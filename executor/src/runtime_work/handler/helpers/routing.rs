@@ -86,6 +86,27 @@ fn apply_local_execution_state(
     link.turn_status = Some("inProgress".to_owned());
 }
 
+fn apply_local_task_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
+    link.running = false;
+    link.status = "failed".to_owned();
+    link.thread_status = "failed".to_owned();
+    link.turn_status = Some("failed".to_owned());
+    link.updated_at = now_ms();
+    link.completed_at = Some(link.updated_at);
+    normalize_settled_task_state(link);
+    if !link.runtime_handle.is_object() {
+        link.runtime_handle = json!({});
+    }
+    if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+        runtime_handle.remove("queuePosition");
+        runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
+        runtime_handle.insert(
+            "lastErrorCode".to_owned(),
+            Value::String(error.code.clone()),
+        );
+    }
+}
+
 fn task_fields(task_id: &str, subtask_id: &str) -> Vec<(&'static str, String)> {
     vec![
         ("task_id", task_id.to_owned()),
@@ -242,6 +263,7 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
             project_active: project.active,
             project_appearance: project.appearance.clone(),
             default_project_space: project.default_project_space.clone(),
+            project_ai_settings: project.ai_settings.clone(),
         })
         .collect()
 }
@@ -329,6 +351,13 @@ fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
         prompt: Value::String(link.title.clone()),
         ..ExecutionRequest::default()
     };
+    set_runtime_task_title(&mut request, &link.title);
+    if !link.project_plugin_ids.is_empty() {
+        request.extra.insert(
+            "project_plugin_ids".to_owned(),
+            json!(link.project_plugin_ids),
+        );
+    }
     if let Some(permission_mode) = link
         .runtime_handle
         .get("modelSelection")

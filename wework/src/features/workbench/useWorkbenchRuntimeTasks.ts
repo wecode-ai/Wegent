@@ -31,6 +31,7 @@ import {
 } from './runtimePaneMessages'
 import type { WorkbenchAction } from './workbenchReducer'
 import {
+  findRuntimeTask,
   getRuntimeTaskRouteKey,
   getRuntimeTaskWorkspacePath,
   isSameRuntimeTaskAddress,
@@ -287,8 +288,16 @@ export function useWorkbenchRuntimeTasks({
     ): Promise<ArchiveRuntimeConversationsResult> => {
       const archiveTargets = uniqueRuntimeTaskAddresses(addresses)
       if (archiveTargets.length === 0) return { status: 'archived' }
+      const localFailedTargets = archiveTargets.filter(address => {
+        const task = findRuntimeTask(state.runtimeWork, address)
+        return task?.status === 'failed' && task.optimistic === true
+      })
+      const persistedTargets = archiveTargets.filter(
+        address =>
+          !localFailedTargets.some(localAddress => isSameRuntimeTaskAddress(localAddress, address))
+      )
       const results = await Promise.all(
-        archiveTargets.map(async address => {
+        persistedTargets.map(async address => {
           try {
             return { address, response: await executorClient.runtime.archiveConversation(address) }
           } catch (error) {
@@ -296,9 +305,10 @@ export function useWorkbenchRuntimeTasks({
           }
         })
       )
-      const archivedAddresses = results.flatMap(result =>
-        result.response?.accepted ? [result.address] : []
-      )
+      const archivedAddresses = [
+        ...localFailedTargets,
+        ...results.flatMap(result => (result.response?.accepted ? [result.address] : [])),
+      ]
       let worktreeCleanupSucceeded = true
       if (archivedAddresses.length > 0) {
         await completeArchivedBoardTasks(archivedAddresses)

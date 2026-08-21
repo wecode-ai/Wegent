@@ -4,8 +4,6 @@ sidebar_position: 32
 
 # Cloud project collaboration architecture
 
-Use the dedicated [board automation and Wegent execution architecture](../../architecture/board-automation.md) for architecture review. This guide retains cloud-project domain, API, and delivery details.
-
 > The current V4 UI source of truth is `/Users/hongyu9/Downloads/wework-delivery-v4-TODO.pen`. Implement the interaction from that design instead of deriving page layout from this document.
 
 ## Goal

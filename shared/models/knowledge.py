@@ -52,6 +52,7 @@ class SelectedKnowledgeRef:
     resources: tuple[SelectedKnowledgeResource, ...] = field(default_factory=tuple)
     routing_summary: str | None = None
     routing_topics: tuple[str, ...] = field(default_factory=tuple)
+    retrieval_capabilities: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

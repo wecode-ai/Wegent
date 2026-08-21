@@ -205,8 +205,21 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn start_claude_turn(&self, local_task_id: String, request: ExecutionRequest) {
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id =
-            self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
+        let execution_id = match self.start_local_task_execution(
+            local_task_id.clone(),
+            request
+                .project_workspace_path
+                .as_deref()
+                .or_else(|| request.cwd()),
+            cancel_tx,
+            stopped_rx,
+        ) {
+            Ok(execution_id) => execution_id,
+            Err(error) => {
+                self.fail_local_task_execution_start(&local_task_id, &error);
+                return;
+            }
+        };
         let handler = self.clone();
         tokio::spawn(async move {
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
@@ -308,7 +321,7 @@ impl RuntimeWorkRpcHandler {
                         "cancelled",
                         Some(message),
                     );
-                    handler.finish_local_task(&local_task_id, execution_id, None, "cancelled");
+                    handler.settle_cancelled_local_task_execution(&local_task_id, execution_id);
                     handler.emit_claude_runtime_event(
                         &local_task_id,
                         &request,
@@ -362,6 +375,14 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(source) = request.extra.get("source") {
             payload["payload"]["source"] = source.clone();
+        }
+        if matches!(
+            event_type,
+            "response.completed" | "response.failed" | "response.incomplete" | "error"
+        ) {
+            if let Some(title) = runtime_task_title(request) {
+                payload["payload"]["taskTitle"] = Value::String(title);
+            }
         }
         let _ = event_tx.send(payload);
     }
@@ -588,8 +609,9 @@ mod tests {
         handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
         let (cancel_tx, _cancel_rx) = oneshot::channel();
         let (_stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id =
-            handler.start_local_task_execution("task-1".to_owned(), cancel_tx, stopped_rx);
+        let execution_id = handler
+            .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
+            .expect("local execution should start");
         let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
         let sink = ClaudeRuntimeEventSink {
             handler: handler.clone(),

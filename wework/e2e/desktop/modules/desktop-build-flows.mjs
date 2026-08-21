@@ -59,6 +59,7 @@ import {
   RETRY_COMPLETION_TEXT,
   RETRY_PROMPT,
   RUNS_PLUGIN_E2E,
+  SELECTED_DESKTOP_SEGMENT,
   TELEMETRY_TEST_PROJECT_KEY,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -79,6 +80,7 @@ import {
   resolve,
   resolveExecutable,
   resultDir,
+  rm,
   runChecked,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
@@ -170,6 +172,9 @@ async function verifyOfflineRemoteProjectRemoval({
   })
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: REMOTE_DOCKER_DEVICE_ID,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await waitForControlValue(
     control,
@@ -409,6 +414,41 @@ async function bundleMacCodex(contentsPath, codexBinary) {
   return bundledCodexBinary
 }
 
+async function bundleMacHarnessRuntime(contentsPath) {
+  if (SELECTED_DESKTOP_SEGMENT !== 'harness-apps') return null
+
+  const source = join(weworkDir, 'src-tauri', 'bundled-harness-runtime')
+  const bundledRuntime = join(contentsPath, 'Resources', 'bundled-harness-runtime')
+  await mkdir(dirname(bundledRuntime), { recursive: true })
+  await rm(bundledRuntime, { recursive: true, force: true })
+  await symlink(source, bundledRuntime, 'dir')
+  console.log(`Bundled E2E Harness runtime: ${bundledRuntime}`)
+  return bundledRuntime
+}
+
+async function prepareHarnessRuntimeRoot() {
+  const metadataPath = join(weworkDir, 'src-tauri', 'bundled-harness-runtime', 'runtime.json')
+  const metadata = JSON.parse(await readFile(metadataPath, 'utf8'))
+  const archivePath = join(
+    weworkDir,
+    'node_modules',
+    '.cache',
+    'harness-runtime-assets',
+    metadata.assetName
+  )
+  const runtimeRoot = join(resultDir, 'harness-runtime')
+  await rm(runtimeRoot, { recursive: true, force: true })
+  await mkdir(runtimeRoot, { recursive: true })
+  await runChecked('tar', ['-xzf', archivePath, '-C', runtimeRoot], { cwd: weworkDir })
+  const node = join(runtimeRoot, 'node', 'bin', process.platform === 'win32' ? 'node.exe' : 'node')
+  assert.equal(
+    await isExecutable(node),
+    true,
+    `The desktop E2E Harness runtime did not contain an executable Node at ${node}`
+  )
+  return runtimeRoot
+}
+
 async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier, codexBinary) {
   if (process.platform !== 'darwin') {
     return { binaryPath, appBundlePath: null, codexBinaryPath: null }
@@ -442,6 +482,7 @@ async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier, codexBin
     'utf8'
   )
   const bundledCodexBinary = await bundleMacCodex(contentsPath, codexBinary)
+  await bundleMacHarnessRuntime(contentsPath)
   commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
   return {
     binaryPath: bundledBinaryPath,
@@ -458,6 +499,10 @@ async function buildDesktopApp(
   modelServerUrl,
   codexBinary
 ) {
+  if (SELECTED_DESKTOP_SEGMENT === 'harness-apps') {
+    await runChecked('pnpm', ['run', 'prepare:harness-runtime'], { cwd: weworkDir })
+  }
+
   const configured = process.env.WEWORK_E2E_APP_BIN
   if (configured) {
     const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework desktop app')
@@ -528,7 +573,11 @@ async function buildDesktopApp(
                 identifier: 'desktop-e2e-window',
                 description: 'Allows the desktop E2E runner to manage test window visibility',
                 windows: ['main'],
-                permissions: ['core:window:allow-show', 'core:window:allow-unminimize'],
+                permissions: [
+                  'core:window:allow-set-size',
+                  'core:window:allow-show',
+                  'core:window:allow-unminimize',
+                ],
               },
             ],
           },
@@ -818,6 +867,9 @@ async function verifyCloudProjectFlow(
   )
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: REMOTE_DOCKER_DEVICE_ID,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await waitForControlValue(
     control,
@@ -1112,6 +1164,9 @@ async function verifyCloudProjectFlow(
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await waitForControlValue(
     control,
     '[data-testid="device-folder-path-input"]',
@@ -1398,6 +1453,8 @@ export {
   macCodexBundleLayout,
   findCodexPackageRoot,
   bundleMacCodex,
+  bundleMacHarnessRuntime,
+  prepareHarnessRuntimeRoot,
   wrapMacDesktopApp,
   buildDesktopApp,
   verifyConnectedModelsOnLocalExecution,

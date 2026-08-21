@@ -9,6 +9,8 @@ import type {
   PluginDeleteImpactResponse,
   PluginDeleteRequest,
   PluginDeleteResponse,
+  PluginDeviceReportItem,
+  PluginDeviceReportResponse,
   PluginDeviceSyncResponse,
   PluginMarketplaceInstallResponse,
   PluginMarketplaceCapabilities,
@@ -49,6 +51,14 @@ export function createPluginApi(client: HttpClient) {
     },
     syncInstalledPluginsToDevice(deviceId: string): Promise<PluginDeviceSyncResponse> {
       return client.post(`/plugins/installed/sync-device${deviceQuery(deviceId)}`)
+    },
+    reportInstalledPluginsOnDevice(
+      deviceId: string,
+      plugins: PluginDeviceReportItem[]
+    ): Promise<PluginDeviceReportResponse> {
+      return client.post(`/plugins/installed/report-device${deviceQuery(deviceId)}`, {
+        plugins,
+      })
     },
     autoUpdateInstalledPlugins(): Promise<PluginAutoUpdateBatchResponse> {
       return client.post('/plugins/installed/auto-update-batch')

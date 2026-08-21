@@ -89,7 +89,12 @@ class IssueWorkflowDecisionService:
             }
         )
         node["decision_history"] = history
-        apply_workflow_nodes(item, workflow=workflow, nodes=nodes)
+        apply_workflow_nodes(
+            item,
+            workflow=workflow,
+            nodes=nodes,
+            actor_user_id=user_id,
+        )
         db.commit()
         db.refresh(item)
         return item

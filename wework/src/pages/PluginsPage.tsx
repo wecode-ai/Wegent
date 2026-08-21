@@ -20,6 +20,7 @@ import { getRuntimeConfig } from '@/config/runtime'
 import { parsePluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { track } from '@/telemetry/client'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
+import { prefetchPluginsWorkspace } from '@/components/plugins/workspace/prefetchPluginsWorkspace'
 
 const PluginsWorkspace = lazy(() =>
   import('@/components/plugins/PluginsWorkspace').then(module => ({
@@ -29,9 +30,11 @@ const PluginsWorkspace = lazy(() =>
 function PluginsWorkspaceRouteFallback({
   sidebarCollapsed,
   topBarLeftActions,
+  pluginDetail,
 }: {
   sidebarCollapsed: boolean
   topBarLeftActions?: ReactNode
+  pluginDetail?: boolean
 }) {
   return (
     <main
@@ -47,37 +50,52 @@ function PluginsWorkspaceRouteFallback({
         {topBarLeftActions ? (
           <div className="flex min-h-8 items-center gap-2">{topBarLeftActions}</div>
         ) : null}
-        <section className="space-y-2">
-          <h1 className="heading-medium text-text-primary">插件市场</h1>
-          <p className="text-base leading-6 text-text-secondary">
-            发现并接入开发工具、企业数据和专业方法。
-          </p>
-        </section>
-        <div className="h-11 w-full animate-pulse rounded-full bg-surface" />
-        <div className="space-y-8 border-t border-border pt-8">
-          {['Featured', 'Productivity'].map(section => (
-            <section key={section} className="space-y-4">
-              <div className="border-b border-border pb-3">
-                <div className="h-5 w-28 animate-pulse rounded-md bg-surface" />
+        {pluginDetail ? (
+          <>
+            <div className="h-4 w-28 animate-pulse rounded-md bg-surface" />
+            <div className="flex items-center gap-3">
+              <div className="h-11 w-11 animate-pulse rounded-xl bg-surface" />
+              <div className="space-y-2">
+                <div className="h-5 w-40 animate-pulse rounded-md bg-surface" />
+                <div className="h-4 w-56 max-w-full animate-pulse rounded-md bg-surface" />
               </div>
-              <div className="grid grid-cols-1 gap-x-10 gap-y-3 sm:grid-cols-2">
-                {Array.from({ length: 4 }).map((_, index) => (
-                  <div
-                    key={index}
-                    className="grid min-h-[66px] grid-cols-[44px_minmax(0,1fr)_72px] items-center gap-3 rounded-lg px-2 py-2"
-                  >
-                    <div className="h-10 w-10 animate-pulse rounded-lg bg-surface" />
-                    <div className="space-y-2">
-                      <div className="h-4 w-32 animate-pulse rounded-md bg-surface" />
-                      <div className="h-3 w-44 max-w-full animate-pulse rounded-md bg-surface" />
-                    </div>
-                    <div className="h-8 animate-pulse rounded-xl bg-surface" />
-                  </div>
-                ))}
-              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <section className="space-y-2">
+              <h1 className="heading-medium text-text-primary">插件市场</h1>
+              <p className="text-base leading-6 text-text-secondary">
+                发现并接入开发工具、企业数据和专业方法。
+              </p>
             </section>
-          ))}
-        </div>
+            <div className="h-11 w-full animate-pulse rounded-full bg-surface" />
+            <div className="space-y-8 border-t border-border pt-8">
+              {['Featured', 'Productivity'].map(section => (
+                <section key={section} className="space-y-4">
+                  <div className="border-b border-border pb-3">
+                    <div className="h-5 w-28 animate-pulse rounded-md bg-surface" />
+                  </div>
+                  <div className="grid grid-cols-1 gap-x-10 gap-y-3 sm:grid-cols-2">
+                    {Array.from({ length: 4 }).map((_, index) => (
+                      <div
+                        key={index}
+                        className="grid min-h-[66px] grid-cols-[44px_minmax(0,1fr)_72px] items-center gap-3 rounded-lg px-2 py-2"
+                      >
+                        <div className="h-10 w-10 animate-pulse rounded-lg bg-surface" />
+                        <div className="space-y-2">
+                          <div className="h-4 w-32 animate-pulse rounded-md bg-surface" />
+                          <div className="h-3 w-44 max-w-full animate-pulse rounded-md bg-surface" />
+                        </div>
+                        <div className="h-8 animate-pulse rounded-xl bg-surface" />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </main>
   )
@@ -124,10 +142,14 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
   const [searchOpen, setSearchOpen] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isTauri = isTauriRuntime()
+  const pluginReference = parsePluginDetailRoute(routeSearch)
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
 
   useEffect(() => {
     track('plugin_center_opened', { surface: 'catalog' })
+    if (!isTauriRuntime()) return
+    const timeoutId = window.setTimeout(() => prefetchPluginsWorkspace(), 400)
+    return () => window.clearTimeout(timeoutId)
   }, [])
 
   const handleSelectProject = (projectId: number) => {
@@ -271,6 +293,7 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
           fallback={
             <PluginsWorkspaceRouteFallback
               sidebarCollapsed={sidebarCollapsed && !isMobile}
+              pluginDetail={Boolean(pluginReference)}
               topBarLeftActions={
                 !isMobile && sidebarCollapsed && !isTauri ? (
                   <DesktopWindowControls
@@ -289,7 +312,7 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
           }
         >
           <PluginsWorkspace
-            pluginReference={parsePluginDetailRoute(routeSearch)}
+            pluginReference={pluginReference}
             cloudMarketplaceAvailable={true}
             cloudApiBaseUrl={cloudConnection.apiBaseUrl || getRuntimeConfig().apiBaseUrl}
             cloudToken={cloudConnection.token}

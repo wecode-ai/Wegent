@@ -1497,6 +1497,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
         }
         let wait_for_goal_continuation = state.goal_is_active();
+        let expected_client_user_message_id = request_client_user_message_id(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         client.mark_thread_active(&thread_id).await;
@@ -1554,6 +1555,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_deadline,
             SharedTurnNotificationOptions {
                 active_turn_id,
+                expected_client_user_message_id,
                 notifications,
                 cancellation,
                 request_user_input_answers,
@@ -1611,10 +1613,17 @@ fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
         .get("developerInstructions")
         .and_then(Value::as_str)
         .is_some_and(|instructions| instructions.contains("Wework 项目空间 routing:"));
+    let reasoning_effort = params
+        .get("config")
+        .and_then(|config| config.get("model_reasoning_effort"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
     let Some(config) = params.get("config").and_then(Value::as_object) else {
         return vec![
             ("mcp_config_key_count", "0".to_owned()),
             ("mcp_server_names", String::new()),
+            ("reasoning_effort", reasoning_effort),
             (
                 "space_routing_instructions",
                 space_routing_instructions.to_string(),
@@ -1641,6 +1650,7 @@ fn mcp_thread_config_fields(params: &Value) -> Vec<(&'static str, String)> {
     vec![
         ("mcp_config_key_count", mcp_keys.len().to_string()),
         ("mcp_server_names", server_names),
+        ("reasoning_effort", reasoning_effort),
         (
             "space_routing_instructions",
             space_routing_instructions.to_string(),
@@ -1866,6 +1876,7 @@ fn codex_outcome_name(outcome: &ExecutionOutcome) -> &'static str {
 
 struct SharedTurnNotificationOptions {
     active_turn_id: Option<String>,
+    expected_client_user_message_id: Option<String>,
     notifications: Option<CodexNotificationSender>,
     cancellation: Option<oneshot::Receiver<()>>,
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
@@ -1977,9 +1988,13 @@ async fn read_shared_turn_notifications(
         }
 
         let notification_turn_id = root_turn_notification_id(&message, state);
-        if let Some(turn_id) =
-            started_active_turn_id(options.active_turn_id.as_deref(), &message, state)
-        {
+        let active_turn_update = observed_active_turn_id(
+            options.active_turn_id.as_deref(),
+            options.expected_client_user_message_id.as_deref(),
+            &message,
+            state,
+        );
+        if let Some((turn_id, source)) = active_turn_update {
             if let Some(previous_turn_id) = options.active_turn_id.as_deref() {
                 log_executor_event(
                     "codex shared active turn corrected",
@@ -1987,7 +2002,7 @@ async fn read_shared_turn_notifications(
                         ("thread_id", thread_id.to_owned()),
                         ("previous_turn_id", previous_turn_id.to_owned()),
                         ("turn_id", turn_id.clone()),
-                        ("source", "turn_started_notification".to_owned()),
+                        ("source", source.to_owned()),
                     ],
                 );
             }
@@ -2104,7 +2119,7 @@ fn required_mcp_startup_failure(message: &Value) -> Option<String> {
         .get("status")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if !matches!(status, "failed" | "error" | "cancelled") {
+    if !matches!(status, "failed" | "error") {
         return None;
     }
     let reason = params
@@ -2483,16 +2498,41 @@ async fn notification_belongs_to_thread(
     }
 }
 
-fn started_active_turn_id(
+fn observed_active_turn_id(
     active_turn_id: Option<&str>,
+    expected_client_user_message_id: Option<&str>,
     message: &Value,
     state: &CodexRunState,
-) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) != Some("turn/started") {
-        return None;
-    }
+) -> Option<(String, &'static str)> {
+    let method = message.get("method").and_then(Value::as_str);
+    let source = match method {
+        Some("turn/started") => "turn_started_notification",
+        Some("item/started") => {
+            let item = message_params(message).get("item")?;
+            if string_value(item, "type").as_deref() != Some("userMessage") {
+                return None;
+            }
+            let client_user_message_id = string_value(item, "clientId")
+                .or_else(|| string_value(item, "clientUserMessageId"))
+                .or_else(|| string_value(item, "client_user_message_id"));
+            if let (Some(expected), Some(observed)) = (
+                expected_client_user_message_id,
+                client_user_message_id.as_deref(),
+            ) {
+                if observed != expected {
+                    return None;
+                }
+            }
+            "root_user_message_notification"
+        }
+        Some("thread/goal/updated" | "thread/goal/cleared") if active_turn_id.is_some() => {
+            "goal_status_notification"
+        }
+        _ => return None,
+    };
     root_turn_notification_id(message, state)
         .filter(|turn_id| active_turn_id != Some(turn_id.as_str()))
+        .map(|turn_id| (turn_id, source))
 }
 
 fn turn_start_response_id(response: &Value) -> Option<String> {
@@ -2792,12 +2832,18 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     launch_config
         .config_overrides
         .extend(task_identity_config_overrides(request));
+    if let Some(cargo_target_override) = super::cargo_cache::codex_config_override(request) {
+        launch_config.config_overrides.push(cargo_target_override);
+    }
     launch_config
         .config_overrides
         .extend(codex_runtime_default_config_overrides());
     launch_config
         .config_overrides
         .extend(codex_model_config_overrides(&request.model_config));
+    launch_config
+        .config_overrides
+        .extend(project_plugin_config_overrides(request));
 
     if let Some(model) = &model {
         launch_config
@@ -3037,6 +3083,32 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
         codex_model_context_window(model_config).unwrap_or(DEFAULT_CODEX_MODEL_CONTEXT_WINDOW);
     overrides.push(format!("model_context_window={context_window}"));
     overrides
+}
+
+fn project_plugin_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    if request.runtime_project_key.is_none() {
+        return Vec::new();
+    }
+    request
+        .extra
+        .get("project_plugin_ids")
+        .or_else(|| request.extra.get("projectPluginIds"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|value| {
+            value.chars().all(|character| {
+                character.is_ascii_alphanumeric()
+                    || matches!(character, '-' | '_' | '.' | '@' | '/')
+            })
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|plugin_id| format!("{}=true", toml_key_path(&["plugins", plugin_id, "enabled"]),))
+        .collect()
 }
 
 fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
@@ -4678,17 +4750,10 @@ fn turn_start_params(
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
     params.insert("input".to_owned(), Value::Array(input));
-    if let Some(client_user_message_id) = request
-        .extra
-        .get("client_user_message_id")
-        .or_else(|| request.extra.get("clientUserMessageId"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(client_user_message_id) = request_client_user_message_id(request) {
         params.insert(
             "clientUserMessageId".to_owned(),
-            Value::String(client_user_message_id.to_owned()),
+            Value::String(client_user_message_id),
         );
     }
     params.insert(
@@ -4720,6 +4785,17 @@ fn turn_start_params(
         params.insert("outputSchema".to_owned(), output_schema);
     }
     Value::Object(params)
+}
+
+fn request_client_user_message_id(request: &ExecutionRequest) -> Option<String> {
+    request
+        .extra
+        .get("client_user_message_id")
+        .or_else(|| request.extra.get("clientUserMessageId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn codex_output_schema(request: &ExecutionRequest) -> Option<Value> {
@@ -4754,8 +4830,8 @@ fn codex_collaboration_mode_payload(
         "mode": mode,
         "settings": {
             "model": codex_request_model(request),
-            "reasoningEffort": launch_config.effort,
-            "developerInstructions": Value::Null,
+            "reasoning_effort": launch_config.effort,
+            "developer_instructions": Value::Null,
         }
     }))
 }

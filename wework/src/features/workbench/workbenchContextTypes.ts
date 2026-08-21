@@ -3,6 +3,7 @@ import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
+  CloneGitRepositoryInput,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   DeleteDeviceWorkspaceRequest,
@@ -39,6 +40,7 @@ import type {
   RuntimeTaskCreateRequest,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectAiSettings,
   RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
@@ -101,6 +103,9 @@ export interface SendCurrentInputOptions {
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void | Promise<void>
+  prepareRuntimeTask?: (
+    address: RuntimeTaskAddress
+  ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
 }
@@ -151,6 +156,7 @@ export interface CreateProjectRuntimeTaskOptions {
   deviceId?: string | null
   additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
+  prepareRuntimeTask?: SendCurrentInputOptions['prepareRuntimeTask']
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
 }
 
@@ -185,6 +191,7 @@ export interface WorkbenchContextValue {
     isModelSelectionReady: boolean
     input: string
     composerError?: string | null
+    composerErrorByScope?: Readonly<Record<string, string>>
     trialTemplates: PluginPathComponent[]
     trialPluginName?: string
     trialPluginApp?: LocalDeviceApp
@@ -208,6 +215,7 @@ export interface WorkbenchContextValue {
     setInput: (value: string) => void
     setInputForScope: (scopeKey: string, value: string) => void
     setComposerError?: (error: string | null) => void
+    setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>
@@ -315,6 +323,7 @@ export interface WorkbenchContextValue {
     name: string
     roots: string[]
     defaultProjectSpace: RuntimeProjectSpaceRef | null
+    aiSettings: RuntimeProjectAiSettings | null
   }) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>
@@ -326,6 +335,7 @@ export interface WorkbenchContextValue {
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
+  cloneGitRepository: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
   loadEnvironmentInfo: (
     project: ProjectWithTasks | null,
     workspaceTarget?: WorkspaceTarget | null,
@@ -443,6 +453,7 @@ export interface WorkbenchProviderProps {
   lifecycleStore?: RuntimeTaskLifecycleStore
   onStartupReadyChange?: (ready: boolean) => void
   workspaceTabId?: string
+  consumePluginTrials?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean
 }

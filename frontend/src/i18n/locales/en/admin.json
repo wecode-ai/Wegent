@@ -407,6 +407,17 @@
     "marketplace_tag_sort": "Sort Value",
     "marketplace_tag_enabled": "Enabled",
     "marketplace_tag_disabled": "Disabled",
+    "knowledge_base_profile_title": "Knowledge Base Retrieval Default Profile",
+    "knowledge_base_profile_description": "Initial settings for all new knowledge bases. References must name public resources.",
+    "knowledge_base_profile_health_missing": "No profile is configured; new knowledge bases use automatic defaults.",
+    "knowledge_base_profile_health_valid": "The profile references active public resources.",
+    "knowledge_base_profile_health_invalid": "The profile cannot be applied; new knowledge bases use automatic defaults.",
+    "knowledge_base_profile_load_failed": "Could not load the current profile. Refresh before saving changes.",
+    "knowledge_base_profile_saved": "Knowledge base retrieval default profile saved",
+    "knowledge_base_profile_save_failed": "Failed to save knowledge base retrieval default profile",
+    "retrieval_profile_reason_retriever_unavailable": "The configured public retriever is unavailable.",
+    "retrieval_profile_reason_embedding_model_unavailable": "The configured public embedding model is unavailable.",
+    "retrieval_profile_reason_profile_incomplete": "The configured profile is incomplete.",
     "version": "Version",
     "success": {
       "updated": "Configuration updated successfully"

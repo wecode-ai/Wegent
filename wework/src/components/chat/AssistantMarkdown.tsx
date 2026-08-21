@@ -7,7 +7,7 @@ import { ComposerLinkChip } from './ComposerLinkChip'
 import 'streamdown/styles.css'
 import {
   classifyMarkdownLink,
-  getAuthenticatedImageFetchUrl,
+  getAuthenticatedAttachmentId,
   isAuthenticatedAttachmentImageSrc,
   isHtmlFilePath,
   resolveDirectMarkdownImageSrc,
@@ -25,6 +25,7 @@ import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
+import { useAttachmentDownload } from './AttachmentDownloadContext'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -179,7 +180,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <strong className="font-semibold">{children}</strong>
       ),
       code: (props: MarkdownCodeProps) => (
-        <MarkdownCode {...props} compact={variant === 'process'} />
+        <MarkdownCode {...props} compact={variant === 'process'} isStreaming={isStreaming} />
       ),
       inlineCode: ({ children }: { children?: ReactNode }) => (
         <MarkdownInlineCode compact={variant === 'process'}>{children}</MarkdownInlineCode>
@@ -224,7 +225,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <AssistantMarkdownImage src={src} alt={alt} />
       ),
     }),
-    [headingClasses, openFile, variant]
+    [headingClasses, isStreaming, openFile, variant]
   )
 
   return (
@@ -336,9 +337,17 @@ function estimateMarkdownChunkHeight(content: string): number {
 type MarkdownCodeProps = {
   node?: HastElement
   compact?: boolean
+  isStreaming?: boolean
 } & HTMLAttributes<HTMLElement>
 
-function MarkdownCode({ className, children, node, compact = false, ...props }: MarkdownCodeProps) {
+function MarkdownCode({
+  className,
+  children,
+  node,
+  compact = false,
+  isStreaming = false,
+  ...props
+}: MarkdownCodeProps) {
   const match = /language-(\w*)/.exec(className || '')
   const text = reactNodeToText(children)
   const isBlock =
@@ -352,7 +361,7 @@ function MarkdownCode({ className, children, node, compact = false, ...props }: 
       return <MarkdownDiagramPreview code={text.trimEnd()} language={lang} />
     }
     return (
-      <MarkdownCodeBlock lang={lang} compact={compact}>
+      <MarkdownCodeBlock lang={lang} compact={compact} isStreaming={isStreaming}>
         {text || children}
       </MarkdownCodeBlock>
     )
@@ -588,6 +597,7 @@ function AssistantMarkdownLink({
 }
 
 function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+  const fetchAttachmentBlob = useAttachmentDownload()
   const rawSrc = typeof src === 'string' ? src.trim() : ''
   const [authenticatedPreview, setAuthenticatedPreview] = useState<{
     rawSrc: string
@@ -616,16 +626,11 @@ function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
 
     async function loadAuthenticatedImage() {
       try {
-        const token = localStorage.getItem('auth_token')
-        const response = await fetch(getAuthenticatedImageFetchUrl(rawSrc), {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        })
-
-        if (!response.ok) {
-          throw new Error(`Failed to load markdown image: ${response.status}`)
+        const attachmentId = getAuthenticatedAttachmentId(rawSrc)
+        if (attachmentId === null) {
+          throw new Error('Failed to resolve markdown attachment')
         }
-
-        const blob = await response.blob()
+        const blob = await fetchAttachmentBlob(attachmentId)
         if (!blob.type.startsWith('image/')) {
           throw new Error(`Markdown image response is not an image: ${blob.type || 'unknown'}`)
         }
@@ -651,7 +656,7 @@ function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [isAuthenticatedSrc, rawSrc])
+  }, [fetchAttachmentBlob, isAuthenticatedSrc, rawSrc])
 
   if (hasError) {
     return (

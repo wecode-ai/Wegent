@@ -4,6 +4,11 @@ import {
   type HarnessProxyRegistration,
   type LocalHarnessModelOption,
 } from '@/features/local-harness/localHarnessModels'
+import {
+  buildHarnessModelContext,
+  buildHarnessUserContext,
+  type HarnessContextRegistration,
+} from '@/features/harness-apps/harnessContext'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import i18n from '@/i18n'
 import type {
@@ -17,6 +22,8 @@ import type {
   DeviceWorkspacePrepareResponse,
   RuntimeTaskSummary,
   LocalDeviceSkill,
+  ModelSelectionConfig,
+  ModelType,
   RuntimeArchiveProjectConversationsRequest,
   RuntimeArchivedConversationBulkRequest,
   RuntimeArchivedConversationBulkResponse,
@@ -32,6 +39,7 @@ import type {
   RuntimeLocalProjectUpsertRequest,
   RuntimeLocalProjectUpsertResponse,
   RuntimeProjectSpaceRef,
+  RuntimeProjectQuickPhrase,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
@@ -154,7 +162,7 @@ import {
 import { createLocalProjectChatClient } from './localProjectChatClient'
 import { createLocalAITableApi } from '@/api/aitable'
 import { createDwsApi } from '@/api/dws'
-import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
+import { getLocalUser, LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import type { LocalHarnessId } from '@/lib/local-harness'
 import {
@@ -354,11 +362,12 @@ function localRuntimeModels(
 }
 
 type LocalExecutorRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+type LocalExecutorSubscribe = (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 
 interface LocalAppServicesDeps {
   ensure?: () => Promise<LocalExecutorStatus>
   request?: LocalExecutorRequest
-  subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
+  subscribe?: LocalExecutorSubscribe
   cloudModelGateway?: CloudModelGateway
   user?: User
   readWorkspaceTextFile?: typeof readLocalWorkspaceTextFile
@@ -376,6 +385,31 @@ const catalogReconciliationTrackers = new WeakMap<
   LocalExecutorRequest,
   CatalogReconciliationTracker
 >()
+let runtimeChatStreams = new WeakMap<
+  LocalExecutorSubscribe,
+  WeakMap<LocalExecutorRequest, ReturnType<typeof createRuntimeChatStream>>
+>()
+
+export function resetLocalRuntimeChatStreamsForTests(): void {
+  runtimeChatStreams = new WeakMap()
+}
+
+function getRuntimeChatStream(
+  subscribe: LocalExecutorSubscribe,
+  request: LocalExecutorRequest
+): ReturnType<typeof createRuntimeChatStream> {
+  let streamsByRequest = runtimeChatStreams.get(subscribe)
+  if (!streamsByRequest) {
+    streamsByRequest = new WeakMap()
+    runtimeChatStreams.set(subscribe, streamsByRequest)
+  }
+  const existing = streamsByRequest.get(request)
+  if (existing) return existing
+
+  const stream = createRuntimeChatStream({ subscribe, request })
+  streamsByRequest.set(request, stream)
+  return stream
+}
 const CATALOG_IDLE_RESTART_RETRY_DELAY_MS = 100
 const CATALOG_IDLE_RESTART_MAX_ATTEMPTS = 20
 
@@ -637,11 +671,21 @@ function timestampValue(value: unknown): string | number | null {
   return stringValue(value)
 }
 
-function modelSelectionValue(value: unknown) {
+function modelTypeValue(value: unknown): ModelType | null {
+  const modelType = stringValue(value)
+  return modelType === 'public' ||
+    modelType === 'user' ||
+    modelType === 'group' ||
+    modelType === 'runtime'
+    ? modelType
+    : null
+}
+
+function modelSelectionValue(value: unknown): ModelSelectionConfig | null {
   const selection = recordValue(value)
   const modelName = stringValue(selection.modelName) ?? stringValue(selection.model_name)
   if (!modelName) return null
-  const modelType = stringValue(selection.modelType) ?? stringValue(selection.model_type)
+  const modelType = modelTypeValue(selection.modelType) ?? modelTypeValue(selection.model_type)
   const options = recordValue(selection.options)
   return {
     modelName,
@@ -737,6 +781,13 @@ function normalizeRuntimeTaskSummary(
   const turnStatus = stringValue(taskRecord.turnStatus ?? taskRecord.turn_status)
   const continuableValue = taskRecord.continuable
   const continuable = typeof continuableValue === 'boolean' ? continuableValue : undefined
+  const rawProjectPluginIds = taskRecord.projectPluginIds ?? taskRecord.project_plugin_ids
+  const projectPluginIds = Array.isArray(rawProjectPluginIds)
+    ? rawProjectPluginIds
+        .filter((value: unknown): value is string => typeof value === 'string')
+        .map((value: string) => value.trim())
+        .filter(Boolean)
+    : []
 
   const normalized = {
     ...taskRecord,
@@ -757,6 +808,7 @@ function normalizeRuntimeTaskSummary(
     ...(threadStatus ? { threadStatus } : {}),
     ...(turnStatus ? { turnStatus } : {}),
     ...(continuable !== undefined ? { continuable } : {}),
+    ...(projectPluginIds.length > 0 ? { projectPluginIds } : {}),
   }
 
   return normalized as RuntimeTaskSummary
@@ -1387,6 +1439,8 @@ interface BuildLocalRuntimeExecutionRequestInput {
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
+  projectInstructions?: string
+  projectPlugins?: RuntimeTaskCreateRequest['projectPlugins']
   cloudProjectId?: string
   origin?: RuntimeTaskCreateRequest['origin']
   workspaceSource: LocalRuntimeWorkspaceSource
@@ -1442,21 +1496,19 @@ function buildLocalRuntimeExecutionRequest(
   const claudeRuntime = ['claude', 'claudecode', 'claude_code'].includes(
     input.runtime.trim().toLowerCase()
   )
-  const modelConfig =
+  const baseModelConfig =
     input.modelConfig ??
     (claudeRuntime && !input.modelId
       ? {}
-      : applyRuntimeModelOptions(
-          localRuntimeModelConfig(
-            input.runtime,
-            !claudeRuntime && input.requireLocalCodexCatalog,
-            input.modelId,
-            input.modelType,
-            input.modelOptions,
-            input.cloudModelGateway
-          ),
-          input.modelOptions
+      : localRuntimeModelConfig(
+          input.runtime,
+          !claudeRuntime && input.requireLocalCodexCatalog,
+          input.modelId,
+          input.modelType,
+          input.modelOptions,
+          input.cloudModelGateway
         ))
+  const modelConfig = applyRuntimeModelOptions({ ...baseModelConfig }, input.modelOptions)
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
   const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
@@ -1500,6 +1552,8 @@ function buildLocalRuntimeExecutionRequest(
     ...(input.runtimePermissionMode ? { claude_permission_mode: input.runtimePermissionMode } : {}),
     mcp_servers: [],
     model_config: modelConfig,
+    system_prompt: input.projectInstructions?.trim() ?? '',
+    project_plugin_ids: (input.projectPlugins ?? []).map(plugin => plugin.id),
     prompt: messageWithApplicationContext(
       input.message,
       input.additionalContext,
@@ -1718,6 +1772,8 @@ async function createLocalRuntimeTaskPayload(
       runtimeProjectKey: normalizedData.runtimeProjectKey,
       runtimeProjectName: normalizedData.runtimeProjectName,
       runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
+      projectInstructions: normalizedData.projectInstructions,
+      projectPlugins: normalizedData.projectPlugins,
       cloudProjectId: normalizedData.cloudProjectId,
       origin: normalizedData.origin,
       workspaceSource: runtimeWorkspace?.workspaceSource ?? 'local_path',
@@ -2064,6 +2120,61 @@ function adaptRuntimeWorkListResponse(
       (defaultProjectStore === 'local' || defaultProjectStore === 'backend') && defaultProjectId
         ? { projectStore: defaultProjectStore, projectId: defaultProjectId }
         : null
+    const rawProjectAiSettings = recordValue(
+      workspace.projectAiSettings ?? workspace.project_ai_settings
+    )
+    const projectInstructions =
+      typeof rawProjectAiSettings.instructions === 'string'
+        ? rawProjectAiSettings.instructions
+        : undefined
+    const projectModelSelection = modelSelectionValue(
+      rawProjectAiSettings.modelSelection ?? rawProjectAiSettings.model_selection
+    )
+    const projectPlugins = Array.isArray(rawProjectAiSettings.plugins)
+      ? rawProjectAiSettings.plugins
+          .map(plugin => {
+            const value = recordValue(plugin)
+            const id = stringValue(value.id)
+            const pluginName = stringValue(value.pluginName ?? value.plugin_name)
+            const marketplaceId = stringValue(value.marketplaceId ?? value.marketplace_id)
+            const displayName = stringValue(value.displayName ?? value.display_name)
+            return id && pluginName && marketplaceId
+              ? { id, pluginName, marketplaceId, displayName: displayName || pluginName }
+              : null
+          })
+          .filter((plugin): plugin is NonNullable<typeof plugin> => plugin !== null)
+      : []
+    const rawProjectQuickPhrases =
+      rawProjectAiSettings.quickPhrases ?? rawProjectAiSettings.quick_phrases
+    const projectQuickPhrases = Array.isArray(rawProjectQuickPhrases)
+      ? rawProjectQuickPhrases
+          .map((phrase): RuntimeProjectQuickPhrase | null => {
+            const value = recordValue(phrase)
+            const id = stringValue(value.id)
+            const title = stringValue(value.title)
+            const content = stringValue(value.content)
+            const mode = stringValue(value.mode)
+            return id &&
+              title &&
+              content &&
+              (mode === 'normal' || mode === 'plan' || mode === 'goal')
+              ? { id, title, content, mode }
+              : null
+          })
+          .filter((phrase): phrase is NonNullable<typeof phrase> => phrase !== null)
+      : []
+    const aiSettings =
+      projectInstructions !== undefined ||
+      projectModelSelection ||
+      projectPlugins.length > 0 ||
+      projectQuickPhrases.length > 0
+        ? {
+            ...(projectInstructions !== undefined ? { instructions: projectInstructions } : {}),
+            modelSelection: projectModelSelection,
+            ...(projectPlugins.length > 0 ? { plugins: projectPlugins } : {}),
+            ...(projectQuickPhrases.length > 0 ? { quickPhrases: projectQuickPhrases } : {}),
+          }
+        : null
     const projectWork: RuntimeWorkListResponse['projects'][number] = {
       project: {
         key: projectKey,
@@ -2087,6 +2198,7 @@ function adaptRuntimeWorkListResponse(
           | RuntimeWorkListResponse['projects'][number]['project']['appearance']
           | null,
         ...(defaultProjectSpace ? { defaultProjectSpace } : {}),
+        ...(aiSettings ? { aiSettings } : {}),
       },
       deviceWorkspaces: [deviceWorkspace],
       totalTasks: tasks.length,
@@ -3393,10 +3505,33 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
             upstream: harnessProxyUpstream(harnessId, option, deps.cloudModelGateway),
           }
         )
-        return harnessLaunchThroughMessagesProxy(harnessId, option, registration)
+        const launch = harnessLaunchThroughMessagesProxy(harnessId, option, registration)
+        if (harnessId !== 'opencode') return launch
+        try {
+          const context = await request<HarnessContextRegistration>(
+            'runtime.harness_context.register',
+            {
+              scope: 'harness:' + harnessId + ':' + crypto.randomUUID(),
+              user: buildHarnessUserContext(
+                deps.user ?? getLocalUser(),
+                deps.cloudModelGateway ? 'cloud' : 'local'
+              ),
+              model: buildHarnessModelContext(option),
+            }
+          )
+          return { ...launch, context }
+        } catch (error) {
+          await request('runtime.harness_proxy.unregister', { token: registration.token }).catch(
+            () => undefined
+          )
+          throw error
+        }
       },
       async unregisterProxy(token: string) {
         await request('runtime.harness_proxy.unregister', { token })
+      },
+      async unregisterContext(token: string) {
+        await request('runtime.harness_context.unregister', { token })
       },
     },
     localProjectChatClient,
@@ -3435,6 +3570,6 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       uploadRuntimeAuthJson: () => cloudConnectionRequired('uploadRuntimeAuthJson'),
       importRuntimeAuthJson: () => cloudConnectionRequired('importRuntimeAuthJson'),
     },
-    chatStream: createRuntimeChatStream({ subscribe, request }),
+    chatStream: getRuntimeChatStream(subscribe, request),
   } as unknown as WorkbenchServices
 }

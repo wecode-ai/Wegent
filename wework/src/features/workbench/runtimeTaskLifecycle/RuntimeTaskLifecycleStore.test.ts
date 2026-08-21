@@ -247,6 +247,35 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.execution.running).toBe(false)
   })
 
+  test('rejects a stale confirmed-active snapshot after a terminal event', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'active',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+        })
+      )
+    )
+
+    store.turnSettled(address, null, 'succeeded')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'active',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+        })
+      )
+    )
+
+    expect(store.getTask(address)?.execution.running).toBe(false)
+    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
+  })
+
   test('keeps terminal executor snapshots idle even when running remains true', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const terminalTask = task({ running: true, status: 'complete' })
@@ -382,6 +411,28 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.execution.phase).toBe('idle')
     expect(snapshot?.turn.phase).toBe('idle')
     expect(snapshot?.turn.outcome).toBe('succeeded')
+    expect(snapshot?.derived.isBusy).toBe(false)
+  })
+
+  test('ignores a late send acceptance after an authoritative completion', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.sendRequested(address)
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'done',
+          completedAt: 1_787_200_000_000,
+          turnStatus: 'completed',
+        })
+      )
+    )
+    store.sendAccepted(address)
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.turn.phase).toBe('idle')
     expect(snapshot?.derived.isBusy).toBe(false)
   })
 

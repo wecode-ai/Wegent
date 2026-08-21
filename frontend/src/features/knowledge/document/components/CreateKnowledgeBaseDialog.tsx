@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { BookOpen, Code2, Database, User, Building2, Users, FileText } from 'lucide-react'
 import {
   Dialog,
@@ -39,7 +39,9 @@ import type {
   RagConfigMode,
 } from '@/types/knowledge'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
+import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { createDefaultRetrievalConfig } from './retrievalConfig'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 
 /** Available group for selection */
@@ -89,18 +91,6 @@ function GroupTypeIcon({ type }: { type: 'personal' | 'group' | 'organization' |
     case 'group':
     default:
       return <Users className="w-4 h-4" />
-  }
-}
-
-function createDefaultRetrievalConfig(): RetrievalConfigDraft {
-  return {
-    retrieval_mode: 'vector',
-    top_k: 5,
-    score_threshold: 0.5,
-    hybrid_weights: {
-      vector_weight: 0.7,
-      keyword_weight: 0.3,
-    },
   }
 }
 
@@ -173,6 +163,9 @@ export function CreateKnowledgeBaseDialog({
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>(
     createDefaultRetrievalConfig
   )
+  const profileAppliedRef = useRef(false)
+  const retrievalConfigChangedRef = useRef(false)
+  const [profileFallbackReason, setProfileFallbackReason] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [accordionValue, setAccordionValue] = useState<string>('')
   const [maxCalls, setMaxCalls] = useState(10)
@@ -203,8 +196,36 @@ export function CreateKnowledgeBaseDialog({
       setSource(createEmptySource())
       setSelectedGroupId(defaultGroupId || 'personal')
       setDirectAccessRequirement('read')
+      setRetrievalConfig(createDefaultRetrievalConfig())
+      profileAppliedRef.current = false
+      retrievalConfigChangedRef.current = false
+      setProfileFallbackReason(null)
     }
   }, [open, initialKbType, defaultGroupId])
+
+  useEffect(() => {
+    if (!open || profileAppliedRef.current) return
+    profileAppliedRef.current = true
+    let cancelled = false
+
+    void getKnowledgeBaseRetrievalProfile()
+      .then(profile => {
+        if (cancelled) return
+        if (profile.health.status === 'valid' && profile.retrieval_config) {
+          if (!retrievalConfigChangedRef.current) {
+            setRetrievalConfig(profile.retrieval_config)
+          }
+          return
+        }
+        setProfileFallbackReason(profile.health.fallback_reason ?? '')
+      })
+      .catch(() => {
+        if (!cancelled) setProfileFallbackReason('')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
 
   // Update selectedKbType when KB type changes (keep summaryEnabled unchanged)
   const handleKbTypeChange = (newType: KnowledgeBaseType) => {
@@ -264,7 +285,10 @@ export function CreateKnowledgeBaseDialog({
         name: name.trim(),
         description: description.trim() || undefined,
         direct_access_requirement: directAccessRequirement,
-        retrieval_config: ragConfigMode === 'disabled' ? undefined : retrievalConfig,
+        retrieval_config:
+          ragConfigMode === 'disabled' || !retrievalConfigChangedRef.current
+            ? undefined
+            : retrievalConfig,
         rag_config_mode: ragConfigMode,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
@@ -389,6 +413,13 @@ export function CreateKnowledgeBaseDialog({
               </button>
             ))}
           </div>
+          {profileFallbackReason !== null && (
+            <p className="text-sm text-warning" data-testid="knowledge-retrieval-profile-fallback">
+              {t(
+                `knowledge:document.retrievalProfile.fallbackReasons.${profileFallbackReason || 'unavailable'}`
+              )}
+            </p>
+          )}
           <KnowledgeBaseForm
             advancedExtras={
               kind === 'code' ? (
@@ -566,6 +597,9 @@ export function CreateKnowledgeBaseDialog({
             showRetrievalSection={ragConfigMode !== 'disabled'}
             retrievalConfig={retrievalConfig}
             onRetrievalConfigChange={setRetrievalConfig}
+            onRetrievalConfigUserChange={() => {
+              retrievalConfigChangedRef.current = true
+            }}
             retrievalScope={effectiveScope}
             retrievalGroupName={effectiveGroupName}
             showGuidedQuestions={true}

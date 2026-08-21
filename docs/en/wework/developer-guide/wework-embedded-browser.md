@@ -4,8 +4,6 @@ sidebar_position: 38
 
 # Embedded Browser
 
-Use [embedded-browser navigation and tabs](../../architecture/embedded-browser.md) as the architecture review source of truth. This guide retains capability, compatibility, and verification details.
-
 Wework's embedded browser displays an interactive web page inside the desktop workbench right panel and lets the local runtime control the same page through the WKWebView bridge. It is not a screenshot preview, and it should not open a separate external Chrome window.
 
 ## Architecture

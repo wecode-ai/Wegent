@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { ApiError, type HttpClient } from './http'
+import type { ProjectChatAgent } from './projectChatAgents'
 import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 
 import { openLocalFile } from '@/lib/local-terminal'
@@ -107,6 +108,8 @@ export interface CloudLoopItem {
   created_by_user_name?: string | null
   can_view_detail?: boolean
   can_edit?: boolean
+  content_revision?: number
+  is_unread?: boolean
   assignee_user_id: number | null
   assignee_name?: string | null
   assignee_agent_id?: string | null
@@ -309,6 +312,11 @@ export interface CloudProject {
     auto_retry_on_failure: boolean
     max_retry_count: number
   }
+  pull_request_automation?: {
+    enabled: boolean
+    statuses: PullRequestAutoRepairStatus[]
+    prompt: string
+  }
   workflow_definition?: ProjectWorkflowDefinition
   created_by_user_id: number
   current_user_id?: number
@@ -325,6 +333,13 @@ export interface CloudProject {
     [key: string]: unknown
   }
 }
+
+export type PullRequestAutoRepairStatus =
+  | 'checks_failed'
+  | 'merge_conflict'
+  | 'merge_queue_failed'
+  | 'merge_queue_timed_out'
+  | 'merge_queue_conflicting'
 
 export interface CloudTaskContext {
   id: string
@@ -446,6 +461,26 @@ export interface CloudProjectMember {
   email: string | null
   role: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'
   capability_description?: string
+}
+
+export interface LoopItemTaskBinding {
+  id: number
+  cloud_project_id?: string | number
+  loop_item_id: string | null
+  task_user_id: number
+  device_id: string
+  task_id: string
+  task_title: string | null
+  backend_task_id: number | null
+  workflow_node_id?: string | null
+  linked_at: string
+}
+
+export interface ProjectBoardSnapshot {
+  items: CloudLoopItem[]
+  task_bindings: LoopItemTaskBinding[]
+  members: CloudProjectMember[]
+  agents: ProjectChatAgent[]
 }
 
 export interface CloudLoopItemCollaborator {
@@ -616,6 +651,7 @@ export function createDeliveryApi(client: HttpClient) {
         visibility?: 'private' | 'public'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
+        pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         provider_config?: {
           repository?: string
@@ -659,6 +695,9 @@ export function createDeliveryApi(client: HttpClient) {
       if (filters?.executionState) query.set('execution_state', filters.executionState)
       const suffix = query.toString() ? `?${query.toString()}` : ''
       return client.get(`/v1/cloud-projects/${projectId}/loop-items${suffix}`)
+    },
+    getBoardSnapshot(projectId: CloudProjectIdInput): Promise<ProjectBoardSnapshot> {
+      return client.get(`/v1/cloud-projects/${projectId}/board-snapshot`)
     },
     listLoopItemExecutions(
       projectId: CloudProjectIdInput,
@@ -732,6 +771,9 @@ export function createDeliveryApi(client: HttpClient) {
     },
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
+    },
+    markLoopItemRead(itemId: string): Promise<CloudLoopItem> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`)
     },
     findLoopItemForTask(task: RuntimeTaskAddress): Promise<CloudLoopItem> {
       const query = new URLSearchParams({ device_id: task.deviceId, task_id: task.taskId })
@@ -884,19 +926,7 @@ export function createDeliveryApi(client: HttpClient) {
     deleteLoopItemAttachment(attachmentId: string): Promise<void> {
       return client.delete(`/v1/loop-item-attachments/${attachmentId}`)
     },
-    listTaskBindings(itemId: string): Promise<
-      Array<{
-        id: number
-        loop_item_id: string
-        task_user_id: number
-        device_id: string
-        task_id: string
-        task_title: string | null
-        backend_task_id: number | null
-        workflow_node_id?: string | null
-        linked_at: string
-      }>
-    > {
+    listTaskBindings(itemId: string): Promise<LoopItemTaskBinding[]> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`)
     },
     listLoopItemCollaborators(itemId: string): Promise<CloudLoopItemCollaborator[]> {

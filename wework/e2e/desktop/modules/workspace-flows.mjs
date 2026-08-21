@@ -7,12 +7,20 @@ import {
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
+  DEFAULT_MODEL_ID,
+  DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
+  PROVIDER_SWITCH_OFFICIAL_LABEL,
+  PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  ensureModelOptionVisible,
   join,
+  modelOptionIdCandidates,
+  revealGroupedModelOption,
   resultDir,
   runChecked,
+  visibleModelOptionId,
   withTimeout,
   writeFile,
 } from './shared.mjs'
@@ -115,6 +123,10 @@ async function waitForWorkbenchTask(control, taskId, message) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
+}
+
+function currentRuntimeTaskFromDebugSnapshot(snapshot) {
+  return snapshot?.workbench?.currentRuntimeTask ?? snapshot?.pane?.currentRuntimeTask ?? null
 }
 
 async function waitForWorkbenchDebugState(
@@ -426,6 +438,21 @@ async function verifyWorkspaceIssueCreation(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="workspace-issue-description"]', {
+      value: 'contenteditable',
+    }),
+    'true',
+    'Expanded Issue description must use the rich Markdown editor'
+  )
+  const descriptionRegionClass =
+    (await control.command('getAttribute', '[data-testid="workspace-issue-description-region"]', {
+      value: 'class',
+    })) ?? ''
+  assert.ok(
+    descriptionRegionClass.includes('flex-1') && descriptionRegionClass.includes('min-h-[360px]'),
+    `Expanded Issue description must fill the remaining editor height: ${descriptionRegionClass}`
+  )
   const expandedPanelClass =
     (await control.command('getAttribute', '[data-testid="workspace-issue-composer-panel"]', {
       value: 'class',
@@ -459,7 +486,7 @@ async function verifyWorkspaceIssueCreation(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('fill', '[data-testid="workspace-issue-description"]', {
-    value: 'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace fullscreen issue creation verified',
+    value: 'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
   })
   await control.command('waitFor', '[data-testid="workspace-issue-draft-status"]', {
     text: '草稿已自动保存',
@@ -478,10 +505,10 @@ async function verifyWorkspaceIssueCreation(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="workspace-issue-expand"]')
-  await waitForControlValue(
+  await waitForControlValueIncludes(
     control,
     '[data-testid="workspace-issue-description"]',
-    'WEWORK_DESKTOP_E2E_ISSUE\nWorkspace fullscreen issue creation verified',
+    'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
     'Fullscreen Issue content did not survive closing and reopening'
   )
   await control.command('click', '[data-testid="workspace-issue-fullscreen-submit"]')
@@ -521,6 +548,39 @@ async function verifyWorkspaceIssueCreation(control) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  const taskComposerSelector = `${boardContentSelector} [data-testid="work-item-new-task-chat-panel"]`
+  const modelSelectorButton = `${taskComposerSelector} [data-testid="model-selector-button"]`
+  const currentModelLabel = await control.command('getText', modelSelectorButton, {
+    visible: true,
+  })
+  const targetModel = currentModelLabel.includes(DEFAULT_MODEL_LABEL)
+    ? {
+        id: PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+        label: PROVIDER_SWITCH_OFFICIAL_LABEL,
+      }
+    : { id: DEFAULT_MODEL_ID, label: DEFAULT_MODEL_LABEL }
+  await ensureModelOptionVisible(control, targetModel.id, modelSelectorButton)
+  let targetOptionId = await visibleModelOptionId(control, modelOptionIdCandidates(targetModel.id))
+  if (!targetOptionId) {
+    await revealGroupedModelOption(control, modelOptionIdCandidates(targetModel.id))
+    targetOptionId = await visibleModelOptionId(control, modelOptionIdCandidates(targetModel.id))
+  }
+  assert.ok(targetOptionId, `No visible model option matched ${targetModel.id}`)
+  await control.command(
+    'click',
+    `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]`
+  )
+  const switchedModelSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    switchedModelSnapshot.testIds.includes('model-switch-warning-dialog'),
+    false,
+    'A fresh board task composer was treated as an existing conversation while switching models'
+  )
+  await control.command('waitFor', modelSelectorButton, {
+    text: targetModel.label,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(
     control,
     'workspace-issue-03-new-task-sidebar.png',
@@ -551,28 +611,35 @@ async function verifyWorkspaceIssueCreation(control) {
 }
 
 async function verifyDefaultTaskBoardAssociation(control, projectRowSelector) {
-  await ensureExperimentalFeaturesEnabled(control)
-  await control.command(
-    'click',
-    `${projectRowSelector} [data-testid="project-new-conversation-button"]`
-  )
-  await control.command('waitFor', '[data-testid="project-work-button"]', {
-    text: 'workspace',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const taskTabTestId = await control.command(
-    'getAttribute',
-    '[data-tab-kind="task"][aria-selected="true"]',
-    { value: 'data-testid' }
-  )
-  assert.ok(taskTabTestId, 'The active task tab identity was unavailable before association setup')
+  await ensureExperimentalFeaturesDisabled(control)
+  try {
+    await control.command(
+      'click',
+      `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+    )
+    await control.command('waitFor', '[data-testid="project-work-button"]', {
+      text: 'workspace',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const taskTabTestId = await control.command(
+      'getAttribute',
+      '[data-tab-kind="task"][aria-selected="true"]',
+      { value: 'data-testid' }
+    )
+    assert.ok(
+      taskTabTestId,
+      'The active task tab identity was unavailable before association setup'
+    )
 
-  await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
-    text: '我的任务',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await captureVerificationScreenshot(control, 'workspace-01-new-task.png')
-  return taskTabTestId
+    await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
+      text: '我的任务',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, 'workspace-01-new-task.png')
+    return taskTabTestId
+  } finally {
+    await ensureExperimentalFeaturesEnabled(control)
+  }
 }
 
 async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
@@ -1188,6 +1255,7 @@ export {
   waitForControlSelectionOffset,
   waitForPersistedComposerInput,
   waitForWorkbenchTask,
+  currentRuntimeTaskFromDebugSnapshot,
   waitForWorkbenchDebugState,
   captureVerificationScreenshot,
   verifyWorkspaceDocumentTabs,

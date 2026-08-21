@@ -15,6 +15,7 @@ import {
   verifyWorktreeCreationStatus,
   waitForElementInsideScroller,
   waitForElementWidth,
+  waitForOverflowMetrics,
   waitForSnapshot,
 } from './conversation-layout.mjs'
 
@@ -40,6 +41,7 @@ import {
   buildExecutor,
   codexUpstreamApiFormat,
   mcpElicitationConfigToml,
+  prepareHarnessRuntimeRoot,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
   verifyCloudProjectFlow,
@@ -118,6 +120,7 @@ import {
   CANCELLATION_COMPLETION_TEXT,
   CANCELLATION_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
+  CHECKPOINT_TASK_PROMPT,
   CLOUD_FEATURES_ONLY,
   CLOUD_ONLY,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -168,6 +171,9 @@ import {
   MCP_ELICITATION_COMPLETION_TEXT,
   MCP_ELICITATION_PROMPT,
   PASTED_WORKSPACE_PATHS_ONLY,
+  PLUGIN_DISPLAY_NAME,
+  PLUGIN_MARKETPLACE_NAME,
+  PLUGIN_NAME,
   QUEUE_MANAGEMENT_ONLY,
   QUEUE_NAVIGATION_ONLY,
   RATE_LIMIT_ONLY,
@@ -268,6 +274,372 @@ import {
   waitForWorkbenchDebugState,
   waitForWorkbenchTask,
 } from './workspace-flows.mjs'
+
+const PROJECT_AI_INITIAL_INSTRUCTIONS =
+  'WEWORK_DESKTOP_E2E_PROJECT_AI_INITIAL: preserve this instruction for the existing conversation.'
+const PROJECT_AI_UPDATED_INSTRUCTIONS =
+  'WEWORK_DESKTOP_E2E_PROJECT_AI_UPDATED: apply this instruction only to new conversations.'
+const PROJECT_AI_MODEL_ID = 'wework-deepseek-v4-pro'
+const PROJECT_AI_MODEL_LABEL = 'wework-deepseek-v4-pro'
+const PROJECT_AI_MODEL_VALUE = `runtime:${PROJECT_AI_MODEL_ID}`
+const PROJECT_AI_UPSTREAM_MODEL_ID = 'deepseek-v4-pro'
+const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
+const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
+
+async function openProjectAiSettings(control, projectId) {
+  await control.command('hover', `[data-testid="project-row-${projectId}"]`)
+  await control.command('clickWhenEnabled', `[data-testid="project-menu-${projectId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('clickWhenEnabled', `[data-testid="edit-project-${projectId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="local-project-edit-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="local-project-settings-ai-tab"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="local-project-settings-ai-panel"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+}
+
+async function saveProjectAiSettings(control) {
+  await control.command('clickWhenEnabled', '[data-testid="save-local-project-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="local-project-edit-dialog"]', {
+    visible: false,
+    stableMs: 100,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
+async function registerProjectPluginMarketplace(control, marketplacePath) {
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (snapshot.testIds.includes('plugins-add-custom-marketplace-empty-button')) {
+    await control.command('click', '[data-testid="plugins-add-custom-marketplace-empty-button"]')
+  } else if (snapshot.testIds.includes('plugins-add-marketplace-button')) {
+    await control.command('click', '[data-testid="plugins-add-marketplace-button"]')
+    await control.command('click', '[data-testid="plugins-add-custom-marketplace-button"]')
+  } else {
+    await control.command('click', '[data-testid="plugins-create-button"]')
+    await control.command('click', '[data-testid="plugins-add-market-option"]')
+  }
+  await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
+    value: marketplacePath,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugins-marketplace-save-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `[data-testid="plugins-marketplace-tab-${PLUGIN_MARKETPLACE_NAME}"]`,
+    { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+  )
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+}
+
+function assertProjectAiRequest(request, { instructions, reasoning }) {
+  assert.equal(
+    request.body.model,
+    PROJECT_AI_UPSTREAM_MODEL_ID,
+    'The project default model was not forwarded to Codex'
+  )
+  assert.equal(
+    request.body.reasoning?.effort,
+    reasoning,
+    'The project reasoning effort was not forwarded to Codex'
+  )
+  const serializedRequest = JSON.stringify(request.body)
+  assert.ok(
+    serializedRequest.includes(instructions),
+    'The project instructions were not appended to the Codex request'
+  )
+}
+
+async function sendProjectAiCheckpointPrompt(
+  control,
+  composerSelector,
+  { createsConversation = false } = {}
+) {
+  const activeTaskIdBefore = createsConversation
+    ? (JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane
+        ?.currentRuntimeTask?.taskId ?? null)
+    : null
+  const assistantCountBefore = createsConversation
+    ? 0
+    : Number(await control.command('getElementCount', '[data-testid="message-assistant"]'))
+  const requestCount = control.scenarioRequests.get('checkpoint_task')?.length ?? 0
+  await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
+  const request = await control.awaitScenarioRequestCount('checkpoint_task', requestCount + 1)
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot => {
+      const activeTaskId = snapshot.pane?.currentRuntimeTask?.taskId
+      const assistantCount = snapshot.pane?.messageSummary?.byRole?.assistant ?? 0
+      return (
+        (!createsConversation || (Boolean(activeTaskId) && activeTaskId !== activeTaskIdBefore)) &&
+        assistantCount > assistantCountBefore &&
+        snapshot.pane?.messageSummary?.activeAssistantMessage === null &&
+        snapshot.pane?.messageSummary?.lastMessage?.role === 'assistant'
+      )
+    },
+    'The project conversation did not settle on its completed assistant response'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CHECKPOINT_TASK_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  return request
+}
+
+async function waitForProjectComposerPlugin(control) {
+  const itemTestId = `composer-plugin-picker-item-plugin:${PLUGIN_NAME}`
+  const itemSelector = `[data-testid="${itemTestId}"]`
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (!snapshot.testIds.includes('composer-plugin-picker')) {
+    await control.command('click', '[data-testid="composer-plugin-picker-button"]')
+  }
+  await control.command('waitFor', '[data-testid="composer-plugin-picker"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="composer-plugin-picker-search"]', {
+    value: PLUGIN_DISPLAY_NAME,
+  })
+  await control.command('waitFor', itemSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  return itemTestId
+}
+
+async function verifyProjectAiSettings({
+  codexHome,
+  composerSelector,
+  control,
+  projectId,
+  setPhase,
+}) {
+  const newConversationSelector = `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
+
+  setPhase('project-ai-settings-defaults')
+  await openProjectAiSettings(control, projectId)
+  assert.equal(
+    await control.command('getValue', '[data-testid="local-project-instructions-input"]'),
+    '',
+    'A new local project unexpectedly inherited project instructions'
+  )
+  assert.equal(
+    await control.command('getValue', '[data-testid="local-project-model-select"]'),
+    '',
+    'A new local project did not initially follow the global model'
+  )
+  await captureVerificationScreenshot(control, 'project-ai-settings-01-defaults.png')
+
+  setPhase('project-ai-settings-configure')
+  await control.command('fill', '[data-testid="local-project-instructions-input"]', {
+    value: PROJECT_AI_INITIAL_INSTRUCTIONS,
+  })
+  await control.command('fill', '[data-testid="local-project-model-select"]', {
+    value: PROJECT_AI_MODEL_VALUE,
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="local-project-model-select"]',
+    PROJECT_AI_MODEL_VALUE,
+    'The project default model selection did not update'
+  )
+  await control.command('fill', '[data-testid="local-project-reasoning-select"]', {
+    value: 'low',
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="local-project-reasoning-select"]',
+    'low',
+    'The project reasoning selection did not update'
+  )
+  await captureVerificationScreenshot(control, 'project-ai-settings-02-configured.png')
+  await control.command('click', '[data-testid="local-project-settings-quick-phrases-tab"]')
+  await control.command('click', '[data-testid="local-project-add-quick-phrase-button"]')
+  await control.command('fill', '[data-testid="local-project-quick-phrase-title-input"]', {
+    value: PROJECT_QUICK_PHRASE_TITLE,
+  })
+  await control.command('fill', '[data-testid="local-project-quick-phrase-content-input"]', {
+    value: PROJECT_QUICK_PHRASE_CONTENT,
+  })
+  await control.command('click', '[data-testid="local-project-quick-phrase-save-button"]')
+  await control.command('waitFor', '[data-testid="local-project-settings-quick-phrases-panel"]', {
+    text: PROJECT_QUICK_PHRASE_TITLE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await saveProjectAiSettings(control)
+
+  setPhase('project-ai-settings-persisted')
+  await openProjectAiSettings(control, projectId)
+  assert.equal(
+    await control.command('getValue', '[data-testid="local-project-instructions-input"]'),
+    PROJECT_AI_INITIAL_INSTRUCTIONS,
+    'The project instructions were not restored after saving'
+  )
+  assert.equal(
+    await control.command('getValue', '[data-testid="local-project-model-select"]'),
+    PROJECT_AI_MODEL_VALUE,
+    'The project default model was not restored after saving'
+  )
+  assert.equal(
+    await control.command('getValue', '[data-testid="local-project-reasoning-select"]'),
+    'low',
+    'The project reasoning effort was not restored after saving'
+  )
+  await control.command('click', '[data-testid="local-project-settings-quick-phrases-tab"]')
+  await control.command('waitFor', '[data-testid="local-project-settings-quick-phrases-panel"]', {
+    text: PROJECT_QUICK_PHRASE_TITLE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'project-ai-settings-03-persisted.png')
+
+  setPhase('project-plugin-install')
+  await control.command('click', '[data-testid="local-project-settings-plugins-tab"]')
+  await control.command('waitFor', '[data-testid="local-project-plugin-search"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="local-project-plugin-search"]', {
+    value: PLUGIN_DISPLAY_NAME,
+  })
+  await control.command('waitFor', `[data-testid="local-project-plugin-toggle-${PLUGIN_NAME}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'project-ai-settings-04-plugin-marketplace.png')
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="local-project-plugin-toggle-${PLUGIN_NAME}"]`,
+    { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+  )
+  await waitForSnapshot(
+    control,
+    snapshot => /移出项目|Remove from project/.test(snapshot.text),
+    'The project plugin toggle did not switch to its installed state',
+    WORKBENCH_READY_TIMEOUT_MS,
+    `[data-testid="local-project-plugin-toggle-${PLUGIN_NAME}"]`
+  )
+  await captureVerificationScreenshot(control, 'project-ai-settings-05-plugin-installed.png')
+  await saveProjectAiSettings(control)
+  const codexConfig = await readFile(join(codexHome, 'config.toml'), 'utf8')
+  assert.ok(
+    codexConfig.includes(`[plugins."${PLUGIN_NAME}@${PLUGIN_MARKETPLACE_NAME}"]`) &&
+      codexConfig.includes('enabled = false'),
+    'The project plugin package was not cached with global enablement disabled'
+  )
+
+  setPhase('project-ai-settings-new-conversation')
+  await control.command('clickWhenEnabled', newConversationSelector)
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForE2EModelLabel(control, [PROJECT_AI_MODEL_LABEL])
+  await control.command('click', '[data-testid="quick-phrase-button"]')
+  await control.command('waitFor', '[data-testid="quick-phrase-menu"]', {
+    text: PROJECT_QUICK_PHRASE_TITLE,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const quickPhraseSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const projectQuickPhraseTestId = quickPhraseSnapshot.testIds.find(testId =>
+    testId.startsWith('project-quick-phrase-option-')
+  )
+  assert.ok(projectQuickPhraseTestId, 'The project quick phrase did not appear in the composer')
+  await captureVerificationScreenshot(control, 'project-ai-settings-06-project-quick-phrase.png')
+  await control.command('click', `[data-testid="${projectQuickPhraseTestId}"]`)
+  await waitForControlValue(
+    control,
+    composerSelector,
+    PROJECT_QUICK_PHRASE_CONTENT,
+    'Selecting the project quick phrase did not update the composer'
+  )
+  await control.command('fill', composerSelector, { value: '' })
+  const composerPluginItemTestId = await waitForProjectComposerPlugin(control)
+  await captureVerificationScreenshot(control, 'project-ai-settings-06-new-conversation.png')
+  await control.command('clickWhenEnabled', `[data-testid="${composerPluginItemTestId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="composer-plugin-picker"]', {
+    visible: false,
+    stableMs: 100,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  control.setScenario('checkpoint_task')
+  const initialRequest = await sendProjectAiCheckpointPrompt(control, composerSelector, {
+    createsConversation: true,
+  })
+  assertProjectAiRequest(initialRequest, {
+    instructions: PROJECT_AI_INITIAL_INSTRUCTIONS,
+    reasoning: 'low',
+  })
+  await captureVerificationScreenshot(control, 'project-ai-settings-07-initial-response.png')
+
+  setPhase('project-ai-settings-update')
+  await openProjectAiSettings(control, projectId)
+  await control.command('fill', '[data-testid="local-project-instructions-input"]', {
+    value: PROJECT_AI_UPDATED_INSTRUCTIONS,
+  })
+  await control.command('fill', '[data-testid="local-project-reasoning-select"]', {
+    value: 'high',
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="local-project-reasoning-select"]',
+    'high',
+    'The updated project reasoning selection did not settle'
+  )
+  await captureVerificationScreenshot(control, 'project-ai-settings-08-updated.png')
+  await saveProjectAiSettings(control)
+
+  setPhase('project-ai-settings-existing-conversation')
+  const existingConversationRequest = await sendProjectAiCheckpointPrompt(control, composerSelector)
+  assertProjectAiRequest(existingConversationRequest, {
+    instructions: PROJECT_AI_INITIAL_INSTRUCTIONS,
+    reasoning: 'low',
+  })
+  assert.ok(
+    !JSON.stringify(existingConversationRequest.body).includes(PROJECT_AI_UPDATED_INSTRUCTIONS),
+    'Changing project settings modified the existing conversation instructions'
+  )
+  await captureVerificationScreenshot(control, 'project-ai-settings-09-existing-conversation.png')
+
+  setPhase('project-ai-settings-next-conversation')
+  await control.command('clickWhenEnabled', newConversationSelector)
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const updatedConversationRequest = await sendProjectAiCheckpointPrompt(
+    control,
+    composerSelector,
+    { createsConversation: true }
+  )
+  assertProjectAiRequest(updatedConversationRequest, {
+    instructions: PROJECT_AI_UPDATED_INSTRUCTIONS,
+    reasoning: 'high',
+  })
+  assert.ok(
+    !JSON.stringify(updatedConversationRequest.body).includes(PROJECT_AI_INITIAL_INSTRUCTIONS),
+    'A new conversation retained obsolete project instructions'
+  )
+  await captureVerificationScreenshot(control, 'project-ai-settings-10-next-conversation.png')
+}
 
 async function verifyLocalModelRouting({
   composerSelector,
@@ -423,6 +795,7 @@ async function verifyLocalModelRouting({
 
 async function main() {
   validateDesktopSegmentOptions()
+  const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
   await mkdir(resultDir, { recursive: true })
   console.log(`[desktop-e2e] result directory: ${resultDir}`)
   const workspacePath = join(resultDir, 'workspace')
@@ -470,6 +843,8 @@ async function main() {
       join(nativeCodexHome, 'config.toml'),
       '# desktop-e2e-native-home-marker\nmodel = "native-model-that-must-not-migrate"\n'
     )
+  } else if (runsProjectPluginE2E) {
+    await createPluginMarketplaceFixture(marketplacePluginPath)
   }
   await runChecked('git', ['init'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.name', 'Wework Desktop E2E'], { cwd: workspacePath })
@@ -500,7 +875,7 @@ async function main() {
     throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
   }
   const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario, {
-    enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E,
+    enableMarketplaceConnectorAppsStub: RUNS_PLUGIN_E2E || runsProjectPluginE2E,
   })
   const modelSwitchVerification = []
   let app
@@ -626,6 +1001,8 @@ async function main() {
       )
     }
 
+    const harnessRuntimeRoot =
+      SELECTED_DESKTOP_SEGMENT === 'harness-apps' ? await prepareHarnessRuntimeRoot() : null
     const appEnvironment = {
       ...process.env,
       CODEX_BINARY_PATH: resolvedAppCodexBinary,
@@ -656,6 +1033,7 @@ async function main() {
       WEWORK_E2E_POSTHOG_HOST: control.url,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
+      ...(harnessRuntimeRoot ? { WEWORK_HARNESS_RUNTIME_ROOT: harnessRuntimeRoot } : {}),
       ...(RUNS_PLUGIN_E2E
         ? {
             GIT_CONFIG_COUNT: '1',
@@ -1300,6 +1678,50 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (DESKTOP_SEGMENT === 'project-ai-settings') {
+      phase = 'project-ai-settings-project'
+      await registerProjectPluginMarketplace(control, marketplacePluginPath)
+      const projectMenusBeforeProjectAiSettings = new Set(
+        JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+          testId.startsWith('project-menu-')
+        )
+      )
+      await createSingleRootLocalProject(control, workspacePath, 'workspace')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      const projectSnapshot = await waitForSnapshot(
+        control,
+        snapshot =>
+          snapshot.testIds.some(
+            testId =>
+              testId.startsWith('project-menu-') && !projectMenusBeforeProjectAiSettings.has(testId)
+          ),
+        'The project AI settings fixture was not shown in the sidebar'
+      )
+      const projectMenuTestId = projectSnapshot.testIds.find(
+        testId =>
+          testId.startsWith('project-menu-') && !projectMenusBeforeProjectAiSettings.has(testId)
+      )
+      assert.ok(projectMenuTestId, 'The project AI settings fixture identity was not found')
+      await verifyProjectAiSettings({
+        codexHome,
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        projectId: projectMenuTestId.slice('project-menu-'.length),
+        setPhase: value => {
+          phase = value
+        },
+      })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop project-ai-settings checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (DESKTOP_SEGMENT === 'permission-modes') {
       phase = 'permission-modes'
       await verifyPermissionModes(control)
@@ -1809,6 +2231,11 @@ last_updated = "2026-07-30T00:00:00Z"`
         )
         await captureVerificationScreenshot(control, '02-send-mode-menu-open.png')
         await control.command('press', 'body', { key: 'Escape' })
+        await waitForSnapshot(
+          control,
+          snapshot => !snapshot.testIds.includes('send-mode-menu-button-menu'),
+          'The send mode menu did not close before continuing'
+        )
         await control.command('fill', composerSelector, { value: '' })
         if (!GUIDANCE_BACKGROUND_ONLY) {
           await verifyQueuedFollowUpNavigation({
@@ -1874,16 +2301,6 @@ last_updated = "2026-07-30T00:00:00Z"`
       })
       phase = 'private-im-model-binding'
       await control.command('click', '[data-testid="continue-in-im-button"]')
-      await control.command(
-        'waitFor',
-        '[data-testid="continue-im-session-desktop-e2e-im-session"]',
-        {
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        }
-      )
-      await control.command('clickWhenEnabled', '[data-testid="continue-im-submit-button"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
       await withTimeout(
         (async () => {
           while (control.runtimeImBindingRequests.length === 0) {
@@ -1892,6 +2309,19 @@ last_updated = "2026-07-30T00:00:00Z"`
         })(),
         DEFAULT_STEP_TIMEOUT_MS,
         'The runtime task was not bound to the private IM session'
+      )
+      await withTimeout(
+        (async () => {
+          while (
+            Number(
+              await control.command('getElementCount', '[data-testid="continue-im-dialog-overlay"]')
+            ) !== 0
+          ) {
+            await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+          }
+        })(),
+        DEFAULT_STEP_TIMEOUT_MS,
+        'The single private IM session dialog did not close after automatic binding'
       )
       const runtimeImBinding = control.runtimeImBindingRequests.at(-1)
       assert.equal(
@@ -2208,14 +2638,85 @@ last_updated = "2026-07-30T00:00:00Z"`
       })
       await captureVerificationScreenshot(control, '02-background-request-user-input-visible.png')
       await new Promise(resolvePromise => setTimeout(resolvePromise, 3_000))
-      await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: REQUEST_USER_INPUT_COMPLETION_TEXT,
-        visible: true,
-        stableMs: COMPOSER_READY_STABILITY_MS,
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await captureVerificationScreenshot(control, '03-delayed-answer-completed.png')
+      const previousWindowSize = JSON.parse(
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 1_200, height: 420 }),
+        })
+      )
+      try {
+        const sidebarScrollerSelector = '[data-testid="sidebar-worklists-scroll"]'
+        const overflowMetrics = await waitForOverflowMetrics(
+          control,
+          sidebarScrollerSelector,
+          'The constrained sidebar task list did not overflow',
+          DEFAULT_STEP_TIMEOUT_MS
+        )
+        const maxScrollTop = overflowMetrics.scrollHeight - overflowMetrics.clientHeight
+        assert.ok(maxScrollTop > 8, 'The constrained sidebar did not have a non-edge scroll range')
+        let sidebarBeforeRefresh
+        for (const scrollRatio of [0.2, 0.8, 0.5]) {
+          await control.command('scrollToRatioAsUser', sidebarScrollerSelector, {
+            value: String(scrollRatio),
+          })
+          const candidateSidebarMetrics = await getSingleElementMetrics(
+            control,
+            sidebarScrollerSelector,
+            'The manually scrolled sidebar before the runtime refresh'
+          )
+          const candidateActiveTaskRow = await getSingleElementMetrics(
+            control,
+            `[data-testid="${requestInputTaskRowTestId}"]`,
+            'The active task row after manually scrolling the sidebar'
+          )
+          const activeTaskHidden =
+            candidateActiveTaskRow.bottom < candidateSidebarMetrics.top - 2 ||
+            candidateActiveTaskRow.top > candidateSidebarMetrics.bottom + 2
+          if (
+            candidateSidebarMetrics.scrollTop > 2 &&
+            distanceFromBottom(candidateSidebarMetrics) > 2 &&
+            activeTaskHidden
+          ) {
+            assert.ok(
+              Math.abs(candidateSidebarMetrics.scrollTop - maxScrollTop * scrollRatio) <= 2,
+              `The sidebar task list did not reach the requested ${scrollRatio} scroll ratio`
+            )
+            sidebarBeforeRefresh = candidateSidebarMetrics
+            break
+          }
+        }
+        assert.ok(
+          sidebarBeforeRefresh,
+          'The sidebar task list did not expose a non-edge position with the active task hidden'
+        )
+
+        await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: REQUEST_USER_INPUT_COMPLETION_TEXT,
+          visible: true,
+          stableMs: COMPOSER_READY_STABILITY_MS,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+        const sidebarAfterRefresh = await getSingleElementMetrics(
+          control,
+          sidebarScrollerSelector,
+          'The manually scrolled sidebar after the runtime refresh'
+        )
+        assert.ok(
+          Math.abs(sidebarAfterRefresh.scrollTop - sidebarBeforeRefresh.scrollTop) <= 2,
+          `The sidebar task list jumped from ${sidebarBeforeRefresh.scrollTop}px to ${sidebarAfterRefresh.scrollTop}px after the active task refreshed`
+        )
+        await captureVerificationScreenshot(
+          control,
+          '03-sidebar-manual-scroll-preserved.png',
+          sidebarScrollerSelector
+        )
+      } finally {
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify(previousWindowSize),
+        })
+      }
+      await captureVerificationScreenshot(control, '04-delayed-answer-completed.png')
       await control.command('click', '[data-testid="cancel-plan-mode-button"]')
       if (REQUEST_INPUT_ONLY) return
       if (shouldStopAfterDesktopCheckpoint('core-task-flow')) {

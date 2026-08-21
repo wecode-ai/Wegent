@@ -22,7 +22,7 @@ class LocalDeviceCommandDefinition:
 
 
 GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
-    'bash -lc \'base=""; '
+    'bash -c \'base=""; '
     "for candidate in "
     '"$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" '
     "origin/main main origin/master master; do "
@@ -38,7 +38,7 @@ GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
 )
 
 GIT_WORKSPACE_DIFF_COMMAND = (
-    "bash -lc "
+    "bash -c "
     "'if git rev-parse --verify --quiet HEAD >/dev/null; then "
     "git diff --binary HEAD --; "
     "else "
@@ -51,7 +51,7 @@ GIT_WORKSPACE_DIFF_COMMAND = (
 )
 
 GIT_BRANCH_DIFF_COMMAND = (
-    "bash -lc "
+    "bash -c "
     '\'base=""; '
     "for candidate in "
     '"$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" '
@@ -1646,6 +1646,15 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         ),
         post_processor="json",
     ),
+    "git_github_pull_requests_batch": LocalDeviceCommandDefinition(
+        command=(
+            "gh api --method GET "
+            "'repos/{owner}/{repo}/pulls?state=all&per_page=100' "
+            "--jq '[.[] | {number, html_url, title, state, draft, "
+            "head: {ref: .head.ref}, updated_at, merged_at}]'"
+        ),
+        post_processor="json",
+    ),
     "git_github_pull_request_merge_queue": LocalDeviceCommandDefinition(
         command=(
             "gh api graphql "
@@ -1654,10 +1663,21 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         ),
         post_processor="json",
     ),
+    "git_github_pull_request_merge_queue_batch": LocalDeviceCommandDefinition(
+        command="gh api graphql",
+        post_processor="json",
+    ),
     "git_gitlab_merge_requests": LocalDeviceCommandDefinition(
         command=(
             "glab mr list --all --per-page 20 --order updated_at --sort desc "
             "--output json --source-branch"
+        ),
+        post_processor="json",
+    ),
+    "git_gitlab_merge_requests_batch": LocalDeviceCommandDefinition(
+        command=(
+            "glab mr list --all --per-page 100 --order updated_at --sort desc "
+            "--output json"
         ),
         post_processor="json",
     ),

@@ -113,6 +113,24 @@ def _normalize_ref(
         "routing_summary": _optional_string(value.get("routing_summary")),
         "routing_topics": _normalize_topics(value.get("routing_topics")),
         "resources": resources,
+        "retrieval_capabilities": _normalize_retrieval_capabilities(
+            value.get("retrieval_capabilities")
+        ),
+    }
+
+
+def _normalize_retrieval_capabilities(value: Any) -> dict[str, Any]:
+    """Keep only the safe, derived capability summary in provider prompts."""
+    if not isinstance(value, dict):
+        return {}
+    mode = value.get("retrieval_mode")
+    if not isinstance(mode, str) or mode not in {"vector", "keyword", "hybrid"}:
+        return {}
+    return {
+        "retrieval_mode": mode,
+        "semantic_query": value.get("semantic_query") is True,
+        "keywords": value.get("keywords") is True,
+        "phrases": value.get("phrases") is True,
     }
 
 
@@ -142,6 +160,16 @@ def _render_source(ref: dict[str, Any]) -> list[str]:
         "routing_summary": ref["routing_summary"],
         "routing_topics": ", ".join(ref["routing_topics"]),
     }
+    capabilities = ref["retrieval_capabilities"]
+    if capabilities:
+        attributes["retrieval_mode"] = capabilities["retrieval_mode"]
+        search_hints = ",".join(
+            name
+            for name in ("semantic_query", "keywords", "phrases")
+            if capabilities[name]
+        )
+        if search_hints:
+            attributes["search_hints"] = search_hints
     rendered_source = _render_attributes(attributes)
     resources = ref["resources"]
     if not resources:

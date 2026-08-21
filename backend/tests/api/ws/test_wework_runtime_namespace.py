@@ -5,6 +5,7 @@
 """Tests for the Wework runtime IPC relay namespace."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -13,6 +14,20 @@ import pytest
 from app.api.ws import device_namespace, local_task_responses, wework_runtime_namespace
 from app.api.ws.device_namespace import DeviceNamespace
 from app.api.ws.wework_runtime_namespace import WeworkRuntimeNamespace
+from app.core.socketio import SOCKETIO_MAX_HTTP_BUFFER_SIZE
+
+
+@pytest.fixture(autouse=True)
+def runtime_notification_sender(monkeypatch):
+    """Keep namespace tests isolated from notification DB and provider I/O."""
+
+    sender = AsyncMock(return_value={"sent": 0, "results": []})
+    monkeypatch.setattr(
+        device_namespace.im_notification_dispatcher,
+        "send_runtime_task_update_for_user",
+        sender,
+    )
+    return sender
 
 
 def _im_source() -> dict:
@@ -77,8 +92,65 @@ async def test_runtime_event_forwards_im_chunk_to_channel_callbacks(monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "event_data", "expected_type"),
+    [
+        (
+            "response.reasoning_summary_text.delta",
+            {"delta": "Inspecting the workspace"},
+            "thinking",
+        ),
+        (
+            "response.block.created",
+            {
+                "block": {
+                    "id": "tool-1",
+                    "type": "tool",
+                    "tool_name": "Read",
+                    "status": "pending",
+                }
+            },
+            "block_created",
+        ),
+    ],
+)
+async def test_runtime_event_forwards_im_progress_events_to_channel_callbacks(
+    monkeypatch,
+    event_type,
+    event_data,
+    expected_type,
+):
+    namespace = DeviceNamespace()
+    forward = AsyncMock()
+    monkeypatch.setattr(
+        local_task_responses, "forward_event_to_channel_callbacks", forward
+    )
+
+    result = await _relay_runtime_event(
+        namespace,
+        monkeypatch,
+        {
+            "event_type": event_type,
+            "taskId": "runtime-375023196",
+            "subtaskId": "runtime-375023196",
+            "data": event_data,
+            "source": _im_source(),
+        },
+    )
+
+    assert result == {"success": True}
+    event = forward.await_args.kwargs["event"]
+    assert event.type == expected_type
+    if expected_type == "thinking":
+        assert event.content == "Inspecting the workspace"
+    else:
+        assert event.data["block"]["tool_name"] == "Read"
+
+
+@pytest.mark.asyncio
 async def test_runtime_event_completes_im_channel_callback_on_terminal_event(
     monkeypatch,
+    runtime_notification_sender,
 ):
     """The native runtime reports its answer as ``data.value``, not a response body."""
 
@@ -104,10 +176,14 @@ async def test_runtime_event_completes_im_channel_callback_on_terminal_event(
     assert kwargs["task_id"] == "runtime:local-device:runtime-375023196"
     assert kwargs["status"] == "COMPLETED"
     assert kwargs["result"] == {"value": "Hi! What would you like to work on?"}
+    runtime_notification_sender.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_runtime_event_fails_im_channel_callback_on_failed_event(monkeypatch):
+async def test_runtime_event_fails_im_channel_callback_on_failed_event(
+    monkeypatch,
+    runtime_notification_sender,
+):
     """``response.failed`` must release the card instead of leaving it pending."""
 
     namespace = DeviceNamespace()
@@ -130,6 +206,7 @@ async def test_runtime_event_fails_im_channel_callback_on_failed_event(monkeypat
     kwargs = registry.handle_task_completed.await_args.kwargs
     assert kwargs["status"] == "FAILED"
     assert kwargs["error"] == "model request timed out"
+    runtime_notification_sender.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -156,6 +233,157 @@ async def test_runtime_event_skips_channel_callbacks_without_im_source(monkeypat
     assert result == {"success": True}
     forward.assert_not_awaited()
     registry.handle_task_completed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "event_data", "expected_status", "expected_content"),
+    [
+        (
+            "response.completed",
+            {"value": "Codex finished the task"},
+            "COMPLETED",
+            "Codex finished the task",
+        ),
+        (
+            "response.completed",
+            {
+                "response": {
+                    "output": [
+                        {
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": "Claude finished the task",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            "COMPLETED",
+            "Claude finished the task",
+        ),
+        (
+            "response.failed",
+            {"error": {"message": "model request timed out"}},
+            "FAILED",
+            "model request timed out",
+        ),
+        (
+            "response.incomplete",
+            {"error": {"message": "turn cancelled"}},
+            "CANCELLED",
+            "turn cancelled",
+        ),
+        (
+            "error",
+            {"message": "Claude transport failed"},
+            "FAILED",
+            "Claude transport failed",
+        ),
+    ],
+)
+async def test_runtime_terminal_event_notifies_im_dispatcher(
+    monkeypatch,
+    runtime_notification_sender,
+    event_type,
+    event_data,
+    expected_status,
+    expected_content,
+):
+    namespace = DeviceNamespace()
+
+    result = await _relay_runtime_event(
+        namespace,
+        monkeypatch,
+        {
+            "event_type": event_type,
+            "taskId": "runtime-375023196",
+            "taskTitle": "分析线上问题",
+            "data": event_data,
+        },
+    )
+
+    assert result == {"success": True}
+    runtime_notification_sender.assert_awaited_once_with(
+        user_id=7,
+        address={
+            "deviceId": "local-device",
+            "localTaskId": "runtime-375023196",
+        },
+        title="分析线上问题",
+        status=expected_status,
+        content=expected_content,
+        source=None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "event_data"),
+    [
+        ("response.output_text.delta", {"delta": "still running"}),
+        ("response.completed", {"value": ""}),
+        ("response.completed", {"response": {"output": []}}),
+    ],
+)
+async def test_runtime_event_skips_non_terminal_or_empty_success_notifications(
+    monkeypatch,
+    runtime_notification_sender,
+    event_type,
+    event_data,
+):
+    namespace = DeviceNamespace()
+
+    result = await _relay_runtime_event(
+        namespace,
+        monkeypatch,
+        {
+            "event_type": event_type,
+            "taskId": "runtime-375023196",
+            "data": event_data,
+        },
+    )
+
+    assert result == {"success": True}
+    runtime_notification_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_runtime_notification_failure_does_not_break_wework_relay(
+    monkeypatch,
+    runtime_notification_sender,
+):
+    namespace = DeviceNamespace()
+    sio = AsyncMock()
+    runtime_notification_sender.side_effect = RuntimeError("DingTalk unavailable")
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "local-device"}),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio)
+
+    result = await namespace.on_runtime_event(
+        "device-sid",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": "runtime-375023196",
+                "data": {"value": "Task finished"},
+            },
+        },
+    )
+
+    assert result == {"success": True}
+    sio.emit.assert_awaited_once()
+    assert sio.emit.await_args.args[0] == "runtime:event"
 
 
 @pytest.mark.asyncio
@@ -296,6 +524,48 @@ async def test_runtime_request_relays_to_device_runtime_rpc(monkeypatch):
         payload={"message": "hello"},
         timeout_seconds=75,
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_request_compresses_large_result_for_wework(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    namespace = WeworkRuntimeNamespace()
+    runtime_rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "messages": [{"id": "m1", "content": "历史消息🙂" * 100000}],
+        }
+    )
+    monkeypatch.setattr(
+        wework_runtime_namespace.runtime_rpc_service,
+        "call",
+        runtime_rpc,
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7}),
+    )
+
+    response = await namespace.on_runtime_request(
+        "browser-sid",
+        {
+            "id": "req-1",
+            "device_id": "cloud-device",
+            "method": "runtime.tasks.transcript",
+            "params": {"localTaskId": "runtime-1"},
+        },
+    )
+
+    assert response["ok"] is True
+    assert response["result"]["__runtimeRpcEncoding"] == "gzip+base64+json"
+    encoded_response = json.dumps(
+        response,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert len(encoded_response) < SOCKETIO_MAX_HTTP_BUFFER_SIZE
 
 
 @pytest.mark.asyncio

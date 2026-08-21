@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
-const DEFAULT_PARALLEL_CHECKPOINTS = 3
+const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_SCENARIO_MODULES = {
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
@@ -17,6 +17,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
   'local-file-preview': './scenarios/local-file-preview.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
+  'harness-apps': './scenarios/harness-apps.scenario.mjs',
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'browser-toolbar-actions': './scenarios/embedded-browser-toolbar-actions.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
@@ -34,6 +35,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'claude-runtime',
   'local-file-preview',
   'local-harness',
+  'harness-apps',
   'offline-local-project-space',
   'task-attachments',
   'project-assignment-notification',

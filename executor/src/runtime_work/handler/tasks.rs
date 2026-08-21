@@ -276,6 +276,7 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        set_runtime_task_title(&mut request, &title);
         if is_codex_runtime(&runtime) {
             if let (Some(project_key), Some(project_name)) = (
                 request.runtime_project_key.as_deref(),
@@ -286,6 +287,7 @@ impl RuntimeWorkRpcHandler {
                         project_key,
                         project_name,
                         &request.runtime_workspace_roots,
+                        None,
                         None,
                     )
                     .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
@@ -429,6 +431,8 @@ impl RuntimeWorkRpcHandler {
         link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
+        link.project_instructions = request.system_prompt.clone();
+        link.project_plugin_ids = project_plugin_ids(&request);
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         if let Some(executable_path) = request
             .extra
@@ -657,15 +661,10 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
-        self.send_message_with_active_turn_check(payload, true)
-            .await
+        self.send_message_after_local_checks(payload).await
     }
 
-    async fn send_message_with_active_turn_check(
-        &self,
-        payload: Value,
-        verify_no_active_turn: bool,
-    ) -> Result<Value, AppIpcError> {
+    async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.local_task_link(&local_task_id);
@@ -714,6 +713,9 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         if let Some(link) = existing_link.as_ref() {
+            set_runtime_task_title(&mut request, &link.title);
+        }
+        if let Some(link) = existing_link.as_ref() {
             mark_runtime_model_switch(&mut request, link, &payload);
         }
         if let Some(link) = existing_link.as_ref() {
@@ -731,6 +733,23 @@ impl RuntimeWorkRpcHandler {
                 .as_ref()
                 .map(|link| link.runtime_workspace_roots.clone())
                 .unwrap_or_default();
+        }
+        if request.system_prompt.trim().is_empty() {
+            request.system_prompt = existing_link
+                .as_ref()
+                .map(|link| link.project_instructions.clone())
+                .unwrap_or_default();
+        }
+        if project_plugin_ids(&request).is_empty() {
+            if let Some(plugin_ids) = existing_link
+                .as_ref()
+                .map(|link| link.project_plugin_ids.clone())
+                .filter(|plugin_ids| !plugin_ids.is_empty())
+            {
+                request
+                    .extra
+                    .insert("project_plugin_ids".to_owned(), json!(plugin_ids));
+            }
         }
         if !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
@@ -806,19 +825,6 @@ impl RuntimeWorkRpcHandler {
         };
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
-        if verify_no_active_turn && !ephemeral {
-            let thread = self
-                .read_codex_recent_turns(&thread_id)
-                .await
-                .map_err(|error| AppIpcError::new("codex_error", error))?;
-            if codex_thread_has_in_progress_turn(&thread) {
-                return Ok(json!({
-                    "success": false,
-                    "error": "runtime task is already running",
-                    "code": "bad_request",
-                }));
-            }
-        }
 
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
@@ -918,8 +924,7 @@ impl RuntimeWorkRpcHandler {
                 }
             }
         }
-        self.send_message_with_active_turn_check(payload, false)
-            .await
+        self.send_message_after_local_checks(payload).await
     }
 
     async fn interrupt_provider_active_turn(&self, thread_id: &str) -> bool {
@@ -998,6 +1003,7 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| workspace_path(&payload))
             .unwrap_or_default();
         apply_runtime_payload_metadata(&mut request, &payload);
+        set_runtime_task_title(&mut request, &existing_link.title);
         mark_runtime_model_switch(&mut request, &existing_link, &payload);
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         restore_origin(&mut request, &existing_link.runtime_handle);
@@ -1560,6 +1566,13 @@ impl RuntimeWorkRpcHandler {
             if !request.runtime_workspace_roots.is_empty() {
                 link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
             }
+            if !request.system_prompt.trim().is_empty() {
+                link.project_instructions = request.system_prompt.clone();
+            }
+            let plugin_ids = project_plugin_ids(request);
+            if !plugin_ids.is_empty() {
+                link.project_plugin_ids = plugin_ids;
+            }
             link.updated_at = now_ms();
             set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
         });
@@ -1576,6 +1589,8 @@ impl RuntimeWorkRpcHandler {
         link.ephemeral = request.ephemeral;
         link.runtime_project_key = request.runtime_project_key.clone();
         link.runtime_workspace_roots = request.runtime_workspace_roots.clone();
+        link.project_instructions = request.system_prompt.clone();
+        link.project_plugin_ids = project_plugin_ids(request);
         set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
         if let Some(presentation) = presentation {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
@@ -1601,7 +1616,24 @@ pub(super) fn forked_task_link(
     link.parent = Some(parent);
     link.runtime_project_key = source.runtime_project_key.clone();
     link.runtime_workspace_roots = source.runtime_workspace_roots.clone();
+    link.project_instructions = source.project_instructions.clone();
+    link.project_plugin_ids = source.project_plugin_ids.clone();
     link
+}
+
+fn project_plugin_ids(request: &ExecutionRequest) -> Vec<String> {
+    request
+        .extra
+        .get("project_plugin_ids")
+        .or_else(|| request.extra.get("projectPluginIds"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn apply_runtime_task_start_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {

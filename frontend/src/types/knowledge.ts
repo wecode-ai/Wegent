@@ -72,6 +72,17 @@ export interface RetrievalConfigDraft {
   }
 }
 
+export interface KnowledgeBaseRetrievalProfileHealth {
+  status: 'missing' | 'valid' | 'invalid'
+  fallback_reason: string | null
+}
+
+export interface KnowledgeBaseRetrievalProfile {
+  version: number
+  retrieval_config: RetrievalConfigDraft | null
+  health: KnowledgeBaseRetrievalProfileHealth
+}
+
 // Splitter Config types
 export type ChunkStrategy = 'flat' | 'hierarchical' | 'semantic'
 export type FormatEnhancement = 'none' | 'file_aware'

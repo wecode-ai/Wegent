@@ -1,8 +1,10 @@
-import { Bot, CheckSquare2, CloudOff, Columns3, Plus, X } from 'lucide-react'
+import { Bot, Boxes, CheckSquare2, CloudOff, Columns3, Plus, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type DragEvent, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
@@ -25,11 +27,15 @@ interface WorkspaceTabStripProps {
   availableKinds?: readonly WorkspaceTabKind[]
 }
 
-function tabKindIcon(kind: WorkspaceTabKind, unavailable = false) {
-  if (kind === 'board') {
+function tabKindIcon(tab: WorkspaceTab, unavailable = false) {
+  const pathname = tab.contentRoute.split('?', 1)[0]
+  if (pathname === '/sites' || pathname.startsWith('/app/harness-')) {
+    return <Boxes aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
+  }
+  if (tab.kind === 'board') {
     return <Columns3 aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
   }
-  if (kind === 'agent') {
+  if (tab.kind === 'agent') {
     if (unavailable) {
       return <CloudOff aria-hidden="true" className="h-4 w-4 shrink-0 opacity-60" />
     }
@@ -40,7 +46,7 @@ function tabKindIcon(kind: WorkspaceTabKind, unavailable = false) {
 
 function menuPosition(trigger: HTMLElement, width: number): MenuPosition {
   const rect = trigger.getBoundingClientRect()
-  return clampMenuPosition({ left: rect.left, top: rect.bottom + 4 }, width, 120)
+  return clampMenuPosition({ left: rect.left, top: rect.bottom + 4 }, width, 152)
 }
 
 function clampMenuPosition(position: MenuPosition, width: number, height: number): MenuPosition {
@@ -123,6 +129,7 @@ function WorkspaceTabButton({
       }}
       className={cn(
         'group relative flex h-8 w-36 min-w-28 max-w-[188px] flex-none items-center rounded-md text-sm transition-[background-color,color,opacity] duration-150',
+        tab.contentRoute.startsWith('/app/harness-') && 'smart-app-workspace-tab-enter',
         active
           ? 'bg-white/55 text-text-primary dark:bg-white/[0.09]'
           : 'text-text-secondary hover:bg-black/[0.045] hover:text-text-primary dark:hover:bg-white/[0.06]',
@@ -162,7 +169,7 @@ function WorkspaceTabButton({
         className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
         title={tabTitle}
       >
-        {tabKindIcon(tab.kind, unavailable)}
+        {tabKindIcon(tab, unavailable)}
         <span className={cn('truncate', active && 'font-medium')}>{tab.title}</span>
       </button>
       <button
@@ -192,6 +199,7 @@ export function WorkspaceTabStrip({
 }: WorkspaceTabStripProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const {
     tabs,
     activeTabId,
@@ -267,6 +275,13 @@ export function WorkspaceTabStrip({
   const openNewTab = (kind: WorkspaceTabKind) => {
     if (!availableKindSet.has(kind)) return
     openTab(kind)
+    setAddMenuPosition(null)
+  }
+  const openSmartApps = () => {
+    openTab('auxiliary', {
+      title: t('workbench.workspace_tab_sites', '应用'),
+      contentRoute: '/sites?app_type=smart_app',
+    })
     setAddMenuPosition(null)
   }
   const contextTab = visibleTabs.find(tab => tab.id === contextMenu?.tabId) ?? null
@@ -361,6 +376,22 @@ export function WorkspaceTabStrip({
                   {label}
                 </button>
               ))}
+              {availableKindSet.has('auxiliary') && experimentalFeaturesEnabled ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="workspace-tab-add-smart-app"
+                  onClick={openSmartApps}
+                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04]"
+                >
+                  <Boxes aria-hidden="true" className="h-4 w-4 text-text-secondary" />
+                  {t('workbench.smart_apps_title', '智能工作台')}
+                  <ExperimentalBadge
+                    testId="workspace-tab-add-smart-app-experimental-badge"
+                    className="ml-auto"
+                  />
+                </button>
+              ) : null}
             </div>,
             document.body
           )

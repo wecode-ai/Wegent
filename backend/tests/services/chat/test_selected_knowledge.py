@@ -10,6 +10,7 @@ import pytest
 import yaml
 from fastapi import HTTPException
 
+from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.models.subtask_context import ContextStatus, ContextType
 from app.services.chat.selected_knowledge import (
@@ -41,6 +42,8 @@ class _Query:
 
 class _KnowledgeMetadataDB:
     def query(self, model: object) -> _Query:
+        if model is Kind:
+            return _Query([])
         if model is KnowledgeFolder:
             return _Query([SimpleNamespace(id=3, name="设计资料")])
         if model is KnowledgeDocument:

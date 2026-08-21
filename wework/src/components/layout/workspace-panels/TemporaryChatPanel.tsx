@@ -15,11 +15,15 @@ import {
   isRuntimeTaskBusyError,
 } from '@/features/workbench/runtimePaneStatus'
 import {
+  abortRuntimeConversationHydration,
   applyRuntimeConversationAction,
+  beginRuntimeConversationHydration,
+  completeRuntimeConversationHydration,
   getRuntimeConversationMessages,
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
+import { resolveTemporaryChatActiveModel } from '@/features/workbench/temporaryChatModelContext'
 import {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -43,12 +47,17 @@ import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workben
 const QUEUED_MESSAGE_RETRY_DELAY_MS = 250
 const QUEUED_MESSAGE_MAX_BUSY_RETRIES = 40
 
-function createUserMessage(content: string, id = `side-user-${Date.now()}`): WorkbenchMessage {
+function createUserMessage(
+  content: string,
+  attachments: Attachment[],
+  id = `side-user-${Date.now()}`
+): WorkbenchMessage {
   const createdAt = new Date().toISOString()
   return {
     id,
     role: 'user',
     content,
+    attachments: attachments.length > 0 ? persistAttachmentReferences(attachments) : undefined,
     status: 'done',
     createdAt,
   }
@@ -128,9 +137,16 @@ export function TemporaryChatPanel({
     deleteAttachment: services.attachmentApi?.deleteAttachment,
     scopeKey: instanceId,
   })
+  const [address, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
+  const activeModel = useMemo(
+    () => resolveTemporaryChatActiveModel(projectChat.models, state.runtimeWork, address),
+    [address, projectChat.models, state.runtimeWork]
+  )
   const sideChatProjectChat = useMemo(
     () => ({
       ...projectChat,
+      activeModel,
+      hasConversationContext: Boolean(address),
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
       errors: attachmentSelection.errors,
@@ -140,9 +156,8 @@ export function TemporaryChatPanel({
       removeAttachment: attachmentSelection.removeAttachment,
       resetAttachments: attachmentSelection.resetAttachments,
     }),
-    [attachmentSelection, projectChat]
+    [activeModel, address, attachmentSelection, projectChat]
   )
-  const [address, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
   const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
     initialAddress ? getRuntimeConversationMessages(initialAddress) : []
   )
@@ -196,8 +211,10 @@ export function TemporaryChatPanel({
     if (!address) return
     const syncMessages = () => {
       const nextMessages = getRuntimeConversationMessages(address)
-      setMessages(nextMessages)
-      if (nextMessages.length > 0) setError(null)
+      if (nextMessages.length > 0) {
+        setMessages(nextMessages)
+        setError(null)
+      }
     }
     return subscribeRuntimeConversation(address, syncMessages)
   }, [address])
@@ -206,27 +223,39 @@ export function TemporaryChatPanel({
     if (!address || sendEphemeral) return
     if (createdAddressKeyRef.current === `${address.deviceId}:${address.taskId}`) return
     let cancelled = false
+    const hydrationToken = beginRuntimeConversationHydration(address)
     void loadRuntimeTranscriptForPane(address)
       .then(transcript => {
-        if (cancelled) return
+        if (cancelled) {
+          abortRuntimeConversationHydration(address, hydrationToken)
+          return
+        }
         lifecycleStore.syncTranscript(address, transcript, {
           preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
         })
-        if (transcript.messages.length > 0) setMessages(transcript.messages)
+        const nextMessages = completeRuntimeConversationHydration(
+          address,
+          hydrationToken,
+          transcript.turns
+        )
+        if (nextMessages.length > 0) setMessages(nextMessages)
       })
       .catch(caughtError => {
+        abortRuntimeConversationHydration(address, hydrationToken)
         if (!cancelled && getRuntimeConversationMessages(address).length === 0) {
           setError(caughtError instanceof Error ? caughtError.message : '加载临时聊天失败')
         }
       })
     return () => {
       cancelled = true
+      abortRuntimeConversationHydration(address, hydrationToken)
     }
   }, [address, lifecycleStore, loadRuntimeTranscriptForPane, sendEphemeral])
 
   const loadFullTranscript = useCallback(async () => {
     if (!address || loadingFullTranscript) return
     setLoadingFullTranscript(true)
+    const hydrationToken = beginRuntimeConversationHydration(address)
     try {
       const transcript = await loadRuntimeTranscriptForPane(address, {
         includeFullContent: true,
@@ -235,10 +264,16 @@ export function TemporaryChatPanel({
       lifecycleStore.syncTranscript(address, transcript, {
         preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
       })
-      if (transcript.messages.length > 0) {
-        setMessages(transcript.messages)
+      const nextMessages = completeRuntimeConversationHydration(
+        address,
+        hydrationToken,
+        transcript.turns
+      )
+      if (nextMessages.length > 0) {
+        setMessages(nextMessages)
       }
     } catch (caughtError) {
+      abortRuntimeConversationHydration(address, hydrationToken)
       setError(caughtError instanceof Error ? caughtError.message : '加载完整输出失败')
     } finally {
       setLoadingFullTranscript(false)
@@ -323,7 +358,11 @@ export function TemporaryChatPanel({
             setMessages(
               applyRuntimeConversationAction(address, {
                 type: 'user_added',
-                message: createUserMessage(queuedMessage.content, queuedMessage.id),
+                message: createUserMessage(
+                  queuedMessage.content,
+                  queuedMessage.attachments ?? [],
+                  queuedMessage.id
+                ),
               })
             )
             setQueuedMessages(messages =>
@@ -448,7 +487,11 @@ export function TemporaryChatPanel({
       let targetAddress: RuntimeTaskAddress | false | null = address
       let optimisticAddress: RuntimeTaskAddress | null = null
       if (!targetAddress) {
-        const optimisticUserMessage = createUserMessage(message, queuedMessage.id)
+        const optimisticUserMessage = createUserMessage(
+          message,
+          currentAttachments,
+          queuedMessage.id
+        )
         setMessages(current => [...current, optimisticUserMessage])
         const handleOptimisticOpen = (nextAddress: RuntimeTaskAddress) => {
           optimisticAddress = nextAddress
@@ -494,7 +537,7 @@ export function TemporaryChatPanel({
         setMessages(
           applyRuntimeConversationAction(targetAddress, {
             type: 'user_added',
-            message: createUserMessage(message, queuedMessage.id),
+            message: createUserMessage(message, currentAttachments, queuedMessage.id),
           })
         )
         updateAddress(targetAddress)
@@ -505,7 +548,7 @@ export function TemporaryChatPanel({
       setMessages(
         applyRuntimeConversationAction(targetAddress, {
           type: 'user_added',
-          message: createUserMessage(message, queuedMessage.id),
+          message: createUserMessage(message, currentAttachments, queuedMessage.id),
         })
       )
       let sendError: string | null = null

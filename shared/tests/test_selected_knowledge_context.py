@@ -87,9 +87,11 @@ def test_duplicate_refs_preserve_routing_metadata() -> None:
             SelectedKnowledgeResource(scope_type="document", resource_id="doc-1"),
         ),
         routing_topics=("发布", "产品"),
+        retrieval_capabilities={"retrieval_mode": "hybrid"},
     )
 
     context = resolve_selected_knowledge_context([], [first, second])
 
     assert context.refs[0].routing_summary == "产品发布流程"
     assert context.refs[0].routing_topics == ("产品", "发布")
+    assert context.refs[0].retrieval_capabilities == {"retrieval_mode": "hybrid"}

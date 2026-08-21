@@ -136,13 +136,12 @@ pub(super) fn write_runtime_turn_queue(
     write_private_atomic(queue_path, &envelope)
 }
 
-pub(super) fn partition_restored_turns(
+pub(super) fn remove_worktree_turns_after_restart(
     worktrees: &WorktreeManager,
-    turns: VecDeque<SpawnTurnRequest>,
-) -> (VecDeque<SpawnTurnRequest>, VecDeque<SpawnTurnRequest>) {
-    let mut resumable = VecDeque::new();
-    let mut interrupted_worktrees = VecDeque::new();
-    for turn in turns {
+    turns: &mut VecDeque<SpawnTurnRequest>,
+) -> usize {
+    let initial_count = turns.len();
+    turns.retain(|turn| {
         let deferred_worktree = turn
             .request
             .extra
@@ -152,13 +151,9 @@ pub(super) fn partition_restored_turns(
             .project_workspace_path
             .as_deref()
             .is_some_and(|path| worktrees.is_managed_path(Path::new(path)));
-        if deferred_worktree || managed_worktree {
-            interrupted_worktrees.push_back(turn);
-        } else {
-            resumable.push_back(turn);
-        }
-    }
-    (resumable, interrupted_worktrees)
+        !deferred_worktree && !managed_worktree
+    });
+    initial_count - turns.len()
 }
 
 fn read_runtime_turn_queue_key(queue_path: &Path) -> Result<[u8; 32], String> {
@@ -441,23 +436,8 @@ impl RuntimeWorkRpcHandler {
     fn mark_deferred_worktree_failed(&self, turn: &SpawnTurnRequest, error: &AppIpcError) {
         let local_task_id = &turn.local_task_id;
         self.persist_failed_assistant_message(local_task_id, &turn.request, &error.message);
-        self.store.update_task(local_task_id, |link| {
-            link.running = false;
-            link.status = "failed".to_owned();
-            link.thread_status = "failed".to_owned();
-            link.turn_status = Some("failed".to_owned());
-            link.updated_at = now_ms();
-            link.completed_at = Some(link.updated_at);
-            normalize_settled_task_state(link);
-            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
-                runtime_handle.remove("queuePosition");
-                runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
-                runtime_handle.insert(
-                    "lastErrorCode".to_owned(),
-                    Value::String(error.code.clone()),
-                );
-            }
-        });
+        self.store
+            .update_task(local_task_id, |link| apply_local_task_failure(link, error));
     }
 
     fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
@@ -621,8 +601,21 @@ impl RuntimeWorkRpcHandler {
         ) = mpsc::channel(1);
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id =
-            self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
+        let execution_id = match self.start_local_task_execution(
+            local_task_id.clone(),
+            request
+                .project_workspace_path
+                .as_deref()
+                .or_else(|| request.cwd()),
+            cancel_tx,
+            stopped_rx,
+        ) {
+            Ok(execution_id) => execution_id,
+            Err(error) => {
+                self.fail_local_task_execution_start(&local_task_id, &error);
+                return;
+            }
+        };
         if let Ok(mut requests) = self.active_request_user_inputs.lock() {
             requests.insert(
                 local_task_id.clone(),
@@ -810,7 +803,7 @@ impl RuntimeWorkRpcHandler {
                 );
                 let _ = mapper_handle.await;
                 handler.clear_active_codex_transcript(&turn_local_task_id);
-                handler.finish_local_task(&turn_local_task_id, execution_id, None, "cancelled");
+                handler.settle_cancelled_local_task_execution(&turn_local_task_id, execution_id);
                 handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
                 handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
@@ -1455,7 +1448,7 @@ mod tests {
     }
 
     #[test]
-    fn restored_worktree_turns_are_quarantined_from_resumable_queue() {
+    fn restored_worktree_turns_are_removed_from_resumable_queue() {
         let temp = tempfile::tempdir().expect("temporary worktree directory should exist");
         let worktrees = WorktreeManager::new(temp.path().join("runtime-work/worktrees.json"));
         let managed_root = temp.path().join("workspace/worktrees");
@@ -1480,23 +1473,17 @@ mod tests {
                 .to_string(),
         );
 
-        let (resumable, interrupted) =
-            partition_restored_turns(&worktrees, VecDeque::from([normal, deferred, existing]));
+        let mut restored = VecDeque::from([normal, deferred, existing]);
+        let removed = remove_worktree_turns_after_restart(&worktrees, &mut restored);
 
         assert_eq!(
-            resumable
+            restored
                 .iter()
                 .map(|turn| turn.local_task_id.as_str())
                 .collect::<Vec<_>>(),
             vec!["normal"]
         );
-        assert_eq!(
-            interrupted
-                .iter()
-                .map(|turn| turn.local_task_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["deferred-worktree", "existing-worktree"]
-        );
+        assert_eq!(removed, 2);
     }
 
     #[test]

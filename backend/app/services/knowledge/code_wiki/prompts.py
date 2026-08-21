@@ -117,8 +117,8 @@ def build_prompt(context: WikiRunContext, *, full: bool) -> str:
 def build_diagram_correction(warnings: Sequence[str]) -> Optional[str]:
     """Ask the agent to fix diagrams that will not render.
 
-    Sent back as a follow-up rather than treated as a failure: a broken diagram is a
-    local display fault, and a version is not worth discarding over one.
+    Returned by the publish gate with the page paths intact, so the agent can rewrite
+    only the affected pages and conclude the same generation again.
     """
     if not warnings:
         return None

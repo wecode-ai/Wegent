@@ -97,6 +97,7 @@ class MessageContext:
     is_mention: bool  # Whether the bot was mentioned (for group chats)
     raw_message: Any  # Original message object from the channel SDK
     extra_data: Dict[str, Any]  # Channel-specific extra data
+    proactive_recipient_id: Optional[str] = None
     images: List[Dict[str, str]] = field(default_factory=list)
     # Each image dict: {"mime_type": "image/png", "base64_data": "iVBOR..."}
     files: List[Dict[str, Any]] = field(default_factory=list)
@@ -733,6 +734,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     channel_id=self._channel_id,
                     conversation_id=message_context.conversation_id,
                     sender_id=message_context.sender_id,
+                    proactive_recipient_id=message_context.proactive_recipient_id,
                     display_name=message_context.sender_name or "",
                 )
 
@@ -1209,8 +1211,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         if not streaming_emitter:
             return None
 
-        await streaming_emitter.emit_start(task_id=callback_key, subtask_id=0)
         self._prepare_streaming_emitter(callback_key, streaming_emitter)
+        await streaming_emitter.emit_start(task_id=callback_key, subtask_id=0)
         return streaming_emitter
 
     async def _emit_private_im_runtime_stream_error(
@@ -1407,6 +1409,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
             response_emitter = streaming_emitter
+            self._prepare_streaming_emitter(task_id, streaming_emitter)
             await streaming_emitter.emit_start(
                 task_id=task_id,
                 subtask_id=assistant_subtask.id,
@@ -1417,7 +1420,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 subtask_id=assistant_subtask.id,
                 content=initial_stream_content,
             )
-            self._prepare_streaming_emitter(task_id, streaming_emitter)
         else:
             response_emitter = SyncResponseEmitter()
             if initial_stream_content:
@@ -2774,6 +2776,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         if streaming_emitter:
             response_emitter = streaming_emitter
+            self._prepare_streaming_emitter(task_id, streaming_emitter)
             # Start the card immediately to get card_instance_id before registration,
             # matching Device/Cloud mode behavior. This ensures the card_instance_id
             # is available in Redis for cross-pod emitter reconstruction.
@@ -2781,8 +2784,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 task_id=task_id,
                 subtask_id=trigger_data["assistant_subtask"].id,
             )
-            # Enable Redis-backed content sharing for multi-pod consistency
-            self._prepare_streaming_emitter(task_id, streaming_emitter)
         else:
             response_emitter = SyncResponseEmitter()
 
@@ -2998,12 +2999,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # streaming events from the executor can update the same card.
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
+            self._prepare_streaming_emitter(result.task.id, streaming_emitter)
             await streaming_emitter.emit_start(
                 task_id=result.task.id,
                 subtask_id=result.assistant_subtask.id,
                 shell_type="ClaudeCode",
             )
-            await streaming_emitter.emit_chunk(
+            await self._emit_initial_stream_content(
+                streaming_emitter,
                 task_id=result.task.id,
                 subtask_id=result.assistant_subtask.id,
                 content=(
@@ -3012,10 +3015,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     "状态: 正在执行\n\n"
                     "任务完成后将自动发送结果。"
                 ),
-                offset=0,
             )
-            # Enable Redis-backed content sharing for multi-pod consistency
-            self._prepare_streaming_emitter(result.task.id, streaming_emitter)
 
         # Build message for device: vision content if images present
         if message_context.images:
@@ -3153,12 +3153,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # open so that streaming events from the executor can update it.
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
+            self._prepare_streaming_emitter(result.task.id, streaming_emitter)
             await streaming_emitter.emit_start(
                 task_id=result.task.id,
                 subtask_id=result.assistant_subtask.id,
                 shell_type="ClaudeCode",
             )
-            await streaming_emitter.emit_chunk(
+            await self._emit_initial_stream_content(
+                streaming_emitter,
                 task_id=result.task.id,
                 subtask_id=result.assistant_subtask.id,
                 content=(
@@ -3167,10 +3169,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     "状态: 等待执行\n\n"
                     "任务完成后将收到通知。"
                 ),
-                offset=0,
             )
-            # Enable Redis-backed content sharing for multi-pod consistency
-            self._prepare_streaming_emitter(result.task.id, streaming_emitter)
             # Register emitter so callback events reuse the same AI Card
             await self._register_streaming_emitter(
                 task_id=result.task.id,

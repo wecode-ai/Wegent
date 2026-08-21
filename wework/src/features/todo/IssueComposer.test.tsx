@@ -30,6 +30,16 @@ const workItemProject = {
   updated_at: '',
 }
 
+const productProject = {
+  ...workItemProject,
+  id: 22,
+  public_id: 'product-space',
+  project_key: 'PRODUCT',
+  name: '产品空间',
+  project_store: 'backend' as const,
+  task_provider: 'wegent' as const,
+}
+
 function renderWithProjectChat(
   component: React.ReactNode,
   overrides: Partial<ProjectChatControls> = {}
@@ -57,6 +67,25 @@ function renderWithProjectChat(
       {component}
     </WorkbenchPaneContext.Provider>
   )
+}
+
+async function replaceIssueDescription(value: string) {
+  const user = userEvent.setup()
+  const editor = screen.getByTestId('workspace-issue-description')
+  await user.click(editor)
+  await user.keyboard('{Control>}a{/Control}{Backspace}')
+  await waitFor(() => expect(editor).toHaveTextContent(''))
+  if (value) {
+    fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        types: ['text/plain'],
+        getData: (type: string) => (type === 'text/plain' ? value : ''),
+      },
+    })
+    await waitFor(() => expect(editor).toHaveTextContent(value))
+  }
+  return editor
 }
 
 describe('IssueComposer', () => {
@@ -96,9 +125,21 @@ describe('IssueComposer', () => {
       'aria-selected',
       'true'
     )
+    expect(screen.getByTestId('workspace-issue-heading')).toHaveTextContent('要推进什么？')
+    expect(screen.getByText('描述目标、问题或交付，创建后会进入当前项目空间。')).toBeVisible()
     expect(screen.queryByText('描述要推进的事情，创建后自动进入所选看板。')).not.toBeInTheDocument()
+    const expandButton = screen.getByTestId('workspace-issue-expand')
+    expect(screen.getByTestId('workspace-issue-composer-input-shell')).toContainElement(
+      expandButton
+    )
+    expect(expandButton).toHaveAccessibleName('全屏编辑')
+    expect(expandButton).toHaveClass('hover:bg-muted', 'hover:text-text-primary')
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-selector-button')).not.toBeInTheDocument()
+    const compactProjectSelect = screen.getByTestId('workspace-issue-project-compact')
+    expect(screen.getByTestId('composer-toolbar')).toContainElement(compactProjectSelect)
+    expect(compactProjectSelect.closest('label')).toHaveClass('text-sm', 'font-normal')
+    expect(screen.getByTestId('workspace-issue-composer-input-shell')).toHaveClass('font-normal')
     await userEvent.type(screen.getByTestId('workspace-issue-input'), '修复工作空间创建入口')
     await userEvent.keyboard('{Shift>}{Enter}{/Shift}只创建 Issue')
     await userEvent.click(screen.getByTestId('workspace-issue-submit'))
@@ -133,7 +174,9 @@ describe('IssueComposer', () => {
     await userEvent.click(screen.getByTestId('workspace-create-task-tab'))
 
     expect(screen.getByTestId('workspace-create-task-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('workspace-issue-heading')).toHaveTextContent('要执行什么？')
     expect(screen.getByTestId('workspace-issue-input')).toHaveTextContent('修复创建流程')
+    expect(screen.queryByTestId('workspace-issue-project-compact')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('Wegent')
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('project-option-92'))
@@ -146,6 +189,34 @@ describe('IssueComposer', () => {
       files: [],
       createTask: true,
       localProjectId: 92,
+    })
+  })
+
+  it('selects the target project space from the compact composer', async () => {
+    const onCreate = vi.fn()
+    render(
+      <IssueComposer
+        projects={[workItemProject, productProject]}
+        initialBoardKey="local:default-work-items"
+        onCancel={vi.fn()}
+        onCreate={onCreate}
+      />
+    )
+
+    await userEvent.selectOptions(
+      screen.getByTestId('workspace-issue-project-compact'),
+      'backend:22'
+    )
+    await userEvent.type(screen.getByTestId('workspace-issue-input'), '发布产品需求')
+    await userEvent.click(screen.getByTestId('workspace-issue-submit'))
+
+    expect(onCreate).toHaveBeenCalledWith({
+      boardKey: 'backend:22',
+      title: '发布产品需求',
+      description: '发布产品需求',
+      files: [],
+      createTask: false,
+      localProjectId: null,
     })
   })
 
@@ -241,7 +312,7 @@ describe('IssueComposer', () => {
     })
   })
 
-  it('expands into an app-fullscreen editor that derives the title from content', async () => {
+  it('expands into an app-fullscreen form with separate issue fields', async () => {
     const onCreate = vi.fn()
     const file = new File(['image'], 'context.png', { type: 'image/png' })
     render(
@@ -270,22 +341,37 @@ describe('IssueComposer', () => {
       'inset-0',
       'top-4'
     )
-    expect(screen.queryByTestId('workspace-issue-title')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-issue-description')).toHaveValue('自动生成的标题')
+    expect(screen.getByTestId('workspace-issue-title')).toHaveValue('自动生成的标题')
+    expect(screen.getByTestId('workspace-issue-title')).toHaveClass(
+      'text-heading-md',
+      'font-medium'
+    )
+    expect(screen.getByTestId('workspace-issue-project')).toHaveValue('backend:1')
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-issue-description')).toHaveTextContent('自动生成的标题')
+    )
+    expect(screen.getByTestId('workspace-issue-description')).toHaveAttribute(
+      'contenteditable',
+      'true'
+    )
+    expect(screen.getByTestId('workspace-issue-description-region')).toHaveClass(
+      'flex',
+      'flex-1',
+      'min-h-[360px]'
+    )
 
-    fireEvent.change(screen.getByTestId('workspace-issue-description'), {
-      target: { value: '默认生成的标题\n完整 Issue 内容' },
+    fireEvent.change(screen.getByTestId('workspace-issue-title'), {
+      target: { value: '默认生成的标题' },
     })
+    await replaceIssueDescription('完整 Issue 内容')
     fireEvent.change(screen.getByTestId('workspace-issue-file-input'), {
       target: { files: [file] },
     })
     await userEvent.click(screen.getByTestId('workspace-issue-collapse'))
     await userEvent.click(screen.getByTestId('workspace-issue-expand'))
 
-    expect(screen.queryByTestId('workspace-issue-title')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-issue-description')).toHaveValue(
-      '默认生成的标题\n完整 Issue 内容'
-    )
+    expect(screen.getByTestId('workspace-issue-title')).toHaveValue('默认生成的标题')
+    expect(screen.getByTestId('workspace-issue-description')).toHaveTextContent('完整 Issue 内容')
     expect(screen.getByRole('button', { name: 'context.png' })).toBeInTheDocument()
     expect(
       screen.getByTestId('workspace-issue-composer-panel').querySelector('header')
@@ -314,12 +400,32 @@ describe('IssueComposer', () => {
 
     expect(onCreate).toHaveBeenCalledWith({
       boardKey: 'backend:1',
-      title: '默认生成的标题 完整 Issue 内容',
-      description: '默认生成的标题\n完整 Issue 内容',
+      title: '默认生成的标题',
+      description: '完整 Issue 内容',
       files: [file],
       createTask: false,
       localProjectId: null,
     })
+  })
+
+  it('does not run the dialog focus loop after the editor handles Tab', async () => {
+    render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="backend:1"
+        onCancel={vi.fn()}
+        onCreate={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+    const editor = await screen.findByTestId('workspace-issue-description')
+    editor.focus()
+    editor.addEventListener('keydown', event => event.preventDefault(), { once: true })
+
+    fireEvent.keyDown(editor, { key: 'Tab', code: 'Tab' })
+
+    expect(document.activeElement).toBe(editor)
   })
 
   it('restores a saved draft with staged attachments after an accidental close', async () => {
@@ -335,9 +441,10 @@ describe('IssueComposer', () => {
     )
 
     await userEvent.click(screen.getByTestId('workspace-issue-expand'))
-    fireEvent.change(screen.getByTestId('workspace-issue-description'), {
-      target: { value: '未完成的 Issue\n关闭后需要恢复的内容' },
+    fireEvent.change(screen.getByTestId('workspace-issue-title'), {
+      target: { value: '未完成的 Issue' },
     })
+    await replaceIssueDescription('关闭后需要恢复的内容')
     fireEvent.change(screen.getByTestId('workspace-issue-file-input'), {
       target: { files: [file] },
     })
@@ -360,13 +467,101 @@ describe('IssueComposer', () => {
         onCreate={vi.fn()}
       />
     )
+    const restoredCompactInput = screen.getByTestId('workspace-issue-input')
+    if (!(restoredCompactInput instanceof HTMLTextAreaElement)) {
+      Object.defineProperty(restoredCompactInput, 'innerText', {
+        configurable: true,
+        value: '\n',
+      })
+    }
     await userEvent.click(screen.getByTestId('workspace-issue-expand'))
 
-    expect(screen.queryByTestId('workspace-issue-title')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-issue-description')).toHaveValue(
-      '未完成的 Issue\n关闭后需要恢复的内容'
+    expect(screen.getByTestId('workspace-issue-title')).toHaveValue('未完成的 Issue')
+    expect(screen.getByTestId('workspace-issue-description')).toHaveTextContent(
+      '关闭后需要恢复的内容'
     )
     expect(screen.getByRole('button', { name: 'draft.png' })).toBeInTheDocument()
+  })
+
+  it('stages files pasted or dropped into the fullscreen editor', async () => {
+    render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="backend:1"
+        onCancel={vi.fn()}
+        onCreate={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+    const pastedFile = new File(['pasted'], 'pasted.txt', { type: 'text/plain' })
+    fireEvent.paste(screen.getByTestId('workspace-issue-description'), {
+      clipboardData: {
+        files: [pastedFile],
+        types: ['Files'],
+      },
+    })
+    expect(screen.getByText('pasted.txt')).toBeInTheDocument()
+
+    const droppedFile = new File(['dropped'], 'dropped.pdf', { type: 'application/pdf' })
+    fireEvent.drop(screen.getByTestId('workspace-issue-editor-body'), {
+      dataTransfer: {
+        files: [droppedFile],
+        types: ['Files'],
+      },
+    })
+    expect(screen.getByText('dropped.pdf')).toBeInTheDocument()
+  })
+
+  it('keeps the fullscreen form open and resets it for continuous issue creation', async () => {
+    const onCreate = vi.fn(async () => true)
+    render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="local:default-work-items"
+        projectMembers={{
+          'local:default-work-items': [
+            {
+              id: 1,
+              user_id: 7,
+              user_name: 'Alice',
+              email: 'alice@example.com',
+              role: 'Maintainer',
+            },
+          ],
+        }}
+        onCancel={vi.fn()}
+        onCreate={onCreate}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-issue-expand'))
+    await userEvent.type(screen.getByTestId('workspace-issue-title'), '第一个 Issue')
+    await replaceIssueDescription('第一条描述')
+    await userEvent.selectOptions(screen.getByTestId('workspace-issue-status'), 'in_progress')
+    await userEvent.selectOptions(screen.getByTestId('workspace-issue-priority'), 'high')
+    await userEvent.selectOptions(screen.getByTestId('workspace-issue-assignee'), '7')
+    await userEvent.type(screen.getByTestId('workspace-issue-tag-input'), '体验{Enter}')
+    await userEvent.click(screen.getByTestId('workspace-issue-continue-creating'))
+    await userEvent.click(screen.getByTestId('workspace-issue-fullscreen-submit'))
+
+    expect(onCreate).toHaveBeenCalledWith({
+      boardKey: 'local:default-work-items',
+      title: '第一个 Issue',
+      description: '第一条描述',
+      files: [],
+      createTask: false,
+      localProjectId: null,
+      continueCreating: true,
+      status: 'in_progress',
+      priority: 'high',
+      tags: ['体验'],
+      assigneeUserId: 7,
+    })
+    expect(screen.getByTestId('workspace-issue-title')).toHaveValue('')
+    expect(screen.getByTestId('workspace-issue-description')).toHaveTextContent('')
+    expect(screen.getByTestId('workspace-issue-composer-panel')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('workspace-issue-title')).toHaveFocus())
   })
 
   it('clears the persisted draft after explicit discard or successful creation', async () => {
@@ -381,18 +576,20 @@ describe('IssueComposer', () => {
     )
 
     await userEvent.click(screen.getByTestId('workspace-issue-expand'))
-    fireEvent.change(screen.getByTestId('workspace-issue-description'), {
+    fireEvent.change(screen.getByTestId('workspace-issue-title'), {
       target: { value: '可清理草稿' },
     })
+    await replaceIssueDescription('清理前的描述')
     await waitFor(() =>
       expect(localStorage.getItem('wework-issue-composer-draft:backend:1:issue')).not.toBeNull()
     )
     await userEvent.click(screen.getByTestId('workspace-issue-clear-draft'))
     expect(localStorage.getItem('wework-issue-composer-draft:backend:1:issue')).toBeNull()
 
-    fireEvent.change(screen.getByTestId('workspace-issue-description'), {
-      target: { value: '创建后清理\n提交内容' },
+    fireEvent.change(screen.getByTestId('workspace-issue-title'), {
+      target: { value: '创建后清理' },
     })
+    await replaceIssueDescription('提交内容')
     await userEvent.click(screen.getByTestId('workspace-issue-fullscreen-submit'))
 
     expect(onCreate).toHaveBeenCalledOnce()

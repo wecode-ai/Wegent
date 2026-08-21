@@ -525,6 +525,18 @@ def _build_wegent_refs(
     if not selected_ids:
         return []
 
+    from app.models.kind import Kind
+    from app.services.knowledge.retrieval_capabilities import (
+        derive_retrieval_capabilities,
+    )
+
+    capabilities_by_kb_id = {
+        kind.id: derive_retrieval_capabilities(
+            ((kind.json or {}).get("spec") or {}).get("retrievalConfig")
+        )
+        for kind in db.query(Kind).filter(Kind.id.in_(selected_ids)).all()
+    }
+
     task_json: dict[str, Any] = task.json if isinstance(task.json, dict) else {}
     raw_spec = task_json.get("spec")
     spec: dict[str, Any] = raw_spec if isinstance(raw_spec, dict) else {}
@@ -552,6 +564,7 @@ def _build_wegent_refs(
                     provider="wegent",
                     knowledge_base_id=str(kb_id),
                     knowledge_base_name=kb_name,
+                    retrieval_capabilities=capabilities_by_kb_id.get(kb_id, {}),
                 )
             )
             continue
@@ -570,6 +583,7 @@ def _build_wegent_refs(
                 knowledge_base_id=str(kb_id),
                 knowledge_base_name=kb_name,
                 resources=resources,
+                retrieval_capabilities=capabilities_by_kb_id.get(kb_id, {}),
             )
         )
     return result

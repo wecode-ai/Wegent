@@ -53,6 +53,9 @@ def _merge_refs(
                 current.routing_topics,
                 ref.routing_topics,
             ),
+            retrieval_capabilities=(
+                current.retrieval_capabilities or ref.retrieval_capabilities
+            ),
         )
     return tuple(merged.values())
 

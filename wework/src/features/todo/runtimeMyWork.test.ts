@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
+import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import { runtimeMyWorkItems } from './runtimeMyWork'
 
 function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
@@ -12,7 +13,12 @@ function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
   }
 }
 
-function runtimeWork(tasks: RuntimeTaskSummary[]): RuntimeWorkListResponse {
+function runtimeWork(
+  tasks: RuntimeTaskSummary[],
+  workspaceOverrides: Partial<
+    RuntimeWorkListResponse['projects'][number]['deviceWorkspaces'][number]
+  > = {}
+): RuntimeWorkListResponse {
   return {
     projects: [
       {
@@ -23,6 +29,7 @@ function runtimeWork(tasks: RuntimeTaskSummary[]): RuntimeWorkListResponse {
             workspacePath: '/tmp/project',
             available: true,
             tasks,
+            ...workspaceOverrides,
           },
         ],
       },
@@ -48,13 +55,19 @@ describe('runtimeMyWorkItems', () => {
     })
   })
 
-  it('keeps an optional cloud board association without requiring one', () => {
+  it('keeps every offline cloud-associated task in My Tasks', () => {
     const [item] = runtimeMyWorkItems(
-      runtimeWork([
-        task({
-          runtimeHandle: { cloudProjectId: 'cloud-1', loopItemId: 'WEG-1' },
-        }),
-      ])
+      runtimeWork(
+        [
+          task({
+            runtimeHandle: { cloudProjectId: 'cloud-1', loopItemId: 'WEG-1' },
+          }),
+        ],
+        {
+          available: false,
+          deviceStatus: 'offline',
+        }
+      )
     )
 
     expect(item.cloud_project_id).toBe('cloud-1')
@@ -77,5 +90,27 @@ describe('runtimeMyWorkItems', () => {
       ['failed', 'pending', false],
       ['done', 'completed', false],
     ])
+  })
+
+  it('uses the shared lifecycle state that drives the sidebar running indicator', () => {
+    const work = runtimeWork([task({ running: false, status: 'done' })])
+    const address = {
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      runtime: 'codex' as const,
+      workspacePath: '/tmp/project',
+    }
+    const lifecycleStore = new RuntimeTaskLifecycleStore('my-work-test')
+    lifecycleStore.syncRuntimeWork(work)
+    lifecycleStore.executorStarted(address)
+
+    const [item] = runtimeMyWorkItems(work, lifecycleStore.getSnapshot())
+
+    expect(item).toMatchObject({
+      id: 'task-1',
+      status: 'in_progress',
+      has_active_task: true,
+      execution_state: 'running',
+    })
   })
 })
