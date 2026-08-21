@@ -112,8 +112,6 @@
     "project_chat_agent_unavailable": "This robot is no longer in this project",
     "project_chat_agent_start_failed": "The robot task could not be started",
     "task_activity_title": "Activity",
-    "runtime_task_origin_board_comment": "Board activity",
-    "runtime_task_origin_board_task": "Board task",
     "task_activity_count": "{{count}} total",
     "task_activity_empty": "No activity yet",
     "task_activity_empty_with_ai": "{{name}} is queued and will start automatically, then submit the result for your review.",
