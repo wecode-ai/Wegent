@@ -1942,6 +1942,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: uiTimeoutMs,
       })
       const activeBoard = '[data-workspace-tab-content][aria-hidden="false"]'
+      const reloadActiveBoard = async errorMessage => {
+        const readyCount = control.readyCount
+        await control.command('reloadMainWindow', 'body')
+        await withTimeout(control.awaitReadyAfter(readyCount), uiTimeoutMs * 3, errorMessage)
+        await control.command(
+          'waitFor',
+          `${activeBoard} [data-testid="cloud-project-board-view"]`,
+          {
+            timeoutMs: uiTimeoutMs,
+            visible: true,
+          }
+        )
+      }
       await control.command('click', `${activeBoard} [data-testid="cloud-project-settings"]`)
       await control.command('waitFor', `${activeBoard} [data-testid="project-space-settings"]`, {
         timeoutMs: uiTimeoutMs,
@@ -2499,17 +2512,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           ),
         },
       }
-      const readyCountBeforeChildTaskReload = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await withTimeout(
-        control.awaitReadyAfter(readyCountBeforeChildTaskReload),
-        uiTimeoutMs * 3,
+      await reloadActiveBoard(
         'The project board did not reconnect after adding the workflow child task'
       )
-      await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
         visible: true,
       })
@@ -2704,17 +2709,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           updated_at: '2026-08-20T10:00:00Z',
         },
       }
-      let readyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await withTimeout(
-        control.awaitReadyAfter(readyCount),
-        uiTimeoutMs * 3,
+      await reloadActiveBoard(
         'The project board did not reconnect for AI manager projection verification'
       )
-      await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
         visible: true,
       })
@@ -2769,11 +2766,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           error: null,
         },
       }
-      readyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await withTimeout(
-        control.awaitReadyAfter(readyCount),
-        uiTimeoutMs * 3,
+      await reloadActiveBoard(
         'The project board did not reconnect for workflow approval verification'
       )
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
@@ -2833,11 +2826,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           status: 'materialized',
         })),
       }
-      readyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await withTimeout(
-        control.awaitReadyAfter(readyCount),
-        uiTimeoutMs * 3,
+      await reloadActiveBoard(
         'The project board did not reconnect for workflow running verification'
       )
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
@@ -2896,11 +2885,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           error: 'AI manager finished without submitting a workflow plan.',
         },
       }
-      readyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await withTimeout(
-        control.awaitReadyAfter(readyCount),
-        uiTimeoutMs * 3,
+      await reloadActiveBoard(
         'The project board did not reconnect for manager conflict verification'
       )
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
@@ -2985,11 +2970,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           },
         ],
       }
-      readyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await withTimeout(
-        control.awaitReadyAfter(readyCount),
-        uiTimeoutMs * 3,
+      await reloadActiveBoard(
         'The project board did not reconnect for workflow history verification'
       )
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
