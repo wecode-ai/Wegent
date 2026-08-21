@@ -22,6 +22,7 @@ vi.mock('@/lib/runtime-environment', () => ({
 function renderPage(overrides: Partial<AppUpdateContextValue> = {}) {
   const value: AppUpdateContextValue = {
     updateChannel: 'stable',
+    autoUpdateEnabled: true,
     availableUpdate: null,
     installedReleaseNotes: null,
     status: 'idle',
@@ -31,6 +32,7 @@ function renderPage(overrides: Partial<AppUpdateContextValue> = {}) {
     checkNow: vi.fn().mockResolvedValue(null),
     installUpdate: vi.fn().mockResolvedValue(undefined),
     dismissInstalledReleaseNotes: vi.fn(),
+    setAutoUpdateEnabled: vi.fn(),
     setUpdateChannel: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }
@@ -68,6 +70,16 @@ describe('AboutSettingsPage', () => {
     fireEvent.click(screen.getByTestId('about-beta-update-switch'))
 
     expect(value.setUpdateChannel).toHaveBeenCalledWith('beta')
+  })
+
+  test('enables automatic updates by default and lets the user disable them', () => {
+    const value = renderPage()
+    const autoUpdateSwitch = screen.getByTestId('about-auto-update-switch')
+
+    expect(autoUpdateSwitch).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(autoUpdateSwitch)
+
+    expect(value.setAutoUpdateEnabled).toHaveBeenCalledWith(false)
   })
 
   test('lets a Beta user return to stable-only updates', () => {

@@ -321,7 +321,7 @@ impl RuntimeWorkRpcHandler {
                         "cancelled",
                         Some(message),
                     );
-                    handler.finish_local_task(&local_task_id, execution_id, None, "cancelled");
+                    handler.settle_cancelled_local_task_execution(&local_task_id, execution_id);
                     handler.emit_claude_runtime_event(
                         &local_task_id,
                         &request,
@@ -375,6 +375,14 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(source) = request.extra.get("source") {
             payload["payload"]["source"] = source.clone();
+        }
+        if matches!(
+            event_type,
+            "response.completed" | "response.failed" | "response.incomplete" | "error"
+        ) {
+            if let Some(title) = runtime_task_title(request) {
+                payload["payload"]["taskTitle"] = Value::String(title);
+            }
         }
         let _ = event_tx.send(payload);
     }

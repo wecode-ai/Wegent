@@ -19,7 +19,6 @@ export interface HarnessAppManifest {
   entry: {
     installPackage: string
     profile: string
-    webUrl: string
   }
   requirements: {
     dsh: string

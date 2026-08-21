@@ -11,6 +11,9 @@ import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 const appIframeMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
 }))
+const portalOwnershipMocks = vi.hoisted(() => ({
+  setActiveOwner: vi.fn(),
+}))
 
 vi.mock('@/components/topnav/AppIframe', () => ({
   AppIframe: ({ active }: { active?: boolean }) => {
@@ -23,9 +26,14 @@ vi.mock('@/components/topnav/TitlebarActionsPortal', () => ({
   WorkspaceTabPortalOwner: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
+vi.mock('@/components/topnav/workspaceTabPortalOwnership', () => ({
+  setActiveWorkspaceTabPortalOwner: portalOwnershipMocks.setActiveOwner,
+}))
+
 describe('WorkspaceTabSurface', () => {
   afterEach(() => {
     appIframeMocks.cleanup.mockClear()
+    portalOwnershipMocks.setActiveOwner.mockClear()
   })
 
   test('keeps an inactive iframe app connected so its page state survives tab switches', () => {
@@ -70,6 +78,44 @@ describe('WorkspaceTabSurface', () => {
 
     unmount()
     expect(appIframeMocks.cleanup).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  test('re-syncs titlebar portal ownership when a retained workspace becomes active again', () => {
+    const dispose = getWorkbenchPluginRuntime().apps.register({
+      key: 'harness-titlebar',
+      mode: 'iframe',
+      url: 'http://localhost:3000',
+      hidden: true,
+      labelKey: 'harness-titlebar.label',
+      label: 'Titlebar Harness',
+      descriptionKey: 'harness-titlebar.description',
+      description: 'Titlebar Harness',
+    })
+    const props = {
+      cloudWebUrl: null,
+      lifecycleStore: {} as never,
+      services: {} as never,
+      tab: {
+        id: 'smart-app-tab-1',
+        kind: 'auxiliary' as const,
+        title: 'Titlebar Harness',
+        contentRoute: '/app/harness-titlebar',
+      },
+      user: {
+        id: 1,
+        user_name: 'tester',
+        email: 'tester@example.com',
+      },
+    }
+
+    const { rerender, unmount } = render(<WorkspaceTabSurface {...props} active={false} />)
+    expect(portalOwnershipMocks.setActiveOwner).not.toHaveBeenCalled()
+
+    rerender(<WorkspaceTabSurface {...props} active />)
+
+    expect(portalOwnershipMocks.setActiveOwner).toHaveBeenLastCalledWith('smart-app-tab-1')
+    unmount()
     dispose()
   })
 

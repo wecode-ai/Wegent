@@ -293,6 +293,9 @@ impl LocalTaskStore {
         if let Some(card_display) = input.card_display {
             metadata["card_display"] = card_display;
         }
+        if let Some(pull_request_automation) = input.pull_request_automation {
+            metadata["pull_request_automation"] = pull_request_automation;
+        }
         if let Some(workflow_definition) = input.workflow_definition {
             metadata["workflow_definition"] = workflow_definition;
         }
