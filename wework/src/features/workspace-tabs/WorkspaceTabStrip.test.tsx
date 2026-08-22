@@ -161,7 +161,10 @@ describe('WorkspaceTabStrip', () => {
 
     expect(window.location.pathname).toBe('/sites')
     expect(new URLSearchParams(window.location.search).get('app_type')).toBe('smart_app')
-    expect(screen.getByRole('tab', { name: '应用' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '站点与小程序' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
   })
 
   test('opens an installed Smart app directly from the top tab add menu', async () => {
