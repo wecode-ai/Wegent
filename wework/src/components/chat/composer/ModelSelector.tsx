@@ -56,10 +56,12 @@ const DESKTOP_MENU_VIEWPORT_TOP = 64
 const MAIN_MENU_TRIGGER_GAP = 8
 const MAIN_MENU_MAX_HEIGHT = 608
 const SUBMENU_RIGHT_OFFSET = MAIN_MENU_WIDTH + SUBMENU_GAP
-const SUBMENU_MAX_HEIGHT = 448
-const SUBMENU_VIEWPORT_VERTICAL_GAP = 128
 const DESKTOP_HIDDEN_CONTROL_IDS = new Set(['collaborationMode'])
 type DesktopSubmenuTarget = { type: 'models' } | { type: 'control'; id: string } | { type: 'none' }
+
+function getDesktopSubmenuMaxHeight(): number {
+  return Math.max(0, window.innerHeight - DESKTOP_MENU_VIEWPORT_TOP - VIEWPORT_MARGIN)
+}
 
 function getDesktopViewportRightBoundary(): number {
   const shell = document.getElementById('right-workspace-panel-shell')
@@ -215,10 +217,9 @@ export function ModelSelector({
     const preferredOffset = Math.round(targetTop - menuTop)
     const submenuRect = submenuPanelRef.current?.getBoundingClientRect()
     const submenuScrollHeight = submenuPanelRef.current?.scrollHeight ?? 0
-    const maxSubmenuHeight = Math.min(
-      SUBMENU_MAX_HEIGHT,
-      Math.max(0, window.innerHeight - SUBMENU_VIEWPORT_VERTICAL_GAP)
-    )
+    const viewportTop = DESKTOP_MENU_VIEWPORT_TOP
+    const viewportBottom = window.innerHeight - VIEWPORT_MARGIN
+    const maxSubmenuHeight = getDesktopSubmenuMaxHeight()
     const measuredSubmenuHeight = submenuRect?.height ?? 0
     const submenuHeight = Math.min(
       Math.max(measuredSubmenuHeight, submenuScrollHeight),
@@ -226,8 +227,6 @@ export function ModelSelector({
     )
 
     if (submenuHeight > 0) {
-      const viewportTop = DESKTOP_MENU_VIEWPORT_TOP
-      const viewportBottom = window.innerHeight - VIEWPORT_MARGIN
       const maxOffset = viewportBottom - submenuHeight - menuTop
       const minOffset = viewportTop - menuTop
       setSubmenuOffset(Math.round(Math.max(minOffset, Math.min(preferredOffset, maxOffset))))
@@ -239,10 +238,6 @@ export function ModelSelector({
     const measuredSubmenuWidth = submenuRect?.width || SUBMENU_WIDTH
     const rightSideLeft = measuredMenuWidth + SUBMENU_GAP
     const viewportWidth = getDesktopViewportRightBoundary()
-    const availableRight = viewportWidth - VIEWPORT_MARGIN - menuRect.left - rightSideLeft
-    const availableLeft = menuRect.left - VIEWPORT_MARGIN - SUBMENU_GAP
-    const rightSideWidth = Math.max(0, Math.min(measuredSubmenuWidth, availableRight))
-    const leftSideWidth = Math.max(0, Math.min(measuredSubmenuWidth, availableLeft))
 
     const rightSideEdge = menuRect.left + rightSideLeft + measuredSubmenuWidth
     if (rightSideEdge <= viewportWidth - VIEWPORT_MARGIN) {
@@ -258,27 +253,16 @@ export function ModelSelector({
       return
     }
 
-    if (leftSideWidth >= rightSideWidth) {
-      setSubmenuWidth(Math.round(leftSideWidth))
-      setSubmenuLeft(-Math.round(leftSideWidth + SUBMENU_GAP))
-      return
-    }
-
-    if (rightSideWidth > 0) {
-      setSubmenuWidth(Math.round(rightSideWidth))
-      setSubmenuLeft(rightSideLeft)
-      return
-    }
-
-    const viewportFittedLeft = Math.max(
-      VIEWPORT_MARGIN - menuRect.left,
-      Math.min(
-        rightSideLeft,
-        viewportWidth - VIEWPORT_MARGIN - measuredSubmenuWidth - menuRect.left
-      )
+    const viewportAvailableWidth = Math.max(0, viewportWidth - VIEWPORT_MARGIN * 2)
+    const fittedSubmenuWidth = Math.min(measuredSubmenuWidth, viewportAvailableWidth)
+    const minOverlayLeft = VIEWPORT_MARGIN - menuRect.left
+    const maxOverlayLeft = viewportWidth - VIEWPORT_MARGIN - fittedSubmenuWidth - menuRect.left
+    const alignedOverlayLeft = measuredMenuWidth - fittedSubmenuWidth
+    const overlayLeft = Math.max(minOverlayLeft, Math.min(alignedOverlayLeft, maxOverlayLeft))
+    setSubmenuWidth(
+      fittedSubmenuWidth < measuredSubmenuWidth ? Math.round(fittedSubmenuWidth) : undefined
     )
-    setSubmenuWidth(undefined)
-    setSubmenuLeft(Math.round(viewportFittedLeft))
+    setSubmenuLeft(Math.round(overlayLeft))
   }, [])
   const activateControl = useCallback(
     (controlId: string) => {
@@ -1023,9 +1007,14 @@ export function ModelSelector({
                 ref={submenuPanelRef}
                 data-testid="model-selector-submenu"
                 data-enter-animation="submenu"
-                style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
+                style={{
+                  top: submenuOffset,
+                  left: submenuLeft,
+                  width: submenuWidth,
+                  maxHeight: getDesktopSubmenuMaxHeight(),
+                }}
                 className={cn(
-                  'absolute max-h-[min(28rem,calc(100vh-8rem))] w-72 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
+                  'absolute w-72 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
                   styles.submenu
                 )}
               >
@@ -1040,9 +1029,14 @@ export function ModelSelector({
                 ref={submenuPanelRef}
                 data-testid="model-selector-submenu"
                 data-enter-animation="submenu"
-                style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
+                style={{
+                  top: submenuOffset,
+                  left: submenuLeft,
+                  width: submenuWidth,
+                  maxHeight: getDesktopSubmenuMaxHeight(),
+                }}
                 className={cn(
-                  'absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
+                  'absolute min-h-48 w-72 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
                   styles.submenu
                 )}
               >

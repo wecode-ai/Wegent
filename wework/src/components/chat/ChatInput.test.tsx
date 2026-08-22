@@ -655,6 +655,9 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
       'Switching to Second Model may change how the existing context is understood.'
     )
+    expect(screen.getByTestId('model-switch-warning-dialog-overlay').parentElement).toBe(
+      document.body
+    )
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
     expect(setSelectedModel).not.toHaveBeenCalled()
 
@@ -1019,6 +1022,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('send-message-button'))
 
     expect(screen.getByTestId('paused-queue-send-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('paused-queue-send-dialog-overlay').parentElement).toBe(document.body)
     expect(onSubmit).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('paused-queue-send-preserve-button'))

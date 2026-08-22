@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react'
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { TFunction } from 'i18next'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -1099,7 +1100,7 @@ function QueueResumeDialog({
   onPreserve: () => void
   onClear: () => void
 }) {
-  return (
+  return createPortal(
     <div
       data-testid="paused-queue-send-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
@@ -1153,7 +1154,8 @@ function QueueResumeDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -1168,7 +1170,7 @@ function ModelSwitchWarningDialog({
   onCancel: () => void
   onConfirm: () => void
 }) {
-  return (
+  return createPortal(
     <div
       data-testid="model-switch-warning-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
@@ -1222,6 +1224,7 @@ function ModelSwitchWarningDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
