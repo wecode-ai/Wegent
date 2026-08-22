@@ -5641,6 +5641,12 @@ describe('PluginsWorkspace', () => {
           ],
         },
         {
+          name: 'wework',
+          displayName: 'Wegent',
+          path: 'wework',
+          plugins: [],
+        },
+        {
           name: 'awesome-codex-plugins',
           displayName: 'Awesome Codex Plugins',
           path: 'https://github.com/example/awesome-codex-plugins',
@@ -5662,6 +5668,7 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText('MailAgent')).toBeInTheDocument()
     expect(screen.getByText('EchoID')).toBeInTheDocument()
     expect(screen.getByText('SuperPowers')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-tab-wework')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('plugins-distribution-tab-official'))
     expect(screen.getByText('MailAgent')).toBeInTheDocument()

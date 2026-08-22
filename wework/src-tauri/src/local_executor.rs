@@ -1633,6 +1633,102 @@ fn remove_bundled_marketplace_path(path: &Path) -> Result<(), String> {
     }
 }
 
+fn preserve_personal_marketplace_plugins(
+    destination: &Path,
+    staging: &Path,
+    bundled_plugins: &HashSet<String>,
+) -> Result<(), String> {
+    if !destination.is_dir() {
+        return Ok(());
+    }
+
+    let mut personal_plugins = HashSet::new();
+    for manifest_path in [
+        destination.join(".agents/plugins/marketplace.json"),
+        destination.join(".claude-plugin/marketplace.json"),
+    ] {
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let content = fs::read_to_string(&manifest_path)
+            .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+        let manifest = serde_json::from_str::<Value>(&content)
+            .map_err(|error| format!("invalid marketplace {}: {error}", manifest_path.display()))?;
+        if !is_personal_marketplace_name(manifest.get("name").and_then(Value::as_str)) {
+            return Err(format!(
+                "marketplace {} must use the reserved personal marketplace name",
+                manifest_path.display()
+            ));
+        }
+        let plugins = manifest
+            .get("plugins")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!(
+                    "marketplace {} must contain a plugins array",
+                    manifest_path.display()
+                )
+            })?;
+        for plugin in plugins {
+            let Some(name) = plugin.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            let name = validate_plugin_name(name)?.to_string();
+            let bundled_by_default = plugin
+                .pointer("/policy/installation")
+                .and_then(Value::as_str)
+                == Some("INSTALLED_BY_DEFAULT");
+            if !bundled_plugins.contains(&name) && !bundled_by_default {
+                personal_plugins.insert(name);
+            }
+        }
+    }
+
+    for plugin_name in personal_plugins {
+        let source_plugin = destination.join("plugins").join(&plugin_name);
+        let manifest_path = source_plugin.join(".codex-plugin/plugin.json");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let manifest = fs::read(&manifest_path)
+            .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+        let manifest = serde_json::from_slice::<Value>(&manifest).map_err(|error| {
+            format!(
+                "invalid plugin manifest {}: {error}",
+                manifest_path.display()
+            )
+        })?;
+        if manifest.get("name").and_then(Value::as_str) != Some(plugin_name.as_str()) {
+            continue;
+        }
+
+        copy_directory_recursive(&source_plugin, &staging.join("plugins").join(&plugin_name))?;
+        for staging_manifest in [
+            staging.join(".agents/plugins/marketplace.json"),
+            staging.join(".claude-plugin/marketplace.json"),
+        ] {
+            upsert_marketplace_plugin_entry(&staging_manifest, &plugin_name)?;
+        }
+    }
+
+    let copy_registry = copy_registry_path(destination);
+    if copy_registry.is_file() {
+        let staging_registry = copy_registry_path(staging);
+        if let Some(parent) = staging_registry.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+        }
+        fs::copy(&copy_registry, &staging_registry).map_err(|error| {
+            format!(
+                "failed to preserve {} at {}: {error}",
+                copy_registry.display(),
+                staging_registry.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn initialize_bundled_plugin_marketplace_from_paths(
     source: &Path,
     destination: &Path,
@@ -1662,6 +1758,11 @@ fn initialize_bundled_plugin_marketplace_from_paths(
     ));
     remove_bundled_marketplace_path(&staging)?;
     if let Err(error) = copy_directory_recursive(source, &staging) {
+        let _ = remove_bundled_marketplace_path(&staging);
+        return Err(error);
+    }
+    if let Err(error) = preserve_personal_marketplace_plugins(destination, &staging, &codex_plugins)
+    {
         let _ = remove_bundled_marketplace_path(&staging);
         return Err(error);
     }
@@ -3087,12 +3188,12 @@ fn read_optional_file(path: &Path) -> Result<Option<Vec<u8>>, String> {
     }
 }
 
-fn personal_manifest_contains_plugin(
+fn personal_manifest_plugin_registration(
     manifest_path: &Path,
     plugin_name: &str,
-) -> Result<bool, String> {
+) -> Result<Option<bool>, String> {
     if !manifest_path.is_file() {
-        return Ok(false);
+        return Ok(None);
     }
     let content = fs::read_to_string(manifest_path)
         .map_err(|error| format!("Failed to read {}: {error}", manifest_path.display()))?;
@@ -3104,19 +3205,21 @@ fn personal_manifest_contains_plugin(
     })?;
     let is_personal = is_personal_marketplace_name(manifest.get("name").and_then(Value::as_str));
     if !is_personal {
-        return Ok(false);
+        return Ok(None);
     }
-    Ok(manifest
-        .get("plugins")
-        .and_then(Value::as_array)
-        .is_some_and(|plugins| {
-            plugins.iter().any(|plugin| {
-                plugin
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .is_some_and(|name| name == plugin_name)
-            })
-        }))
+    Ok(Some(
+        manifest
+            .get("plugins")
+            .and_then(Value::as_array)
+            .is_some_and(|plugins| {
+                plugins.iter().any(|plugin| {
+                    plugin
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .is_some_and(|name| name == plugin_name)
+                })
+            }),
+    ))
 }
 
 fn delete_personal_plugin(marketplace_path: &Path, plugin_name: &str) -> Result<(), String> {
@@ -3135,17 +3238,34 @@ fn delete_personal_plugin(marketplace_path: &Path, plugin_name: &str) -> Result<
     }
     manifest_candidates.sort();
     manifest_candidates.dedup();
+    let mut personal_marketplace_found = false;
     let personal_manifests = manifest_candidates
         .into_iter()
         .filter_map(
-            |path| match personal_manifest_contains_plugin(&path, plugin_name) {
-                Ok(true) => Some(Ok(path)),
-                Ok(false) => None,
+            |path| match personal_manifest_plugin_registration(&path, plugin_name) {
+                Ok(Some(registered)) => {
+                    personal_marketplace_found = true;
+                    registered.then_some(Ok(path))
+                }
+                Ok(None) => None,
                 Err(error) => Some(Err(error)),
             },
         )
         .collect::<Result<Vec<_>, _>>()?;
     if personal_manifests.is_empty() {
+        let plugin_path = marketplace_root.join("plugins").join(plugin_name);
+        match fs::symlink_metadata(&plugin_path) {
+            Err(error)
+                if personal_marketplace_found && error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                remove_plugin_registry_entries(&marketplace_root, plugin_name)?;
+                return Ok(());
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!("Failed to inspect personal plugin: {error}"));
+            }
+            _ => {}
+        }
         return Err("Plugin is not registered in this personal marketplace".to_string());
     }
 
@@ -5768,6 +5888,74 @@ mod tests {
     }
 
     #[test]
+    fn deleting_an_already_absent_personal_plugin_is_idempotent() {
+        let root = import_test_root("delete-absent-personal-plugin");
+        let codex_marketplace = root.join(".agents/plugins/marketplace.json");
+        let claude_marketplace = root.join(".claude-plugin/marketplace.json");
+        fs::create_dir_all(codex_marketplace.parent().unwrap()).unwrap();
+        fs::create_dir_all(claude_marketplace.parent().unwrap()).unwrap();
+        let marketplace = r#"{"name":"wework-personal","plugins":[]}"#;
+        fs::write(&codex_marketplace, marketplace).unwrap();
+        fs::write(&claude_marketplace, marketplace).unwrap();
+        write_plugin_cloud_links(
+            &root,
+            vec![LocalPluginCloudLink {
+                local_plugin_name: "already-gone".to_string(),
+                cloud_plugin_id: 71,
+                cloud_release_id: Some(72),
+            }],
+        )
+        .unwrap();
+        write_atomic_file(
+            &copy_registry_path(&root),
+            &serde_json::to_vec_pretty(&LocalPluginCopyRegistry {
+                copies: vec![LocalPluginCopyRecord {
+                    local_plugin_name: "already-gone".to_string(),
+                    source_plugin_id: 1,
+                    source_release_id: 2,
+                    source_plugin_name: "source".to_string(),
+                }],
+                cloud_links: Vec::new(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        delete_personal_plugin(&root, "already-gone").unwrap();
+        delete_personal_plugin(&root, "already-gone").unwrap();
+
+        assert!(load_plugin_cloud_links(&root).is_empty());
+        let copy_registry: LocalPluginCopyRegistry =
+            serde_json::from_slice(&fs::read(copy_registry_path(&root)).unwrap()).unwrap();
+        assert!(copy_registry.copies.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_delete_an_unregistered_personal_plugin_directory() {
+        let root = import_test_root("delete-unregistered-personal-plugin");
+        let marketplace = root.join(".agents/plugins/marketplace.json");
+        let plugin_manifest = root.join("plugins/unregistered/.codex-plugin/plugin.json");
+        fs::create_dir_all(marketplace.parent().unwrap()).unwrap();
+        fs::create_dir_all(plugin_manifest.parent().unwrap()).unwrap();
+        fs::write(&marketplace, r#"{"name":"wework-personal","plugins":[]}"#).unwrap();
+        fs::write(
+            &plugin_manifest,
+            r#"{"name":"unregistered","version":"1.0.0"}"#,
+        )
+        .unwrap();
+
+        let error = delete_personal_plugin(&root, "unregistered").unwrap_err();
+
+        assert_eq!(
+            error,
+            "Plugin is not registered in this personal marketplace"
+        );
+        assert!(plugin_manifest.is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn packages_a_personal_codex_plugin_without_manual_zip_selection() {
         let root = import_test_root("package-plugin");
         let plugin_root = root.join("plugins/gitlab");
@@ -6533,6 +6721,86 @@ mod tests {
         assert!(destination
             .join(".claude-plugin/marketplace.json")
             .is_file());
+        assert!(!destination.join("stale.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn preserves_registered_personal_plugins_when_refreshing_bundled_plugins() {
+        let root = import_test_root("bundled-plugin-marketplace-personal");
+        let source = root.join("source");
+        let destination = root.join("destination/wework-personal");
+        fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+        fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+        fs::create_dir_all(source.join("plugins/smart-app-builder/.codex-plugin")).unwrap();
+        fs::write(
+            source.join(".agents/plugins/marketplace.json"),
+            r#"{"name":"wework-personal","plugins":[{"name":"smart-app-builder"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join(".claude-plugin/marketplace.json"),
+            r#"{"name":"wework-personal","plugins":[{"name":"smart-app-builder"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join("plugins/smart-app-builder/.codex-plugin/plugin.json"),
+            r#"{"name":"smart-app-builder","version":"1.0.0"}"#,
+        )
+        .unwrap();
+
+        initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+        let personal_plugin = destination.join("plugins/dev-tools");
+        fs::create_dir_all(personal_plugin.join(".codex-plugin")).unwrap();
+        fs::write(
+            personal_plugin.join(".codex-plugin/plugin.json"),
+            r#"{"name":"dev-tools","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        let retired_bundled_plugin = destination.join("plugins/retired-bundled-plugin");
+        fs::create_dir_all(retired_bundled_plugin.join(".codex-plugin")).unwrap();
+        fs::write(
+            retired_bundled_plugin.join(".codex-plugin/plugin.json"),
+            r#"{"name":"retired-bundled-plugin","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        for manifest in [
+            destination.join(".agents/plugins/marketplace.json"),
+            destination.join(".claude-plugin/marketplace.json"),
+        ] {
+            upsert_marketplace_plugin_entry(&manifest, "dev-tools").unwrap();
+            let mut value = serde_json::from_slice::<Value>(&fs::read(&manifest).unwrap()).unwrap();
+            value
+                .get_mut("plugins")
+                .and_then(Value::as_array_mut)
+                .unwrap()
+                .push(json!({
+                    "name": "retired-bundled-plugin",
+                    "policy": { "installation": "INSTALLED_BY_DEFAULT" }
+                }));
+            fs::write(&manifest, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        }
+        let registry = copy_registry_path(&destination);
+        fs::create_dir_all(registry.parent().unwrap()).unwrap();
+        fs::write(&registry, br#"{"copies":[]}"#).unwrap();
+        fs::write(destination.join("stale.txt"), "stale").unwrap();
+
+        initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+        initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+
+        let expected = HashSet::from(["dev-tools".to_string(), "smart-app-builder".to_string()]);
+        assert_eq!(
+            marketplace_plugin_names(&destination.join(".agents/plugins/marketplace.json"))
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            marketplace_plugin_names(&destination.join(".claude-plugin/marketplace.json")).unwrap(),
+            expected
+        );
+        assert!(personal_plugin.join(".codex-plugin/plugin.json").is_file());
+        assert!(!retired_bundled_plugin.exists());
+        assert_eq!(fs::read(&registry).unwrap(), br#"{"copies":[]}"#);
         assert!(!destination.join("stale.txt").exists());
         fs::remove_dir_all(root).unwrap();
     }
