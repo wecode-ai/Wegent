@@ -266,8 +266,13 @@ async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
         .expect("Claude task should be accepted");
     assert_eq!(created["accepted"], true);
     assert_eq!(created["runtime"], "claude_code");
+    let mut runtime_events = recv_events_until(&mut events, |runtime_events| {
+        runtime_events.iter().any(|event| {
+            event["event"] == "response.completed" && event["payload"]["runtime"] == "claude_code"
+        })
+    })
+    .await;
     wait_for_text_occurrence_count(&log_path, "CALL\n", 1).await;
-    wait_until_task_idle(&handler, "claude-task-1").await;
 
     let sent = handler
         .handle_runtime_rpc(json!({
@@ -295,8 +300,16 @@ async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
         .expect("Claude follow-up should be accepted");
     assert_eq!(sent["accepted"], true);
     assert_eq!(sent["runtime"], "claude_code");
+    runtime_events.extend(
+        recv_events_until(&mut events, |runtime_events| {
+            runtime_events.iter().any(|event| {
+                event["event"] == "response.completed"
+                    && event["payload"]["runtime"] == "claude_code"
+            })
+        })
+        .await,
+    );
     wait_for_text_occurrence_count(&log_path, "CALL\n", 2).await;
-    wait_until_task_idle(&handler, "claude-task-1").await;
 
     let log = fs::read_to_string(&log_path).expect("Claude args should be logged");
     let calls = log
@@ -337,12 +350,6 @@ async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
     assert_eq!(messages[2]["role"], "user");
     assert_eq!(messages[3]["role"], "assistant");
 
-    let runtime_events = recv_events_until(&mut events, |runtime_events| {
-        runtime_events.iter().any(|event| {
-            event["event"] == "response.completed" && event["payload"]["runtime"] == "claude_code"
-        })
-    })
-    .await;
     assert!(runtime_events.iter().any(|event| {
         event["event"] == "response.created" && event["payload"]["runtime"] == "claude_code"
     }));

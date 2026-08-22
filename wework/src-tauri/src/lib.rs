@@ -9,6 +9,8 @@ mod embedded_browser;
 mod embedded_browser_devtools;
 #[cfg(target_os = "macos")]
 mod embedded_browser_tls;
+#[cfg(target_os = "macos")]
+mod embedded_browser_web_security;
 mod execution_environments;
 #[cfg(desktop)]
 mod feedback;

@@ -1,6 +1,9 @@
 import type { ProcessingBlock, ToolBlock, WorkbenchMessage } from '@/types/workbench'
 
-export type RuntimeLiveToolActivity = Pick<ToolBlock, 'id' | 'status' | 'toolName' | 'toolInput'>
+export type RuntimeLiveToolActivity = Pick<
+  ToolBlock,
+  'id' | 'status' | 'toolName' | 'toolInput' | 'createdAt' | 'completedAt' | 'durationMs'
+>
 
 export interface RuntimeLiveActivity {
   active: boolean
@@ -36,6 +39,9 @@ export function getLatestRuntimeLiveActivity(messages: WorkbenchMessage[]): Runt
             status: block.status,
             toolName: block.toolName,
             toolInput: block.toolInput,
+            createdAt: block.createdAt,
+            completedAt: block.completedAt,
+            durationMs: block.durationMs,
           })) ?? [],
     }
   }

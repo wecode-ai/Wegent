@@ -53,6 +53,7 @@ mod collection;
 mod fork_transfer;
 mod hooks;
 mod notifications;
+mod plugin_install;
 mod queries;
 mod robot_queue_rpc;
 mod sidebar;
@@ -805,6 +806,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
             "runtime.codex.personality.read" => self.read_codex_personality().await,
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
+            "runtime.codex.plugin.install_local_first" => self.install_local_plugin(payload).await,
+            "runtime.codex.plugin.uninstall_local" => self.uninstall_local_plugin(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
             "runtime.codex.runtime_config.update" => {
                 self.update_codex_runtime_config(payload).await

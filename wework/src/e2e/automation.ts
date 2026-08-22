@@ -1,5 +1,6 @@
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { removeToken, setToken } from '@/api/auth'
+import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import {
   testLocalModelConnection,
   type TestLocalModelConnectionInput,
@@ -1751,6 +1752,36 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           marketplacePath: input.marketplacePath,
         })
       )
+    }
+    case 'importPluginPackage': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        preview?: LocalPluginImportPreview
+        overwrite?: boolean
+      }
+      if (!input.preview?.valid) {
+        throw new Error('importPluginPackage requires a valid import preview')
+      }
+      const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+      return JSON.stringify(
+        await createLocalCodexPluginApi().importPluginPackage(
+          input.preview,
+          input.overwrite === true
+        )
+      )
+    }
+    case 'deleteLocalPluginPackage': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        pluginId?: string
+        pluginName?: string
+      }
+      if (!input.pluginId || !input.pluginName) {
+        throw new Error('deleteLocalPluginPackage requires pluginId and pluginName')
+      }
+      const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+      const api = createLocalCodexPluginApi()
+      await api.uninstallInstalledPlugin(input.pluginId)
+      await api.deletePersonalPlugin(input.pluginName)
+      return ''
     }
     case 'hover':
       return hoverDesktopControlElement(command.selector)
