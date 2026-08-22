@@ -3431,6 +3431,8 @@
     "my_work_month": "月",
     "my_work_no_due_date": "无截止日期",
     "no_final_task_response": "暂无最终回复",
+    "task_progress_details": "当前任务进展",
+    "task_progress_empty": "暂无任务进展详情",
     "my_work_pending_approval": "待我批准",
     "my_work_approve": "批准",
     "my_work_running": "正在执行",
