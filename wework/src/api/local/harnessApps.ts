@@ -57,6 +57,10 @@ export interface HarnessAppExport {
   manifest: HarnessAppManifest
 }
 
+export interface HarnessAppSavedExport extends HarnessAppExport {
+  destinationPath: string
+}
+
 export const harnessAppsApi = {
   preview(archivePath: string) {
     return invoke<HarnessAppPreview>('preview_harness_app', { archivePath })
@@ -78,6 +82,16 @@ export const harnessAppsApi = {
   },
   export(installationId: string) {
     return invoke<HarnessAppExport>('export_harness_app_package', { installationId })
+  },
+  async exportToDownloads(installationId: string): Promise<HarnessAppSavedExport> {
+    const exported = await invoke<HarnessAppExport>('export_harness_app_package', {
+      installationId,
+    })
+    const destinationPath = await invoke<string>('download_local_file_to_downloads', {
+      sourcePath: exported.archivePath,
+      filename: `${exported.manifest.name}-${exported.manifest.version}.zip`,
+    })
+    return { ...exported, destinationPath }
   },
   upload(archivePath: string, uploadUrl: string) {
     return invoke<void>('upload_harness_app_package', { archivePath, uploadUrl })
