@@ -1,6 +1,17 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  access,
+  chmod,
+  cp,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -25,7 +36,7 @@ const cacheDirectory = path.join(root, 'node_modules', '.cache')
 const assetDirectory = path.join(cacheDirectory, 'harness-runtime-assets')
 const materializedRoot = path.join(cacheDirectory, 'harness-runtime-dev')
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
-const archiveFormatVersion = 'dsh-runtime-tar-gzip-v4'
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v5'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -64,13 +75,82 @@ function run(command, args, cwd, environment = {}) {
   })
 }
 
-function runtimePlatform() {
+function hostRuntimePlatform() {
   const platform = { darwin: 'macos', win32: 'windows', linux: 'linux' }[process.platform]
   const architecture = { arm64: 'arm64', x64: 'x64' }[process.arch]
   if (!platform || !architecture) {
     throw new Error(`Unsupported Harness runtime target: ${process.platform}-${process.arch}`)
   }
   return `${platform}-${architecture}`
+}
+
+function runtimePlatform() {
+  const target = process.env.WEWORK_RUNTIME_TARGET?.trim()
+  const aliases = {
+    'aarch64-apple-darwin': 'macos-arm64',
+    'x86_64-apple-darwin': 'macos-x64',
+    'x86_64-pc-windows-msvc': 'windows-x64',
+    'macos-arm64': 'macos-arm64',
+    'macos-x64': 'macos-x64',
+    'windows-x64': 'windows-x64',
+  }
+  if (!target) return hostRuntimePlatform()
+  const platform = aliases[target]
+  if (!platform) throw new Error(`Unsupported Harness runtime target: ${target}`)
+  return platform
+}
+
+if (process.argv.includes('--print-runtime-platform')) {
+  console.log(runtimePlatform())
+  process.exit(0)
+}
+
+function targetInstallEnvironment() {
+  const [platform, architecture] = runtimePlatform().split('-')
+  return {
+    npm_config_platform: { macos: 'darwin', windows: 'win32', linux: 'linux' }[platform],
+    npm_config_arch: architecture === 'arm64' ? 'arm64' : 'x64',
+  }
+}
+
+function targetWorkspaceConfiguration(content) {
+  const [platform, architecture] = runtimePlatform().split('-')
+  const os = { macos: 'darwin', windows: 'win32', linux: 'linux' }[platform]
+  const cpu = architecture === 'arm64' ? 'arm64' : 'x64'
+  return `${content.toString('utf8').trimEnd()}\nsupportedArchitectures:\n  os:\n    - ${os}\n  cpu:\n    - ${cpu}\n`
+}
+
+async function prepareTargetSpawnHelpers(staging) {
+  if (runtimePlatform() === 'windows-x64' || runtimePlatform().startsWith('linux-')) return
+  const target = runtimePlatform() === 'macos-arm64' ? 'darwin-arm64' : 'darwin-x64'
+  const helpers = (await listFiles(staging)).filter(
+    name => name.includes('/node-pty/') && name.endsWith(`/prebuilds/${target}/spawn-helper`)
+  )
+  if (helpers.length === 0) {
+    throw new Error(`Harness runtime has no node-pty spawn helper for ${runtimePlatform()}`)
+  }
+  await Promise.all(helpers.map(name => chmod(path.join(staging, name), 0o755)))
+}
+
+function crossTargetRequested() {
+  return runtimePlatform() !== hostRuntimePlatform()
+}
+
+async function validateTargetDependencies(staging) {
+  const packagePlatform = {
+    'macos-arm64': 'darwin-arm64',
+    'macos-x64': 'darwin-x64',
+    'windows-x64': 'win32-x64',
+  }[runtimePlatform()]
+  if (!packagePlatform) return
+  const files = await listFiles(path.join(staging, 'node_modules', '.pnpm'))
+  for (const packagePrefix of ['@img+sharp-', '@koromix+koffi-']) {
+    if (!files.some(name => name.startsWith(`${packagePrefix}${packagePlatform}@`))) {
+      throw new Error(
+        `Harness runtime is missing ${packagePrefix}${packagePlatform} for ${runtimePlatform()}`
+      )
+    }
+  }
 }
 
 async function sha256(pathname) {
@@ -129,9 +209,16 @@ function runtimeIdentity(runtime) {
   const sourceFingerprint = createHash('sha256')
     .update(archiveFormatVersion)
     .update('\0')
+    .update(runtimePlatform())
+    .update('\0')
     .update(process.versions.modules)
     .update('\0')
-    .update(macosSigningFingerprint(process.platform, process.env.APPLE_SIGNING_IDENTITY))
+    .update(
+      macosSigningFingerprint(
+        runtimePlatform().startsWith('macos-') ? 'darwin' : 'win32',
+        process.env.APPLE_SIGNING_IDENTITY
+      )
+    )
     .update('\0')
     .update(
       runtime.entries.map(entry => `${entry.name}\0${entry.content.toString('base64')}`).join('\0')
@@ -256,9 +343,17 @@ async function buildRuntime(runtime) {
     for (const entry of runtime.entries) {
       const destination = path.join(staging, entry.name)
       await mkdir(path.dirname(destination), { recursive: true })
-      await writeFile(destination, entry.content)
+      const content =
+        crossTargetRequested() && entry.name === 'pnpm-workspace.yaml'
+          ? targetWorkspaceConfiguration(entry.content)
+          : entry.content
+      await writeFile(destination, content)
     }
-    await run(pnpmCommand, ['install', '--prod', '--frozen-lockfile'], staging)
+    const installArguments = ['install', '--prod', '--frozen-lockfile']
+    if (crossTargetRequested()) installArguments.push('--ignore-scripts')
+    await run(pnpmCommand, installArguments, staging, targetInstallEnvironment())
+    await validateTargetDependencies(staging)
+    if (crossTargetRequested()) await prepareTargetSpawnHelpers(staging)
     await writeFile(
       path.join(staging, 'runtime.json'),
       `${JSON.stringify(
@@ -271,7 +366,9 @@ async function buildRuntime(runtime) {
       )}\n`
     )
     await writeFile(path.join(staging, '.resource-placeholder'), '')
-    await signPreparedMacOsBinaries(staging)
+    if (runtimePlatform().startsWith('macos-')) {
+      await signPreparedMacOsBinaries(staging)
+    }
 
     await run('tar', ['-cf', temporaryTar, '-C', staging, '.'], root, {
       COPYFILE_DISABLE: '1',

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from hashlib import sha256
@@ -445,6 +446,7 @@ def test_minio_macos_build_inherits_the_complete_tauri_resource_list() -> None:
 
     assert 'BASE_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json"' in script
     assert 'CODEX_TARGET="$MACOS_BUILD_TARGET"' in script
+    assert 'WEWORK_RUNTIME_TARGET="$MACOS_BUILD_TARGET"' in script
     assert "verify_runtime_descriptors_in_app" in script
     assert "verify_codex_targets_in_app" in script
     assert "contains Codex for unexpected target" in script
@@ -453,10 +455,55 @@ def test_minio_macos_build_inherits_the_complete_tauri_resource_list() -> None:
     assert 'bash "$SCRIPT_DIR/release-mac-app.sh"' not in script
 
 
+def test_minio_windows_build_prepares_target_platform_runtimes() -> None:
+    script = (SCRIPT_DIR / "build-minio-windows-release.sh").read_text(encoding="utf-8")
+
+    assert 'WEWORK_RUNTIME_TARGET="$WINDOWS_BUILD_TARGET"' in script
+
+
 def test_node_runtime_format_version_avoids_legacy_minio_asset_names() -> None:
     script = (SCRIPT_DIR / "prepare-execution-runtime.mjs").read_text(encoding="utf-8")
 
     assert "node-runtime-tar-gzip-v2" in script
+    assert "WEWORK_RUNTIME_TARGET" in script
+    assert "SHASUMS256.txt" in script
+    assert "Target Node runtime has the wrong architecture" in script
+
+
+def test_harness_runtime_install_uses_the_requested_target_platform() -> None:
+    script = (SCRIPT_DIR / "prepare-harness-runtime.mjs").read_text(encoding="utf-8")
+
+    assert "WEWORK_RUNTIME_TARGET" in script
+    assert "dsh-runtime-tar-gzip-v5" in script
+    assert "supportedArchitectures" in script
+    assert "--ignore-scripts" in script
+    assert "prepareTargetSpawnHelpers" in script
+
+
+@pytest.mark.parametrize(
+    ("script_name", "target", "expected"),
+    [
+        ("prepare-execution-runtime.mjs", "x86_64-apple-darwin", "macos-x64"),
+        ("prepare-harness-runtime.mjs", "x86_64-apple-darwin", "macos-x64"),
+        ("prepare-execution-runtime.mjs", "x86_64-pc-windows-msvc", "windows-x64"),
+        ("prepare-harness-runtime.mjs", "x86_64-pc-windows-msvc", "windows-x64"),
+    ],
+)
+def test_runtime_preparation_resolves_the_requested_target(
+    script_name: str, target: str, expected: str
+) -> None:
+    environment = os.environ.copy()
+    environment["WEWORK_RUNTIME_TARGET"] = target
+
+    result = subprocess.run(
+        ["node", str(SCRIPT_DIR / script_name), "--print-runtime-platform"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.stdout.strip() == expected
 
 
 def test_minio_release_notes_decode_escaped_newlines() -> None:

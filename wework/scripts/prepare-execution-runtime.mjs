@@ -6,7 +6,8 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 import { constants as zlibConstants, createGzip } from 'node:zlib'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { promisify } from 'node:util'
 
 import { macosSigningFingerprint } from './lib/deepseek-harness-signing.mjs'
 
@@ -19,9 +20,11 @@ const materializedRoot = path.join(cacheDirectory, 'execution-runtime-node-dev')
 const staging = path.join(cacheDirectory, `wework-node-runtime-${process.pid}`)
 const temporaryArchive = path.join(cacheDirectory, `wework-node-runtime-${process.pid}.tar.gz`)
 const temporaryTar = temporaryArchive.slice(0, -3)
+const temporaryDistribution = path.join(cacheDirectory, `wework-node-distribution-${process.pid}`)
 const nodeEntitlements = path.join(root, 'scripts', 'deepseek-harness-node.entitlements.plist')
 const materializeRequested = process.argv.includes('--materialize')
 const archiveFormatVersion = 'node-runtime-tar-gzip-v2'
+const execFileAsync = promisify(execFile)
 
 function run(command, args, cwd = root) {
   return new Promise((resolve, reject) => {
@@ -34,13 +37,113 @@ function run(command, args, cwd = root) {
   })
 }
 
-function runtimePlatform() {
+function hostRuntimePlatform() {
   const platform = { darwin: 'macos', win32: 'windows', linux: 'linux' }[process.platform]
   const architecture = { arm64: 'arm64', x64: 'x64' }[process.arch]
   if (!platform || !architecture) {
     throw new Error(`Unsupported Node runtime target: ${process.platform}-${process.arch}`)
   }
   return `${platform}-${architecture}`
+}
+
+function runtimePlatform() {
+  const target = process.env.WEWORK_RUNTIME_TARGET?.trim()
+  const aliases = {
+    'aarch64-apple-darwin': 'macos-arm64',
+    'x86_64-apple-darwin': 'macos-x64',
+    'x86_64-pc-windows-msvc': 'windows-x64',
+    'macos-arm64': 'macos-arm64',
+    'macos-x64': 'macos-x64',
+    'windows-x64': 'windows-x64',
+  }
+  if (!target) return hostRuntimePlatform()
+  const platform = aliases[target]
+  if (!platform) throw new Error(`Unsupported Node runtime target: ${target}`)
+  return platform
+}
+
+if (process.argv.includes('--print-runtime-platform')) {
+  console.log(runtimePlatform())
+  process.exit(0)
+}
+
+function nodeDistribution() {
+  const version = process.version
+  const platform = runtimePlatform()
+  const distributions = {
+    'macos-arm64': { name: `node-${version}-darwin-arm64.tar.gz`, binary: 'bin/node' },
+    'macos-x64': { name: `node-${version}-darwin-x64.tar.gz`, binary: 'bin/node' },
+    'windows-x64': { name: `node-${version}-win-x64.zip`, binary: 'node.exe' },
+  }
+  return distributions[platform]
+}
+
+async function downloadTargetNode(destination) {
+  if (runtimePlatform() === hostRuntimePlatform()) {
+    await cp(process.execPath, destination)
+    return
+  }
+  const distribution = nodeDistribution()
+  const url = `https://nodejs.org/dist/${process.version}/${distribution.name}`
+  const archive = path.join(cacheDirectory, distribution.name)
+  const [response, checksumsResponse] = await Promise.all([
+    fetch(url),
+    fetch(`https://nodejs.org/dist/${process.version}/SHASUMS256.txt`),
+  ])
+  if (!response.ok || !response.body || !checksumsResponse.ok) {
+    throw new Error(`Failed to download target Node runtime: ${url} (${response.status})`)
+  }
+  await pipeline(Readable.fromWeb(response.body), createWriteStream(archive))
+  const checksumLine = (await checksumsResponse.text())
+    .split('\n')
+    .find(line => line.endsWith(`  ${distribution.name}`))
+  const expectedChecksum = checksumLine?.split(/\s+/)[0]
+  if (!expectedChecksum || (await sha256(archive)) !== expectedChecksum) {
+    throw new Error(`Target Node runtime failed checksum verification: ${distribution.name}`)
+  }
+  await rm(temporaryDistribution, { recursive: true, force: true })
+  await mkdir(temporaryDistribution, { recursive: true })
+  if (distribution.name.endsWith('.zip')) {
+    await run('unzip', ['-q', archive, '-d', temporaryDistribution])
+  } else {
+    await run('tar', ['-xzf', archive, '-C', temporaryDistribution])
+  }
+  const extractedRoot = path.join(
+    temporaryDistribution,
+    distribution.name.replace(/\.(?:tar\.gz|zip)$/, '')
+  )
+  await cp(path.join(extractedRoot, distribution.binary), destination)
+  await rm(archive, { force: true })
+}
+
+async function validateTargetNode(nodePath) {
+  const { stdout } = await execFileAsync('file', [nodePath])
+  const expectations = {
+    'macos-arm64': /Mach-O 64-bit executable arm64/,
+    'macos-x64': /Mach-O 64-bit executable x86_64/,
+    'windows-x64': /PE32\+ executable.*x86-64/i,
+    'linux-arm64': /ELF 64-bit.*ARM aarch64/i,
+    'linux-x64': /ELF 64-bit.*x86-64/i,
+  }
+  if (!expectations[runtimePlatform()].test(stdout)) {
+    throw new Error(`Target Node runtime has the wrong architecture: ${stdout.trim()}`)
+  }
+}
+
+async function signTargetNode(nodePath) {
+  if (!runtimePlatform().startsWith('macos-')) return
+  const identity = process.env.APPLE_SIGNING_IDENTITY?.trim() || '-'
+  const args = [
+    '--force',
+    '--options',
+    'runtime',
+    '--entitlements',
+    nodeEntitlements,
+    '--sign',
+    identity,
+  ]
+  if (identity !== '-') args.splice(1, 0, '--timestamp')
+  await run('codesign', [...args, nodePath])
 }
 
 async function sha256(pathname) {
@@ -91,9 +194,9 @@ async function materialize(assetPath, fingerprint) {
   console.log(`Node runtime root: ${materializedRoot}`)
 }
 
-const nodeBinaryName = process.platform === 'win32' ? 'node.exe' : 'node'
+const nodeBinaryName = runtimePlatform() === 'windows-x64' ? 'node.exe' : 'node'
 const signingFingerprint = macosSigningFingerprint(
-  process.platform,
+  runtimePlatform().startsWith('macos-') ? 'darwin' : 'win32',
   process.env.APPLE_SIGNING_IDENTITY
 )
 const fingerprint = createHash('sha256')
@@ -208,8 +311,13 @@ try {
   await rm(temporaryTar, { force: true })
   await mkdir(path.join(staging, 'bin'), { recursive: true })
   const managedNode = path.join(staging, 'bin', nodeBinaryName)
-  await cp(process.execPath, managedNode)
-  await signAndValidateNode(managedNode)
+  await downloadTargetNode(managedNode)
+  await validateTargetNode(managedNode)
+  if (runtimePlatform() === hostRuntimePlatform()) {
+    await signAndValidateNode(managedNode)
+  } else {
+    await signTargetNode(managedNode)
+  }
   await writeFile(
     path.join(staging, 'runtime.json'),
     `${JSON.stringify(
@@ -254,4 +362,5 @@ try {
   await rm(staging, { recursive: true, force: true })
   await rm(temporaryArchive, { force: true })
   await rm(temporaryTar, { force: true })
+  await rm(temporaryDistribution, { recursive: true, force: true })
 }
