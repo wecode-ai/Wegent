@@ -12,7 +12,7 @@ Wework macOS 应用使用 Tauri updater 支持自动升级。本地或独立发�
 
 - 默认构建 `universal-apple-darwin`，生成一个同时支持 Apple Silicon 和 Intel Mac 的安装包。
 - updater manifest 同时写入 `darwin-aarch64` 和 `darwin-x86_64`，两个平台可以指向同一个 universal archive。
-- `src-tauri/tauri.conf.json` 不保存发布服务地址或 updater 公钥。本地发布脚本和 GitHub Actions 都通过 `wework/scripts/generate-release-config.mjs` 生成临时 Tauri config，在注入发布参数的同时完整保留基础配置中的 `bundle.resources`。Tauri config 覆盖会整体替换资源数组，因此发布路径不能单独维护一份不完整的 resources 列表。
+- `src-tauri/tauri.conf.json` 不保存发布服务地址或 updater 公钥。本地发布脚本和 GitHub Actions 都通过 `wework/scripts/generate-release-config.mjs` 生成临时 Tauri config，在注入发布参数的同时保留基础配置中的完整资源类型，并将宽泛的 Codex 资源规则收窄为当前构建目标。Tauri config 覆盖会整体替换资源数组，因此发布路径不能单独维护一份不完整的 resources 列表。
 - updater 私钥和发布 token 只通过环境变量或本机文件读取，不提交到仓库。
 - Codex CLI 不在本地编译。构建前通过 `wework/scripts/prepare-codex-binary.mjs` 按 `wework/codex-binaries.lock.json` 下载 npm tarball，校验 SHA-512 integrity 后打进 Tauri resources。
 
@@ -145,7 +145,7 @@ Linux 上的内置浏览器子 WebView 必须放在 `GtkOverlay` 和 `GtkFixed` 
 https://github.com/<owner>/<repo>/releases/download/wework-updater/{{target}}-{{arch}}.json
 ```
 
-macOS CI job 不调用 `release-mac-app.sh`，但两条发布路径共享 `wework/scripts/generate-release-config.mjs`。该生成器从 `src-tauri/tauri.conf.json` 复制完整的 `bundle.resources`，确保 Codex、hooks、bundled plugins 及隐藏的 marketplace manifests 都进入正式发布包。修改桌面资源清单时应更新基础 Tauri 配置，不要在 workflow 中重新复制资源列表。
+macOS CI job 不调用 `release-mac-app.sh`，但两条发布路径共享 `wework/scripts/generate-release-config.mjs`。该生成器从 `src-tauri/tauri.conf.json` 复制完整的资源类型，并根据 `CODEX_TARGET` 只保留当前平台的 Codex 二进制，确保 hooks、bundled plugins、runtime 描述及隐藏的 marketplace manifests 都进入正式发布包，同时避免持久工作区中的其他平台 Codex 被误打包。修改桌面资源清单时应更新基础 Tauri 配置，不要在 workflow 中重新复制资源列表。
 
 workflow 只能通过 GitHub Actions 手动触发，不会响应 tag push。启动 workflow 时选择发布渠道：
 
