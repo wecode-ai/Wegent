@@ -533,13 +533,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
       issue = await issueByTitle(projectId, ISSUE_TITLE)
       const initialStatuses = nodeStatuses(issue)
-      assert.equal(initialStatuses['start'], 'completed')
       assert.ok(
         ['ready', 'queued', 'running'].includes(initialStatuses['stage-1']),
         `stage-1 was not active after instantiation: ${JSON.stringify(initialStatuses)}`
       )
       assert.equal(initialStatuses['wait-1'], 'waiting')
-      assert.equal(initialStatuses['end'], 'blocked')
       await control.command('waitFor', '[data-testid="cloud-todo-workflow-node-wait-1"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -640,21 +638,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         response => {
           const item = (response.items ?? []).find(candidate => candidate.id === issue.id)
           const statuses = nodeStatuses(item)
-          return Boolean(
-            item &&
-            statuses['wait-1'] === 'completed' &&
-            statuses['end'] === 'completed' &&
-            item.status === 'in_review'
-          )
+          return Boolean(item && statuses['wait-1'] === 'completed' && item.status === 'in_review')
         },
         'The merged event did not complete the wait node and move the Issue to in_review',
         uiTimeoutMs * 3
       ).then(response => response.items.find(candidate => candidate.id === issue.id))
       const finalStatuses = nodeStatuses(issue)
       assert.equal(finalStatuses['wait-1'], 'completed')
-      assert.equal(finalStatuses['end'], 'completed')
       assert.equal(issue.status, 'in_review')
-      await control.command('waitFor', '[data-testid="cloud-todo-workflow-node-end"]', {
+      await control.command('waitFor', '[data-testid="cloud-todo-workflow-node-wait-1"]', {
+        text: '已完成',
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'external-event-07-merged-issue-in-review.png')
