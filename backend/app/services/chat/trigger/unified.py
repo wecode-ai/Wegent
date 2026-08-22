@@ -1123,11 +1123,12 @@ async def build_execution_request(
         context_subtask_id = (
             user_subtask_id if user_subtask_id else processed_subtask_id
         )
+        selected_knowledge_base_names: dict[int, str] = {}
         if context_subtask_id:
             preload_selected_kb_skill = (
                 task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE
             )
-            request = await _process_contexts(
+            request, selected_knowledge_base_names = await _process_contexts(
                 db,
                 request,
                 context_subtask_id,
@@ -1142,7 +1143,12 @@ async def build_execution_request(
 
         provider_skills = []
         if task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE:
-            provider_skills = apply_selected_knowledge_context(db, request, task)
+            provider_skills = apply_selected_knowledge_context(
+                db,
+                request,
+                task,
+                selected_knowledge_base_names=selected_knowledge_base_names,
+            )
         unresolved_provider_skills = [
             skill_name
             for skill_name in provider_skills
@@ -1175,7 +1181,7 @@ async def _process_contexts(
     user_id: int,
     *,
     preload_selected_kb_skill: bool = True,
-) -> "ExecutionRequest":
+) -> tuple["ExecutionRequest", dict[int, str]]:
     """Process contexts (attachments, knowledge bases, etc.) for the request.
 
     Args:
@@ -1187,7 +1193,7 @@ async def _process_contexts(
             the knowledge-management skill (default: True)
 
     Returns:
-        Enhanced ExecutionRequest with context information
+        Enhanced ExecutionRequest and selected knowledge-base name snapshots
     """
     from app.services.chat.preprocessing import prepare_contexts_for_chat
 
@@ -1265,7 +1271,7 @@ async def _process_contexts(
         inline_attachment_content,
     )
 
-    return request
+    return request, ctx.kb.knowledge_base_names
 
 
 async def _create_kb_contexts_from_api_request(
