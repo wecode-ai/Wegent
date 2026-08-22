@@ -20,9 +20,23 @@ Wework macOS 应用使用 Tauri updater 支持自动升级。本地或独立发�
 
 Wework 桌面包会直接附带 Codex CLI，避免用户在首次运行时再安装。版本和每个平台的 tarball 校验值由 `wework/codex-binaries.lock.json` 固定。
 
-当前固定版本为稳定版 Codex `0.147.0`。升级时必须同时更新所有支持平台的 npm
+当前固定版本为稳定版 Codex `0.149.0`。升级时必须同时更新所有支持平台的 npm
 包版本、官方 registry tarball 地址与 SHA-512 integrity 值；不能直接替换已签名
 应用包中的二进制。请通过发布构建重新准备 sidecar、打包并代码签名。
+
+升级后先运行聚焦单测和全部目标准备命令，确认每个归档都能通过完整性校验，
+并且同时包含 `codex` 与 `codex-code-mode-host`：
+
+```bash
+pnpm --filter wework test scripts/prepare-codex-binary.test.mjs
+pnpm --filter wework run prepare:codex --all
+```
+
+然后根据 `wework/codex-binaries.lock.json` 中当前 macOS 目标的 `binaryPath`，
+对 `wework/src-tauri/binaries/codex/<target>/` 下准备出的准确二进制运行
+`--version`；不要使用 `PATH` 中的 `codex`。再通过
+`pnpm --filter wework ai:verify start` 在隔离的真实 Tauri 应用中至少验证
+Codex App Server 初始化、创建本地任务、完成一次真实 turn，以及插件列表加载。
 
 本地构建会自动准备当前目标平台的 Codex：
 
@@ -149,6 +163,8 @@ workflow 只能通过 GitHub Actions 手动触发，不会响应 tag push。启�
 - `stable-*` 只指向最新正式版。
 - `beta-*` 指向 Beta 和正式版中 SemVer 更高的版本，因此选择 Beta 的用户也会收到更新的正式版。
 - 新版本只有在 SemVer 高于当前渠道版本时才覆盖滚动 manifest，历史发布或较低版本不会让用户降级。
+
+DeepSeek Harness 和 Node.js Runtime 也发布在固定的 `wework-updater` Release，但不属于具体 Wework 应用版本的 assets。Harness 按 DSH 版本和平台生成独立的不可变资产；Node.js 按 Node 版本和平台生成资产。准备脚本使用依赖锁文件、Node ABI、签名身份和打包格式计算 Runtime 指纹：已存在的指纹会复用已发布的资产，只有依赖或这些构建输入变化时才发布新的 Runtime。CI 先上传归档再上传描述符，禁止覆盖或补齐只有一半的资产对，避免旧客户端保存的校验和失效。
 
 用户可以在 Wework 的“设置 → 关于”中打开“接收 Beta 版本更新”。默认关闭时客户端使用 `stable` target；打开后使用 `beta` target。切换后立即检查更新，并把选择保存在本机。
 

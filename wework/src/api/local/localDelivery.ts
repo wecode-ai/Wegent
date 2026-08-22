@@ -838,16 +838,12 @@ export function createLocalDeliveryApi(
       })
       rememberTasks(projectId, records)
       const items = records.map(record => localTask(record))
-      const taskBindings = await Promise.all(
-        items.map(item =>
-          request<LocalTaskBindingRecord[]>('todos.bindings', {
-            task_id: item.id,
-          })
-        )
-      )
+      const taskBindings = await request<LocalTaskBindingRecord[]>('todos.bindings.batch', {
+        task_ids: items.map(item => item.id),
+      })
       return {
         items,
-        task_bindings: taskBindings.flat().map(record => ({
+        task_bindings: taskBindings.map(record => ({
           ...record,
           id: Number(record.id),
         })),

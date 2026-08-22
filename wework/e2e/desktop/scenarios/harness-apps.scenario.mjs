@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url'
 import JSZip from 'jszip'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
+const RC7_INSTALLATION_ID = 'dsh-e2e-smoke-rc7'
 const APP_ROUTE = `/app/harness-${INSTALLATION_ID}`
 const MODEL_LABEL = 'Desktop E2E Chat'
 const RECIPIENT_NAME = 'smart-app-e2e-recipient'
@@ -63,19 +64,24 @@ async function waitForElementCount(control, selector, expected, timeoutMs, messa
   throw new Error(message)
 }
 
-async function createHarnessPackage(resultDir) {
-  const packagePath = join(resultDir, 'dsh-e2e-smoke.zip')
+async function createHarnessPackage(
+  resultDir,
+  installationId,
+  dshVersion,
+  { archiveName = installationId, version = '0.1.0' } = {}
+) {
+  const packagePath = join(resultDir, `${archiveName}.zip`)
   const zip = new JSZip()
-  const root = zip.folder('harness-e2e-plugin')
+  const root = zip.folder(`harness-e2e-plugin-${installationId}`)
   root.file('PLUGIN.md', '# Harness desktop E2E\n')
   root.file('INSTALL.zh-CN.md', '# 安装\n')
   root.file(
     'plugin-manifest.json',
     JSON.stringify(
       {
-        name: INSTALLATION_ID,
-        displayName: 'DSH E2E Smoke',
-        version: '0.1.0',
+        name: installationId,
+        displayName: `DSH E2E Smoke ${dshVersion}`,
+        version,
         type: 'deepseek-harness-plugin-bundle',
         description: 'Desktop E2E Harness smoke package',
         entry: {
@@ -84,7 +90,7 @@ async function createHarnessPackage(resultDir) {
           webUrl: 'http://127.0.0.1:3080/',
         },
         requirements: {
-          dsh: '0.1.0-rc.8',
+          dsh: dshVersion,
           node: '>=22',
         },
         defaultModel: {
@@ -131,8 +137,8 @@ async function createOfficialSource(resultDir, packagePath) {
   const archive = await JSZip.loadAsync(await readFile(packagePath))
   for (const entry of Object.values(archive.files)) {
     if (entry.dir) continue
-    const relative = entry.name.replace(/^harness-e2e-plugin\//, '')
-    if (!relative || relative === entry.name) continue
+    const relative = entry.name.split('/').slice(1).join('/')
+    if (!relative) continue
     const target = join(source, relative)
     await mkdir(dirname(target), { recursive: true })
     await writeFile(target, await entry.async('nodebuffer'))
@@ -165,7 +171,12 @@ async function createOfficialSource(resultDir, packagePath) {
 }
 
 export async function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutMs }) {
-  const packagePath = await createHarnessPackage(resultDir)
+  const packagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.1.0-rc.8')
+  const rc7PackagePath = await createHarnessPackage(resultDir, RC7_INSTALLATION_ID, '0.1.0-rc.7')
+  const sharedPackagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.1.0-rc.8', {
+    archiveName: 'dsh-e2e-shared-0.0.9',
+    version: '0.0.9',
+  })
   const officialSource = await createOfficialSource(resultDir, packagePath)
   return {
     requiresCloudEnvironment: true,
@@ -205,13 +216,13 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           })
         )
       )
-      const packageBytes = await readFile(packagePath)
+      const packageBytes = await readFile(sharedPackagePath)
       const initialized = await ownerRequest('/api/smart-apps/submissions/init', {
         method: 'POST',
         body: JSON.stringify({
           name: INSTALLATION_ID,
           displayName: 'DSH E2E Shared',
-          version: '0.1.0',
+          version: '0.0.9',
           filename: 'dsh-e2e-shared.zip',
           sha256: createHash('sha256').update(packageBytes).digest('hex'),
           sizeBytes: packageBytes.length,
@@ -370,6 +381,15 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', '[data-testid="harness-app-start-market-1"]', {
         timeoutMs: uiTimeoutMs,
       })
+      const officialManagementTabId = await control.command(
+        'getAttribute',
+        '[data-workspace-tab-content][aria-hidden="false"]',
+        { value: 'data-workspace-tab-content' }
+      )
+      assert.ok(
+        officialManagementTabId,
+        'Official Harness management page did not expose its workspace tab ID'
+      )
       await control.command('click', '[data-testid="harness-app-start-market-1"]')
       await control.command('waitFor', '[data-testid="harness-app-launch-market-1"]', {
         timeoutMs: 60_000,
@@ -377,10 +397,18 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', '[data-testid="app-iframe-harness-market-1"]', {
         timeoutMs: 600_000,
       })
+      await control.command(
+        'click',
+        `[data-testid="workspace-tab-select-${officialManagementTabId}"]`
+      )
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-select-${officialManagementTabId}"][aria-selected="true"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await captureScreenshot(control, 'harness-apps-03a-official-running.png', 'body')
-      await control.command('navigate', 'body', {
-        value: '/sites?app_type=smart_app&view=installed',
-      })
       await control.command('waitFor', '[data-testid="harness-app-stop-market-1"]', {
         timeoutMs: 60_000,
       })
@@ -422,7 +450,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         'waitFor',
         `[data-testid="smart-app-created-item-${INSTALLATION_ID}"]`,
         {
-          text: 'DSH E2E Smoke',
+          text: 'DSH E2E Smoke 0.1.0-rc.8',
           timeoutMs: uiTimeoutMs,
         }
       )
@@ -453,6 +481,28 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       )
       await captureScreenshot(control, 'harness-apps-04a-publish-dialog-zh.png', 'body')
       await control.command('click', '[data-testid="smart-app-publish-close"]')
+      await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
+        value: JSON.stringify([
+          {
+            uri: pathToFileURL(rc7PackagePath).href,
+            name: 'dsh-e2e-smoke-rc7.zip',
+            mimeType: 'application/zip',
+          },
+        ]),
+      })
+      await control.command(
+        'waitFor',
+        `[data-testid="smart-app-created-item-${RC7_INSTALLATION_ID}"]`,
+        {
+          text: 'DSH E2E Smoke 0.1.0-rc.7',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('waitFor', '[data-testid="smart-apps-import-button"]', {
+        enabled: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('navigate', 'body', {
         value: '/sites?app_type=smart_app&view=installed',
       })
@@ -476,6 +526,62 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       )
       assert.ok(managementTabId, 'Harness management page did not expose its workspace tab ID')
       await captureScreenshot(control, 'harness-apps-05-installed.png', 'body')
+
+      const rc7ModelSelector = `[data-testid="harness-app-model-${RC7_INSTALLATION_ID}"]`
+      await control.command('select', rc7ModelSelector, {
+        by: 'label',
+        value: MODEL_LABEL,
+      })
+      await control.command('waitFor', rc7ModelSelector, {
+        enabled: true,
+        stableMs: 300,
+        timeoutMs: 30_000,
+      })
+      await control.command(
+        'clickWhenEnabled',
+        `[data-testid="harness-app-start-${RC7_INSTALLATION_ID}"]`,
+        {
+          timeoutMs: 30_000,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `[data-testid="harness-app-launch-${RC7_INSTALLATION_ID}"]`,
+        {
+          timeoutMs: 30_000,
+        }
+      )
+      await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-select-${managementTabId}"][aria-selected="true"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `[data-testid="app-iframe-harness-${RC7_INSTALLATION_ID}"]`,
+        {
+          timeoutMs: 600_000,
+        }
+      )
+      await control.command('navigate', 'body', {
+        value: '/sites?app_type=smart_app&view=owned',
+      })
+      await control.command('waitFor', '[data-testid="smart-apps-owned-page"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('navigate', 'body', {
+        value: '/sites?app_type=smart_app&view=installed',
+      })
+      await control.command('waitFor', `[data-testid="harness-app-stop-${RC7_INSTALLATION_ID}"]`, {
+        timeoutMs: 30_000,
+      })
+      await control.command('click', `[data-testid="harness-app-stop-${RC7_INSTALLATION_ID}"]`)
+      await control.command('waitFor', `[data-testid="harness-app-start-${RC7_INSTALLATION_ID}"]`, {
+        timeoutMs: 30_000,
+      })
 
       const modelSelector = `[data-testid="harness-app-model-${INSTALLATION_ID}"]`
       const initialModelKey = await control.command('getValue', modelSelector)
@@ -700,6 +806,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-add-smart-app"]')
+      await control.command('click', '[data-testid="smart-apps-section-installed"]')
       await control.command('waitFor', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
