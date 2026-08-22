@@ -37,7 +37,7 @@ describe('ChangeRequestStatusIcon', () => {
     )
   })
 
-  it('supports positioning the trigger and opening the popover toward the content area', async () => {
+  it('renders the popover in the document layer so parent overflow cannot clip it', async () => {
     const snapshot: TaskChangeRequestSnapshot = {
       target: {
         deviceId: 'local',
@@ -76,8 +76,9 @@ describe('ChangeRequestStatusIcon', () => {
 
     await userEvent.click(trigger)
 
-    expect(screen.getByTestId('positioned-change-request-popover')).toHaveClass('left-0')
-    expect(screen.getByTestId('positioned-change-request-popover')).not.toHaveClass('right-0')
+    const popover = screen.getByTestId('positioned-change-request-popover')
+    expect(popover.parentElement).toBe(document.body)
+    expect(popover).toHaveClass('fixed', 'z-system-popover')
   })
 
   it('closes the popover on outside pointer down and Escape', async () => {

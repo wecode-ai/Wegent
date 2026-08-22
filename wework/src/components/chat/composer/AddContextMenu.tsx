@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
-import { useAnchoredPortalMenu } from './useAnchoredPortalMenu'
+import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
 import { useOutsideClick } from './useOutsideClick'
 
 interface AddContextMenuProps {
