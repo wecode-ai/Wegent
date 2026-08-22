@@ -2,7 +2,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 
-type SmartAppsSection = 'marketplace' | 'installed' | 'owned'
+type SmartAppsSection = 'marketplace' | 'owned'
 
 interface SmartAppsSectionNavProps {
   active: SmartAppsSection
@@ -17,11 +17,6 @@ const sections: Array<{
     id: 'marketplace',
     path: '/sites?app_type=smart_app',
     testId: 'smart-apps-section-marketplace',
-  },
-  {
-    id: 'installed',
-    path: '/sites?app_type=smart_app&view=installed',
-    testId: 'smart-apps-section-installed',
   },
   {
     id: 'owned',
@@ -44,9 +39,7 @@ export function SmartAppsSectionNav({ active }: SmartAppsSectionNavProps) {
         const label =
           section.id === 'marketplace'
             ? t('workbench.smart_apps_marketplace', '市场')
-            : section.id === 'installed'
-              ? t('workbench.smart_apps_installed', '已安装')
-              : t('workbench.smart_apps_owned', '我的创建')
+            : t('workbench.smart_apps_owned', '我的')
         return (
           <button
             key={section.id}
