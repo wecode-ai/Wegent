@@ -248,6 +248,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       { value: 'rerun' }
     )
     await control.command(
+      'waitFor',
+      '[data-testid="project-workflow-wait-rule-rerun-prompt-wait-1-rule-2"]',
+      { timeoutMs: uiTimeoutMs }
+    )
+    await control.command(
       'fill',
       '[data-testid="project-workflow-wait-rule-rerun-prompt-wait-1-rule-2"]',
       { value: RERUN_PROMPT }
