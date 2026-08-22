@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 
 
@@ -10,6 +11,8 @@ from pathlib import Path
 class RuntimeAssetPair:
     archive: Path
     descriptor: Path
+    archive_bytes: int
+    archive_sha256: str
 
 
 def load_runtime_asset_pairs(output_dir: Path) -> list[RuntimeAssetPair]:
@@ -48,17 +51,41 @@ def load_runtime_asset_pairs(output_dir: Path) -> list[RuntimeAssetPair]:
             or descriptor_name != archive_name.removesuffix(".tar.gz") + ".json"
         ):
             raise SystemExit("Runtime asset manifest contains an invalid asset pair")
+        archive = output_dir / archive_name
+        descriptor = output_dir / descriptor_name
+        missing = [str(path) for path in (archive, descriptor) if not path.is_file()]
+        if missing:
+            raise SystemExit(f"Runtime release assets not found: {', '.join(missing)}")
+        metadata = _read_descriptor(descriptor)
+        archive_bytes = metadata.get("archiveBytes")
+        archive_sha256 = metadata.get("archiveSha256")
+        if (
+            metadata.get("assetName") != archive_name
+            or not isinstance(archive_bytes, int)
+            or archive_bytes <= 0
+            or not isinstance(archive_sha256, str)
+            or len(archive_sha256) != 64
+            or any(
+                character not in "0123456789abcdefABCDEF"
+                for character in archive_sha256
+            )
+        ):
+            raise SystemExit(f"Invalid runtime descriptor: {descriptor}")
+        if (
+            archive.stat().st_size != archive_bytes
+            or _file_sha256(archive) != archive_sha256
+        ):
+            raise SystemExit(
+                f"Runtime archive does not match its descriptor: {archive}"
+            )
         pairs.append(
             RuntimeAssetPair(
-                archive=output_dir / archive_name,
-                descriptor=output_dir / descriptor_name,
+                archive=archive,
+                descriptor=descriptor,
+                archive_bytes=archive_bytes,
+                archive_sha256=archive_sha256,
             )
         )
-
-    paths = [path for pair in pairs for path in (pair.archive, pair.descriptor)]
-    missing = [str(path) for path in paths if not path.is_file()]
-    if missing:
-        raise SystemExit(f"Runtime release assets not found: {', '.join(missing)}")
     return pairs
 
 
@@ -81,7 +108,15 @@ def publish_runtime_asset_pairs(
         if archive_exists and descriptor_exists:
             print(f"Reusing published runtime: {pair.archive.name}")
             continue
-        if archive_exists or descriptor_exists:
+        if archive_exists:
+            if not _remote_archive_matches(client, bucket, archive_key, pair):
+                raise SystemExit(
+                    f"Published runtime archive does not match {pair.archive.name}"
+                )
+            upload(pair.descriptor)
+            print(f"Published descriptor for legacy runtime: {pair.archive.name}")
+            continue
+        if descriptor_exists:
             raise SystemExit(
                 f"Runtime publication is incomplete for {pair.archive.name}"
             )
@@ -99,3 +134,41 @@ def _object_exists(client: object, bucket: str, object_name: str) -> bool:
         if error.code in {"NoSuchKey", "NoSuchObject"}:
             return False
         raise
+
+
+def _read_descriptor(path: Path) -> dict:
+    try:
+        descriptor = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"Invalid runtime descriptor {path}: {error}") from error
+    if not isinstance(descriptor, dict):
+        raise SystemExit(f"Invalid runtime descriptor: {path}")
+    return descriptor
+
+
+def _file_sha256(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as file:
+        while chunk := file.read(64 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _remote_archive_matches(
+    client: object,
+    bucket: str,
+    object_name: str,
+    pair: RuntimeAssetPair,
+) -> bool:
+    metadata = client.stat_object(bucket, object_name)
+    if metadata.size != pair.archive_bytes:
+        return False
+    response = client.get_object(bucket, object_name)
+    digest = sha256()
+    try:
+        while chunk := response.read(64 * 1024):
+            digest.update(chunk)
+    finally:
+        response.close()
+        response.release_conn()
+    return digest.hexdigest() == pair.archive_sha256

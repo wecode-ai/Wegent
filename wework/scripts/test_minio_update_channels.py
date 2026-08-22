@@ -4,8 +4,9 @@ import importlib.util
 import json
 import subprocess
 import sys
+from hashlib import sha256
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from minio.error import S3Error
@@ -56,15 +57,20 @@ class FakeClient:
                 "request-id",
                 "host-id",
             )
-        return object()
+        return SimpleNamespace(size=len(self.objects[object_name]))
 
 
 class FakeResponse:
     def __init__(self, content: bytes) -> None:
         self.content = content
+        self.offset = 0
 
-    def read(self) -> bytes:
-        return self.content
+    def read(self, size: int = -1) -> bytes:
+        if size < 0:
+            size = len(self.content) - self.offset
+        chunk = self.content[self.offset : self.offset + size]
+        self.offset += len(chunk)
+        return chunk
 
     def close(self) -> None:
         pass
@@ -176,8 +182,18 @@ def test_stable_versions_sort_after_beta_versions() -> None:
 def write_runtime_pair(tmp_path: Path, kind: str, suffix: str) -> tuple[Path, Path]:
     archive = tmp_path / f"{kind}-runtime-macos-arm64-{suffix}.tar.gz"
     descriptor = archive.with_name(archive.name.removesuffix(".tar.gz") + ".json")
-    archive.write_bytes(kind.encode())
-    descriptor.write_text("{}", encoding="utf-8")
+    content = kind.encode()
+    archive.write_bytes(content)
+    descriptor.write_text(
+        json.dumps(
+            {
+                "assetName": archive.name,
+                "archiveBytes": len(content),
+                "archiveSha256": sha256(content).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
     return archive, descriptor
 
 
@@ -311,7 +327,7 @@ def test_runtime_asset_pairs_reuse_complete_publications(tmp_path: Path) -> None
     assert uploaded == []
 
 
-def test_runtime_asset_pairs_reject_incomplete_publications(tmp_path: Path) -> None:
+def test_runtime_asset_pairs_migrate_matching_legacy_archives(tmp_path: Path) -> None:
     harness = write_runtime_pair(tmp_path, "harness", "fixture")
     node = write_runtime_pair(tmp_path, "node", "fixture")
     assets = [
@@ -323,7 +339,67 @@ def test_runtime_asset_pairs_reject_incomplete_publications(tmp_path: Path) -> N
         encoding="utf-8",
     )
     client = FakeClient()
-    client.objects[f"wework/macos/{harness[0].name}"] = b"archive"
+    client.objects[f"wework/macos/{harness[0].name}"] = harness[0].read_bytes()
+    uploaded = []
+
+    publish_runtime_asset_pairs(
+        client,
+        "releases",
+        "wework/macos",
+        tmp_path,
+        uploaded.append,
+    )
+
+    assert uploaded == [harness[1], node[0], node[1]]
+
+
+def test_runtime_asset_pairs_reject_mismatched_legacy_archives(
+    tmp_path: Path,
+) -> None:
+    harness = write_runtime_pair(tmp_path, "harness", "fixture")
+    node = write_runtime_pair(tmp_path, "node", "fixture")
+    (tmp_path / "release-runtime-assets.json").write_text(
+        json.dumps(
+            {
+                "assets": [
+                    runtime_asset("harness", *harness),
+                    runtime_asset("node", *node),
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = FakeClient()
+    client.objects[f"wework/macos/{harness[0].name}"] = b"wrong"
+
+    with pytest.raises(SystemExit, match="archive does not match"):
+        publish_runtime_asset_pairs(
+            client,
+            "releases",
+            "wework/macos",
+            tmp_path,
+            lambda _path: None,
+        )
+
+
+def test_runtime_asset_pairs_reject_descriptor_only_publications(
+    tmp_path: Path,
+) -> None:
+    harness = write_runtime_pair(tmp_path, "harness", "fixture")
+    node = write_runtime_pair(tmp_path, "node", "fixture")
+    (tmp_path / "release-runtime-assets.json").write_text(
+        json.dumps(
+            {
+                "assets": [
+                    runtime_asset("harness", *harness),
+                    runtime_asset("node", *node),
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = FakeClient()
+    client.objects[f"wework/macos/{harness[1].name}"] = harness[1].read_bytes()
 
     with pytest.raises(SystemExit, match="publication is incomplete"):
         publish_runtime_asset_pairs(
