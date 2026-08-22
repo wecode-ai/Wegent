@@ -20,9 +20,23 @@ Wework macOS 应用使用 Tauri updater 支持自动升级。本地或独立发�
 
 Wework 桌面包会直接附带 Codex CLI，避免用户在首次运行时再安装。版本和每个平台的 tarball 校验值由 `wework/codex-binaries.lock.json` 固定。
 
-当前固定版本为稳定版 Codex `0.147.0`。升级时必须同时更新所有支持平台的 npm
+当前固定版本为稳定版 Codex `0.149.0`。升级时必须同时更新所有支持平台的 npm
 包版本、官方 registry tarball 地址与 SHA-512 integrity 值；不能直接替换已签名
 应用包中的二进制。请通过发布构建重新准备 sidecar、打包并代码签名。
+
+升级后先运行聚焦单测和全部目标准备命令，确认每个归档都能通过完整性校验，
+并且同时包含 `codex` 与 `codex-code-mode-host`：
+
+```bash
+pnpm --filter wework test scripts/prepare-codex-binary.test.mjs
+pnpm --filter wework run prepare:codex --all
+```
+
+然后根据 `wework/codex-binaries.lock.json` 中当前 macOS 目标的 `binaryPath`，
+对 `wework/src-tauri/binaries/codex/<target>/` 下准备出的准确二进制运行
+`--version`；不要使用 `PATH` 中的 `codex`。再通过
+`pnpm --filter wework ai:verify start` 在隔离的真实 Tauri 应用中至少验证
+Codex App Server 初始化、创建本地任务、完成一次真实 turn，以及插件列表加载。
 
 本地构建会自动准备当前目标平台的 Codex：
 

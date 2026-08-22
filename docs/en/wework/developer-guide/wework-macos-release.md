@@ -20,11 +20,27 @@ The Wework macOS app uses the Tauri updater for automatic upgrades. Local or sta
 
 The Wework desktop package includes Codex CLI directly, so users do not need to install it on first launch. The version and per-platform tarball checksums are pinned in `wework/codex-binaries.lock.json`.
 
-The current pin is stable Codex `0.147.0`. An upgrade must update every
+The current pin is stable Codex `0.149.0`. An upgrade must update every
 supported platform's npm package version, official registry tarball URL, and
 SHA-512 integrity value together; do not replace the binary inside an already
 signed app bundle. Prepare the sidecar again through a release build, then
 package and code-sign the application.
+
+After an upgrade, run the focused unit test and prepare every supported target
+to confirm that each archive passes integrity verification and contains both
+`codex` and `codex-code-mode-host`:
+
+```bash
+pnpm --filter wework test scripts/prepare-codex-binary.test.mjs
+pnpm --filter wework run prepare:codex --all
+```
+
+Then read the current macOS target's `binaryPath` from
+`wework/codex-binaries.lock.json` and run `--version` on that exact binary under
+`wework/src-tauri/binaries/codex/<target>/`; do not use a `codex` found on
+`PATH`. Use `pnpm --filter wework ai:verify start` to validate at least Codex
+App Server initialization, local task creation, one completed real turn, and
+plugin list loading in an isolated real Tauri application.
 
 Local builds prepare the Codex binary for the current target automatically:
 
