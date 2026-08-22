@@ -54,7 +54,7 @@ const snapshot: TaskChangeRequestSnapshot = {
 }
 
 describe('CloudTodoBoardCard', () => {
-  it('opens the pull request popup toward the card content', async () => {
+  it('renders the pull request popup outside the overflow-hidden board card', async () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(snapshot)
 
     render(
@@ -84,8 +84,8 @@ describe('CloudTodoBoardCard', () => {
 
     await userEvent.click(screen.getByTestId('cloud-todo-card-change-request-WEG-85-85'))
 
-    expect(screen.getByTestId('cloud-todo-card-change-request-WEG-85-85-popover')).toHaveClass(
-      'left-0'
-    )
+    const popover = screen.getByTestId('cloud-todo-card-change-request-WEG-85-85-popover')
+    expect(popover.parentElement).toBe(document.body)
+    expect(popover).toHaveClass('fixed', 'z-system-popover')
   })
 })
