@@ -178,6 +178,19 @@ After publishing the versioned Release, the workflow updates rolling manifests i
 
 DeepSeek Harness and Node.js Runtimes are also published in the fixed `wework-updater` Release, but they are not assets of a specific Wework application version. Harness produces a separate immutable asset for each DSH version and platform; Node.js assets are keyed by Node version and platform. The preparation scripts derive a Runtime fingerprint from dependency lockfiles, the Node ABI, signing identity, and archive format. An existing fingerprint reuses the published asset, so a new Runtime is published only when a dependency or one of those build inputs changes. CI uploads the archive before its descriptor and refuses to overwrite or repair a half-published pair, preserving checksums embedded in older clients.
 
+Internal MinIO releases use the same Runtime asset model.
+`build-minio-mac-release.sh` and `build-minio-windows-release.sh` collect every
+DSH version in the Harness catalog plus the Node.js Runtime, then publish each
+Runtime as a same-named `.tar.gz` and `.json` descriptor pair. A complete
+published pair is reused only when its remote descriptor exactly matches the
+current build. To migrate archives uploaded by the legacy archive-only flow,
+the script adds the missing descriptor only when the remote archive size and
+SHA-256 exactly match the current descriptor. A different archive, or a
+descriptor without its archive, fails the release and must never overwrite the
+old object. When Runtime packaging changes and the old archive cannot be
+reused, increment the archive format version in the preparation script so the
+fingerprint and asset name both change.
+
 Users opt into Beta updates under Wework **Settings → About** by enabling **Receive Beta updates**. The client uses the `stable` target by default and the `beta` target after opt-in. Changing the setting immediately checks for updates and persists locally.
 
 The updater manifest's `notes` field is persisted as the installed version's changelog during installation. On the first launch of the new version, Wework does not open the changelog automatically. Instead, it shows a fixed announcement at the bottom of the desktop sidebar above the account area. Clicking the announcement opens the Markdown release notes. Closing the details keeps the announcement available; only the announcement card's close button dismisses it, and that dismissal survives an app reload. The saved version must match the running app version, otherwise the client discards the stale record.
