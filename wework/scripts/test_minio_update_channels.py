@@ -456,6 +456,26 @@ def test_node_runtime_format_version_avoids_legacy_minio_asset_names() -> None:
     assert "node-runtime-tar-gzip-v2" in script
 
 
+def test_minio_release_notes_decode_escaped_newlines() -> None:
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            """
+source "$1"
+wework_decode_release_notes '## 更新内容\\n\\n- 修复发布流程\\n- 保留普通文本'
+""",
+            "bash",
+            str(SCRIPT_DIR / "lib/wework-release-notes.sh"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout == "## 更新内容\n\n- 修复发布流程\n- 保留普通文本"
+
+
 def test_internal_updater_key_exports_private_key_content(tmp_path: Path) -> None:
     key_path = tmp_path / "updater.key"
     key_path.write_text("private-key-content\n", encoding="utf-8")

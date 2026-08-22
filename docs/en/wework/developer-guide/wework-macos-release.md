@@ -191,6 +191,13 @@ old object. When Runtime packaging changes and the old archive cannot be
 reused, increment the archive format version in the preparation script so the
 fingerprint and asset name both change.
 
+If Jenkins still exposes `CHANGE_LOG` as a single-line string parameter that
+cannot be reconfigured, use a literal `\n` for each line break, for example
+`## Changes\n\n- Fix the release flow\n- Improve Runtime downloads`. The
+macOS and Windows MinIO release scripts decode this notation only for an
+explicit `--notes` value and write real multiline Markdown to the updater
+manifest.
+
 Users opt into Beta updates under Wework **Settings → About** by enabling **Receive Beta updates**. The client uses the `stable` target by default and the `beta` target after opt-in. Changing the setting immediately checks for updates and persists locally.
 
 The updater manifest's `notes` field is persisted as the installed version's changelog during installation. On the first launch of the new version, Wework does not open the changelog automatically. Instead, it shows a fixed announcement at the bottom of the desktop sidebar above the account area. Clicking the announcement opens the Markdown release notes. Closing the details keeps the announcement available; only the announcement card's close button dismisses it, and that dismissal survives an app reload. The saved version must match the running app version, otherwise the client discards the stale record.
