@@ -12,9 +12,12 @@ use webview2_com::{ClearBrowsingDataCompletedHandler, Microsoft::Web::WebView2::
 #[cfg(target_os = "windows")]
 use windows::core::Interface;
 
+#[cfg(target_os = "windows")]
+use super::INSECURE_HARNESS_BROWSER_ARGS;
 use super::{
-    browser_data_directory, EmbeddedBrowserEntry, EmbeddedBrowserReadiness, EmbeddedBrowserState,
-    EMBEDDED_BROWSER_DATA_STORE_ID, EMBEDDED_BROWSER_NOT_READY_ERROR, MAIN_WINDOW_LABEL,
+    browser_data_directory, should_disable_web_security, EmbeddedBrowserReadiness,
+    EmbeddedBrowserState, EMBEDDED_BROWSER_DATA_STORE_ID, EMBEDDED_BROWSER_NOT_READY_ERROR,
+    MAIN_WINDOW_LABEL,
 };
 
 const CLEAR_DATA_COMPLETION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -97,8 +100,12 @@ pub async fn clear_embedded_browser_data(
             return Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string());
         }
         webviews
-            .values()
-            .map(EmbeddedBrowserEntry::ready_webview)
+            .iter()
+            .map(|(label, entry)| {
+                entry
+                    .ready_webview()
+                    .map(|webview| (should_disable_web_security(label), webview))
+            })
             .collect::<Result<Vec<_>, _>>()?
     };
 
@@ -123,18 +130,56 @@ pub async fn clear_embedded_browser_data(
         })?;
     }
 
-    if !webviews.is_empty() {
-        for webview in &webviews {
-            clear_webview_data(webview, data_kinds).await?;
-        }
-        return Ok(webviews.len());
+    for (_, webview) in &webviews {
+        clear_webview_data(webview, data_kinds).await?;
     }
+    let active_profiles = webviews
+        .iter()
+        .map(|(disable_web_security, _)| *disable_web_security)
+        .collect::<Vec<_>>();
+    for disable_web_security in
+        inactive_browser_data_profiles(&active_profiles, cfg!(target_os = "windows"))
+    {
+        clear_inactive_browser_data(&app, data_kinds, disable_web_security).await?;
+    }
+    Ok(webviews.len())
+}
 
+fn inactive_browser_data_profiles(
+    active_web_security_modes: &[bool],
+    separate_insecure_profile: bool,
+) -> Vec<bool> {
+    let active_profiles = active_web_security_modes
+        .iter()
+        .map(|disable_web_security| separate_insecure_profile && *disable_web_security)
+        .collect::<Vec<_>>();
+    let expected_profiles: &[bool] = if separate_insecure_profile {
+        &[false, true]
+    } else {
+        &[false]
+    };
+    expected_profiles
+        .iter()
+        .copied()
+        .filter(|profile| !active_profiles.contains(profile))
+        .collect()
+}
+
+async fn clear_inactive_browser_data(
+    app: &tauri::AppHandle,
+    data_kinds: DataKindSet,
+    disable_web_security: bool,
+) -> Result<(), String> {
     let window = app
         .get_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| "Main window not found".to_string())?;
+    let profile_name = if disable_web_security {
+        "insecure-harness"
+    } else {
+        "default"
+    };
     let cleanup_label = format!(
-        "browser-data-cleanup-{}",
+        "browser-data-cleanup-{profile_name}-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -144,8 +189,14 @@ pub async fn clear_embedded_browser_data(
         .map_err(|error| format!("Failed to create browser cleanup URL: {error}"))?;
     let builder =
         tauri::webview::WebviewBuilder::new(&cleanup_label, WebviewUrl::External(cleanup_url))
-            .data_directory(browser_data_directory(&app)?)
+            .data_directory(browser_data_directory(app, disable_web_security)?)
             .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID);
+    #[cfg(target_os = "windows")]
+    let builder = if disable_web_security {
+        builder.additional_browser_args(INSECURE_HARNESS_BROWSER_ARGS)
+    } else {
+        builder
+    };
     let webview = window
         .add_child(
             builder,
@@ -161,8 +212,7 @@ pub async fn clear_embedded_browser_data(
         .close()
         .map_err(|error| format!("Failed to close browser data cleanup view: {error}"));
     clear_result?;
-    close_result?;
-    Ok(0)
+    close_result
 }
 
 async fn clear_webview_data(webview: &Webview<Wry>, data_kinds: DataKindSet) -> Result<(), String> {
@@ -475,6 +525,21 @@ mod tests {
                 history: false,
             }
         );
+    }
+
+    #[test]
+    fn inactive_profiles_cover_both_windows_webview2_configurations() {
+        assert_eq!(inactive_browser_data_profiles(&[], true), vec![false, true]);
+        assert_eq!(inactive_browser_data_profiles(&[false], true), vec![true]);
+        assert_eq!(inactive_browser_data_profiles(&[true], true), vec![false]);
+        assert!(inactive_browser_data_profiles(&[false, true], true).is_empty());
+    }
+
+    #[test]
+    fn shared_profiles_only_require_one_cleanup_view() {
+        assert_eq!(inactive_browser_data_profiles(&[], false), vec![false]);
+        assert!(inactive_browser_data_profiles(&[false], false).is_empty());
+        assert!(inactive_browser_data_profiles(&[true], false).is_empty());
     }
 
     #[test]

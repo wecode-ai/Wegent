@@ -1,5 +1,27 @@
-import { describe, expect, test } from 'vitest'
-import { buildRuntimeTaskRoute, parseRuntimeTaskRoute, resolveDesktopAppRoute } from './navigation'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import {
+  buildRuntimeTaskRoute,
+  parseRuntimeTaskRoute,
+  replaceTo,
+  resolveDesktopAppRoute,
+} from './navigation'
+
+afterEach(() => {
+  window.history.replaceState({}, '', '/')
+})
+
+describe('browser navigation', () => {
+  test('notifies route subscribers after replacing the current location', () => {
+    const onPopState = vi.fn()
+    window.addEventListener('popstate', onPopState)
+
+    replaceTo('/sites?app_type=smart_app')
+
+    expect(`${window.location.pathname}${window.location.search}`).toBe('/sites?app_type=smart_app')
+    expect(onPopState).toHaveBeenCalledOnce()
+    window.removeEventListener('popstate', onPopState)
+  })
+})
 
 describe('runtime task navigation', () => {
   test('builds runtime task routes without exposing workspace paths', () => {

@@ -31,6 +31,8 @@ import {
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
 } from '@/features/workbench/runtimeConversationCache'
+import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
+import * as changeRequestMonitor from '@/features/workbench/changeRequestMonitor'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -3981,6 +3983,107 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(
       screen.getByTestId('runtime-local-task-row-old-task')
     )
+  })
+
+  test('keeps change request icons inside shallow pinned and task rows', async () => {
+    const snapshot: TaskChangeRequestSnapshot = {
+      target: {
+        deviceId: 'local-device',
+        taskId: 'task-with-pr',
+        workspacePath: '/repo/Wegent',
+        remoteUrl: 'https://github.com/wecode-ai/Wegent.git',
+        branch: 'fix/sidebar-pr-icon',
+      },
+      changeRequest: {
+        provider: 'github',
+        number: 2875,
+        url: 'https://github.com/wecode-ai/Wegent/pull/2875',
+        title: 'Keep PR icons inside the sidebar',
+        state: 'open',
+        draft: false,
+        checks: 'success',
+        mergeability: 'mergeable',
+        mergeQueue: 'not_queued',
+      },
+      fetchedAt: '2026-08-21T00:00:00Z',
+      stale: false,
+      error: null,
+    }
+    const changeRequestSpy = vi
+      .spyOn(changeRequestMonitor, 'useTaskChangeRequest')
+      .mockReturnValue(snapshot)
+
+    try {
+      renderSidebar({
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              totalTasks: 2,
+              deviceWorkspaces: [
+                {
+                  id: 91,
+                  deviceId: 'local-device',
+                  deviceName: 'Local Mac',
+                  deviceStatus: 'online',
+                  available: true,
+                  workspacePath: '/repo/Wegent',
+                  tasks: [
+                    {
+                      taskId: 'pinned-task',
+                      threadId: 'pinned-thread',
+                      pinned: true,
+                      workspacePath: '/repo/Wegent',
+                      title: 'Pinned task',
+                      runtime: 'codex',
+                    },
+                    {
+                      taskId: 'project-task',
+                      workspacePath: '/repo/Wegent',
+                      title: 'Project task',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [
+            {
+              deviceId: 'local-device',
+              available: true,
+              workspacePath: '/workspace/chats/task-with-pr',
+              workspaceKind: 'chat',
+              tasks: [
+                {
+                  taskId: 'chat-task',
+                  workspacePath: '/workspace/chats/task-with-pr',
+                  workspaceKind: 'chat',
+                  title: 'Chat task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+          totalTasks: 3,
+        },
+      })
+
+      const pinnedIcon = screen.getByTestId('runtime-local-task-change-request-pinned-task')
+      const chatIcon = screen.getByTestId('runtime-local-task-change-request-chat-task')
+      expect(pinnedIcon.parentElement?.parentElement).toHaveClass('mr-1')
+      expect(pinnedIcon.parentElement?.parentElement).not.toHaveClass('-ml-7')
+      expect(chatIcon.parentElement?.parentElement).toHaveClass('mr-1')
+      expect(chatIcon.parentElement?.parentElement).not.toHaveClass('-ml-7')
+
+      await userEvent.click(screen.getByTestId('project-item-button'))
+      expect(
+        screen.getByTestId('runtime-local-task-change-request-project-task').parentElement
+          ?.parentElement
+      ).toHaveClass('-ml-7', 'mr-1')
+    } finally {
+      changeRequestSpy.mockRestore()
+    }
   })
 
   test('excludes pinned runtime tasks from the collapsed project task count', async () => {

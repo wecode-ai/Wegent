@@ -621,7 +621,6 @@ async function verifyWorkspaceIssueCreation(control) {
   await captureVerificationScreenshot(control, 'workspace-issue-03-new-task-sidebar.png')
   await control.command('click', `${taskPanelBackdrop} [data-testid="ai-chat-modal-close"]`)
 
-  await control.command('click', `${boardContentSelector} [data-testid="cloud-todo-detail-close"]`)
   await control.command('click', boardTabSelector)
   await control.command('waitFor', `${boardContentSelector} [data-testid="cloud-todo-workspace"]`, {
     visible: true,
@@ -792,13 +791,6 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     activeBoardContentSelector
   )
   await control.command('click', '[data-testid="ai-chat-modal-close"]', {
-    visible: true,
-  })
-  await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('click', '[data-testid="cloud-todo-detail-close"]', {
     visible: true,
   })
   await control.command(

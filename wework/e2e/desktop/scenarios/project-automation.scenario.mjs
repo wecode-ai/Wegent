@@ -500,6 +500,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
       timeoutMs: uiTimeoutMs,
     })
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${activeBoard} [data-testid="workspace-issue-input"] .composer-empty-caret`
+        )
+      ),
+      0,
+      'The empty board task composer replaced its native caret with a widget'
+    )
     await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
       value: '真实后端智能体看板任务',
     })
@@ -823,6 +833,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.ok(workflowBinding)
     const workflowTaskRow = `[data-testid="cloud-todo-open-workflow-task-stage-1-${workflowBinding.id}"]`
     await control.command('click', '[data-testid="ai-chat-modal-close"]')
+    const workflowIssueCard = `${activeBoard} [data-testid="cloud-todo-card-${workflowIssue.id}"]`
+    await control.command('waitFor', workflowIssueCard, {
+      text: workflowIssue.title,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', workflowIssueCard, { visible: true })
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+      text: workflowIssue.title,
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('waitFor', workflowTaskRow, {
       timeoutMs: uiTimeoutMs,
     })
@@ -849,7 +870,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       visible: true,
     })
-    const workflowIssueCard = `${activeBoard} [data-testid="cloud-todo-card-${workflowIssue.id}"]`
     await control.command('waitFor', workflowIssueCard, {
       text: workflowIssue.title,
       timeoutMs: uiTimeoutMs,

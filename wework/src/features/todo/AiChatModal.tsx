@@ -13,19 +13,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type {
-  Attachment,
-  ModelOptions,
-  ModelType,
-  ProjectWithTasks,
-  RuntimeSendRequest,
-  RuntimeTaskAddress,
-} from '@/types/api'
+import type { ProjectWithTasks, RuntimeSendRequest, RuntimeTaskAddress } from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
 import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
+import { useProjectRuntimeTaskComposer } from './useProjectRuntimeTaskComposer'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 
 interface AiChatModalProps {
@@ -37,6 +30,7 @@ interface AiChatModalProps {
    * even while the temporary task is still executing. */
   open: boolean
   onClose: () => void
+  onBack?: () => void
   initialAddress?: RuntimeTaskAddress | null
   initialLocalProjectId?: number | null
   inheritFromTask?: RuntimeTaskAddress | null
@@ -76,6 +70,7 @@ export function AiChatModal({
   task,
   open,
   onClose,
+  onBack,
   initialAddress = null,
   initialLocalProjectId = null,
   inheritFromTask = null,
@@ -90,7 +85,6 @@ export function AiChatModal({
   embedded = false,
 }: AiChatModalProps) {
   const { t } = useTranslation('common')
-  const { createProjectRuntimeTask } = useWorkbenchPaneContext()
   const storageKey = lastAddressStorageKey(project.id, task?.id)
   const [currentAddress, setCurrentAddress] = useState<RuntimeTaskAddress | null>(
     () => initialAddress ?? storedLastAddress(storageKey)
@@ -205,48 +199,14 @@ export function AiChatModal({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose, open])
 
-  const createConversation = useCallback(
-    async (
-      message: string,
-      options: {
-        attachments: Attachment[]
-        executionModel: {
-          modelId?: string
-          modelType?: ModelType | null
-          modelOptions?: ModelOptions
-        }
-        onError: (message: string) => void
-        onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
-      }
-    ) => {
-      const address = await createProjectRuntimeTask(message, {
-        project: selectedLocalProject,
-        deviceWorkspaceId: localDeviceWorkspaceId,
-        workspaceSource: inheritFromTask,
-        runtime: 'codex',
-        attachments: options.attachments,
-        executionModel: options.executionModel,
-        collaborationMode: 'default',
-        ...runtimeContext,
-        onError: options.onError,
-        prepareRuntimeTask: prepareTask
-          ? address => prepareTask(address, selectedLocalProject)
-          : undefined,
-        onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
-      })
-      if (address) await onTaskCreated?.(address, selectedLocalProject)
-      return address
-    },
-    [
-      createProjectRuntimeTask,
-      inheritFromTask,
-      localDeviceWorkspaceId,
-      onTaskCreated,
-      prepareTask,
-      runtimeContext,
-      selectedLocalProject,
-    ]
-  )
+  const createConversation = useProjectRuntimeTaskComposer({
+    project: selectedLocalProject,
+    deviceWorkspaceId: localDeviceWorkspaceId,
+    workspaceSource: inheritFromTask,
+    runtimeContext,
+    prepareTask,
+    onTaskCreated,
+  })
 
   const rememberAddress = useCallback(
     (address: RuntimeTaskAddress | null) => {
@@ -337,8 +297,8 @@ export function AiChatModal({
             <header className="flex h-12 shrink-0 items-center gap-2 px-3">
               <button
                 type="button"
-                data-testid="ai-chat-modal-close"
-                onClick={onClose}
+                data-testid="ai-chat-modal-back"
+                onClick={onBack ?? onClose}
                 aria-label={t('workbench.back_to_work_item', '返回 Issue')}
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
               >
@@ -360,6 +320,15 @@ export function AiChatModal({
                   <ArrowUpRight className="h-3.5 w-3.5" />
                 </button>
               ) : null}
+              <button
+                type="button"
+                data-testid="ai-chat-modal-close"
+                onClick={onClose}
+                aria-label={t('common.close', '关闭')}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </header>
             <TemporaryChatPanel
               currentProject={selectedLocalProject}
