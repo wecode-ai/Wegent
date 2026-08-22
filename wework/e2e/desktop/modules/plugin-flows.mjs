@@ -590,7 +590,7 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('click', '[data-testid="plugin-import-close"]')
 
   blockingNetworkProxy.block()
-  const blockedRequestCount = blockingNetworkProxy.requestCount()
+  const blockedRequestCount = blockingNetworkProxy.requests.length
   const importStartedAt = Date.now()
   try {
     await control.command('setLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
@@ -646,7 +646,7 @@ async function verifyMarketplacePluginLifecycle({
       'The offline delete left the personal plugin source behind'
     )
     assert.equal(
-      blockingNetworkProxy.requestCount(),
+      blockingNetworkProxy.requests.length,
       blockedRequestCount,
       'Local plugin import or deletion unexpectedly requested external network access'
     )
