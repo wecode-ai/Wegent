@@ -1974,7 +1974,7 @@ describe('DesktopSidebar', () => {
     renderSidebar({ onOpenSites, activeItem: 'sites' })
 
     expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByTestId('sites-button')).toHaveTextContent('站点与小程序')
+    expect(screen.getByTestId('sites-button')).toHaveTextContent('工作台/站点/小程序')
     await userEvent.click(screen.getByTestId('sites-button'))
 
     expect(onOpenSites).toHaveBeenCalledTimes(1)

@@ -161,7 +161,7 @@ describe('WorkspaceTabStrip', () => {
 
     expect(window.location.pathname).toBe('/sites')
     expect(new URLSearchParams(window.location.search).get('app_type')).toBe('smart_app')
-    expect(screen.getByRole('tab', { name: '站点与小程序' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: '工作台/站点/小程序' })).toHaveAttribute(
       'aria-selected',
       'true'
     )

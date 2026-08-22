@@ -4029,7 +4029,7 @@ export function DesktopSidebar({
               )}
               <DesktopSidebarNavItem
                 icon={Grid3X3}
-                label={t('workbench.sites', '站点与小程序')}
+                label={t('workbench.sites', '工作台/站点/小程序')}
                 testId="sites-button"
                 selected={activeItem === 'sites'}
                 onClick={onOpenSites ?? (() => navigateTo('/sites'))}
