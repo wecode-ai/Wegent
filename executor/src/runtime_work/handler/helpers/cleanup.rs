@@ -1,13 +1,14 @@
 fn cleanup_task_files_preview(worktrees: &WorktreeManager, link: &RuntimeTaskLink) -> Value {
-    cleanup_task_files_response(worktrees, link, false, true)
+    cleanup_task_files_response(worktrees, link, false, true, true)
 }
 fn cleanup_task_files_response(
     worktrees: &WorktreeManager,
     link: &RuntimeTaskLink,
     delete: bool,
     measure_bytes: bool,
+    include_worktree: bool,
 ) -> Value {
-    let targets = cleanup_targets_for_task(worktrees, link);
+    let targets = cleanup_targets_for_task(worktrees, link, include_worktree);
     let mut cleaned_count = 0_u64;
     let mut skipped_count = 0_u64;
     let mut error_count = 0_u64;
@@ -130,14 +131,17 @@ struct CleanupTarget {
 fn cleanup_targets_for_task(
     worktrees: &WorktreeManager,
     link: &RuntimeTaskLink,
+    include_worktree: bool,
 ) -> Vec<CleanupTarget> {
     let mut targets = Vec::new();
     let mut seen = HashSet::new();
-    push_cleanup_target(
-        &mut targets,
-        &mut seen,
-        worktree_cleanup_target(worktrees, &link.workspace_path),
-    );
+    if include_worktree {
+        push_cleanup_target(
+            &mut targets,
+            &mut seen,
+            worktree_cleanup_target(worktrees, &link.workspace_path),
+        );
+    }
     push_cleanup_target(
         &mut targets,
         &mut seen,
