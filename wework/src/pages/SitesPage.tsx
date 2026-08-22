@@ -39,7 +39,6 @@ import type {
   InstalledPlugin,
   RuntimeTaskAddress,
 } from '@/types/api'
-import { HarnessAppsPage } from './HarnessAppsPage'
 import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
 
 class ApplicationPluginSyncConfirmationError extends Error {}
@@ -658,10 +657,9 @@ export function SitesPage() {
           createNotice={createNotice}
           onOpenPlugins={() => navigateTo('/plugins')}
           smartAppsEnabled={experimentalFeatures.enabled}
+          smartAppsMode={smartAppsView === 'owned' ? 'owned' : 'marketplace'}
           smartAppsContent={
-            smartAppsView === 'installed' ? (
-              <HarnessAppsPage smartAppsApi={smartAppsApi} />
-            ) : smartAppsView === 'owned' ? (
+            smartAppsView === 'owned' ? (
               <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />
             ) : (
               <SmartAppsMarketplacePage api={smartAppsApi} />

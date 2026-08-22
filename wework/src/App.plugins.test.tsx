@@ -95,6 +95,7 @@ const mockViewport = vi.hoisted(() => ({
 }))
 
 const workbenchValue: WorkbenchContextValue = {
+  services: {},
   state: {
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
     defaultTeam: null,
