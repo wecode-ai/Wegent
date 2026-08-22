@@ -444,7 +444,10 @@ def test_minio_macos_build_inherits_the_complete_tauri_resource_list() -> None:
     script = (SCRIPT_DIR / "build-minio-mac-release.sh").read_text(encoding="utf-8")
 
     assert 'BASE_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json"' in script
+    assert 'CODEX_TARGET="$MACOS_BUILD_TARGET"' in script
     assert "verify_runtime_descriptors_in_app" in script
+    assert "verify_codex_targets_in_app" in script
+    assert "contains Codex for unexpected target" in script
     assert "bundled-execution-runtimes/node.json" in script
     assert "bundled-harness-runtime/runtimes.json" in script
     assert 'bash "$SCRIPT_DIR/release-mac-app.sh"' not in script

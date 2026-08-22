@@ -446,6 +446,7 @@ jobs:
           trap cleanup EXIT
           CONFIG_OVERRIDE="$config_override" \
           BASE_CONFIG="$PWD/src-tauri/tauri.conf.json" \
+          CODEX_TARGET="${{ matrix.rust_target }}" \
           VERSION="${{ needs.prepare-release.outputs.version }}" \
           UPDATER_ENDPOINT="https://github.com/${GH_REPO}/releases/download/wework-updater/{{target}}-{{arch}}.json" \
           UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
