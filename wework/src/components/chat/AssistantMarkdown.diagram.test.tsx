@@ -22,20 +22,23 @@ test('routes Mermaid fenced code to the diagram preview', async () => {
   expect(container.querySelector('[data-testid="markdown-code-block"]')).not.toBeInTheDocument()
 })
 
-test('renders and updates an unfinished Mermaid fence while the model is streaming', async () => {
+test('keeps an unfinished Mermaid fence as source while the model is streaming', async () => {
   const { container, rerender } = render(
     <AssistantMarkdown content={'```mermaid\ngraph LR\n  A[Start]'} isStreaming />
   )
 
   await waitFor(() => {
-    expect(container.querySelector('[data-testid="diagram-preview"]')).toHaveAttribute(
-      'data-language',
-      'mermaid'
+    expect(container.querySelector('[data-testid="diagram-preview"]')).not.toBeInTheDocument()
+    expect(container.querySelector('[data-testid="markdown-code-block"]')).toHaveTextContent(
+      'A[Start]'
     )
   })
 
   rerender(
-    <AssistantMarkdown content={'```mermaid\ngraph LR\n  A[Start] --> B[Streaming]'} isStreaming />
+    <AssistantMarkdown
+      content={'```mermaid\ngraph LR\n  A[Start] --> B[Streaming]\n```'}
+      isStreaming
+    />
   )
 
   await waitFor(() => {
@@ -45,15 +48,15 @@ test('renders and updates an unfinished Mermaid fence while the model is streami
   })
 })
 
-test('renders an unfinished PlantUML fence while the model is streaming', async () => {
+test('keeps an unfinished PlantUML fence as source while the model is streaming', async () => {
   const { container } = render(
     <AssistantMarkdown content={'```plantuml\n@startuml\nAlice -> Bob: Streaming'} isStreaming />
   )
 
   await waitFor(() => {
-    expect(container.querySelector('[data-testid="diagram-preview"]')).toHaveAttribute(
-      'data-language',
-      'plantuml'
+    expect(container.querySelector('[data-testid="diagram-preview"]')).not.toBeInTheDocument()
+    expect(container.querySelector('[data-testid="markdown-code-block"]')).toHaveTextContent(
+      'Alice -> Bob: Streaming'
     )
   })
 })

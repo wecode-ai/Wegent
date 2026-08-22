@@ -103,6 +103,10 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     () => stripUnsupportedContentReferenceCitations(bufferedContent),
     [bufferedContent]
   )
+  const unclosedDiagramCodes = useMemo(
+    () => findUnclosedDiagramCodes(displayContent),
+    [displayContent]
+  )
   const windowMarkdown = isTauriRuntime() && variant === 'default'
   const contentParts = useMemo(() => {
     const parts = splitCodexInlineVisualizations(displayContent)
@@ -180,7 +184,12 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <strong className="font-semibold">{children}</strong>
       ),
       code: (props: MarkdownCodeProps) => (
-        <MarkdownCode {...props} compact={variant === 'process'} isStreaming={isStreaming} />
+        <MarkdownCode
+          {...props}
+          compact={variant === 'process'}
+          isStreaming={isStreaming}
+          unclosedDiagramCodes={unclosedDiagramCodes}
+        />
       ),
       inlineCode: ({ children }: { children?: ReactNode }) => (
         <MarkdownInlineCode compact={variant === 'process'}>{children}</MarkdownInlineCode>
@@ -225,7 +234,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <AssistantMarkdownImage src={src} alt={alt} />
       ),
     }),
-    [headingClasses, isStreaming, openFile, variant]
+    [headingClasses, isStreaming, openFile, unclosedDiagramCodes, variant]
   )
 
   return (
@@ -338,6 +347,7 @@ type MarkdownCodeProps = {
   node?: HastElement
   compact?: boolean
   isStreaming?: boolean
+  unclosedDiagramCodes?: ReadonlySet<string>
 } & HTMLAttributes<HTMLElement>
 
 function MarkdownCode({
@@ -346,6 +356,7 @@ function MarkdownCode({
   node,
   compact = false,
   isStreaming = false,
+  unclosedDiagramCodes = new Set<string>(),
   ...props
 }: MarkdownCodeProps) {
   const match = /language-(\w*)/.exec(className || '')
@@ -358,6 +369,13 @@ function MarkdownCode({
   if (isBlock) {
     const lang = match ? match[1] || '' : ''
     if (DIAGRAM_LANGUAGES.has(lang.toLowerCase())) {
+      if (isStreaming && unclosedDiagramCodes.has(text.trimEnd())) {
+        return (
+          <MarkdownCodeBlock lang={lang} compact={compact} isStreaming>
+            {text || children}
+          </MarkdownCodeBlock>
+        )
+      }
       return <MarkdownDiagramPreview code={text.trimEnd()} language={lang} />
     }
     return (
@@ -399,6 +417,48 @@ function areAssistantMarkdownPropsEqual(
 
 function prepareAssistantMarkdownContent(content: string): string {
   return encodeLocalMarkdownLinks(content.replace(CODEX_PLAN_TAG_PATTERN, ''))
+}
+
+function findUnclosedDiagramCodes(content: string): ReadonlySet<string> {
+  const unclosedCodes = new Set<string>()
+  const lines = content.split('\n')
+  let openingFence: {
+    character: '`' | '~'
+    length: number
+    language: string
+    code: string[]
+  } | null = null
+
+  for (const line of lines) {
+    if (!openingFence) {
+      const match = /^(?<fence>`{3,}|~{3,})\s*(?<language>[\w+-]*)[^\n]*$/.exec(line)
+      if (!match?.groups) continue
+
+      const fence = match.groups.fence
+      const language = match.groups.language.toLowerCase()
+      if (!DIAGRAM_LANGUAGES.has(language)) continue
+
+      openingFence = {
+        character: fence[0] as '`' | '~',
+        length: fence.length,
+        language,
+        code: [],
+      }
+      continue
+    }
+
+    const closingFence = new RegExp(`^${openingFence.character}{${openingFence.length},}\\s*$`)
+    if (closingFence.test(line)) {
+      openingFence = null
+      continue
+    }
+    openingFence.code.push(line)
+  }
+
+  if (openingFence) {
+    unclosedCodes.add(openingFence.code.join('\n').trimEnd())
+  }
+  return unclosedCodes
 }
 
 function stripUnsupportedContentReferenceCitations(content: string): string {
