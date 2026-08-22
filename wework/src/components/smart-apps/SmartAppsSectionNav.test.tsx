@@ -19,36 +19,32 @@ describe('SmartAppsSectionNav', () => {
     navigateTo.mockReset()
   })
 
-  test('opens installed Smart apps from the marketplace', () => {
+  test('opens My apps from the marketplace', () => {
     render(<SmartAppsSectionNav active="marketplace" />)
 
     expect(screen.getByTestId('smart-apps-section-marketplace')).toHaveAttribute(
       'aria-current',
       'page'
     )
-    fireEvent.click(screen.getByTestId('smart-apps-section-installed'))
+    fireEvent.click(screen.getByTestId('smart-apps-section-owned'))
 
-    expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app&view=installed')
+    expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app&view=owned')
   })
 
   test('returns to the Smart app marketplace', () => {
-    render(<SmartAppsSectionNav active="installed" />)
+    render(<SmartAppsSectionNav active="owned" />)
 
-    expect(screen.getByTestId('smart-apps-section-installed')).toHaveAttribute(
-      'aria-current',
-      'page'
-    )
+    expect(screen.getByTestId('smart-apps-section-owned')).toHaveAttribute('aria-current', 'page')
     fireEvent.click(screen.getByTestId('smart-apps-section-marketplace'))
 
     expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app')
   })
 
-  test('opens my creations as a peer section', () => {
+  test('exposes exactly Marketplace and My as peer sections', () => {
     render(<SmartAppsSectionNav active="marketplace" />)
 
-    expect(screen.getByTestId('smart-apps-section-owned')).toHaveTextContent('我的创建')
-    fireEvent.click(screen.getByTestId('smart-apps-section-owned'))
-
-    expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app&view=owned')
+    expect(screen.getByTestId('smart-apps-section-owned')).toHaveTextContent('我的')
+    expect(screen.queryByText('已安装')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button')).toHaveLength(2)
   })
 })
