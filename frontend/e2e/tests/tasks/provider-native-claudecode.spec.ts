@@ -270,10 +270,12 @@ test.describe('Provider-native ClaudeCode access', () => {
     const modelSelector = page.getByTestId('model-selector')
     await expect(modelSelector).toBeEnabled()
     await modelSelector.click()
-    await page.getByTestId('model-cascade-search-input').fill(CLAUDE_MODEL_NAME)
+    const modelSearch = page.getByTestId('model-cascade-search-input')
+    await modelSearch.fill(CLAUDE_MODEL_NAME)
     const claudeModelOption = page.getByTestId(`model-option-${CLAUDE_MODEL_NAME}`)
     await expect(claudeModelOption).toBeVisible()
     await claudeModelOption.click()
     await expect(modelSelector).toHaveAttribute('aria-expanded', 'false')
+    await expect(modelSearch).toHaveCount(0)
   }
 })

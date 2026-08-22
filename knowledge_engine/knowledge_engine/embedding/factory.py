@@ -27,6 +27,7 @@ def create_embedding_model_from_runtime_config(
         model_id=resolved_config.get("model_id"),
         custom_headers=resolved_config.get("custom_headers") or {},
         dimensions=resolved_config.get("dimensions"),
+        encoding_format=resolved_config.get("encoding_format"),
         additional_input_modalities=resolved_config.get("additional_input_modalities"),
     )
 
@@ -40,6 +41,7 @@ def _create_embedding_model_from_resolved_values(
     model_id: str | None,
     custom_headers: dict[str, Any],
     dimensions: int | None,
+    encoding_format: str | None,
     additional_input_modalities: list[str] | None,
 ):
     normalized_additional_input_modalities = normalize_additional_input_modalities(
@@ -59,6 +61,7 @@ def _create_embedding_model_from_resolved_values(
                     headers=custom_headers,
                     api_key=api_key,
                     dimensions=dimensions,
+                    encoding_format=encoding_format,
                 ),
                 additional_input_modalities=normalized_additional_input_modalities,
             )
@@ -88,6 +91,7 @@ def _create_embedding_model_from_resolved_values(
                 headers=custom_headers if isinstance(custom_headers, dict) else {},
                 api_key=api_key,
                 dimensions=dimensions,
+                encoding_format=encoding_format,
             ),
             additional_input_modalities=normalized_additional_input_modalities,
         )
