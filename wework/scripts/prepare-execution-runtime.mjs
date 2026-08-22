@@ -21,7 +21,7 @@ const temporaryArchive = path.join(cacheDirectory, `wework-node-runtime-${proces
 const temporaryTar = temporaryArchive.slice(0, -3)
 const nodeEntitlements = path.join(root, 'scripts', 'deepseek-harness-node.entitlements.plist')
 const materializeRequested = process.argv.includes('--materialize')
-const archiveFormatVersion = 'node-runtime-tar-gzip-v1'
+const archiveFormatVersion = 'node-runtime-tar-gzip-v2'
 
 function run(command, args, cwd = root) {
   return new Promise((resolve, reject) => {

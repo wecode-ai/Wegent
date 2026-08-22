@@ -313,7 +313,9 @@ def test_runtime_asset_pairs_reuse_complete_publications(tmp_path: Path) -> None
     client = FakeClient()
     for asset in assets:
         client.objects[f"wework/macos/{asset['archiveName']}"] = b"archive"
-        client.objects[f"wework/macos/{asset['descriptorName']}"] = b"descriptor"
+        client.objects[f"wework/macos/{asset['descriptorName']}"] = (
+            tmp_path / asset["descriptorName"]
+        ).read_bytes()
 
     uploaded = []
     publish_runtime_asset_pairs(
@@ -325,6 +327,33 @@ def test_runtime_asset_pairs_reuse_complete_publications(tmp_path: Path) -> None
     )
 
     assert uploaded == []
+
+
+def test_runtime_asset_pairs_reject_changed_published_descriptors(
+    tmp_path: Path,
+) -> None:
+    harness = write_runtime_pair(tmp_path, "harness", "fixture")
+    node = write_runtime_pair(tmp_path, "node", "fixture")
+    assets = [
+        runtime_asset("harness", *harness),
+        runtime_asset("node", *node),
+    ]
+    (tmp_path / "release-runtime-assets.json").write_text(
+        json.dumps({"assets": assets}),
+        encoding="utf-8",
+    )
+    client = FakeClient()
+    client.objects[f"wework/macos/{harness[0].name}"] = harness[0].read_bytes()
+    client.objects[f"wework/macos/{harness[1].name}"] = b"{}"
+
+    with pytest.raises(SystemExit, match="descriptor does not match"):
+        publish_runtime_asset_pairs(
+            client,
+            "releases",
+            "wework/macos",
+            tmp_path,
+            lambda _path: None,
+        )
 
 
 def test_runtime_asset_pairs_migrate_matching_legacy_archives(tmp_path: Path) -> None:
@@ -419,6 +448,12 @@ def test_minio_macos_build_inherits_the_complete_tauri_resource_list() -> None:
     assert "bundled-execution-runtimes/node.json" in script
     assert "bundled-harness-runtime/runtimes.json" in script
     assert 'bash "$SCRIPT_DIR/release-mac-app.sh"' not in script
+
+
+def test_node_runtime_format_version_avoids_legacy_minio_asset_names() -> None:
+    script = (SCRIPT_DIR / "prepare-execution-runtime.mjs").read_text(encoding="utf-8")
+
+    assert "node-runtime-tar-gzip-v2" in script
 
 
 def test_internal_updater_key_exports_private_key_content(tmp_path: Path) -> None:

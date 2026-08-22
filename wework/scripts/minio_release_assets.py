@@ -106,6 +106,12 @@ def publish_runtime_asset_pairs(
         archive_exists = _object_exists(client, bucket, archive_key)
         descriptor_exists = _object_exists(client, bucket, descriptor_key)
         if archive_exists and descriptor_exists:
+            if not _remote_descriptor_matches(
+                client, bucket, descriptor_key, pair.descriptor
+            ):
+                raise SystemExit(
+                    f"Published runtime descriptor does not match {pair.descriptor.name}"
+                )
             print(f"Reusing published runtime: {pair.archive.name}")
             continue
         if archive_exists:
@@ -172,3 +178,20 @@ def _remote_archive_matches(
         response.close()
         response.release_conn()
     return digest.hexdigest() == pair.archive_sha256
+
+
+def _remote_descriptor_matches(
+    client: object,
+    bucket: str,
+    object_name: str,
+    local_descriptor: Path,
+) -> bool:
+    response = client.get_object(bucket, object_name)
+    try:
+        remote = json.loads(response.read().decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    finally:
+        response.close()
+        response.release_conn()
+    return remote == _read_descriptor(local_descriptor)
