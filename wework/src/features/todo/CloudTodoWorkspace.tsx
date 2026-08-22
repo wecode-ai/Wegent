@@ -431,18 +431,21 @@ function ProjectChangeRequestAutoRepairObserver({
   ) => Promise<void>
 }) {
   const snapshot = useTaskChangeRequest(monitor, binding.changeRequestTarget ?? null)
+  const failedEventKeysRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     const changeRequest = snapshot?.changeRequest
     const status = changeRequest ? autoRepairStatus(changeRequest) : null
     if (!snapshot || !changeRequest || !status || !statuses.includes(status)) return
     const eventKey = `${itemId}\0${binding.task_id}\0${changeRequestRepairEventKey(changeRequest)}`
+    if (failedEventKeysRef.current.has(eventKey)) return
     if (!claimChangeRequestAutoRepair(eventKey)) return
     queueMicrotask(() => {
       void onRepair(binding, snapshot)
         .then(() => completeChangeRequestAutoRepair(eventKey, true))
         .catch(error => {
           completeChangeRequestAutoRepair(eventKey, false)
+          failedEventKeysRef.current.add(eventKey)
           console.error('[Wework change requests] Automatic repair failed', {
             itemId,
             taskId: binding.task_id,
@@ -896,7 +899,10 @@ function ProjectDialog({
                 }
               />
               <span className="mt-1.5 block text-xs font-normal text-text-muted">
-                支持 HTTPS、SSH 或 owner/repository 格式；自托管地址会自动识别。
+                支持 HTTPS、SSH 或 owner/repository
+                格式。自托管实例请粘贴完整地址（含端口）；若实例部署在子路径下（如
+                /gitlab/），请使用 API
+                地址形式：https://host/gitlab/api/v4/projects/group%2Fproject。
               </span>
             </label>
             <label className="block text-sm font-medium text-text-primary">
@@ -1308,7 +1314,6 @@ export function CloudTodoWorkspace({
   // loaded-but-empty project (renders empty columns) from a failed fetch
   // (renders the skeleton plus the error banner instead of an empty board).
   const applyBoardItems = useCallback(
-    // eslint-disable-next-line react-hooks/preserve-manual-memoization -- React state setters are stable.
     (spaceKey: string, fetchedItems: CloudLoopItem[], error: string | null) => {
       console.info('[Wework project board] snapshot applied', {
         projectSpace: spaceKey,
@@ -1534,30 +1539,34 @@ export function CloudTodoWorkspace({
   const selectedProjectKey = selectedProject
     ? projectSpaceKey(projectSpaceRef(selectedProject))
     : null
-  async function continueChangeRequestRepair(
-    binding: CloudTodoBoardTaskBinding,
-    snapshot: TaskChangeRequestSnapshot
-  ): Promise<void> {
-    const changeRequest = snapshot.changeRequest
-    if (!changeRequest || !workbench || !selectedProject) return
-    const address = hydrateRuntimeTaskAddress(runtimeWork, {
-      deviceId: binding.device_id,
-      taskId: binding.task_id,
-    })
-    const accepted = await workbench.sendRuntimePaneMessage({
-      address,
-      message: buildChangeRequestRepairPrompt(
-        changeRequest,
-        binding.task_title || binding.task_id,
-        selectedProject.pull_request_automation?.prompt
-      ),
-      source: { source: 'manual' },
-      cloudProjectId: String(selectedProject.id),
-    })
-    if (!accepted) {
-      throw new Error(t('workbench.change_request_continue_repair_failed', '无法继续任务'))
-    }
-  }
+  const continueChangeRequestRepair = useCallback(
+    async (
+      binding: CloudTodoBoardTaskBinding,
+      snapshot: TaskChangeRequestSnapshot
+    ): Promise<void> => {
+      const changeRequest = snapshot.changeRequest
+      if (!changeRequest || !workbench || !selectedProject) return
+      const address = hydrateRuntimeTaskAddress(runtimeWork, {
+        deviceId: binding.device_id,
+        taskId: binding.task_id,
+      })
+      const accepted = await workbench.sendRuntimePaneMessage({
+        address,
+        message: buildChangeRequestRepairPrompt(
+          changeRequest,
+          binding.task_title || binding.task_id,
+          selectedProject.pull_request_automation?.prompt
+        ),
+        source: { source: 'manual' },
+        cloudProjectId: String(selectedProject.id),
+      })
+      if (!accepted) {
+        throw new Error(t('workbench.change_request_continue_repair_failed', '无法继续任务'))
+      }
+    },
+    // eslint-disable-next-line react-hooks/preserve-manual-memoization -- runtimeWork is a prop snapshot, never mutated here.
+    [t, workbench, runtimeWork, selectedProject]
+  )
   const projectForItem = (item: Pick<LocatedLoopItem, 'cloud_project_id' | 'project_store'>) => {
     if (item.project_store) {
       return projects.find(project =>
@@ -1613,8 +1622,7 @@ export function CloudTodoWorkspace({
   // wrapped once per selected project API instead of being recreated on every
   // render, so unrelated workspace re-renders do not restart the queue load
   // (which flashed the loading state).
-  /* eslint-disable react-hooks/preserve-manual-memoization -- the automation view
-   * reloads its queue when this adapter identity changes, so it must remain stable. */
+
   const automationExecutionApi = useMemo(() => {
     if (selectedProjectLocation === 'local') {
       const local = selectedProjectServices?.loopItemExecutionApi
@@ -1640,7 +1648,7 @@ export function CloudTodoWorkspace({
     services.runtimeWorkApi,
     selectedProjectServices?.loopItemExecutionApi,
   ])
-  /* eslint-enable react-hooks/preserve-manual-memoization */
+
   const selectedProjectAgents = selectedProjectKey ? (projectAgents[selectedProjectKey] ?? []) : []
   const agentNameById = (() => {
     const names: Record<string, string> = {}
@@ -3754,6 +3762,7 @@ export function CloudTodoWorkspace({
                   api={selectedProjectApi}
                   projectChatAgentApi={selectedProjectAgentApi}
                   projectAutomationApi={selectedProjectServices?.projectAutomationApi}
+                  externalEventApi={selectedProjectServices?.externalEventApi}
                   executionApi={automationExecutionApi}
                   deviceApi={selectedProjectServices?.deviceApi}
                   modelApi={selectedProjectServices?.modelApi}

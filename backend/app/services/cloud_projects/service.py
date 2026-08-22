@@ -28,6 +28,7 @@ from app.schemas.cloud_project import (
     default_board_statuses,
     normalize_provider_config,
 )
+from app.schemas.issue_workflow import require_rerun_agent
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_item_status_history import write_status_change
 
@@ -202,6 +203,18 @@ class CloudProjectService:
             or "visibility" in values.model_fields_set
         ):
             metadata = dict(project.metadata_json or {})
+            if (
+                "workflow_definition" in values.model_fields_set
+                and values.workflow_definition is not None
+            ):
+                # Validate before any board mutation so a rejected definition
+                # can never leave dirty LoopItem changes behind on the session.
+                try:
+                    require_rerun_agent(values.workflow_definition)
+                except ValueError as exc:
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)
+                    ) from exc
             if "tags" in values.model_fields_set and values.tags is not None:
                 metadata["tags"] = updates.pop("tags")
             if (

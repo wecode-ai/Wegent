@@ -6,6 +6,7 @@
 
 import hashlib
 import json
+import logging
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ from app.models.delivery import (
     LoopItem,
     loop_datetime_is_unset,
 )
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
 from app.schemas.delivery import (
@@ -38,12 +40,14 @@ from app.services.delivery.storage import (
     DeliveryStorageUnavailableError,
     delivery_storage,
 )
+from app.services.external_events.reference import bind_references_from_delivery
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
 from app.services.loop_item_unread import advance_content_revision
 
 MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 MAX_CHAT_BYTES = 10 * 1024 * 1024
+logger = logging.getLogger(__name__)
 
 
 def _safe_relative_path(value: str) -> str:
@@ -298,7 +302,13 @@ class DeliveryService:
             )
         assets = self.list_assets(db, delivery.id)
         workflow_node = self._workflow_node(item, source_binding)
+        workflow = (
+            item.metadata_json.get("workflow")
+            if isinstance(item.metadata_json, dict)
+            else None
+        )
         fulfillments = self._validate_fulfillments(
+            workflow,
             workflow_node,
             assets,
             values.fulfillments,
@@ -333,6 +343,7 @@ class DeliveryService:
         }
         manifest_key = f"{self._delivery_prefix_for(db, delivery)}/manifest.json"
         self.storage.put_json(manifest_key, manifest)
+        registration: dict[str, Any] | None = None
         try:
             now = datetime.now(timezone.utc).replace(tzinfo=None)
             delivery.manifest_object_key = manifest_key
@@ -363,6 +374,11 @@ class DeliveryService:
                     reason="delivery_finalized",
                     actor_user_id=user_id,
                 )
+                registration = {
+                    "workflow_node": workflow_node,
+                    "fulfillments": fulfillments,
+                    "source_binding": source_binding,
+                }
                 return delivery
             if item.status != "completed":
                 project = db.get(CloudProject, item.cloud_project_id)
@@ -401,6 +417,93 @@ class DeliveryService:
             db.rollback()
             self.storage.remove_objects([manifest_key])
             raise
+        finally:
+            if registration is not None:
+                try:
+                    self._register_reference_bindings(
+                        db,
+                        item=item,
+                        user_id=user_id,
+                        **registration,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[Delivery] Reference binding failed after finalize "
+                        "delivery=%s item=%s",
+                        delivery.id,
+                        item.id,
+                    )
+
+    def _register_reference_bindings(
+        self,
+        db: Session,
+        *,
+        item: LoopItem,
+        workflow_node: dict[str, Any] | None,
+        fulfillments: list[dict[str, Any]],
+        source_binding: LoopItemTaskBinding,
+        user_id: int,
+    ) -> None:
+        """Register downstream wait-node bindings derived from a delivered stage.
+
+        The reference is a property of the completed delivery, not of the
+        transport that finalized it: every finalize entry point (REST and MCP)
+        runs this step, so a delivered pull_request always reaches the wait
+        node that declared the provider rule.
+        """
+
+        metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        workflow = metadata.get("workflow")
+        if workflow_node is None or not isinstance(workflow, dict):
+            return
+        automation_run_id = self._automation_run_id(
+            db, item=item, source_binding=source_binding
+        )
+        if not automation_run_id:
+            logger.warning(
+                "[Delivery] Reference binding skipped without an automation run "
+                "item=%s node=%s",
+                item.id,
+                workflow_node.get("id"),
+            )
+            return
+        bind_references_from_delivery(
+            db,
+            item=item,
+            workflow=workflow,
+            node=workflow_node,
+            fulfillments=fulfillments,
+            automation_run_id=automation_run_id,
+            user_id=user_id,
+        )
+
+    @staticmethod
+    def _automation_run_id(
+        db: Session,
+        *,
+        item: LoopItem,
+        source_binding: LoopItemTaskBinding,
+    ) -> str:
+        """Resolve the owning automation run from the delivery's source task.
+
+        The run is stored on the execution row that dispatched the runtime
+        task, so registration never depends on which finalize entry point
+        carried the request.
+        """
+
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.loop_item_id == item.id,
+                LoopItemExecution.runtime_device_id == source_binding.device_id,
+                LoopItemExecution.runtime_task_id == source_binding.task_id,
+            )
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+        if execution is None:
+            return ""
+        return str(execution.automation_run_id or "")
 
     @staticmethod
     def _workflow_node(
@@ -429,6 +532,7 @@ class DeliveryService:
 
     @staticmethod
     def _validate_fulfillments(
+        workflow: dict[str, Any] | None,
         node: dict[str, Any] | None,
         assets: list[DeliveryAsset],
         values: list[DeliveryFulfillment],
@@ -440,10 +544,12 @@ class DeliveryService:
                     "Deliverable fulfillments require a workflow stage",
                 )
             return []
+        from app.services.workflow_deliverables import workflow_requirements
+
         requirements = {
             str(requirement.get("id")): requirement
-            for requirement in node.get("required_deliverables") or []
-            if isinstance(requirement, dict) and requirement.get("id")
+            for requirement in workflow_requirements(node, workflow)
+            if requirement.get("id")
         }
         if requirements and not values:
             raise HTTPException(
@@ -558,7 +664,7 @@ class DeliveryService:
             node is None
             or not node.get("automation_rule_id")
             or node.get("status") != "awaiting_deliverables"
-            or missing_requirement_ids(db, node)
+            or missing_requirement_ids(db, node, workflow)
         ):
             return
         node["status"] = "completed"

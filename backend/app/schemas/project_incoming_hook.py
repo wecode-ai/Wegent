@@ -45,7 +45,7 @@ class ProjectIncomingHookView(BaseModel):
 
 
 class ProjectIncomingReceipt(BaseModel):
-    status: Literal["created", "duplicate", "ignored", "failed"]
+    status: Literal["created", "buffered", "duplicate", "ignored", "failed"]
     provider: str
     event_id: str
     loop_item_id: str | None = None

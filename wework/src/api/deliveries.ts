@@ -367,11 +367,14 @@ export interface CloudTaskContext {
 
 export type WorkflowWorkspacePolicy = 'none' | 'composer' | 'inherit'
 export type WorkflowContextSource = 'final_result' | 'deliveries' | 'activity'
+export type WorkflowNodeType = 'stage' | 'wait'
+export type WaitEventAction = 'rerun' | 'complete' | 'continue'
 export type WorkflowNodeStatus =
   | 'blocked'
   | 'ready'
   | 'queued'
   | 'running'
+  | 'waiting'
   | 'awaiting_approval'
   | 'awaiting_deliverables'
   | 'changes_requested'
@@ -381,10 +384,38 @@ export type WorkflowNodeStatus =
 export type IssueAdvancementPolicy = 'manual' | 'ai'
 export type IssueStageMode = 'none' | 'dag'
 
+export type WaitEventRule = WaitEventCompleteRule | WaitEventPromptRule
+
+export interface WaitEventCompleteRule {
+  id: string
+  /** Provider that emits the event; empty matches any provider (custom rules). */
+  provider?: string | null
+  event_type: string
+  action: 'complete'
+}
+
+export interface WaitEventPromptRule {
+  id: string
+  /** Provider that emits the event; empty matches any provider (custom rules). */
+  provider?: string | null
+  event_type: string
+  action: 'rerun' | 'continue'
+  /** Repair instruction required by prompt-driven actions. */
+  prompt: string
+}
+
+export interface WaitNodeConfig {
+  rules: WaitEventRule[]
+  /** Robot that executes a rerun round for this wait node. */
+  agent_id?: string | null
+}
+
 export interface WorkflowNodeDefinition {
   id: string
   name: string
   prompt?: string
+  node_type?: WorkflowNodeType
+  wait_config?: WaitNodeConfig | null
   kind?: 'my_task' | 'automation' | 'ai' | null
   depends_on: string[]
   dependency_context?: Record<string, WorkflowContextSource[]>
@@ -419,6 +450,10 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   }>
   execution_id?: number | null
   automation_run_id?: string | null
+  wait_round?: number
+  repair_status?: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | null
+  /** Why automatic reference registration failed for this wait node. */
+  registration_error?: string
 }
 
 export interface IssueWorkflowInstance {

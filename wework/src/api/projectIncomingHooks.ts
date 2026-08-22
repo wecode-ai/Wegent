@@ -2,13 +2,13 @@ import type { HttpClient } from './http'
 
 export interface ProjectIncomingHook {
   id: string
-  projectId: string
+  project_id: string
   name: string
   status: 'active' | 'disabled'
-  webhookUrl: string
+  webhook_url: string
   version: number
-  createdAt: string
-  updatedAt: string
+  created_at: string
+  updated_at: string
 }
 
 export function createProjectIncomingHookApi(client: HttpClient) {

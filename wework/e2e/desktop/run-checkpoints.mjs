@@ -28,6 +28,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'context-compaction': './scenarios/context-compaction.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
+  'external-event-subscription': './scenarios/external-event-subscription.scenario.mjs',
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
@@ -41,6 +42,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'offline-local-project-space',
   'task-attachments',
   'project-assignment-notification',
+  'external-event-subscription',
   'runtime-task-queue',
   'runtime-terminal-convergence',
   'running-conversation-history',
@@ -288,7 +290,14 @@ function parallelCheckpointLimit() {
 
 function parallelCheckpointArgs(checkpoint) {
   const scope = process.env.WEWORK_E2E_PARALLEL_SCOPE ?? 'cloud'
-  if (scope === 'cloud') return ['--cloud-only', '--segment', checkpoint]
+  if (scope === 'cloud') {
+    // Scenario-only checkpoints manage their own app lifecycle and opt into
+    // the cloud environment through requiresCloudEnvironment; the explicit
+    // cloud-only mode is mutually exclusive with scenario-only mode.
+    return SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)
+      ? ['--segment', checkpoint]
+      : ['--cloud-only', '--segment', checkpoint]
+  }
   if (scope === 'core') return ['--segment', checkpoint]
   throw new Error('WEWORK_E2E_PARALLEL_SCOPE must be "cloud" or "core"')
 }

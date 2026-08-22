@@ -1,13 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Deterministic normalization and persistence for project incoming hooks."""
+"""Unified external event ingestion and persistence for project incoming hooks."""
 
 import hashlib
 import json
 import logging
 import secrets
-from dataclasses import dataclass
 from typing import Any, Mapping
 from urllib.parse import parse_qs
 
@@ -22,250 +21,24 @@ from app.models.delivery import (
 )
 from app.models.user import User
 from app.schemas.base_role import BaseRole
-from app.schemas.delivery import LoopItemCreate, LoopItemResponse
 from app.schemas.project_incoming_hook import (
     ProjectIncomingHookCreate,
     ProjectIncomingHookUpdate,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
-from app.services.loop_items.provider_router import loop_item_provider_router
-from app.services.loop_items.service import loop_item_service
+from app.services.external_events.adapters import (
+    NormalizedExternalEvent,
+    normalize_external_event,
+)
+from app.services.external_events.service import external_event_service
 
 MAX_BODY_BYTES = 1_048_576
 MAX_STORED_PAYLOAD_BYTES = 65_536
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class IncomingCandidate:
-    provider: str
-    title: str
-    description: str
-    source_url: str | None
-    external_id: str | None
-
-
-@dataclass(frozen=True)
-class IncomingDecision:
-    candidate: IncomingCandidate | None
-    provider: str
-    reason: str | None = None
-
-
-def _mapping(value: object) -> Mapping[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
 def _text(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
-
-
-def _first_text(payload: Mapping[str, Any], *paths: tuple[str, ...]) -> str:
-    for path in paths:
-        current: object = payload
-        for key in path:
-            if not isinstance(current, dict):
-                current = None
-                break
-            current = current.get(key)
-        value = _text(current)
-        if value:
-            return value
-    return ""
-
-
-def _github(payload: Mapping[str, Any], event_name: str) -> IncomingDecision | None:
-    issue = _mapping(payload.get("issue"))
-    if event_name != "issues" and not issue:
-        return None
-    action = _text(payload.get("action"))
-    if action not in {"opened", "reopened"}:
-        return IncomingDecision(
-            None, "github", f"unsupported action: {action or 'unknown'}"
-        )
-    repository = _mapping(payload.get("repository"))
-    number = issue.get("number")
-    return IncomingDecision(
-        IncomingCandidate(
-            provider="github",
-            title=_text(issue.get("title")),
-            description=_text(issue.get("body")),
-            source_url=_text(issue.get("html_url")) or None,
-            external_id=(
-                f"{_text(repository.get('full_name'))}#{number}"
-                if repository.get("full_name") and number is not None
-                else _text(issue.get("id")) or None
-            ),
-        ),
-        "github",
-    )
-
-
-def _gitlab(payload: Mapping[str, Any], event_name: str) -> IncomingDecision | None:
-    attributes = _mapping(payload.get("object_attributes"))
-    if event_name != "issue hook" and payload.get("object_kind") != "issue":
-        return None
-    action = _text(attributes.get("action"))
-    if action not in {"open", "reopen"}:
-        return IncomingDecision(
-            None, "gitlab", f"unsupported action: {action or 'unknown'}"
-        )
-    project = _mapping(payload.get("project"))
-    iid = attributes.get("iid")
-    return IncomingDecision(
-        IncomingCandidate(
-            provider="gitlab",
-            title=_text(attributes.get("title")),
-            description=_text(attributes.get("description")),
-            source_url=_text(attributes.get("url")) or None,
-            external_id=(
-                f"{_text(project.get('path_with_namespace'))}#{iid}"
-                if project.get("path_with_namespace") and iid is not None
-                else _text(attributes.get("id")) or None
-            ),
-        ),
-        "gitlab",
-    )
-
-
-def _sentry(payload: Mapping[str, Any], resource: str) -> IncomingDecision | None:
-    data = _mapping(payload.get("data"))
-    issue = _mapping(data.get("issue")) or _mapping(payload.get("issue"))
-    if resource not in {"issue", "error"} and not issue:
-        return None
-    action = _text(payload.get("action"))
-    if action and action not in {"created", "triggered", "resolved"}:
-        return IncomingDecision(None, "sentry", f"unsupported action: {action}")
-    if action == "resolved":
-        return IncomingDecision(None, "sentry", "resolved event")
-    return IncomingDecision(
-        IncomingCandidate(
-            provider="sentry",
-            title=_text(issue.get("title")) or _text(issue.get("culprit")),
-            description=_text(issue.get("culprit")) or _text(issue.get("metadata")),
-            source_url=_text(issue.get("web_url"))
-            or _text(issue.get("permalink"))
-            or None,
-            external_id=_text(issue.get("id")) or _text(payload.get("id")) or None,
-        ),
-        "sentry",
-    )
-
-
-def _grafana(payload: Mapping[str, Any]) -> IncomingDecision | None:
-    alerts = payload.get("alerts")
-    looks_like_grafana = isinstance(alerts, list) or any(
-        key in payload for key in ("ruleUrl", "dashboardURL", "orgId")
-    )
-    if not looks_like_grafana:
-        return None
-    state = (_text(payload.get("status")) or _text(payload.get("state"))).lower()
-    if state in {"ok", "resolved", "normal"}:
-        return IncomingDecision(None, "grafana", f"resolved state: {state}")
-    first_alert = _mapping(alerts[0]) if isinstance(alerts, list) and alerts else {}
-    labels = _mapping(first_alert.get("labels"))
-    annotations = _mapping(first_alert.get("annotations"))
-    title = (
-        _text(payload.get("title"))
-        or _text(labels.get("alertname"))
-        or _text(annotations.get("summary"))
-    )
-    return IncomingDecision(
-        IncomingCandidate(
-            provider="grafana",
-            title=title,
-            description=(
-                _text(payload.get("message"))
-                or _text(annotations.get("description"))
-                or _text(annotations.get("summary"))
-            ),
-            source_url=(
-                _text(first_alert.get("generatorURL"))
-                or _text(payload.get("ruleUrl"))
-                or _text(payload.get("dashboardURL"))
-                or None
-            ),
-            external_id=(
-                _text(first_alert.get("fingerprint"))
-                or _text(payload.get("groupKey"))
-                or None
-            ),
-        ),
-        "grafana",
-    )
-
-
-def _generic(payload: Mapping[str, Any]) -> IncomingDecision:
-    title = _first_text(
-        payload,
-        ("title",),
-        ("subject",),
-        ("summary",),
-        ("name",),
-        ("issue", "title"),
-        ("alert", "title"),
-        ("event", "title"),
-        ("message",),
-    )
-    if not title:
-        return IncomingDecision(None, "generic", "no deterministic title field found")
-    description = _first_text(
-        payload,
-        ("description",),
-        ("body",),
-        ("details",),
-        ("text",),
-        ("issue", "body"),
-        ("issue", "description"),
-        ("alert", "description"),
-        ("event", "description"),
-    )
-    source_url = _first_text(
-        payload,
-        ("url",),
-        ("web_url",),
-        ("html_url",),
-        ("source_url",),
-        ("issue", "url"),
-        ("issue", "html_url"),
-    )
-    external_id = _first_text(
-        payload,
-        ("event_id",),
-        ("eventId",),
-        ("id",),
-        ("uuid",),
-        ("issue", "id"),
-        ("alert", "id"),
-    )
-    return IncomingDecision(
-        IncomingCandidate(
-            provider="generic",
-            title=title,
-            description=description,
-            source_url=source_url or None,
-            external_id=external_id or None,
-        ),
-        "generic",
-    )
-
-
-def normalize_incoming_payload(
-    payload: Mapping[str, Any],
-    headers: Mapping[str, str],
-) -> IncomingDecision:
-    github_event = _text(headers.get("x-github-event")).lower()
-    gitlab_event = _text(headers.get("x-gitlab-event")).lower()
-    sentry_resource = _text(headers.get("sentry-hook-resource")).lower()
-    for decision in (
-        _github(payload, github_event),
-        _gitlab(payload, gitlab_event),
-        _sentry(payload, sentry_resource),
-        _grafana(payload),
-    ):
-        if decision is not None:
-            return decision
-    return _generic(payload)
 
 
 def parse_incoming_body(raw_body: bytes, content_type: str) -> Mapping[str, Any]:
@@ -418,7 +191,7 @@ class ProjectIncomingHookService:
 
         try:
             payload = parse_incoming_body(raw_body, content_type)
-            decision = normalize_incoming_payload(payload, headers)
+            incoming = normalize_external_event(payload, headers)
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             return self._record_outcome(
                 db,
@@ -429,8 +202,27 @@ class ProjectIncomingHookService:
                 outcome="failed",
                 reason=str(exc),
             )
+        if incoming is None:
+            return self._record_outcome(
+                db,
+                hook,
+                raw_body,
+                headers,
+                provider="unknown",
+                outcome="ignored",
+                reason="no supported external event detected",
+                public_id=self._event_public_id(
+                    hook, raw_body, headers, provider="unknown", event_id=None
+                ),
+            )
 
-        event_public_id = self._event_public_id(hook, raw_body, headers, decision)
+        event_public_id = self._event_public_id(
+            hook,
+            raw_body,
+            headers,
+            provider=incoming.provider,
+            event_id=incoming.event_id,
+        )
         existing = (
             db.query(ProjectIncomingEvent)
             .filter(ProjectIncomingEvent.public_id == event_public_id)
@@ -439,124 +231,48 @@ class ProjectIncomingHookService:
         if existing is not None:
             return {
                 "status": "duplicate",
-                "provider": existing.source or decision.provider,
+                "provider": existing.source or incoming.provider,
                 "event_id": str(existing.id),
                 "loop_item_id": existing.loop_item_id or None,
                 "reason": None,
             }
-        if decision.candidate is None:
-            return self._record_outcome(
-                db,
-                hook,
-                raw_body,
-                headers,
-                provider=decision.provider,
-                outcome="ignored",
-                reason=decision.reason,
-                public_id=event_public_id,
-            )
-        candidate = decision.candidate
-        if not candidate.title:
-            return self._record_outcome(
-                db,
-                hook,
-                raw_body,
-                headers,
-                provider=candidate.provider,
-                outcome="failed",
-                reason="title is empty",
-                public_id=event_public_id,
-            )
-
-        project_metadata = (
-            project.metadata_json if isinstance(project.metadata_json, dict) else {}
-        )
-        board_config = project_metadata.get("board_config")
-        board_config = board_config if isinstance(board_config, dict) else {}
-        statuses = board_config.get("statuses")
-        statuses = statuses if isinstance(statuses, list) else []
-        inbox_status = (
-            str(statuses[0].get("id"))
-            if statuses and isinstance(statuses[0], dict)
-            else None
-        )
-        description_parts = [candidate.description]
-        if candidate.source_url:
-            description_parts.append(f"来源：{candidate.source_url}")
-        created = loop_item_provider_router.create(
-            db,
-            project,
-            creator,
-            LoopItemCreate(
-                title=candidate.title[:255],
-                description="\n\n".join(part for part in description_parts if part),
-                status=inbox_status,
-            ),
-            automation_context={
-                "trigger": "incoming_hook",
-                "hook_id": str(hook.id),
-                "provider": candidate.provider,
-                "external_id": candidate.external_id,
-                "source_url": candidate.source_url,
-            },
-            assign_creator_if_unassigned=False,
-        )
-        response = LoopItemResponse.model_validate(created.values)
         event = ProjectIncomingEvent(
             public_id=event_public_id,
             cloud_project_id=str(project.id),
             parent_id=str(hook.id),
-            loop_item_id=str(created.values["id"]),
-            title=candidate.title[:255],
-            source=candidate.provider[:20],
-            status="created",
+            title=incoming.summary[:255],
+            source=incoming.provider[:20],
+            status="pending",
             created_by_user_id=creator.id,
             metadata_json=self._event_metadata(
                 raw_body,
                 headers,
-                external_id=candidate.external_id,
-                source_url=candidate.source_url,
+                event=incoming,
             ),
         )
         db.add(event)
-        db.commit()
-        db.refresh(event)
-
-        from app.services.project_automations import (
-            ProjectAutomationEvent,
-            project_automation_processor,
-        )
-
         try:
-            await project_automation_processor.process(
-                db,
-                ProjectAutomationEvent(
-                    event_type="task.created",
-                    project_id=str(project.id),
-                    subject_id=str(created.values["id"]),
-                    source="incoming_hook",
-                    actor_user_id=creator.id,
-                    payload=response.model_dump(mode="json"),
-                ),
-            )
+            status_value = external_event_service.route(db, hook=hook, event=incoming)
+            event.status = status_value
+            db.commit()
+            db.refresh(event)
         except Exception:
             db.rollback()
-            logger.exception(
-                "Project automation processing failed after incoming hook "
-                "project=%s task=%s hook=%s",
-                project.id,
-                created.values.get("id"),
-                hook.id,
+            return self._record_outcome(
+                db,
+                hook,
+                raw_body,
+                headers,
+                provider=incoming.provider,
+                outcome="failed",
+                reason="external event routing failed",
+                public_id=event_public_id,
             )
-
-        if created.internal_item is not None:
-            db.refresh(created.internal_item)
-            loop_item_service.response_values(db, created.internal_item, creator.id)
         return {
-            "status": "created",
-            "provider": candidate.provider,
+            "status": status_value,
+            "provider": incoming.provider,
             "event_id": str(event.id),
-            "loop_item_id": str(created.values["id"]),
+            "loop_item_id": None,
             "reason": None,
         }
 
@@ -618,9 +334,11 @@ class ProjectIncomingHookService:
         hook: ProjectIncomingHook,
         raw_body: bytes,
         headers: Mapping[str, str],
-        decision: IncomingDecision,
+        *,
+        provider: str,
+        event_id: str | None,
     ) -> str:
-        external_delivery = next(
+        instance_id = next(
             (
                 _text(headers.get(key))
                 for key in (
@@ -633,13 +351,10 @@ class ProjectIncomingHookService:
             ),
             "",
         )
-        candidate_id = decision.candidate.external_id if decision.candidate else None
-        identity = external_delivery or candidate_id
+        identity = instance_id or event_id or ""
         if not identity:
             return self._body_public_id(hook, raw_body)
-        digest = hashlib.sha256(
-            f"{hook.id}:{decision.provider}:{identity}".encode()
-        ).hexdigest()
+        digest = hashlib.sha256(f"{hook.id}:{provider}:{identity}".encode()).hexdigest()
         return digest[:36]
 
     @staticmethod
@@ -647,8 +362,7 @@ class ProjectIncomingHookService:
         raw_body: bytes,
         headers: Mapping[str, str],
         *,
-        external_id: str | None = None,
-        source_url: str | None = None,
+        event: NormalizedExternalEvent | None = None,
     ) -> dict[str, object]:
         metadata: dict[str, object] = {
             "content_type": headers.get("content-type", ""),
@@ -657,10 +371,21 @@ class ProjectIncomingHookService:
         }
         if len(raw_body) <= MAX_STORED_PAYLOAD_BYTES:
             metadata["payload"] = raw_body.decode("utf-8", errors="replace")
-        if external_id:
-            metadata["external_id"] = external_id
-        if source_url:
-            metadata["source_url"] = source_url
+        if event is not None:
+            metadata["event_type"] = event.event_type
+            metadata["opaque_ref"] = event.opaque_ref
+            metadata["occurred_at"] = (
+                event.occurred_at.isoformat() if event.occurred_at else None
+            )
+            # The stored raw payload already carries the provider body; the
+            # routing-only detail is kept only as a fallback for oversized
+            # payloads so the row never duplicates the same data.
+            if "payload" not in metadata and event.detail:
+                metadata["detail"] = event.detail
+            if event.source_url:
+                metadata["source_url"] = event.source_url
+            if event.event_id:
+                metadata["event_id"] = event.event_id
         return metadata
 
 

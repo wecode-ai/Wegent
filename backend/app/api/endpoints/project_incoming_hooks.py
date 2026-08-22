@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.config import settings
 from app.core.security import get_current_user
 from app.models.delivery import ProjectIncomingHook
 from app.models.user import User
@@ -23,14 +24,16 @@ public_router = APIRouter()
 
 
 def _view(request: Request, hook: ProjectIncomingHook) -> ProjectIncomingHookView:
+    hook_url = request.url_for("receive_project_incoming_hook", token=hook.public_id)
+    public_base = str(settings.WEGENT_BACKEND_PUBLIC_URL or "").rstrip("/")
+    if not public_base:
+        public_base = str(request.base_url).rstrip("/")
     return ProjectIncomingHookView(
         id=str(hook.id),
         project_id=str(hook.cloud_project_id),
         name=hook.name or "",
         status=hook.status or "disabled",
-        webhook_url=str(
-            request.url_for("receive_project_incoming_hook", token=hook.public_id)
-        ),
+        webhook_url=f"{public_base}{hook_url.path}",
         version=hook.version,
         created_at=hook.created_at,
         updated_at=hook.updated_at,

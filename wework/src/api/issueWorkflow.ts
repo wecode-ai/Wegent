@@ -16,13 +16,68 @@ export interface WorkflowTaskBinding {
   linked_at?: string
 }
 
+/**
+ * Drop legacy start/end sentinels from a stored definition or snapshot.
+ *
+ * Structural markers carry no semantics: the entry is any node without
+ * predecessors and the end is derived from nodes without successors. Stripping
+ * also rewires `depends_on` and the per-edge context so no dangling reference
+ * survives. Mirrors the backend projection normalization.
+ */
+export function stripWorkflowEndpointNodes<
+  T extends {
+    id: string
+    node_type?: string
+    depends_on?: string[]
+    dependency_context?: Record<string, unknown>
+  },
+>(nodes: T[]): T[] {
+  const structural = new Set(
+    nodes
+      .filter(node => node.node_type === 'start' || node.node_type === 'end')
+      .map(node => node.id)
+  )
+  if (structural.size === 0) return nodes
+  return nodes
+    .filter(node => !structural.has(node.id))
+    .map(node => {
+      if (!(node.depends_on ?? []).some(dependency => structural.has(dependency))) return node
+      const dependsOn = (node.depends_on ?? []).filter(dependency => !structural.has(dependency))
+      const dependencyContext = node.dependency_context
+        ? Object.fromEntries(
+            Object.entries(node.dependency_context).filter(
+              ([dependency]) => !structural.has(dependency)
+            )
+          )
+        : node.dependency_context
+      return { ...node, depends_on: dependsOn, dependency_context: dependencyContext }
+    })
+}
+
 export function instantiateIssueWorkflow(
   definition: ProjectWorkflowDefinition | null | undefined
 ): IssueWorkflowInstance | null {
   if (!definition) return null
+  const definitionNodes = stripWorkflowEndpointNodes(definition.nodes)
   const stageMode = definition.stage_mode ?? (definition.nodes.length ? 'dag' : 'none')
   const advancementPolicy = definition.advancement_policy ?? 'manual'
   if (stageMode === 'none' && advancementPolicy === 'manual') return null
+  const nodes: WorkflowNodeInstance[] = (stageMode === 'dag' ? definitionNodes : []).map(node => ({
+    ...node,
+    status:
+      node.depends_on.length === 0 && node.node_type === 'wait'
+        ? 'waiting'
+        : node.depends_on.length === 0
+          ? 'ready'
+          : 'blocked',
+    task_binding_id: null,
+    task_ids: [],
+    task_statuses: {},
+    delivery_ids: [],
+    fulfilled_deliverable_ids: [],
+    decision_history: [],
+    execution_id: null,
+  }))
   return {
     version: 1,
     definition_version: definition.version,
@@ -35,31 +90,34 @@ export function instantiateIssueWorkflow(
     active_run_id: null,
     active_plan_version: null,
     current_stage_id: null,
-    nodes: (stageMode === 'dag' ? definition.nodes : []).map(node => ({
-      ...node,
-      status: node.depends_on.length === 0 ? 'ready' : 'blocked',
-      task_binding_id: null,
-      task_ids: [],
-      task_statuses: {},
-      delivery_ids: [],
-      fulfilled_deliverable_ids: [],
-      decision_history: [],
-      execution_id: null,
-    })),
+    // Release nodes whose dependencies are already satisfied (roots are ready
+    // at instantiation), mirroring the backend projection pass.
+    nodes: releaseReadyNodes(nodes),
   }
 }
 
 function releaseReadyNodes(nodes: WorkflowNodeInstance[]): WorkflowNodeInstance[] {
+  nodes = stripWorkflowEndpointNodes(nodes)
   const completed = new Set(
     nodes
       .filter(node => ['completed', 'forced_completed'].includes(node.status))
       .map(node => node.id)
   )
+  const statuses = new Map(nodes.map(node => [node.id, node.status]))
   return nodes.map(node => {
     if (node.status !== 'blocked') return node
-    return node.depends_on.every(dependency => completed.has(dependency))
-      ? { ...node, status: 'ready' }
-      : node
+    if (node.node_type === 'wait') {
+      // A wait node becomes active as soon as its upstream work has begun (no
+      // dependency is still blocked): the robot registers the external
+      // reference while its stage is still running, and only the terminal
+      // event completes the node later. Mirrors the backend projection pass.
+      if (node.depends_on.some(dependency => statuses.get(dependency) === 'blocked')) return node
+      statuses.set(node.id, 'waiting')
+      return { ...node, status: 'waiting' }
+    }
+    if (!node.depends_on.every(dependency => completed.has(dependency))) return node
+    statuses.set(node.id, 'ready')
+    return { ...node, status: 'ready' }
   })
 }
 
@@ -88,6 +146,7 @@ export function reconcileIssueWorkflowForTaskBindings(
   workflow: IssueWorkflowInstance,
   bindings: WorkflowTaskBinding[]
 ): IssueWorkflowInstance {
+  const workflowNodes = stripWorkflowEndpointNodes(workflow.nodes)
   const orderedBindings = [...bindings].sort((left, right) => {
     const timeOrder = (right.linked_at ?? '').localeCompare(left.linked_at ?? '')
     if (timeOrder !== 0) return timeOrder
@@ -96,7 +155,7 @@ export function reconcileIssueWorkflowForTaskBindings(
     })
   })
   let changed = false
-  const nodes = workflow.nodes.map(node => {
+  const nodes = workflowNodes.map(node => {
     const stageTaskIds = orderedBindings
       .filter(binding => binding.workflow_node_id === node.id)
       .map(binding => `${binding.device_id}:${binding.task_id}`)
@@ -114,7 +173,8 @@ export function reconcileIssueWorkflowForTaskBindings(
     changed = true
     return { ...node, status, task_ids: knownTaskIds }
   })
-  return changed ? { ...workflow, nodes } : workflow
+  if (changed) return { ...workflow, nodes }
+  return workflowNodes === workflow.nodes ? workflow : { ...workflow, nodes: workflowNodes }
 }
 
 export function updateIssueWorkflowForRuntime(
@@ -157,14 +217,15 @@ export function updateIssueWorkflowForRuntime(
 }
 
 export function workflowBoardStatus(workflow: IssueWorkflowInstance): CloudLoopItem['status'] {
-  const required = workflow.nodes.filter(node => node.required)
+  const nodes = stripWorkflowEndpointNodes(workflow.nodes)
+  const required = nodes.filter(node => node.required)
   if (
     required.length > 0 &&
     required.every(node => ['completed', 'forced_completed'].includes(node.status))
   ) {
     return 'in_review'
   }
-  if (workflow.nodes.some(node => ['running', 'changes_requested'].includes(node.status))) {
+  if (nodes.some(node => ['running', 'waiting', 'changes_requested'].includes(node.status))) {
     return 'in_progress'
   }
   return 'pending'

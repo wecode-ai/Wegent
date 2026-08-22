@@ -21,17 +21,25 @@ export function layoutWorkflowGraph<NodeData extends Record<string, unknown>>(
     marginx: 28,
     marginy: 28,
   })
-  nodes.forEach(node => graph.setNode(node.id, { width: nodeWidth, height: nodeHeight }))
+  // Allow heterogeneous node types (stage and wait cards) to carry their own
+  // dimensions; fall back to the shared size.
+  nodes.forEach(node => {
+    const width = Number(node.data?.nodeWidth ?? nodeWidth)
+    const height = Number(node.data?.nodeHeight ?? nodeHeight)
+    graph.setNode(node.id, { width, height })
+  })
   edges.forEach(edge => graph.setEdge(edge.source, edge.target))
   dagre.layout(graph)
 
   return nodes.map(node => {
     const position = graph.node(node.id)
+    const width = Number(node.data?.nodeWidth ?? nodeWidth)
+    const height = Number(node.data?.nodeHeight ?? nodeHeight)
     return {
       ...node,
       position: {
-        x: position.x - nodeWidth / 2,
-        y: position.y - nodeHeight / 2,
+        x: position.x - width / 2,
+        y: position.y - height / 2,
       },
     }
   })

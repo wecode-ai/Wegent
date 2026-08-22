@@ -56,6 +56,7 @@ class IssueWorkflowDecisionService:
             db,
             [dict(node) for node in raw_nodes if isinstance(node, dict)],
             bindings,
+            workflow,
         )
         node = next(
             (
@@ -73,7 +74,7 @@ class IssueWorkflowDecisionService:
                 "Automated workflow stages do not accept human decisions",
             )
 
-        self._validate_decision(db, node, values)
+        self._validate_decision(db, node, values, workflow)
         node["status"] = {
             "approve": "completed",
             "reject": "changes_requested",
@@ -104,6 +105,7 @@ class IssueWorkflowDecisionService:
         db: Session,
         node: dict,
         values: WorkflowNodeDecisionRequest,
+        workflow: dict | None,
     ) -> None:
         node_status = node.get("status")
         if values.action == "approve":
@@ -112,7 +114,7 @@ class IssueWorkflowDecisionService:
                     status.HTTP_409_CONFLICT,
                     "Workflow node is not awaiting approval",
                 )
-            if missing_requirement_ids(db, node):
+            if missing_requirement_ids(db, node, workflow):
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
                     "Required workflow deliverables are missing",

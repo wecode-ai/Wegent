@@ -2,6 +2,7 @@ import { getToken } from '@/api/auth'
 import { createAttachmentApi } from '@/api/attachments'
 import { createDeviceApi } from '@/api/devices'
 import { createDeliveryApi } from '@/api/deliveries'
+import { createExternalEventApi } from '@/api/externalEvents'
 import { createExecutorClientFromApis, type ExecutorTransportKind } from '@/api/executorAccess'
 import { createFeedbackApi } from '@/api/feedback'
 import { createGitApi } from '@/api/git'
@@ -75,6 +76,7 @@ export function createBackendWorkbenchServices(
   const projectChatAgentApi = createProjectChatAgentApi(client)
   const projectAutomationApi = createProjectAutomationApi(client)
   const projectIncomingHookApi = createProjectIncomingHookApi(client)
+  const externalEventApi = createExternalEventApi(client)
 
   return {
     teamApi,
@@ -97,6 +99,7 @@ export function createBackendWorkbenchServices(
         projectChatAgentApi,
         projectAutomationApi,
         projectIncomingHookApi,
+        externalEventApi,
         deviceApi,
         modelApi,
         teamApi,
@@ -122,6 +125,7 @@ export function createBackendWorkbenchServices(
     projectChatAgentApi,
     projectAutomationApi,
     projectIncomingHookApi,
+    externalEventApi,
     workspaceSessionApi: {
       startProjectTerminal: projectApi.startTerminalSession,
       startProjectCodeServer: projectApi.startCodeServerSession,

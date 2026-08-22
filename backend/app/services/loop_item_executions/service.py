@@ -2112,7 +2112,29 @@ class LoopItemExecutionService:
         if commit:
             db.refresh(execution)
             self._push_activity_after_commit(db, activity)
+            self._settle_external_event_buffers(execution)
         return execution
+
+    @staticmethod
+    def _settle_external_event_buffers(execution: LoopItemExecution) -> None:
+        """Best-effort debounce settle for wait nodes bound to this run."""
+
+        try:
+            from app.db.session import SessionLocal
+            from app.services.external_events.evaluate import (
+                external_event_evaluation_service,
+            )
+
+            with SessionLocal() as db:
+                external_event_evaluation_service.on_execution_terminal(
+                    db, execution=execution
+                )
+                db.commit()
+        except Exception:
+            logger.exception(
+                "External event debounce settle failed execution=%s",
+                getattr(execution, "id", None),
+            )
 
     def publish_terminal_projection(
         self, db: Session, execution: LoopItemExecution
@@ -2842,6 +2864,7 @@ class LoopItemExecutionService:
             )
         db.commit()
         db.refresh(row)
+        self.push_linked_activity_after_commit(db, execution=row)
         return row
 
     def resolve_task_context(

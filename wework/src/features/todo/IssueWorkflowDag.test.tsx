@@ -8,12 +8,18 @@ const fitView = vi.fn()
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: { count?: number }): string => {
-      if (key === 'todo.workflow_task_count') return `${options?.count ?? 0} 个任务`
-      return (
+    t: (
+      key: string,
+      optionsOrFallback?: { count?: number } | string,
+      values?: Record<string, string | number>
+    ): string => {
+      if (key === 'todo.workflow_task_count') {
+        const count = typeof optionsOrFallback === 'object' ? (optionsOrFallback?.count ?? 0) : 0
+        return `${count} 个任务`
+      }
+      const fallback = typeof optionsOrFallback === 'string' ? optionsOrFallback : undefined
+      const text =
         {
-          'todo.workflow_active_stages': '当前阶段',
-          'todo.workflow_node_details': '节点详情',
           'todo.workflow_stage_human_execution': '人工执行',
           'todo.workflow_ai_execution': 'AI 执行',
           'todo.workflow_start_work': '开始处理',
@@ -32,6 +38,7 @@ vi.mock('@/hooks/useTranslation', () => ({
           'todo.workflow_node_ready': '可开始',
           'todo.workflow_node_queued': '排队中',
           'todo.workflow_node_running': '执行中',
+          'todo.workflow_node_waiting': '等待中',
           'todo.workflow_node_awaiting_approval': '待人工批准',
           'todo.workflow_node_changes_requested': '已驳回，待修改',
           'todo.workflow_node_completed': '已完成',
@@ -51,7 +58,19 @@ vi.mock('@/hooks/useTranslation', () => ({
           'todo.workflow_decision_reason_placeholder': '填写原因',
           'todo.workflow_wait_dependencies': '等待前置阶段',
           'todo.workflow_no_stage_tasks': '尚无具体任务',
-        }[key] ?? key
+          'todo.workflow_wait_event_types': '等待：{{types}}',
+          'todo.workflow_wait_round': '等待中 · 第 {{round}} 轮修复中',
+          'todo.workflow_wait_repair_queued': '第 {{round}} 轮修复排队中',
+          'todo.workflow_wait_repair_failed': '第 {{round}} 轮修复失败',
+          'todo.workflow_wait_repair_succeeded': '第 {{round}} 轮修复完成',
+          'todo.workflow_wait_repair_cancelled': '第 {{round}} 轮修复已取消',
+          'todo.workflow_more_tasks': '另有 {{count}} 个任务',
+        }[key] ??
+        fallback ??
+        key
+      return Object.entries(values ?? {}).reduce(
+        (rendered, [name, value]) => rendered.replace(`{{${name}}}`, String(value)),
+        text
       )
     },
   }),
@@ -271,6 +290,126 @@ describe('IssueWorkflowDag', () => {
     expect(screen.getByTestId('cloud-todo-workflow-action-审阅')).toHaveTextContent('可开始')
     fireEvent.click(screen.getByTestId('cloud-todo-run-workflow-node-审阅'))
     expect(onRunAutomation).toHaveBeenCalledWith('审阅', 'rule-1')
+  })
+
+  test('renders a waiting node with wait events and round text', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('等待', {
+            node_type: 'wait',
+            status: 'waiting',
+            wait_round: 2,
+            wait_config: {
+              rules: [
+                {
+                  id: 'rule-1',
+                  event_type: 'ci_failed',
+                  action: 'rerun',
+                },
+                {
+                  id: 'rule-2',
+                  event_type: 'merged',
+                  action: 'complete',
+                },
+              ],
+            },
+          }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent('等待中')
+    expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent(
+      '等待：ci_failed / merged'
+    )
+    expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent(
+      '等待中 · 第 2 轮修复中'
+    )
+    expect(screen.getByTestId('cloud-todo-workflow-action-等待')).toHaveTextContent('等待中')
+  })
+
+  test('shows cancelled repair rounds without the in-progress message', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('等待', {
+            node_type: 'wait',
+            status: 'waiting',
+            wait_round: 1,
+            repair_status: 'cancelled',
+            wait_config: {
+              rules: [
+                {
+                  id: 'rule-1',
+                  event_type: 'ci_failed',
+                  action: 'rerun',
+                },
+              ],
+            },
+          }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent(
+      '第 1 轮修复已取消'
+    )
+    expect(screen.getByTestId('cloud-todo-workflow-node-等待')).not.toHaveTextContent(
+      '等待中 · 第 1 轮修复中'
+    )
+  })
+
+  test('ignores legacy start/end sentinels and renders only real stages', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('开始', { node_type: 'start', status: 'completed' }),
+          stage('编辑'),
+          stage('审阅', { depends_on: ['编辑'] }),
+          stage('结束', { node_type: 'end', status: 'blocked' }),
+        ]}
+        tasks={[]}
+        onCreateTask={vi.fn()}
+      />
+    )
+
+    // Legacy start/end sentinels are stripped on render; the flow simply ends
+    // at the last stage with no end marker.
+    expect(screen.queryByTestId('cloud-todo-workflow-node-开始')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-workflow-node-结束')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-workflow-end-marker-审阅')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-workflow-action-开始')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-workflow-action-结束')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toBeInTheDocument()
+  })
+
+  test('shows the waiting status label and action panel for a wait node', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('等待', {
+            node_type: 'wait',
+            status: 'waiting',
+            wait_config: {
+              rules: [
+                {
+                  id: 'rule-1',
+                  event_type: 'merged',
+                  action: 'complete',
+                },
+              ],
+            },
+          }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-node-等待')).toHaveTextContent('等待中')
+    expect(screen.getByTestId('cloud-todo-workflow-action-等待')).toHaveTextContent('等待中')
   })
 
   test('prevents duplicate reruns and surfaces the backend rejection', async () => {

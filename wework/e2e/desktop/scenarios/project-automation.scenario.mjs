@@ -2250,11 +2250,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         { timeoutMs: uiTimeoutMs }
       )
       await control.command(
-        'clickThenMacrotask',
-        `${activeWorkflow} [data-testid="project-workflow-stage-stage-1"]`,
-        {
-          target: `${activeWorkflow} [data-testid="project-workflow-insert-after-stage-1"]`,
-        }
+        'click',
+        `${activeWorkflow} [data-testid="project-workflow-stage-stage-1"]`
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-insert-after-stage-1"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
+      await control.command(
+        'click',
+        `${activeWorkflow} [data-testid="project-workflow-insert-after-stage-1"]`
       )
       await control.command(
         'waitFor',

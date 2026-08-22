@@ -59,6 +59,7 @@ cloud_segments=(
   priority-filter
   automation-lifecycle
   project-automation
+  external-event-subscription
   plugin-auto-update
 )
 # Group checkpoints by observed Cloud CI duration and order each shard from
@@ -71,7 +72,7 @@ cloud_shards=(
   resilience,cloud-worktree-queued-cancel,browser-multi-tabs
   core-task-flow,supervisor-lifecycle,automation-lifecycle
   window-lifecycle,cloud-worktree-tools,cloud-worktree-archive-restore
-  project-automation,workspace-attachments,cloud-worktree-create
+  project-automation,workspace-attachments,cloud-worktree-create,external-event-subscription
   conversation-state,rendering-extensions,workspace-tabs
 )
 # Group checkpoints by observed Core CI duration and order each shard so the
@@ -260,7 +261,8 @@ classify_wework_path() {
       select_target "core:priority-filter"
       return
       ;;
-    wework/e2e/desktop/scenarios/project-automation.scenario.mjs)
+    wework/e2e/desktop/scenarios/project-automation.scenario.mjs | \
+      wework/e2e/desktop/scenarios/external-event-subscription.scenario.mjs)
       select_target "core:automation-lifecycle"
       select_target "core:project-automation"
       select_target "cloud:all"
@@ -490,6 +492,27 @@ classify_path() {
       backend/tests/services/test_runtime_work_service.py | \
       docker/device/Dockerfile)
       select_cloud_worktree_checkpoints
+      ;;
+    # External-event wait gates are exercised end to end by the cloud desktop
+    # suite (external-event-subscription scenario), so every backend change to
+    # the feature must schedule Cloud / shard 7.
+    backend/app/services/external_events/* | \
+      backend/app/services/project_incoming_hooks.py | \
+      backend/app/services/issue_workflow_decision.py | \
+      backend/app/tasks/external_event_tasks.py | \
+      backend/app/api/endpoints/external_events.py | \
+      backend/app/api/endpoints/project_incoming_hooks.py | \
+      backend/app/schemas/external_event.py | \
+      backend/app/schemas/project_incoming_hook.py | \
+      backend/app/mcp_server/tools/wework_space.py | \
+      backend/tests/services/test_external_events.py | \
+      backend/tests/services/external_events/* | \
+      backend/tests/api/test_external_events_api.py | \
+      backend/tests/api/test_external_references_api.py | \
+      backend/tests/api/test_project_incoming_hooks_api.py | \
+      backend/tests/services/test_project_incoming_hooks.py | \
+      backend/tests/services/test_external_provider_urls.py)
+      select_target "cloud:all"
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites

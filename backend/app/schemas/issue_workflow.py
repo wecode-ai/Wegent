@@ -4,9 +4,9 @@
 """Validated project orchestration definitions and per-Issue snapshots."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Sequence
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
 WorkflowContextSource = Literal["final_result", "deliveries", "activity"]
 WorkflowOrchestrationStatus = Literal[
@@ -30,11 +30,14 @@ DeliverableValueType = Literal[
     "pull_request",
     "url",
 ]
+WorkflowNodeType = Literal["stage", "wait"]
+WaitEventAction = Literal["rerun", "complete", "continue"]
 WorkflowNodeStatus = Literal[
     "blocked",
     "ready",
     "queued",
     "running",
+    "waiting",
     "awaiting_approval",
     "awaiting_deliverables",
     "changes_requested",
@@ -81,10 +84,55 @@ class DeliverableRequirement(BaseModel):
         return self
 
 
+class WaitEventRule(BaseModel):
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    # The provider that emits the event. Rules picked from the provider catalog
+    # always carry it; custom rules may leave it empty to match any provider.
+    provider: str | None = Field(default=None, max_length=64)
+    event_type: str = Field(min_length=1, max_length=128)
+    # Delivery policy (window / busy-period merge) is declared by the event
+    # type in the provider catalog and is never stored on the rule.
+    action: WaitEventAction = "complete"
+    # Prompt used by every prompt-driven action (rerun / continue). Accepts the
+    # legacy ``rerun_prompt`` key so definitions written before the rename stay
+    # readable without a migration.
+    prompt: str = Field(
+        default="",
+        max_length=20_000,
+        validation_alias=AliasChoices("prompt", "rerun_prompt"),
+    )
+
+    @field_validator("provider")
+    @classmethod
+    def _normalize_provider(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @model_validator(mode="after")
+    def validate_prompt_driven_rule(self) -> "WaitEventRule":
+        if self.action in {"rerun", "continue"} and not self.prompt.strip():
+            raise ValueError(f"{self.action} rules require a non-empty repair prompt")
+        return self
+
+
+class WaitNodeConfig(BaseModel):
+    rules: list[WaitEventRule] = Field(
+        default_factory=list, min_length=1, max_length=20
+    )
+    # Robot that executes a rerun round when a matching event fires. Wait nodes
+    # are robot-only: the rerun is an autonomous reaction to an external event,
+    # so the human path is expressed by ``complete`` + a downstream human stage.
+    agent_id: str | None = Field(default=None, max_length=64)
+
+
 class WorkflowNodeDefinition(BaseModel):
     id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     name: str = Field(min_length=1, max_length=100)
     prompt: str = Field(default="", max_length=100_000)
+    node_type: WorkflowNodeType = "stage"
+    wait_config: WaitNodeConfig | None = None
     # Kept only to read workflow definitions written by older clients. Stage
     # nodes are task categories, not executor kinds.
     kind: Literal["my_task", "automation", "ai"] | None = None
@@ -101,6 +149,13 @@ class WorkflowNodeDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_execution_configuration(self) -> "WorkflowNodeDefinition":
+        if self.node_type == "wait":
+            if self.wait_config is None:
+                raise ValueError("wait nodes require wait_config")
+            if self.automation_rule_id:
+                raise ValueError("wait nodes cannot run an automation stage")
+        elif self.wait_config is not None:
+            raise ValueError("only wait nodes may define wait_config")
         if unknown := set(self.dependency_context) - set(self.depends_on):
             raise ValueError(
                 "workflow dependency context references non-dependencies: "
@@ -117,6 +172,78 @@ class WorkflowNodeDefinition(BaseModel):
         return self
 
 
+def strip_structural_nodes(
+    nodes: Sequence[dict[str, object] | WorkflowNodeDefinition],
+) -> list[dict[str, object]]:
+    """Drop legacy start/end sentinels so stored data matches the current model.
+
+    Old definitions and snapshots may still carry ``start``/``end`` marker
+    nodes. They carry no semantics: the entry is any node without predecessors
+    and the end is derived from nodes without successors. Stripping also
+    rewires ``depends_on`` and the per-edge context so no dangling reference
+    survives. Returns plain dicts whenever anything was stripped so the parent
+    model re-validates the cleaned shape.
+    """
+
+    def node_type(node: object) -> object:
+        if isinstance(node, dict):
+            return node.get("node_type")
+        return getattr(node, "node_type", None)
+
+    def node_id(node: object) -> object:
+        if isinstance(node, dict):
+            return node.get("id")
+        return getattr(node, "id", None)
+
+    structural = {
+        node_id(node)
+        for node in nodes
+        if node_type(node) in {"start", "end"} and node_id(node)
+    }
+    if not structural:
+        return [node if isinstance(node, dict) else node.model_dump() for node in nodes]
+    cleaned = [
+        node if isinstance(node, dict) else node.model_dump()
+        for node in nodes
+        if node_type(node) not in {"start", "end"}
+    ]
+    for node in cleaned:
+        depends_on = [
+            dependency
+            for dependency in (node.get("depends_on") or [])
+            if dependency not in structural
+        ]
+        node["depends_on"] = depends_on
+        context = node.get("dependency_context")
+        if isinstance(context, dict):
+            node["dependency_context"] = {
+                dependency: sources
+                for dependency, sources in context.items()
+                if dependency not in structural
+            }
+    return cleaned
+
+
+def require_rerun_agent(definition: "ProjectWorkflowDefinition") -> None:
+    """Reject definitions whose rerun wait rules have no execution robot.
+
+    Kept outside the schema so legacy stored definitions and Issue snapshots
+    stay readable: the invariant is enforced where definitions are written
+    (project save) and at rerun time, never on read.
+    """
+
+    for node in definition.nodes:
+        if node.node_type != "wait" or node.wait_config is None:
+            continue
+        if not any(rule.action == "rerun" for rule in node.wait_config.rules):
+            continue
+        if not node.wait_config.agent_id:
+            label = node.name or node.id
+            raise ValueError(
+                f"wait node {label!r} with rerun rules requires an execution robot"
+            )
+
+
 class ProjectWorkflowDefinition(BaseModel):
     version: int = Field(default=1, ge=1)
     stage_mode: Literal["none", "dag"] = "none"
@@ -128,9 +255,13 @@ class ProjectWorkflowDefinition(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def infer_legacy_stage_mode(cls, value: object) -> object:
-        if isinstance(value, dict) and "stage_mode" not in value and value.get("nodes"):
-            return {**value, "stage_mode": "dag"}
+    def normalize_legacy_definition(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        if "stage_mode" not in value and value.get("nodes"):
+            value = {**value, "stage_mode": "dag"}
+        if isinstance(value.get("nodes"), list):
+            value = {**value, "nodes": strip_structural_nodes(value["nodes"])}
         return value
 
     @model_validator(mode="after")
@@ -174,6 +305,14 @@ class WorkflowNodeInstance(WorkflowNodeDefinition):
     task_ids: list[str] = Field(default_factory=list, max_length=100)
     task_statuses: dict[str, str] = Field(default_factory=dict)
     delivery_ids: list[str] = Field(default_factory=list, max_length=100)
+    wait_round: int = Field(default=0, ge=0)
+    repair_status: str | None = Field(default=None, max_length=32)
+    # Set when a delivered reference for this wait node failed to register, so
+    # the card can show why the listener is not receiving events.
+    registration_error: str | None = Field(default=None, max_length=500)
+    # Set when a continue round could not be dispatched into the current task,
+    # so the card can show why a repair prompt never landed.
+    continue_error: str | None = Field(default=None, max_length=500)
     decision_history: list["WorkflowNodeDecision"] = Field(
         default_factory=list, max_length=100
     )
@@ -214,6 +353,13 @@ class IssueWorkflowInstance(BaseModel):
     current_stage_id: str | None = Field(default=None, max_length=64)
     nodes: list[WorkflowNodeInstance] = Field(default_factory=list, max_length=50)
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_snapshot(cls, value: object) -> object:
+        if isinstance(value, dict) and isinstance(value.get("nodes"), list):
+            return {**value, "nodes": strip_structural_nodes(value["nodes"])}
+        return value
+
     @model_validator(mode="after")
     def validate_snapshot(self) -> "IssueWorkflowInstance":
         ProjectWorkflowDefinition(
@@ -228,6 +374,8 @@ class IssueWorkflowInstance(BaseModel):
                     id=node.id,
                     name=node.name,
                     prompt=node.prompt,
+                    node_type=node.node_type,
+                    wait_config=node.wait_config,
                     kind=node.kind,
                     depends_on=node.depends_on,
                     dependency_context=node.dependency_context,
@@ -242,10 +390,52 @@ class IssueWorkflowInstance(BaseModel):
         return self
 
 
+def release_blocked_nodes(
+    nodes: list[WorkflowNodeInstance],
+) -> list[WorkflowNodeInstance]:
+    """Advance blocked nodes whose dependencies are already completed.
+
+    Mirrors the projection pass used on persisted snapshots: a wait node enters
+    ``waiting`` once its upstream work has begun, and everything else becomes
+    ``ready`` once its dependencies are done.
+    """
+
+    completed = {
+        node.id for node in nodes if node.status in {"completed", "forced_completed"}
+    }
+    statuses = {node.id: node.status for node in nodes}
+    for node in nodes:
+        if node.status != "blocked":
+            continue
+        if node.node_type == "wait":
+            if not any(
+                statuses.get(dependency) == "blocked" for dependency in node.depends_on
+            ):
+                node.status = "waiting"
+                statuses[node.id] = "waiting"
+            continue
+        if not all(dependency in completed for dependency in node.depends_on):
+            continue
+        node.status = "ready"
+        statuses[node.id] = node.status
+    return nodes
+
+
 def instantiate_workflow(
     definition: ProjectWorkflowDefinition,
 ) -> IssueWorkflowInstance:
     roots = {node.id for node in definition.nodes if not node.depends_on}
+    nodes = [
+        WorkflowNodeInstance(
+            **node.model_dump(),
+            status=(
+                "waiting"
+                if node.id in roots and node.node_type == "wait"
+                else ("ready" if node.id in roots else "blocked")
+            ),
+        )
+        for node in (definition.nodes if definition.stage_mode == "dag" else [])
+    ]
     return IssueWorkflowInstance(
         definition_version=definition.version,
         stage_mode=definition.stage_mode,
@@ -253,13 +443,9 @@ def instantiate_workflow(
         coordinator_prompt=definition.coordinator_prompt,
         approval_policy=definition.approval_policy,
         ai_automation_rule_id=definition.ai_automation_rule_id,
-        nodes=[
-            WorkflowNodeInstance(
-                **node.model_dump(),
-                status="ready" if node.id in roots else "blocked",
-            )
-            for node in (definition.nodes if definition.stage_mode == "dag" else [])
-        ],
+        # Release nodes whose dependencies are already satisfied (roots are
+        # ready at instantiation), mirroring the projection pass.
+        nodes=release_blocked_nodes(nodes),
     )
 
 

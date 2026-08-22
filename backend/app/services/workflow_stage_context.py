@@ -18,6 +18,7 @@ from app.models.delivery import Delivery, LoopItem, loop_datetime_is_unset
 from app.models.project_chat_message import ProjectChatMessage
 from app.services.delivery.service import delivery_service
 from app.services.delivery.storage import DeliveryObjectNotFoundError
+from app.services.external_events.reference import resolved_workflow_requirements
 from app.services.workflow_deliverables import delivery_fulfillments
 
 DEFAULT_DEPENDENCY_CONTEXT = ["final_result", "deliveries"]
@@ -69,6 +70,7 @@ class WorkflowStageContextResolver:
         *,
         item: LoopItem,
         target_node_id: str,
+        target_prompt_override: str | None = None,
     ) -> dict[str, Any]:
         workflow = self._workflow(item)
         nodes = {
@@ -128,8 +130,14 @@ class WorkflowStageContextResolver:
             "target_stage": {
                 "id": target_node_id,
                 "name": str(target.get("name") or target_node_id),
-                "prompt": str(target.get("prompt") or ""),
-                "required_deliverables": target.get("required_deliverables") or [],
+                "prompt": (
+                    target_prompt_override.strip()
+                    if target_prompt_override is not None
+                    else str(target.get("prompt") or "")
+                ),
+                "required_deliverables": resolved_workflow_requirements(
+                    workflow, target
+                ),
                 "workspace_policy": str(target.get("workspace_policy") or "composer"),
             },
             "dependencies": dependencies,

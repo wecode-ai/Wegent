@@ -310,7 +310,7 @@ export function CloudProjectManageView({
 
   async function copyIncomingHook(hook: ProjectIncomingHook) {
     try {
-      await navigator.clipboard.writeText(hook.webhookUrl)
+      await navigator.clipboard.writeText(hook.webhook_url)
       setCopiedHookId(hook.id)
       window.setTimeout(
         () => setCopiedHookId(current => (current === hook.id ? null : current)),
@@ -871,6 +871,10 @@ export function CloudProjectManageView({
                 {providerSaved ? '已保存' : '保存'}
               </button>
             </div>
+            <p className="mt-2 text-xs text-text-muted">
+              自托管实例请使用完整地址（含端口）；子路径部署（如 /gitlab/）请使用 API 地址形式：
+              https://host/gitlab/api/v4/projects/group%2Fproject。
+            </p>
             {!project.provider_config.credential_configured && (
               <p className="mt-2 text-xs text-text-muted">需要配置令牌</p>
             )}
@@ -992,9 +996,9 @@ export function CloudProjectManageView({
                       type="button"
                       onClick={() => void copyIncomingHook(hook)}
                       className="mt-2 block w-full truncate rounded-lg border border-border bg-background px-3 py-2 text-left text-code text-text-secondary hover:border-text-tertiary"
-                      title={hook.webhookUrl}
+                      title={hook.webhook_url}
                     >
-                      {hook.webhookUrl}
+                      {hook.webhook_url}
                     </button>
                   </div>
                 ))}

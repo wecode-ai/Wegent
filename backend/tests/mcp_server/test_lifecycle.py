@@ -172,6 +172,7 @@ def test_mounted_wework_space_streamable_http_uses_parent_asgi_lifespan(
         "finalize_delivery",
         "discard_delivery_draft",
         "reorder_board_items",
+        "register_external_reference",
     }
     unauthenticated_text = unauthenticated["result"]["content"][0]["text"]
     authenticated_text = authenticated["result"]["content"][0]["text"]

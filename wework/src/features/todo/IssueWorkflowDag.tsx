@@ -18,13 +18,16 @@ import {
   ChevronRight,
   Circle,
   FastForward,
+  Hourglass,
   Play,
   Plus,
   RefreshCw,
   UserRound,
   XCircle,
 } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import type { Delivery, WorkflowNodeInstance } from '@/api/deliveries'
+import { stripWorkflowEndpointNodes } from '@/api/issueWorkflow'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { layoutWorkflowGraph } from './workflowGraph'
@@ -64,19 +67,25 @@ interface IssueWorkflowDagProps {
   ) => Promise<void>
 }
 
-interface RuntimeStageNodeData extends Record<string, unknown> {
+interface RuntimeNodeData extends Record<string, unknown> {
   stage: WorkflowNodeInstance
   tasks: WorkflowTaskBinding[]
   selected: boolean
   onSelect: (stageId: string) => void
+  nodeWidth: number
+  nodeHeight: number
+  onOpenTask?: (task: WorkflowTaskBinding) => void
 }
 
-type RuntimeStageFlowNode = Node<RuntimeStageNodeData, 'runtimeStage'>
+type RuntimeFlowNode = Node<RuntimeNodeData>
 
 const NODE_WIDTH = 208
 const NODE_HEIGHT = 112
+const WAIT_NODE_WIDTH = 228
+const WAIT_NODE_HEIGHT = 180
 const CURRENT_STAGE_STATUS_PRIORITY: WorkflowNodeInstance['status'][] = [
   'running',
+  'waiting',
   'awaiting_approval',
   'awaiting_deliverables',
   'changes_requested',
@@ -109,6 +118,7 @@ function workflowNodeStatusLabel(
   if (status === 'ready') return t('todo.workflow_node_ready')
   if (status === 'queued') return t('todo.workflow_node_queued')
   if (status === 'running') return t('todo.workflow_node_running')
+  if (status === 'waiting') return t('todo.workflow_node_waiting')
   if (status === 'awaiting_approval') return t('todo.workflow_node_awaiting_approval')
   if (status === 'awaiting_deliverables') return t('todo.workflow_node_awaiting_deliverables')
   if (status === 'changes_requested') return t('todo.workflow_node_changes_requested')
@@ -124,6 +134,25 @@ function workflowTaskStatusLabel(t: (key: string) => string, status?: string): s
   if (status === 'cancelled') return t('todo.workflow_task_status_cancelled')
   if (status === 'archived') return t('todo.workflow_task_status_archived')
   return t('todo.workflow_task_status_pending')
+}
+
+function workflowWaitRepairLabel(t: TFunction, stage: WorkflowNodeInstance): string | null {
+  const round = stage.wait_round ?? 0
+  if (round <= 0) return null
+  const status = stage.repair_status
+  if (status === 'queued') {
+    return t('todo.workflow_wait_repair_queued', '第 {{round}} 轮修复排队中', { round })
+  }
+  if (status === 'failed') {
+    return t('todo.workflow_wait_repair_failed', '第 {{round}} 轮修复失败', { round })
+  }
+  if (status === 'succeeded') {
+    return t('todo.workflow_wait_repair_succeeded', '第 {{round}} 轮修复完成', { round })
+  }
+  if (status === 'cancelled') {
+    return t('todo.workflow_wait_repair_cancelled', '第 {{round}} 轮修复已取消', { round })
+  }
+  return t('todo.workflow_wait_round', '等待中 · 第 {{round}} 轮修复中', { round })
 }
 
 function isWorkflowNodeCompleted(status: WorkflowNodeInstance['status']): boolean {
@@ -146,7 +175,7 @@ function requirementDelivery(
 
 const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
   data,
-}: NodeProps<RuntimeStageFlowNode>) {
+}: NodeProps<RuntimeFlowNode>) {
   const { t } = useTranslation('common')
   const { stage, tasks, selected, onSelect } = data
   const statusLabel = workflowNodeStatusLabel(t, stage.status)
@@ -194,7 +223,95 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
   )
 })
 
-const nodeTypes = { runtimeStage: RuntimeStageNodeCard }
+const RuntimeWaitNodeCard = memo(function RuntimeWaitNodeCard({
+  data,
+}: NodeProps<RuntimeFlowNode>) {
+  const { t } = useTranslation('common')
+  const { stage, tasks } = data
+  const statusLabel = workflowNodeStatusLabel(t, stage.status)
+  const waitingEvents = Array.from(
+    new Set((stage.wait_config?.rules ?? []).map(rule => rule.event_type.trim()).filter(Boolean))
+  )
+  const waiting = stage.status === 'waiting'
+  const completed = ['completed', 'forced_completed'].includes(stage.status)
+
+  return (
+    <article
+      data-testid={`cloud-todo-workflow-node-${stage.id}`}
+      className="relative flex h-[180px] w-[228px] flex-col rounded-xl border border-dashed border-text-muted/70 bg-background p-3 shadow-sm"
+    >
+      <Handle type="target" position={Position.Left} className="!invisible" />
+      <header className="flex items-start gap-2">
+        <span
+          className={cn(
+            'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-dashed text-xs',
+            completed
+              ? 'border-green-500/40 bg-green-500/10 text-green-600'
+              : waiting
+                ? 'border-blue-500/40 bg-blue-500/10 text-blue-500'
+                : 'border-border text-text-muted'
+          )}
+        >
+          {completed ? <Check className="h-3.5 w-3.5" /> : <Hourglass className="h-3.5 w-3.5" />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-text-primary">{stage.name}</span>
+          <span className="block text-xs text-text-muted">{statusLabel}</span>
+        </span>
+      </header>
+      <p className="mt-1 line-clamp-1 text-xs text-text-secondary">
+        {waitingEvents.length
+          ? t('todo.workflow_wait_event_types', '等待：{{types}}', {
+              types: waitingEvents.join(' / '),
+            })
+          : ''}
+      </p>
+      {waiting && (stage.wait_round ?? 0) > 0 ? (
+        <p className="mt-1 text-xs font-medium text-text-primary">
+          {workflowWaitRepairLabel(t, stage)}
+        </p>
+      ) : null}
+      <div className="mt-2 min-h-0 flex-1 space-y-1 overflow-hidden">
+        {tasks.slice(0, 2).map(task => (
+          <button
+            key={task.id}
+            type="button"
+            data-testid={`cloud-todo-open-workflow-task-${stage.id}-${task.id}`}
+            onClick={() => data.onOpenTask?.(task)}
+            className="nodrag flex h-7 w-full items-center gap-1.5 rounded-md bg-muted/60 px-2 text-left text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+          >
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-text-muted" />
+            <span className="min-w-0 flex-1 truncate">{task.task_title || task.task_id}</span>
+            <ChevronRight className="h-3 w-3 shrink-0" />
+          </button>
+        ))}
+        {tasks.length > 2 ? (
+          <p className="px-2 text-xs text-text-muted">
+            {t('todo.workflow_more_tasks', '另有 {{count}} 个任务', {
+              count: tasks.length - 2,
+            })}
+          </p>
+        ) : null}
+        {tasks.length === 0 ? (
+          <p className="px-2 py-1 text-xs text-text-muted">
+            {t('todo.workflow_no_stage_tasks', '尚无具体任务')}
+          </p>
+        ) : null}
+      </div>
+      <Handle type="source" position={Position.Right} className="!invisible" />
+    </article>
+  )
+})
+
+const nodeTypes = {
+  runtimeStage: RuntimeStageNodeCard,
+  runtimeWait: RuntimeWaitNodeCard,
+}
+
+function runtimeNodeType(node: WorkflowNodeInstance): string {
+  if (node.node_type === 'wait') return 'runtimeWait'
+  return 'runtimeStage'
+}
 
 export function IssueWorkflowDag({
   nodes,
@@ -209,6 +326,7 @@ export function IssueWorkflowDag({
   onDecide,
 }: IssueWorkflowDagProps) {
   const { t } = useTranslation('common')
+  const workflowNodes = useMemo(() => stripWorkflowEndpointNodes(nodes), [nodes])
   const [decisionDraft, setDecisionDraft] = useState<{
     stageId: string
     action: 'reject'
@@ -228,19 +346,19 @@ export function IssueWorkflowDag({
     currentStageId: string | null
   } | null>(null)
   const graphContainerRef = useRef<HTMLDivElement | null>(null)
-  const flowInstanceRef = useRef<ReactFlowInstance<RuntimeStageFlowNode, Edge> | null>(null)
-  const currentStageId = useMemo(() => getCurrentWorkflowNodeId(nodes), [nodes])
+  const flowInstanceRef = useRef<ReactFlowInstance<RuntimeFlowNode, Edge> | null>(null)
+  const currentStageId = useMemo(() => getCurrentWorkflowNodeId(workflowNodes), [workflowNodes])
   const effectiveSelectedStageId =
     stageSelection?.currentStageId === currentStageId &&
-    nodes.some(stage => stage.id === stageSelection.stageId)
+    workflowNodes.some(stage => stage.id === stageSelection.stageId)
       ? stageSelection.stageId
       : currentStageId
   const selectedStage = effectiveSelectedStageId
-    ? nodes.find(stage => stage.id === effectiveSelectedStageId)
+    ? workflowNodes.find(stage => stage.id === effectiveSelectedStageId)
     : undefined
   const graph = useMemo(() => {
-    const nodesById = new Map(nodes.map(node => [node.id, node]))
-    const edges: Edge[] = nodes.flatMap(node =>
+    const nodesById = new Map(workflowNodes.map(node => [node.id, node]))
+    const edges: Edge[] = workflowNodes.flatMap(node =>
       node.depends_on.map(dependency => {
         const completed = isWorkflowNodeCompleted(nodesById.get(dependency)?.status ?? 'blocked')
         const color = completed ? 'rgb(0 162 64 / 0.55)' : 'rgb(var(--color-text-muted) / 0.45)'
@@ -253,27 +371,33 @@ export function IssueWorkflowDag({
         }
       })
     )
-    const flowNodes: RuntimeStageFlowNode[] = nodes.map(stage => ({
-      id: stage.id,
-      type: 'runtimeStage',
-      position: { x: 0, y: 0 },
-      data: {
-        stage,
-        tasks: tasks.filter(task => task.workflow_node_id === stage.id),
-        selected: stage.id === effectiveSelectedStageId,
-        onSelect: stageId => setStageSelection({ stageId, currentStageId }),
-      },
-    }))
+    const flowNodes: RuntimeFlowNode[] = workflowNodes.map(stage => {
+      const isWait = stage.node_type === 'wait'
+      return {
+        id: stage.id,
+        type: runtimeNodeType(stage),
+        position: { x: 0, y: 0 },
+        data: {
+          stage,
+          nodeWidth: isWait ? WAIT_NODE_WIDTH : NODE_WIDTH,
+          nodeHeight: isWait ? WAIT_NODE_HEIGHT : NODE_HEIGHT,
+          tasks: tasks.filter(task => task.workflow_node_id === stage.id),
+          onOpenTask,
+          selected: stage.id === effectiveSelectedStageId,
+          onSelect: stageId => setStageSelection({ stageId, currentStageId }),
+        },
+      }
+    })
     return {
       edges,
       nodes: layoutWorkflowGraph(flowNodes, edges, {
         nodeWidth: NODE_WIDTH,
         nodeHeight: NODE_HEIGHT,
-      }) as RuntimeStageFlowNode[],
+      }) as RuntimeFlowNode[],
     }
-  }, [currentStageId, effectiveSelectedStageId, nodes, tasks])
+  }, [currentStageId, effectiveSelectedStageId, onOpenTask, tasks, workflowNodes])
   const focusCurrentStage = useCallback(
-    (instance: ReactFlowInstance<RuntimeStageFlowNode, Edge>, duration = 0) => {
+    (instance: ReactFlowInstance<RuntimeFlowNode, Edge>, duration = 0) => {
       void instance.fitView({
         ...CURRENT_STAGE_FIT_VIEW_OPTIONS,
         duration,
@@ -351,7 +475,7 @@ export function IssueWorkflowDag({
     }
   }
   const completionStage = completionDraft
-    ? nodes.find(stage => stage.id === completionDraft.stageId)
+    ? workflowNodes.find(stage => stage.id === completionDraft.stageId)
     : undefined
   const pendingCompletionRequirements = (completionStage?.required_deliverables ?? []).filter(
     requirement =>

@@ -2260,3 +2260,70 @@ def test_cloud_workspace_lists_immutable_delivery_files(
     assert read_content.status_code == 200
     assert read_content.content == b"report"
     assert read_content.headers["content-type"] == "application/pdf"
+
+
+def test_cloud_project_workflow_definition_requires_rerun_robot(
+    test_client: TestClient, test_token: str
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "wfwait", "name": "Workflow wait"},
+    ).json()
+
+    def definition(agent_id: object) -> dict:
+        return {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "nodes": [
+                {
+                    "id": "stage-1",
+                    "name": "Stage",
+                    "node_type": "stage",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "composer",
+                },
+                {
+                    "id": "wait-1",
+                    "name": "Wait",
+                    "node_type": "wait",
+                    "depends_on": ["stage-1"],
+                    "required": True,
+                    "workspace_policy": "none",
+                    "wait_config": {
+                        "agent_id": agent_id,
+                        "rules": [
+                            {
+                                "id": "ci",
+                                "event_type": "ci_failed",
+                                "action": "rerun",
+                                "rerun_prompt": "Fix CI",
+                            },
+                        ],
+                    },
+                },
+            ],
+        }
+
+    rejected = test_client.patch(
+        f"/api/v1/cloud-projects/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": created["version"], "workflow_definition": definition(None)},
+    )
+    assert rejected.status_code == 422
+    assert "requires an execution robot" in rejected.json()["detail"]
+
+    accepted = test_client.patch(
+        f"/api/v1/cloud-projects/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "workflow_definition": definition("robot-1"),
+        },
+    )
+    assert accepted.status_code == 200
+    saved = accepted.json()["workflow_definition"]
+    wait_node = next(node for node in saved["nodes"] if node["id"] == "wait-1")
+    assert wait_node["wait_config"]["agent_id"] == "robot-1"

@@ -151,7 +151,7 @@ pub fn encoded_space_context_grant(request: &ExecutionRequest) -> Option<String>
         space_id,
         item_id,
         device_id: request.device_id.clone().filter(|value| !value.is_empty()),
-        automation_run_id: automation_origin
+        automation_run_id: origin
             .and_then(|origin| origin.get("run_id"))
             .and_then(id_value)
             .filter(|value| !value.is_empty()),
@@ -1801,6 +1801,34 @@ async fn call_backend_tool(
             };
             return backend_json(response).await;
         }
+        "register_external_reference" => {
+            let grant = grant.ok_or_else(|| {
+                "register_external_reference requires a workflow automation execution"
+                    .to_owned()
+            })?;
+            let run_id = grant.automation_run_id.as_deref().ok_or_else(|| {
+                "register_external_reference requires a workflow automation execution"
+                    .to_owned()
+            })?;
+            let item_id = arguments
+                .get("item_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .or_else(|| grant.item_id.clone())
+                .ok_or_else(|| "item_id is required".to_owned())?;
+            client
+                .post(format!(
+                    "{base}/cloud-projects/{project_id}/external-references"
+                ))
+                .json(&json!({
+                    "provider": arguments.get("provider").and_then(Value::as_str).unwrap_or_default(),
+                    "opaque_ref": arguments.get("opaque_ref").and_then(Value::as_str).unwrap_or_default(),
+                    "item_id": item_id,
+                    "automation_run_id": run_id,
+                    "workflow_node_id": arguments.get("workflow_node_id").and_then(Value::as_str).unwrap_or_default(),
+                }))
+        }
         "reorder_board_items" => client
             .post(format!(
                 "{base}/cloud-projects/{project_id}/loop-items/reorder"
@@ -2652,6 +2680,21 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "register_external_reference",
+            "Register an external reference so a waiting workflow node can receive provider events (e.g. the merge request that this task just opened). Only the task that is executing a preset workflow with a wait node may register.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "provider": {"type": "string", "description": "External provider name such as the code hosting platform that emitted the event"},
+                    "opaque_ref": {"type": "string", "description": "Provider-specific reference such as a merge request id"},
+                    "workflow_node_id": {"type": "string", "description": "Optional target wait node; omitted registers the first ready wait node"}
+                },
+                "required": ["provider", "opaque_ref"]
+            }),
+        ),
+        tool(
             "reorder_board_items",
             "Persist the order of board items in one board lane",
             json!({
@@ -2973,7 +3016,7 @@ mod tests {
     }
 
     #[test]
-    fn binds_project_context_for_assigned_board_robot() {
+    fn binds_automation_run_scope_for_assigned_board_robot() {
         let mut request = ExecutionRequest::default();
         request
             .extra
@@ -2988,7 +3031,7 @@ mod tests {
         assert_eq!(grant.version, 1);
         assert_eq!(grant.space_id.as_deref(), Some("cloud-42"));
         assert_eq!(grant.item_id, None);
-        assert_eq!(grant.automation_run_id, None);
+        assert_eq!(grant.automation_run_id.as_deref(), Some("run-1"));
         assert!(!grant.automation_manager);
         assert!(grant.expires_at_unix > Local::now().timestamp());
     }
@@ -3299,6 +3342,147 @@ mod tests {
                 ["properties"]["provider"]["enum"],
             json!(["github", "gitlab"])
         );
+    }
+
+    #[test]
+    fn exposes_external_reference_registration_tool() {
+        let registration = tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "register_external_reference")
+            .expect("register_external_reference tool");
+        let properties = registration["inputSchema"]["properties"]
+            .as_object()
+            .expect("input schema properties");
+
+        for name in [
+            "provider",
+            "opaque_ref",
+            "space_id",
+            "item_id",
+            "workflow_node_id",
+        ] {
+            assert!(
+                properties.contains_key(name),
+                "missing input schema property {name}"
+            );
+        }
+        assert_eq!(
+            registration["inputSchema"]["required"],
+            json!(["provider", "opaque_ref"])
+        );
+        assert!(!is_automation_manager_tool("register_external_reference"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn register_external_reference_uses_the_session_grant() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+
+        let captured: std::sync::Arc<std::sync::Mutex<Option<serde_json::Value>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let captured_for_server = captured.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = axum::Router::new()
+            .route(
+                "/api/v1/cloud-projects/{project_id}/external-references",
+                axum::routing::post(
+                    move |axum::extract::State(state): axum::extract::State<
+                        std::sync::Arc<std::sync::Mutex<Option<serde_json::Value>>>,
+                    >,
+                          axum::Json(body): axum::Json<serde_json::Value>| async move {
+                        *state.lock().unwrap() = Some(body);
+                        axum::Json(serde_json::json!({
+                            "binding_id": "binding-1",
+                            "provider": "gitlab",
+                            "opaque_ref": "owner/repo!8",
+                            "task_id": "issue-7",
+                            "issue_id": "issue-7",
+                            "workflow_node_id": "wait-1",
+                            "compensated_event_count": 0,
+                        }))
+                    },
+                ),
+            )
+            .with_state(captured_for_server);
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let backend_url = format!("http://{address}");
+        let arguments = json!({
+            "provider": "gitlab",
+            "opaque_ref": "owner/repo!8",
+            "space_id": "cloud-42",
+            "item_id": "issue-7",
+        });
+        let grant = SpaceContextGrant {
+            version: 1,
+            task_id: "runtime-1".to_owned(),
+            space_id: Some("cloud-42".to_owned()),
+            item_id: Some("issue-7".to_owned()),
+            device_id: Some("device-1".to_owned()),
+            automation_run_id: Some("run-1".to_owned()),
+            automation_manager: false,
+            expires_at_unix: Local::now().timestamp() + 60,
+        };
+
+        // Without a session grant the registration stays gated.
+        let denied = call_tool_with_runtime_context(
+            &runtime,
+            "register_external_reference",
+            arguments.clone(),
+            None,
+            Some(&backend_url),
+            Some("token"),
+        )
+        .await;
+        assert_eq!(denied["isError"], true);
+        assert_eq!(
+            denied["content"][0]["text"],
+            "register_external_reference requires a workflow automation execution"
+        );
+
+        // A session grant without an automation run id is still gated.
+        let no_run = call_tool_with_runtime_context(
+            &runtime,
+            "register_external_reference",
+            arguments.clone(),
+            Some(SpaceContextGrant {
+                automation_run_id: None,
+                ..grant.clone()
+            }),
+            Some(&backend_url),
+            Some("token"),
+        )
+        .await;
+        assert_eq!(no_run["isError"], true);
+        assert_eq!(
+            no_run["content"][0]["text"],
+            "register_external_reference requires a workflow automation execution"
+        );
+
+        // The bound automation run from the session grant reaches the backend.
+        let registered = call_tool_with_runtime_context(
+            &runtime,
+            "register_external_reference",
+            arguments,
+            Some(grant),
+            Some(&backend_url),
+            Some("token"),
+        )
+        .await;
+        assert_eq!(registered["isError"], false);
+        let body = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("backend received the registration");
+        assert_eq!(body["provider"], "gitlab");
+        assert_eq!(body["opaque_ref"], "owner/repo!8");
+        assert_eq!(body["item_id"], "issue-7");
+        assert_eq!(body["automation_run_id"], "run-1");
     }
 
     #[test]
