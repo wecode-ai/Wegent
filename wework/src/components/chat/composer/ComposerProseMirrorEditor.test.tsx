@@ -351,6 +351,12 @@ describe('ComposerProseMirrorEditor', () => {
     expect(editor.querySelector('.composer-empty-caret')).toHaveAttribute('aria-hidden', 'true')
   })
 
+  test('uses the native caret when the composer is completely empty', () => {
+    renderEditor('')
+
+    expect(screen.getByTestId('composer-editor').querySelector('.composer-empty-caret')).toBeNull()
+  })
+
   test('keeps the caret outside the skill while repeatedly moving left', () => {
     const { editorRef, onChange } = renderEditor()
     const editor = screen.getByTestId('composer-editor')

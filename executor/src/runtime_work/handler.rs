@@ -10,7 +10,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex, Weak,
+        Arc, Mutex, OnceLock, Weak,
     },
     time::{Duration, Instant},
 };
@@ -53,6 +53,7 @@ mod collection;
 mod fork_transfer;
 mod hooks;
 mod notifications;
+mod plugin_install;
 mod queries;
 mod robot_queue_rpc;
 mod sidebar;
@@ -84,8 +85,9 @@ use super::{
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
         archived_conversations_response, codex_thread_has_in_progress_turn,
-        codex_thread_in_progress_turn_id, runtime_status_is_running, search_result_item,
-        workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
+        codex_thread_in_progress_turn_id, codex_thread_terminal_task_status,
+        runtime_status_is_running, search_result_item, workspace_response, RuntimeTaskLink,
+        RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
         append_completed_transcript_messages, append_runtime_handle_message,
@@ -120,6 +122,7 @@ const PENDING_THREAD_EVENT_ROUTE_PREFIX: &str = "pending:";
 const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
 const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const CODEX_TRANSCRIPT_PAGE_SIZE: usize = 40;
+const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(500);
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
 const CONTEXT_COMPACTION_WAIT_ATTEMPTS: usize = 600;
 const CONTEXT_COMPACTION_WAIT_MS: u64 = 200;
@@ -338,18 +341,30 @@ struct CodexModelProviderInfo {
 }
 
 fn current_codex_model_provider_from_config(config_response: &Value) -> CodexModelProviderInfo {
+    let configured_provider = crate::agents::configured_inference_model_provider();
+    current_codex_model_provider(config_response, &configured_provider)
+}
+
+fn current_codex_model_provider(
+    config_response: &Value,
+    configured_provider: &str,
+) -> CodexModelProviderInfo {
     let config = config_response
         .get("config")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let current_provider = string_from_map(&config, "modelProvider")
+    let runtime_provider = string_from_map(&config, "modelProvider")
         .or_else(|| string_from_map(&config, "model_provider"))
         .filter(|provider| {
             provider != crate::server::codex_model_catalog::PROVIDER_ID
                 && provider != "wework-catalog"
-        })
-        .unwrap_or_else(crate::agents::configured_inference_model_provider);
+        });
+    let current_provider = if configured_provider != CODEX_OFFICIAL_PROVIDER_ID {
+        configured_provider.to_owned()
+    } else {
+        runtime_provider.unwrap_or_else(|| configured_provider.to_owned())
+    };
     let display_name = config
         .get("model_providers")
         .or_else(|| config.get("modelProviders"))
@@ -737,6 +752,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
+            "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
             "runtime.tasks.interrupt_and_send" => self.interrupt_and_send(payload).await,
@@ -788,6 +804,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
             "runtime.codex.personality.read" => self.read_codex_personality().await,
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
+            "runtime.codex.plugin.install_local_first" => self.install_local_plugin(payload).await,
+            "runtime.codex.plugin.uninstall_local" => self.uninstall_local_plugin(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
             "runtime.codex.runtime_config.update" => {
                 self.update_codex_runtime_config(payload).await
@@ -867,6 +885,11 @@ impl RuntimeWorkRpcHandler {
             )),
         }
     }
+}
+
+fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
+    static GATE: OnceLock<AsyncMutex<()>> = OnceLock::new();
+    GATE.get_or_init(|| AsyncMutex::new(()))
 }
 
 include!("handler/helpers.rs");

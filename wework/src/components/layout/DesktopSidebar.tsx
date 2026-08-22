@@ -68,7 +68,6 @@ import {
   autoRepairStatus,
   buildChangeRequestRepairPrompt,
 } from '@/features/workbench/changeRequestStatus'
-import { runtimeTaskBoardOrigin } from '@/features/workbench/runtimeTaskOrigin'
 import {
   getRuntimeConversationQueuePaused,
   subscribeRuntimeConversation,
@@ -1411,6 +1410,7 @@ function RuntimeTaskRow({
   onToggleRuntimeTaskNotification,
   priorityReason,
   priorityLayout = false,
+  changeRequestInIndent = false,
   splitGroup,
 }: {
   workspace: RuntimeDeviceWorkspace
@@ -1437,6 +1437,7 @@ function RuntimeTaskRow({
   ) => Promise<void> | void
   priorityReason?: RuntimeTaskPriorityReason
   priorityLayout?: boolean
+  changeRequestInIndent?: boolean
   splitGroup?: WorkbenchSplitGroupMembership
 }) {
   const { t } = useTranslation('common')
@@ -1465,11 +1466,6 @@ function RuntimeTaskRow({
   const repositoryLabel = getRuntimeTaskRepositoryLabel(workspace, task)
   const branchLabel = getRuntimeTaskBranch(task)
   const taskWorkspacePath = task.workspacePath || workspace.workspacePath
-  const boardOrigin = runtimeTaskBoardOrigin(task)
-  const boardOriginLabel =
-    boardOrigin === 'board_comment'
-      ? t('workbench.runtime_task_origin_board_comment', '看板评论')
-      : t('workbench.runtime_task_origin_board_task', '看板任务')
   const hostLabel =
     workspace.remoteHostId ||
     (workspace.workspaceSource === 'remote' ? workspace.deviceName || workspace.deviceId : null)
@@ -1745,7 +1741,7 @@ function RuntimeTaskRow({
                 ? continueChangeRequestRepair
                 : undefined
             }
-            className={priorityLayout ? 'mr-1' : '-ml-7 mr-1'}
+            className={changeRequestInIndent && !priorityLayout ? '-ml-7 mr-1' : 'mr-1'}
             popoverAlign="left"
           />
           {priorityLayout ? (
@@ -1763,13 +1759,6 @@ function RuntimeTaskRow({
                     aria-hidden="true"
                     className="runtime-task-title-shimmer"
                     data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
-                  />
-                ) : null}
-                {boardOrigin ? (
-                  <MessageCircle
-                    data-testid={`runtime-local-task-board-comment-${task.taskId}`}
-                    className="h-3 w-3 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
-                    aria-label={boardOriginLabel}
                   />
                 ) : null}
                 <span data-testid={`runtime-local-task-drag-activator-${task.taskId}`}>
@@ -1804,13 +1793,6 @@ function RuntimeTaskRow({
                   aria-hidden="true"
                   className="runtime-task-title-shimmer"
                   data-testid={`runtime-local-task-title-shimmer-${task.taskId}`}
-                />
-              ) : null}
-              {boardOrigin ? (
-                <MessageCircle
-                  data-testid={`runtime-local-task-board-comment-${task.taskId}`}
-                  className="mr-1 inline h-3 w-3 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
-                  aria-label={boardOriginLabel}
                 />
               ) : null}
               <span data-testid={`runtime-local-task-drag-activator-${task.taskId}`}>
@@ -2894,6 +2876,7 @@ function ProjectItem({
                       unread={unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))}
                       marked={task.pinned}
                       indentClassName="pl-9"
+                      changeRequestInIndent
                       imNotificationSettings={imNotificationSettings}
                       showDeviceMarker={showDeviceMarker}
                       onOpenRuntimeTask={onOpenRuntimeTask}

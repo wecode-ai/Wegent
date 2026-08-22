@@ -63,25 +63,31 @@ cloud_segments=(
   plugin-auto-update
 )
 # Group checkpoints by observed Cloud CI duration and order each shard from
-# longest to shortest so the five serial runners finish at similar times.
+# longest to shortest so the eight serial runners finish at similar times.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  goal-lifecycle,window-lifecycle,cloud-worktree-tools,telemetry-consent
-  model-routing,project-automation,workspace-attachments,plugin-auto-update
-  embedded-browser,cloud-worktree-create,workspace-tabs,cloud-worktree-archive-restore,cloud-worktree-device-restart
-  resilience,rendering-extensions,cloud-worktree-queued-cancel,priority-filter,cloud-worktree-capability
-  core-task-flow,conversation-state,supervisor-lifecycle,automation-lifecycle,browser-multi-tabs,cloud-project-creation,external-event-subscription
+  goal-lifecycle,telemetry-consent,cloud-worktree-capability
+  model-routing,plugin-auto-update,priority-filter
+  embedded-browser,cloud-worktree-device-restart,cloud-project-creation
+  resilience,cloud-worktree-queued-cancel,browser-multi-tabs
+  core-task-flow,supervisor-lifecycle,automation-lifecycle
+  window-lifecycle,cloud-worktree-tools,cloud-worktree-archive-restore
+  project-automation,workspace-attachments,cloud-worktree-create,external-event-subscription
+  conversation-state,rendering-extensions,workspace-tabs
 )
-# Keep the number of core desktop runners fixed as checkpoints grow. Group
-# checkpoints by observed Core CI duration and order each shard so the serial
-# runners stay balanced while reusing the same prebuilt application.
+# Group checkpoints by observed Core CI duration and order each shard so the
+# eight serial runners stay balanced while reusing the same prebuilt
+# application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  rendering-extensions,resilience,runtime-task-queue
-  project-ai-settings,model-routing,window-lifecycle
-  core-task-flow,embedded-browser,browser-toolbar-actions,automation-lifecycle,priority-filter,temporary-chat
-  claude-runtime,workspace-attachments,local-harness,supervisor-lifecycle,codex-notification-isolation,local-file-preview
-  conversation-state,goal-lifecycle,workspace-tabs,project-automation,permission-modes
+  rendering-extensions,runtime-task-queue,local-file-preview
+  project-ai-settings,window-lifecycle,permission-modes
+  core-task-flow,temporary-chat,codex-notification-isolation
+  claude-runtime,workspace-attachments,local-harness
+  conversation-state,goal-lifecycle,workspace-tabs
+  resilience,supervisor-lifecycle
+  model-routing,project-automation,automation-lifecycle
+  embedded-browser,browser-toolbar-actions,priority-filter
 )
 
 validate_core_shards() {
@@ -477,7 +483,7 @@ classify_path() {
       backend/app/schemas/runtime_work.py | \
       backend/app/services/device/runtime_route.py | \
       backend/app/services/device/runtime_rpc_service.py | \
-    backend/app/services/runtime_work_service.py | \
+      backend/app/services/runtime_work_service.py | \
       backend/tests/api/endpoints/test_runtime_work_api.py | \
       backend/tests/api/ws/test_device_reconnect_storm.py | \
       backend/tests/api/ws/test_wework_runtime_namespace.py | \
@@ -489,7 +495,7 @@ classify_path() {
       ;;
     # External-event wait gates are exercised end to end by the cloud desktop
     # suite (external-event-subscription scenario), so every backend change to
-    # the feature must schedule Cloud / shard 5.
+    # the feature must schedule Cloud / shard 7.
     backend/app/services/external_events/* | \
       backend/app/services/project_incoming_hooks.py | \
       backend/app/services/issue_workflow_decision.py | \

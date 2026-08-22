@@ -23,7 +23,9 @@ Codex 插件运行配置位于“设置 → 集成 → 插件”，当前提供�
 
 本地市场和 OpenAI 官方市场由 Wework 前端通过本机 executor 的 Codex app-server 读取。列表请求不限制 `marketplaceKinds`，因此 Codex 可以按照当前功能开关和登录态返回本地市场与 `openai-curated-remote` 官方市场。远程 GitHub 自定义市场会被 clone 到本地缓存目录，后续列表读取使用缓存中的 marketplace 数据和插件目录。本地市场的安装、卸载、刷新和删除都走 Codex app-server。
 
-连接 Wegent 云端后，插件页还会展示 Backend 提供的 Wegent 云端市场。云端市场详情和安装状态来自 Backend；普通安装完成后，Backend 将用户的全局 `InstalledPlugin` 期望状态同步到在线本地设备和云设备。本机 Codex app-server 中用于承载云端插件的 `wegent` 内部市场继续参与插件注册和运行时解析，但不会作为设备侧市场标签显示。OpenAI 官方市场仍由 Codex 管理，不出现在自定义市场的编辑、排序和删除列表中。
+连接 Wegent 云端后，插件页还会展示 Backend 提供的 Wegent 云端市场。云端市场详情和安装状态来自 Backend；普通安装完成后，Backend 将用户的全局 `InstalledPlugin` 期望状态同步到在线本地设备和云设备。设备 Executor 从 Wework Backend / 对象存储取得包后，直接在隔离的 Claude 和 Codex home 中写入运行时缓存、marketplace 元数据和启用配置；云端插件的安装、更新和删除不调用 Codex app-server 的 `plugin/install`、`plugin/uninstall` 或配置 RPC，也不刷新 GitHub / OpenAI 市场。这样企业内部、Wework 公开和已发布个人插件在包已可达后不依赖 GitHub、OpenAI 或 Codex 联网接口。OpenAI 官方市场仍由 Codex 管理，不出现在自定义市场的编辑、排序和删除列表中。
+
+云端同步中的包替换、两个运行时缓存、注册表和配置文件按一个本地事务提交。任何解压、解析或写入失败都会恢复同步前状态，避免出现新包已落盘但旧运行时仍生效，或删除一半后无法恢复的状态。Connector 的 `localAuth` 仍在包同步完成后由 Wework 独立执行，不因本地物化方式变化而跳过。
 
 ### 安装期本地授权
 
@@ -52,7 +54,7 @@ Codex 插件运行配置位于“设置 → 集成 → 插件”，当前提供�
 
 创建入口会先调用 `GET /api/plugins/installed?device_id=<target>` 检查目标设备的本地插件安装态；如果对应插件在该设备上的 `currentDeviceInstallation` / `status.devices` 已是 `installed`，前端直接使用插件的 `displayName` 和默认提示词打开新任务，不再重复安装。未安装时，创建站点调用 `POST /api/plugins/builtin/wegent-sites/ensure-installed`，创建小程序调用 `POST /api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed`，请求体都必须携带目标 `device_id`。该接口只允许安装系统所有者发布的内置插件；内置应用插件使用 `visibility=workspace`，因此 Backend 下发的 `create.marketplace_name` 和安装记录中的 `source.marketplace` 都是 `wegent`。不同 visibility 对应不同插件市场名：`personal` 使用 `wework-personal`，`workspace` 使用 `wegent`，`public` 使用 `wework`，前端不应写死某一个市场名，而应复用共享的 marketplace 身份工具。重复调用会复用并重新启用对应插件的已有安装记录；后端可能先执行全量 `replace` 同步，并在目标设备缺少该插件时再执行单插件 `merge`。前端只以目标设备回执为准，要求本次应用插件的安装 ID 或插件名返回 `synced`；如果旧响应没有 `sync.results`，则按没有目标设备专属结果处理，并继续使用顶层 `sync.plugins` 回退校验。其他设备或历史能力的同步错误不会阻塞应用创建对话。目标设备不存在、离线或本次请求的插件未能同步到目标设备时，前端不会创建对话。确认成功后，前端分别使用稳定的 `plugin://wegent-sites@wegent` 和 `plugin://weibo-miniapp-h5-develop-agent@wegent` 引用打开新任务；小程序入口还会带入插件提供的默认创建提示。插件安装和同步期间，应用页会显示“正在安装应用插件，完成后将进入会话...”的状态提示。点击 mention 时，插件页直接加载相应的云端插件详情。
 
-正常卸载会删除账号安装意图、设备期望状态、Codex app-server 安装记录，并按连接器策略清理本机登录态；它不主动删除 Codex 或 Claude `plugins/cache` 里的可复用包缓存。缓存目录由运行时负责复用和回收，若需要释放磁盘空间，应通过独立的缓存清理或垃圾回收流程处理未被任何安装记录引用的版本。
+本地自定义市场和 OpenAI 官方市场的卸载继续走 Codex app-server。Wegent 云端插件卸载则删除账号安装意图和设备期望状态，并由 Executor 本地删除 Wegent 管理的中心包、Claude / Codex 缓存及对应配置；个人本地插件和 OpenAI 市场配置不会被一并清理。连接器登录态仍按插件授权策略处理。
 
 ## 独立 Codex Home
 

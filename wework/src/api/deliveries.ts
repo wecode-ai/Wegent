@@ -583,6 +583,7 @@ export interface LoopItemTaskBinding {
   task_title: string | null
   backend_task_id: number | null
   workflow_node_id?: string | null
+  binding_type?: 'system' | 'user'
   linked_at: string
 }
 

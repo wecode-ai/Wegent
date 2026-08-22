@@ -194,14 +194,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       timeoutMs: uiTimeoutMs,
     })
     await control.command('click', '[data-testid="project-workflow-mode-workflow"]')
+    await control.command('waitFor', '[data-testid="project-workflow-empty-add"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="project-workflow-empty-add"]')
     await control.command('waitFor', '[data-testid="project-workflow-dag"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('waitFor', '[data-testid="project-workflow-add"]', {
-      timeoutMs: uiTimeoutMs,
-    })
-
-    await control.command('click', '[data-testid="project-workflow-add"]')
     await control.command('waitFor', '[data-testid="project-workflow-stage-stage-1"]', {
       timeoutMs: uiTimeoutMs,
     })

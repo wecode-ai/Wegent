@@ -130,6 +130,8 @@ When the local executor receives `device:sync_capabilities`, it:
 
 Current device sync accepts either source format and also adds a missing runtime manifest while extracting legacy packages. The executor stores the normalized package centrally, creates real cache directories, and registers the required marketplace metadata for both Codex and Claude Code. Components supported by only one runtime remain available to that runtime without being copied into the other runtime's generated manifest.
 
+Plugin packages are downloaded only from the `download_path` supplied by Wegent Backend. After download, install, update, and `replace` removal operate entirely on the local central store, runtime caches, and configuration files; they do not call Codex app-server or contact GitHub or OpenAI. Updates and removals use a local transaction: old packages and caches remain recoverable until registry and Claude / Codex configuration writes all succeed, and failures restore the pre-sync package, caches, configuration, and manifest. This boundary applies only to Wegent-managed `wegent` / `wework` cloud plugins and does not change user-local marketplaces, OpenAI marketplaces, or Connector authorization flows.
+
 Central store layout:
 
 ```text
@@ -215,7 +217,7 @@ The manifest records Wegent-managed capabilities:
 }
 ```
 
-`replace` mode only removes runtime entries marked as Wegent managed in the manifest. User-created local Skills or plugin cache entries under `~/.claude` are preserved. If a local Skill already occupies the same runtime path, the executor reports a conflict and does not overwrite user content.
+`replace` mode only removes runtime entries, central packages, and matching `wegent` / `wework` configuration marked as Wegent managed in the manifest. User-created local Skills or plugin cache entries under `~/.claude`, plus personal and OpenAI marketplace configuration, are preserved. If a local Skill already occupies the same runtime path, the executor reports a conflict and does not overwrite user content.
 
 ## Heartbeat
 

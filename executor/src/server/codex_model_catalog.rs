@@ -433,10 +433,7 @@ fn catalog_cache() -> &'static Mutex<Option<CatalogCacheEntry>> {
 }
 
 fn configured_catalog_upstream() -> Option<(String, String)> {
-    let codex_home = env::var_os("WEGENT_CODEX_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)?;
-    let document = fs::read_to_string(codex_home.join("config.toml"))
+    let document = fs::read_to_string(crate::agents::wework_codex_home().join("config.toml"))
         .ok()?
         .parse::<DocumentMut>()
         .ok()?;

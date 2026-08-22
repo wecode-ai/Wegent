@@ -124,7 +124,9 @@ mod plugin_skills;
 use diagnostics::{json_scalar_field, json_string_field};
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
-pub(crate) use home::{executor_home, select_wework_codex_user_instructions, wework_codex_home};
+pub(crate) use home::{
+    executor_home, replace_config, select_wework_codex_user_instructions, wework_codex_home,
+};
 use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
 

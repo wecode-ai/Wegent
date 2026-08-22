@@ -56,6 +56,7 @@ export function ProjectAutomationView({
   const [pullRequestAutomationBusy, setPullRequestAutomationBusy] = useState(false)
   const [pullRequestAutomationError, setPullRequestAutomationError] = useState<string | null>(null)
   const projectVersionRef = useRef({ projectId: String(project.id), version: project.version })
+  const workflowEditRevisionRef = useRef(0)
   const [automationRules, setAutomationRules] = useState<ProjectAutomationRule[]>([])
   const [projectAgents, setProjectAgents] = useState<ProjectChatAgent[]>([])
   const [externalEventCatalog, setExternalEventCatalog] = useState<ExternalEventType[] | null>(null)
@@ -98,6 +99,10 @@ export function ProjectAutomationView({
   const handleAgentsChange = useCallback((agents: ProjectChatAgent[]) => {
     setProjectAgents(agents.filter(agent => agent.status === 'active'))
   }, [])
+  const handleWorkflowChange = useCallback((definition: ProjectWorkflowDefinition) => {
+    workflowEditRevisionRef.current += 1
+    setWorkflowDefinition(definition)
+  }, [])
 
   const ensureStageRobotRule = useCallback(
     async (agentId: string): Promise<string | null> => {
@@ -138,6 +143,7 @@ export function ProjectAutomationView({
 
   async function saveWorkflow(definition: ProjectWorkflowDefinition) {
     if (workflowBusy) return
+    const savedEditRevision = workflowEditRevisionRef.current
     setWorkflowBusy(true)
     setWorkflowError(null)
     try {
@@ -156,8 +162,14 @@ export function ProjectAutomationView({
         projectId: String(project.id),
         version: updated.version,
       }
-      setWorkflowDefinition(
-        updated.workflow_definition ?? { version: definition.version + 1, nodes: [] }
+      const savedDefinition = updated.workflow_definition ?? {
+        version: definition.version + 1,
+        nodes: [],
+      }
+      setWorkflowDefinition(current =>
+        workflowEditRevisionRef.current === savedEditRevision
+          ? savedDefinition
+          : { ...current, version: savedDefinition.version }
       )
       onProjectUpdated?.(updated)
     } catch (cause) {
@@ -248,7 +260,7 @@ export function ProjectAutomationView({
         <ProjectWorkflowEditor
           value={workflowDefinition}
           busy={workflowBusy}
-          onChange={setWorkflowDefinition}
+          onChange={handleWorkflowChange}
           onSave={saveWorkflow}
           externalEventCatalog={externalEventApi ? externalEventCatalog : null}
           automationRules={automationRules}

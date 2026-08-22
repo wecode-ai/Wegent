@@ -382,10 +382,11 @@ interface CatalogReconciliationTracker {
   key: string
 }
 
-const catalogReconciliationTrackers = new WeakMap<
-  LocalExecutorRequest,
-  CatalogReconciliationTracker
->()
+let catalogReconciliationTracker: CatalogReconciliationTracker = {
+  attemptedAt: 0,
+  inFlight: null,
+  key: '',
+}
 let runtimeChatStreams = new WeakMap<
   LocalExecutorSubscribe,
   WeakMap<LocalExecutorRequest, ReturnType<typeof createRuntimeChatStream>>
@@ -393,6 +394,11 @@ let runtimeChatStreams = new WeakMap<
 
 export function resetLocalRuntimeChatStreamsForTests(): void {
   runtimeChatStreams = new WeakMap()
+  catalogReconciliationTracker = {
+    attemptedAt: 0,
+    inFlight: null,
+    key: '',
+  }
 }
 
 function getRuntimeChatStream(
@@ -414,19 +420,11 @@ function getRuntimeChatStream(
 const CATALOG_IDLE_RESTART_RETRY_DELAY_MS = 100
 const CATALOG_IDLE_RESTART_MAX_ATTEMPTS = 20
 
-function catalogReconciliationTracker(request: LocalExecutorRequest): CatalogReconciliationTracker {
-  const existing = catalogReconciliationTrackers.get(request)
-  if (existing) return existing
-  const tracker = { attemptedAt: 0, inFlight: null, key: '' }
-  catalogReconciliationTrackers.set(request, tracker)
-  return tracker
-}
-
 async function reconcilePendingLocalModelCatalog(
   request: LocalExecutorRequest,
   runtimeInstanceId?: string
 ): Promise<void> {
-  const tracker = catalogReconciliationTracker(request)
+  const tracker = catalogReconciliationTracker
   if (tracker.inFlight) {
     try {
       await tracker.inFlight
@@ -3455,6 +3453,48 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       }
     },
   }
+  const branchNameApi: NonNullable<WorkbenchServices['branchNameApi']> = {
+    async generateBranchName(data) {
+      const deviceId = data.deviceId?.trim() || (await getLocalDeviceId())
+      if (!(await runtimeWorkApi.prepareRuntimeModel({ deviceId, modelId: data.modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
+      const sourceText = data.sourceText.trim()
+      if (!sourceText) {
+        throw new Error(i18n.t('workbench.environment_branch_generate_source_required'))
+      }
+      const executionRequest = buildLocalRuntimeExecutionRequest({
+        taskId: `branch-name-${createRuntimeTurnSeed()}`,
+        runtime: 'codex',
+        teamId: LOCAL_WORKBENCH_TEAM.id,
+        title: 'Generate Git branch name',
+        message: [
+          'Generate a concise Git branch name for the work described below.',
+          'Output only the branch name. Use lowercase ASCII letters, digits, hyphens, and one conventional prefix such as feature/, fix/, refactor/, docs/, test/, or chore/.',
+          'Do not use spaces, quotes, punctuation, explanations, or Markdown. Keep it under 48 characters.',
+          '',
+          `Work: ${sourceText}`,
+        ].join('\n'),
+        turnSeed: createRuntimeTurnSeed(),
+        modelId: data.modelId,
+        modelType: data.modelType,
+        modelOptions: data.modelOptions,
+        cloudModelGateway: deps.cloudModelGateway,
+        localDeviceId: deviceId,
+        workspaceSource: 'local_path',
+        newSession: true,
+        ephemeral: true,
+        requireLocalCodexCatalog: true,
+        user: deps.user ?? getLocalUser(),
+      })
+      executionRequest.enable_tools = false
+      executionRequest.enable_deep_thinking = false
+      const response = await request<{ content?: string }>('runtime.text.generate', {
+        executionRequest,
+      })
+      return response.content?.trim() ?? ''
+    },
+  }
 
   return {
     teamApi,
@@ -3538,6 +3578,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       },
     },
     runtimeWorkApi,
+    branchNameApi,
     automationApi,
     attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({

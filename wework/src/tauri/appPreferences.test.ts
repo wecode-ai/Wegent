@@ -14,7 +14,12 @@ vi.mock('@/lib/runtime-environment', () => ({
 const mergedDefaultPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
-  defaultWorkspaceTab: 'task',
+  fixedWorkspaceTabs: [
+    { id: 'fixed-task', kind: 'task' },
+    { id: 'fixed-board', kind: 'board' },
+    { id: 'fixed-agent', kind: 'agent' },
+  ],
+  startupWorkspaceTabId: 'fixed-task',
   systemDragEnabled: true,
   preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
@@ -127,7 +132,7 @@ describe('appPreferences', () => {
     await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
   })
 
-  test('normalizes the default workspace tab preference', async () => {
+  test('migrates the legacy default workspace tab preference', async () => {
     isTauriRuntimeMock.mockReturnValue(true)
     invokeMock.mockResolvedValue({ defaultWorkspaceTab: 'board' })
 
@@ -135,12 +140,33 @@ describe('appPreferences', () => {
 
     await expect(getAppPreferences()).resolves.toEqual({
       ...mergedDefaultPreferences,
-      defaultWorkspaceTab: 'board',
+      startupWorkspaceTabId: 'fixed-board',
     })
 
     invokeMock.mockResolvedValue({ defaultWorkspaceTab: 'unsupported' })
 
     await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
+  })
+
+  test('normalizes fixed workspace tabs and the startup tab', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({
+      fixedWorkspaceTabs: [
+        { id: 'smart-1', kind: 'smart_app', installationId: 'app-1', title: 'Research' },
+        { id: 'invalid-smart', kind: 'smart_app' },
+      ],
+      startupWorkspaceTabId: 'missing',
+    })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      fixedWorkspaceTabs: [
+        { id: 'smart-1', kind: 'smart_app', installationId: 'app-1', title: 'Research' },
+      ],
+      startupWorkspaceTabId: 'smart-1',
+    })
   })
 
   test('normalizes stored browser preferences', async () => {

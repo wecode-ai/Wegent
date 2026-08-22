@@ -120,7 +120,7 @@ pub(crate) fn select_wework_codex_user_instructions(
     strip_wework_browser_instructions(developer_instructions).to_owned()
 }
 
-fn replace_config(config_path: &Path, content: String) -> Result<(), String> {
+pub(crate) fn replace_config(config_path: &Path, content: String) -> Result<(), String> {
     let temporary_path = config_path.with_extension("toml.tmp");
     fs::write(&temporary_path, content).map_err(|error| {
         format!(
