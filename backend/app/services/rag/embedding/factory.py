@@ -12,7 +12,6 @@ from typing import Any, Dict, Optional
 from llama_index.core.base.embeddings.base import BaseEmbedding
 from sqlalchemy.orm import Session
 
-from app.models.kind import Kind
 from knowledge_engine.embedding.capabilities import (
     embedding_supports_image_input,
     normalize_additional_input_modalities,
@@ -20,6 +19,7 @@ from knowledge_engine.embedding.capabilities import (
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config as engine_create_embedding_model_from_runtime_config,
 )
+from shared.db.capability_reference import resolve_model_kind
 from shared.models import RuntimeEmbeddingModelConfig
 from shared.utils.crypto import decrypt_api_key
 from shared.utils.placeholder import process_custom_headers_placeholders
@@ -37,10 +37,9 @@ def create_embedding_model_from_crd(
     """
     Create embedding model from Model CRD.
 
-    Query logic:
-    - If namespace='default': query with user_id filter (personal model) or public model (user_id=0)
-    - If namespace!='default': query without user_id filter (group model)
-      Group models may be created by other users in the same group.
+    Resolution logic:
+    - Prefer a direct Model in the caller-visible namespace.
+    - Fall back to an approved shared Model reference.
 
     Args:
         db: Database session
@@ -55,35 +54,12 @@ def create_embedding_model_from_crd(
     Raises:
         ValueError: If model not found or not an embedding model
     """
-    # Query Model CRD from kinds table
-    # For group resources (namespace != 'default'), don't filter by user_id
-    # since the model may be created by other users in the same group
-    if model_namespace == "default":
-        # Personal or public model: filter by user_id or public (user_id=0)
-        model_kind = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Model",
-                Kind.name == model_name,
-                Kind.namespace == model_namespace,
-                Kind.is_active == True,
-            )
-            .filter((Kind.user_id == user_id) | (Kind.user_id == 0))
-            .order_by(Kind.user_id.desc())  # Prioritize user's models
-            .first()
-        )
-    else:
-        # Group model: no user_id filter
-        model_kind = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Model",
-                Kind.name == model_name,
-                Kind.namespace == model_namespace,
-                Kind.is_active == True,
-            )
-            .first()
-        )
+    model_kind = resolve_model_kind(
+        db,
+        name=model_name,
+        namespace=model_namespace,
+        user_id=user_id,
+    )
 
     if not model_kind:
         raise ValueError(
@@ -148,6 +124,9 @@ def create_embedding_model_from_crd(
     # This is used by Milvus to create collections with the correct dimension
     embedding_config = spec.get("embeddingConfig", {})
     dimensions = embedding_config.get("dimensions") if embedding_config else None
+    encoding_format = (
+        embedding_config.get("encoding_format") if embedding_config else None
+    )
     additional_input_modalities = normalize_additional_input_modalities(
         embedding_config.get("additional_input_modalities")
         if embedding_config
@@ -179,6 +158,7 @@ def create_embedding_model_from_crd(
                     custom_headers if isinstance(custom_headers, dict) else {}
                 ),
                 "dimensions": dimensions,
+                "encoding_format": encoding_format,
                 "additional_input_modalities": additional_input_modalities,
             },
         )

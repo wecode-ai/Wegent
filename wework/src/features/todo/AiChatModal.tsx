@@ -30,6 +30,7 @@ interface AiChatModalProps {
    * even while the temporary task is still executing. */
   open: boolean
   onClose: () => void
+  onBack?: () => void
   initialAddress?: RuntimeTaskAddress | null
   initialLocalProjectId?: number | null
   inheritFromTask?: RuntimeTaskAddress | null
@@ -69,6 +70,7 @@ export function AiChatModal({
   task,
   open,
   onClose,
+  onBack,
   initialAddress = null,
   initialLocalProjectId = null,
   inheritFromTask = null,
@@ -295,8 +297,8 @@ export function AiChatModal({
             <header className="flex h-12 shrink-0 items-center gap-2 px-3">
               <button
                 type="button"
-                data-testid="ai-chat-modal-close"
-                onClick={onClose}
+                data-testid="ai-chat-modal-back"
+                onClick={onBack ?? onClose}
                 aria-label={t('workbench.back_to_work_item', '返回 Issue')}
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
               >
@@ -318,6 +320,15 @@ export function AiChatModal({
                   <ArrowUpRight className="h-3.5 w-3.5" />
                 </button>
               ) : null}
+              <button
+                type="button"
+                data-testid="ai-chat-modal-close"
+                onClick={onClose}
+                aria-label={t('common.close', '关闭')}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </header>
             <TemporaryChatPanel
               currentProject={selectedLocalProject}

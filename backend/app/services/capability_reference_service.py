@@ -12,6 +12,7 @@ from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.schemas.base_role import BaseRole
+from shared.db.capability_reference import resolve_referenced_model_kind
 
 REFERENCE_KINDS = {"Model", "Shell", "Retriever"}
 
@@ -141,6 +142,13 @@ def get_referenced_capability(
     namespace: str,
 ) -> Kind | None:
     """Resolve a referenced source Kind by its target-visible name."""
+    if kind == "Model":
+        return resolve_referenced_model_kind(
+            db,
+            name=name,
+            namespace=namespace,
+            user_id=user_id,
+        )
     return next(
         (
             source
