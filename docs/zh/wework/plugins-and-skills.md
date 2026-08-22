@@ -30,6 +30,8 @@ Skill 为 AI 提供特定任务的操作说明和资源；插件可以组合 Ski
 
 Wework 分别管理 DeepSeek Harness Runtime 和共享 Node.js Runtime，并在启动智能工作台时禁止 Harness 把页面交给系统默认浏览器。工作台页面只会加载到 Wework 内置的原生 WebView 中。常驻工作台会等待已绑定的模型恢复完成后再自动启动，避免 Wework 重载期间因模型列表尚未就绪而漏掉恢复。
 
+为兼容需要跨域调用遗留服务的 DSH 页面，Wework 只在智能工作台自己的 Harness WebView 中放宽同源限制；Wework 主界面和普通内置浏览器仍使用默认网页安全策略。Windows 会为这类 WebView 使用独立的 WebView2 数据目录，清除浏览数据时会同时清理普通浏览器和智能工作台的数据。放宽同源限制会降低页面之间的隔离强度，因此只应安装并运行来源可信的智能工作台。
+
 Wework 支持标准 DSH Release ZIP：`plugin-manifest.json` 通过 `packages` 声明各 npm 包的 `name`、`role` 和目标 `path`，ZIP 根目录包含对应的 `.tgz` 文件，其中唯一的 `profile-bundle` 路径必须与 `entry.installPackage` 一致。`entry` 只需要 `installPackage` 和 `profile`，不需要声明 `webUrl`；Wework 会在启动时分配本地地址、安装清单中的全部包，并把用户选择的 Wework 模型绑定到 profile。
 
 从市场安装时需要选择一个 Wework 模型；从“我的创建”导入的工作台可以稍后在 **已安装** 中选择模型。这个模型只绑定到当前智能工作台，其他智能工作台可以分别选择不同模型。工作台会显示版本、绑定模型和 **已安装 / 运行中 / 启动失败** 状态；工作台停止时可以直接修改绑定模型。点击 **打开** 后，Wework 启动隔离的 Harness 实例，并播放工作台进入顶部标签栏的动效，再把智能工作台作为独立工作区标签页打开；点击 **停止** 会关闭对应标签页并回收实例。打开 **常驻** 后，Wework 每次启动主窗口时都会自动启动该工作台并打开它的标签页。
