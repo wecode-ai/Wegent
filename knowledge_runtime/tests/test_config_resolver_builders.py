@@ -7,11 +7,11 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from knowledge_runtime.services.config_resolver import (
     ConfigResolutionError,
     ConfigResolver,
 )
+
 from shared.models import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrieverConfig,
@@ -119,7 +119,10 @@ class TestBuildResolvedEmbeddingModelConfig:
                     "custom_headers": {"X-Custom": "value"},
                 },
             },
-            "embeddingConfig": {"dimensions": 1536},
+            "embeddingConfig": {
+                "dimensions": 1536,
+                "encoding_format": "float",
+            },
         }
         model = _make_model_kind(spec=spec)
 
@@ -151,6 +154,7 @@ class TestBuildResolvedEmbeddingModelConfig:
         assert result.resolved_config["base_url"] == "https://api.openai.com/v1"
         assert result.resolved_config["model_id"] == "text-embedding-3-small"
         assert result.resolved_config["dimensions"] == 1536
+        assert result.resolved_config["encoding_format"] == "float"
 
     def test_protocol_fallback_to_env_model(
         self, resolver: ConfigResolver, mock_db: MagicMock
@@ -222,6 +226,7 @@ class TestBuildResolvedEmbeddingModelConfig:
             )
 
         assert result.resolved_config["dimensions"] is None
+        assert result.resolved_config["encoding_format"] is None
 
     def test_model_not_found(
         self, resolver: ConfigResolver, mock_db: MagicMock
