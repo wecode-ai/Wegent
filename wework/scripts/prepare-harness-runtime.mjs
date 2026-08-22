@@ -211,6 +211,10 @@ async function reusePublishedRuntime(runtime) {
   }
   const descriptor = validateDescriptor(await response.json(), runtime)
   await ensurePublishedAsset(descriptor, runtime)
+  await writeFile(
+    path.join(assetDirectory, runtime.descriptorName),
+    `${JSON.stringify(descriptor, null, 2)}\n`
+  )
   console.log(`Reused published Harness runtime: ${runtime.assetName}`)
   return descriptor
 }
