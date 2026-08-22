@@ -258,7 +258,7 @@ verify_uploaded_artifacts() {
     fi
   done < <(
     node -e \
-      "const m=require(process.argv[1]); for (const a of m.assets) console.log(a.name)" \
+      "const m=require(process.argv[1]); for (const a of m.assets) { console.log(a.archiveName); console.log(a.descriptorName) }" \
       "$OUTPUT_DIR/release-runtime-assets.json"
   )
 }
@@ -371,7 +371,7 @@ verify_runtime_descriptors_in_app() {
 
   for descriptor in \
     bundled-execution-runtimes/node.json \
-    bundled-harness-runtime/runtime.json; do
+    bundled-harness-runtime/runtimes.json; do
     if [ ! -s "$resource_root/$descriptor" ]; then
       echo "MinIO app bundle is missing runtime descriptor: $descriptor" >&2
       exit 1

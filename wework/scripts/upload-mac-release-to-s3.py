@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from minio import Minio
 from minio.commonconfig import CopySource
 from minio.error import S3Error
-from minio_release_assets import load_runtime_assets
+from minio_release_assets import publish_runtime_asset_pairs
 
 MACOS_PLATFORM_PREFIXES = {
     "darwin-aarch64": "WEWORK_MAC_ARM64_RELEASE_S3_PREFIX",
@@ -274,14 +274,15 @@ def main() -> None:
             artifact,
             "public, max-age=31536000, immutable",
         )
-    for runtime_asset in load_runtime_assets(output_dir):
-        upload_file(
-            client,
-            bucket,
-            prefix,
-            runtime_asset,
-            "public, max-age=31536000, immutable",
-        )
+    publish_runtime_asset_pairs(
+        client,
+        bucket,
+        prefix,
+        output_dir,
+        lambda path: upload_file(
+            client, bucket, prefix, path, "public, max-age=31536000, immutable"
+        ),
+    )
     manifest = output_dir / "latest.json"
     if not manifest.is_file():
         raise SystemExit(f"Updater manifest not found: {manifest}")
