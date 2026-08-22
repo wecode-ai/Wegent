@@ -31,7 +31,6 @@ import {
   mergeRuntimeWorkLists as mergeRuntimeWorkPair,
 } from '@/features/workbench/workbenchCloudStatus'
 import { supportsCloudExecution } from '@/features/cloud-connection/modelExecution'
-import { resolveCloudVisionSidecarReference } from '@/features/workbench/runtimeModelSelection'
 import type {
   Attachment,
   ArchivedConversationItem,
@@ -144,22 +143,8 @@ function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
   return models
 }
 
-function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
-  const compatibleModels = models.filter(supportsCloudExecution)
-  return compatibleModels.map(model => {
-    const config = recordValue(model.config)
-    if (!Object.hasOwn(config, 'visionSidecarModel')) return model
-    const visionSidecarModel = resolveCloudVisionSidecarReference(
-      config.visionSidecarModel,
-      compatibleModels
-    )
-    if (visionSidecarModel) {
-      return { ...model, config: { ...config, visionSidecarModel } }
-    }
-    const sanitizedConfig = { ...config }
-    delete sanitizedConfig.visionSidecarModel
-    return { ...model, config: sanitizedConfig }
-  })
+function cloudExecutableModels(models: UnifiedModel[]): UnifiedModel[] {
+  return models.filter(supportsCloudExecution)
 }
 
 function normalizedModelId(model: UnifiedModel): string {
@@ -404,7 +389,7 @@ export function createHybridWorkbenchServices(
         void writeInfoLog(
           `[Wework] Cloud model catalog loaded ${JSON.stringify(modelCatalogLog)}`
         ).catch(() => undefined)
-        rememberedCloudModels = annotateCloudModels(response.data)
+        rememberedCloudModels = cloudExecutableModels(response.data)
         cloudModelsLoaded = true
         notifyWorkbenchModelsChanged()
       })

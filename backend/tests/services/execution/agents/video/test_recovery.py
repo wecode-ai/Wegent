@@ -11,8 +11,8 @@ import pytest
 
 from app.services.execution.agents.video.recovery import (
     STALE_THRESHOLD_SECONDS,
-    _recover_video_jobs_sync,
     _is_polling_context_stale,
+    _recover_video_jobs_sync,
     recover_video_jobs,
     recover_video_jobs_after_stale_delay,
 )

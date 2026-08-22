@@ -86,14 +86,18 @@ describe('projectSpaceSelection', () => {
     ).resolves.toEqual(context)
   })
 
-  test('preserves API priority when more than one store returns a context', async () => {
+  test('prefers a user Issue over the system My Tasks Issue across stores', async () => {
     const localContext = {
       id: 'local-context',
       device_id: 'device-1',
       task_id: 'task-1',
-      cloud_project_id: 'space-local',
+      cloud_project_id: 'default-work-items',
       loop_item_id: 'todo-local',
-      project: project('space-local', 'Local board', 'local'),
+      project: {
+        ...project('default-work-items', 'My Tasks', 'local'),
+        project_key: 'WORK',
+        metadata: { system_kind: 'default_work_items' },
+      },
       loop_item: null,
     }
     const cloudContext = {
@@ -115,8 +119,9 @@ describe('projectSpaceSelection', () => {
         deviceId: 'device-1',
         taskId: 'task-1',
       })
-    ).resolves.toEqual(localContext)
-    expect(cloudApi.findCloudContextForTask).not.toHaveBeenCalled()
+    ).resolves.toEqual(cloudContext)
+    expect(localApi.findCloudContextForTask).toHaveBeenCalledOnce()
+    expect(cloudApi.findCloudContextForTask).toHaveBeenCalledOnce()
   })
 
   test('only scopes runtime creation to backend project spaces', () => {

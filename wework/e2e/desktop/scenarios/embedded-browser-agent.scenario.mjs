@@ -64,6 +64,7 @@ const ANNOTATION_COMMENT = 'Make this target more prominent'
 const ANNOTATION_NAVIGATION_COMMENT = 'This comment must not survive navigation'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoDir = resolve(scriptDir, '..', '..', '..', '..')
+let desktopScenarioExecutorBinary = null
 
 async function readBrowserPanelLabel(control, scopeSelector, timeoutMs) {
   const selector = `${scopeSelector} ${WORKBENCH_BROWSER_LABEL_SELECTOR}`
@@ -356,6 +357,7 @@ async function waitForRuntimeTaskId(control, timeoutMs) {
 
 async function withBrowserMcp(identity, label, callback) {
   const executorPath =
+    desktopScenarioExecutorBinary ||
     process.env.WEWORK_E2E_EXECUTOR_BIN ||
     join(
       repoDir,
@@ -472,6 +474,9 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
   let cacheResourceRequests = 0
 
   return {
+    setExecutorBinary(path) {
+      desktopScenarioExecutorBinary = path
+    },
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === REDIRECT_PATH) {
         response.writeHead(302, { location: FIXTURE_PATH })

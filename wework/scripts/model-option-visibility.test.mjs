@@ -16,19 +16,15 @@ class DeferredLocalModelControl {
         testIds: ['model-selector-menu', MODEL_OPTION_ID],
       })
     }
-    if (name === 'getElementMetrics') {
+    if (name === 'getElementCount') {
       if (selector.includes(`[data-model-provider-id="${EXPECTED_PROVIDER_ID}"]`)) {
         if (this.localModelReloads === 0) {
           this.providerQualifiedLookupsBeforeReload += 1
-          return JSON.stringify([])
+          return '0'
         }
-        return JSON.stringify([
-          { width: 160, height: 32, top: 120, right: 320, bottom: 152, left: 160 },
-        ])
+        return '1'
       }
-      return JSON.stringify([
-        { width: 160, height: 32, top: 80, right: 320, bottom: 112, left: 160 },
-      ])
+      return '1'
     }
     if (name === 'dispatchLocalModelSettingsChanged') {
       this.localModelReloads += 1

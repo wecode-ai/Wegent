@@ -5,9 +5,10 @@ set -euo pipefail
 DEVICE_IMAGE_REPOSITORY="${DEVICE_IMAGE_REPOSITORY:-registry.api.weibo.com/ci/wegent-device}"
 DEVICE_IMAGE_PUSH_REPOSITORY="${DEVICE_IMAGE_PUSH_REPOSITORY:-pushregistry.api.weibo.com/ci/wegent-device}"
 BUILDKIT_IMAGE="${BUILDKIT_IMAGE:-registry.api.weibo.com/ci/moby/buildkit:buildx-stable-1}"
-DEVICE_IMAGE_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' executor/Cargo.toml | head -1)"
+EXECUTOR_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' executor/Cargo.toml | head -1)"
+DEVICE_IMAGE_VERSION="${DEVICE_IMAGE_VERSION:-$EXECUTOR_VERSION}"
 
-if [[ -z "$DEVICE_IMAGE_VERSION" ]]; then
+if [[ -z "$EXECUTOR_VERSION" ]]; then
   echo "Unable to read the executor version from executor/Cargo.toml" >&2
   exit 1
 fi
@@ -45,11 +46,13 @@ docker buildx inspect "$BUILDER_NAME" --bootstrap
 
 push_image="${DEVICE_IMAGE_PUSH_REPOSITORY}:${DEVICE_IMAGE_VERSION}"
 runtime_image="${DEVICE_IMAGE_REPOSITORY}:${DEVICE_IMAGE_VERSION}"
+executor_version_push_image="${DEVICE_IMAGE_PUSH_REPOSITORY}:${EXECUTOR_VERSION}"
+executor_version_runtime_image="${DEVICE_IMAGE_REPOSITORY}:${EXECUTOR_VERSION}"
 docker buildx build \
   --builder "$BUILDER_NAME" \
   --platform linux/amd64 \
   --file docker/device/Dockerfile \
-  --build-arg "APP_VERSION=${DEVICE_IMAGE_VERSION}" \
+  --build-arg "APP_VERSION=${EXECUTOR_VERSION}" \
   --build-arg "VCS_REF=${CI_COMMIT_SHA}" \
   --build-arg "DEVICE_BASE_IMAGE=${DEVICE_BASE_IMAGE:-registry.api.weibo.com/weibo_rd_if/ubuntu:22.04.5}" \
   --build-arg "DEVICE_APT_MIRROR=${DEVICE_APT_MIRROR:-http://mirrors.cloud.aliyuncs.com/ubuntu}" \
@@ -78,9 +81,9 @@ fi
 printf 'Local image verification: architecture=%s version=%s revision=%s executor=%s\n' \
   "$actual_architecture" "$actual_version" "$actual_revision" "$actual_executor_version"
 test "$actual_architecture" = "amd64"
-test "$actual_version" = "$DEVICE_IMAGE_VERSION"
+test "$actual_version" = "$EXECUTOR_VERSION"
 test "$actual_revision" = "$CI_COMMIT_SHA"
-test "$actual_executor_version" = "$DEVICE_IMAGE_VERSION"
+test "$actual_executor_version" = "$EXECUTOR_VERSION"
 
 if [[ -n "${CI_COMMIT_BRANCH:-}" ]]; then
   branch_head="$(git ls-remote origin "refs/heads/${CI_COMMIT_BRANCH}" | awk '{print $1}')"
@@ -98,27 +101,34 @@ if [[ -z "$pushed_digest" ]]; then
   exit 1
 fi
 
-consecutive_current=0
-for attempt in $(seq 1 120); do
-  observed_digest="$(
-    timeout --signal=TERM --kill-after=5s 15s \
-      docker buildx imagetools inspect "$runtime_image" 2>/dev/null \
-      | awk '/^Digest:/ {print $2; exit}' \
-      || true
-  )"
-  if [[ "$observed_digest" = "$pushed_digest" ]]; then
-    consecutive_current=$((consecutive_current + 1))
-  else
-    consecutive_current=0
-  fi
-  printf 'Runtime registry verification: attempt=%s digest=%s consecutive_current=%s\n' \
-    "$attempt" "${observed_digest:-unavailable}" "$consecutive_current"
-  if [[ "$consecutive_current" -ge 5 ]]; then
-    break
-  fi
-  sleep 5
-done
-test "$consecutive_current" -ge 5
+wait_for_runtime_digest() {
+  local image="$1"
+  local expected_digest="$2"
+  local consecutive_current=0
+  local observed_digest
+  for attempt in $(seq 1 120); do
+    observed_digest="$(
+      timeout --signal=TERM --kill-after=5s 15s \
+        docker buildx imagetools inspect "$image" 2>/dev/null \
+        | awk '/^Digest:/ {print $2; exit}' \
+        || true
+    )"
+    if [[ "$observed_digest" = "$expected_digest" ]]; then
+      consecutive_current=$((consecutive_current + 1))
+    else
+      consecutive_current=0
+    fi
+    printf 'Runtime registry verification: image=%s attempt=%s digest=%s consecutive_current=%s\n' \
+      "$image" "$attempt" "${observed_digest:-unavailable}" "$consecutive_current"
+    if [[ "$consecutive_current" -ge 5 ]]; then
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+
+wait_for_runtime_digest "$runtime_image" "$pushed_digest"
 
 docker pull --platform linux/amd64 "$runtime_image"
 published_architecture="$(docker image inspect --format '{{.Architecture}}' "$runtime_image")"
@@ -131,6 +141,14 @@ fi
 printf 'Published image verification: architecture=%s version=%s revision=%s executor=%s\n' \
   "$published_architecture" "$published_version" "$published_revision" "$published_executor_version"
 test "$published_architecture" = "amd64"
-test "$published_version" = "$DEVICE_IMAGE_VERSION"
+test "$published_version" = "$EXECUTOR_VERSION"
 test "$published_revision" = "$CI_COMMIT_SHA"
-test "$published_executor_version" = "$DEVICE_IMAGE_VERSION"
+test "$published_executor_version" = "$EXECUTOR_VERSION"
+
+if [[ "${CI_COMMIT_BRANCH:-}" = "${MASTER_BRANCH:-main}" \
+  && "$DEVICE_IMAGE_VERSION" != "$EXECUTOR_VERSION" ]]; then
+  docker tag "$push_image" "$executor_version_push_image"
+  docker push "$executor_version_push_image"
+  wait_for_runtime_digest "$executor_version_runtime_image" "$pushed_digest"
+  printf 'Published main-branch compatibility tag: %s\n' "$executor_version_runtime_image"
+fi

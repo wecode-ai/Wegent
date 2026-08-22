@@ -12614,6 +12614,99 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('backfills unbound runtime tasks into the default My Tasks board', async () => {
+    const updateTaskTrackingStatus = vi.fn().mockResolvedValue({
+      id: 'WORK-1',
+      status: 'in_review',
+    })
+    const trackProjectTask = vi.fn().mockResolvedValue({
+      item: {
+        id: 'WORK-1',
+        cloud_project_id: 'default-work-items',
+        title: 'Runtime A',
+      },
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, key: 'wegent', name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  workspacePath: '/workspace/project-alpha',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                    },
+                    {
+                      taskId: 'runtime-bound',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Already bound',
+                      runtime: 'codex',
+                      status: 'queued',
+                      runtimeHandle: {
+                        cloudProjectId: 'project-1',
+                        loopItemId: 'WEG-1',
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 2,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      projectSpaceApis: {
+        local: {
+          trackProjectTask,
+          updateTaskTrackingStatus,
+          updateTaskTrackingTitle: vi.fn().mockResolvedValue(null),
+        },
+      } as unknown as WorkbenchServices['projectSpaceApis'],
+    })
+
+    renderWorkbench(<div />, services)
+
+    await waitFor(() => expect(trackProjectTask).toHaveBeenCalledTimes(1))
+    expect(trackProjectTask).toHaveBeenCalledWith(
+      'default-work-items',
+      expect.objectContaining({
+        deviceId: 'device-1',
+        taskId: 'runtime-a',
+        runtime: 'codex',
+        workspacePath: '/workspace/project-alpha',
+      }),
+      'Runtime A',
+      ''
+    )
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deviceId: 'device-1',
+          taskId: 'runtime-a',
+        }),
+        'cancelled'
+      )
+    )
+    expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'device-1',
+        taskId: 'runtime-bound',
+      }),
+      'queued'
+    )
+  })
+
   test('does not regress board completion when a stale running snapshot arrives', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {

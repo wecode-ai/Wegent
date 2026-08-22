@@ -309,6 +309,9 @@ wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e='
     expected="${expected/wework_desktop_other_e2e=/$cloud_defaults}"
   fi
+  if [[ "$expected" != *"wework_desktop_macos_inspector_e2e="* ]]; then
+    expected="${expected}"$'\n''wework_desktop_macos_inspector_e2e=false'
+  fi
   local output
   output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$@")"
   if [[ "$output" != "$expected" ]]; then
@@ -370,11 +373,12 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"rendering-extensions,resilience,runtime-task-queue"},{"id":"core-2","name":"Core / shard 2","segments":"project-ai-settings,model-routing,window-lifecycle"},{"id":"core-3","name":"Core / shard 3","segments":"core-task-flow,embedded-browser,automation-lifecycle,priority-filter,temporary-chat"},{"id":"core-4","name":"Core / shard 4","segments":"claude-runtime,workspace-attachments,local-harness,supervisor-lifecycle,codex-notification-isolation,local-file-preview"},{"id":"core-5","name":"Core / shard 5","segments":"conversation-state,goal-lifecycle,workspace-tabs,project-automation,permission-modes"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"rendering-extensions,resilience,runtime-task-queue"},{"id":"core-2","name":"Core / shard 2","segments":"project-ai-settings,model-routing,window-lifecycle"},{"id":"core-3","name":"Core / shard 3","segments":"core-task-flow,embedded-browser,browser-toolbar-actions,automation-lifecycle,priority-filter,temporary-chat"},{"id":"core-4","name":"Core / shard 4","segments":"claude-runtime,workspace-attachments,local-harness,supervisor-lifecycle,codex-notification-isolation,local-file-preview"},{"id":"core-5","name":"Core / shard 5","segments":"conversation-state,goal-lifecycle,workspace-tabs,project-automation,permission-modes"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"goal-lifecycle,window-lifecycle,cloud-worktree-tools,telemetry-consent"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"model-routing,project-automation,workspace-attachments,plugin-auto-update"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"embedded-browser,cloud-worktree-create,workspace-tabs,cloud-worktree-archive-restore,cloud-worktree-device-restart"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"resilience,rendering-extensions,cloud-worktree-queued-cancel,priority-filter,cloud-worktree-capability"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"core-task-flow,conversation-state,supervisor-lifecycle,automation-lifecycle,browser-multi-tabs,cloud-project-creation"}]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}'
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""}]}
+wework_desktop_macos_inspector_e2e=true'
 
 assert_desktop_case "runner-only changes retain full coverage" \
   "$full_desktop_expected" \
@@ -383,10 +387,20 @@ assert_desktop_case "runner-only changes retain full coverage" \
 assert_desktop_case "embedded browser files select browser coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"embedded-browser"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"embedded-browser,browser-toolbar-actions"}]}
 wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=true' \
   "wework/src/lib/browser-url.ts"
+
+assert_desktop_case "browser toolbar scenario is invoked by Core and macOS CI" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"embedded-browser,browser-toolbar-actions"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}
+wework_desktop_macos_inspector_e2e=true' \
+  "wework/e2e/desktop/scenarios/embedded-browser-toolbar-actions.scenario.mjs"
 
 assert_desktop_case "local harness files select local harness coverage" \
   'wework_desktop_e2e=true

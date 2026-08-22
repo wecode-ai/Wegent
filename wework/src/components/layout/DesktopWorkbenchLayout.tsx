@@ -1067,6 +1067,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 runtimeTaskLifecycle={runtimeTaskLifecycle}
                 services={services}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                onArchiveRuntimeTask={onArchiveRuntimeTask}
                 onOpenSettings={options => openSettings(options, '/todo')}
                 onLogout={onLogout}
                 activeProjectRef={

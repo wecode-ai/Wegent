@@ -548,6 +548,7 @@ export interface LoopItemTaskBinding {
   task_title: string | null
   backend_task_id: number | null
   workflow_node_id?: string | null
+  binding_type?: 'system' | 'user'
   linked_at: string
 }
 
@@ -584,7 +585,13 @@ export interface CloudMyWorkItem extends CloudLoopItem {
 export const DEFAULT_WORK_ITEM_PROJECT_KEY = 'WORK'
 export const DEFAULT_WORK_ITEM_PROJECT_ID = 'default-work-items'
 
-type TaskExecutionStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'archived'
+export type TaskExecutionStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'archived'
 
 export function isDefaultWorkItemProject(project: CloudProject | null | undefined): boolean {
   return (
@@ -599,17 +606,21 @@ export function nextTaskTrackingStatus(
   executionStatus: TaskExecutionStatus,
   options: { completeOnSuccess?: boolean } = {}
 ): CloudLoopItem['status'] | null {
-  if (
-    executionStatus === 'running' &&
-    (itemStatus === 'inbox' ||
-      itemStatus === 'pending' ||
-      itemStatus === 'in_review' ||
-      (options.completeOnSuccess && itemStatus === 'completed'))
-  ) {
+  if (executionStatus === 'queued' && itemStatus !== 'pending') {
+    return 'pending'
+  }
+  if (executionStatus === 'running' && itemStatus !== 'in_progress') {
     return 'in_progress'
   }
-  if (executionStatus === 'succeeded' && itemStatus === 'in_progress') {
+  if (executionStatus === 'succeeded' && itemStatus !== 'completed') {
     return options.completeOnSuccess ? 'completed' : 'in_review'
+  }
+  if (
+    (executionStatus === 'failed' || executionStatus === 'cancelled') &&
+    itemStatus !== 'completed' &&
+    itemStatus !== 'in_review'
+  ) {
+    return 'in_review'
   }
   if (executionStatus === 'archived' && itemStatus !== 'completed') return 'completed'
   return null
@@ -1091,7 +1102,7 @@ export function createDeliveryApi(client: HttpClient) {
           (await api.createLoopItem(projectId, {
             title: taskTitle,
             description,
-            status: 'pending',
+            status: String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID ? 'inbox' : 'pending',
           }))
         pendingTrackedItems.set(trackingKey, item)
         await api.bindTask(item.id, task, taskTitle)
@@ -1113,7 +1124,7 @@ export function createDeliveryApi(client: HttpClient) {
         }
         if (!context.loop_item_id) return null
         const item = context.loop_item ?? (await api.getLoopItem(context.loop_item_id))
-        if (item.workflow && context.workflow_node_id) {
+        if (executionStatus !== 'queued' && item.workflow && context.workflow_node_id) {
           return client.patch('/v1/runtime-tasks/cloud-context/status', {
             ...task,
             status: executionStatus,

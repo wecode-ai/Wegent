@@ -89,10 +89,12 @@ use super::{
     },
     runtime_handle_messages::{
         append_completed_transcript_messages, append_runtime_handle_message,
-        append_runtime_handle_user_message_presentation,
+        append_runtime_handle_user_message_presentation, append_unique_transcript_messages,
         bind_runtime_handle_user_message_presentation_to_turn, cached_messages,
         clear_completed_transcript_messages, clear_runtime_handle_messages,
-        completed_transcript_messages, set_runtime_handle_messages, user_message_presentations,
+        clear_transcript_snapshot_messages, completed_transcript_messages,
+        set_runtime_handle_messages, set_transcript_snapshot_messages,
+        transcript_snapshot_messages, user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
@@ -336,18 +338,30 @@ struct CodexModelProviderInfo {
 }
 
 fn current_codex_model_provider_from_config(config_response: &Value) -> CodexModelProviderInfo {
+    let configured_provider = crate::agents::configured_inference_model_provider();
+    current_codex_model_provider(config_response, &configured_provider)
+}
+
+fn current_codex_model_provider(
+    config_response: &Value,
+    configured_provider: &str,
+) -> CodexModelProviderInfo {
     let config = config_response
         .get("config")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let current_provider = string_from_map(&config, "modelProvider")
+    let runtime_provider = string_from_map(&config, "modelProvider")
         .or_else(|| string_from_map(&config, "model_provider"))
         .filter(|provider| {
             provider != crate::server::codex_model_catalog::PROVIDER_ID
                 && provider != "wework-catalog"
-        })
-        .unwrap_or_else(crate::agents::configured_inference_model_provider);
+        });
+    let current_provider = if configured_provider != CODEX_OFFICIAL_PROVIDER_ID {
+        configured_provider.to_owned()
+    } else {
+        runtime_provider.unwrap_or_else(|| configured_provider.to_owned())
+    };
     let display_name = config
         .get("model_providers")
         .or_else(|| config.get("modelProviders"))
@@ -439,6 +453,7 @@ pub struct RuntimeWorkRpcHandler {
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
+    codex_app_server_restart_gate: Arc<AsyncMutex<()>>,
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
@@ -446,8 +461,7 @@ pub struct RuntimeWorkRpcHandler {
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
-    active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
-    active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
+    active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
@@ -482,13 +496,14 @@ struct WorktreeReconciliationState {
     last_attempt: Option<Instant>,
 }
 
-struct ActiveTurnCancellation {
+struct ActiveLocalExecution {
     execution_id: u64,
     stop_requested: bool,
     stop_acknowledged: bool,
     managed_worktree_path: Option<PathBuf>,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
+    codex_turn: Option<ActiveCodexTurn>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -616,6 +631,7 @@ impl RuntimeWorkRpcHandler {
             codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
                 CodexRuntimeProxyConfig::default(),
             )),
+            codex_app_server_restart_gate: Arc::new(AsyncMutex::new(())),
             event_tx: None,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
@@ -626,8 +642,7 @@ impl RuntimeWorkRpcHandler {
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
-            active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
-            active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
+            active_local_executions: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),

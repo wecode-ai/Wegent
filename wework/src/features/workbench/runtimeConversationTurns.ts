@@ -276,7 +276,9 @@ function mergeRuntimeConversationTurn(
   local: RuntimeConversationTurn,
   snapshot: RuntimeConversationTurn
 ): RuntimeConversationTurn {
-  const items = mergeRuntimeConversationItems(local.items, snapshot.items)
+  const preserveLocalTerminal =
+    isTerminalTurnStatus(local.status) && isUnsettledTurnStatus(snapshot.status)
+  const items = mergeRuntimeConversationItems(local.items, snapshot.items, preserveLocalTerminal)
   const preserveLocalFailure = local.status === 'failed' && Boolean(local.error) && !snapshot.error
   const preserveStreamingThinking =
     snapshot.status === 'streaming' &&
@@ -287,14 +289,26 @@ function mergeRuntimeConversationTurn(
     clientUserMessageId: snapshot.clientUserMessageId ?? local.clientUserMessageId,
     runtimeMessageIndex: earliestRuntimeMessageIndex(local, snapshot),
     items,
-    status: preserveLocalFailure ? local.status : snapshot.status,
-    completedAt: preserveLocalFailure ? local.completedAt : snapshot.completedAt,
-    error: preserveLocalFailure ? local.error : snapshot.error,
-    errorType: preserveLocalFailure ? local.errorType : snapshot.errorType,
-    streamingThinkingContent: preserveStreamingThinking
-      ? getLatestThinkingContent(processingBlocks(items))
-      : snapshot.streamingThinkingContent,
+    status: preserveLocalTerminal || preserveLocalFailure ? local.status : snapshot.status,
+    completedAt:
+      preserveLocalTerminal || preserveLocalFailure ? local.completedAt : snapshot.completedAt,
+    error: preserveLocalTerminal || preserveLocalFailure ? local.error : snapshot.error,
+    errorType: preserveLocalTerminal || preserveLocalFailure ? local.errorType : snapshot.errorType,
+    stoppedNotice: preserveLocalTerminal ? local.stoppedNotice : snapshot.stoppedNotice,
+    streamingThinkingContent: preserveLocalTerminal
+      ? undefined
+      : preserveStreamingThinking
+        ? getLatestThinkingContent(processingBlocks(items))
+        : snapshot.streamingThinkingContent,
   }
+}
+
+function isTerminalTurnStatus(status: RuntimeConversationTurn['status']): boolean {
+  return status === 'done' || status === 'failed' || status === 'cancelled'
+}
+
+function isUnsettledTurnStatus(status: RuntimeConversationTurn['status']): boolean {
+  return status === 'pending' || status === 'streaming'
 }
 
 function earliestRuntimeMessageIndex(
@@ -348,7 +362,8 @@ function runtimeConversationTurnTimestamp(turn: RuntimeConversationTurn): number
 
 function mergeRuntimeConversationItems(
   localItems: RuntimeConversationItem[],
-  snapshotItems: RuntimeConversationItem[]
+  snapshotItems: RuntimeConversationItem[],
+  preserveLocalTerminal = false
 ): RuntimeConversationItem[] {
   const reconciledLocalItems = localItems.filter(
     localItem =>
@@ -358,7 +373,7 @@ function mergeRuntimeConversationItems(
   )
   const localById = new Map(reconciledLocalItems.map(item => [item.id, item]))
   const mergedSnapshotItems = snapshotItems.map(item =>
-    mergeRuntimeConversationItem(localById.get(item.id), item)
+    mergeRuntimeConversationItem(localById.get(item.id), item, preserveLocalTerminal)
   )
   const snapshotById = new Map(mergedSnapshotItems.map(item => [item.id, item]))
   const mergedLocalItems = reconciledLocalItems.map(item => snapshotById.get(item.id) ?? item)
@@ -405,14 +420,35 @@ function assistantTextRepresentationContent(item: RuntimeConversationItem): stri
 
 function mergeRuntimeConversationItem(
   local: RuntimeConversationItem | undefined,
-  snapshot: RuntimeConversationItem
+  snapshot: RuntimeConversationItem,
+  preserveLocalTerminal: boolean
 ): RuntimeConversationItem {
   if (local?.type !== 'block' || snapshot.type !== 'block') return snapshot
+
+  if (
+    preserveLocalTerminal &&
+    isTerminalProcessingBlockStatus(local.block.status) &&
+    !isTerminalProcessingBlockStatus(snapshot.block.status)
+  ) {
+    return {
+      ...snapshot,
+      block: {
+        ...snapshot.block,
+        status: local.block.status,
+        completedAt: local.block.completedAt,
+        durationMs: local.block.durationMs,
+      } as ProcessingBlock,
+    }
+  }
 
   return {
     ...snapshot,
     block: preserveProcessingBlockTiming(local.block, snapshot.block),
   }
+}
+
+function isTerminalProcessingBlockStatus(status: ProcessingBlock['status']): boolean {
+  return status === 'done' || status === 'error'
 }
 
 function seedRuntimeConversationTurns(

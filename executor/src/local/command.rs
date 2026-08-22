@@ -182,6 +182,7 @@ impl CommandHandler {
         if let Some(cwd) = request.cwd.as_deref() {
             command.current_dir(cwd);
         }
+        command.stdin(Stdio::null());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
         command.kill_on_drop(true);
