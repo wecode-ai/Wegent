@@ -10,6 +10,8 @@ PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/wework-updater-signing.sh"
 # shellcheck source=lib/codex-code-statistics.sh
 source "$SCRIPT_DIR/lib/codex-code-statistics.sh"
+# shellcheck source=lib/wework-release-notes.sh
+source "$SCRIPT_DIR/lib/wework-release-notes.sh"
 
 EXPLICIT_VITE_API_BASE_URL="${VITE_API_BASE_URL+x}"
 EXPLICIT_VITE_API_BASE_URL_VALUE="${VITE_API_BASE_URL:-}"
@@ -300,7 +302,7 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --notes)
-      RELEASE_NOTES="$2"
+      RELEASE_NOTES="$(wework_decode_release_notes "$2")"
       shift 2
       ;;
     --endpoint)
