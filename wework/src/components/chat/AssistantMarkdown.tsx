@@ -43,6 +43,12 @@ const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HO
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
 const MARKDOWN_WINDOW_ROOT_MARGIN = '800px 0px'
 const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
+const STREAMING_DIAGRAM_LANGUAGES = new Map([
+  ['weworkstreamingmermaid', 'mermaid'],
+  ['weworkstreamingmmd', 'mmd'],
+  ['weworkstreamingplantuml', 'plantuml'],
+  ['weworkstreamingpuml', 'puml'],
+])
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
@@ -102,10 +108,6 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   const displayContent = useMemo(
     () => stripUnsupportedContentReferenceCitations(bufferedContent),
     [bufferedContent]
-  )
-  const unclosedDiagramCodes = useMemo(
-    () => findUnclosedDiagramCodes(displayContent),
-    [displayContent]
   )
   const windowMarkdown = isTauriRuntime() && variant === 'default'
   const contentParts = useMemo(() => {
@@ -184,12 +186,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <strong className="font-semibold">{children}</strong>
       ),
       code: (props: MarkdownCodeProps) => (
-        <MarkdownCode
-          {...props}
-          compact={variant === 'process'}
-          isStreaming={isStreaming}
-          unclosedDiagramCodes={unclosedDiagramCodes}
-        />
+        <MarkdownCode {...props} compact={variant === 'process'} isStreaming={isStreaming} />
       ),
       inlineCode: ({ children }: { children?: ReactNode }) => (
         <MarkdownInlineCode compact={variant === 'process'}>{children}</MarkdownInlineCode>
@@ -234,7 +231,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <AssistantMarkdownImage src={src} alt={alt} />
       ),
     }),
-    [headingClasses, isStreaming, openFile, unclosedDiagramCodes, variant]
+    [headingClasses, isStreaming, openFile, variant]
   )
 
   return (
@@ -265,7 +262,10 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
               urlTransform={url => url}
               components={components}
             >
-              {prepareAssistantMarkdownContent(part.content)}
+              {prepareAssistantMarkdownContent(
+                part.content,
+                isStreaming && index === contentParts.length - 1
+              )}
             </Streamdown>
           </WindowedMarkdownChunk>
         ) : (
@@ -279,7 +279,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             urlTransform={url => url}
             components={components}
           >
-            {prepareAssistantMarkdownContent(part.content)}
+            {prepareAssistantMarkdownContent(part.content, isStreaming)}
           </Streamdown>
         )
       )}
@@ -347,7 +347,6 @@ type MarkdownCodeProps = {
   node?: HastElement
   compact?: boolean
   isStreaming?: boolean
-  unclosedDiagramCodes?: ReadonlySet<string>
 } & HTMLAttributes<HTMLElement>
 
 function MarkdownCode({
@@ -356,7 +355,6 @@ function MarkdownCode({
   node,
   compact = false,
   isStreaming = false,
-  unclosedDiagramCodes = new Set<string>(),
   ...props
 }: MarkdownCodeProps) {
   const match = /language-(\w*)/.exec(className || '')
@@ -368,14 +366,15 @@ function MarkdownCode({
     text.includes('\n')
   if (isBlock) {
     const lang = match ? match[1] || '' : ''
+    const streamingDiagramLanguage = STREAMING_DIAGRAM_LANGUAGES.get(lang.toLowerCase())
+    if (streamingDiagramLanguage) {
+      return (
+        <MarkdownCodeBlock lang={streamingDiagramLanguage} compact={compact} isStreaming>
+          {text || children}
+        </MarkdownCodeBlock>
+      )
+    }
     if (DIAGRAM_LANGUAGES.has(lang.toLowerCase())) {
-      if (isStreaming && unclosedDiagramCodes.has(text.trimEnd())) {
-        return (
-          <MarkdownCodeBlock lang={lang} compact={compact} isStreaming>
-            {text || children}
-          </MarkdownCodeBlock>
-        )
-      }
       return <MarkdownDiagramPreview code={text.trimEnd()} language={lang} />
     }
     return (
@@ -415,50 +414,59 @@ function areAssistantMarkdownPropsEqual(
   )
 }
 
-function prepareAssistantMarkdownContent(content: string): string {
-  return encodeLocalMarkdownLinks(content.replace(CODEX_PLAN_TAG_PATTERN, ''))
+function prepareAssistantMarkdownContent(content: string, isStreaming = false): string {
+  const normalizedContent = content.replace(CODEX_PLAN_TAG_PATTERN, '')
+  return encodeLocalMarkdownLinks(
+    isStreaming ? markUnclosedDiagramFence(normalizedContent) : normalizedContent
+  )
 }
 
-function findUnclosedDiagramCodes(content: string): ReadonlySet<string> {
-  const unclosedCodes = new Set<string>()
+function markUnclosedDiagramFence(content: string): string {
   const lines = content.split('\n')
   let openingFence: {
     character: '`' | '~'
     length: number
     language: string
-    code: string[]
+    lineIndex: number
+    match: RegExpExecArray
   } | null = null
 
-  for (const line of lines) {
+  for (const [lineIndex, line] of lines.entries()) {
     if (!openingFence) {
-      const match = /^(?<fence>`{3,}|~{3,})\s*(?<language>[\w+-]*)[^\n]*$/.exec(line)
+      const match =
+        /^(?<indent> {0,3})(?<fence>`{3,}|~{3,})(?<spacing>[ \t]*)(?<language>[\w+-]*)(?<remainder>[^\n]*)$/.exec(
+          line
+        )
       if (!match?.groups) continue
 
       const fence = match.groups.fence
       const language = match.groups.language.toLowerCase()
-      if (!DIAGRAM_LANGUAGES.has(language)) continue
-
       openingFence = {
         character: fence[0] as '`' | '~',
         length: fence.length,
         language,
-        code: [],
+        lineIndex,
+        match,
       }
       continue
     }
 
-    const closingFence = new RegExp(`^${openingFence.character}{${openingFence.length},}\\s*$`)
+    const closingFence = new RegExp(
+      `^ {0,3}${openingFence.character}{${openingFence.length},}[ \\t]*$`
+    )
     if (closingFence.test(line)) {
       openingFence = null
-      continue
     }
-    openingFence.code.push(line)
   }
 
-  if (openingFence) {
-    unclosedCodes.add(openingFence.code.join('\n').trimEnd())
-  }
-  return unclosedCodes
+  if (!openingFence || !DIAGRAM_LANGUAGES.has(openingFence.language)) return content
+
+  const { groups } = openingFence.match
+  if (!groups) return content
+  lines[openingFence.lineIndex] =
+    `${groups.indent}${groups.fence}${groups.spacing}` +
+    `weworkstreaming${openingFence.language}${groups.remainder}`
+  return lines.join('\n')
 }
 
 function stripUnsupportedContentReferenceCitations(content: string): string {
