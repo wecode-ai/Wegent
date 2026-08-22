@@ -26,7 +26,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { BranchSelector } from '@/components/common/BranchSelector'
-import { ChangeRequestStatusGlyph } from '@/components/common/ChangeRequestStatusIcon'
+import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
 import { changeRequestVisualStatus } from '@/features/workbench/changeRequestStatus'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
@@ -59,6 +59,8 @@ interface EnvironmentInfoPopoverProps {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
+  onGenerateBranchName?: (sourceText: string) => Promise<string>
+  branchNameSource?: string
   onOpenChangesReview?: () => void
   onDeliver?: () => void
   todoLabel?: string
@@ -102,6 +104,8 @@ export function EnvironmentInfoPopover({
   onListBranches,
   onCheckoutBranch,
   onCreateBranch,
+  onGenerateBranchName,
+  branchNameSource,
   onOpenChangesReview,
   onDeliver,
   todoLabel,
@@ -478,6 +482,8 @@ export function EnvironmentInfoPopover({
                       onListBranches={onListBranches}
                       onCheckoutBranch={onCheckoutBranch}
                       onCreateBranch={onCreateBranch}
+                      onGenerateBranchName={onGenerateBranchName}
+                      branchNameSource={branchNameSource}
                     />
                   )}
                   {hasGitInfo && (
@@ -530,57 +536,60 @@ export function EnvironmentInfoPopover({
                         </button>
                       )}
                       {changeRequest ? (
-                        <button
-                          type="button"
-                          data-testid="change-request-button"
-                          onClick={handleOpenChangeRequest}
-                          title={`${changeRequest.title} · ${changeRequestStatusLabel}`}
-                          aria-label={`${changeRequestPrefix}${changeRequest.number} ${changeRequest.title}，${changeRequestStatusLabel}`}
-                          className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
-                        >
-                          <ChangeRequestStatusGlyph
-                            changeRequest={changeRequest}
-                            size="environment"
+                        <div className="flex h-9 w-full items-center gap-2 rounded-md hover:bg-hover">
+                          <ChangeRequestStatusIcon
+                            snapshot={{ changeRequest }}
+                            testId="environment-change-request-status"
+                            glyphSize="environment"
                             mainIconTestId={
                               changeRequestStatus === 'merged'
                                 ? 'change-request-merged-icon'
                                 : 'change-request-pull-request-icon'
                             }
                           />
-                          <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                            <span
-                              data-testid="change-request-number"
-                              className="shrink-0 font-medium"
-                            >
-                              {changeRequestPrefix}
-                              {changeRequest.number}
-                            </span>
-                            <span
-                              data-testid="change-request-title"
-                              className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
-                            >
-                              {changeRequest.title}
-                            </span>
-                            <span data-testid="change-request-state" className="sr-only">
-                              {changeRequestStatusLabel}
-                            </span>
-                            {changeRequestStatus?.startsWith('checks_') && (
-                              <span data-testid="change-request-checks" className="sr-only">
+                          <button
+                            type="button"
+                            data-testid="change-request-button"
+                            onClick={handleOpenChangeRequest}
+                            title={`${changeRequest.title} · ${changeRequestStatusLabel}`}
+                            aria-label={`${changeRequestPrefix}${changeRequest.number} ${changeRequest.title}，${changeRequestStatusLabel}`}
+                            className="flex h-9 min-w-0 flex-1 items-center text-left text-sm text-text-primary"
+                          >
+                            <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                              <span
+                                data-testid="change-request-number"
+                                className="shrink-0 font-medium"
+                              >
+                                {changeRequestPrefix}
+                                {changeRequest.number}
+                              </span>
+                              <span
+                                data-testid="change-request-title"
+                                className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap"
+                              >
+                                {changeRequest.title}
+                              </span>
+                              <span data-testid="change-request-state" className="sr-only">
                                 {changeRequestStatusLabel}
                               </span>
-                            )}
-                            {changeRequestStatus === 'merge_conflict' && (
-                              <span data-testid="change-request-conflict" className="sr-only">
-                                {changeRequestStatusLabel}
-                              </span>
-                            )}
-                            {changeRequestStatus?.startsWith('merge_queue_') && (
-                              <span data-testid="change-request-merge-queue" className="sr-only">
-                                {changeRequestStatusLabel}
-                              </span>
-                            )}
-                          </span>
-                        </button>
+                              {changeRequestStatus?.startsWith('checks_') && (
+                                <span data-testid="change-request-checks" className="sr-only">
+                                  {changeRequestStatusLabel}
+                                </span>
+                              )}
+                              {changeRequestStatus === 'merge_conflict' && (
+                                <span data-testid="change-request-conflict" className="sr-only">
+                                  {changeRequestStatusLabel}
+                                </span>
+                              )}
+                              {changeRequestStatus?.startsWith('merge_queue_') && (
+                                <span data-testid="change-request-merge-queue" className="sr-only">
+                                  {changeRequestStatusLabel}
+                                </span>
+                              )}
+                            </span>
+                          </button>
+                        </div>
                       ) : (
                         <button
                           type="button"

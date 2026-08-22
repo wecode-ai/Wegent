@@ -30,6 +30,7 @@ import {
   type ComposerTextareaHandle,
 } from './ComposerTextarea'
 import { ProjectWorkBar } from './ProjectWorkBar'
+import { resolveBranchNameGenerationSource } from '@/lib/branch-name'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/tauri/appPreferences'
@@ -348,6 +349,11 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onListBranches={projectWork.onListBranches}
             onCheckoutBranch={projectWork.onCheckoutBranch}
             onCreateBranch={projectWork.onCreateBranch}
+            onGenerateBranchName={projectWork.onGenerateBranchName}
+            branchNameSource={resolveBranchNameGenerationSource(
+              value,
+              projectWork.branchNameSource
+            )}
             worktreeBranch={projectWork.worktreeBranch}
             onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
             showClearButton={projectWork.showProjectClearButton}

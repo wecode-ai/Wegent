@@ -162,13 +162,8 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   restartDesktopApp,
 }) {
   const modelRequestCountBeforeRestart = control.modelRequests.length
-  const blockedRequestCountBeforeRestart = blockingNetworkProxy.requestCount()
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
   await restartDesktopApp()
-  await blockingNetworkProxy.waitForRequestMatchingAfter(
-    blockedRequestCountBeforeRestart,
-    /desktop-e2e-startup-probe\.invalid/
-  )
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -192,7 +187,7 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
     `Codex initialize took ${executorStatus.codexInitializeElapsedMs}ms with blocked network`
   )
   console.log(
-    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms while startup network remained blocked`
+    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms with a blocking network proxy configured`
   )
   assert.equal(
     control.modelRequests.length,

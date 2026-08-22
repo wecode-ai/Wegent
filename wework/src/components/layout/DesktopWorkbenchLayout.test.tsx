@@ -13,6 +13,10 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  applyRuntimeConversationAction,
+  clearRuntimeConversationCacheForTests,
+} from '@/features/workbench/runtimeConversationCache'
 import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
@@ -517,6 +521,23 @@ const sendRuntimePaneGuidanceMock = vi.fn().mockResolvedValue({
 })
 const subscribeRuntimeTaskStreamMock = vi.fn(() => vi.fn())
 
+type CreateTemporaryRuntimeTaskOptions = Parameters<
+  WorkbenchContextValue['createTemporaryRuntimeTask']
+>[1]
+
+async function openOptimisticTemporaryRuntimeTask(
+  address: RuntimeTaskAddress,
+  options: CreateTemporaryRuntimeTaskOptions
+) {
+  if (options?.optimisticUserMessage) {
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: options.optimisticUserMessage,
+    })
+  }
+  await options?.onRuntimeTaskOptimisticOpen?.(address)
+}
+
 function createDefaultImNotificationSettings() {
   return {
     global: {
@@ -735,6 +756,7 @@ describe('DesktopWorkbenchLayout', () => {
       startCodeServerSession: startCodeServerSessionMock,
     } as unknown as ReturnType<typeof createProjectApi>)
     createTemporaryRuntimeTaskMock.mockResolvedValue(false)
+    clearRuntimeConversationCacheForTests()
     sendRuntimePaneMessageMock.mockReset()
     sendRuntimePaneMessageMock.mockResolvedValue(true)
     sendRuntimePaneGuidanceMock.mockReset()
@@ -6641,7 +6663,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
+      await openOptimisticTemporaryRuntimeTask(optimisticAddress, options)
       return createResult.promise
     })
     renderWorkspacePanelLayout()
@@ -6721,7 +6743,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(address)
+      await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
     renderWorkspacePanelLayout()
@@ -6765,7 +6787,7 @@ describe('DesktopWorkbenchLayout', () => {
     }
     const followUpSend = createDeferred<boolean>()
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(address)
+      await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
     sendRuntimePaneMessageMock.mockReturnValue(followUpSend.promise)
@@ -6809,7 +6831,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(address)
+      await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
     renderWorkspacePanelLayout()
@@ -6879,7 +6901,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(address)
+      await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
     renderWorkspacePanelLayout()
@@ -6929,7 +6951,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(address)
+      await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
     sendRuntimePaneMessageMock.mockImplementation(async (_request, options) => {
@@ -6971,7 +6993,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(address)
+      await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
     sendRuntimePaneMessageMock.mockRejectedValueOnce(new Error('network unavailable'))
@@ -7015,7 +7037,7 @@ describe('DesktopWorkbenchLayout', () => {
     const unsubscribe = vi.fn()
     subscribeRuntimeTaskStreamMock.mockReturnValue(unsubscribe)
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
+      await openOptimisticTemporaryRuntimeTask(optimisticAddress, options)
       return createResult.promise
     })
     renderWorkspacePanelLayout()
@@ -9496,8 +9518,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('加载中')
 
     const cachedPullRequest: EnvironmentInfo = {
-      additions: '+0',
-      deletions: '-0',
+      additions: '+7',
+      deletions: '-2',
       executionTarget: 'local',
       deviceId: 'device-1',
       workspacePath: '/workspace/github_wegent',
@@ -9525,6 +9547,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('change-request-button')).toHaveAccessibleName(
       expect.stringContaining('#2875')
     )
+    expect(screen.getByTestId('environment-git-section')).toHaveTextContent('+7')
+    expect(screen.getByTestId('environment-git-section')).toHaveTextContent('-2')
 
     act(() => {
       publishPartialInfo?.({
@@ -9542,6 +9566,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('change-request-button')).toHaveAccessibleName(
       expect.stringContaining('#2875')
     )
+    expect(screen.getByTestId('environment-git-section')).toHaveTextContent('+7')
+    expect(screen.getByTestId('environment-git-section')).toHaveTextContent('-2')
   })
 
   test('closes the branch menu when Escape is pressed', async () => {
@@ -10839,7 +10865,7 @@ describe('DesktopWorkbenchLayout', () => {
       },
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(temporaryAddress)
+      await openOptimisticTemporaryRuntimeTask(temporaryAddress, options)
       return temporaryAddress
     })
     const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
