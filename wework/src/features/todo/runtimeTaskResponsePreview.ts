@@ -16,32 +16,62 @@ interface RuntimeResponseTurn {
   }[]
 }
 
-export function firstThreeResponseLines(value: string): string | null {
+export function latestResponseLine(value: string): string | null {
   const lines = value
     .split(/\r?\n/)
     .map(line => line.trim())
     .filter(Boolean)
-    .slice(0, 3)
-  return lines.length > 0 ? lines.join('\n') : null
+  return lines.at(-1) ?? null
 }
 
 export function finalAssistantMessagesPreview(
   messages: readonly RuntimeResponseMessage[]
 ): string | null {
+  const response = finalAssistantMessagesText(messages)
+  return response ? latestResponseLine(response) : null
+}
+
+export function finalAssistantMessagesText(
+  messages: readonly RuntimeResponseMessage[]
+): string | null {
   for (const message of [...messages].reverse()) {
     if (!message.role?.toLowerCase().startsWith('assistant')) continue
-    const preview = firstThreeResponseLines(messageText(message))
-    if (preview) return preview
+    const content = messageText(message)
+    if (content) return content
   }
   return null
+}
+
+export function latestAssistantMessage<T extends RuntimeResponseMessage>(
+  messages: readonly T[]
+): T | null {
+  for (const message of [...messages].reverse()) {
+    if (!message.role?.toLowerCase().startsWith('assistant')) continue
+    if (messageText(message) || message.blocks?.length) return message
+  }
+  return null
+}
+
+export function finalAssistantTranscriptMessage<T extends RuntimeResponseMessage>(transcript: {
+  messages: readonly T[]
+}): T | null {
+  return latestAssistantMessage(transcript.messages)
 }
 
 export function finalAssistantTranscriptPreview(transcript: {
   messages: readonly RuntimeResponseMessage[]
   turns: readonly RuntimeResponseTurn[]
 }): string | null {
-  const messagePreview = finalAssistantMessagesPreview(transcript.messages)
-  if (messagePreview) return messagePreview
+  const response = finalAssistantTranscriptText(transcript)
+  return response ? latestResponseLine(response) : null
+}
+
+export function finalAssistantTranscriptText(transcript: {
+  messages: readonly RuntimeResponseMessage[]
+  turns: readonly RuntimeResponseTurn[]
+}): string | null {
+  const messageResponse = finalAssistantMessagesText(transcript.messages)
+  if (messageResponse) return messageResponse
 
   for (const turn of [...transcript.turns].reverse()) {
     const content = turn.items
@@ -49,8 +79,8 @@ export function finalAssistantTranscriptPreview(transcript: {
         item.type === 'assistant_text' && typeof item.content === 'string' ? [item.content] : []
       )
       .join('\n')
-    const turnPreview = firstThreeResponseLines(content)
-    if (turnPreview) return turnPreview
+      .trim()
+    if (content) return content
   }
   return null
 }

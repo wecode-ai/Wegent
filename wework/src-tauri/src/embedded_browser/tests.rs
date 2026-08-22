@@ -60,6 +60,15 @@ fn new_browser_uses_the_requested_url_as_its_initial_navigation() {
 }
 
 #[test]
+fn web_security_bypass_is_limited_to_harness_app_webviews() {
+    assert!(super::should_disable_web_security(
+        "app-harness-dsh-opsduty-workbench-auxiliary-workspace-tab"
+    ));
+    assert!(!super::should_disable_web_security("workspace-browser"));
+    assert!(!super::should_disable_web_security("app-wegent-default"));
+}
+
+#[test]
 fn placeholder_load_does_not_replace_the_requested_url() {
     assert!(!should_record_loaded_url("about:blank"));
     assert!(should_record_loaded_url("https://example.com/"));
