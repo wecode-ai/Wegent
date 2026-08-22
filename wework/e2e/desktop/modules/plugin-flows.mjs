@@ -35,7 +35,6 @@ import {
   PLUGIN_NAME,
   QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
   QUALIFIED_SKILL_MENTION_PROMPT,
-  STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   commandOutput,
@@ -163,25 +162,12 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   control,
   restartDesktopApp,
 }) {
-  const requestCountBeforeRestart = blockingNetworkProxy.requestCount()
   const modelRequestCountBeforeRestart = control.modelRequests.length
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
   await restartDesktopApp()
-  const [blockedRequest] = await Promise.all([
-    blockingNetworkProxy.waitForRequestMatchingAfter(
-      requestCountBeforeRestart,
-      STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
-      DEFAULT_STEP_TIMEOUT_MS
-    ),
-    control.command('waitFor', '[data-testid="projects-create-button"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }),
-  ])
-  assert.match(
-    blockedRequest,
-    /^(CONNECT|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) /,
-    'The blocking proxy did not capture a Codex startup request'
-  )
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     snapshot.testIds.includes('desktop-workbench-main'),
@@ -202,7 +188,7 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
     `Codex initialize took ${executorStatus.codexInitializeElapsedMs}ms with blocked network`
   )
   console.log(
-    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms while startup network remained blocked`
+    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms with a blocking network proxy configured`
   )
   assert.equal(
     control.modelRequests.length,

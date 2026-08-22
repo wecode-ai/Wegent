@@ -269,7 +269,7 @@ verify_uploaded_artifacts() {
     fi
   done < <(
     node -e \
-      "const m=require(process.argv[1]); for (const a of m.assets) console.log(a.name)" \
+      "const m=require(process.argv[1]); for (const a of m.assets) { console.log(a.archiveName); console.log(a.descriptorName) }" \
       "$OUTPUT_DIR/release-runtime-assets.json"
   )
 }

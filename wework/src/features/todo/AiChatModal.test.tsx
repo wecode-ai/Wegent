@@ -79,6 +79,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
           modelType?: ModelType | null
           modelOptions?: ModelOptions
         }
+        optimisticUserMessage: import('@/types/workbench').WorkbenchMessage & { role: 'user' }
         onError: (message: string) => void
         onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
       }
@@ -103,6 +104,12 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
                 modelId: 'backend-codex',
                 modelType: 'user',
                 modelOptions: { reasoningEffort: 'high' },
+              },
+              optimisticUserMessage: {
+                id: 'queued-side-chat-1',
+                role: 'user',
+                content: '给出任务列表',
+                status: 'done',
               },
               onError: vi.fn(),
               onRuntimeTaskOptimisticOpen: vi.fn(),
@@ -262,6 +269,10 @@ describe('AiChatModal', () => {
       '给出任务列表',
       expect.objectContaining({
         runtime: 'codex',
+        optimisticUserMessage: expect.objectContaining({
+          id: 'queued-side-chat-1',
+          role: 'user',
+        }),
         executionModel: {
           modelId: 'backend-codex',
           modelType: 'user',

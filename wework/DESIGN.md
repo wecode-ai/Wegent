@@ -407,6 +407,10 @@ may reveal on hover/focus but must remain keyboard accessible.
   screenshot-matched review artifacts must use that width.
 - Sidebar rows are `30px` high with a `10px` radius, `8px–10px` horizontal
   padding, `14px` text, and an ordinary `16px` icon.
+- Leading status icons may occupy reserved indentation only when their negative
+  offset is fully contained by the row's left padding. Keep icons in the normal
+  flex flow for shallow pinned and top-level task rows so the glyph and its hit
+  target remain inside the sidebar viewport.
 - Priority task entries are selectable two-line data rows rather than compact
   navigation rows. They use a `48px` minimum height so the title and `12px–14px`
   source metadata remain readable.

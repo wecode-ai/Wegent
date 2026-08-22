@@ -500,6 +500,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
       timeoutMs: uiTimeoutMs,
     })
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${activeBoard} [data-testid="workspace-issue-input"] .composer-empty-caret`
+        )
+      ),
+      0,
+      'The empty board task composer replaced its native caret with a widget'
+    )
     await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
       value: '真实后端智能体看板任务',
     })

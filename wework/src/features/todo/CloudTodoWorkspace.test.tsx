@@ -3358,8 +3358,9 @@ describe('CloudTodoWorkspace', () => {
 
     await user.click((await screen.findAllByText('Wegent V4'))[0])
     await user.click(screen.getByTestId('cloud-todo-column-add-pending'))
-    await user.click(screen.getByTestId('workspace-issue-input'))
-    await user.paste('Pending Issue')
+    const input = screen.getByTestId('workspace-issue-input')
+    await waitFor(() => expect(input).toHaveFocus())
+    await user.keyboard('Pending Issue')
     await user.click(screen.getByTestId('workspace-issue-submit'))
 
     await waitFor(() =>

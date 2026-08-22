@@ -13,19 +13,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type {
-  Attachment,
-  ModelOptions,
-  ModelType,
-  ProjectWithTasks,
-  RuntimeSendRequest,
-  RuntimeTaskAddress,
-} from '@/types/api'
+import type { ProjectWithTasks, RuntimeSendRequest, RuntimeTaskAddress } from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
 import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
+import { useProjectRuntimeTaskComposer } from './useProjectRuntimeTaskComposer'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 
 interface AiChatModalProps {
@@ -90,7 +83,6 @@ export function AiChatModal({
   embedded = false,
 }: AiChatModalProps) {
   const { t } = useTranslation('common')
-  const { createProjectRuntimeTask } = useWorkbenchPaneContext()
   const storageKey = lastAddressStorageKey(project.id, task?.id)
   const [currentAddress, setCurrentAddress] = useState<RuntimeTaskAddress | null>(
     () => initialAddress ?? storedLastAddress(storageKey)
@@ -205,48 +197,14 @@ export function AiChatModal({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose, open])
 
-  const createConversation = useCallback(
-    async (
-      message: string,
-      options: {
-        attachments: Attachment[]
-        executionModel: {
-          modelId?: string
-          modelType?: ModelType | null
-          modelOptions?: ModelOptions
-        }
-        onError: (message: string) => void
-        onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
-      }
-    ) => {
-      const address = await createProjectRuntimeTask(message, {
-        project: selectedLocalProject,
-        deviceWorkspaceId: localDeviceWorkspaceId,
-        workspaceSource: inheritFromTask,
-        runtime: 'codex',
-        attachments: options.attachments,
-        executionModel: options.executionModel,
-        collaborationMode: 'default',
-        ...runtimeContext,
-        onError: options.onError,
-        prepareRuntimeTask: prepareTask
-          ? address => prepareTask(address, selectedLocalProject)
-          : undefined,
-        onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
-      })
-      if (address) await onTaskCreated?.(address, selectedLocalProject)
-      return address
-    },
-    [
-      createProjectRuntimeTask,
-      inheritFromTask,
-      localDeviceWorkspaceId,
-      onTaskCreated,
-      prepareTask,
-      runtimeContext,
-      selectedLocalProject,
-    ]
-  )
+  const createConversation = useProjectRuntimeTaskComposer({
+    project: selectedLocalProject,
+    deviceWorkspaceId: localDeviceWorkspaceId,
+    workspaceSource: inheritFromTask,
+    runtimeContext,
+    prepareTask,
+    onTaskCreated,
+  })
 
   const rememberAddress = useCallback(
     (address: RuntimeTaskAddress | null) => {

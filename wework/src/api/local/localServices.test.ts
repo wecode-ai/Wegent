@@ -186,6 +186,41 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
+  test('generates a branch name with the title model in an isolated ephemeral request', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.text.generate') {
+        return { content: 'fix/login-redirect' }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      user: { id: 9, user_name: 'hongyu9', email: 'hongyu9@example.com' },
+    })
+
+    await expect(
+      services.branchNameApi?.generateBranchName({
+        sourceText: '修复登录回调',
+        deviceId: 'local-device',
+        modelId: 'gpt-5.6-sol',
+        modelType: 'runtime',
+        modelOptions: { reasoning: 'low' },
+      })
+    ).resolves.toBe('fix/login-redirect')
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.text.generate')?.[1]
+    expect(payload.executionRequest).toMatchObject({
+      ephemeral: true,
+      enable_tools: false,
+      enable_deep_thinking: false,
+      model_config: expect.objectContaining({ reasoning: { effort: 'low' } }),
+    })
+    expect(payload.executionRequest).not.toHaveProperty('workspace_project')
+    expect(payload.executionRequest.prompt).toContain('修复登录回调')
+  })
+
   test('registers harness models through the executor Messages proxy', async () => {
     const config = saveLocalModelConfig({
       id: 'harness-model',

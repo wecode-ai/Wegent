@@ -20,11 +20,27 @@ The Wework macOS app uses the Tauri updater for automatic upgrades. Local or sta
 
 The Wework desktop package includes Codex CLI directly, so users do not need to install it on first launch. The version and per-platform tarball checksums are pinned in `wework/codex-binaries.lock.json`.
 
-The current pin is stable Codex `0.147.0`. An upgrade must update every
+The current pin is stable Codex `0.149.0`. An upgrade must update every
 supported platform's npm package version, official registry tarball URL, and
 SHA-512 integrity value together; do not replace the binary inside an already
 signed app bundle. Prepare the sidecar again through a release build, then
 package and code-sign the application.
+
+After an upgrade, run the focused unit test and prepare every supported target
+to confirm that each archive passes integrity verification and contains both
+`codex` and `codex-code-mode-host`:
+
+```bash
+pnpm --filter wework test scripts/prepare-codex-binary.test.mjs
+pnpm --filter wework run prepare:codex --all
+```
+
+Then read the current macOS target's `binaryPath` from
+`wework/codex-binaries.lock.json` and run `--version` on that exact binary under
+`wework/src-tauri/binaries/codex/<target>/`; do not use a `codex` found on
+`PATH`. Use `pnpm --filter wework ai:verify start` to validate at least Codex
+App Server initialization, local task creation, one completed real turn, and
+plugin list loading in an isolated real Tauri application.
 
 Local builds prepare the Codex binary for the current target automatically:
 
@@ -159,6 +175,8 @@ After publishing the versioned Release, the workflow updates rolling manifests i
 - `stable-*` points only to the latest stable release.
 - `beta-*` points to whichever Beta or stable release has the higher SemVer, so Beta users also receive newer stable releases.
 - A release only replaces a rolling manifest when its SemVer is higher; historical or lower releases cannot downgrade users.
+
+DeepSeek Harness and Node.js Runtimes are also published in the fixed `wework-updater` Release, but they are not assets of a specific Wework application version. Harness produces a separate immutable asset for each DSH version and platform; Node.js assets are keyed by Node version and platform. The preparation scripts derive a Runtime fingerprint from dependency lockfiles, the Node ABI, signing identity, and archive format. An existing fingerprint reuses the published asset, so a new Runtime is published only when a dependency or one of those build inputs changes. CI uploads the archive before its descriptor and refuses to overwrite or repair a half-published pair, preserving checksums embedded in older clients.
 
 Users opt into Beta updates under Wework **Settings → About** by enabling **Receive Beta updates**. The client uses the `stable` target by default and the `beta` target after opt-in. Changing the setting immediately checks for updates and persists locally.
 

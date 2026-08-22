@@ -10,19 +10,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
 const defaultWeworkDirectory = path.resolve(scriptDirectory, '..')
 
-const runtimeDefinitions = [
-  {
-    kind: 'harness',
-    descriptor: ['src-tauri', 'bundled-harness-runtime', 'runtime.json'],
-    cache: ['node_modules', '.cache', 'harness-runtime-assets'],
-  },
-  {
-    kind: 'node',
-    descriptor: ['src-tauri', 'bundled-execution-runtimes', 'node.json'],
-    cache: ['node_modules', '.cache', 'execution-runtime-assets'],
-  },
-]
-
 async function sha256(pathname) {
   const hash = createHash('sha256')
   await pipeline(createReadStream(pathname), hash)
@@ -35,6 +22,82 @@ function normalizedBaseUrl(value) {
   return baseUrl
 }
 
+function validateRuntimeDescriptor(descriptor, kind, baseUrl, expectedPlatform, descriptorPath) {
+  const assetName = descriptor.assetName
+  if (typeof assetName !== 'string' || !assetName) {
+    throw new Error(`Runtime descriptor has no assetName: ${descriptorPath}`)
+  }
+  if (!assetName.startsWith(`${kind}-runtime-`)) {
+    throw new Error(`Unexpected ${kind} runtime asset name: ${assetName}`)
+  }
+  if (!assetName.includes(`-${expectedPlatform}-`)) {
+    throw new Error(
+      `${kind} runtime asset targets the wrong platform: expected ${expectedPlatform}, got ${assetName}`
+    )
+  }
+  const expectedUrl = `${baseUrl}/${assetName}`
+  if (descriptor.downloadUrl !== expectedUrl) {
+    throw new Error(
+      `${kind} runtime download URL must be ${expectedUrl}, got ${descriptor.downloadUrl}`
+    )
+  }
+  return assetName
+}
+
+async function runtimeDefinitions(weworkDirectory) {
+  const harnessCatalogPath = path.join(
+    weworkDirectory,
+    'src-tauri',
+    'bundled-harness-runtime',
+    'runtimes.json'
+  )
+  const harnessCatalog = JSON.parse(await readFile(harnessCatalogPath, 'utf8'))
+  if (!Array.isArray(harnessCatalog.runtimes) || harnessCatalog.runtimes.length === 0) {
+    throw new Error(`Harness runtime catalog is empty: ${harnessCatalogPath}`)
+  }
+  return [
+    ...harnessCatalog.runtimes.map(descriptor => ({
+      kind: 'harness',
+      descriptor,
+      descriptorSource: null,
+      descriptorLabel: harnessCatalogPath,
+      cacheDirectory: path.join(
+        weworkDirectory,
+        'node_modules',
+        '.cache',
+        'harness-runtime-assets'
+      ),
+    })),
+    {
+      kind: 'node',
+      descriptor: JSON.parse(
+        await readFile(
+          path.join(weworkDirectory, 'src-tauri', 'bundled-execution-runtimes', 'node.json'),
+          'utf8'
+        )
+      ),
+      descriptorSource: path.join(
+        weworkDirectory,
+        'src-tauri',
+        'bundled-execution-runtimes',
+        'node.json'
+      ),
+      descriptorLabel: path.join(
+        weworkDirectory,
+        'src-tauri',
+        'bundled-execution-runtimes',
+        'node.json'
+      ),
+      cacheDirectory: path.join(
+        weworkDirectory,
+        'node_modules',
+        '.cache',
+        'execution-runtime-assets'
+      ),
+    },
+  ]
+}
+
 export async function collectReleaseRuntimeAssets({
   outputDirectory,
   runtimeBaseUrl,
@@ -45,48 +108,46 @@ export async function collectReleaseRuntimeAssets({
   await mkdir(outputDirectory, { recursive: true })
 
   const assets = []
-  for (const definition of runtimeDefinitions) {
-    const descriptorPath = path.join(weworkDirectory, ...definition.descriptor)
-    const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'))
-    const assetName = descriptor.assetName
-    if (typeof assetName !== 'string' || !assetName) {
-      throw new Error(`Runtime descriptor has no assetName: ${descriptorPath}`)
-    }
-    if (!assetName.startsWith(`${definition.kind === 'node' ? 'node' : 'harness'}-runtime-`)) {
-      throw new Error(`Unexpected ${definition.kind} runtime asset name: ${assetName}`)
-    }
-    if (!assetName.includes(`-${expectedPlatform}-`)) {
-      throw new Error(
-        `${definition.kind} runtime asset targets the wrong platform: expected ${expectedPlatform}, got ${assetName}`
-      )
-    }
+  for (const definition of await runtimeDefinitions(weworkDirectory)) {
+    const { descriptor, kind } = definition
+    const assetName = validateRuntimeDescriptor(
+      descriptor,
+      kind,
+      baseUrl,
+      expectedPlatform,
+      definition.descriptorLabel
+    )
+    const descriptorName = assetName.replace(/\.tar\.gz$/, '.json')
 
-    const expectedUrl = `${baseUrl}/${assetName}`
-    if (descriptor.downloadUrl !== expectedUrl) {
-      throw new Error(
-        `${definition.kind} runtime download URL must be ${expectedUrl}, got ${descriptor.downloadUrl}`
-      )
-    }
-
-    const sourcePath = path.join(weworkDirectory, ...definition.cache, assetName)
+    const sourcePath = path.join(definition.cacheDirectory, assetName)
     const sourceStat = await stat(sourcePath)
     const archiveSha256 = await sha256(sourcePath)
     if (descriptor.archiveBytes !== sourceStat.size) {
       throw new Error(
-        `${definition.kind} runtime size mismatch: expected ${descriptor.archiveBytes}, got ${sourceStat.size}`
+        `${kind} runtime size mismatch: expected ${descriptor.archiveBytes}, got ${sourceStat.size}`
       )
     }
     if (descriptor.archiveSha256 !== archiveSha256) {
-      throw new Error(`${definition.kind} runtime checksum mismatch: ${assetName}`)
+      throw new Error(`${kind} runtime checksum mismatch: ${assetName}`)
     }
 
     await copyFile(sourcePath, path.join(outputDirectory, assetName))
+    if (definition.descriptorSource) {
+      await copyFile(definition.descriptorSource, path.join(outputDirectory, descriptorName))
+    } else {
+      await writeFile(
+        path.join(outputDirectory, descriptorName),
+        `${JSON.stringify(descriptor, null, 2)}\n`,
+        'utf8'
+      )
+    }
     assets.push({
-      kind: definition.kind,
-      name: assetName,
+      kind,
+      archiveName: assetName,
+      descriptorName,
       bytes: sourceStat.size,
       sha256: archiveSha256,
-      downloadUrl: expectedUrl,
+      downloadUrl: descriptor.downloadUrl,
     })
   }
 
