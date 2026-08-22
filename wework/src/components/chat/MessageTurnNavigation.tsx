@@ -72,7 +72,7 @@ export function MessageTurnNavigation({
   const { t } = useTranslation('chat')
   const [markers, setMarkers] = useState<MessageTurnMarker[]>([])
   const [activeMarkerIds, setActiveMarkerIds] = useState<string[]>([])
-  const [hoveredMarkerId, setHoveredMarkerId] = useState<string | null>(null)
+  const [hoveredMarkerIndex, setHoveredMarkerIndex] = useState<number | null>(null)
   const [loadingMarkerId, setLoadingMarkerId] = useState<string | null>(null)
   const [pendingScrollTarget, setPendingScrollTarget] = useState<PendingScrollTarget | null>(null)
   const [navigationScrollTop, setNavigationScrollTop] = useState(0)
@@ -409,9 +409,6 @@ export function MessageTurnNavigation({
   if (markers.length === 0) return null
 
   const navigationHeight = getNavigationHeight(markers.length)
-  const hoveredMarkerIndex =
-    hoveredMarkerId === null ? -1 : markers.findIndex(marker => marker.id === hoveredMarkerId)
-
   const navigation = (
     <nav
       aria-label={t('message_navigation.label', '历史发言导航')}
@@ -438,19 +435,19 @@ export function MessageTurnNavigation({
             const isActive = activeMarkerIds.includes(marker.id)
             const isLoading = loadingMarkerId === marker.id
             const hoverDistance =
-              hoveredMarkerIndex === -1 ? null : Math.abs(index - hoveredMarkerIndex)
+              hoveredMarkerIndex === null ? null : Math.abs(index - hoveredMarkerIndex)
 
             return (
               <div
-                key={marker.id}
+                key={getMarkerRenderKey(marker, index)}
                 className="absolute left-0 -translate-y-1/2"
                 style={{
                   top: `${getMarkerTopPx(index)}px`,
                   height: `${MARKER_HOVER_ROW_HEIGHT_PX}px`,
                   width: `${MARKER_HIT_AREA_WIDTH_PX}px`,
                 }}
-                onMouseEnter={() => setHoveredMarkerId(marker.id)}
-                onMouseLeave={() => setHoveredMarkerId(null)}
+                onMouseEnter={() => setHoveredMarkerIndex(index)}
+                onMouseLeave={() => setHoveredMarkerIndex(null)}
               >
                 <button
                   type="button"
@@ -467,8 +464,8 @@ export function MessageTurnNavigation({
                   data-turn-index={marker.turnIndex}
                   data-testid="message-turn-navigation-marker"
                   onClick={() => handleMarkerClick(marker)}
-                  onFocus={() => setHoveredMarkerId(marker.id)}
-                  onBlur={() => setHoveredMarkerId(null)}
+                  onFocus={() => setHoveredMarkerIndex(index)}
+                  onBlur={() => setHoveredMarkerIndex(null)}
                 >
                   <span
                     className={cn(
@@ -487,10 +484,10 @@ export function MessageTurnNavigation({
       </div>
       {markers.map((marker, index) => (
         <div
-          key={`${marker.id}-preview`}
+          key={`${getMarkerRenderKey(marker, index)}-preview`}
           className={cn(
             'pointer-events-none absolute left-8 z-30 w-[300px] max-w-[calc(100vw-56px)] -translate-y-1/2 rounded-md border border-border bg-background px-2.5 py-2 text-left shadow-[0_10px_24px_rgba(15,23,42,0.12)] transition-opacity duration-150',
-            hoveredMarkerId === marker.id ? 'opacity-100' : 'opacity-0'
+            hoveredMarkerIndex === index ? 'opacity-100' : 'opacity-0'
           )}
           data-testid="message-turn-navigation-preview"
           data-turn-index={marker.turnIndex}
@@ -648,6 +645,10 @@ function getNavigationHeight(markerCount: number) {
 
 function getMarkerTopPx(index: number) {
   return MARKER_ROW_HEIGHT_PX / 2 + index * (MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX)
+}
+
+function getMarkerRenderKey(marker: MessageTurnMarker, index: number) {
+  return `${marker.id}:${marker.messageIndex}:${index}`
 }
 
 function getMarkerWidthPx(hoverDistance: number | null, loading = false) {
