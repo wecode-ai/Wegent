@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Embedded Browser Annotation Fixture</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 48px;
+        font-family: system-ui, sans-serif;
+      }
+
+      h1 {
+        margin: 0 0 32px;
+        font-size: 24px;
+      }
+
+      #annotation-dialog {
+        padding: 24px;
+        border: 1px solid #cbd5e1;
+      }
+
+      #annotation-target {
+        display: block;
+        width: 280px;
+        padding: 16px;
+        border: 1px solid #9ca3af;
+        border-radius: 6px;
+        background: #f8fafc;
+        color: #111827;
+        font-size: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Embedded Browser Annotation Fixture</h1>
+    <div id="annotation-dialog" role="dialog" aria-modal="true">
+      <input id="annotation-dialog-focus" aria-label="Dialog focus fallback" />
+      <button id="annotation-target" type="button">Annotation target text</button>
+    </div>
+
+    <script>
+      const dialog = document.querySelector('#annotation-dialog')
+      const fallback = document.querySelector('#annotation-dialog-focus')
+
+      fallback.focus()
+
+      document.addEventListener('focusin', event => {
+        if (dialog.isConnected && !dialog.contains(event.target)) {
+          fallback.focus()
+        }
+      })
+
+      document.addEventListener('pointerdown', event => {
+        if (dialog.isConnected && !dialog.contains(event.target)) {
+          dialog.remove()
+        }
+      })
+    </script>
+  </body>
+</html>
