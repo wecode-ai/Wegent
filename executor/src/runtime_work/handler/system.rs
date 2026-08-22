@@ -47,7 +47,9 @@ impl RuntimeWorkRpcHandler {
                     outcome.interrupted_preparation || outcome.interrupted_execution
                 })
             {
-                let task_id = outcome.record.worktree_id;
+                let task_id = outcome
+                    .interrupted_execution_task_id
+                    .unwrap_or(outcome.record.worktree_id);
                 let error = outcome.record.last_error.unwrap_or_else(|| {
                     if outcome.interrupted_execution {
                         "Executor restarted while the Worktree task was executing; runtime was not resumed"
