@@ -930,6 +930,84 @@ describe('ProjectWorkflowEditor', () => {
     expect(screen.getByTestId('project-workflow-save')).toBeEnabled()
   })
 
+  test('keeps the editor mounted when a fresh rule switches to a rerun action', () => {
+    const onChange = vi.fn()
+    const workflowWithWait: ProjectWorkflowDefinition = {
+      ...workflow,
+      nodes: [
+        workflow.nodes[0],
+        {
+          id: 'wait-1',
+          name: '等待外部事件',
+          node_type: 'wait',
+          depends_on: ['test'],
+          required: true,
+          workspace_policy: 'none',
+          automation_rule_id: null,
+          wait_config: {
+            rules: [{ id: 'rule-1', event_type: 'ci_failed', action: 'complete' }],
+            agent_id: 'robot-1',
+          },
+        },
+        workflow.nodes[1],
+      ],
+    }
+    const renderEditor = (value: ProjectWorkflowDefinition) =>
+      render(
+        <ProjectWorkflowEditor
+          value={value}
+          busy={false}
+          onChange={onChange}
+          onSave={vi.fn()}
+          projectAgents={[robot]}
+        />
+      )
+    const { rerender } = renderEditor(workflowWithWait)
+
+    fireEvent.click(screen.getByTestId('project-workflow-wait-wait-1'))
+    expect(screen.getByTestId('project-workflow-inspector-wait-1')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('project-workflow-wait-rule-action-wait-1-rule-1'), {
+      target: { value: 'rerun' },
+    })
+    const switched = onChange.mock.calls.at(-1)![0] as ProjectWorkflowDefinition
+    expect(switched.nodes.find(node => node.id === 'wait-1')?.wait_config?.rules[0]).toEqual(
+      expect.objectContaining({ action: 'rerun' })
+    )
+
+    rerender(
+      <ProjectWorkflowEditor
+        value={switched}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        projectAgents={[robot]}
+      />
+    )
+
+    // A freshly switched rule has no prompt yet; the editor must stay mounted,
+    // reveal the prompt field, and keep saving gated until the prompt is typed.
+    expect(
+      screen.getByTestId('project-workflow-wait-rule-rerun-prompt-wait-1-rule-1')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('project-workflow-save')).toBeDisabled()
+
+    fireEvent.change(screen.getByTestId('project-workflow-wait-rule-rerun-prompt-wait-1-rule-1'), {
+      target: { value: 'Fix the failing pipeline' },
+    })
+    const withPrompt = onChange.mock.calls.at(-1)![0] as ProjectWorkflowDefinition
+    rerender(
+      <ProjectWorkflowEditor
+        value={withPrompt}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        projectAgents={[robot]}
+      />
+    )
+    expect(screen.getByTestId('project-workflow-save')).toBeEnabled()
+  })
+
   test('continues the current task with a prompt without requiring a robot', () => {
     const onChange = vi.fn()
     const workflowWithWait: ProjectWorkflowDefinition = {

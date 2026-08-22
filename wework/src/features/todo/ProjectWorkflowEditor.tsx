@@ -1224,7 +1224,7 @@ export function ProjectWorkflowEditor({
           rules.length > 0 &&
           rules.every(
             rule =>
-              rule.event_type.trim() && (rule.action === 'complete' || Boolean(rule.prompt.trim()))
+              rule.event_type.trim() && (rule.action === 'complete' || Boolean(rule.prompt?.trim()))
           ) &&
           (!hasRerun || Boolean(node.wait_config?.agent_id))
         )
