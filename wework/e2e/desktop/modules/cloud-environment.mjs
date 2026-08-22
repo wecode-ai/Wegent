@@ -23,6 +23,7 @@ import {
   fetchJson,
   join,
   mkdir,
+  pathExists,
   readFile,
   repoDir,
   reservePort,
@@ -159,6 +160,7 @@ class RealCloudEnvironment {
     this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
     this.generatedRemoteExecutors = []
+    this.pluginAutoUpdateFixtures = []
   }
 
   async startBackend() {
@@ -286,8 +288,19 @@ class RealCloudEnvironment {
           body: JSON.stringify({ approved: true, note: 'Desktop E2E update release' }),
         }
       )
+      this.pluginAutoUpdateFixtures.push({ pluginId: first.pluginId, slug })
     }
     this.pluginAutoUpdateFixturesSeeded = true
+  }
+
+  async syncPluginAutoUpdatesToCloudDevice() {
+    const headers = { Authorization: `Bearer ${this.authToken}` }
+    for (const fixture of this.pluginAutoUpdateFixtures) {
+      await fetchJson(
+        `${this.backendUrl}/api/plugins/marketplace/${fixture.pluginId}/install?device_id=${CLOUD_DEVICE_ID}`,
+        { method: 'POST', headers }
+      )
+    }
   }
 
   async publishPluginRelease({ headers, slug, version }) {
@@ -331,7 +344,7 @@ class RealCloudEnvironment {
     return initialized
   }
 
-  async assertPluginAutoUpdateComplete(expectedCount = 6) {
+  async assertPluginAutoUpdateComplete(codexHome, expectedCount = 6) {
     const installed = await fetchJson(`${this.backendUrl}/api/plugins/installed`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     })
@@ -343,6 +356,42 @@ class RealCloudEnvironment {
       fixtures.every(item => item.spec.version === '2.0.0'),
       'Not every desktop E2E plugin advanced to version 2.0.0'
     )
+    for (let index = 1; index <= expectedCount; index += 1) {
+      const slug = `desktop-e2e-auto-update-${index}`
+      const currentManifest = join(
+        codexHome,
+        'plugins',
+        'cache',
+        'wegent',
+        slug,
+        '2.0.0',
+        '.codex-plugin',
+        'plugin.json'
+      )
+      assert.equal(
+        await pathExists(currentManifest),
+        true,
+        `Plugin ${slug} did not commit its updated package to the local runtime`
+      )
+      assert.equal(
+        JSON.parse(await readFile(currentManifest, 'utf8')).version,
+        '2.0.0',
+        `Plugin ${slug} kept stale local runtime metadata after update`
+      )
+      assert.equal(
+        await pathExists(join(codexHome, 'plugins', 'cache', 'wegent', slug, '1.0.0')),
+        false,
+        `Plugin ${slug} kept its old local runtime after update`
+      )
+    }
+  }
+
+  async restartCloudExecutorWithoutCodexPluginRpc() {
+    assert.ok(this.remoteExecutorEnv, 'The cloud Executor environment is not initialized')
+    const unavailableCodexBinary = join(resultDir, 'unavailable-codex-for-plugin-sync')
+    await rm(unavailableCodexBinary, { force: true })
+    this.remoteExecutorEnv.CODEX_BIN = unavailableCodexBinary
+    await this.restartCloudExecutor()
   }
 
   executorEnv({

@@ -1783,6 +1783,8 @@
     "plugins_import_confirm": "Import and install",
     "plugins_import_overwrite": "Overwrite and reinstall",
     "plugins_import_success": "Plugin imported and installed.",
+    "plugins_import_success_auth_deferred": "Plugin imported and installed. If a connector needs authorization, you can sign in later from the plugin details.",
+    "plugins_import_view_plugin": "View plugin",
     "plugins_import_components": "{{skills}} Skills · {{mcps}} MCP servers",
     "plugins_import_existing": "{{name}} ({{version}}) already exists in the personal marketplace. Continuing will overwrite and reinstall it.",
     "plugins_import_risk_title": "This plugin contains executable capabilities",
