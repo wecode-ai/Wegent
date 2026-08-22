@@ -8,7 +8,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.delivery import ExternalEventBinding, loop_datetime_is_unset
@@ -55,25 +54,9 @@ class ExternalEventBindingService:
                 "automation_run_id": automation_run_id,
             },
         )
-        try:
-            # The active-binding key is unique in the database, so a concurrent
-            # registration of the same logical key fails here instead of
-            # creating a duplicate listener. Re-read and return the winner.
-            with db.begin_nested():
-                db.add(row)
-                db.flush()
-            return row
-        except IntegrityError:
-            existing = self._active(
-                db,
-                provider=provider,
-                opaque_ref=opaque_ref,
-                loop_item_id=loop_item_id,
-                workflow_node_id=workflow_node_id,
-            )
-            if existing is not None:
-                return existing
-            raise
+        db.add(row)
+        db.flush()
+        return row
 
     def route(
         self,
