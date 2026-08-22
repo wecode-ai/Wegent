@@ -1,20 +1,14 @@
+import { isWegentCloudMarketplaceId } from './marketplaceIdentity'
+
 export interface PluginReference {
   pluginName: string
   marketplaceName: string
 }
 
-export const WEGENT_CLOUD_MARKETPLACE_ALIASES = new Set([
-  'default',
-  'wework',
-  'wegent',
-  'wegent-market',
-  'wegent-marketplace',
-])
-
 const PLUGIN_MENTION_REFERENCE_PATTERN = /^\[\$[^\]]+]\((plugin:\/\/[^)\n]+)\)$/
 
 export function isWegentCloudMarketplace(marketplaceName: string): boolean {
-  return WEGENT_CLOUD_MARKETPLACE_ALIASES.has(marketplaceName.trim().toLowerCase())
+  return isWegentCloudMarketplaceId(marketplaceName)
 }
 
 export function parsePluginUri(uri: string): PluginReference | null {
