@@ -831,7 +831,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     )
     const workflowBinding = workflowBindings.find(binding => binding.workflow_node_id === 'stage-1')
     assert.ok(workflowBinding)
-    const workflowTaskRow = `[data-testid="cloud-todo-open-workflow-task-stage-1-${workflowBinding.id}"]`
+    const workflowTaskRow = `${activeBoard} [data-testid="cloud-todo-open-workflow-task-stage-1-${workflowBinding.id}"]`
     await control.command('click', '[data-testid="ai-chat-modal-close"]')
     const workflowIssueCard = `${activeBoard} [data-testid="cloud-todo-card-${workflowIssue.id}"]`
     await control.command('waitFor', workflowIssueCard, {

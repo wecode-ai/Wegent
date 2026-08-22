@@ -1028,7 +1028,8 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
         .to_string();
     let mut envs = vec![
         (LOCAL_EXECUTOR_HOME_ENV.to_string(), executor_home),
-        (CODEX_HOME_ENV.to_string(), codex_home),
+        (CODEX_HOME_ENV.to_string(), codex_home.clone()),
+        (WEGENT_CODEX_HOME_ENV.to_string(), codex_home),
         (LOCAL_EXECUTOR_LOG_DIR_ENV.to_string(), log_dir),
         (APP_IPC_DEVICE_ID_ENV.to_string(), app_ipc_device_id.clone()),
         ("DEVICE_ID".to_string(), app_ipc_device_id.clone()),
@@ -7511,6 +7512,9 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
         let codex_home_env = envs
             .get(CODEX_HOME_ENV)
             .expect("codex home env should be passed to sidecar");
+        let wegent_codex_home_env = envs
+            .get(WEGENT_CODEX_HOME_ENV)
+            .expect("Wegent Codex home env should be passed to sidecar");
         let log_dir_env = envs
             .get(LOCAL_EXECUTOR_LOG_DIR_ENV)
             .expect("log dir env should be passed to sidecar");
@@ -7519,10 +7523,12 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
                 executor_home_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-")
             );
             assert_eq!(codex_home_env, &format!("{executor_home_env}/codex"));
+            assert_eq!(wegent_codex_home_env, codex_home_env);
             assert!(log_dir_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-"));
         } else {
             assert_eq!(executor_home_env, "/tmp/wework-instance-executor");
             assert_eq!(codex_home_env, "/tmp/wework-instance-executor/codex");
+            assert_eq!(wegent_codex_home_env, codex_home_env);
             assert_eq!(log_dir_env, "/tmp/wework-instance-executor/logs");
         }
     }
