@@ -20,6 +20,7 @@ import { Slice, type Node as ProseMirrorNode } from 'prosemirror-model'
 import { AllSelection, EditorState, Plugin, TextSelection } from 'prosemirror-state'
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { ComposerMentionNodeView } from './ComposerMentionNodeView'
 import { ComposerLinkNodeView } from './ComposerLinkNodeView'
 import type { ComposerLinkPayload } from './composerLinks'
@@ -163,7 +164,9 @@ export const ComposerProseMirrorEditor = forwardRef<
                   state.selection.$head.parent.content.size > 0 ||
                   // WKWebView needs the only empty text position to remain native
                   // so programmatic focus can start a text input session.
-                  (state.doc.childCount === 1 && state.doc.firstChild?.content.size === 0)
+                  (!isElectronRuntime() &&
+                    state.doc.childCount === 1 &&
+                    state.doc.firstChild?.content.size === 0)
                 ) {
                   return null
                 }

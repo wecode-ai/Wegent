@@ -49,7 +49,7 @@ import {
 } from '@/lib/attachments'
 import { openLocalFile } from '@/lib/local-terminal'
 import { getRecognizedLink } from '@/lib/link-preview'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isTauriRuntime } from '@/lib/runtime-environment'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
 import { ComposerLinkChip } from './ComposerLinkChip'
 import { ComposerTextarea } from './composer/ComposerTextarea'
@@ -267,7 +267,7 @@ export const MessageList = memo(function MessageList({
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
-  const virtualMessages = isTauri && Boolean(scrollElementRef)
+  const virtualMessages = isDesktopRuntime() && Boolean(scrollElementRef)
   const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
   const forcedVirtualMessageIndex = useMemo(
     () =>

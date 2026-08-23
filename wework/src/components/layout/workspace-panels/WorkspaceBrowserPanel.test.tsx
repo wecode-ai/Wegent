@@ -50,6 +50,7 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   setEmbeddedBrowserAgentControlPaused: vi.fn(),
   setEmbeddedBrowserActiveTab: vi.fn(),
   setEmbeddedBrowserBounds: vi.fn(),
+  setEmbeddedBrowserDeviceMetrics: vi.fn(),
   setEmbeddedBrowserZoom: vi.fn(),
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT: 'wework:debug-panel-visibility-change',
   EMBEDDED_BROWSER_OCCLUSION_EVENT: 'wework:embedded-browser-occlusion-change',
@@ -2165,6 +2166,9 @@ describe('WorkspaceBrowserPanel', () => {
     )
     expect(screen.getByText('正在批注 · example.com')).toBeInTheDocument()
 
+    button.setPointerCapture = vi.fn(() => {
+      throw new DOMException('No active pointer', 'NotFoundError')
+    })
     fireEvent.pointerDown(button)
     await waitFor(() => {
       expect(

@@ -23,6 +23,14 @@ interface TerminalEventPayload {
   deviceId?: string
 }
 
+interface TerminalDoneEventPayload extends TerminalEventPayload {
+  result?: {
+    value?: unknown
+    blocks?: unknown
+    fileChanges?: unknown
+  }
+}
+
 export function RuntimeTaskLifecycleStreamCoordinator({
   services,
   store,
@@ -101,19 +109,48 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     const settleMatchingTask = (
       payload: TerminalEventPayload,
       outcome: 'succeeded' | 'failed' | 'cancelled'
-    ) => {
-      if (!payload.taskId) return
+    ): RuntimeTaskAddress | null => {
+      if (!payload.taskId) return null
       const snapshot = store.getSnapshot()
-      for (const key of snapshot.runningTaskKeys) {
-        const lifecycle = snapshot.tasks.get(key)
+      for (const lifecycle of snapshot.tasks.values()) {
         if (!lifecycle || lifecycle.address.taskId !== payload.taskId) continue
         if (payload.deviceId && lifecycle.address.deviceId !== payload.deviceId) continue
         store.turnSettled(lifecycle.address, null, outcome)
+        return lifecycle.address
+      }
+      return null
+    }
+
+    const reconcileTerminalTranscript = async (address: RuntimeTaskAddress) => {
+      try {
+        const transcriptResponse = await executorClient.runtime.getRuntimeTranscript({
+          ...address,
+          limit: 50,
+          refresh: true,
+        })
+        if (disposed) return
+        const transcript = runtimePaneTranscript(transcriptResponse)
+        reconcileRuntimeConversationSnapshot(
+          address,
+          runtimeTranscriptTurnsToConversationTurns(transcriptResponse.turns ?? [])
+        )
+        store.syncTranscript(address, transcript)
+      } catch (error) {
+        console.warn('[Wework] Runtime terminal transcript reconciliation failed', {
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+          error,
+        })
       }
     }
 
     const unsubscribe = services.chatStream.subscribe({
-      onChatDone: payload => settleMatchingTask(payload, 'succeeded'),
+      onChatDone: payload => {
+        const address = settleMatchingTask(payload, 'succeeded')
+        if (address && terminalDoneNeedsTranscript(payload)) {
+          void reconcileTerminalTranscript(address)
+        }
+      },
       onChatError: payload =>
         settleMatchingTask(payload, isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed'),
       onRuntimeEventLagged: payload => {
@@ -171,4 +208,13 @@ function isCancelledTerminalEvent(payload: { error: string; type?: string }): bo
   return [error, type].some(value =>
     value ? ['interrupted', 'cancelled', 'canceled', 'aborted'].includes(value) : false
   )
+}
+
+function terminalDoneNeedsTranscript(payload: TerminalDoneEventPayload): boolean {
+  const result = payload.result
+  if (!result) return true
+  const hasValue = typeof result.value === 'string' && result.value.trim().length > 0
+  const hasBlocks = Array.isArray(result.blocks) && result.blocks.length > 0
+  const hasFileChanges = typeof result.fileChanges === 'object' && result.fileChanges !== null
+  return !hasValue && !hasBlocks && !hasFileChanges
 }

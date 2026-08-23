@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url'
 import JSZip from 'jszip'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
-const RC7_INSTALLATION_ID = 'dsh-e2e-smoke-rc7'
+const INCOMPATIBLE_INSTALLATION_ID = 'dsh-e2e-smoke-rc7'
 const APP_ROUTE = `/app/harness-${INSTALLATION_ID}`
 const MODEL_LABEL = 'Desktop E2E Chat'
 const RECIPIENT_NAME = 'smart-app-e2e-recipient'
@@ -172,7 +172,11 @@ async function createOfficialSource(resultDir, packagePath) {
 
 export async function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutMs }) {
   const packagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.1.0-rc.8')
-  const rc7PackagePath = await createHarnessPackage(resultDir, RC7_INSTALLATION_ID, '0.1.0-rc.7')
+  const incompatiblePackagePath = await createHarnessPackage(
+    resultDir,
+    INCOMPATIBLE_INSTALLATION_ID,
+    '0.1.0-rc.7'
+  )
   const sharedPackagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.1.0-rc.8', {
     archiveName: 'dsh-e2e-shared-0.0.9',
     version: '0.0.9',
@@ -484,19 +488,25 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
         value: JSON.stringify([
           {
-            uri: pathToFileURL(rc7PackagePath).href,
+            uri: pathToFileURL(incompatiblePackagePath).href,
             name: 'dsh-e2e-smoke-rc7.zip',
             mimeType: 'application/zip',
           },
         ]),
       })
-      await control.command(
-        'waitFor',
-        `[data-testid="smart-app-created-item-${RC7_INSTALLATION_ID}"]`,
-        {
-          text: 'DSH E2E Smoke 0.1.0-rc.7',
-          timeoutMs: uiTimeoutMs,
-        }
+      await control.command('waitFor', '[data-testid="smart-apps-owned-page"]', {
+        text: 'Smart app requires DeepSeek Harness 0.1.0-rc.7, but Wework provides 0.1.0-rc.8',
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `[data-testid="smart-app-created-item-${INCOMPATIBLE_INSTALLATION_ID}"]`
+          )
+        ),
+        0,
+        'An incompatible RC7 Smart app was added to the created-app list'
       )
       await control.command('waitFor', '[data-testid="smart-apps-import-button"]', {
         enabled: true,
@@ -526,62 +536,6 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       )
       assert.ok(managementTabId, 'Harness management page did not expose its workspace tab ID')
       await captureScreenshot(control, 'harness-apps-05-installed.png', 'body')
-
-      const rc7ModelSelector = `[data-testid="harness-app-model-${RC7_INSTALLATION_ID}"]`
-      await control.command('select', rc7ModelSelector, {
-        by: 'label',
-        value: MODEL_LABEL,
-      })
-      await control.command('waitFor', rc7ModelSelector, {
-        enabled: true,
-        stableMs: 300,
-        timeoutMs: 30_000,
-      })
-      await control.command(
-        'clickWhenEnabled',
-        `[data-testid="harness-app-start-${RC7_INSTALLATION_ID}"]`,
-        {
-          timeoutMs: 30_000,
-        }
-      )
-      await control.command(
-        'waitFor',
-        `[data-testid="harness-app-launch-${RC7_INSTALLATION_ID}"]`,
-        {
-          timeoutMs: 30_000,
-        }
-      )
-      await control.command('click', `[data-testid="workspace-tab-select-${managementTabId}"]`)
-      await control.command(
-        'waitFor',
-        `[data-testid="workspace-tab-select-${managementTabId}"][aria-selected="true"]`,
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      await control.command(
-        'waitFor',
-        `[data-testid="app-iframe-harness-${RC7_INSTALLATION_ID}"]`,
-        {
-          timeoutMs: 600_000,
-        }
-      )
-      await control.command('navigate', 'body', {
-        value: '/sites?app_type=smart_app&view=owned',
-      })
-      await control.command('waitFor', '[data-testid="smart-apps-owned-page"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('navigate', 'body', {
-        value: '/sites?app_type=smart_app&view=installed',
-      })
-      await control.command('waitFor', `[data-testid="harness-app-stop-${RC7_INSTALLATION_ID}"]`, {
-        timeoutMs: 30_000,
-      })
-      await control.command('click', `[data-testid="harness-app-stop-${RC7_INSTALLATION_ID}"]`)
-      await control.command('waitFor', `[data-testid="harness-app-start-${RC7_INSTALLATION_ID}"]`, {
-        timeoutMs: 30_000,
-      })
 
       const modelSelector = `[data-testid="harness-app-model-${INSTALLATION_ID}"]`
       const initialModelKey = await control.command('getValue', modelSelector)

@@ -1,4 +1,5 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 
 const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/download(?:[?#].*)?$/
 
@@ -56,13 +57,24 @@ export function isHtmlFilePath(path: string): boolean {
 }
 
 export function localHtmlBrowserUrl(path: string): string | null {
-  if (!isHtmlFilePath(path) || typeof convertFileSrc !== 'function') return null
+  if (!isHtmlFilePath(path)) return null
+  if (isElectronRuntime()) return electronFileUrl(path)
+  if (typeof convertFileSrc !== 'function') return null
 
   try {
     return convertFileSrc(path)
   } catch {
     return null
   }
+}
+
+function electronFileUrl(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const encoded = normalized
+    .split('/')
+    .map(segment => encodeURIComponent(segment).replace(/%3A/gi, ':'))
+    .join('/')
+  return `file://${encoded.startsWith('/') ? '' : '/'}${encoded}`
 }
 
 export function splitMarkdownFileLineSuffix(path: string): {

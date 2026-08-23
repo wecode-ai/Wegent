@@ -15,7 +15,7 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   setEmbeddedBrowserBounds: vi.fn().mockResolvedValue(undefined),
 }))
 const runtimeMocks = vi.hoisted(() => ({
-  isTauriRuntime: vi.fn(() => false),
+  isDesktopRuntime: vi.fn(() => false),
 }))
 
 vi.mock('@/lib/embedded-browser', () => embeddedBrowserMocks)
@@ -23,7 +23,7 @@ vi.mock('@/lib/runtime-environment', () => runtimeMocks)
 
 describe('AppIframe', () => {
   beforeEach(() => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(false)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(false)
     embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
     embeddedBrowserMocks.evalEmbeddedBrowserJson.mockReset()
     embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue(true)
@@ -52,7 +52,7 @@ describe('AppIframe', () => {
   })
 
   test('keeps app identity stable when the display title is localized', async () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,
       height: 600,
@@ -112,7 +112,7 @@ describe('AppIframe', () => {
   })
 
   test('uses a persistent native webview in Tauri', async () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,
       height: 600,
@@ -147,7 +147,7 @@ describe('AppIframe', () => {
   })
 
   test('mounts content-aware native apps in a visible collapsed webview', async () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,
       height: 600,
@@ -183,7 +183,7 @@ describe('AppIframe', () => {
   })
 
   test('keeps one native webview during the StrictMode effect replay', async () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,
       height: 600,
@@ -216,7 +216,7 @@ describe('AppIframe', () => {
   })
 
   test('shows an existing native webview without navigating again', async () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,
       height: 600,
@@ -271,7 +271,7 @@ describe('AppIframe', () => {
   })
 
   test('hides a native webview that finishes opening after its tab becomes inactive', async () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     let resolveOpen!: () => void
     embeddedBrowserMocks.openEmbeddedBrowser.mockReturnValueOnce(
       new Promise(resolve => {

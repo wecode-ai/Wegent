@@ -1,4 +1,5 @@
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { isElectronRuntime, isTauriRuntime } from '@/lib/runtime-environment'
 
 export interface RuntimeTaskCompletionNotification {
   title: string
@@ -22,7 +23,7 @@ export async function sendSystemNotification({
   title,
   body,
 }: RuntimeTaskCompletionNotification): Promise<void> {
-  if (!isTauriRuntime()) return
+  if (!isTauriRuntime() && !isElectronRuntime()) return
 
   const testState = systemNotificationTestState()
   if (testState) {
@@ -31,6 +32,10 @@ export async function sendSystemNotification({
   }
 
   try {
+    if (isElectronRuntime()) {
+      await invokeDesktopHost<void>('notification.show', { title, body })
+      return
+    }
     const notification = await import('@tauri-apps/plugin-notification')
     let granted = await notification.isPermissionGranted()
     if (!granted) {

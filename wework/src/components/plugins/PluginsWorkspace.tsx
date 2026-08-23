@@ -1146,7 +1146,11 @@ export function PluginsWorkspace({
         })
       }
       setLocalConnectorAuthBySlug({})
-      notifyLocalPluginSkillsChanged()
+      notifyLocalPluginSkillsChanged([
+        String(id),
+        pluginName,
+        plugin?.raw.spec.source.pluginKey ?? '',
+      ])
       setMarketplaceRefreshTick(previous => previous + 1)
       track('plugin_uninstalled', { source: 'local' })
     }

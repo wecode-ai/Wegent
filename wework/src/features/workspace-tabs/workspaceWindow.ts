@@ -1,7 +1,8 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { LogicalPosition } from '@tauri-apps/api/dpi'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getPlatform } from '@/lib/platform'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime, isTauriRuntime } from '@/lib/runtime-environment'
 import { toBrowserPath } from '@/lib/navigation'
 import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import {
@@ -19,14 +20,36 @@ function errorMessage(payload: unknown): string {
   return typeof payload === 'string' ? payload : 'Unknown Tauri window error'
 }
 
+function endActiveEditingSession(): void {
+  const activeElement = document.activeElement
+  if (activeElement instanceof HTMLElement) activeElement.blur()
+}
+
 export async function openWorkspaceTabWindow(tab: WorkspaceTab): Promise<boolean> {
   const route = toBrowserPath(workspaceTabRoute(tab))
+  const label = `workspace-${tab.id}-${Date.now()}`
+  if (isElectronRuntime()) {
+    endActiveEditingSession()
+    persistWorkspaceTabs(label, [tab], tab.id)
+    stageWorkspaceTabTransfer(tab.id)
+    try {
+      await invokeDesktopHost('window.openWorkspace', {
+        label,
+        route,
+        title: tab.title,
+      })
+      return true
+    } catch (error) {
+      localStorage.removeItem(workspaceTabsStorageKey(label))
+      clearStagedWorkspaceTabTransfer(tab.id)
+      throw error
+    }
+  }
   if (!isTauriRuntime()) {
     return Boolean(window.open(route, '_blank', 'noopener,noreferrer'))
   }
 
   const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
-  const label = `workspace-${tab.id}-${Date.now()}`
   persistWorkspaceTabs(label, [tab], tab.id)
   stageWorkspaceTabTransfer(tab.id)
   const platform = getPlatform()

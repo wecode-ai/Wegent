@@ -223,6 +223,7 @@ import {
   MULTIMODAL_VISION_PROMPT,
   WINDOW_LIFECYCLE_COMPLETION_RESPONSE,
   WINDOW_LIFECYCLE_PROMPT,
+  DESKTOP_RUNTIME,
   assert,
   createServer,
   join,
@@ -231,6 +232,16 @@ import {
 } from './shared.mjs'
 
 const DESKTOP_CONTROL_COMMAND_INTERVAL_MS = 250
+const ELECTRON_OBSERVATION_ACTIONS = new Set([
+  'activeElement',
+  'getAttribute',
+  'getElementCount',
+  'getText',
+  'metrics',
+  'snapshot',
+  'text',
+  'waitFor',
+])
 
 class DesktopE2EServer {
   constructor(
@@ -268,6 +279,7 @@ class DesktopE2EServer {
     this.commandQueue = []
     this.commandResults = new Map()
     this.commandHistory = []
+    this.controlLongPolls = new Map()
     this.modelRequests = []
     this.catalogRequests = []
     this.httpRequests = []
@@ -454,6 +466,11 @@ class DesktopE2EServer {
   async close() {
     for (const response of this.blockedCloudResponses) response.destroy()
     this.blockedCloudResponses.clear()
+    for (const { response, timeout } of this.controlLongPolls.values()) {
+      clearTimeout(timeout)
+      response.destroy()
+    }
+    this.controlLongPolls.clear()
     this.desktopScenario?.close?.()
     this.server.closeAllConnections?.()
     this.controlServer.closeAllConnections?.()
@@ -854,7 +871,11 @@ class DesktopE2EServer {
   }
 
   async commandForClient(clientId, action, selector, options = {}) {
-    const availableAt = this.controlCommandAvailableAt.get(clientId) ?? 0
+    const observesElectronState =
+      DESKTOP_RUNTIME === 'electron' && ELECTRON_OBSERVATION_ACTIONS.has(action)
+    const availableAt = observesElectronState
+      ? 0
+      : (this.controlCommandAvailableAt.get(clientId) ?? 0)
     const delayMs = Math.max(0, availableAt - Date.now())
     if (delayMs > 0) {
       await new Promise(resolvePromise => setTimeout(resolvePromise, delayMs))
@@ -881,6 +902,7 @@ class DesktopE2EServer {
       })
     })
     this.commandQueue.push({ clientId, command, rejectDelivery })
+    this.deliverPendingControlCommand(clientId)
     try {
       await withTimeout(
         this.guard(Promise.race([delivery, result])),
@@ -911,6 +933,35 @@ class DesktopE2EServer {
     })
     json(response, 200, command)
     return true
+  }
+
+  deliverPendingControlCommand(clientId) {
+    const pending = this.controlLongPolls.get(clientId)
+    if (!pending) return false
+    clearTimeout(pending.timeout)
+    this.controlLongPolls.delete(clientId)
+    return this.deliverQueuedControlCommand(clientId, pending.response)
+  }
+
+  waitForQueuedControlCommand(clientId, response) {
+    const previous = this.controlLongPolls.get(clientId)
+    if (previous) {
+      clearTimeout(previous.timeout)
+      previous.response.writeHead(204)
+      previous.response.end()
+    }
+    const timeout = setTimeout(() => {
+      if (this.controlLongPolls.get(clientId)?.response !== response) return
+      this.controlLongPolls.delete(clientId)
+      response.writeHead(204)
+      response.end()
+    }, 25_000)
+    this.controlLongPolls.set(clientId, { response, timeout })
+    response.once('close', () => {
+      if (this.controlLongPolls.get(clientId)?.response !== response) return
+      clearTimeout(timeout)
+      this.controlLongPolls.delete(clientId)
+    })
   }
 
   async handleControl(request, response) {
@@ -1437,6 +1488,12 @@ class DesktopE2EServer {
       this.controlClientsByWindow.set(ready.windowLabel, ready.clientId)
       this.controlWindowsByClient.set(ready.clientId, ready.windowLabel)
       if (previousClientId && previousClientId !== ready.clientId) {
+        const previousLongPoll = this.controlLongPolls.get(previousClientId)
+        if (previousLongPoll) {
+          clearTimeout(previousLongPoll.timeout)
+          previousLongPoll.response.destroy()
+          this.controlLongPolls.delete(previousClientId)
+        }
         this.controlWindowsByClient.delete(previousClientId)
         this.controlCommandAvailableAt.delete(previousClientId)
         const replacementError = new Error(
@@ -1478,6 +1535,10 @@ class DesktopE2EServer {
         return true
       }
       if (this.deliverQueuedControlCommand(clientId, response)) return true
+      if (url.searchParams.get('wait') === '1') {
+        this.waitForQueuedControlCommand(clientId, response)
+        return true
+      }
       response.writeHead(204)
       response.end()
       return true

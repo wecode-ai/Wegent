@@ -9,11 +9,16 @@ import {
 } from '@/features/workbench/workbenchRuntimeHelpers'
 import { resolveStoredWorkspacePaths } from '@/lib/workspace-path-transfer'
 import { applyWorkspacePathTransfer } from '@/components/chat/composer/composerPathTransfer'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 
 interface SystemDropPayload {
   action: 'new-chat' | 'follow-up' | 'stash'
   text: string | null
   paths: string[]
+}
+
+function isElectronHost(): boolean {
+  return window.__WEWORK_RUNTIME_CONFIG__?.desktopHost === 'electron'
 }
 
 export function SystemDragBridge() {
@@ -29,12 +34,16 @@ export function SystemDragBridge() {
   }, [workbench])
 
   useEffect(() => {
-    void emitTo('system-drag-panel', 'wework-system-drag-context', {
-      conversationTitle: currentTask?.title ?? null,
-    }).catch(() => undefined)
+    const context = { conversationTitle: currentTask?.title ?? null }
+    if (isElectronHost()) {
+      void invokeDesktopHost('systemDrag.setContext', context)
+      return
+    }
+    void emitTo('system-drag-panel', 'wework-system-drag-context', context).catch(() => undefined)
   }, [currentTask?.title])
 
   useEffect(() => {
+    if (isElectronHost()) return
     let cancelled = false
     let dispose: (() => void) | undefined
     void listen('wework-system-drag-context-requested', () => {
@@ -129,9 +138,21 @@ export function SystemDragBridge() {
       }
       void apply(payload)
     }
-    void invoke<SystemDropPayload[]>('take_pending_system_drag_drops').then(payloads => {
-      if (!cancelled) payloads.forEach(handlePayload)
-    })
+    const takePending = () =>
+      (isElectronHost()
+        ? invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending')
+        : invoke<SystemDropPayload[]>('take_pending_system_drag_drops')
+      ).then(payloads => {
+        if (!cancelled) payloads.forEach(handlePayload)
+      })
+    void takePending()
+    const poll = isElectronHost() ? window.setInterval(() => void takePending(), 250) : undefined
+    if (isElectronHost()) {
+      return () => {
+        cancelled = true
+        if (poll !== undefined) window.clearInterval(poll)
+      }
+    }
     void listen<SystemDropPayload>('wework-system-drag-drop', event => {
       if (!cancelled) handlePayload(event.payload)
     }).then(unlisten => {
@@ -140,6 +161,7 @@ export function SystemDragBridge() {
     })
     return () => {
       cancelled = true
+      if (poll !== undefined) window.clearInterval(poll)
       dispose?.()
     }
   }, [])

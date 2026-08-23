@@ -133,11 +133,13 @@ import {
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
   DESKTOP_CONTROL_SERVER_PORT,
+  DESKTOP_RUNTIME,
   DESKTOP_MODEL_SERVER_PORT,
   DESKTOP_READY_TIMEOUT_MS,
   DESKTOP_SCENARIO_ONLY,
   DESKTOP_SEGMENT,
   DROPPED_WORKSPACE_PATHS_ONLY,
+  E2E_TRANSCRIPT_PAGE_SIZE,
   FILE_PANEL_ANCHOR_MARKER,
   FILE_PANEL_ANCHOR_PROMPT,
   FILE_PREVIEW_RESTORE_MARKER,
@@ -195,6 +197,7 @@ import {
   SYSTEM_DRAG_PANEL_ONLY,
   TASK_PLAN_ONLY,
   TASK_PROMPT,
+  TELEMETRY_TEST_PROJECT_KEY,
   TOOL_BLOCK_ORDER_ONLY,
   TURN_NAVIGATION_ONLY,
   TURN_NAVIGATION_ONLY_TURN_COUNT,
@@ -1005,6 +1008,17 @@ async function main() {
 
     const harnessRuntimes =
       SELECTED_DESKTOP_SEGMENT === 'harness-apps' ? await prepareHarnessRuntimeRoots() : null
+    const electronCoreRuntimeRoot =
+      DESKTOP_RUNTIME === 'electron'
+        ? join(weworkDir, 'node_modules', '.cache', 'harness-runtime-dev')
+        : null
+    if (electronCoreRuntimeRoot) {
+      assert.equal(
+        await pathExists(electronCoreRuntimeRoot),
+        true,
+        `Electron desktop E2E Core DSH runtime is unavailable: ${electronCoreRuntimeRoot}`
+      )
+    }
     const appEnvironment = {
       ...process.env,
       CODEX_BINARY_PATH: resolvedAppCodexBinary,
@@ -1032,9 +1046,23 @@ async function main() {
       WEWORK_E2E_CONTROL_URL: control.controlUrl,
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_E2E_MODEL_SERVER_URL: control.url,
+      WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
+      WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
       WEWORK_E2E_POSTHOG_HOST: control.url,
+      WEWORK_E2E_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
+      WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
+      WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
+      WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
+      ...(DESKTOP_RUNTIME === 'electron'
+        ? {
+            WEWORK_DESKTOP_RUNTIME: 'electron',
+            WEWORK_EXECUTOR_PATH: executorBinary,
+            WEWORK_HARNESS_RUNTIME_ROOT: electronCoreRuntimeRoot,
+            WEWORK_USER_DATA_DIR: join(resultDir, 'electron-user-data'),
+          }
+        : {}),
       ...(harnessRuntimes
         ? {
             WEWORK_HARNESS_RUNTIME_ROOT: harnessRuntimes.harnessRuntimeRoot,
@@ -1051,7 +1079,7 @@ async function main() {
         : {}),
     }
     const startDesktopAppProcess = async () => {
-      if (process.platform === 'darwin') {
+      if (process.platform === 'darwin' && DESKTOP_RUNTIME === 'tauri') {
         assert.ok(appBundlePath, 'The macOS desktop E2E application bundle is missing')
         const child = spawn(appBinary, [], {
           cwd: weworkDir,
@@ -1098,7 +1126,7 @@ async function main() {
     const ready = await withTimeout(
       control.awaitReady(),
       DESKTOP_READY_TIMEOUT_MS,
-      'Timed out waiting for the real Tauri application to connect to the Desktop E2E controller'
+      `Timed out waiting for the real ${DESKTOP_RUNTIME} application to connect to the Desktop E2E controller`
     )
     assert.match(
       String(ready.location ?? ''),
@@ -1117,7 +1145,7 @@ async function main() {
     } else {
       await declineInitialTelemetryConsent(control)
     }
-    if (process.platform === 'darwin') {
+    if (process.platform === 'darwin' && DESKTOP_RUNTIME === 'tauri') {
       assert.notEqual(
         macosFrontmostProcessId(),
         app.pid,
@@ -3685,8 +3713,18 @@ last_updated = "2026-07-30T00:00:00Z"`
       'utf8'
     )
     try {
-      const snapshot = await control.command('snapshot', 'body', { timeoutMs: 5000 })
-      await writeFile(join(resultDir, 'ui-snapshot.json'), `${snapshot}\n`, 'utf8')
+      const [snapshot, composerDiagnostics, composerFocus, workbenchDebug] = await Promise.all([
+        control.command('snapshot', 'body', { timeoutMs: 5000 }),
+        control.command('getComposerDiagnosticsSnapshot', 'body', { timeoutMs: 5000 }),
+        control.command('getComposerFocusSnapshot', 'body', { timeoutMs: 5000 }),
+        control.command('getWorkbenchDebugSnapshot', 'body', { timeoutMs: 5000 }),
+      ])
+      await Promise.all([
+        writeFile(join(resultDir, 'ui-snapshot.json'), `${snapshot}\n`, 'utf8'),
+        writeFile(join(resultDir, 'composer-diagnostics.json'), `${composerDiagnostics}\n`, 'utf8'),
+        writeFile(join(resultDir, 'composer-focus.json'), `${composerFocus}\n`, 'utf8'),
+        writeFile(join(resultDir, 'workbench-debug.json'), `${workbenchDebug}\n`, 'utf8'),
+      ])
     } catch {
       // Preserve the original test failure when the WebView can no longer answer diagnostics.
     }
@@ -3701,7 +3739,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     await blockingNetworkProxy?.stop()
     await stopDesktopAppProcess(app)
     await control.close()
-    if (appBundlePath) {
+    if (appBundlePath && process.platform === 'darwin') {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
     }
   }

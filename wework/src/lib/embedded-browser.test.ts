@@ -33,6 +33,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 vi.mock('./runtime-environment', () => ({
+  isElectronRuntime: vi.fn(() => false),
   isTauriRuntime: vi.fn(() => true),
 }))
 

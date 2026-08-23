@@ -4,6 +4,7 @@ set -euo pipefail
 
 core_segments=(
   workspace-tabs
+  cloud-space-mention
   priority-filter
   automation-lifecycle
   project-automation
@@ -80,7 +81,7 @@ cloud_shards=(
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
   rendering-extensions,runtime-task-queue,local-file-preview
-  project-ai-settings,window-lifecycle,permission-modes
+  project-ai-settings,window-lifecycle,permission-modes,cloud-space-mention
   core-task-flow,temporary-chat,codex-notification-isolation
   claude-runtime,workspace-attachments,local-harness
   conversation-state,goal-lifecycle,workspace-tabs
@@ -264,6 +265,10 @@ classify_wework_path() {
       select_target "core:automation-lifecycle"
       select_target "core:project-automation"
       select_target "cloud:all"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)
+      select_target "core:cloud-space-mention"
       return
       ;;
     wework/src/features/todo/ProjectAutomation* | \

@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+.electron-titlebar-drag-region {
+  -webkit-app-region: drag;
+}
+
 :root {
   color-scheme: light;
   --color-bg-base: 255 255 255;

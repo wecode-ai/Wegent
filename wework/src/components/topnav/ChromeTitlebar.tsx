@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime, isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
@@ -35,8 +35,10 @@ export function ChromeTitlebar({
   availableWorkspaceTabKinds,
 }: ChromeTitlebarProps) {
   const isTauri = isTauriRuntime()
+  const isElectron = isElectronRuntime()
+  const isDesktop = isDesktopRuntime()
   const platform = getPlatform()
-  const feedbackSlotVisible = isTauri && platform === 'mac'
+  const feedbackSlotVisible = isDesktop && platform === 'mac'
   const fixedActionsWidth = showWorkspacePortals
     ? feedbackSlotVisible
       ? '6.75rem'
@@ -54,7 +56,7 @@ export function ChromeTitlebar({
       )}
     >
       {/* macOS: traffic light spacer (left) */}
-      {isTauri && platform === 'mac' && (
+      {isDesktop && platform === 'mac' && (
         <div
           className="w-[92px] shrink-0 self-stretch"
           data-testid="macos-traffic-light-spacer"
@@ -77,16 +79,16 @@ export function ChromeTitlebar({
         </div>
       )}
 
-      {showWorkspacePortals && isTauri && <TitlebarExtensionSlot />}
+      {showWorkspacePortals && isDesktop && <TitlebarExtensionSlot />}
       {showWorkspacePortals && (
         <div
           data-testid="titlebar-right-workspace-zone"
           className="pointer-events-none absolute top-0 z-chrome flex h-full items-center"
           style={{
             right:
-              isTauri && platform === 'win'
+              isDesktop && platform === 'win'
                 ? `calc(138px + ${fixedActionsWidth})`
-                : isTauri && platform === 'linux'
+                : isDesktop && platform === 'linux'
                   ? `calc(138px + ${fixedActionsWidth})`
                   : fixedActionsWidth,
             width: 'var(--right-workspace-titlebar-width, auto)',
@@ -97,7 +99,7 @@ export function ChromeTitlebar({
             data-testid="titlebar-right-panel"
             className="pointer-events-auto relative flex min-w-0 flex-1 self-stretch items-center"
           >
-            {isTauri ? (
+            {isDesktop ? (
               <div data-testid="titlebar-right-panel-drag-region" className="absolute inset-0 z-0">
                 <MacOSTitleBarDragRegion className="h-full w-full" />
               </div>
@@ -138,7 +140,8 @@ export function ChromeTitlebar({
       )}
 
       {/* Windows: custom window frame controls */}
-      {isTauri && platform === 'win' && (
+      {((isTauri && platform === 'win') ||
+        (isElectron && (platform === 'win' || platform === 'linux'))) && (
         <div
           className="relative z-chrome w-[138px] shrink-0 self-stretch"
           data-tauri-drag-region={false}

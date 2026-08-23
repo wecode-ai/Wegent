@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { closeMainWindowToTray, installRuntimeTaskCloseGuard } from '@/tauri/runtimeTaskCloseGuard'
 
@@ -13,7 +13,7 @@ export function RuntimeTaskCloseGuard() {
   const [closing, setClosing] = useState(false)
 
   useEffect(() => {
-    if (!isTauriRuntime()) return undefined
+    if (!isDesktopRuntime()) return undefined
 
     let unlisten: (() => void) | undefined
     let cancelled = false

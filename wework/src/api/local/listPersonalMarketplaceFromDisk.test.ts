@@ -12,6 +12,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
+  isDesktopRuntime: () => true,
   isTauriRuntime: () => true,
 }))
 

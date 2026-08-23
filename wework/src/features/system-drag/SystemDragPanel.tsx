@@ -6,6 +6,7 @@ import { emit, listen } from '@tauri-apps/api/event'
 import { MessageSquarePlus, CornerDownRight, Archive, Check, AlertCircle, X } from 'lucide-react'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 
 type DropAction = 'new-chat' | 'follow-up' | 'stash'
 type DropStatus = { kind: 'success' | 'error'; action: DropAction } | null
@@ -17,6 +18,10 @@ const PANEL_WIDTH = 440
 const PANEL_CONTENT_INSET = 5
 const BRAND_WIDTH = 64
 const CLOSE_AREA_WIDTH = 32
+
+function isElectronHost(): boolean {
+  return window.__WEWORK_RUNTIME_CONFIG__?.desktopHost === 'electron'
+}
 
 function actionAtPosition(x: number, hasConversation: boolean): DropAction | null {
   const actionAreaStart = PANEL_CONTENT_INSET + BRAND_WIDTH
@@ -42,7 +47,9 @@ export function SystemDragPanel() {
   const dismiss = useCallback(() => {
     setDropStatus(null)
     setActiveAction(null)
-    void invoke('dismiss_system_drag_panel')
+    void (isElectronHost()
+      ? invokeDesktopHost('systemDrag.dismissPanel')
+      : invoke('dismiss_system_drag_panel'))
   }, [])
 
   useEscapeKey(dismiss)
@@ -56,20 +63,26 @@ export function SystemDragPanel() {
 
   const complete = async (action: DropAction, text: string | null, paths: string[]) => {
     try {
-      await invoke('complete_system_drag_drop', { payload: { action, text, paths } })
+      const payload = { action, text, paths }
+      await (isElectronHost()
+        ? invokeDesktopHost('systemDrag.complete', { payload })
+        : invoke('complete_system_drag_drop', { payload }))
       setDropStatus({ kind: 'success', action })
     } catch (error) {
       console.error('[Wework] Failed to complete system drop:', error)
       setDropStatus({ kind: 'error', action })
     }
     window.setTimeout(() => {
-      void invoke('dismiss_system_drag_panel')
+      void (isElectronHost()
+        ? invokeDesktopHost('systemDrag.dismissPanel')
+        : invoke('dismiss_system_drag_panel'))
       setDropStatus(null)
       setActiveAction(null)
     }, FEEDBACK_DURATION_MS)
   }
 
   useEffect(() => {
+    if (isElectronHost()) return
     let cancelled = false
     let dispose: (() => void) | undefined
     void listen<NativeTextDropPayload>('wework-system-drag-native-text-drop', event => {
@@ -98,6 +111,7 @@ export function SystemDragPanel() {
   }, [conversationTitle, dismiss])
 
   useEffect(() => {
+    if (isElectronHost()) return
     let cancelled = false
     let unlisten: (() => void) | undefined
     void getCurrentWebview()
@@ -163,6 +177,12 @@ export function SystemDragPanel() {
   }, [conversationTitle, dismiss])
 
   useEffect(() => {
+    if (isElectronHost()) {
+      void invokeDesktopHost<{ conversationTitle: string | null }>('systemDrag.getContext').then(
+        context => setConversationTitle(context.conversationTitle)
+      )
+      return
+    }
     let cancelled = false
     let dispose: (() => void) | undefined
     void listen<{ conversationTitle: string | null }>('wework-system-drag-context', event => {

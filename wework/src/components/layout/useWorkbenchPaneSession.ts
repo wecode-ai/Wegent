@@ -57,6 +57,7 @@ import type {
   RuntimeTaskAddress,
   RuntimeTurnNavigationItem,
 } from '@/types/api'
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type {
   GuidanceWorkbenchMessage,
   RuntimePaneQueuedMessage,
@@ -158,7 +159,8 @@ interface PendingRuntimeGoalState {
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const configuredRuntimeTranscriptPageSize = Number(
-  import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
+  getDesktopE2ERuntimeConfig().transcriptPageSize ??
+    import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
 )
 const RUNTIME_TRANSCRIPT_PAGE_SIZE =
   import.meta.env.VITE_WEWORK_E2E === 'true' &&

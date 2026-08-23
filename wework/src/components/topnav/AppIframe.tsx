@@ -8,7 +8,7 @@ import {
   setEmbeddedBrowserBounds,
   type EmbeddedBrowserBounds,
 } from '@/lib/embedded-browser'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 
 interface AppIframeProps {
   active?: boolean
@@ -94,7 +94,7 @@ export function AppIframe({
   waitForContent = false,
   workspaceTabId,
 }: AppIframeProps) {
-  const native = isTauriRuntime()
+  const native = isDesktopRuntime()
   const hostRef = useRef<HTMLDivElement>(null)
   const onReadyRef = useRef(onReady)
   const openedRef = useRef(false)

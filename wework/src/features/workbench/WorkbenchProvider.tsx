@@ -212,6 +212,7 @@ export function WorkbenchProvider({
   lifecycleStore: providedLifecycleStore,
   onStartupReadyChange,
   workspaceTabId,
+  debugSnapshotEnabled = true,
   consumePluginTrials = true,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
@@ -1236,6 +1237,8 @@ export function WorkbenchProvider({
   ])
 
   useEffect(() => {
+    if (!debugSnapshotEnabled) return
+
     let timeout: number | null = null
     const schedule = () => {
       if (timeout !== null) return
@@ -1272,6 +1275,7 @@ export function WorkbenchProvider({
     attachmentSelection.attachments.length,
     cloudWorkStatus,
     currentContextUsage,
+    debugSnapshotEnabled,
     draftInput.length,
     lifecycleSnapshot,
     draftInputByScope,

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import {
@@ -6,6 +6,7 @@ import {
   LOCAL_EXECUTOR_EVENT,
   connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend,
+  ensureBundledPluginInstalled,
   ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted,
   getLocalExecutorStatus,
@@ -30,9 +31,102 @@ const listenMock = vi.mocked(listen)
 describe('localExecutor', () => {
   beforeEach(() => {
     localStorage.clear()
+    delete window.__WEWORK_RUNTIME_CONFIG__
     resetLocalExecutorStateForTests()
     invokeMock.mockReset()
     listenMock.mockReset()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  test('initializes and registers bundled plugins through the declared Electron executor API', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const marketplacePath = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal'
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/wework/executor/v1') {
+        return Response.json({
+          protocolVersion: 1,
+          transport: 'managed',
+          executor: {
+            protocol_version: 1,
+            device_id: 'electron-device',
+            runtime_instance_id: 'electron-runtime',
+            version: '1.8.6',
+            capabilities: ['executor.plugins'],
+            renderer_methods: [
+              'codex.app_server_request',
+              'executor.plugins.initialize_bundled_marketplace',
+              'runtime.*',
+            ],
+            transports: ['local-endpoint-ndjson'],
+          },
+        })
+      }
+      const request = JSON.parse(String(init?.body)) as {
+        method: string
+        params: { method?: string }
+      }
+      if (request.method === 'runtime.codex.runtime_config.update') {
+        return Response.json({ ok: true, result: { updated: true } })
+      }
+      if (request.method === 'runtime.codex.ensure_started') {
+        return Response.json({
+          ok: true,
+          result: {
+            ready: true,
+            started: true,
+            initializeElapsedMs: 37,
+          },
+        })
+      }
+      if (request.method === 'executor.plugins.initialize_bundled_marketplace') {
+        return Response.json({
+          ok: true,
+          result: {
+            id: 'wework-personal',
+            path: marketplacePath,
+            pluginCount: 2,
+            defaultPluginNames: ['smart-app-builder'],
+          },
+        })
+      }
+      if (request.params.method === 'marketplace/add') {
+        return Response.json({
+          ok: true,
+          result: { marketplaceName: 'wework-personal' },
+        })
+      }
+      if (request.params.method === 'config/read') {
+        return Response.json({ ok: true, result: { config: { plugins: {} } } })
+      }
+      if (request.params.method === 'plugin/install') {
+        return Response.json({ ok: true, result: {} })
+      }
+      throw new Error(`Unexpected Executor request: ${JSON.stringify(request)}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await ensureBundledPluginInstalled('smart-app-builder')
+
+    expect(getInitializedBundledPluginMarketplace()).toEqual({
+      id: 'wework-personal',
+      path: marketplacePath,
+      pluginCount: 2,
+      defaultPluginNames: ['smart-app-builder'],
+    })
+    expect(
+      fetchMock.mock.calls.slice(1).map(call => JSON.parse(String(call[1]?.body)).method)
+    ).toEqual([
+      'runtime.codex.runtime_config.update',
+      'runtime.codex.ensure_started',
+      'executor.plugins.initialize_bundled_marketplace',
+      'codex.app_server_request',
+      'codex.app_server_request',
+      'codex.app_server_request',
+    ])
   })
 
   test('ensures the local executor through the native app command', async () => {

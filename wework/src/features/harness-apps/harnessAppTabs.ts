@@ -1,6 +1,8 @@
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { invoke } from '@tauri-apps/api/core'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 
 const disposers = new Map<string, () => void>()
@@ -56,17 +58,29 @@ export function openHarnessAppTab(
 }
 
 export function takeHarnessAppProxyToken(installationId: string): Promise<string | null> {
+  if (isElectronRuntime()) {
+    return invokeDesktopHost<string | null>('smartApps.takeProxyToken', { installationId })
+  }
   return invoke<string | null>('take_harness_app_proxy_token', { installationId })
 }
 
 export function storeHarnessAppProxyToken(installationId: string, token: string): Promise<void> {
+  if (isElectronRuntime()) {
+    return invokeDesktopHost<void>('smartApps.storeProxyToken', { installationId, token })
+  }
   return invoke<void>('store_harness_app_proxy_token', { installationId, token })
 }
 
 export function takeHarnessAppContextToken(installationId: string): Promise<string | null> {
+  if (isElectronRuntime()) {
+    return invokeDesktopHost<string | null>('smartApps.takeContextToken', { installationId })
+  }
   return invoke<string | null>('take_harness_app_context_token', { installationId })
 }
 
 export function storeHarnessAppContextToken(installationId: string, token: string): Promise<void> {
+  if (isElectronRuntime()) {
+    return invokeDesktopHost<void>('smartApps.storeContextToken', { installationId, token })
+  }
   return invoke<void>('store_harness_app_context_token', { installationId, token })
 }

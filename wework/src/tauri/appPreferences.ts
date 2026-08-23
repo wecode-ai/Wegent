@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type { ModelSelectionConfig } from '@/types/api'
 import {
   defaultLocalHarnessPreferences,
@@ -508,6 +510,9 @@ function emitAppPreferencesChanged(preferences: AppPreferences) {
 }
 
 export async function getAppPreferences(): Promise<AppPreferences> {
+  if (isElectronRuntime()) {
+    return mergeAppPreferences(await invokeDesktopHost<Record<string, unknown>>('preferences.get'))
+  }
   if (!isTauriRuntime() || !canInvokeAppPreferencesCommand()) {
     return defaultAppPreferences
   }
@@ -516,6 +521,13 @@ export async function getAppPreferences(): Promise<AppPreferences> {
 }
 
 export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<AppPreferences> {
+  if (isElectronRuntime()) {
+    const preferences = mergeAppPreferences(
+      await invokeDesktopHost<Record<string, unknown>>('preferences.update', { patch })
+    )
+    emitAppPreferencesChanged(preferences)
+    return preferences
+  }
   if (!isTauriRuntime() || !canInvokeAppPreferencesCommand()) {
     const preferences = mergeAppPreferences({ ...defaultAppPreferences, ...patch })
     emitAppPreferencesChanged(preferences)

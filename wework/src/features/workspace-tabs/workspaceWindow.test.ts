@@ -8,8 +8,12 @@ const destroy = vi.fn().mockResolvedValue(undefined)
 const WebviewWindow = vi.fn(function MockWebviewWindow() {
   return { listen, show, setFocus, destroy }
 })
+const invokeDesktopHost = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@tauri-apps/api/webviewWindow', () => ({ WebviewWindow }))
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: (...args: unknown[]) => invokeDesktopHost(...args),
+}))
 vi.mock('@tauri-apps/api/dpi', () => ({
   LogicalPosition: class LogicalPosition {
     constructor(
@@ -30,6 +34,7 @@ describe('openWorkspaceTabWindow', () => {
     vi.resetModules()
     vi.clearAllMocks()
     localStorage.clear()
+    delete window.__WEWORK_RUNTIME_CONFIG__
     delete (window as Window & { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
     show.mockResolvedValue(undefined)
     setFocus.mockResolvedValue(undefined)
@@ -52,6 +57,32 @@ describe('openWorkspaceTabWindow', () => {
       'noopener,noreferrer'
     )
     expect(WebviewWindow).not.toHaveBeenCalled()
+  })
+
+  test('creates an isolated Electron workspace window through the desktop host', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const editor = document.createElement('textarea')
+    document.body.append(editor)
+    editor.focus()
+    const { openWorkspaceTabWindow } = await import('./workspaceWindow')
+
+    await expect(openWorkspaceTabWindow(tab)).resolves.toBe(true)
+
+    expect(document.activeElement).not.toBe(editor)
+    expect(invokeDesktopHost).toHaveBeenCalledWith(
+      'window.openWorkspace',
+      expect.objectContaining({
+        label: expect.stringMatching(/^workspace-board-project-1-\d+$/),
+        route: expect.stringContaining('/todo?projectId=project-1&workspaceTab=board-project-1'),
+        title: '产品规划',
+      })
+    )
+    const label = (invokeDesktopHost.mock.calls[0]?.[1] as { label: string }).label
+    expect(JSON.parse(localStorage.getItem(`wework.workspaceTabs.v3:${label}`) ?? 'null')).toEqual({
+      activeTabId: tab.id,
+      tabs: [tab],
+    })
+    editor.remove()
   })
 
   test('creates, reveals and focuses an isolated Tauri workspace window', async () => {

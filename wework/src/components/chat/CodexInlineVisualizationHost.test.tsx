@@ -3,14 +3,27 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CodexInlineVisualizationHost } from './CodexInlineVisualizationHost'
 
 const invokeMock = vi.hoisted(() => vi.fn())
+const runtimeMock = vi.hoisted(() => ({
+  electron: false,
+}))
+const desktopHostMock = vi.hoisted(() => ({
+  invokeDesktopHost: vi.fn(),
+}))
 
 vi.mock('@tauri-apps/api/core', () => ({
   convertFileSrc: (path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`,
   invoke: invokeMock,
 }))
+vi.mock('@/lib/runtime-environment', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/runtime-environment')>()),
+  isElectronRuntime: () => runtimeMock.electron,
+}))
+vi.mock('@/api/dsh/desktopHost', () => desktopHostMock)
 
 beforeEach(() => {
+  runtimeMock.electron = false
   invokeMock.mockReset()
+  desktopHostMock.invokeDesktopHost.mockReset()
 })
 
 afterEach(() => {
@@ -104,6 +117,38 @@ describe('CodexInlineVisualizationHost', () => {
 
     unmount()
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:inline-visualization')
+  })
+
+  test('loads an Electron visualization through the declared local file capability', async () => {
+    runtimeMock.electron = true
+    const fragment = '<div>Electron 可视化</div>'
+    desktopHostMock.invokeDesktopHost.mockResolvedValue({
+      chunkBase64: Buffer.from(fragment).toString('base64'),
+      bytesRead: Buffer.byteLength(fragment),
+      eof: true,
+      size: Buffer.byteLength(fragment),
+    })
+    let documentBlob: Blob | undefined
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => {
+      documentBlob = blob
+      return 'blob:electron-visualization'
+    })
+
+    render(
+      <CodexInlineVisualizationHost
+        file="/tmp/codex/visualizations/electron chart.html"
+        title="Electron chart"
+      />
+    )
+
+    const frame = screen.getByTestId('codex-inline-visualization-frame')
+    await waitFor(() => expect(frame).toHaveAttribute('src', 'blob:electron-visualization'))
+    expect(desktopHostMock.invokeDesktopHost).toHaveBeenCalledWith('filesystem.readFileChunk', {
+      path: '/tmp/codex/visualizations/electron chart.html',
+      offset: 0,
+      length: 512 * 1024,
+    })
+    expect(await documentBlob?.text()).toContain('<base href="file:///tmp/codex/visualizations/">')
   })
 
   test('does not render an ambiguous basename match', () => {

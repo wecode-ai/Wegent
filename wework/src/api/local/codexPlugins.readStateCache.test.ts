@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   ensureLocalExecutorStarted: vi.fn(),
   ensureBundledPluginMarketplaceRegistered: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn(() => null),
+  runtime: {
+    desktop: true,
+    electron: false,
+    tauri: true,
+  },
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -21,7 +26,9 @@ vi.mock('@tauri-apps/api/core', () => ({
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: () => true,
+  isDesktopRuntime: () => mocks.runtime.desktop,
+  isElectronRuntime: () => mocks.runtime.electron,
+  isTauriRuntime: () => mocks.runtime.tauri,
 }))
 
 vi.mock('@/tauri/localExecutor', () => ({
@@ -84,6 +91,9 @@ const createdPlugin: InstalledPlugin = {
 describe('local codex plugin readState cache', () => {
   beforeEach(() => {
     clearLocalCodexPluginsReadStateCache()
+    mocks.runtime.desktop = true
+    mocks.runtime.electron = false
+    mocks.runtime.tauri = true
     mocks.invoke.mockReset()
     mocks.requestLocalExecutor.mockReset()
     mocks.ensureLocalExecutorStarted.mockReset()
@@ -123,6 +133,34 @@ describe('local codex plugin readState cache', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  test('loads Codex marketplaces through Executor in Electron desktop runtime', async () => {
+    mocks.runtime.tauri = false
+
+    const state = await createLocalCodexPluginApi().readState({
+      mergeAllMarketplaces: true,
+      refresh: true,
+    })
+
+    expect(state.marketplaces).toEqual([
+      expect.objectContaining({
+        id: 'wework-personal',
+      }),
+    ])
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('codex.app_server_request', {
+      method: 'plugin/installed',
+      params: {
+        cwds: null,
+        installSuggestionPluginNames: null,
+      },
+    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('codex.app_server_request', {
+      method: 'plugin/list',
+      params: {
+        cwds: null,
+      },
+    })
   })
 
   test('linkPersonalPluginRelease drops TTL cache so the next readState reloads', async () => {
@@ -558,6 +596,63 @@ describe('local codex plugin readState cache', () => {
         )
       ).toEqual(['github'])
     })
+  })
+
+  test('an older refresh resolves with the newer canonical marketplace snapshot', async () => {
+    const currentMarketplace = {
+      name: 'desktop-e2e-openai-official',
+      path: '/tmp/desktop-e2e-openai-official',
+      interface: { displayName: 'Desktop E2E OpenAI Official' },
+      plugins: [
+        {
+          id: 'openai-developers',
+          name: 'openai-developers',
+          interface: { displayName: 'OpenAI Developers' },
+        },
+      ],
+    }
+    let pluginListRequestCount = 0
+    let resolveOlderList: ((value: unknown) => void) | null = null
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/installed') {
+          return { marketplaces: [personalMarketplace] }
+        }
+        if (params.method === 'plugin/list') {
+          pluginListRequestCount += 1
+          if (pluginListRequestCount === 1) {
+            return await new Promise(resolve => {
+              resolveOlderList = resolve
+            })
+          }
+          return { marketplaces: [personalMarketplace, currentMarketplace] }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    const older = api.readState({ mergeAllMarketplaces: true, refresh: true })
+    await vi.waitFor(() => expect(pluginListRequestCount).toBe(1))
+
+    const current = await api.readState({ mergeAllMarketplaces: true, refresh: true })
+    expect(current.marketplaces.map(marketplace => marketplace.id)).toContain(
+      'desktop-e2e-openai-official'
+    )
+
+    resolveOlderList?.({ marketplaces: [personalMarketplace] })
+    const resolvedOlder = await older
+    expect(resolvedOlder.marketplaces.map(marketplace => marketplace.id)).toContain(
+      'desktop-e2e-openai-official'
+    )
   })
 
   test('retains the cached OpenAI catalog when a refresh omits that marketplace', async () => {

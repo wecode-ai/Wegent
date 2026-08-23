@@ -1,0 +1,742 @@
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  screen,
+  session,
+  shell,
+  WebContentsView,
+  type WebContents,
+} from 'electron'
+import { existsSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import {
+  captureWebContentsDataUrl,
+  createElectronCapabilityRouter,
+} from './host/electron-capabilities.js'
+import { HostPipeServer } from './host/host-pipe.js'
+import { RendererHealthService } from './host/renderer-health.js'
+import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
+import { SystemSleepController } from './host/system-sleep-controller.js'
+import { PreferencesStore } from './host/preferences-store.js'
+import { EmbeddedBrowserManager } from './host/embedded-browser-manager.js'
+import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
+import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
+import {
+  WorkbenchTabController,
+  type WorkbenchTabView,
+  type WorkbenchViewBounds,
+} from './host/workbench-tab-controller.js'
+import {
+  desktopWindowFrameOptions,
+  primaryDshBounds,
+  workbenchDshBounds,
+} from './host/window-layout.js'
+import { DesktopRuntime } from './runtime/desktop-runtime.js'
+
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
+
+const userDataPath =
+  process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), 'io.wecode.wework')
+app.setPath('userData', resolve(userDataPath))
+
+let mainWindow: BrowserWindow | null = null
+const workspaceWindows = new Map<string, BrowserWindow>()
+const dshWindowLabels = new Map<number, string>()
+let primaryDshView: WebContentsView | null = null
+let attachedDshView: WebContentsView | null = null
+let primaryDshViewAttached = false
+let desktopRuntime: DesktopRuntime | null = null
+let workbenchTabs: WorkbenchTabController<ElectronWorkbenchView> | null = null
+let smartApps: SmartAppManager | null = null
+let embeddedBrowser: EmbeddedBrowserManager | null = null
+let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
+let systemDragWindow: BrowserWindow | null = null
+let popoutWindow: BrowserWindow | null = null
+let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
+let pendingSystemDrops: Array<{
+  action: 'new-chat' | 'follow-up' | 'stash'
+  text: string | null
+  paths: string[]
+}> = []
+let runtimeError: string | null = null
+let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
+let runtimeStartPromise: Promise<void> | null = null
+let quitting = false
+let mainWindowCloseRequestRevision = 0
+const rendererHealth = new RendererHealthService()
+const systemSleep = new SystemSleepController()
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+
+if (!hasSingleInstanceLock) app.quit()
+
+app.on('second-instance', () => {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+})
+
+rendererHealth.on('change', () => {
+  mainWindow?.webContents.send('runtime:changed')
+})
+
+function secureDshContents(contents: WebContents, dshUrl: string): void {
+  const allowedOrigin = new URL(dshUrl).origin
+  contents.setWindowOpenHandler(({ url }) => {
+    const target = new URL(url)
+    if (target.origin === allowedOrigin) return { action: 'allow' }
+    void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  contents.on('will-navigate', (event, url) => {
+    if (new URL(url).origin === allowedOrigin) return
+    event.preventDefault()
+    void shell.openExternal(url)
+  })
+}
+
+function registerDshWindowLabel(contents: WebContents, label: string): void {
+  dshWindowLabels.set(contents.id, label)
+  contents.once('destroyed', () => dshWindowLabels.delete(contents.id))
+}
+
+function installDshWindowLabelHeaders(): void {
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const label =
+      typeof details.webContentsId === 'number'
+        ? dshWindowLabels.get(details.webContentsId)
+        : undefined
+    callback({
+      requestHeaders: label
+        ? { ...details.requestHeaders, 'X-Wework-Window-Label': label }
+        : details.requestHeaders,
+    })
+  })
+}
+
+function secureDshView(view: WebContentsView, dshUrl: string): void {
+  secureDshContents(view.webContents, dshUrl)
+}
+
+function layoutPrimaryView(): void {
+  if (!mainWindow) return
+  primaryDshView?.setBounds(primaryDshViewBounds())
+  workbenchTabs?.layout()
+  embeddedBrowser?.layoutAll()
+}
+
+function primaryDshViewBounds(): WorkbenchViewBounds {
+  const [width, height] = mainWindow?.getContentSize() ?? [0, 0]
+  return primaryDshBounds({ width, height })
+}
+
+function workbenchViewBounds(): WorkbenchViewBounds {
+  const [width, height] = mainWindow?.getContentSize() ?? [0, 0]
+  return workbenchDshBounds({ width, height })
+}
+
+function attachPrimaryDshView(): void {
+  if (!mainWindow || !primaryDshView || primaryDshViewAttached) return
+  mainWindow.contentView.addChildView(primaryDshView)
+  primaryDshViewAttached = true
+  primaryDshView.setBounds(primaryDshViewBounds())
+}
+
+function showWorkbenchView(view: WebContentsView | null): void {
+  if (!mainWindow || attachedDshView === view) return
+  if (attachedDshView) {
+    mainWindow.contentView.removeChildView(attachedDshView)
+  }
+  attachedDshView = view
+  if (view) {
+    mainWindow.contentView.addChildView(view)
+    view.setBounds(workbenchViewBounds())
+  }
+}
+
+class ElectronWorkbenchView implements WorkbenchTabView {
+  readonly nativeView: WebContentsView
+
+  constructor() {
+    this.nativeView = new WebContentsView({
+      webPreferences: {
+        backgroundThrottling: false,
+        preload: dshPreloadPath,
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+      },
+    })
+  }
+
+  load(url: string): Promise<void> {
+    secureDshView(this.nativeView, url)
+    return this.nativeView.webContents.loadURL(url)
+  }
+
+  setBounds(bounds: WorkbenchViewBounds): void {
+    this.nativeView.setBounds(bounds)
+  }
+
+  evaluate(expression: string): Promise<unknown> {
+    return this.nativeView.webContents.executeJavaScript(expression, true)
+  }
+
+  capture(): Promise<string> {
+    return captureWebContentsDataUrl(this.nativeView.webContents)
+  }
+
+  close(): void {
+    if (attachedDshView === this.nativeView) showWorkbenchView(null)
+    if (!this.nativeView.webContents.isDestroyed()) {
+      this.nativeView.webContents.close()
+    }
+  }
+
+  onRendererGone(listener: (reason: string) => void): () => void {
+    const handler = (_event: Electron.Event, details: Electron.RenderProcessGoneDetails) =>
+      listener(details.reason)
+    this.nativeView.webContents.on('render-process-gone', handler)
+    return () => {
+      if (!this.nativeView.webContents.isDestroyed()) {
+        this.nativeView.webContents.off('render-process-gone', handler)
+      }
+    }
+  }
+}
+
+async function loadPrimaryDshView(): Promise<void> {
+  if (!mainWindow || !desktopRuntime) return
+  if (primaryDshView) return
+  rendererHealth.loading()
+  const dshUrl = desktopRuntime.coreDshUrl()
+  const view = new WebContentsView({
+    webPreferences: {
+      backgroundThrottling: false,
+      preload: dshPreloadPath,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  })
+  secureDshView(view, dshUrl)
+  registerDshWindowLabel(view.webContents, 'main')
+  primaryDshView = view
+  attachPrimaryDshView()
+  layoutPrimaryView()
+  view.webContents.once('did-finish-load', () => {
+    runtimeError = null
+    rendererHealth.ready()
+  })
+  view.webContents.on('unresponsive', () => rendererHealth.unresponsive())
+  view.webContents.on('responsive', () => rendererHealth.responsive())
+  view.webContents.once('render-process-gone', (_event, details) => {
+    if (primaryDshView !== view) return
+    if (primaryDshViewAttached && mainWindow) {
+      mainWindow.contentView.removeChildView(view)
+      primaryDshViewAttached = false
+    }
+    primaryDshView = null
+    view.webContents.close()
+    if (quitting) return
+    if (!rendererHealth.crashed(details.reason)) {
+      runtimeError = 'DSH renderer repeatedly crashed'
+      return
+    }
+    rendererHealth.recreating()
+    void loadPrimaryDshView().catch(error => {
+      runtimeError = error instanceof Error ? error.message : String(error)
+      rendererHealth.failed('renderer_recreation_failed')
+    })
+  })
+  try {
+    await view.webContents.loadURL(dshUrl, {
+      extraHeaders: 'X-Wework-Window-Label: main',
+    })
+  } catch (error) {
+    if (primaryDshView === view) {
+      if (primaryDshViewAttached && mainWindow) {
+        mainWindow.contentView.removeChildView(view)
+        primaryDshViewAttached = false
+      }
+      primaryDshView = null
+    }
+    view.webContents.close()
+    rendererHealth.failed('renderer_load_failed')
+    throw error
+  }
+}
+
+async function openWorkspaceWindow(input: {
+  label: string
+  route: string
+  title: string
+}): Promise<void> {
+  if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
+  if (!/^workspace-[a-zA-Z0-9_-]+$/.test(input.label)) {
+    throw new Error(`Workspace window label is invalid: ${input.label}`)
+  }
+  const existing = workspaceWindows.get(input.label)
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore()
+    existing.show()
+    existing.focus()
+    return
+  }
+  const dshUrl = desktopRuntime.coreDshUrl()
+  const target = new URL(input.route, desktopRuntime.coreDshOrigin())
+  if (target.origin !== new URL(dshUrl).origin) {
+    throw new Error('Workspace window route must belong to the Core DSH runtime')
+  }
+  const workspaceWindow = new BrowserWindow({
+    ...desktopWindowFrameOptions(),
+    width: 1280,
+    height: 800,
+    minWidth: 900,
+    minHeight: 620,
+    title: input.title,
+    backgroundColor: '#101316',
+    show: false,
+    webPreferences: {
+      backgroundThrottling: false,
+      preload: dshPreloadPath,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  })
+  workspaceWindows.set(input.label, workspaceWindow)
+  secureDshContents(workspaceWindow.webContents, dshUrl)
+  registerDshWindowLabel(workspaceWindow.webContents, input.label)
+  workspaceWindow.on('closed', () => {
+    if (workspaceWindows.get(input.label) === workspaceWindow) {
+      workspaceWindows.delete(input.label)
+    }
+  })
+  try {
+    await workspaceWindow.loadURL(target.toString(), {
+      extraHeaders: `X-Wework-Window-Label: ${input.label}`,
+    })
+    workspaceWindow.show()
+    workspaceWindow.focus()
+  } catch (error) {
+    workspaceWindows.delete(input.label)
+    workspaceWindow.destroy()
+    throw error
+  }
+}
+
+async function ensureAuxiliaryWindow(
+  kind: 'system-drag-panel' | 'popout-window'
+): Promise<BrowserWindow> {
+  if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
+  const existing = kind === 'system-drag-panel' ? systemDragWindow : popoutWindow
+  if (existing && !existing.isDestroyed()) return existing
+  const isSystemDrag = kind === 'system-drag-panel'
+  const target = new URL(isSystemDrag ? 'system-drag' : 'popout', desktopRuntime.coreDshUrl())
+  const auxiliaryWindow = new BrowserWindow({
+    width: isSystemDrag ? 440 : 470,
+    height: isSystemDrag ? 60 : 112,
+    resizable: false,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    skipTaskbar: isSystemDrag,
+    show: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      backgroundThrottling: false,
+      preload: dshPreloadPath,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  })
+  secureDshContents(auxiliaryWindow.webContents, desktopRuntime.coreDshUrl())
+  registerDshWindowLabel(auxiliaryWindow.webContents, kind)
+  auxiliaryWindow.on('closed', () => {
+    if (kind === 'system-drag-panel') systemDragWindow = null
+    else popoutWindow = null
+  })
+  await auxiliaryWindow.loadURL(target.toString(), {
+    extraHeaders: `X-Wework-Window-Label: ${kind}`,
+  })
+  if (isSystemDrag) systemDragWindow = auxiliaryWindow
+  else popoutWindow = auxiliaryWindow
+  return auxiliaryWindow
+}
+
+async function showSystemDragPanel(): Promise<void> {
+  const target = await ensureAuxiliaryWindow('system-drag-panel')
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const x = Math.round(display.workArea.x + (display.workArea.width - 440) / 2)
+  target.setPosition(x, display.workArea.y + 8)
+  target.showInactive()
+}
+
+async function showPopoutWindow(): Promise<void> {
+  const target = await ensureAuxiliaryWindow('popout-window')
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  target.setPosition(
+    Math.round(display.workArea.x + (display.workArea.width - 470) / 2),
+    Math.round(display.workArea.y + (display.workArea.height - 112) / 2)
+  )
+  target.show()
+  target.focus()
+}
+
+async function createWindow(): Promise<void> {
+  mainWindow = new BrowserWindow({
+    ...desktopWindowFrameOptions(),
+    width: 1440,
+    height: 960,
+    minWidth: 900,
+    minHeight: 600,
+    title: 'Wework',
+    backgroundColor: '#101316',
+    show: false,
+    webPreferences: {
+      backgroundThrottling: false,
+      preload: resolve(packageRoot, 'dist/preload.cjs'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  })
+  await mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'))
+  mainWindow.show()
+  mainWindow.on('resize', layoutPrimaryView)
+  mainWindow.on('close', event => {
+    if (quitting) return
+    event.preventDefault()
+    mainWindowCloseRequestRevision += 1
+  })
+  mainWindow.on('closed', () => {
+    attachedDshView = null
+    primaryDshViewAttached = false
+    primaryDshView?.webContents.close()
+    primaryDshView = null
+    mainWindow = null
+  })
+}
+
+async function closeMainWindowToTray(): Promise<void> {
+  const target = mainWindow
+  if (!target || target.isDestroyed()) return
+  console.log(`windowWillClose: electron close-to-tray revision=${mainWindowCloseRequestRevision}`)
+  if (primaryDshView) {
+    if (primaryDshViewAttached) {
+      target.contentView.removeChildView(primaryDshView)
+      primaryDshViewAttached = false
+    }
+    primaryDshView.webContents.close()
+    primaryDshView = null
+  }
+  target.hide()
+  if (process.platform === 'darwin') app.hide()
+}
+
+async function reactivateMainWindow(): Promise<void> {
+  const target = mainWindow
+  if (!target || target.isDestroyed()) return
+  await loadPrimaryDshView()
+  if (target.isMinimized()) target.restore()
+  target.show()
+  target.focus()
+}
+
+function installIpc(): void {
+  ipcMain.handle('runtime:get-state', () => ({
+    ...(desktopRuntime?.state() ?? {
+      coreDshUrl: null,
+      executorConfigured: false,
+      workbenchRuntimeCount: 0,
+      ready: false,
+    }),
+    phase: runtimePhase,
+    ready:
+      runtimePhase === 'ready' && runtimeError === null && desktopRuntime?.state().ready === true,
+    error: runtimeError,
+    rendererHealth: rendererHealth.snapshot(),
+  }))
+  ipcMain.handle('runtime:reload-dsh', async () => {
+    if (runtimePhase === 'ready' && primaryDshView) {
+      primaryDshView.webContents.reload()
+      return
+    }
+    await startDesktopRuntime()
+  })
+}
+
+async function shutdown(): Promise<void> {
+  systemSleep.stop()
+  for (const workspaceWindow of workspaceWindows.values()) {
+    if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
+  }
+  workspaceWindows.clear()
+  systemDragWindow?.destroy()
+  systemDragWindow = null
+  popoutWindow?.destroy()
+  popoutWindow = null
+  embeddedBrowser?.stop()
+  await embeddedBrowserBridge?.stop()
+  embeddedBrowserBridge = null
+  await workbenchTabs?.stop()
+  await desktopRuntime?.stop()
+}
+
+function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
+  if (!workbenchTabs) return null
+  return {
+    open: async launch => {
+      await workbenchTabs?.open(launch)
+    },
+    close: tabId => workbenchTabs?.close(tabId) ?? Promise.resolve(),
+    activate: tabId => workbenchTabs?.activate(tabId),
+    runningTabIds: () => new Set(workbenchTabs?.list().map(item => item.tabId) ?? []),
+  }
+}
+
+async function configureDesktopRuntime(): Promise<void> {
+  if (desktopRuntime) return
+  const environment = await desktopEnvironment()
+  const preferences = new PreferencesStore(app.getPath('userData'))
+  embeddedBrowser = new EmbeddedBrowserManager(
+    () => mainWindow,
+    () => ({ x: 0, y: 0 })
+  )
+  embeddedBrowserBridge = new EmbeddedBrowserBridge(
+    embeddedBrowser,
+    process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+  )
+  await embeddedBrowserBridge.start()
+  const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
+  if (runtimeRoot) {
+    smartApps = new SmartAppManager({
+      dataDirectory: app.getPath('userData'),
+      logDirectory: app.getPath('logs'),
+      runtimeRoot,
+      environment,
+      runtimeHost: smartAppRuntimeHost,
+    })
+  }
+  desktopRuntime = new DesktopRuntime({
+    environment,
+    dataDirectory: app.getPath('userData'),
+    logDirectory: app.getPath('logs'),
+    onExecutorEvent: (event, payload) => systemSleep.handleExecutorEvent(event, payload),
+    hostPipe: new HostPipeServer(
+      createElectronCapabilityRouter(
+        () => mainWindow,
+        () => rendererHealth.snapshot(),
+        () => smartApps,
+        preferences,
+        embeddedBrowser,
+        {
+          captureTarget: windowLabel =>
+            windowLabel === 'main'
+              ? (primaryDshView?.webContents ?? null)
+              : windowLabel === 'popout-window'
+                ? (popoutWindow?.webContents ?? null)
+                : windowLabel === 'system-drag-panel'
+                  ? (systemDragWindow?.webContents ?? null)
+                  : (workspaceWindows.get(windowLabel)?.webContents ?? null),
+          closeRequestState: after => ({
+            requested: mainWindowCloseRequestRevision > after,
+            revision: mainWindowCloseRequestRevision,
+          }),
+          closeToTray: closeMainWindowToTray,
+          focusWindow: windowLabel => {
+            const target =
+              windowLabel === 'main' ? mainWindow : (workspaceWindows.get(windowLabel) ?? null)
+            if (!target || target.isDestroyed()) return
+            if (target.isMinimized()) target.restore()
+            target.show()
+            target.focus()
+          },
+          openWorkspace: openWorkspaceWindow,
+          popoutWindowSnapshot: () => ({
+            exists: Boolean(popoutWindow && !popoutWindow.isDestroyed()),
+            focused: Boolean(
+              popoutWindow && !popoutWindow.isDestroyed() && popoutWindow.isFocused()
+            ),
+            visible: Boolean(
+              popoutWindow && !popoutWindow.isDestroyed() && popoutWindow.isVisible()
+            ),
+          }),
+          capturePopout: async () => {
+            const target = await ensureAuxiliaryWindow('popout-window')
+            return captureWebContentsDataUrl(target.webContents)
+          },
+          captureWorkbench: tabId => {
+            if (!workbenchTabs) throw new Error('Workbench tabs are unavailable')
+            return workbenchTabs.capture(tabId)
+          },
+          completeSystemDragDrop: async payload => {
+            pendingSystemDrops.push(payload)
+            await showPopoutWindow()
+          },
+          dismissPopout: () => popoutWindow?.hide(),
+          dismissSystemDragPanel: () => systemDragWindow?.hide(),
+          evaluateWorkbench: (tabId, expression) => {
+            if (!workbenchTabs) throw new Error('Workbench tabs are unavailable')
+            return workbenchTabs.evaluate(tabId, expression)
+          },
+          getSystemDragContext: () => systemDragContext,
+          runtimeDiagnostics: () =>
+            desktopRuntime?.diagnostics() ?? {
+              coreDshPid: null,
+              executorPid: null,
+              workbenchRuntimes: [],
+            },
+          setSystemDragContext: context => {
+            systemDragContext = context
+          },
+          setSystemSleepEnabled: enabled => systemSleep.setEnabled(enabled),
+          setSystemSleepTaskActive: (source, active) => systemSleep.setTaskActive(source, active),
+          showPopout: showPopoutWindow,
+          showSystemDragPanel,
+          systemDragPanelVisible: () =>
+            Boolean(
+              systemDragWindow && !systemDragWindow.isDestroyed() && systemDragWindow.isVisible()
+            ),
+          takePendingSystemDrops: () => {
+            const drops = pendingSystemDrops
+            pendingSystemDrops = []
+            return drops
+          },
+          workspaceWindowSnapshots: () =>
+            [...workspaceWindows.entries()].flatMap(([label, target]) =>
+              target.isDestroyed()
+                ? []
+                : [
+                    {
+                      label,
+                      focused: target.isFocused(),
+                      visible: target.isVisible(),
+                    },
+                  ]
+            ),
+        }
+      )
+    ),
+  })
+  workbenchTabs = new WorkbenchTabController({
+    runtime: desktopRuntime,
+    surface: {
+      bounds: workbenchViewBounds,
+      show: view => showWorkbenchView(view?.nativeView ?? null),
+    },
+    createView: () => new ElectronWorkbenchView(),
+  })
+  workbenchTabs.on('change', () => {
+    mainWindow?.webContents.send('runtime:changed')
+  })
+}
+
+function notifyRuntimeChanged(): void {
+  mainWindow?.webContents.send('runtime:changed')
+}
+
+function startDesktopRuntime(): Promise<void> {
+  if (runtimeStartPromise) return runtimeStartPromise
+  runtimePhase = 'initializing'
+  runtimeError = null
+  notifyRuntimeChanged()
+  runtimeStartPromise = (async () => {
+    await configureDesktopRuntime()
+    await desktopRuntime?.start()
+    await loadPrimaryDshView()
+    runtimePhase = 'ready'
+  })()
+    .catch(error => {
+      runtimePhase = 'failed'
+      runtimeError = error instanceof Error ? error.message : String(error)
+      console.error('[runtime] startup failed', error)
+    })
+    .finally(() => {
+      runtimeStartPromise = null
+      notifyRuntimeChanged()
+    })
+  return runtimeStartPromise
+}
+
+if (hasSingleInstanceLock) {
+  app.whenReady().then(async () => {
+    installDshWindowLabelHeaders()
+    installIpc()
+    await createWindow()
+    void startDesktopRuntime()
+  })
+}
+
+async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
+  const resourcesRoot = app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'resources')
+  const developmentRuntimeRoot = resolve(
+    packageRoot,
+    '..',
+    'node_modules',
+    '.cache',
+    'harness-runtime-dev'
+  )
+  const configuredRuntimeRoot = process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
+  const runtimeRoot = configuredRuntimeRoot
+    ? configuredRuntimeRoot
+    : app.isPackaged
+      ? await materializeBundledRuntimes(
+          join(resourcesRoot, 'harness-runtime'),
+          join(app.getPath('userData'), 'managed-runtimes', 'dsh')
+        )
+      : developmentRuntimeRoot
+  const executorName = process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
+  const packagedExecutor = join(resourcesRoot, 'bin', executorName)
+  const nodeName = process.platform === 'win32' ? 'node.exe' : 'node'
+  const packagedNode = join(resourcesRoot, 'node-runtime', 'bin', nodeName)
+  const nodePath =
+    process.env.WEWORK_NODE_PATH?.trim() ||
+    (existsSync(packagedNode) ? packagedNode : process.execPath)
+  return {
+    ...process.env,
+    WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
+    WEWORK_NODE_PATH: nodePath,
+    WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
+      resourcesRoot,
+      'bundled-plugins',
+      'wework-personal'
+    ),
+    ...(process.env.WEWORK_EXECUTOR_PATH?.trim()
+      ? {}
+      : existsSync(packagedExecutor)
+        ? { WEWORK_EXECUTOR_PATH: packagedExecutor }
+        : {}),
+    ...(nodePath === process.execPath ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+  }
+}
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('activate', () => {
+  void reactivateMainWindow().catch(error => {
+    console.error('[window] failed to reactivate main window', error)
+  })
+})
+
+app.on('did-become-active', () => {
+  if (mainWindow?.isVisible()) return
+  void reactivateMainWindow().catch(error => {
+    console.error('[window] failed to restore inactive main window', error)
+  })
+})
+
+app.on('before-quit', event => {
+  if (quitting) return
+  event.preventDefault()
+  quitting = true
+  void shutdown().finally(() => app.quit())
+})

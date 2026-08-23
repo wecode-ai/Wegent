@@ -1,9 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import i18n from '@/i18n'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { requestDshTerminal, subscribeDshTerminalEvents } from '@/api/dsh/terminalTransport'
+import { getLocalExecutorStatus, requestLocalExecutor } from '@/tauri/localExecutor'
 import type { LocalHarnessId } from './local-harness'
 import type { LocalWorkspaceOpenerId } from './local-workspace-openers'
-import { isTauriRuntime } from './runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from './runtime-environment'
 
 const localFileOpenerIconCache = new Map<string, string>()
 const localFileOpenerIconRequests = new Map<string, Promise<string>>()
@@ -36,20 +39,23 @@ export function isLocalTerminalAvailable(): boolean {
   const platform = getLocalRuntimePlatform()
   return Boolean(
     platform &&
-    isTauriRuntime() &&
+    isDesktopRuntime() &&
     !platform.isIosLike &&
     (platform.isMacOs || platform.isWindows || import.meta.env.VITE_WEWORK_E2E === 'true')
   )
 }
 
 export function isLocalHarnessAvailable(): boolean {
-  return isLocalTerminalAvailable()
+  return isDesktopRuntime() && isLocalTerminalAvailable()
 }
 
 export async function getLocalExecutorDeviceId(
   expectedBackendUrl?: string
 ): Promise<string | null> {
   if (!isLocalTerminalAvailable()) return null
+  if (isElectronRuntime()) {
+    return (await getLocalExecutorStatus()).deviceId?.trim() || null
+  }
 
   const deviceId = await invoke<string | null>('get_local_executor_device_id', {
     expectedBackendUrl: expectedBackendUrl?.trim() || null,
@@ -62,6 +68,11 @@ export async function localPathExists(path?: string): Promise<boolean> {
 
   const trimmedPath = path?.trim()
   if (!trimmedPath) return false
+  if (isElectronRuntime()) {
+    return invokeDesktopHost('filesystem.stat', { path: trimmedPath })
+      .then(() => true)
+      .catch(() => false)
+  }
 
   return invoke<boolean>('local_path_exists', { path: trimmedPath })
 }
@@ -73,6 +84,13 @@ export async function getLocalPathKind(path?: string): Promise<LocalPathKind | n
 
   const trimmedPath = path?.trim()
   if (!trimmedPath) return null
+  if (isElectronRuntime()) {
+    return invokeDesktopHost<{ isDirectory: boolean; isFile: boolean }>('filesystem.stat', {
+      path: trimmedPath,
+    })
+      .then(metadata => (metadata.isDirectory ? 'directory' : metadata.isFile ? 'file' : 'other'))
+      .catch(() => null)
+  }
 
   return invoke<LocalPathKind | null>('get_local_path_kind', { path: trimmedPath })
 }
@@ -112,6 +130,17 @@ export interface LocalHarnessSessionDescriptor {
   plugin_roots?: string[]
   proxy_token?: string
 }
+
+interface PersistedLocalHarnessSession extends LocalHarnessSessionDescriptor {
+  native_session_id?: string | null
+}
+
+interface PreparedLocalHarnessLaunch {
+  args: string[]
+  env: Record<string, string>
+}
+
+const ELECTRON_HARNESS_SESSIONS_KEY = 'wework:electron-local-harness-sessions:v1'
 
 export interface LocalHarnessPluginLocation {
   marketplacePath: string
@@ -184,7 +213,18 @@ export async function startLocalTerminal({
     ...context,
   })
   try {
-    const sessionId = await invoke<string>('start_local_terminal', payload)
+    const sessionId = isElectronRuntime()
+      ? crypto.randomUUID()
+      : await invoke<string>('start_local_terminal', payload)
+    if (isElectronRuntime()) {
+      await requestDshTerminal('terminal.start', {
+        session_id: sessionId,
+        cwd: payload.cwd,
+        rows: payload.rows,
+        cols: payload.cols,
+        env: payload.env,
+      })
+    }
     console.info('Local terminal start succeeded', {
       sessionId,
       cwd: trimmedCwd || null,
@@ -206,6 +246,12 @@ export async function listLocalHarnesses(
 ): Promise<LocalHarnessDescriptor[]> {
   if (!isLocalHarnessAvailable()) return []
 
+  if (isElectronRuntime()) {
+    return requestLocalExecutor<LocalHarnessDescriptor[]>('executor.harnesses.list', {
+      executable_overrides: executableOverrides,
+    })
+  }
+
   return invoke<LocalHarnessDescriptor[]>('list_local_harnesses', {
     executableOverrides,
   })
@@ -213,28 +259,71 @@ export async function listLocalHarnesses(
 
 export async function listLocalHarnessSessions(): Promise<LocalHarnessSessionDescriptor[]> {
   if (!isLocalHarnessAvailable()) return []
+  if (isElectronRuntime()) {
+    const sessions = readElectronHarnessSessions().filter(session => !session.archived_at)
+    return Promise.all(
+      sessions.map(async session => {
+        const active = await requestDshTerminal('terminal.snapshot', {
+          session_id: session.session_id,
+        })
+          .then(() => true)
+          .catch(() => false)
+        return { ...session, active, proxy_token: active ? session.proxy_token : undefined }
+      })
+    )
+  }
 
   return invoke<LocalHarnessSessionDescriptor[]>('list_local_harness_sessions')
 }
 
 export async function listArchivedLocalHarnessSessions(): Promise<LocalHarnessSessionDescriptor[]> {
   if (!isLocalHarnessAvailable()) return []
+  if (isElectronRuntime()) {
+    return readElectronHarnessSessions()
+      .filter(session => Boolean(session.archived_at))
+      .sort((left, right) => (right.archived_at ?? 0) - (left.archived_at ?? 0))
+  }
 
   return invoke<LocalHarnessSessionDescriptor[]>('list_archived_local_harness_sessions')
 }
 
 export async function archiveLocalHarnessSession(sessionId: string): Promise<void> {
   if (!isLocalHarnessAvailable()) return
+  if (isElectronRuntime()) {
+    updateElectronHarnessSessions(sessions =>
+      sessions.map(session =>
+        session.session_id === sessionId
+          ? { ...session, active: false, archived_at: Date.now(), proxy_token: undefined }
+          : session
+      )
+    )
+    await requestDshTerminal('terminal.close', { session_id: sessionId }).catch(() => {})
+    return
+  }
   await invoke('archive_local_harness_session', { sessionId })
 }
 
 export async function unarchiveLocalHarnessSession(sessionId: string): Promise<void> {
   if (!isLocalHarnessAvailable()) return
+  if (isElectronRuntime()) {
+    updateElectronHarnessSessions(sessions =>
+      sessions.map(session =>
+        session.session_id === sessionId ? { ...session, archived_at: null } : session
+      )
+    )
+    return
+  }
   await invoke('unarchive_local_harness_session', { sessionId })
 }
 
 export async function deleteArchivedLocalHarnessSession(sessionId: string): Promise<void> {
   if (!isLocalHarnessAvailable()) return
+  if (isElectronRuntime()) {
+    updateElectronHarnessSessions(sessions =>
+      sessions.filter(session => session.session_id !== sessionId)
+    )
+    return
+  }
   await invoke('delete_archived_local_harness_session', { sessionId })
 }
 
@@ -242,6 +331,17 @@ export async function resolveLocalHarnessPluginRoots(
   locations: LocalHarnessPluginLocation[]
 ): Promise<string[]> {
   if (!isLocalHarnessAvailable() || locations.length === 0) return []
+  if (isElectronRuntime()) {
+    return Array.from(
+      new Set(
+        locations.flatMap(location => {
+          const marketplacePath = location.marketplacePath.trim().replace(/[\\/]+$/, '')
+          const pluginName = location.pluginName.trim()
+          return marketplacePath && pluginName ? [`${marketplacePath}/plugins/${pluginName}`] : []
+        })
+      )
+    )
+  }
 
   return invoke<string[]>('resolve_local_harness_plugin_roots', { locations })
 }
@@ -251,10 +351,25 @@ export async function updateLocalHarnessSessionTitle(
   title: string
 ): Promise<void> {
   if (!isLocalHarnessAvailable()) return
+  if (isElectronRuntime()) {
+    const normalized = title.trim().replace(/\s+/g, ' ').slice(0, 80)
+    if (!normalized) return
+    updateElectronHarnessSessions(sessions =>
+      sessions.map(session =>
+        session.session_id === sessionId ? { ...session, title: normalized } : session
+      )
+    )
+    return
+  }
   await invoke('update_local_harness_session_title', { sessionId, title })
 }
 
 export async function getLocalTerminalSnapshot(sessionId: string): Promise<LocalTerminalSnapshot> {
+  if (isElectronRuntime()) {
+    return requestDshTerminal<LocalTerminalSnapshot>('terminal.snapshot', {
+      session_id: sessionId,
+    })
+  }
   return invoke<LocalTerminalSnapshot>('get_local_terminal_snapshot', { sessionId })
 }
 
@@ -314,7 +429,113 @@ export async function startLocalHarness({
     payload.env = normalizedEnv
   }
 
+  if (isElectronRuntime()) {
+    const persisted = resumeSessionId
+      ? readElectronHarnessSessions().find(session => session.session_id === resumeSessionId)
+      : undefined
+    const sessionId = persisted?.session_id ?? `local-harness-${Date.now()}-${crypto.randomUUID()}`
+    const nativeSessionId =
+      harnessId === 'claude_code' ? persisted?.native_session_id || crypto.randomUUID() : null
+    let launchArgs = [...payload.args]
+    let initialInput: string | undefined
+    if (persisted) {
+      if (harnessId === 'claude_code' && nativeSessionId) {
+        launchArgs.push('--resume', nativeSessionId)
+      } else {
+        launchArgs.push('--continue')
+      }
+    } else if (harnessId === 'claude_code' && nativeSessionId) {
+      launchArgs.push('--session-id', nativeSessionId)
+    }
+    if (!persisted && payload.prompt.trim()) {
+      if (harnessId === 'opencode') {
+        launchArgs.push('--prompt', payload.prompt.trim())
+      } else if (harnessId === 'claude_code') {
+        launchArgs.push(payload.prompt.trim())
+      } else {
+        initialInput = `\u001b[200~${payload.prompt.trim()}\u001b[201~\r`
+      }
+    }
+    const prepared = await requestLocalExecutor<PreparedLocalHarnessLaunch>(
+      'executor.harnesses.prepare_launch',
+      {
+        harness_id: harnessId,
+        session_id: sessionId,
+        cwd: payload.cwd,
+        args: launchArgs,
+        uses_wework_model: Boolean(payload.proxyToken),
+        accept_bypass_permissions:
+          harnessId === 'claude_code' &&
+          (launchArgs.includes('--dangerously-skip-permissions') ||
+            launchArgs.some(
+              (argument, index) =>
+                argument === '--permission-mode' && launchArgs[index + 1] === 'bypassPermissions'
+            )),
+      }
+    )
+    launchArgs = prepared.args
+    const launchEnv = { ...(payload.env ?? {}), ...prepared.env }
+    await requestDshTerminal('terminal.start', {
+      session_id: sessionId,
+      executable: payload.executablePath,
+      args: launchArgs,
+      cwd: payload.cwd,
+      rows: payload.rows,
+      cols: payload.cols,
+      env: launchEnv,
+      initial_input: initialInput,
+      initial_input_readiness_marker: harnessId === 'kimi_code' ? 'No session yet' : undefined,
+    })
+    const descriptor: PersistedLocalHarnessSession = {
+      session_id: sessionId,
+      harness_id: harnessId,
+      title:
+        persisted?.title ||
+        payload.prompt.split(/\r?\n/, 1)[0]?.trim().slice(0, 80) ||
+        (harnessId === 'opencode'
+          ? 'OpenCode'
+          : harnessId === 'claude_code'
+            ? 'Claude Code'
+            : 'Kimi Code'),
+      cwd: payload.cwd || '',
+      created_at: persisted?.created_at ?? Date.now(),
+      is_primary: persisted?.is_primary ?? isPrimary,
+      project_id: persisted?.project_id ?? projectId,
+      active: true,
+      archived_at: null,
+      model_key: modelKey,
+      plugin_roots: pluginRoots ?? [],
+      proxy_token: proxyToken,
+      native_session_id: nativeSessionId,
+    }
+    updateElectronHarnessSessions(sessions => [
+      descriptor,
+      ...sessions.filter(session => session.session_id !== sessionId),
+    ])
+    return sessionId
+  }
+
   return invoke<string>('start_local_harness', { request: payload })
+}
+
+function readElectronHarnessSessions(): PersistedLocalHarnessSession[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const value = JSON.parse(window.localStorage.getItem(ELECTRON_HARNESS_SESSIONS_KEY) ?? '[]')
+    return Array.isArray(value) ? (value as PersistedLocalHarnessSession[]) : []
+  } catch {
+    return []
+  }
+}
+
+function updateElectronHarnessSessions(
+  update: (sessions: PersistedLocalHarnessSession[]) => PersistedLocalHarnessSession[]
+) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(
+    ELECTRON_HARNESS_SESSIONS_KEY,
+    JSON.stringify(update(readElectronHarnessSessions()))
+  )
 }
 
 function normalizeLocalTerminalEnv(env?: Record<string, string | null | undefined>) {
@@ -362,6 +583,13 @@ export async function openLocalWorkspace({
     throw new Error('Local workspace path is empty')
   }
 
+  if (isElectronRuntime()) {
+    if (opener !== 'file-manager') {
+      throw new Error(`Workspace opener ${opener} is not available in Electron yet`)
+    }
+    await invokeDesktopHost<void>('shell.openPath', { path: trimmedPath })
+    return
+  }
   await invoke('open_local_workspace', {
     opener,
     path: trimmedPath,
@@ -380,6 +608,15 @@ export async function listLocalWorkspaceOpeners(): Promise<LocalWorkspaceOpenerA
     return []
   }
 
+  if (isElectronRuntime()) {
+    return [
+      {
+        id: 'file-manager',
+        category: 'fileManager',
+        available: true,
+      },
+    ]
+  }
   return invoke<LocalWorkspaceOpenerAvailability[]>('list_local_workspace_openers')
 }
 
@@ -388,6 +625,7 @@ export async function pickLocalWorkspaceOpenerExe(): Promise<string | null> {
     return null
   }
 
+  if (isElectronRuntime()) return null
   return invoke<string | null>('pick_local_workspace_opener_exe')
 }
 
@@ -401,6 +639,10 @@ export async function openLocalFile(path?: string): Promise<void> {
     throw new Error('Local file path is empty')
   }
 
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('shell.openPath', { path: trimmedPath })
+    return
+  }
   await invoke('open_local_file', {
     path: trimmedPath,
   })
@@ -416,6 +658,10 @@ export async function revealLocalFile(path?: string): Promise<void> {
     throw new Error('Local file path is empty')
   }
 
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('shell.showItemInFolder', { path: trimmedPath })
+    return
+  }
   await invoke('reveal_local_file', { path: trimmedPath })
 }
 
@@ -440,6 +686,9 @@ export async function listLocalFileOpeners(path?: string): Promise<LocalFileOpen
     throw new Error('Local file path is empty')
   }
 
+  if (isElectronRuntime()) {
+    return { default_path: null, applications: [] }
+  }
   return invoke<LocalFileOpeners>('list_local_file_openers', { path: trimmedPath })
 }
 
@@ -496,6 +745,13 @@ export async function openLocalFileWithApplication(
 }
 
 export async function writeLocalTerminal(sessionId: string, data: string): Promise<void> {
+  if (isElectronRuntime()) {
+    await requestDshTerminal('terminal.input', {
+      session_id: sessionId,
+      data,
+    })
+    return
+  }
   await invoke('write_local_terminal', {
     sessionId,
     data,
@@ -507,6 +763,9 @@ export async function attachLocalTerminal(
   diagnosticContext?: LocalTerminalDiagnosticContext
 ): Promise<void> {
   const context = normalizeLocalTerminalDiagnosticContext(diagnosticContext)
+  if (isElectronRuntime()) {
+    return
+  }
   await invoke('attach_local_terminal', {
     sessionId,
     taskId: context.taskId,
@@ -519,6 +778,14 @@ export async function resizeLocalTerminal(
   rows: number,
   cols: number
 ): Promise<void> {
+  if (isElectronRuntime()) {
+    await requestDshTerminal('terminal.resize', {
+      session_id: sessionId,
+      rows,
+      cols,
+    })
+    return
+  }
   await invoke('resize_local_terminal', {
     sessionId,
     rows,
@@ -533,12 +800,16 @@ export async function closeLocalTerminal(
   const context = normalizeLocalTerminalDiagnosticContext(diagnosticContext)
   console.info('Local terminal close requested', { sessionId, ...context })
   try {
-    await invoke('close_local_terminal', {
-      sessionId,
-      taskId: context.taskId,
-      workspacePath: context.workspacePath,
-      reason: context.reason,
-    })
+    if (isElectronRuntime()) {
+      await requestDshTerminal('terminal.close', { session_id: sessionId })
+    } else {
+      await invoke('close_local_terminal', {
+        sessionId,
+        taskId: context.taskId,
+        workspacePath: context.workspacePath,
+        reason: context.reason,
+      })
+    }
     console.info('Local terminal close succeeded', { sessionId, ...context })
   } catch (error) {
     console.error('Local terminal close failed', {
@@ -553,6 +824,15 @@ export async function closeLocalTerminal(
 export function listenLocalTerminalOutput(
   handler: (payload: LocalTerminalOutputPayload) => void
 ): Promise<UnlistenFn> {
+  if (isElectronRuntime()) {
+    return Promise.resolve(
+      subscribeDshTerminalEvents(event => {
+        if (event.event === 'terminal.output') {
+          handler(event.payload as unknown as LocalTerminalOutputPayload)
+        }
+      })
+    )
+  }
   return listen<LocalTerminalOutputPayload>('local-terminal-output', event => {
     handler(event.payload)
   })
@@ -561,6 +841,15 @@ export function listenLocalTerminalOutput(
 export function listenLocalTerminalExit(
   handler: (payload: LocalTerminalExitPayload) => void
 ): Promise<UnlistenFn> {
+  if (isElectronRuntime()) {
+    return Promise.resolve(
+      subscribeDshTerminalEvents(event => {
+        if (event.event === 'terminal.exit') {
+          handler(event.payload as unknown as LocalTerminalExitPayload)
+        }
+      })
+    )
+  }
   return listen<LocalTerminalExitPayload>('local-terminal-exit', event => {
     handler(event.payload)
   })

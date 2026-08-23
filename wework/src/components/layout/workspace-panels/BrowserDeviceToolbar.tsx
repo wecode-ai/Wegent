@@ -38,7 +38,8 @@ function DimensionInput({
   value: number
   onCommit: (value: number) => void
 }) {
-  const [draft, setDraft] = useState<string | null>(null)
+  const [draft, setDraft] = useState<{ sourceValue: number; text: string } | null>(null)
+  const displayedValue = draft?.sourceValue === value ? draft.text : String(value)
 
   const commit = (raw: string) => {
     const parsed = Number.parseInt(raw, 10)
@@ -55,10 +56,10 @@ function DimensionInput({
       type="number"
       min={min}
       max={BROWSER_DEVICE_MAX_DIMENSION}
-      value={draft ?? String(value)}
-      onFocus={() => setDraft(String(value))}
+      value={displayedValue}
+      onFocus={() => setDraft({ sourceValue: value, text: String(value) })}
       onChange={event => {
-        setDraft(event.target.value)
+        setDraft({ sourceValue: value, text: event.target.value })
         const parsed = Number.parseInt(event.target.value, 10)
         if (Number.isFinite(parsed) && parsed >= min && parsed <= BROWSER_DEVICE_MAX_DIMENSION) {
           onCommit(parsed)

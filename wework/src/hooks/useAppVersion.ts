@@ -1,9 +1,10 @@
 import { getVersion } from '@tauri-apps/api/app'
 import { useEffect, useState } from 'react'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { isDesktopRuntime, isElectronRuntime, isTauriRuntime } from '@/lib/runtime-environment'
 
 export function useAppVersion(): string | null {
-  const isDesktopApp = isTauriRuntime()
+  const isDesktopApp = isDesktopRuntime()
   const [version, setVersion] = useState<string | null>(
     isDesktopApp ? null : __WEWORK_APP_VERSION__
   )
@@ -12,7 +13,12 @@ export function useAppVersion(): string | null {
     if (!isDesktopApp) return
 
     let active = true
-    void getVersion()
+    const versionRequest = isElectronRuntime()
+      ? invokeDesktopHost<{ version: string }>('app.getVersion').then(result => result.version)
+      : isTauriRuntime()
+        ? getVersion()
+        : Promise.resolve(__WEWORK_APP_VERSION__)
+    void versionRequest
       .then(appVersion => {
         if (active) setVersion(appVersion)
       })

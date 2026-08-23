@@ -420,7 +420,7 @@ export function PluginManagementWorkspace({
       .then(outcome => {
         setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
         setSelectedPluginId(current => (String(current) === String(id) ? null : current))
-        notifyLocalPluginSkillsChanged()
+        notifyLocalPluginSkillsChanged([String(id), pluginName, plugin.raw.spec.source.pluginKey])
         const warningDetails = pluginUninstallWarningDetails(outcome)
         setPluginOperationNotice({
           id: `uninstalled-${id}`,

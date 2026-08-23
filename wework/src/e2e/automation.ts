@@ -1,11 +1,17 @@
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { removeToken, setToken } from '@/api/auth'
+import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import {
   testLocalModelConnection,
   type TestLocalModelConnectionInput,
   type TestLocalModelConnectionResult,
 } from '@/features/model-settings/localModelConnectionTest'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import {
+  getDesktopWindowLabel,
+  isDesktopRuntime,
+  isElectronRuntime,
+  isTauriRuntime,
+} from '@/lib/runtime-environment'
 import { closeMainWindowToTray } from '@/tauri/runtimeTaskCloseGuard'
 import {
   normalizeCloudBackendUrl,
@@ -32,9 +38,9 @@ import {
   reconcileRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
+import { getLocalExecutorStatus, readLocalExecutorLog } from '@/tauri/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
-import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
+import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { selectDesktopControlOption } from './desktop-control-select'
 import {
   getAppPreferences,
@@ -44,6 +50,9 @@ import {
 import type { LocalHarnessId } from '@/lib/local-harness'
 import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
 import { getDesktopE2EClipboardText, installDesktopE2EClipboard } from './clipboard'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
+import { requestLocalExecutor } from '@/tauri/localExecutor'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -99,7 +108,11 @@ declare global {
 }
 
 export function isWeworkAutomationEnabled(): boolean {
-  return import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
+  return (
+    import.meta.env.MODE === 'e2e' ||
+    import.meta.env.VITE_WEWORK_E2E === 'true' ||
+    Boolean(getDesktopE2ERuntimeConfig().controlUrl)
+  )
 }
 
 export function shouldUseNativeProjectDirectoryPicker(): boolean {
@@ -117,7 +130,9 @@ function desktopControlUrl(): string | null {
 }
 
 function desktopControlHeaders(): HeadersInit | undefined {
-  const token = import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN?.trim()
+  const token =
+    getDesktopE2ERuntimeConfig().controlToken ??
+    import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN?.trim()
   return token ? { Authorization: `Bearer ${token}` } : undefined
 }
 
@@ -225,7 +240,7 @@ async function captureEmbeddedBrowserWhenReady(command: DesktopControlCommand): 
         label
       )
       if (page.readyState === 'complete' && page.textLength > 0) {
-        return invoke<string>('embedded_browser_capture_snapshot', { label })
+        return captureEmbeddedBrowserSnapshot(label)
       }
       lastError = `page state is ${page.readyState} with ${page.textLength} visible text characters`
     } catch (error) {
@@ -329,6 +344,7 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
     import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() ??
     backendUrl
   const localModelsCatalogReady =
+    runtimeConfig.localModelsCatalogReady ??
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
   const token =
     runtimeConfig.cloudToken ??
@@ -349,7 +365,7 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
     connectedAt: new Date().toISOString(),
   })
   const localModels =
-    import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true'
+    (runtimeConfig.seedLocalModels ?? import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true')
       ? [
           {
             id: 'desktop-e2e-responses',
@@ -435,7 +451,7 @@ export async function installWeworkAutomationBridge(
     return
   }
 
-  if (isTauriRuntime()) {
+  if (isDesktopRuntime()) {
     await loadDesktopE2ERuntimeConfig()
   }
   installDesktopE2EClipboard()
@@ -507,6 +523,21 @@ function desktopControlSnapshot(selector = 'body'): string {
     location: window.location.href,
     text: root.innerText,
     testIds: Array.from(new Set(testIds)).sort(),
+    browserPanels: Array.from(
+      root.querySelectorAll<HTMLElement>('[data-testid="workspace-browser-panel"]')
+    ).map(panel => ({
+      label: panel.dataset.embeddedBrowserLabel ?? null,
+      hidden: panel.classList.contains('hidden'),
+      parentHidden: panel.parentElement?.classList.contains('hidden') ?? null,
+      address:
+        panel.querySelector<HTMLInputElement>('[data-testid="workspace-browser-url-input"]')
+          ?.value ?? null,
+    })),
+    selectedRightWorkspaceTabs: Array.from(
+      root.querySelectorAll<HTMLElement>(
+        '[data-testid="right-workspace-tabbar"] [role="tab"][aria-selected="true"]'
+      )
+    ).map(tab => tab.dataset.testid ?? null),
   })
 }
 
@@ -524,7 +555,85 @@ function desktopControlTestIdOrder(selector = 'body'): string {
   return JSON.stringify(Array.from(new Set(testIds)))
 }
 
+function quiesceElectronTerminalCaptureSurfaces(): () => void {
+  const restores: Array<() => void> = []
+  document.querySelectorAll<HTMLElement>('.xterm-screen').forEach(screen => {
+    const accessibilityTree = screen.parentElement?.querySelector<HTMLElement>(
+      '.xterm-accessibility-tree'
+    )
+    const rows = accessibilityTree
+      ? Array.from(accessibilityTree.querySelectorAll<HTMLElement>('[role="listitem"]'))
+          .map(row => row.textContent ?? '')
+          .join('\n')
+      : ''
+    const mirror = document.createElement('pre')
+    const style = window.getComputedStyle(screen)
+    mirror.textContent = rows
+    mirror.setAttribute('aria-hidden', 'true')
+    Object.assign(mirror.style, {
+      background: style.backgroundColor,
+      color: style.color,
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      inset: '0',
+      lineHeight: style.lineHeight,
+      margin: '0',
+      overflow: 'hidden',
+      padding: '0',
+      pointerEvents: 'none',
+      position: 'absolute',
+      whiteSpace: 'pre',
+      zIndex: '1',
+    })
+    screen.parentElement?.appendChild(mirror)
+    const previousVisibility = screen.style.visibility
+    screen.style.visibility = 'hidden'
+    restores.push(() => {
+      screen.style.visibility = previousVisibility
+      mirror.remove()
+    })
+  })
+  return () => restores.toReversed().forEach(restore => restore())
+}
+
+async function captureElectronRendererDataUrl(): Promise<string> {
+  const { default: html2canvas } = await import('html2canvas')
+  const canvas = await html2canvas(document.body, {
+    backgroundColor: window.getComputedStyle(document.body).backgroundColor,
+    height: window.innerHeight,
+    logging: false,
+    scale: window.devicePixelRatio,
+    useCORS: true,
+    width: window.innerWidth,
+    windowHeight: window.innerHeight,
+    windowWidth: window.innerWidth,
+    x: 0,
+    y: 0,
+  })
+  return canvas.toDataURL('image/png')
+}
+
 async function captureDesktopControlScreenshot(selector: string): Promise<string> {
+  if (isElectronRuntime()) {
+    const resumeTerminalEvents = suspendDshTerminalEventDelivery()
+    const restoreTerminalSurfaces = quiesceElectronTerminalCaptureSurfaces()
+    try {
+      await new Promise<void>(resolve => window.setTimeout(resolve, 100))
+      const snapshot = document.querySelector('.xterm-screen')
+        ? await captureElectronRendererDataUrl()
+        : await invokeDesktopHost<string>('e2e.capturePrimaryView', {
+            windowLabel: getDesktopWindowLabel(),
+          })
+      const element = findDesktopControlElements(selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${selector}"`)
+      return element === document.body
+        ? snapshot
+        : cropDesktopControlScreenshot(snapshot, element.getBoundingClientRect())
+    } finally {
+      restoreTerminalSurfaces()
+      resumeTerminalEvents()
+    }
+  }
   const currentWindow = getCurrentWindow()
   const restoreCurrentWindow = async () => {
     await currentWindow.show()
@@ -663,6 +772,10 @@ async function expandDesktopProcessingSummaries(): Promise<string> {
 }
 
 async function waitForDesktopControlTick(): Promise<void> {
+  if (isElectronRuntime()) {
+    await new Promise<void>(resolve => window.setTimeout(resolve, 16))
+    return
+  }
   const url = desktopControlUrl()
   if (!url) throw new Error('Desktop E2E control URL is not configured')
   const response = await fetch(`${url}/control-tick`, { headers: desktopControlHeaders() })
@@ -763,6 +876,7 @@ function startDesktopControlPointer(selector: string): string {
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
   element.scrollIntoView({ block: 'center', inline: 'center' })
+  element.focus()
   const options = { ...desktopControlEventOptions(element), buttons: 1 }
   dispatchDesktopControlPointerEvent(element, 'pointerdown', options)
   activeDesktopControlPointer = { element, options }
@@ -785,9 +899,20 @@ function endDesktopControlPointer(): string {
 
 let activeDesktopControlDrag: {
   endOptions: MouseEventInit & PointerEventInit
+  sourceElement: HTMLElement
   sourceText: string
   targetSelector: string
 } | null = null
+
+function desktopControlDeepActiveElement(): HTMLElement | null {
+  let activeElement: Element | null = document.activeElement
+  while (activeElement instanceof HTMLElement) {
+    const shadowActiveElement = activeElement.shadowRoot?.activeElement
+    if (!(shadowActiveElement instanceof HTMLElement)) return activeElement
+    activeElement = shadowActiveElement
+  }
+  return null
+}
 
 async function startDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
   if (activeDesktopControlDrag) throw new Error('A desktop control drag is already active')
@@ -797,16 +922,23 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
   const target = findDesktopControlElements(command.target)[0]
   if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
 
+  const activeElement = desktopControlDeepActiveElement()
+  if (activeElement && activeElement !== element) {
+    activeElement.blur()
+    await waitForDesktopControlTick()
+  }
   const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
   const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
   dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
   await waitForDesktopControlTick()
   dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+  dispatchDesktopControlPointerEvent(element, 'pointermove', endOptions)
   await waitForDesktopControlTick()
   dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
   await waitForDesktopControlTick()
   activeDesktopControlDrag = {
     endOptions,
+    sourceElement: element,
     sourceText: element.textContent?.trim() ?? '',
     targetSelector: command.target,
   }
@@ -825,9 +957,14 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
       : { ...desktopControlEventOptions(target), buttons: 1 }
   try {
     dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+    dispatchDesktopControlPointerEvent(activeDrag.sourceElement, 'pointermove', endOptions)
     dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
     await waitForDesktopControlTick()
     dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
+    dispatchDesktopControlPointerEvent(activeDrag.sourceElement, 'pointerup', {
+      ...endOptions,
+      buttons: 0,
+    })
     return activeDrag.sourceText
   } finally {
     activeDesktopControlDrag = null
@@ -920,8 +1057,8 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
   }
 
   if (element instanceof HTMLSelectElement) {
-    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
-    setter?.call(element, value)
+    selectDesktopControlOption(element, value)
+    return
   } else if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
     const prototype =
       element instanceof HTMLInputElement
@@ -1062,6 +1199,11 @@ function dispatchDesktopControlPaths(
 
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   const getWindowFocusSnapshot = async () => {
+    if (isElectronRuntime()) {
+      return JSON.stringify(
+        await invokeDesktopHost<Record<string, unknown>>('e2e.getWindowFocusSnapshot')
+      )
+    }
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
     const popoutWindow = await WebviewWindow.getByLabel('popout-window')
     const workspaceWindows = (await WebviewWindow.getAll()).filter(window =>
@@ -1091,16 +1233,24 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)
     case 'capturePopoutWindow':
-      return invoke<string>('capture_popout_webview')
+      return isElectronRuntime()
+        ? invokeDesktopHost<string>('e2e.capturePopoutWindow')
+        : invoke<string>('capture_popout_webview')
     case 'captureWorkspaceWindow':
-      return invoke<string>('capture_workspace_webview')
+      return isElectronRuntime()
+        ? invokeDesktopHost<string>('e2e.captureWorkspaceWindow')
+        : invoke<string>('capture_workspace_webview')
     case 'captureEmbeddedBrowser':
       return captureEmbeddedBrowserWhenReady(command)
     case 'verifyEmbeddedBrowserDetachedInspector':
       return JSON.stringify(
-        await invoke('embedded_browser_verify_detached_inspector_for_e2e', {
-          label: command.value || undefined,
-        })
+        isElectronRuntime()
+          ? await invokeDesktopHost('e2e.verifyEmbeddedBrowserDetachedInspector', {
+              label: command.value || undefined,
+            })
+          : await invoke('embedded_browser_verify_detached_inspector_for_e2e', {
+              label: command.value || undefined,
+            })
       )
     case 'closeMainWindowToTray':
       return ''
@@ -1112,18 +1262,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return desktopControlTestIdOrder(command.selector)
     case 'reorderRuntimeProjectTasks':
       return JSON.stringify(
-        await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
-          method: 'runtime.sidebar.tasks.reorder',
-          params: JSON.parse(command.value ?? '{}'),
-        })
+        await requestLocalExecutor(
+          'runtime.sidebar.tasks.reorder',
+          JSON.parse(command.value ?? '{}')
+        )
       )
     case 'getLocalRuntimeWork':
-      return JSON.stringify(
-        await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
-          method: 'runtime.tasks.list',
-          params: {},
-        })
-      )
+      return JSON.stringify(await requestLocalExecutor('runtime.tasks.list', {}))
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
@@ -1208,9 +1353,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'setLocalProxyUrl': {
       const proxyUrl = command.value?.trim() ?? ''
       const config = saveLocalProxyUrl(proxyUrl)
-      await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
-        method: 'runtime.codex.runtime_config.update',
-        params: { proxyUrl: proxyUrl || null },
+      await requestLocalExecutor('runtime.codex.runtime_config.update', {
+        proxyUrl: proxyUrl || null,
       })
       return JSON.stringify(config)
     }
@@ -1242,7 +1386,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'performanceSnapshot': {
       const processMemory = navigator.platform.toLowerCase().includes('mac')
-        ? await invoke('get_wework_process_snapshot')
+        ? isElectronRuntime()
+          ? await invokeDesktopHost('e2e.getProcessSnapshot')
+          : await invoke('get_wework_process_snapshot')
         : null
       return JSON.stringify({
         timestamp: Date.now(),
@@ -1252,15 +1398,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
     }
     case 'focusMainWindow':
+      if (isElectronRuntime()) {
+        await invokeDesktopHost('e2e.focusMainWindow')
+        return ''
+      }
       await getCurrentWindow().show()
       await getCurrentWindow().unminimize()
       await getCurrentWindow().setFocus()
       return ''
     case 'setMainWindowSize': {
-      const currentWindow = getCurrentWindow()
-      const previousSize = (await currentWindow.innerSize()).toLogical(
-        await currentWindow.scaleFactor()
-      )
       const nextSize = JSON.parse(command.value ?? '{}') as {
         width?: number
         height?: number
@@ -1273,28 +1419,59 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       ) {
         throw new Error('setMainWindowSize requires positive width and height')
       }
+      if (isElectronRuntime()) {
+        return JSON.stringify(
+          await invokeDesktopHost('e2e.setMainWindowSize', {
+            width: Number(nextSize.width),
+            height: Number(nextSize.height),
+          })
+        )
+      }
+      const currentWindow = getCurrentWindow()
+      const previousSize = (await currentWindow.innerSize()).toLogical(
+        await currentWindow.scaleFactor()
+      )
       await currentWindow.setSize(new LogicalSize(Number(nextSize.width), Number(nextSize.height)))
       return JSON.stringify(previousSize)
     }
     case 'getWindowFocusSnapshot':
       return getWindowFocusSnapshot()
+    case 'getDesktopRuntimeDiagnostics':
+      if (!isElectronRuntime()) {
+        throw new Error('Desktop runtime diagnostics are only available in Electron')
+      }
+      return JSON.stringify(await invokeDesktopHost('e2e.getRuntimeDiagnostics'))
     case 'showSystemDragPanel': {
-      await invoke<void>('show_system_drag_panel_for_e2e')
+      await (isElectronRuntime()
+        ? invokeDesktopHost<void>('systemDrag.showPanel')
+        : invoke<void>('show_system_drag_panel_for_e2e'))
       return ''
     }
     case 'getSystemDragPanelVisibility':
-      return String(await invoke<boolean>('get_system_drag_panel_visibility_for_e2e'))
+      return String(
+        await (isElectronRuntime()
+          ? invokeDesktopHost<boolean>('systemDrag.panelVisible')
+          : invoke<boolean>('get_system_drag_panel_visibility_for_e2e'))
+      )
     case 'completeSystemDragDrop':
-      await invoke('complete_system_drag_drop', {
-        payload: JSON.parse(command.value ?? '{}'),
-      })
+      await (isElectronRuntime()
+        ? invokeDesktopHost('systemDrag.complete', {
+            payload: JSON.parse(command.value ?? '{}'),
+          })
+        : invoke('complete_system_drag_drop', {
+            payload: JSON.parse(command.value ?? '{}'),
+          }))
       await new Promise(resolve => window.setTimeout(resolve, 250))
       return getWindowFocusSnapshot()
     case 'dismissPopoutWindow':
-      await invoke('dismiss_popout_window')
+      await (isElectronRuntime()
+        ? invokeDesktopHost('window.dismissPopout')
+        : invoke('dismiss_popout_window'))
       return ''
     case 'showPopoutWindow':
-      await invoke('show_popout_window')
+      await (isElectronRuntime()
+        ? invokeDesktopHost('window.showPopout')
+        : invoke('show_popout_window'))
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
@@ -1734,9 +1911,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getActiveElementTestId':
       return document.activeElement?.getAttribute('data-testid') ?? ''
     case 'getLocalExecutorStatus':
-      return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.status))
+      return JSON.stringify(await getLocalExecutorStatus())
     case 'getLocalExecutorLog':
-      return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.readLog))
+      return JSON.stringify(await readLocalExecutorLog())
     case 'previewPluginImport': {
       const input = JSON.parse(command.value ?? '{}') as {
         archivePath?: string
@@ -1746,10 +1923,31 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         throw new Error('previewPluginImport requires archivePath and marketplacePath')
       }
       return JSON.stringify(
-        await invoke('local_executor_preview_plugin_import', {
-          archivePath: input.archivePath,
-          marketplacePath: input.marketplacePath,
-        })
+        await (isElectronRuntime()
+          ? requestLocalExecutor('executor.plugins.import_package.preview', {
+              archivePath: input.archivePath,
+              marketplacePath: input.marketplacePath,
+            })
+          : invoke('local_executor_preview_plugin_import', {
+              archivePath: input.archivePath,
+              marketplacePath: input.marketplacePath,
+            }))
+      )
+    }
+    case 'importPluginPackage': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        preview?: LocalPluginImportPreview
+        overwrite?: boolean
+      }
+      if (!input.preview?.valid) {
+        throw new Error('importPluginPackage requires a valid import preview')
+      }
+      const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+      return JSON.stringify(
+        await createLocalCodexPluginApi().importPluginPackage(
+          input.preview,
+          input.overwrite === true
+        )
       )
     }
     case 'hover':
@@ -1758,10 +1956,17 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return leaveDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
-    case 'pointerDownOnly':
-      return startDesktopControlPointer(command.selector)
-    case 'pointerUp':
-      return endDesktopControlPointer()
+    case 'pointerDownOnly': {
+      if (isElectronRuntime()) await invokeDesktopHost('e2e.focusMainWindow')
+      const result = startDesktopControlPointer(command.selector)
+      await waitForDesktopControlTick()
+      return result
+    }
+    case 'pointerUp': {
+      const result = endDesktopControlPointer()
+      await waitForDesktopControlTick()
+      return result
+    }
     case 'navigate': {
       const appPath = normalizeAppPath(command.value ?? '/')
       window.history.pushState(null, '', joinAppPath(getRuntimeConfig().appBasePath, appPath))
@@ -1826,12 +2031,21 @@ async function postDesktopControlStarted(
 async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
-    fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}`, {
-      headers: desktopControlHeaders(),
-    })
-  await getCurrentWindow().show()
-  await getCurrentWindow().unminimize()
-  await getCurrentWindow().setFocus()
+    fetch(
+      `${url}/commands?clientId=${encodeURIComponent(clientId)}${
+        isElectronRuntime() ? '&wait=1' : ''
+      }`,
+      {
+        headers: desktopControlHeaders(),
+      }
+    )
+  if (isElectronRuntime()) {
+    await invokeDesktopHost('e2e.focusMainWindow')
+  } else {
+    await getCurrentWindow().show()
+    await getCurrentWindow().unminimize()
+    await getCurrentWindow().setFocus()
+  }
   let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
@@ -1847,7 +2061,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
     try {
       const response = await commandRequest
       if (response.status === 204) {
-        await waitForDesktopControlTick()
+        if (!isElectronRuntime()) await waitForDesktopControlTick()
         commandRequest = pollForCommand()
         continue
       }
@@ -1862,7 +2076,11 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
         if (command.action === 'closeMainWindowToTray') {
           await closeMainWindowToTray()
         } else if (command.action === 'requestMainWindowClose') {
-          await getCurrentWindow().close()
+          if (isElectronRuntime()) {
+            await invokeDesktopHost('e2e.closeMainWindow')
+          } else {
+            await getCurrentWindow().close()
+          }
         } else if (command.action === 'reloadMainWindow') {
           window.location.reload()
           return
@@ -1885,9 +2103,9 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
 }
 
 function installDesktopControlClient() {
-  if (!isTauriRuntime()) return
+  if (!isDesktopRuntime()) return
   const url = desktopControlUrl()
-  const windowLabel = getCurrentWindow().label
+  const windowLabel = isElectronRuntime() ? getDesktopWindowLabel() : getCurrentWindow().label
   if (
     !url ||
     (windowLabel !== 'main' && !windowLabel.startsWith('workspace-')) ||

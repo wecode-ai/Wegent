@@ -14,7 +14,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: () => true,
+  isDesktopRuntime: () => true,
 }))
 
 vi.mock('@/tauri/runtimeTaskCloseGuard', () => ({

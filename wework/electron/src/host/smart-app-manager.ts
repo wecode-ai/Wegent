@@ -1,0 +1,622 @@
+import { ZipArchive } from 'archiver'
+import { createHash } from 'node:crypto'
+import { createWriteStream } from 'node:fs'
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
+import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
+import extractZip from 'extract-zip'
+import semver from 'semver'
+import type { WorkbenchRuntimeLaunch } from '../runtime/workbench-runtime.js'
+import {
+  prepareWorkbenchDshLaunch,
+  WORKBENCH_DSH_VERSION,
+  type WorkbenchAppManifest,
+} from '../runtime/workbench-dsh-runtime.js'
+
+const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
+const MAX_EXTRACTED_BYTES = 250 * 1024 * 1024
+
+export interface SmartAppInstallation {
+  id: string
+  manifest: WorkbenchAppManifest
+  packagePath: string
+  sha256: string
+  modelKey: string | null
+  resident: boolean
+  runtimeVersion: string | null
+  state: 'installed' | 'running' | 'failed'
+  webUrl: string | null
+  error: string | null
+  smartAppId?: number | null
+  releaseId?: number | null
+}
+
+export interface SmartAppPreview {
+  valid: boolean
+  archivePath: string
+  sha256: string
+  manifest: WorkbenchAppManifest | null
+  issues: string[]
+}
+
+export interface SmartAppExport {
+  archivePath: string
+  sha256: string
+  sizeBytes: number
+  manifest: WorkbenchAppManifest
+}
+
+export interface SmartAppRuntimeHost {
+  open(launch: WorkbenchRuntimeLaunch): Promise<void>
+  close(tabId: string): Promise<void>
+  activate(tabId: string | null): void
+  runningTabIds(): ReadonlySet<string>
+}
+
+export interface SmartAppManagerOptions {
+  dataDirectory: string
+  logDirectory: string
+  runtimeRoot: string
+  environment: NodeJS.ProcessEnv
+  runtimeHost: () => SmartAppRuntimeHost | null
+}
+
+export class SmartAppManager {
+  private readonly proxyTokens = new Map<string, string>()
+  private readonly contextTokens = new Map<string, string>()
+  private operation = Promise.resolve()
+
+  constructor(private readonly options: SmartAppManagerOptions) {}
+
+  async list(): Promise<SmartAppInstallation[]> {
+    return this.serial(async () => {
+      const installations = await this.readRegistry()
+      const running = this.options.runtimeHost()?.runningTabIds() ?? new Set()
+      let changed = false
+      for (const installation of installations) {
+        const active = running.has(tabId(installation.id))
+        const state = active ? 'running' : 'installed'
+        if (installation.state !== state || (!active && installation.webUrl !== null)) {
+          installation.state = state
+          installation.webUrl = active ? installation.webUrl : null
+          installation.error = null
+          changed = true
+        }
+      }
+      if (changed) await this.writeRegistry(installations)
+      return installations
+    })
+  }
+
+  async preview(archivePath: string): Promise<SmartAppPreview> {
+    const absolutePath = resolve(archivePath)
+    const sha256 = await fileSha256(absolutePath)
+    const staging = join(this.root(), `.preview-${process.pid}-${Date.now()}`)
+    try {
+      await extractArchive(absolutePath, staging)
+      const manifest = await readManifest(staging)
+      validateManifest(manifest)
+      return {
+        valid: true,
+        archivePath: absolutePath,
+        sha256,
+        manifest,
+        issues: [],
+      }
+    } catch (error) {
+      return {
+        valid: false,
+        archivePath: absolutePath,
+        sha256,
+        manifest: null,
+        issues: [error instanceof Error ? error.message : String(error)],
+      }
+    } finally {
+      await rm(staging, { recursive: true, force: true })
+    }
+  }
+
+  async download(input: {
+    downloadUrl: string
+    sha256: string
+    sizeBytes: number
+    smartAppId: number
+    releaseId: number
+  }): Promise<SmartAppPreview> {
+    const url = new URL(input.downloadUrl)
+    if (!isSecureDownloadUrl(url)) {
+      throw new Error('Smart app download must use HTTPS')
+    }
+    if (
+      !Number.isSafeInteger(input.sizeBytes) ||
+      input.sizeBytes <= 0 ||
+      input.sizeBytes > MAX_ARCHIVE_BYTES
+    ) {
+      throw new Error('Smart app download size is invalid')
+    }
+    const directory = join(this.root(), 'downloads')
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    const path = join(
+      directory,
+      `market-${input.smartAppId}-${input.releaseId}-${input.sha256}.zip`
+    )
+    const response = await fetch(url)
+    if (!response.ok || !response.body) {
+      throw new Error(`Smart app download failed with HTTP ${response.status}`)
+    }
+    const bytes = Buffer.from(await response.arrayBuffer())
+    if (bytes.byteLength !== input.sizeBytes) {
+      throw new Error('Smart app download size does not match its descriptor')
+    }
+    const sha256 = createHash('sha256').update(bytes).digest('hex')
+    if (sha256 !== input.sha256.toLowerCase()) {
+      throw new Error('Smart app download checksum does not match its descriptor')
+    }
+    await writeFile(path, bytes, { mode: 0o600 })
+    return this.preview(path)
+  }
+
+  async install(input: {
+    archivePath: string
+    expectedSha256: string
+    modelKey?: string | null
+    smartAppId?: number | null
+    releaseId?: number | null
+  }): Promise<SmartAppInstallation> {
+    return this.serial(async () => {
+      const preview = await this.preview(input.archivePath)
+      if (!preview.valid || !preview.manifest) {
+        throw new Error(preview.issues.join('\n') || 'Smart app package is invalid')
+      }
+      if (preview.sha256 !== input.expectedSha256.toLowerCase()) {
+        throw new Error('Smart app package changed after preview')
+      }
+      const id =
+        input.smartAppId === null || input.smartAppId === undefined
+          ? preview.manifest.name
+          : `market-${input.smartAppId}`
+      const target = join(this.root(), 'packages', safeName(id), preview.manifest.version)
+      const staging = join(this.root(), `.install-${process.pid}-${Date.now()}`)
+      await extractArchive(preview.archivePath, staging)
+      const packageRoot = await manifestRoot(staging)
+      await mkdir(dirname(target), { recursive: true, mode: 0o700 })
+      if (await exists(target)) {
+        await rm(staging, { recursive: true, force: true })
+      } else {
+        await rename(packageRoot, target)
+        await rm(staging, { recursive: true, force: true })
+      }
+      const installations = await this.readRegistry()
+      const previous = installations.find(item => item.id === id)
+      const installation: SmartAppInstallation = {
+        id,
+        manifest: preview.manifest,
+        packagePath: target,
+        sha256: preview.sha256,
+        modelKey: normalizedOptional(input.modelKey) ?? previous?.modelKey ?? null,
+        resident: previous?.resident ?? false,
+        runtimeVersion: null,
+        state: 'installed',
+        webUrl: null,
+        error: null,
+        smartAppId: input.smartAppId ?? null,
+        releaseId: input.releaseId ?? null,
+      }
+      await this.writeRegistry([...installations.filter(item => item.id !== id), installation])
+      return installation
+    })
+  }
+
+  async start(input: {
+    installationId: string
+    modelBaseUrl?: string | null
+    contextBaseUrl?: string | null
+    contextToken?: string | null
+  }): Promise<SmartAppInstallation> {
+    return this.serial(async () => {
+      const runtimeHost = this.requiredRuntimeHost()
+      const installations = await this.readRegistry()
+      const installation = requiredInstallation(installations, input.installationId)
+      const id = tabId(installation.id)
+      if (runtimeHost.runningTabIds().has(id)) {
+        runtimeHost.activate(id)
+        return installation
+      }
+      const port = await freePort()
+      try {
+        const prepared = await prepareWorkbenchDshLaunch({
+          runtimeRoot: this.options.runtimeRoot,
+          dataDirectory: this.options.dataDirectory,
+          installationId: installation.id,
+          packagePath: installation.packagePath,
+          manifest: installation.manifest,
+          environment: this.options.environment,
+          port,
+          modelBaseUrl: input.modelBaseUrl,
+          contextBaseUrl: input.contextBaseUrl,
+          contextToken: input.contextToken,
+        })
+        await runtimeHost.open({
+          tabId: id,
+          url: prepared.url,
+          command: prepared.command,
+          args: prepared.args,
+          cwd: prepared.cwd,
+          environment: prepared.environment,
+          logDirectory: this.options.logDirectory,
+        })
+        installation.state = 'running'
+        installation.webUrl = prepared.url
+        installation.runtimeVersion = prepared.version
+        installation.error = null
+        await this.writeRegistry(installations)
+        return installation
+      } catch (error) {
+        installation.state = 'failed'
+        installation.webUrl = null
+        installation.error = error instanceof Error ? error.message : String(error)
+        await this.writeRegistry(installations)
+        throw error
+      }
+    })
+  }
+
+  async stop(installationId: string): Promise<void> {
+    return this.serial(async () => {
+      await this.options.runtimeHost()?.close(tabId(installationId))
+      const installations = await this.readRegistry()
+      const installation = installations.find(item => item.id === installationId)
+      if (!installation) return
+      installation.state = 'installed'
+      installation.webUrl = null
+      installation.error = null
+      await this.writeRegistry(installations)
+    })
+  }
+
+  activate(installationId: string | null): void {
+    const host = this.requiredRuntimeHost()
+    if (installationId === null) {
+      host.activate(null)
+      return
+    }
+    const id = tabId(installationId)
+    if (host.runningTabIds().has(id)) host.activate(id)
+  }
+
+  async update(
+    installationId: string,
+    updates: { modelKey?: string; resident?: boolean }
+  ): Promise<SmartAppInstallation> {
+    return this.serial(async () => {
+      const installations = await this.readRegistry()
+      const installation = requiredInstallation(installations, installationId)
+      if (
+        updates.modelKey !== undefined &&
+        this.options.runtimeHost()?.runningTabIds().has(tabId(installationId))
+      ) {
+        throw new Error('Stop the Smart app before changing its model')
+      }
+      if (updates.modelKey !== undefined) {
+        const modelKey = normalizedOptional(updates.modelKey)
+        if (!modelKey) throw new Error('Smart app model cannot be empty')
+        installation.modelKey = modelKey
+      }
+      if (updates.resident !== undefined) installation.resident = updates.resident
+      await this.writeRegistry(installations)
+      return installation
+    })
+  }
+
+  async delete(installationId: string, deleteData: boolean): Promise<void> {
+    await this.stop(installationId)
+    return this.serial(async () => {
+      const installations = await this.readRegistry()
+      const installation = requiredInstallation(installations, installationId)
+      await this.writeRegistry(installations.filter(item => item.id !== installationId))
+      await rm(dirname(installation.packagePath), { recursive: true, force: true })
+      if (deleteData) {
+        await rm(join(this.root(), 'instances', safeName(installationId)), {
+          recursive: true,
+          force: true,
+        })
+      }
+      this.proxyTokens.delete(installationId)
+      this.contextTokens.delete(installationId)
+    })
+  }
+
+  async export(installationId: string): Promise<SmartAppExport> {
+    const installation = requiredInstallation(await this.readRegistry(), installationId)
+    const directory = join(this.root(), 'exports')
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    const archivePath = join(
+      directory,
+      `${safeName(installation.manifest.name)}-${installation.manifest.version}.zip`
+    )
+    await archiveDirectory(installation.packagePath, archivePath)
+    const metadata = await stat(archivePath)
+    return {
+      archivePath,
+      sha256: await fileSha256(archivePath),
+      sizeBytes: metadata.size,
+      manifest: installation.manifest,
+    }
+  }
+
+  async upload(archivePath: string, uploadUrl: string): Promise<void> {
+    const url = new URL(uploadUrl)
+    if (url.protocol !== 'https:') throw new Error('Smart app upload must use HTTPS')
+    const bytes = await readFile(resolve(archivePath))
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/zip' },
+      body: bytes,
+    })
+    if (!response.ok) throw new Error(`Smart app upload failed with HTTP ${response.status}`)
+  }
+
+  storeProxyToken(installationId: string, token: string): void {
+    this.proxyTokens.set(requiredText(installationId), requiredText(token))
+  }
+
+  takeProxyToken(installationId: string): string | null {
+    return takeToken(this.proxyTokens, installationId)
+  }
+
+  storeContextToken(installationId: string, token: string): void {
+    this.contextTokens.set(requiredText(installationId), requiredText(token))
+  }
+
+  takeContextToken(installationId: string): string | null {
+    return takeToken(this.contextTokens, installationId)
+  }
+
+  private root(): string {
+    return join(this.options.dataDirectory, 'harness-apps')
+  }
+
+  private registryPath(): string {
+    return join(this.root(), 'installations.json')
+  }
+
+  private async readRegistry(): Promise<SmartAppInstallation[]> {
+    try {
+      return JSON.parse(await readFile(this.registryPath(), 'utf8')) as SmartAppInstallation[]
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
+    }
+  }
+
+  private async writeRegistry(installations: SmartAppInstallation[]): Promise<void> {
+    const path = this.registryPath()
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    const temporary = `${path}.${process.pid}.tmp`
+    await writeFile(temporary, `${JSON.stringify(installations, null, 2)}\n`, {
+      mode: 0o600,
+    })
+    await rename(temporary, path)
+  }
+
+  private requiredRuntimeHost(): SmartAppRuntimeHost {
+    const host = this.options.runtimeHost()
+    if (!host) throw new Error('Smart app runtime host is unavailable')
+    return host
+  }
+
+  private serial<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const result = this.operation.then(operation, operation)
+    this.operation = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
+}
+
+function isSecureDownloadUrl(url: URL): boolean {
+  if (url.protocol === 'https:') return true
+  if (url.protocol !== 'http:') return false
+  return ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+}
+
+async function extractArchive(archivePath: string, destination: string): Promise<void> {
+  const metadata = await stat(archivePath)
+  if (metadata.size > MAX_ARCHIVE_BYTES) throw new Error('Smart app ZIP exceeds 50 MB')
+  await rm(destination, { recursive: true, force: true })
+  await mkdir(destination, { recursive: true, mode: 0o700 })
+  let extractedBytes = 0
+  await extractZip(archivePath, {
+    dir: destination,
+    onEntry: entry => {
+      extractedBytes += entry.uncompressedSize
+      if (extractedBytes > MAX_EXTRACTED_BYTES) {
+        throw new Error('Smart app ZIP expands beyond 250 MB')
+      }
+    },
+  })
+}
+
+async function readManifest(root: string): Promise<WorkbenchAppManifest> {
+  const path = join(await manifestRoot(root), 'plugin-manifest.json')
+  return JSON.parse(await readFile(path, 'utf8')) as WorkbenchAppManifest
+}
+
+async function manifestRoot(root: string): Promise<string> {
+  const matches: string[] = []
+  await walk(root, async path => {
+    if (basename(path) === 'plugin-manifest.json') matches.push(dirname(path))
+  })
+  if (matches.length !== 1) {
+    throw new Error(
+      matches.length
+        ? 'Smart app ZIP contains multiple plugin-manifest.json files'
+        : 'plugin-manifest.json is missing'
+    )
+  }
+  return matches[0] as string
+}
+
+async function walk(root: string, visit: (path: string) => Promise<void>): Promise<void> {
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const path = join(root, entry.name)
+    if (entry.isSymbolicLink()) throw new Error('Smart app package contains a symbolic link')
+    if (entry.isDirectory()) await walk(path, visit)
+    else if (entry.isFile()) await visit(path)
+  }
+}
+
+function validateManifest(manifest: WorkbenchAppManifest): void {
+  if (manifest.type !== 'deepseek-harness-plugin-bundle') {
+    throw new Error('Unsupported Smart app package type')
+  }
+  if (!semver.valid(manifest.version)) throw new Error('Smart app version is invalid')
+  if (
+    !manifest.name?.trim() ||
+    !/^[0-9A-Za-z_-]+$/.test(manifest.name) ||
+    !manifest.entry?.profile?.trim() ||
+    !safeRelative(manifest.entry.installPackage)
+  ) {
+    throw new Error('Smart app manifest has incomplete identity or entry fields')
+  }
+  if (
+    !manifest.requirements?.dsh ||
+    !semver.validRange(manifest.requirements.dsh, { includePrerelease: true }) ||
+    !manifest.requirements.node ||
+    !semver.validRange(manifest.requirements.node, { includePrerelease: true })
+  ) {
+    throw new Error('Smart app runtime requirements are invalid')
+  }
+  if (
+    !semver.satisfies(WORKBENCH_DSH_VERSION, manifest.requirements.dsh, {
+      includePrerelease: true,
+    })
+  ) {
+    throw new Error(
+      `Smart app requires DeepSeek Harness ${manifest.requirements.dsh}, but Wework provides ${WORKBENCH_DSH_VERSION}`
+    )
+  }
+  const packages = manifest.packages ?? []
+  const names = new Set<string>()
+  const paths = new Set<string>()
+  const profileBundles: string[] = []
+  for (const item of packages) {
+    if (
+      !item.name?.trim() ||
+      !item.role?.trim() ||
+      !safeRelative(item.path) ||
+      names.has(item.name) ||
+      paths.has(item.path)
+    ) {
+      throw new Error('Smart app package declaration is invalid')
+    }
+    names.add(item.name)
+    paths.add(item.path)
+    if (item.role === 'profile-bundle') profileBundles.push(item.path)
+  }
+  if (
+    packages.length &&
+    (profileBundles.length !== 1 || profileBundles[0] !== manifest.entry.installPackage)
+  ) {
+    throw new Error('Smart app must declare installPackage as its only profile-bundle')
+  }
+}
+
+async function fileSha256(path: string): Promise<string> {
+  return createHash('sha256')
+    .update(await readFile(path))
+    .digest('hex')
+}
+
+async function archiveDirectory(source: string, destination: string): Promise<void> {
+  await new Promise<void>((resolvePromise, reject) => {
+    const output = createWriteStream(destination, { mode: 0o600 })
+    const archive = new ZipArchive({ zlib: { level: 9 } })
+    output.once('close', resolvePromise)
+    output.once('error', reject)
+    archive.once('error', reject)
+    archive.pipe(output)
+    archive.directory(source, false)
+    void archive.finalize()
+  })
+}
+
+function requiredInstallation(
+  installations: SmartAppInstallation[],
+  installationId: string
+): SmartAppInstallation {
+  const installation = installations.find(item => item.id === installationId)
+  if (!installation) throw new Error('Smart app installation is missing')
+  return installation
+}
+
+function tabId(installationId: string): string {
+  return `smart-app:${requiredText(installationId)}`
+}
+
+function safeName(value: string): string {
+  const safe = requiredText(value)
+    .replace(/[^0-9A-Za-z.-]/g, '-')
+    .slice(0, 80)
+  if (!safe) throw new Error('Smart app identifier is invalid')
+  return safe
+}
+
+function safeRelative(value: string): boolean {
+  const path = value?.trim()
+  if (!path || isAbsolute(path)) return false
+  const normalized = normalize(path)
+  return (
+    normalized !== '.' &&
+    normalized !== '..' &&
+    !normalized.startsWith(`..${sep}`) &&
+    !normalized.includes('\0')
+  )
+}
+
+function requiredText(value: string): string {
+  const text = value?.trim()
+  if (!text) throw new Error('Required Smart app value is missing')
+  return text
+}
+
+function normalizedOptional(value: string | null | undefined): string | null {
+  const text = value?.trim()
+  return text || null
+}
+
+function takeToken(tokens: Map<string, string>, installationId: string): string | null {
+  const id = requiredText(installationId)
+  const token = tokens.get(id) ?? null
+  tokens.delete(id)
+  return token
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function freePort(): Promise<number> {
+  return new Promise((resolvePromise, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        server.close()
+        reject(new Error('Failed to allocate a Smart app port'))
+        return
+      }
+      server.close(error => {
+        if (error) reject(error)
+        else resolvePromise(address.port)
+      })
+    })
+  })
+}

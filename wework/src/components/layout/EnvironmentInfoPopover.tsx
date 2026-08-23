@@ -183,6 +183,17 @@ export function EnvironmentInfoPopover({
   const changeRequestStatusLabel = changeRequestStatus
     ? t(`workbench.change_request_status_${changeRequestStatus}`, changeRequestStatus)
     : ''
+  const changeRequestChecksStatus =
+    changeRequest?.checks === 'success'
+      ? 'checks_passed'
+      : changeRequest?.checks === 'failure'
+        ? 'checks_failed'
+        : changeRequest?.checks === 'pending'
+          ? 'checks_pending'
+          : null
+  const changeRequestChecksLabel = changeRequestChecksStatus
+    ? t(`workbench.change_request_status_${changeRequestChecksStatus}`, changeRequestChecksStatus)
+    : ''
 
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
@@ -572,11 +583,13 @@ export function EnvironmentInfoPopover({
                               <span data-testid="change-request-state" className="sr-only">
                                 {changeRequestStatusLabel}
                               </span>
-                              {changeRequestStatus?.startsWith('checks_') && (
-                                <span data-testid="change-request-checks" className="sr-only">
-                                  {changeRequestStatusLabel}
-                                </span>
-                              )}
+                              {changeRequestChecksStatus &&
+                                (changeRequestStatus?.startsWith('checks_') ||
+                                  changeRequestStatus === 'merged') && (
+                                  <span data-testid="change-request-checks" className="sr-only">
+                                    {changeRequestChecksLabel}
+                                  </span>
+                                )}
                               {changeRequestStatus === 'merge_conflict' && (
                                 <span data-testid="change-request-conflict" className="sr-only">
                                   {changeRequestStatusLabel}

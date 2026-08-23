@@ -357,6 +357,24 @@ describe('ComposerProseMirrorEditor', () => {
     expect(screen.getByTestId('composer-editor').querySelector('.composer-empty-caret')).toBeNull()
   })
 
+  test('renders the measurable empty caret in Electron', () => {
+    const previousRuntimeConfig = window.__WEWORK_RUNTIME_CONFIG__
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...previousRuntimeConfig,
+      desktopHost: 'electron',
+    }
+
+    try {
+      renderEditor('')
+
+      expect(
+        screen.getByTestId('composer-editor').querySelector('.composer-empty-caret')
+      ).toHaveAttribute('aria-hidden', 'true')
+    } finally {
+      window.__WEWORK_RUNTIME_CONFIG__ = previousRuntimeConfig
+    }
+  })
+
   test('keeps the caret outside the skill while repeatedly moving left', () => {
     const { editorRef, onChange } = renderEditor()
     const editor = screen.getByTestId('composer-editor')

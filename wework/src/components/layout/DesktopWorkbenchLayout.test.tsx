@@ -2572,6 +2572,7 @@ describe('DesktopWorkbenchLayout', () => {
       render(<DesktopWorkbenchLayout {...baseProps} routeActive={false} />)
 
       expect(screen.getByTestId('workbench-main-header')).toBeEmptyDOMElement()
+      expect(screen.queryByTestId('sidebar-worklists-scroll')).not.toBeInTheDocument()
       expect(screen.queryByTestId('titlebar-main-actions')).not.toBeInTheDocument()
       expect(screen.queryByTestId('titlebar-actions')).not.toBeInTheDocument()
     } finally {
@@ -6209,6 +6210,17 @@ describe('DesktopWorkbenchLayout', () => {
         'true'
       )
     )
+    const browserInputs = screen.getAllByTestId('workspace-browser-url-input')
+    expect(browserInputs).toHaveLength(2)
+    expect(browserInputs[0]).toHaveValue('http://example.com/')
+    expect(browserInputs[1]).toHaveValue('')
+    expect(
+      document.querySelector(
+        '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] ' +
+          '[data-testid="right-workspace-panel"] div:not(.hidden) > ' +
+          '[data-testid="workspace-browser-panel"] [data-testid="workspace-browser-url-input"]'
+      )
+    ).toHaveValue('')
     expect(screen.queryByTestId('browser-tab-strip')).not.toBeInTheDocument()
     expect(screen.queryByTestId('browser-tab-add')).not.toBeInTheDocument()
 

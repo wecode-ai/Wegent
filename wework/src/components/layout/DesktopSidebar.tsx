@@ -99,7 +99,7 @@ import {
 import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { openLocalWorkspace } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import {
   isEditableShortcutTarget,
@@ -4020,7 +4020,7 @@ export function DesktopSidebar({
                   selected={activeItem === 'plugins'}
                   onClick={onOpenPlugins}
                   onPointerEnter={() => {
-                    if (!isTauriRuntime()) return
+                    if (!isDesktopRuntime()) return
                     void import('@/components/plugins/workspace/prefetchPluginsWorkspace').then(
                       module => module.prefetchPluginsWorkspace()
                     )

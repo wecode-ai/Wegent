@@ -1,6 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import {
+  describeDshExecutor,
+  requestDshExecutor,
+  subscribeDshExecutorEvents,
+} from '@/api/dsh/executorTransport'
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 
 export const LOCAL_EXECUTOR_COMMANDS = {
   codexHomeMigrationStatus: 'local_executor_codex_home_migration_status',
@@ -31,7 +37,7 @@ export interface LocalExecutorLog {
   content: string
   truncated: boolean
   lineCount: number
-  transport: 'stdio'
+  transport: 'stdio' | 'dsh-http'
   transportConnected: boolean
   processPids: number[]
   processPaths: string[]
@@ -49,6 +55,12 @@ export interface LocalExecutorLog {
 export interface LocalExecutorEvent {
   event: string
   payload: Record<string, unknown>
+}
+
+interface CodexStartupStatus {
+  ready: boolean
+  started: boolean
+  initializeElapsedMs: number
 }
 
 export interface LocalExecutorBackendConnection {
@@ -89,16 +101,13 @@ async function installBundledMarketplaceDefaults(
 ): Promise<void> {
   const defaultPluginNames = marketplace.defaultPluginNames ?? []
   if (defaultPluginNames.length === 0) return
-  const response = await invoke<{
+  const response = await requestLocalExecutor<{
     config: { plugins?: Record<string, unknown> | null }
-  }>(LOCAL_EXECUTOR_COMMANDS.request, {
-    method: 'codex.app_server_request',
+  }>('codex.app_server_request', {
+    method: 'config/read',
     params: {
-      method: 'config/read',
-      params: {
-        includeLayers: false,
-        cwd: null,
-      },
+      includeLayers: false,
+      cwd: null,
     },
   })
   const configuredPluginKeys = new Set(Object.keys(response.config.plugins ?? {}))
@@ -106,15 +115,12 @@ async function installBundledMarketplaceDefaults(
     if (configuredPluginKeys.has(`${pluginName}@${marketplace.id}`)) continue
     // The local path identifies the bundled catalog. Codex resolves each
     // plugin entry's declared source, which may itself be local or remote.
-    await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
-      method: 'codex.app_server_request',
+    await requestLocalExecutor('codex.app_server_request', {
+      method: 'plugin/install',
       params: {
-        method: 'plugin/install',
-        params: {
-          marketplacePath: bundledMarketplaceManifestPath(marketplace.path),
-          remoteMarketplaceName: null,
-          pluginName,
-        },
+        marketplacePath: bundledMarketplaceManifestPath(marketplace.path),
+        remoteMarketplaceName: null,
+        pluginName,
       },
     })
   }
@@ -131,15 +137,12 @@ async function reconcileBundledPluginMarketplace(
   if (reconciledBundledPluginMarketplaceKey === reconciliationKey) return
 
   const addMarketplace = () =>
-    invoke<{ marketplaceName: string }>(LOCAL_EXECUTOR_COMMANDS.request, {
-      method: 'codex.app_server_request',
+    requestLocalExecutor<{ marketplaceName: string }>('codex.app_server_request', {
+      method: 'marketplace/add',
       params: {
-        method: 'marketplace/add',
-        params: {
-          source: marketplace.path,
-          refName: null,
-          sparsePaths: null,
-        },
+        source: marketplace.path,
+        refName: null,
+        sparsePaths: null,
       },
     })
 
@@ -147,16 +150,13 @@ async function reconcileBundledPluginMarketplace(
   try {
     added = await addMarketplace()
   } catch (addError) {
-    const available = await invoke<{
+    const available = await requestLocalExecutor<{
       marketplaces: Array<{ name: string; path?: string | null }>
-    }>(LOCAL_EXECUTOR_COMMANDS.request, {
-      method: 'codex.app_server_request',
+    }>('codex.app_server_request', {
+      method: 'plugin/list',
       params: {
-        method: 'plugin/list',
-        params: {
-          cwds: null,
-          marketplaceKinds: ['local'],
-        },
+        cwds: null,
+        marketplaceKinds: ['local'],
       },
     })
     const existing = available.marketplaces.find(candidate => candidate.name === marketplace.id)
@@ -165,12 +165,9 @@ async function reconcileBundledPluginMarketplace(
         cause: addError,
       })
     }
-    await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
-      method: 'codex.app_server_request',
-      params: {
-        method: 'marketplace/remove',
-        params: { marketplaceName: marketplace.id },
-      },
+    await requestLocalExecutor('codex.app_server_request', {
+      method: 'marketplace/remove',
+      params: { marketplaceName: marketplace.id },
     })
     added = await addMarketplace()
   }
@@ -232,6 +229,30 @@ export function getInitializedBundledPluginMarketplace(): BundledPluginMarketpla
 export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
   if (!ensureLocalExecutorStartedPromise) {
     ensureLocalExecutorStartedPromise = (async () => {
+      if (isElectronRuntime()) {
+        const description = await describeDshExecutor()
+        const proxyUrl = getLocalProxyUrl().trim()
+        await requestDshExecutor('runtime.codex.runtime_config.update', {
+          proxyUrl: proxyUrl || null,
+        })
+        const codexStartup = await requestDshExecutor<CodexStartupStatus>(
+          'runtime.codex.ensure_started'
+        )
+        const marketplace = await requestDshExecutor<BundledPluginMarketplace>(
+          'executor.plugins.initialize_bundled_marketplace'
+        )
+        initializedBundledPluginMarketplace = marketplace
+        const status: LocalExecutorStatus = {
+          running: true,
+          ready: codexStartup.ready,
+          deviceId: description.device_id,
+          runtimeInstanceId: description.runtime_instance_id,
+          codexInitializeElapsedMs: codexStartup.initializeElapsedMs,
+          version: description.version,
+        }
+        initializedLocalExecutorStatus = status
+        return status
+      }
       const marketplace = await invoke<BundledPluginMarketplace>(
         LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace
       )
@@ -262,20 +283,54 @@ export function resetLocalExecutorStateForTests(): void {
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {
+  if (isElectronRuntime()) return ensureLocalExecutorStarted()
   return invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.status)
 }
 
-export function readLocalExecutorLog(): Promise<LocalExecutorLog> {
+export async function readLocalExecutorLog(): Promise<LocalExecutorLog> {
+  if (isElectronRuntime()) {
+    const status = await ensureLocalExecutorStarted()
+    return {
+      path: 'Electron managed executor log',
+      content: 'Executor diagnostics are managed by the Electron runtime.',
+      truncated: false,
+      lineCount: 1,
+      transport: 'dsh-http',
+      transportConnected: true,
+      processPids: [],
+      processPaths: [],
+      sidecarSource: 'electron-managed',
+      sidecarPath: '',
+      currentDir: '',
+      executorHome: '',
+      backendUrl: null,
+      socketUrl: null,
+      hasBackendAuthToken: false,
+      pendingRequestCount: 0,
+      status,
+    }
+  }
   return invoke<LocalExecutorLog>(LOCAL_EXECUTOR_COMMANDS.readLog)
 }
 
 export function copyLocalExecutorDebugInfo(text: string): Promise<void> {
+  if (isElectronRuntime() && navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text)
+  }
   return invoke<void>(LOCAL_EXECUTOR_COMMANDS.copyDebugInfo, { text })
 }
 
 export function connectLocalExecutorToBackend(
   connection: LocalExecutorBackendConnection
 ): Promise<LocalExecutorStatus> {
+  if (isElectronRuntime()) {
+    return requestDshExecutor('executor.backend.configure', {
+      backend_url: connection.backendUrl,
+      socket_url: connection.socketBaseUrl,
+      auth_token: connection.authToken,
+      runtime_auth_token: connection.runtimeAuthToken ?? null,
+    }).then(() => ensureLocalExecutorStarted())
+  }
   return invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.connectBackend, {
     backendUrl: connection.backendUrl,
     socketUrl: connection.socketBaseUrl,
@@ -285,6 +340,11 @@ export function connectLocalExecutorToBackend(
 }
 
 export function disconnectLocalExecutorFromBackend(): Promise<LocalExecutorStatus> {
+  if (isElectronRuntime()) {
+    return requestDshExecutor('executor.backend.configure', {}).then(() =>
+      ensureLocalExecutorStarted()
+    )
+  }
   return invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.disconnectBackend)
 }
 
@@ -292,7 +352,10 @@ export function requestLocalExecutor<T = unknown>(
   method: string,
   params: Record<string, unknown> = {}
 ): Promise<T> {
-  return invoke<T>(LOCAL_EXECUTOR_COMMANDS.request, { method, params }).catch((cause: unknown) => {
+  const request = isElectronRuntime()
+    ? requestDshExecutor<T>(method, params)
+    : invoke<T>(LOCAL_EXECUTOR_COMMANDS.request, { method, params })
+  return request.catch((cause: unknown) => {
     console.error('[local-ipc] request failed', {
       method,
       paramsKeys: Object.keys(params ?? {}),
@@ -307,6 +370,13 @@ export function requestLocalExecutor<T = unknown>(
 export function subscribeLocalExecutorEvents(
   handler: (event: LocalExecutorEvent) => void
 ): Promise<UnlistenFn> {
+  if (isElectronRuntime()) {
+    return Promise.resolve(
+      subscribeDshExecutorEvents(event => {
+        handler({ event: event.event, payload: event.payload })
+      })
+    )
+  }
   return listen<LocalExecutorEvent>(LOCAL_EXECUTOR_EVENT, event => {
     handler(event.payload)
   })

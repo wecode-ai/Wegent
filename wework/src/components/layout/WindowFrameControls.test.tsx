@@ -12,17 +12,35 @@ const mocks = vi.hoisted(() => {
     isMaximized: vi.fn().mockResolvedValue(false),
     onResized: vi.fn().mockResolvedValue(unlisten),
   }
-  return { unlisten, windowMock }
+  return {
+    desktopInvoke: vi.fn(),
+    electron: { enabled: false },
+    unlisten,
+    windowMock,
+  }
 })
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: vi.fn(() => mocks.windowMock),
 }))
 
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: mocks.desktopInvoke,
+}))
+
+vi.mock('@/lib/runtime-environment', () => ({
+  isElectronRuntime: () => mocks.electron.enabled,
+}))
+
 describe('WindowFrameControls', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.electron.enabled = false
     mocks.windowMock.isMaximized.mockResolvedValue(false)
+    mocks.desktopInvoke.mockImplementation((capability: string) => {
+      if (capability === 'window.getState') return Promise.resolve({ maximized: false })
+      return Promise.resolve(undefined)
+    })
   })
 
   test('renders minimize, maximize and close buttons', () => {
@@ -98,5 +116,22 @@ describe('WindowFrameControls', () => {
     capturedHandler?.()
 
     await waitFor(() => expect(mocks.windowMock.isMaximized).toHaveBeenCalled())
+  })
+
+  test('uses Electron host capabilities for frame controls', async () => {
+    mocks.electron.enabled = true
+    render(<WindowFrameControls />)
+    await waitFor(() => expect(mocks.desktopInvoke).toHaveBeenCalledWith('window.getState'))
+
+    fireEvent.click(screen.getByTestId('window-minimize-button'))
+    fireEvent.click(screen.getByTestId('window-maximize-button'))
+    fireEvent.click(screen.getByTestId('window-close-button'))
+
+    await waitFor(() => {
+      expect(mocks.desktopInvoke).toHaveBeenCalledWith('window.minimize')
+      expect(mocks.desktopInvoke).toHaveBeenCalledWith('window.toggleMaximize')
+      expect(mocks.desktopInvoke).toHaveBeenCalledWith('window.close')
+    })
+    expect(mocks.windowMock.minimize).not.toHaveBeenCalled()
   })
 })

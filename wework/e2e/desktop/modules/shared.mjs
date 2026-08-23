@@ -494,6 +494,11 @@ const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
 const SEND_REJECTION_ONLY = process.argv.includes('--send-rejection-only')
 const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
 const BUILD_ONLY = process.argv.includes('--build-only')
+const DESKTOP_RUNTIME = process.env.WEWORK_E2E_DESKTOP_RUNTIME?.trim() || 'electron'
+assert.ok(
+  DESKTOP_RUNTIME === 'electron' || DESKTOP_RUNTIME === 'tauri',
+  'WEWORK_E2E_DESKTOP_RUNTIME must be "electron" or "tauri"'
+)
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 const MIXED_TOOL_TURNS_ONLY = process.env.WEWORK_E2E_MIXED_TOOL_TURNS_ONLY === '1'
 const DESKTOP_SEGMENT = readCommandLineOption('--segment')
@@ -1085,11 +1090,13 @@ function macosSleepAssertionIds(appProcessId) {
   if (process.platform !== 'darwin') return []
   const output = commandOutput('/usr/bin/pmset', ['-g', 'assertions'])
   return output.split('\n').flatMap(line => {
+    const assertionPattern =
+      DESKTOP_RUNTIME === 'electron'
+        ? 'NoIdleSleepAssertion named: "Electron"'
+        : 'PreventUserIdleSystemSleep named: "Wework local task is running"'
     const match = line
       .trim()
-      .match(
-        /^pid (\d+)\([^)]+\): \[(0x[0-9a-f]+)\].*PreventUserIdleSystemSleep named: "Wework local task is running"/i
-      )
+      .match(new RegExp(`^pid (\\d+)\\([^)]+\\): \\[(0x[0-9a-f]+)\\].*${assertionPattern}`, 'i'))
     if (!match || Number(match[1]) !== appProcessId) {
       return []
     }
@@ -1124,6 +1131,31 @@ async function waitForExecutorReadyEvidence(
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(`Timed out waiting for executor stdio-ready evidence in ${logPath}`)
+}
+
+async function waitForExecutorRuntimeEvidence(
+  control,
+  logPath,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
+  minimumProcessCount = 1
+) {
+  if (DESKTOP_RUNTIME !== 'electron') {
+    return waitForExecutorReadyEvidence(logPath, timeoutMs, minimumProcessCount)
+  }
+
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const diagnostics = JSON.parse(await control.command('getDesktopRuntimeDiagnostics', 'body'))
+    const executorProcessId = Number(diagnostics.executorPid)
+    if (Number.isInteger(executorProcessId) && executorProcessId > 0) {
+      return {
+        processIds: [executorProcessId],
+        content: JSON.stringify(diagnostics),
+      }
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('Timed out waiting for the Electron core runtime executor process')
 }
 
 async function waitForLogPattern(
@@ -1464,6 +1496,7 @@ export {
   stopProcess,
   stopProcessGroup,
   DESKTOP_READY_TIMEOUT_MS,
+  DESKTOP_RUNTIME,
   WORKBENCH_READY_TIMEOUT_MS,
   DEFAULT_STEP_TIMEOUT_MS,
   DESKTOP_MODEL_SERVER_PORT,
@@ -1804,6 +1837,7 @@ export {
   macosSleepAssertionIds,
   waitForMacosSleepAssertion,
   waitForExecutorReadyEvidence,
+  waitForExecutorRuntimeEvidence,
   waitForLogPattern,
   reactivateMacApplication,
   requestMacosApplicationQuit,

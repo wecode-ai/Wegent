@@ -11,6 +11,10 @@ import {
 
 const invokeMock = vi.hoisted(() => vi.fn())
 const listenMock = vi.hoisted(() => vi.fn())
+const desktopInvokeMock = vi.hoisted(() => vi.fn())
+const runtimeMocks = vi.hoisted(() => ({
+  electron: false,
+}))
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
@@ -18,6 +22,14 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: listenMock,
+}))
+
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: desktopInvokeMock,
+}))
+
+vi.mock('@/lib/runtime-environment', () => ({
+  isElectronRuntime: () => runtimeMocks.electron,
 }))
 
 function runtimeWorkWithTasks(tasks: Array<{ running?: boolean }>): RuntimeWorkListResponse {
@@ -56,6 +68,8 @@ describe('runtime task close guard', () => {
   beforeEach(() => {
     invokeMock.mockReset()
     listenMock.mockReset()
+    desktopInvokeMock.mockReset()
+    runtimeMocks.electron = false
   })
 
   test('detects running tasks across runtime work', () => {
@@ -113,5 +127,15 @@ describe('runtime task close guard', () => {
     await closeMainWindowToTray()
 
     expect(invokeMock).toHaveBeenCalledWith('close_main_window_to_tray')
+  })
+
+  test('closes the main window to tray through the Electron host', async () => {
+    runtimeMocks.electron = true
+    desktopInvokeMock.mockResolvedValue(undefined)
+
+    await closeMainWindowToTray()
+
+    expect(desktopInvokeMock).toHaveBeenCalledWith('window.closeToTray')
+    expect(invokeMock).not.toHaveBeenCalled()
   })
 })

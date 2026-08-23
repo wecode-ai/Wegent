@@ -55,11 +55,22 @@ function disableTauri() {
   delete (window as Window & { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
 }
 
+function enableElectron() {
+  window.__WEWORK_RUNTIME_CONFIG__ = {
+    ...window.__WEWORK_RUNTIME_CONFIG__,
+    desktopHost: 'electron',
+  }
+}
+
 describe('ChromeTitlebar', () => {
   beforeEach(() => {
     startDragging.mockClear()
     localStorage.clear()
     disableTauri()
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      desktopHost: 'browser',
+    }
     mockUserAgent('Mozilla/5.0')
     window.history.replaceState({}, '', '/')
   })
@@ -126,6 +137,26 @@ describe('ChromeTitlebar', () => {
     expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
     expect(screen.queryByTestId('macos-traffic-light-spacer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('topnav-feedback-button')).not.toBeInTheDocument()
+  })
+
+  test('uses the same macOS traffic-light layout in Electron', () => {
+    mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
+    enableElectron()
+    renderTitlebar()
+
+    expect(screen.getByTestId('macos-traffic-light-spacer')).toHaveClass('w-[92px]', 'self-stretch')
+    expect(screen.getByTestId('titlebar-fixed-actions')).toHaveStyle({
+      width: '6.75rem',
+    })
+    expect(screen.getByTestId('titlebar-right-panel-drag-region')).toBeInTheDocument()
+  })
+
+  test('uses DSH window controls in frameless Electron windows', () => {
+    mockUserAgent('Mozilla/5.0 (X11; Linux x86_64)')
+    enableElectron()
+    renderTitlebar()
+
+    expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
   })
 
   test('can hide workbench portals without removing the document tabs', () => {

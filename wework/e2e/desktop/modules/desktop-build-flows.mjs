@@ -47,6 +47,7 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
+  DESKTOP_RUNTIME,
   E2E_TRANSCRIPT_PAGE_SIZE,
   LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES,
   LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
@@ -503,6 +504,30 @@ async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier, codexBin
   }
 }
 
+async function cloneMacElectronApp(binaryPath, appIdentifier, codexBinary) {
+  if (process.platform !== 'darwin') {
+    return { binaryPath, appBundlePath: null, codexBinaryPath: codexBinary }
+  }
+
+  const sourceBundlePath = resolve(binaryPath, '..', '..', '..')
+  const appBundlePath = join(resultDir, `WeWork-Electron-E2E-${process.pid}.app`)
+  const binaryName = binaryPath.split('/').at(-1)
+  assert.ok(binaryName, `Unable to determine the Electron executable name from ${binaryPath}`)
+  await rm(appBundlePath, { recursive: true, force: true })
+  await runChecked('/bin/cp', ['-cR', sourceBundlePath, appBundlePath])
+  await runChecked('/usr/libexec/PlistBuddy', [
+    '-c',
+    `Set :CFBundleIdentifier ${appIdentifier}`,
+    join(appBundlePath, 'Contents', 'Info.plist'),
+  ])
+  commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
+  return {
+    binaryPath: join(appBundlePath, 'Contents', 'MacOS', binaryName),
+    appBundlePath,
+    codexBinaryPath: codexBinary,
+  }
+}
+
 async function buildDesktopApp(
   controlUrl,
   cloudBackendUrl,
@@ -512,13 +537,30 @@ async function buildDesktopApp(
   codexBinary
 ) {
   if (SELECTED_DESKTOP_SEGMENT === 'harness-apps') {
-    await runChecked('pnpm', ['run', 'prepare:harness-runtime'], { cwd: weworkDir })
+    await runChecked('pnpm', ['run', 'prepare:harness-runtime'], {
+      cwd: weworkDir,
+      env: {
+        ...process.env,
+        VITE_WEWORK_E2E: 'true',
+        VITE_WEWORK_RELEASE_CHANNEL: 'stable',
+        VITE_WEWORK_RUNTIME_MODE: 'local-first',
+      },
+    })
   }
 
   const configured = process.env.WEWORK_E2E_APP_BIN
   if (configured) {
     const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework desktop app')
+    if (DESKTOP_RUNTIME === 'electron') {
+      return cloneMacElectronApp(binaryPath, appIdentifier, codexBinary)
+    }
     return wrapMacDesktopApp(binaryPath, binaryPath.split('/').at(-1), appIdentifier, codexBinary)
+  }
+
+  if (DESKTOP_RUNTIME === 'electron') {
+    throw new Error(
+      'Electron desktop E2E requires WEWORK_E2E_APP_BIN from pnpm ai:verify:electron:build'
+    )
   }
 
   const windows = (await readTauriE2EWindowConfig()).map(window => ({

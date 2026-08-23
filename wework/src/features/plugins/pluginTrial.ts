@@ -4,7 +4,10 @@ import {
   resolveInstalledPluginLogoUrl,
   resolvePluginLogo,
 } from '@/components/plugins/plugin-assets'
-import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
+import {
+  getComposerApps,
+  removeComposerAppsByPluginIdentity,
+} from '@/components/chat/composer/composerAppsSnapshot'
 import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
 import { composerAppPluginKey } from './composerPluginMetadata'
 import { managedMarketplaceName } from './pluginMarketplaceIdentity'
@@ -397,7 +400,8 @@ export function consumePluginTrialInput(): string | null {
   return consumePluginTrial()?.input ?? null
 }
 
-export function notifyLocalPluginSkillsChanged() {
+export function notifyLocalPluginSkillsChanged(removedPluginIdentities: readonly string[] = []) {
+  removeComposerAppsByPluginIdentity(removedPluginIdentities)
   window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
 }
 

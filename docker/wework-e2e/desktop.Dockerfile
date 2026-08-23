@@ -14,11 +14,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     git \
     imagemagick \
+    libasound2t64 \
+    libatk-bridge2.0-0t64 \
+    libatspi2.0-0t64 \
     libayatana-appindicator3-dev \
+    libdrm2 \
+    libgbm1 \
+    libgtk-3-0t64 \
     libmagic1 \
+    libnss3 \
     librsvg2-dev \
     libssl-dev \
     libwebkit2gtk-4.1-dev \
+    libxshmfence1 \
+    libxss1 \
     python3 \
     python3-venv \
     redis-server \

@@ -10,6 +10,7 @@ import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_SCENARIO_MODULES = {
+  'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
@@ -33,6 +34,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'cloud-space-mention',
   'change-request-status',
   'claude-runtime',
   'local-file-preview',

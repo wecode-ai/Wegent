@@ -3,6 +3,8 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { normalizeBrowserUrl } from './browser-url'
 import { isTauriRuntime } from './runtime-environment'
+import { isElectronRuntime } from './runtime-environment'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 
 export const DEFAULT_EMBEDDED_BROWSER_LABEL = 'workspace-browser'
 const transferredBrowserLabels = new Set<string>()
@@ -150,10 +152,39 @@ export interface EmbeddedBrowserInvalidTlsCertificateEvent {
   port: number
 }
 
+interface ElectronBrowserHostEvent {
+  sequence: number
+  type:
+    | 'agent-state'
+    | 'close-request'
+    | 'download'
+    | 'local-file-preview'
+    | 'open-request'
+    | 'page-state'
+    | 'popup'
+  payload: Record<string, unknown>
+}
+
+interface ElectronBrowserHostEventBatch {
+  events: ElectronBrowserHostEvent[]
+  latestSequence: number
+  historyLost: boolean
+}
+
+type ElectronBrowserEventHandler = (event: Record<string, unknown>) => void
+const electronBrowserEventHandlers = new Map<
+  ElectronBrowserHostEvent['type'],
+  Set<ElectronBrowserEventHandler>
+>()
+let electronBrowserEventAfter = 0
+let electronBrowserEventPolling = false
+let electronBrowserEventTimer: number | null = null
+
 export function listenEmbeddedBrowserInvalidTlsCertificates(
   handler: (event: EmbeddedBrowserInvalidTlsCertificateEvent) => void
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
+  if (isElectronRuntime()) return Promise.resolve(() => {})
   return listen<EmbeddedBrowserInvalidTlsCertificateEvent>(
     EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT,
     event => handler(event.payload)
@@ -164,6 +195,9 @@ export function listenEmbeddedBrowserPopupRequests(
   handler: (request: EmbeddedBrowserPopupRequest) => void
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
+  if (isElectronRuntime()) {
+    return listenElectronBrowserEvents('popup', handler)
+  }
   return listen<EmbeddedBrowserPopupRequest>(EMBEDDED_BROWSER_POPUP_EVENT, event => {
     handler(event.payload)
   }).catch(error => {
@@ -173,14 +207,26 @@ export function listenEmbeddedBrowserPopupRequests(
 }
 
 export async function pauseEmbeddedBrowserDownload(id: string): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.pauseDownload', { id })
+    return
+  }
   await invoke('embedded_browser_pause_download', { id })
 }
 
 export async function resumeEmbeddedBrowserDownload(id: string): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.resumeDownload', { id })
+    return
+  }
   await invoke('embedded_browser_resume_download', { id })
 }
 
 export async function deleteEmbeddedBrowserDownload(id: string): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.deleteDownload', { id })
+    return
+  }
   await invoke('embedded_browser_delete_download', { id })
 }
 
@@ -188,6 +234,10 @@ export async function setEmbeddedBrowserAgentControlPaused(
   paused: boolean,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.setAgentControlPaused', { label, paused })
+    return
+  }
   await invoke('embedded_browser_set_agent_control_paused', { label, paused })
 }
 
@@ -196,6 +246,14 @@ export async function resolveEmbeddedBrowserAgentApproval(
   approved: boolean,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.resolveAgentApproval', {
+      label,
+      approvalId,
+      approved,
+    })
+    return
+  }
   await invoke('embedded_browser_resolve_agent_approval', { label, approvalId, approved })
 }
 
@@ -203,6 +261,9 @@ export function listenEmbeddedBrowserDownloads(
   handler: (event: EmbeddedBrowserDownloadEvent) => void
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
+  if (isElectronRuntime()) {
+    return listenElectronBrowserEvents('download', handler)
+  }
   return listen<EmbeddedBrowserDownloadEvent>(EMBEDDED_BROWSER_DOWNLOAD_EVENT, event => {
     handler(event.payload)
   })
@@ -212,6 +273,9 @@ export function listenEmbeddedBrowserLocalFilePreview(
   handler: (event: EmbeddedBrowserLocalFilePreviewEvent) => void
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
+  if (isElectronRuntime()) {
+    return listenElectronBrowserEvents('local-file-preview', handler)
+  }
   return listen<EmbeddedBrowserLocalFilePreviewEvent>(
     EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT,
     event => handler(event.payload)
@@ -222,15 +286,65 @@ export function listenEmbeddedBrowserPageStateChanges(
   handler: (event: EmbeddedBrowserPageState) => void
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
+  if (isElectronRuntime()) {
+    return listenElectronBrowserEvents('page-state', handler)
+  }
   return listen<EmbeddedBrowserPageState>(EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT, event => {
     handler(event.payload)
   })
+}
+
+function listenElectronBrowserEvents<EventPayload>(
+  type: ElectronBrowserHostEvent['type'],
+  handler: (event: EventPayload) => void
+): Promise<UnlistenFn> {
+  const wrappedHandler: ElectronBrowserEventHandler = event => handler(event as EventPayload)
+  const handlers = electronBrowserEventHandlers.get(type) ?? new Set<ElectronBrowserEventHandler>()
+  handlers.add(wrappedHandler)
+  electronBrowserEventHandlers.set(type, handlers)
+  startElectronBrowserEventPolling()
+
+  return Promise.resolve(() => {
+    const currentHandlers = electronBrowserEventHandlers.get(type)
+    currentHandlers?.delete(wrappedHandler)
+    if (currentHandlers?.size === 0) electronBrowserEventHandlers.delete(type)
+    if (electronBrowserEventHandlers.size > 0 || electronBrowserEventTimer === null) return
+    window.clearInterval(electronBrowserEventTimer)
+    electronBrowserEventTimer = null
+  })
+}
+
+function startElectronBrowserEventPolling(): void {
+  if (electronBrowserEventTimer !== null) return
+  void pollElectronBrowserEvents()
+  electronBrowserEventTimer = window.setInterval(() => void pollElectronBrowserEvents(), 250)
+}
+
+async function pollElectronBrowserEvents(): Promise<void> {
+  if (electronBrowserEventPolling || electronBrowserEventHandlers.size === 0) return
+  electronBrowserEventPolling = true
+  try {
+    const batch = await invokeDesktopHost<ElectronBrowserHostEventBatch>('browser.events', {
+      after: electronBrowserEventAfter,
+    })
+    for (const event of batch.events) {
+      electronBrowserEventHandlers.get(event.type)?.forEach(handler => handler(event.payload))
+    }
+    electronBrowserEventAfter = batch.latestSequence
+  } catch (error) {
+    console.error('[Wework] Failed to poll Electron browser events', error)
+  } finally {
+    electronBrowserEventPolling = false
+  }
 }
 
 export function listenEmbeddedBrowserCloseRequests(
   handler: (event: EmbeddedBrowserCloseRequest) => void
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
+  if (isElectronRuntime()) {
+    return listenElectronBrowserEvents('close-request', handler)
+  }
   return listen<EmbeddedBrowserCloseRequest>(EMBEDDED_BROWSER_CLOSE_EVENT, event =>
     handler(event.payload)
   )
@@ -240,6 +354,9 @@ export function listenEmbeddedBrowserAgentState(
   handler: (event: EmbeddedBrowserAgentStateEvent) => void
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
+  if (isElectronRuntime()) {
+    return listenElectronBrowserEvents('agent-state', handler)
+  }
   return listen<EmbeddedBrowserAgentStateEvent>(EMBEDDED_BROWSER_AGENT_STATE_EVENT, event => {
     handler(event.payload)
   })
@@ -252,7 +369,7 @@ interface EmbeddedBrowserEvalResult {
 }
 
 export function canUseEmbeddedBrowser(): boolean {
-  return isTauriRuntime()
+  return isTauriRuntime() || isElectronRuntime()
 }
 
 export function setEmbeddedBrowserOcclusion(id: string, occluded: boolean): void {
@@ -291,6 +408,16 @@ export async function openEmbeddedBrowser(
   readyWhenHidden = true,
   navigateExisting = true
 ): Promise<EmbeddedBrowserPageState> {
+  if (isElectronRuntime()) {
+    return invokeDesktopHost<EmbeddedBrowserPageState>('browser.open', {
+      label,
+      url,
+      bounds,
+      visible,
+      readyWhenHidden,
+      navigateExisting,
+    })
+  }
   return invoke<EmbeddedBrowserPageState>('embedded_browser_open', {
     ...browserArgs(label),
     url,
@@ -307,6 +434,10 @@ export async function setEmbeddedBrowserBounds(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL,
   readyWhenHidden = false
 ): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.setBounds', { label, bounds, visible })
+    return
+  }
   await invoke('embedded_browser_set_bounds', {
     ...browserArgs(label),
     bounds,
@@ -315,9 +446,24 @@ export async function setEmbeddedBrowserBounds(
   })
 }
 
+export async function setEmbeddedBrowserDeviceMetrics(
+  metrics: { width: number; height: number } | null,
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
+  if (!isElectronRuntime()) return
+  await invokeDesktopHost<void>('browser.setDeviceMetrics', {
+    label,
+    width: metrics?.width ?? null,
+    height: metrics?.height ?? null,
+  })
+}
+
 export async function captureEmbeddedBrowserSnapshot(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<string> {
+  if (isElectronRuntime()) {
+    return invokeDesktopHost<string>('browser.capture', { label })
+  }
   return invoke<string>('embedded_browser_capture_snapshot', browserArgs(label))
 }
 
@@ -325,6 +471,10 @@ export async function navigateEmbeddedBrowser(
   url: string,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.navigate', { label, url })
+    return
+  }
   await invoke('embedded_browser_navigate', {
     ...browserArgs(label),
     url,
@@ -332,16 +482,28 @@ export async function navigateEmbeddedBrowser(
 }
 
 export async function reloadEmbeddedBrowser(label = DEFAULT_EMBEDDED_BROWSER_LABEL): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.reload', { label })
+    return
+  }
   await invoke('embedded_browser_reload', browserArgs(label))
 }
 
 export async function goBackEmbeddedBrowser(label = DEFAULT_EMBEDDED_BROWSER_LABEL): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.goBack', { label })
+    return
+  }
   await invoke('embedded_browser_go_back', browserArgs(label))
 }
 
 export async function goForwardEmbeddedBrowser(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.goForward', { label })
+    return
+  }
   await invoke('embedded_browser_go_forward', browserArgs(label))
 }
 
@@ -349,6 +511,10 @@ export async function setEmbeddedBrowserZoom(
   scaleFactor: number,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.setZoom', { label, scaleFactor })
+    return
+  }
   await invoke('embedded_browser_set_zoom', {
     ...browserArgs(label),
     scaleFactor,
@@ -359,6 +525,10 @@ export async function evalEmbeddedBrowser(
   script: string,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.evaluate', { label, expression: script })
+    return
+  }
   await invoke('embedded_browser_eval', {
     ...browserArgs(label),
     script,
@@ -369,6 +539,9 @@ export async function evalEmbeddedBrowserJson<T = unknown>(
   expression: string,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<T> {
+  if (isElectronRuntime()) {
+    return invokeDesktopHost<T>('browser.evaluate', { label, expression })
+  }
   const result = await invoke<EmbeddedBrowserEvalResult | T>('embedded_browser_eval_json', {
     ...browserArgs(label),
     expression,
@@ -394,6 +567,9 @@ function isEmbeddedBrowserEvalResult(value: unknown): value is EmbeddedBrowserEv
 export async function readEmbeddedBrowserPageState(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<EmbeddedBrowserPageState> {
+  if (isElectronRuntime()) {
+    return invokeDesktopHost<EmbeddedBrowserPageState>('browser.pageState', { label })
+  }
   return invoke<EmbeddedBrowserPageState>('embedded_browser_page_state', browserArgs(label))
 }
 
@@ -401,6 +577,10 @@ export async function relabelEmbeddedBrowser(
   fromLabel: string,
   toLabel = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.relabel', { fromLabel, toLabel })
+    return
+  }
   await invoke('embedded_browser_relabel', {
     fromLabel,
     toLabel,
@@ -411,6 +591,10 @@ export async function setEmbeddedBrowserActiveTab(
   baseLabel: string,
   activeTabLabel: string
 ): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.setActiveTab', { baseLabel, activeTabLabel })
+    return
+  }
   await invoke('embedded_browser_set_active_tab', { baseLabel, activeTabLabel })
 }
 
@@ -418,6 +602,10 @@ export async function closeEmbeddedBrowser(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL,
   expectedNativeLabel?: string
 ): Promise<void> {
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.close', { label })
+    return
+  }
   await invoke('embedded_browser_close', {
     ...browserArgs(label),
     expectedNativeLabel: expectedNativeLabel ?? null,
@@ -426,10 +614,17 @@ export async function closeEmbeddedBrowser(
 
 export async function closeEmbeddedBrowsers(labels: string[]): Promise<void> {
   if (labels.length === 0) return
+  if (isElectronRuntime()) {
+    await invokeDesktopHost<void>('browser.closeMany', { labels })
+    return
+  }
   await invoke('embedded_browser_close_many', { labels })
 }
 
 export async function clearEmbeddedBrowserData(kinds?: EmbeddedBrowserDataKind[]): Promise<number> {
+  if (isElectronRuntime()) {
+    return invokeDesktopHost<number>('browser.clearData', { dataKinds: kinds ?? null })
+  }
   return invoke<number>('embedded_browser_clear_data', { dataKinds: kinds ?? null })
 }
 
@@ -464,6 +659,17 @@ export function listenEmbeddedBrowserOpenRequests(
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) {
     return null
+  }
+  if (isElectronRuntime()) {
+    embeddedBrowserOpenRequestHandlers.add(handler)
+    const listener = listenElectronBrowserEvents<EmbeddedBrowserOpenRequest>(
+      'open-request',
+      handler
+    )
+    return listener.then(unlisten => () => {
+      embeddedBrowserOpenRequestHandlers.delete(handler)
+      unlisten()
+    })
   }
 
   if (embeddedBrowserOpenRequestReleaseTimer !== null) {

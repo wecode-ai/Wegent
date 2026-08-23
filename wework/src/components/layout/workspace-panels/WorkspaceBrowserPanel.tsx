@@ -49,6 +49,7 @@ import {
   resolveEmbeddedBrowserAgentApproval,
   setEmbeddedBrowserAgentControlPaused,
   setEmbeddedBrowserBounds,
+  setEmbeddedBrowserDeviceMetrics,
   setEmbeddedBrowserZoom,
   type EmbeddedBrowserAgentStateEvent,
   type EmbeddedBrowserDataKind,
@@ -109,6 +110,7 @@ import type {
 import { browserSnapshotToContexts } from '@/lib/browser-annotation-context'
 
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
+const BROWSER_ANNOTATION_STATE_INTERVAL_MS = 100
 const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
 const EMBEDDED_BROWSER_VISIBLE_HOST_TIMEOUT_MS = 12_000
 const EMBEDDED_BROWSER_VISIBLE_HOST_INTERVAL_MS = 50
@@ -347,7 +349,9 @@ export function WorkspaceBrowserTabPanel({
   const nativeBrowserOpenRef = useRef(false)
   const nativeBrowserOpeningRef = useRef(false)
   const currentUrlRef = useRef<string | null>(null)
+  const pendingNavigationUrlRef = useRef<string | null>(null)
   const activePageUrlRef = useRef<string | null>(null)
+  const addressInputRef = useRef<HTMLInputElement | null>(null)
   const addressEditingRef = useRef(false)
   const annotationModeRef = useRef(false)
   const annotationCleanupPromiseRef = useRef<Promise<void> | null>(null)
@@ -628,7 +632,7 @@ export function WorkspaceBrowserTabPanel({
   useEffect(() => {
     const listener = listenEmbeddedBrowserCloseRequests(event => {
       if (!activeRef.current || event.label !== currentLabelRef.current) return
-      if (nativeLabelRef.current && event.nativeLabel !== nativeLabelRef.current) {
+      if (event.nativeLabel !== nativeLabelRef.current) {
         console.info(
           '[Wework] Embedded browser close ignored',
           JSON.stringify({
@@ -650,6 +654,7 @@ export function WorkspaceBrowserTabPanel({
       onNativeLabelChange?.(null)
       onDownloadActivityChange?.(false)
       currentUrlRef.current = null
+      pendingNavigationUrlRef.current = null
       activePageUrlRef.current = null
       annotationModeRef.current = false
       pageStateRequestGenerationRef.current += 1
@@ -699,10 +704,14 @@ export function WorkspaceBrowserTabPanel({
 
   const updatePageUrl = useCallback(
     (url: string | null) => {
+      const pendingNavigationUrl = pendingNavigationUrlRef.current
+      if (pendingNavigationUrl && url && url !== pendingNavigationUrl) return
       activePageUrlRef.current = url
       setPageUrl(url)
       if (url) {
-        if (!addressEditingRef.current) setAddress(url)
+        if (!addressEditingRef.current && document.activeElement !== addressInputRef.current) {
+          setAddress(url)
+        }
         onTitleChange?.(getFallbackBrowserTitle(url))
         onFaviconChange?.(getFallbackFaviconUrl(url))
         return
@@ -819,10 +828,15 @@ export function WorkspaceBrowserTabPanel({
             ? current
             : nextVisualRect
         )
+        await setEmbeddedBrowserDeviceMetrics(
+          { width: deviceState.width, height: deviceState.height },
+          label
+        )
         await setEmbeddedBrowserBounds(placement.webviewBounds, nativeVisible, label)
       } else {
         deviceFitScaleRef.current = 1
         setDeviceVisualRect(current => (current === null ? current : null))
+        await setEmbeddedBrowserDeviceMetrics(null, label)
         await setEmbeddedBrowserBounds(bounds, nativeVisible, label)
       }
       // The native webview zoom carries the page zoom; in device mode the
@@ -1218,6 +1232,7 @@ export function WorkspaceBrowserTabPanel({
           setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
           nativeBrowserOpenRef.current = true
           updatePageUrl(pageState.url || openingUrl)
+          pendingNavigationUrlRef.current = null
           schedulePostOpenBoundsSync(activeRef.current)
           applyNativePageStatus(pageState)
           return true
@@ -1286,6 +1301,7 @@ export function WorkspaceBrowserTabPanel({
           activeOpenRequestIdRef.current = null
         }
         updatePageUrl(requestId ? openingUrl : pageState.url || openingUrl)
+        if (!requestId) pendingNavigationUrlRef.current = null
         await revealHiddenBrowser(visible)
         schedulePostOpenBoundsSync(activeRef.current)
         applyNativePageStatus(pageState)
@@ -1357,6 +1373,7 @@ export function WorkspaceBrowserTabPanel({
         nativeBrowserOpenRef.current = true
         setCurrentUrl(pageState.url)
         updatePageUrl(pageState.url)
+        pendingNavigationUrlRef.current = null
         if (pageState.title) {
           onTitleChange?.(pageState.title)
         }
@@ -1571,7 +1588,7 @@ export function WorkspaceBrowserTabPanel({
 
     const intervalId = window.setInterval(() => {
       void consumeAnnotations()
-    }, 500)
+    }, BROWSER_ANNOTATION_STATE_INTERVAL_MS)
     void consumeAnnotations()
 
     return () => {
@@ -1592,18 +1609,32 @@ export function WorkspaceBrowserTabPanel({
   ])
 
   const holdOriginalView = useCallback((event: PointerEvent<HTMLButtonElement>) => {
-    event.currentTarget.setPointerCapture?.(event.pointerId)
+    if (event.nativeEvent.isTrusted) {
+      try {
+        event.currentTarget.setPointerCapture?.(event.pointerId)
+      } catch {
+        // The native pointer may already have been released.
+      }
+    }
     setOriginalViewHeld(true)
   }, [])
   const releaseOriginalView = useCallback((event: PointerEvent<HTMLButtonElement>) => {
-    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
+    try {
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    } catch {
+      // The pointer may already have been released by the native host.
     }
     setOriginalViewHeld(false)
   }, [])
   const cancelOriginalView = useCallback((event: PointerEvent<HTMLButtonElement>) => {
-    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
+    try {
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    } catch {
+      // The pointer may already have been released by the native host.
     }
     setOriginalViewHeld(false)
   }, [])
@@ -1858,7 +1889,6 @@ export function WorkspaceBrowserTabPanel({
 
   const runBrowserCommand = useCallback(
     async (command: () => Promise<void>) => {
-      if (!currentUrl) return
       try {
         await command()
         await refreshPageState()
@@ -1868,7 +1898,7 @@ export function WorkspaceBrowserTabPanel({
         setError(t('workbench.browser_control_failed'))
       }
     },
-    [currentUrl, refreshPageState, t]
+    [refreshPageState, t]
   )
 
   const reloadCurrentUrl = useCallback(
@@ -1913,6 +1943,7 @@ export function WorkspaceBrowserTabPanel({
         certificate && haveSameOrigin(certificate.url, nextUrl) ? certificate : null
       )
       pageStateRequestGenerationRef.current += 1
+      pendingNavigationUrlRef.current = nextUrl
 
       if (annotationMode && nextUrl !== activePageUrl) {
         exitAnnotationMode()
@@ -1920,6 +1951,7 @@ export function WorkspaceBrowserTabPanel({
 
       if (nextUrl === activePageUrl) {
         updatePageUrl(nextUrl)
+        pendingNavigationUrlRef.current = null
         reloadCurrentUrl(nextUrl)
         return
       }
@@ -1928,8 +1960,10 @@ export function WorkspaceBrowserTabPanel({
 
       if (embeddedBrowserAvailable && nativeBrowserOpenRef.current) {
         setStatus('loading')
-        void runBrowserCommand(() => navigateEmbeddedBrowser(nextUrl, label)).then(() => {
+        void runBrowserCommand(() => navigateEmbeddedBrowser(nextUrl, label)).then(async () => {
+          pendingNavigationUrlRef.current = null
           setCurrentUrl(nextUrl)
+          await refreshPageState()
           track('browser_navigation_completed', { runtime: 'embedded' })
         })
         return
@@ -1937,6 +1971,7 @@ export function WorkspaceBrowserTabPanel({
 
       setCurrentUrl(nextUrl)
       setStatus(embeddedBrowserAvailable ? 'loading' : 'ready')
+      if (!embeddedBrowserAvailable) pendingNavigationUrlRef.current = null
       track('browser_navigation_completed', { runtime: 'fallback' })
     },
     [
@@ -1945,6 +1980,7 @@ export function WorkspaceBrowserTabPanel({
       embeddedBrowserAvailable,
       exitAnnotationMode,
       label,
+      refreshPageState,
       reloadCurrentUrl,
       runBrowserCommand,
       t,
@@ -1988,10 +2024,11 @@ export function WorkspaceBrowserTabPanel({
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    addressEditingRef.current = false
     const urlInput = event.currentTarget.elements.namedItem('url') as HTMLInputElement | null
+    const submittedAddress = urlInput?.value ?? address
+    openBrowserUrl(submittedAddress)
+    addressEditingRef.current = false
     urlInput?.blur()
-    openBrowserUrl(address)
   }
 
   const handleReload = () => {
@@ -2290,7 +2327,9 @@ export function WorkspaceBrowserTabPanel({
       startWidth: current.width,
       startHeight: current.height,
     }
-    event.currentTarget.setPointerCapture(event.pointerId)
+    if (event.nativeEvent.isTrusted) {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    }
   }, [])
 
   const handleDeviceResizeMove = useCallback(
@@ -2314,7 +2353,9 @@ export function WorkspaceBrowserTabPanel({
     const drag = deviceResizeStateRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     deviceResizeStateRef.current = null
-    event.currentTarget.releasePointerCapture(event.pointerId)
+    if (event.nativeEvent.isTrusted && event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
   }, [])
 
   // --- Toolbar keyboard shortcuts (Cmd/Ctrl+F) ---
@@ -2437,6 +2478,7 @@ export function WorkspaceBrowserTabPanel({
           </BrowserToolbarButton>
           <form onSubmit={handleSubmit} className="min-w-0 flex-1">
             <input
+              ref={addressInputRef}
               name="url"
               data-testid="workspace-browser-url-input"
               value={address}
