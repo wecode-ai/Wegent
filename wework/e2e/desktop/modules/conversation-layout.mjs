@@ -453,7 +453,7 @@ async function assertMentionRenderedAsToken(
 }
 
 async function getElementMetrics(control, selector) {
-  return JSON.parse(await control.command('getElementMetrics', selector, { visible: true }))
+  return JSON.parse(await control.command('getElementMetrics', selector))
 }
 
 async function getSingleElementMetrics(control, selector, description) {

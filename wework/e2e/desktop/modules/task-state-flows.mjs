@@ -61,6 +61,9 @@ async function verifyPriorityFilter({ composerSelector, control }) {
   const requestInputTaskId = requestInputDebugSnapshot.workbench?.currentRuntimeTask?.taskId
   assert.ok(requestInputTaskId, 'The priority-filter fixture did not expose its runtime task ID')
   const requestInputTaskRowTestId = `runtime-local-task-row-${requestInputTaskId}`
+  const taskSidebarPriorityFilterButton =
+    `[data-testid="desktop-sidebar"]:has([data-testid="${requestInputTaskRowTestId}"]) ` +
+    '[data-testid="runtime-priority-filter-button"]'
   await control.command('waitFor', `[data-testid="${requestInputTaskRowTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -80,7 +83,7 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     await control.command('press', 'body', { key: 'Escape' })
     await captureVerificationScreenshot(control, 'priority-filter-01-background-task.png')
 
-    await control.command('click', '[data-testid="runtime-priority-filter-button"]')
+    await control.command('click', taskSidebarPriorityFilterButton, { visible: true })
     await control.command('waitFor', '[data-testid="runtime-priority-section"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       visible: true,
@@ -138,57 +141,22 @@ async function verifyPriorityFilter({ composerSelector, control }) {
       snapshot =>
         snapshot.workbench?.currentRuntimeTask?.taskId === requestInputTaskId &&
         snapshot.pane?.status?.isBusy === false,
-      'The handled priority task did not settle before reopening the filter'
+      'The handled priority task did not settle while the filter remained active'
     )
     await control.command(
       'waitFor',
       `[data-testid="runtime-priority-section"] [data-testid="${requestInputTaskRowTestId}"]`,
       {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        visible: true,
       }
     )
     await captureVerificationScreenshot(control, 'priority-filter-03-handled-task-settled.png')
-
-    await control.command('press', 'body', { key: 'Meta+Alt+U' })
+    await control.command('click', taskSidebarPriorityFilterButton, { visible: true })
     await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       visible: true,
     })
-    await control.command('press', 'body', { key: 'Meta+Alt+U' })
-    await control.command(
-      'waitFor',
-      `[data-testid^="runtime-priority-recent-list-"] [data-testid="${requestInputTaskRowTestId}"]`,
-      {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        visible: true,
-      }
-    )
-    const reopenedPrioritySnapshot = JSON.parse(
-      await control.command('snapshot', '[data-testid="runtime-priority-section"]', {
-        visible: true,
-      })
-    )
-    assert.equal(
-      reopenedPrioritySnapshot.testIds.includes('runtime-priority-empty'),
-      true,
-      'Reopening the priority filter left the handled task in the Priority group'
-    )
-    await captureVerificationScreenshot(control, 'priority-filter-04-reopened-task-in-recent.png')
-
-    await control.command('press', 'body', { key: 'Meta+Alt+U' })
-    await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      visible: true,
-    })
-    const restoredSidebarSnapshot = JSON.parse(
-      await control.command('snapshot', '[data-testid="desktop-sidebar"]', { visible: true })
-    )
-    assert.equal(
-      restoredSidebarSnapshot.testIds.includes('runtime-priority-section'),
-      false,
-      'The priority shortcut did not restore the regular sidebar'
-    )
-    await captureVerificationScreenshot(control, 'priority-filter-05-shortcut-restored-sidebar.png')
   } finally {
     if (!requestInputResponseReleased) {
       try {

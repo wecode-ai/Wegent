@@ -1395,13 +1395,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [defaultEmbeddedBrowserLabel]
   )
+  const activeEmbeddedBrowserLabel = isRightWorkspaceBrowserTab(rightPanelView)
+    ? browserStates[rightPanelView]?.label
+    : null
   useEffect(() => {
-    if (!isRightWorkspaceBrowserTab(rightPanelView)) return
-    const activeBrowserLabel = browserStates[rightPanelView]?.label
-    if (!activeBrowserLabel) return
+    if (!activeEmbeddedBrowserLabel) return
 
-    syncActiveEmbeddedBrowserLabel(activeBrowserLabel)
-  }, [browserStates, rightPanelView, syncActiveEmbeddedBrowserLabel])
+    syncActiveEmbeddedBrowserLabel(activeEmbeddedBrowserLabel)
+  }, [activeEmbeddedBrowserLabel, syncActiveEmbeddedBrowserLabel])
   useEffect(() => {
     onWorkspaceStateChange(paneKey, {
       rightPanelOpen,

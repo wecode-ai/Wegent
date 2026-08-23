@@ -6084,6 +6084,12 @@ describe('DesktopWorkbenchLayout', () => {
       'aria-selected',
       'true'
     )
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.setEmbeddedBrowserActiveTab).toHaveBeenCalledWith(
+        'workspace-browser-blank-0',
+        'workspace-browser-blank-0-2'
+      )
+    )
 
     fireEvent.keyDown(window, { key: 'b', metaKey: true, shiftKey: true })
 

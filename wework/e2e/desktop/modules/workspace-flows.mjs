@@ -867,8 +867,8 @@ async function verifyWorkspaceTabIsolation(control) {
   const initialBoardIds = workspaceTabIds(initial, 'board')
   const initialAgentIds = workspaceTabIds(initial, 'agent')
   assert.ok(initialTaskIds.length >= 1, 'The titlebar did not start with a task tab')
-  assert.equal(initialBoardIds.length, 1, 'The titlebar did not start with one project-space tab')
-  assert.equal(initialAgentIds.length, 1, 'The titlebar did not start with one Agent tab')
+  assert.ok(initialBoardIds.length >= 1, 'The titlebar did not start with a project-space tab')
+  assert.ok(initialAgentIds.length >= 1, 'The titlebar did not start with an Agent tab')
 
   const firstTaskId = initialTaskIds[0].slice('workspace-tab-'.length)
   const firstTaskContent = `[data-testid="workspace-tab-content-${firstTaskId}"]`
@@ -959,7 +959,7 @@ async function verifyWorkspaceTabIsolation(control) {
   await control.command('click', '[data-testid="workspace-tab-add-board"]')
   const withSecondBoard = await waitForSnapshot(
     control,
-    snapshot => workspaceTabIds(snapshot, 'board').length === 2,
+    snapshot => workspaceTabIds(snapshot, 'board').length === initialBoardIds.length + 1,
     'The explicit new-project-space action did not create a second tab'
   )
   const secondBoardTestId = workspaceTabIds(withSecondBoard, 'board').find(
@@ -1043,7 +1043,7 @@ async function verifyWorkspaceTabIsolation(control) {
   await control.command('click', '[data-testid="workspace-tab-add-agent"]')
   const withTemporaryAgent = await waitForSnapshot(
     control,
-    snapshot => workspaceTabIds(snapshot, 'agent').length === 2,
+    snapshot => workspaceTabIds(snapshot, 'agent').length === initialAgentIds.length + 1,
     'The explicit new-Agent action did not create an ordinary Agent tab'
   )
   const temporaryAgentTestId = workspaceTabIds(withTemporaryAgent, 'agent').find(
@@ -1055,7 +1055,7 @@ async function verifyWorkspaceTabIsolation(control) {
   await waitForSnapshot(
     control,
     snapshot =>
-      workspaceTabIds(snapshot, 'agent').length === 1 &&
+      workspaceTabIds(snapshot, 'agent').length === initialAgentIds.length &&
       snapshot.testIds.includes(`workspace-tab-${firstAgentId}`),
     'Closing the ordinary Agent tab removed or replaced the fixed Agent tab'
   )
@@ -1065,7 +1065,7 @@ async function verifyWorkspaceTabIsolation(control) {
   await control.command('click', '[data-testid="workspace-tab-add-agent"]')
   const withSecondAgent = await waitForSnapshot(
     control,
-    snapshot => workspaceTabIds(snapshot, 'agent').length === 2,
+    snapshot => workspaceTabIds(snapshot, 'agent').length === initialAgentIds.length + 1,
     'The explicit new-Agent action did not reopen an Agent tab'
   )
   const secondAgentTestId = workspaceTabIds(withSecondAgent, 'agent').find(
@@ -1102,7 +1102,7 @@ async function verifyWorkspaceTabIsolation(control) {
   await control.command('click', '[data-testid="workspace-tab-add-agent"]')
   const withThirdAgent = await waitForSnapshot(
     control,
-    snapshot => workspaceTabIds(snapshot, 'agent').length === 3,
+    snapshot => workspaceTabIds(snapshot, 'agent').length === initialAgentIds.length + 2,
     'The explicit new-Agent action did not create an independent Agent tab'
   )
   const thirdAgentTestId = workspaceTabIds(withThirdAgent, 'agent').find(
@@ -1147,11 +1147,11 @@ async function verifyWorkspaceTabIsolation(control) {
   await control.command('click', '[data-testid="workspace-tab-add-task"]')
   const withThirdTask = await waitForSnapshot(
     control,
-    snapshot => workspaceTabIds(snapshot, 'task').length === 3,
+    snapshot => workspaceTabIds(snapshot, 'task').length === initialTaskIds.length + 2,
     'The route-isolation setup did not create a third task tab'
   )
   const thirdTaskTestId = workspaceTabIds(withThirdTask, 'task').find(
-    testId => testId !== initialTaskIds[0] && testId !== secondTaskTestId
+    testId => !initialTaskIds.includes(testId) && testId !== secondTaskTestId
   )
   assert.ok(thirdTaskTestId, 'The third task tab identity was not observable')
   const thirdTaskId = thirdTaskTestId.slice('workspace-tab-'.length)

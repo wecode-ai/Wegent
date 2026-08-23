@@ -491,18 +491,24 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
     )
     await captureVerificationScreenshot(control, 'automations-03-manual-goal-complete.png')
     const manualTaskMark = `runtime-local-task-mark-${manualTaskId}`
+    const activeWorkspace = '[data-workspace-tab-content][aria-hidden="false"]'
     await waitForSnapshot(
       control,
       snapshot =>
         snapshot.testIds.includes(manualTaskMark) &&
-        snapshot.testIds.includes('send-message-button') &&
         !snapshot.testIds.includes(`runtime-local-task-running-${manualTaskId}`),
       'The completed automation task did not become available for pinning',
       DEFAULT_STEP_TIMEOUT_MS,
-      'body',
-      true
+      activeWorkspace
     )
-    await control.command('click', `[data-testid="${manualTaskMark}"]`, { visible: true })
+    await control.command('hover', `${activeWorkspace} [data-testid="${manualTaskRow}"]`)
+    await control.command('waitFor', `${activeWorkspace} [data-testid="${manualTaskMark}"]`, {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', `${activeWorkspace} [data-testid="${manualTaskMark}"]`, {
+      visible: true,
+    })
     await waitForSnapshot(
       control,
       snapshot => snapshot.testIds.includes('sidebar-pinned-section'),
