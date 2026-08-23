@@ -8,6 +8,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
+  isElectronRuntime: () => false,
   isTauriRuntime: isTauriRuntimeMock,
 }))
 

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('./runtime-environment', () => ({
+  isElectronRuntime: () => false,
   isTauriRuntime: () => true,
 }))
 

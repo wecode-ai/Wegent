@@ -4,7 +4,10 @@ import { isTauriRuntime } from './runtime-environment'
 import { openNativeExecutablePicker } from './native-executable-picker'
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
-vi.mock('./runtime-environment', () => ({ isTauriRuntime: vi.fn() }))
+vi.mock('./runtime-environment', () => ({
+  isElectronRuntime: () => false,
+  isTauriRuntime: vi.fn(),
+}))
 
 describe('openNativeExecutablePicker', () => {
   beforeEach(() => {

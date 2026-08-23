@@ -792,7 +792,7 @@ fn validate_plugin_import_manifest(root: &Path, manifest: &Value) -> Vec<LocalPl
         .and_then(Value::as_object)
         .and_then(|author| author.get("name"))
         .and_then(Value::as_str)
-        .is_none_or(|name| name.trim().is_empty())
+        .map_or(true, |name| name.trim().is_empty())
     {
         issues.push(plugin_import_issue(
             "manifest_author_missing",
@@ -818,7 +818,7 @@ fn validate_plugin_import_manifest(root: &Path, manifest: &Value) -> Vec<LocalPl
     let interface = manifest.get("interface").and_then(Value::as_object);
     if interface
         .and_then(|value| value.get("capabilities"))
-        .is_none_or(|value| !value.is_array())
+        .map_or(true, |value| !value.is_array())
     {
         issues.push(plugin_import_issue(
             "manifest_capabilities_invalid",
@@ -826,7 +826,7 @@ fn validate_plugin_import_manifest(root: &Path, manifest: &Value) -> Vec<LocalPl
             "plugin.json field `interface.capabilities` must be an array",
         ));
     }
-    if interface.is_none_or(|value| {
+    if interface.map_or(true, |value| {
         !value.contains_key("defaultPrompt") && !value.contains_key("default_prompt")
     }) {
         issues.push(plugin_import_issue(
@@ -838,7 +838,7 @@ fn validate_plugin_import_manifest(root: &Path, manifest: &Value) -> Vec<LocalPl
     if let Some(skills) = manifest.get("skills") {
         if skills
             .as_str()
-            .is_none_or(|path| path.trim_end_matches('/') != "./skills")
+            .map_or(true, |path| path.trim_end_matches('/') != "./skills")
             || !root.join("skills").is_dir()
         {
             issues.push(plugin_import_issue(
@@ -1106,7 +1106,7 @@ fn valid_semver_identifier(value: &str, allow_leading_zero: bool) -> bool {
 fn marketplace_root_from_path(path: &Path) -> PathBuf {
     if path
         .file_name()
-        .is_none_or(|name| name != "marketplace.json")
+        .map_or(true, |name| name != "marketplace.json")
     {
         return path.to_path_buf();
     }
