@@ -162,6 +162,7 @@ import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
 } from '@/features/workspace-tabs/workspaceTabTransfer'
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
 import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
 import { normalizeAiModelId } from '@/telemetry/modelCatalog'
@@ -220,6 +221,10 @@ export function WorkbenchProvider({
 }: WorkbenchProviderProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  const workspaceTabs = useOptionalWorkspaceTabs()
+  const canNavigateWorkspaceTab = useStableEvent(
+    () => !workspaceTabId || !workspaceTabs || workspaceTabs.activeTabId === workspaceTabId
+  )
   // Preferences can change while a turn is running. Runtime transports only
   // need the account identity, so keep their service graph stable across those
   // updates and avoid an event-subscription gap during terminal delivery.
@@ -1661,6 +1666,7 @@ export function WorkbenchProvider({
     lifecycleStore,
     markRuntimeTasksArchived,
     refreshWorkLists,
+    canNavigate: canNavigateWorkspaceTab,
   })
 
   const listImPrivateSessions = useCallback(
