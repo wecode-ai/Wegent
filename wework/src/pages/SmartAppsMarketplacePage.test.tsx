@@ -171,6 +171,7 @@ describe('SmartAppsMarketplacePage', () => {
     ).not.toBeInTheDocument()
     expect(screen.queryByTestId('smart-apps-created-create')).not.toBeInTheDocument()
     expect(screen.queryByTestId('smart-apps-import-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-marketplace-item-7')).toHaveClass('min-h-52')
   })
 
   test('merges local installation and exposes a manual update', async () => {
@@ -254,6 +255,8 @@ describe('SmartAppsMarketplacePage', () => {
     expect(screen.getByTestId('smart-app-created-item-research-desk-state')).toHaveClass(
       'text-success'
     )
+    expect(screen.getByTestId('smart-app-created-item-research-desk')).toHaveClass('min-h-52')
+    expect(screen.getByTestId('smart-app-created-item-research-desk')).not.toHaveClass('min-h-64')
   })
 
   test('exports a created or imported installation package to Downloads', async () => {

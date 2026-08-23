@@ -5,7 +5,6 @@ import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   enqueueIssueWorkflowMutation,
   enqueueTaskTrackingMutation,
-  isDefaultWorkItemProject,
   nextTaskTrackingStatus,
   type TaskExecutionStatus,
   type CloudLoopItemAttachment,
@@ -1189,9 +1188,7 @@ export function createLocalDeliveryApi(
           const bindings = await api.listTaskBindings(item.id)
           if (bindings.length > 1) return item
         }
-        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus, {
-          completeOnSuccess: isDefaultWorkItemProject(context.project),
-        })
+        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus)
         return nextStatus
           ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
           : item

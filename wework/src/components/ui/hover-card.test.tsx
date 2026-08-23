@@ -16,11 +16,15 @@ describe('HoverCard', () => {
         interactive
         content={<div data-testid="hover-card-scroll-area">Progress details</div>}
       >
-        <button type="button">Current task</button>
+        <button type="button">
+          Current task
+          <span data-testid="hover-card-anchor-scroll-area">Live activity</span>
+        </button>
       </HoverCard>
     )
 
-    fireEvent.mouseEnter(screen.getByText('Current task'))
+    const trigger = screen.getByRole('button', { name: /Current task/ })
+    fireEvent.mouseEnter(trigger)
     await act(async () => vi.advanceTimersByTime(449))
     expect(screen.queryByTestId('hover-card')).not.toBeInTheDocument()
 
@@ -28,11 +32,17 @@ describe('HoverCard', () => {
     const card = screen.getByTestId('hover-card')
     expect(card).toHaveTextContent('Progress details')
 
-    fireEvent.mouseLeave(screen.getByText('Current task'))
+    fireEvent.scroll(screen.getByTestId('hover-card-anchor-scroll-area'))
+    expect(card).toBeInTheDocument()
+
+    fireEvent.mouseLeave(trigger)
     fireEvent.mouseEnter(card)
     fireEvent.scroll(screen.getByTestId('hover-card-scroll-area'))
     await act(async () => vi.advanceTimersByTime(120))
     expect(card).toBeInTheDocument()
+
+    fireEvent.scroll(document.body)
+    expect(screen.queryByTestId('hover-card')).not.toBeInTheDocument()
   })
 
   test('opens on focus and closes on Escape', () => {

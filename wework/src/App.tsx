@@ -303,6 +303,7 @@ export function WorkspaceTabSurface({
               onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
               consumePluginTrials={active && !iframe}
+              publishDebugSnapshots={active && !iframe}
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >

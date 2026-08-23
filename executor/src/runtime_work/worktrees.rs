@@ -98,11 +98,14 @@ pub(crate) struct WorktreeReconciliation {
     pub record: ManagedWorktree,
     pub interrupted_preparation: bool,
     pub interrupted_execution: bool,
+    pub interrupted_execution_task_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorktreeExecutionLease {
+    #[serde(default)]
+    pub task_id: String,
     pub execution_id: u64,
     pub started_at: i64,
     #[serde(default)]
@@ -345,13 +348,13 @@ impl WorktreeManager {
     pub fn begin_execution(
         &self,
         path: &Path,
-        worktree_id: &str,
+        task_id: &str,
         execution_id: u64,
     ) -> Result<(), String> {
         self.update_execution_lease(
             path,
-            worktree_id,
             Some(WorktreeExecutionLease {
+                task_id: task_id.to_owned(),
                 execution_id,
                 started_at: now_ms(),
                 owner_id: self.execution_owner_id.clone(),
@@ -364,18 +367,17 @@ impl WorktreeManager {
     pub fn finish_execution(
         &self,
         path: &Path,
-        worktree_id: &str,
+        task_id: &str,
         execution_id: u64,
     ) -> Result<bool, String> {
-        self.update_execution_lease(path, worktree_id, None, Some(execution_id))
+        self.update_execution_lease(path, None, Some((task_id, execution_id)))
     }
 
     fn update_execution_lease(
         &self,
         path: &Path,
-        worktree_id: &str,
         execution_lease: Option<WorktreeExecutionLease>,
-        expected_execution_id: Option<u64>,
+        expected_execution: Option<(&str, u64)>,
     ) -> Result<bool, String> {
         let _guard = self
             .mutation_lock
@@ -388,19 +390,18 @@ impl WorktreeManager {
             .get_mut(&key)
             .ok_or_else(|| "Managed worktree was not found".to_owned())?;
         validate_or_bind_record_device(record, &self.device_id)?;
-        if record.worktree_id != worktree_id {
-            return Err(format!(
-                "Managed worktree {} belongs to task {}, not {worktree_id}",
-                path.display(),
-                record.worktree_id
-            ));
-        }
-        if let Some(expected) = expected_execution_id {
+        if let Some((task_id, execution_id)) = expected_execution {
             match record.execution_lease.as_ref() {
-                Some(lease) if lease.execution_id == expected => {}
+                Some(lease) if lease.execution_id == execution_id && lease.task_id == task_id => {}
                 None if execution_lease.is_none() => return Ok(true),
                 _ => return Ok(false),
             }
+        } else if let Some(lease) = record.execution_lease.as_ref() {
+            return Err(format!(
+                "Managed worktree {} is already executing task {}",
+                path.display(),
+                lease.task_id
+            ));
         }
         record.execution_lease = execution_lease;
         self.save(&state)?;
@@ -1680,6 +1681,7 @@ fn reconcile_worktree_state(
                 record: record.clone(),
                 interrupted_preparation: true,
                 interrupted_execution: false,
+                interrupted_execution_task_id: None,
             });
             continue;
         }
@@ -1688,8 +1690,16 @@ fn reconcile_worktree_state(
                 .execution_lease
                 .as_ref()
                 .is_some_and(|lease| lease.owner_id != execution_owner_id);
+        let interrupted_execution_task_id = if interrupted_execution {
+            record
+                .execution_lease
+                .take()
+                .and_then(|lease| (!lease.task_id.is_empty()).then_some(lease.task_id))
+        } else {
+            None
+        };
         if interrupted_execution {
-            record.execution_lease = None;
+            debug_assert!(record.execution_lease.is_none());
         }
         if record.state == STATE_ACTIVE && path.exists() {
             if let Err(error) = validate_record_worktree_identity(record, &path) {
@@ -1710,6 +1720,7 @@ fn reconcile_worktree_state(
                 record: record.clone(),
                 interrupted_preparation: false,
                 interrupted_execution: true,
+                interrupted_execution_task_id,
             });
         }
     }

@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils'
 import type { ProjectExecutionMode, ProjectWithTasks } from '@/types/api'
 import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import { getProjectWorktreeUnavailableMessageKey } from './project-work-bar-utils'
-import { useAnchoredPortalMenu } from './useAnchoredPortalMenu'
+import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
 import { useOutsideClick } from './useOutsideClick'
 
 type WorkspaceSubmenu = 'project' | 'launchMode' | 'branch'

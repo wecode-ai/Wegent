@@ -16,6 +16,20 @@ struct LocalPluginInstallTarget {
     codex_home: PathBuf,
 }
 
+#[derive(Debug)]
+struct LocalPluginUninstallTarget {
+    plugin_key: String,
+    cache_root: PathBuf,
+    codex_home: PathBuf,
+}
+
+struct LocalPluginRequestContext {
+    plugin_name: String,
+    marketplace: Value,
+    marketplace_root: PathBuf,
+    codex_home: PathBuf,
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn install_local_plugin(&self, payload: Value) -> Result<Value, AppIpcError> {
         let target = resolve_local_plugin_install_target(&payload)
@@ -48,7 +62,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
-        let target = resolve_local_plugin_install_target(&payload)
+        let target = resolve_local_plugin_uninstall_target(&payload)
             .map_err(|error| AppIpcError::new("invalid_local_plugin_uninstall", error))?;
         let plugin_key = target.plugin_key.clone();
         let started_at = Instant::now();
@@ -78,30 +92,12 @@ impl RuntimeWorkRpcHandler {
 fn resolve_local_plugin_install_target(
     payload: &Value,
 ) -> Result<LocalPluginInstallTarget, String> {
-    let marketplace_path = string_field(payload, "marketplacePath")
-        .ok_or_else(|| "marketplacePath is required".to_owned())?;
-    let plugin_name =
-        string_field(payload, "pluginName").ok_or_else(|| "pluginName is required".to_owned())?;
-    validate_path_segment(&plugin_name, "pluginName")?;
+    let context = resolve_local_plugin_request_context(payload)?;
+    let plugin_name = context.plugin_name;
+    let marketplace = context.marketplace;
+    let marketplace_root = context.marketplace_root;
+    let codex_home = context.codex_home;
 
-    let marketplace_path = PathBuf::from(marketplace_path)
-        .canonicalize()
-        .map_err(|error| format!("failed to resolve local marketplace manifest: {error}"))?;
-    if marketplace_path.file_name().and_then(|name| name.to_str()) != Some("marketplace.json") {
-        return Err("marketplacePath must point to marketplace.json".to_owned());
-    }
-    let marketplace = read_json_file(&marketplace_path, "local marketplace manifest")?;
-    if marketplace.get("name").and_then(Value::as_str) != Some(WEWORK_PERSONAL_MARKETPLACE) {
-        return Err("only the Wework personal marketplace supports local-first install".to_owned());
-    }
-
-    let marketplace_root = marketplace_path
-        .parent()
-        .and_then(Path::parent)
-        .and_then(Path::parent)
-        .ok_or_else(|| "personal marketplace manifest path is invalid".to_owned())?
-        .canonicalize()
-        .map_err(|error| format!("failed to resolve personal marketplace root: {error}"))?;
     let source_path = marketplace
         .get("plugins")
         .and_then(Value::as_array)
@@ -141,7 +137,6 @@ fn resolve_local_plugin_install_target(
         .ok_or_else(|| "plugin manifest version is required".to_owned())?;
     validate_path_segment(plugin_version, "plugin version")?;
 
-    let codex_home = crate::agents::wework_codex_home();
     let cache_root = codex_home
         .join("plugins/cache")
         .join(WEWORK_PERSONAL_MARKETPLACE)
@@ -151,6 +146,59 @@ fn resolve_local_plugin_install_target(
         plugin_key: format!("{plugin_name}@{WEWORK_PERSONAL_MARKETPLACE}"),
         source_root,
         cache_root,
+        codex_home,
+    })
+}
+
+fn resolve_local_plugin_uninstall_target(
+    payload: &Value,
+) -> Result<LocalPluginUninstallTarget, String> {
+    let context = resolve_local_plugin_request_context(payload)?;
+    let plugin_key = format!("{}@{WEWORK_PERSONAL_MARKETPLACE}", context.plugin_name);
+    let cache_root = context
+        .codex_home
+        .join("plugins/cache")
+        .join(WEWORK_PERSONAL_MARKETPLACE)
+        .join(&context.plugin_name);
+    Ok(LocalPluginUninstallTarget {
+        plugin_key,
+        cache_root,
+        codex_home: context.codex_home,
+    })
+}
+
+fn resolve_local_plugin_request_context(
+    payload: &Value,
+) -> Result<LocalPluginRequestContext, String> {
+    let marketplace_path = string_field(payload, "marketplacePath")
+        .ok_or_else(|| "marketplacePath is required".to_owned())?;
+    let plugin_name =
+        string_field(payload, "pluginName").ok_or_else(|| "pluginName is required".to_owned())?;
+    validate_path_segment(&plugin_name, "pluginName")?;
+
+    let marketplace_path = PathBuf::from(marketplace_path)
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve local marketplace manifest: {error}"))?;
+    if marketplace_path.file_name().and_then(|name| name.to_str()) != Some("marketplace.json") {
+        return Err("marketplacePath must point to marketplace.json".to_owned());
+    }
+    let marketplace = read_json_file(&marketplace_path, "local marketplace manifest")?;
+    if marketplace.get("name").and_then(Value::as_str) != Some(WEWORK_PERSONAL_MARKETPLACE) {
+        return Err("only the Wework personal marketplace supports local-first install".to_owned());
+    }
+
+    let marketplace_root = marketplace_path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .ok_or_else(|| "personal marketplace manifest path is invalid".to_owned())?
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve personal marketplace root: {error}"))?;
+    let codex_home = crate::agents::wework_codex_home();
+    Ok(LocalPluginRequestContext {
+        plugin_name,
+        marketplace,
+        marketplace_root,
         codex_home,
     })
 }
@@ -184,14 +232,10 @@ fn install_local_plugin_files(target: &LocalPluginInstallTarget) -> Result<(), S
     Ok(())
 }
 
-fn uninstall_local_plugin_files(target: &LocalPluginInstallTarget) -> Result<(), String> {
+fn uninstall_local_plugin_files(target: &LocalPluginUninstallTarget) -> Result<(), String> {
     remove_plugin_config(&target.codex_home, &target.plugin_key)?;
-    let plugin_cache_root = target
-        .cache_root
-        .parent()
-        .ok_or_else(|| "local plugin cache path is invalid".to_owned())?;
-    if plugin_cache_root.is_dir() {
-        fs::remove_dir_all(plugin_cache_root)
+    if target.cache_root.is_dir() {
+        fs::remove_dir_all(&target.cache_root)
             .map_err(|error| format!("failed to remove local plugin cache: {error}"))?;
     }
     Ok(())
@@ -506,11 +550,56 @@ mod tests {
         install_local_plugin_files(&target).unwrap();
         assert!(local_plugin_install_is_committed(&target).unwrap());
 
-        uninstall_local_plugin_files(&target).unwrap();
+        let uninstall_target = LocalPluginUninstallTarget {
+            plugin_key: target.plugin_key.clone(),
+            cache_root: cache.parent().unwrap().to_path_buf(),
+            codex_home: codex_home.clone(),
+        };
+        uninstall_local_plugin_files(&uninstall_target).unwrap();
         assert!(!cache.parent().unwrap().exists());
         assert!(!plugin_config_enabled(&codex_home, &target.plugin_key).unwrap());
         let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
         assert!(!config.contains(&target.plugin_key));
+    }
+
+    #[test]
+    fn resolves_orphaned_personal_plugin_without_a_marketplace_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let marketplace_root = temp.path().join("wework-personal");
+        let manifest_path = marketplace_root.join(".agents/plugins/marketplace.json");
+        fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+        fs::write(&manifest_path, r#"{"name":"wework-personal","plugins":[]}"#).unwrap();
+
+        let target = resolve_local_plugin_uninstall_target(&json!({
+            "marketplacePath": manifest_path,
+            "pluginName": "orphaned-plugin",
+        }))
+        .unwrap();
+
+        assert_eq!(target.plugin_key, "orphaned-plugin@wework-personal");
+        assert!(target
+            .cache_root
+            .ends_with("plugins/cache/wework-personal/orphaned-plugin"));
+    }
+
+    #[test]
+    fn uninstalls_orphaned_personal_plugin_cache_and_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex_home = temp.path().join("codex");
+        let cache_root = codex_home.join("plugins/cache/wework-personal/orphaned-plugin");
+        fs::create_dir_all(cache_root.join("1.0.0")).unwrap();
+        fs::write(cache_root.join("1.0.0/plugin.json"), "{}").unwrap();
+        set_plugin_config_enabled(&codex_home, "orphaned-plugin@wework-personal", true).unwrap();
+        let target = LocalPluginUninstallTarget {
+            plugin_key: "orphaned-plugin@wework-personal".to_owned(),
+            cache_root: cache_root.clone(),
+            codex_home: codex_home.clone(),
+        };
+
+        uninstall_local_plugin_files(&target).unwrap();
+
+        assert!(!cache_root.exists());
+        assert!(!plugin_config_enabled(&codex_home, &target.plugin_key).unwrap());
     }
 
     #[test]

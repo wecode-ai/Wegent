@@ -7,6 +7,7 @@ import type { Site, SiteAppType, SiteListItem, SitesApi } from '@/api/sites'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { replaceTo } from '@/lib/navigation'
 import { track } from '@/telemetry/client'
 import {
   DEFAULT_APPLICATION_TYPE,
@@ -291,11 +292,11 @@ export function SitesWorkspace({
     setActiveAppType(appType)
     setQuery('')
     setDebouncedQuery('')
-    const url = new URL(window.location.href)
-    url.searchParams.set('app_type', appType)
-    url.searchParams.delete('view')
-    url.searchParams.delete('action')
-    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+    const params = new URLSearchParams(window.location.search)
+    params.set('app_type', appType)
+    params.delete('view')
+    params.delete('action')
+    replaceTo(`/sites?${params.toString()}`)
   }, [])
 
   useEffect(() => {

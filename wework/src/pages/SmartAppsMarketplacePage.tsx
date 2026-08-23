@@ -920,7 +920,6 @@ export function SmartAppsMarketplacePage({
                 return (
                   <SmartAppCard
                     key={card.key}
-                    variant="owned"
                     testId={
                       card.category === 'created' && installation
                         ? `smart-app-created-item-${installation.id}`
@@ -1290,7 +1289,6 @@ function SmartAppCard({
   tags,
   testId,
   title,
-  variant = 'marketplace',
   version,
   visibility,
 }: {
@@ -1305,7 +1303,6 @@ function SmartAppCard({
   tags: string[]
   testId?: string
   title: string
-  variant?: 'marketplace' | 'owned'
   version: string
   visibility: {
     kind: 'private' | 'public' | 'restricted'
@@ -1370,9 +1367,7 @@ function SmartAppCard({
   return (
     <article
       data-testid={testId}
-      className={`flex flex-col rounded-2xl border border-border/45 bg-background p-5 transition-colors hover:border-border/70 hover:bg-surface/20 ${
-        variant === 'owned' ? 'min-h-64' : 'min-h-52'
-      }`}
+      className="flex min-h-52 flex-col rounded-2xl border border-border/45 bg-background p-5 transition-colors hover:border-border/70 hover:bg-surface/20"
     >
       {onDetails ? (
         <button

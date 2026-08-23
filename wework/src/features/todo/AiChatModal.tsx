@@ -15,11 +15,11 @@ import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSe
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { ProjectWithTasks, RuntimeSendRequest, RuntimeTaskAddress } from '@/types/api'
+import type { ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
-import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
 import { useProjectRuntimeTaskComposer } from './useProjectRuntimeTaskComposer'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
+import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
 
 interface AiChatModalProps {
   project: CloudProject
@@ -36,7 +36,6 @@ interface AiChatModalProps {
   inheritFromTask?: RuntimeTaskAddress | null
   taskTitle?: string | null
   initialTaskInput?: string
-  autoSubmitInitialTaskInput?: boolean
   workflowNodeId?: string
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onAddressChange?: (address: RuntimeTaskAddress) => void
@@ -76,7 +75,6 @@ export function AiChatModal({
   inheritFromTask = null,
   taskTitle,
   initialTaskInput = '',
-  autoSubmitInitialTaskInput = false,
   workflowNodeId,
   onOpenRuntimeTask,
   onAddressChange,
@@ -116,72 +114,8 @@ export function AiChatModal({
     },
     []
   )
-  const runtimeContext = useMemo<
-    Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
-  >(
-    () => ({
-      cloudProjectId: String(project.id),
-      ...(task
-        ? {
-            origin: {
-              type: 'board_task' as const,
-              cloudProjectId: String(project.id),
-              loopItemId: String(task.id),
-            },
-          }
-        : {}),
-      additionalContext: {
-        ...projectSpaceChatRuntimeContext(project, task),
-        ...(task
-          ? {
-              issueEnvironment: {
-                kind: 'application' as const,
-                value: [
-                  '<issue_environment>',
-                  JSON.stringify({
-                    project: {
-                      id: String(project.id),
-                      name: project.name,
-                      description: project.description ?? '',
-                    },
-                    issue: {
-                      id: String(task.id),
-                      title: task.title,
-                      description: task.description ?? '',
-                      status: task.status,
-                      priority: task.priority,
-                      tags: task.tags ?? [],
-                      assigneeUserId: task.assignee_user_id ?? null,
-                      assigneeAgentId: task.assignee_agent_id || null,
-                      dueDate: task.due_at ?? null,
-                    },
-                    orchestration: task.workflow
-                      ? {
-                          advancementPolicy: task.workflow.advancement_policy ?? 'manual',
-                          stageMode:
-                            task.workflow.stage_mode ??
-                            (task.workflow.nodes.length ? 'dag' : 'none'),
-                          currentStageId: workflowNodeId ?? null,
-                          stages: task.workflow.nodes.map(node => ({
-                            id: node.id,
-                            name: node.name,
-                            prompt: node.prompt ?? '',
-                            status: node.status,
-                            dependsOn: node.depends_on,
-                            dependencyContext: node.dependency_context ?? {},
-                            required: node.required,
-                          })),
-                        }
-                      : null,
-                  }),
-                  '</issue_environment>',
-                  'Treat this Issue as immutable execution context. The user message is the concrete task instruction.',
-                ].join('\n'),
-              },
-            }
-          : {}),
-      },
-    }),
+  const runtimeContext = useMemo(
+    () => buildWorkItemRuntimeContext(project, task, workflowNodeId),
     [project, task, workflowNodeId]
   )
 
@@ -236,7 +170,6 @@ export function AiChatModal({
         instanceId={instanceId}
         testId={testId}
         initialInput={initialTaskInput}
-        autoSubmitInitialInput={autoSubmitInitialTaskInput}
         initialAddress={options.startFresh ? null : currentAddress}
         createTask={createConversation}
         onAddressChange={rememberAddress}

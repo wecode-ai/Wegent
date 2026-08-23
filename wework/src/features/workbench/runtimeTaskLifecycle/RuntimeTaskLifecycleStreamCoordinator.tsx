@@ -8,13 +8,9 @@ import {
   reconcileRuntimeConversationSnapshot,
   runtimeConversationKey,
 } from '../runtimeConversationCache'
-import {
-  runtimeMessagesToWorkbenchMessages,
-  runtimeTranscriptTurnsToConversationTurns,
-} from '../runtimePaneMessages'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
-import type { RuntimeTaskAddress, RuntimeTranscriptResponse } from '@/types/api'
-import type { RuntimePaneTranscript } from '@/types/workbench'
+import { projectRuntimePaneTranscript } from './projection'
+import type { RuntimeTaskAddress } from '@/types/api'
 
 type ReconciliationReason = 'event_lagged' | 'runtime_replaced'
 
@@ -58,10 +54,8 @@ export function RuntimeTaskLifecycleStreamCoordinator({
                   refresh: true,
                 })
                 if (disposed) break
-                const transcript = runtimePaneTranscript(transcriptResponse)
-                const turns = runtimeTranscriptTurnsToConversationTurns(
-                  transcriptResponse.turns ?? []
-                )
+                const transcript = projectRuntimePaneTranscript(transcriptResponse)
+                const turns = transcript.turns
                 reconcileRuntimeConversationSnapshot(address, turns)
                 if (reason === 'runtime_replaced') {
                   reconcileRuntimeConversationQueueAfterTransportReplacement(address, turns)
@@ -147,22 +141,6 @@ function runtimeRecoveryAddresses(
     }
   }
   return [...addresses.values()]
-}
-
-function runtimePaneTranscript(transcript: RuntimeTranscriptResponse): RuntimePaneTranscript {
-  return {
-    messages: runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
-    turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
-    contextUsage: transcript.contextUsage ?? null,
-    turnNavigation: transcript.turnNavigation ?? [],
-    fullContent: transcript.fullContent === true,
-    rangeStart: transcript.rangeStart ?? null,
-    rangeEnd: transcript.rangeEnd ?? null,
-    hasMoreBefore: Boolean(transcript.hasMoreBefore),
-    beforeCursor: transcript.beforeCursor ?? null,
-    hasMoreAfter: Boolean(transcript.hasMoreAfter),
-    afterCursor: transcript.afterCursor ?? null,
-  }
 }
 
 function isCancelledTerminalEvent(payload: { error: string; type?: string }): boolean {

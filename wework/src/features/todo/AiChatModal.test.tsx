@@ -231,27 +231,6 @@ describe('AiChatModal', () => {
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-auto-submit', 'no')
   })
 
-  it('submits the original title immediately when a work item moves to in progress', () => {
-    render(
-      <AiChatModal
-        project={project}
-        localProjects={localProjects}
-        task={task}
-        initialTaskInput="Implement cloud MCP"
-        autoSubmitInitialTaskInput
-        embedded
-        open
-        onClose={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
-      'data-initial-input',
-      'Implement cloud MCP'
-    )
-    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-auto-submit', 'yes')
-  })
-
   it('always creates private AI conversations with the Codex runtime', async () => {
     render(
       <AiChatModal
