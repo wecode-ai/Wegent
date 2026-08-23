@@ -167,7 +167,12 @@ export function HoverCard({
       if (event.key === 'Escape') close()
     }
     const handleScroll = (event: Event) => {
-      if (event.target instanceof Node && cardRef.current?.contains(event.target)) return
+      if (
+        event.target instanceof Node &&
+        (anchorRef.current?.contains(event.target) || cardRef.current?.contains(event.target))
+      ) {
+        return
+      }
       close()
     }
 

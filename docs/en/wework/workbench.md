@@ -26,6 +26,8 @@ Every runtime task has at least one system-managed **My tasks** issue. A user ma
 
 Lanes follow actual execution state: a task that is explicitly queued but has not started appears in **To start**, an active task appears in **In progress**, a successful task appears in **Completed**, and a stopped, cancelled, or failed task awaiting human action appears in **To confirm**. Confirmation cards show the linked task and the first three lines of the final AI response so users can decide whether more work is needed. Archived runtime tasks are excluded from the completed lane. The completed lane also provides batch archive, with an additional confirmation when a workspace still contains uncommitted changes.
 
+Hover over a board card's linked-task area to preview the current task progress. The preview remains visible while the pointer stays over either the trigger area or the preview itself, including when live task activity scrolls internally to the latest content. It closes after the pointer leaves both areas, the surrounding board scrolls, or the user presses `Esc`.
+
 The work-item control above the composer shows the board name and work-item identifier. Its menu exposes the next step, linked-task count, and participants, and can open details in the unified right workspace. **Open in work-item board** focuses the linked work item while preserving the original Task tab. If a board tab for the same project is already open, Wework reuses it instead of loading a duplicate board; otherwise, it creates a board tab.
 
 Local projects do not each create a separate board. Their tasks share **My tasks** and carry a project field, so project views can filter the same work-item data.
