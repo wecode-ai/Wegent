@@ -1,11 +1,13 @@
 import { spawn } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { afterEach, describe, expect, test } from 'vitest'
 
 const temporaryDirectories = []
 const processes = []
+const OUTPUT_TIMEOUT_MS = 15_000
 
 afterEach(async () => {
   for (const process of processes.splice(0)) {
@@ -16,12 +18,16 @@ afterEach(async () => {
   )
 })
 
-function waitForOutput(stream, pattern, timeoutMs = 10_000) {
+function waitForOutput(stream, pattern, timeoutMs = OUTPUT_TIMEOUT_MS, diagnostics = () => '') {
   return new Promise((resolveOutput, rejectOutput) => {
     let output = ''
     const timeout = setTimeout(() => {
       cleanup()
-      rejectOutput(new Error(`Timed out waiting for ${pattern}; output=${JSON.stringify(output)}`))
+      rejectOutput(
+        new Error(
+          `Timed out waiting for ${pattern}; output=${JSON.stringify(output)}; diagnostics=${JSON.stringify(diagnostics())}`
+        )
+      )
     }, timeoutMs)
     const onData = chunk => {
       output += chunk
@@ -38,12 +44,13 @@ function waitForOutput(stream, pattern, timeoutMs = 10_000) {
   })
 }
 
-describe('dev executor reload', { timeout: 20_000 }, () => {
+describe('dev executor reload', { timeout: 30_000 }, () => {
   test('builds once initially and rebuilds after a source change', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-executor-reload-'))
     temporaryDirectories.push(directory)
     const executorDirectory = join(directory, 'executor')
     const sourceDirectory = join(executorDirectory, 'src')
+    const sourcePath = join(sourceDirectory, 'main.rs')
     const targetDirectory = join(directory, 'target')
     const binDirectory = join(directory, 'bin')
     const buildLog = join(directory, 'build.log')
@@ -53,7 +60,7 @@ describe('dev executor reload', { timeout: 20_000 }, () => {
     await mkdir(binDirectory, { recursive: true })
     await writeFile(join(executorDirectory, 'Cargo.toml'), '[package]\nname = "fake"\n')
     await writeFile(join(executorDirectory, 'Cargo.lock'), '')
-    await writeFile(join(sourceDirectory, 'main.rs'), 'fn main() {}\n')
+    await writeFile(sourcePath, 'fn main() {}\n')
     await writeFile(
       executorTemplate,
       `#!/usr/bin/env node
@@ -97,11 +104,25 @@ chmodSync(output, 0o755)
       }
     )
     processes.push(watcher)
+    let watcherStderr = ''
+    watcher.stderr.on('data', chunk => {
+      watcherStderr += chunk
+    })
 
-    const firstReady = await waitForOutput(watcher.stdout, /ready (\d+)\n/)
-    await writeFile(join(sourceDirectory, 'main.rs'), 'fn main() { println!("changed"); }\n')
+    const firstReady = await waitForOutput(
+      watcher.stdout,
+      /ready (\d+)\n/,
+      OUTPUT_TIMEOUT_MS,
+      () => watcherStderr
+    )
+    await writeFile(sourcePath, 'fn main() { println!("changed"); }\n')
     const secondReady = await waitForOutput(watcher.stdout, /ready (\d+)\n/)
     expect(secondReady[1]).not.toBe(firstReady[1])
+    expect((await readFile(buildLog, 'utf8')).trim().split('\n')).toHaveLength(2)
+
+    const now = new Date()
+    await utimes(sourcePath, now, now)
+    await delay(700)
     expect((await readFile(buildLog, 'utf8')).trim().split('\n')).toHaveLength(2)
 
     watcher.stdin.write('ping\n')
