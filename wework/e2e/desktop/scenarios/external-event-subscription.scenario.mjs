@@ -148,7 +148,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           item =>
             item.loopItemId === loopItemId &&
             item.executorType === 'project_robot' &&
-            item.automationRunId === automationRunId &&
+            (automationRunId === null || item.automationRunId === automationRunId) &&
             (floorId === null || item.id > floorId) &&
             item.status === 'completed'
         ),
@@ -159,7 +159,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         item =>
           item.loopItemId === loopItemId &&
           item.executorType === 'project_robot' &&
-          item.automationRunId === automationRunId &&
+          (automationRunId === null || item.automationRunId === automationRunId) &&
           (floorId === null || item.id > floorId) &&
           item.status === 'completed'
       )
@@ -583,12 +583,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       )
       assert.equal(pipelineReceipt.status, 'created')
 
-      rerunExecution = await waitForCompletedExecution(
-        projectId,
-        issue.id,
-        String(stageRun.id),
-        firstExecution.id
-      )
+      rerunExecution = await waitForCompletedExecution(projectId, issue.id, null, firstExecution.id)
       assert.ok(
         rerunExecution.id > firstExecution.id,
         'Rerun execution did not follow the first run'
