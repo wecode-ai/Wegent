@@ -790,12 +790,13 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
     deviceName: generatedDeviceName,
     authToken: generatedAuthToken,
   })
+  await control.command('waitFor', `[data-testid="connection-device-${generatedDeviceId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await waitForSnapshot(
     control,
-    snapshot =>
-      !snapshot.testIds.includes('add-cloud-device-dialog') &&
-      snapshot.testIds.includes(`connection-device-${generatedDeviceId}`),
-    'The generated remote device did not close the dialog and refresh the device list',
+    snapshot => !snapshot.testIds.includes('add-cloud-device-dialog'),
+    'The generated remote device did not close the dialog',
     DEFAULT_STEP_TIMEOUT_MS,
     'body',
     true

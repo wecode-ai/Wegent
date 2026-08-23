@@ -930,5 +930,28 @@ describe('runtimeConversationCache', () => {
       scrollSnapshotKeys: [],
       virtualMeasurementKeys: [],
     })
+
+    cacheConversationScrollSnapshot('device-1:task-1', {
+      distanceFromBottomPx: 120,
+      pinnedToBottom: false,
+    })
+    cacheConversationVirtualMeasurements('device-1:task-1', [
+      { index: 0, key: 'user-1', start: 0, end: 120, size: 120, lane: 0 },
+    ])
+
+    expect(getConversationScrollSnapshot('device-1:task-1')).toBeUndefined()
+    expect(getConversationVirtualMeasurements('device-1:task-1')).toBeUndefined()
+
+    beginRuntimeConversationHydration(address)
+    cacheConversationScrollSnapshot('device-1:task-1', {
+      distanceFromBottomPx: 120,
+      pinnedToBottom: false,
+    })
+    cacheConversationVirtualMeasurements('device-1:task-1', [
+      { index: 0, key: 'user-1', start: 0, end: 120, size: 120, lane: 0 },
+    ])
+
+    expect(getConversationScrollSnapshot('device-1:task-1')).toBeDefined()
+    expect(getConversationVirtualMeasurements('device-1:task-1')).toBeDefined()
   })
 })
