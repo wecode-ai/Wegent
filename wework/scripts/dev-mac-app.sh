@@ -470,7 +470,7 @@ fi
 print_startup_configuration
 if [ "${VITE_WEWORK_E2E:-}" = "true" ] && [ "$WEWORK_RELEASE_UI" != "true" ]; then
   echo "Using shared native development binaries."
-  export WEWORK_DEV_SERVER_URL="http://localhost:$WEWORK_PORT"
+  export WEWORK_DEV_SERVER_URL="http://127.0.0.1:$WEWORK_PORT"
   CACHE_RESULT_DIR="$(mktemp -d -t wework-dev-cache-results)"
   node scripts/dev-binary-cache.mjs executor >"$CACHE_RESULT_DIR/executor" &
   EXECUTOR_CACHE_PID="$!"

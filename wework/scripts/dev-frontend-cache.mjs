@@ -2,21 +2,12 @@
 
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import {
-  access,
-  mkdir,
-  open,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  stat,
-  utimes,
-} from 'node:fs/promises'
+import { access, mkdir, open, readFile, readdir, rename, rm, stat, utimes } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { updateHashWithFileState } from './lib/dev-cache-fingerprint.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -80,7 +71,16 @@ async function gitSourceFiles() {
   const output = await new Promise((resolvePromise, reject) => {
     const child = spawn(
       'git',
-      ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', ...sourceRoots, ...sourceFiles],
+      [
+        'ls-files',
+        '-z',
+        '--cached',
+        '--others',
+        '--exclude-standard',
+        '--',
+        ...sourceRoots,
+        ...sourceFiles,
+      ],
       {
         cwd: projectDir,
         stdio: ['ignore', 'pipe', 'inherit'],
@@ -117,7 +117,7 @@ async function frontendFingerprint() {
   }
   for (const relative of await gitSourceFiles()) {
     hash.update(`\0file:${relative}\0`)
-    hash.update(await readFile(join(projectDir, relative)))
+    await updateHashWithFileState(hash, join(projectDir, relative))
   }
   return hash.digest('hex')
 }
@@ -171,8 +171,7 @@ async function buildFrontend(destination) {
         cwd: weworkDir,
         env: {
           ...process.env,
-          VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: '',
-          VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN: '',
+          ...Object.fromEntries([...runtimeEnvironmentKeys].map(key => [key, ''])),
         },
         stdio: ['ignore', process.stderr, process.stderr],
       }

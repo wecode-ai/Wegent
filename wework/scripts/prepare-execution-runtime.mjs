@@ -72,7 +72,8 @@ async function materialize(assetPath, fingerprint) {
   const identityPath = path.join(materializedRoot, 'runtime.json')
   try {
     const identity = JSON.parse(await readFile(identityPath, 'utf8'))
-    if (identity.fingerprint === fingerprint) {
+    const nodePath = path.join(materializedRoot, 'bin', nodeBinaryName)
+    if (identity.fingerprint === fingerprint && (await stat(nodePath)).isFile()) {
       console.log(`Node runtime root: ${materializedRoot}`)
       return
     }
@@ -95,9 +96,7 @@ async function materialize(assetPath, fingerprint) {
 async function reuseMaterializedRuntime(fingerprint) {
   if (!materializeRequested) return false
   try {
-    const identity = JSON.parse(
-      await readFile(path.join(materializedRoot, 'runtime.json'), 'utf8')
-    )
+    const identity = JSON.parse(await readFile(path.join(materializedRoot, 'runtime.json'), 'utf8'))
     const nodePath = path.join(materializedRoot, 'bin', nodeBinaryName)
     if (identity.fingerprint === fingerprint && (await stat(nodePath)).isFile()) {
       console.log(`Node runtime root: ${materializedRoot}`)

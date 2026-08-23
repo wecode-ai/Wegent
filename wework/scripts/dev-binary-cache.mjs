@@ -20,6 +20,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { updateHashWithFileState } from './lib/dev-cache-fingerprint.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -96,7 +97,7 @@ export async function binaryFingerprint(componentName) {
     hash.update('\0')
     hash.update(relative)
     hash.update('\0')
-    hash.update(await readFile(join(projectDir, projectRelative)))
+    await updateHashWithFileState(hash, join(projectDir, projectRelative))
   }
   return hash.digest('hex')
 }

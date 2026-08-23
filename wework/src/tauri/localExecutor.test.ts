@@ -10,6 +10,7 @@ import {
   ensureLocalExecutorStarted,
   getLocalExecutorStatus,
   getInitializedBundledPluginMarketplace,
+  type LocalExecutorStatus,
   requestLocalExecutor,
   resetLocalExecutorStateForTests,
   subscribeLocalExecutorEvents,
@@ -133,6 +134,41 @@ describe('localExecutor', () => {
 
     expect(second).toEqual(first)
     expect(invokeMock).toHaveBeenCalledTimes(2)
+  })
+
+  test('starts a new barrier when the proxy changes during startup', async () => {
+    const statusResolvers: Array<(status: LocalExecutorStatus) => void> = []
+    invokeMock.mockImplementation(command => {
+      if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
+        return Promise.resolve({
+          id: 'wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          pluginCount: 0,
+        })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.ensure) {
+        return new Promise(resolve => statusResolvers.push(resolve))
+      }
+      return Promise.reject(new Error(`Unexpected command: ${String(command)}`))
+    })
+
+    saveLocalProxyUrl('http://127.0.0.1:7890')
+    const first = ensureLocalExecutorStarted()
+    await vi.waitFor(() => expect(statusResolvers).toHaveLength(1))
+    saveLocalProxyUrl('http://127.0.0.1:7891')
+    const second = ensureLocalExecutorStarted()
+    await vi.waitFor(() => expect(statusResolvers).toHaveLength(2))
+
+    statusResolvers[0]({ running: true, ready: true, runtimeInstanceId: 'runtime-a' })
+    statusResolvers[1]({ running: true, ready: true, runtimeInstanceId: 'runtime-b' })
+    await expect(first).resolves.toMatchObject({ runtimeInstanceId: 'runtime-a' })
+    await expect(second).resolves.toMatchObject({ runtimeInstanceId: 'runtime-b' })
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === LOCAL_EXECUTOR_COMMANDS.ensure)
+    ).toEqual([
+      [LOCAL_EXECUTOR_COMMANDS.ensure, { proxyUrl: 'http://127.0.0.1:7890' }],
+      [LOCAL_EXECUTOR_COMMANDS.ensure, { proxyUrl: 'http://127.0.0.1:7891' }],
+    ])
   })
 
   test('keeps an initialized bundled marketplace without adding it again', async () => {

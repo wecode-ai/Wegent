@@ -1869,7 +1869,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
     console.warn('[Wework] Failed to focus the desktop E2E window:', error)
   })
   let commandRequest = pollForCommand()
-  await waitForVisibleWorkbench()
+  await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
@@ -1918,38 +1918,6 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
       commandRequest = pollForCommand()
     }
   }
-}
-
-async function waitForVisibleWorkbench(): Promise<void> {
-  const deadline = performance.now() + 60_000
-  while (performance.now() < deadline) {
-    const shell = document.querySelector<HTMLElement>('[data-testid="app-shell"]')
-    const content = document.querySelector<HTMLElement>('[data-testid="desktop-workbench-content"]')
-    const startupScreen = document.querySelector<HTMLElement>(
-      '[data-testid="local-runtime-initializer"]'
-    )
-    const workbenchLoading = document.querySelector<HTMLElement>(
-      '[data-testid="desktop-workbench-loading"]'
-    )
-    const startupError = document.querySelector<HTMLElement>(
-      '[data-testid="workbench-startup-error"]'
-    )
-    if (startupError && desktopControlElementVisible(startupError)) {
-      throw new Error('Wework displayed its startup error screen')
-    }
-    if (
-      shell &&
-      content &&
-      desktopControlElementVisible(shell) &&
-      desktopControlElementVisible(content) &&
-      (!startupScreen || !desktopControlElementVisible(startupScreen)) &&
-      (!workbenchLoading || !desktopControlElementVisible(workbenchLoading))
-    ) {
-      return
-    }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
-  }
-  throw new Error('Timed out waiting for the visible Wework workbench')
 }
 
 function installDesktopControlClient() {

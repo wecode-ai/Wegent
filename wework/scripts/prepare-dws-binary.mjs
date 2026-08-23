@@ -74,9 +74,14 @@ async function pathExists(path) {
 
 async function sharedCachePath() {
   const packageManifest = JSON.parse(await readFile(packageJson, 'utf8'))
-  const root =
+  const root = resolve(
     process.env.WEWORK_RUNTIME_CACHE_DIR?.trim() ||
-    join(process.env.XDG_CACHE_HOME?.trim() || join(homedir(), '.cache'), 'wegent', 'wework-runtime')
+      join(
+        process.env.XDG_CACHE_HOME?.trim() || join(homedir(), '.cache'),
+        'wegent',
+        'wework-runtime'
+      )
+  )
   return join(root, 'dws', `${packageManifest.version}-${target}`, executable)
 }
 

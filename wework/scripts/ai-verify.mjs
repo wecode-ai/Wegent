@@ -87,14 +87,24 @@ function json(response, status, value) {
   response.end(`${JSON.stringify(value)}\n`)
 }
 
-function readBody(request) {
+function readBody(request, maxBytes = 1024 * 1024) {
   return new Promise((resolvePromise, reject) => {
     let body = ''
+    let bytes = 0
+    let rejected = false
     request.setEncoding('utf8')
     request.on('data', chunk => {
+      if (rejected) return
+      bytes += Buffer.byteLength(chunk)
+      if (bytes > maxBytes) {
+        rejected = true
+        reject(new Error(`Request body exceeds ${maxBytes} bytes`))
+        return
+      }
       body += chunk
     })
     request.once('end', () => {
+      if (rejected) return
       try {
         resolvePromise(body ? JSON.parse(body) : {})
       } catch (error) {
@@ -191,10 +201,28 @@ export function startupFailureMessage(status, timeoutMs) {
       error: status.appExitError,
     })} before its WebView connected to AI verification`
   }
+  if (status?.ready) {
+    return `Timed out after ${timeoutMs}ms while the Wework WebView was connected but its main workbench was not fully visible`
+  }
   const phase = status?.pid
     ? 'the Tauri launcher was still waiting for its WebView'
     : 'the Tauri launcher had not started'
   return `Timed out after ${timeoutMs}ms while ${phase}`
+}
+
+export function visibleWorkbenchProbe(status) {
+  if (!status?.ready) return null
+  return (
+    status.probes?.find(
+      probe =>
+        probe?.windowLabel === 'main' &&
+        probe.shellVisible === true &&
+        probe.contentVisible === true &&
+        probe.loadingVisible !== true &&
+        probe.startupVisible !== true &&
+        probe.startupError !== true
+    ) ?? null
+  )
 }
 
 export function monitorAppProcess(app, pending, onExit) {
@@ -238,8 +266,10 @@ async function runServer(sessionPath, token) {
         return json(response, 200, { ok: true })
       }
       if (request.method === 'POST' && url.pathname === '/probe') {
-        const nextProbe = await readBody(request)
-        probes.set(nextProbe.location ?? `unknown-${probes.size}`, nextProbe)
+        const nextProbe = await readBody(request, 16 * 1024)
+        if (['main', 'popout-window', 'system-drag-panel'].includes(nextProbe.windowLabel)) {
+          probes.set(nextProbe.windowLabel, nextProbe)
+        }
         return json(response, 200, { ok: true })
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
@@ -479,7 +509,7 @@ async function main() {
           try {
             lastStatus = null
             lastStatus = await request(session, token, '/status')
-            if (lastStatus.ready) {
+            if (visibleWorkbenchProbe(lastStatus)) {
               console.log(
                 JSON.stringify({ session: sessionPath, controlUrl: session.controlUrl }, null, 2)
               )

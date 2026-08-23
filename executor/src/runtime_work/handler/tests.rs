@@ -2719,7 +2719,7 @@ fn plugin_app_server_method_allowlist_covers_wework_plugin_runtime_surface() {
 
 #[test]
 fn unrouted_notification_preview_is_bounded_and_utf8_safe() {
-    let raw = format!("{}中文", "x".repeat(8 * 1024));
+    let raw = format!("{}中", "x".repeat(4 * 1024 - 1));
 
     let preview = bounded_unrouted_notification_preview(&raw);
 

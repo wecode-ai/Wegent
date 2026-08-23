@@ -43,6 +43,21 @@ wegent_wework_node_modules_ready() {
     [ -f "$node_modules/dingtalk-workspace-cli/package.json" ]
 }
 
+wegent_wework_installed_tree_matches_lockfile() {
+  local project_dir="$1"
+
+  [ -f "$project_dir/node_modules/.pnpm/lock.yaml" ] &&
+    cmp -s "$project_dir/pnpm-lock.yaml" "$project_dir/node_modules/.pnpm/lock.yaml"
+}
+
+wegent_wework_cache_entry_matches_fingerprint() {
+  local cache_entry="$1"
+  local fingerprint="$2"
+
+  [ -f "$cache_entry/dependency-fingerprint" ] &&
+    [ "$(cat "$cache_entry/dependency-fingerprint")" = "$fingerprint" ]
+}
+
 wegent_wework_node_modules_view_ready() {
   local node_modules="$1"
 
@@ -166,10 +181,16 @@ ensure_wework_worktree_node_modules() {
     fingerprint="$(wegent_wework_dependency_fingerprint "$project_dir")"
     cache_entry="$cache_root/$fingerprint"
     cached_virtual_store="$cache_entry/pnpm-virtual-store"
+    if ! wegent_wework_installed_tree_matches_lockfile "$project_dir"; then
+      echo "Error: installed dependencies do not match pnpm-lock.yaml." >&2
+      echo "Run 'pnpm install --frozen-lockfile' before publishing the worktree cache." >&2
+      return 1
+    fi
     if [ ! -d "$cached_virtual_store" ] ||
       ! wegent_root_node_modules_view_ready "$cache_entry" ||
       ! wegent_virtual_store_root_links_ready "$cached_virtual_store" ||
-      ! wegent_workspace_node_modules_views_ready "$cache_entry"; then
+      ! wegent_workspace_node_modules_views_ready "$cache_entry" ||
+      ! wegent_wework_cache_entry_matches_fingerprint "$cache_entry" "$fingerprint"; then
       mkdir -p "$cache_root"
       cache_lock="${cache_entry}.lock"
       if mkdir "$cache_lock" 2>/dev/null; then
@@ -189,6 +210,7 @@ ensure_wework_worktree_node_modules() {
         if ! wegent_workspace_node_modules_views_ready "$cache_entry"; then
           wegent_cache_workspace_node_modules_views "$project_dir" "$cache_entry"
         fi
+        printf '%s\n' "$fingerprint" >"$cache_entry/dependency-fingerprint"
         rmdir "$cache_lock"
       fi
     fi
@@ -205,7 +227,8 @@ ensure_wework_worktree_node_modules() {
   if [ ! -d "$cached_virtual_store" ] ||
     ! wegent_root_node_modules_view_ready "$cache_entry" ||
     ! wegent_virtual_store_root_links_ready "$cached_virtual_store" ||
-    ! wegent_workspace_node_modules_views_ready "$cache_entry"; then
+    ! wegent_workspace_node_modules_views_ready "$cache_entry" ||
+    ! wegent_wework_cache_entry_matches_fingerprint "$cache_entry" "$fingerprint"; then
     echo "Error: Wework dependencies are not installed and no matching worktree cache exists." >&2
     echo "Run 'pnpm install --frozen-lockfile' once in any worktree with these dependencies." >&2
     return 1

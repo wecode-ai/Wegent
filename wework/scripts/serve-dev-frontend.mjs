@@ -192,8 +192,8 @@ const server = createServer(async (request, response) => {
   }
 })
 
-server.listen(port, '0.0.0.0', () => {
-  console.log(`Wework cached frontend listening on http://localhost:${port}`)
+server.listen(port, '127.0.0.1', () => {
+  console.log(`Wework cached frontend listening on http://127.0.0.1:${port}`)
 })
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
