@@ -2232,11 +2232,9 @@ fn is_terminal_response_event(event: &str) -> bool {
 }
 
 fn kill_executor_child(child: SharedExecutorChild) {
-    let _ = tauri::async_runtime::spawn_blocking(move || {
-        if let Ok(Some(child)) = child.lock().map(|mut child| child.take()) {
-            child.kill();
-        }
-    });
+    if let Ok(Some(child)) = child.lock().map(|mut child| child.take()) {
+        child.kill();
+    }
 }
 
 fn executor_child_is_running(child: &SharedExecutorChild) -> bool {
@@ -7803,7 +7801,7 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
 
     #[cfg(unix)]
     #[test]
-    fn configured_sidecar_kill_stops_grandchild_process_group() {
+    fn shutdown_stops_configured_sidecar_process_group_before_returning() {
         let dir = std::env::temp_dir().join(format!(
             "wework-local-executor-process-group-{}",
             std::process::id()
@@ -7842,18 +7840,28 @@ wait
             .stderr(Stdio::piped());
         configure_managed_process_group(&mut command);
         let child = command.spawn().expect("sidecar should start");
-        let child = LocalExecutorChild::Process(ManagedProcessChild::new(child));
+        let child_pid = child.id();
+        let state = LocalExecutorState::default();
+        register_spawned_child(
+            &state,
+            LocalExecutorChild::Process(ManagedProcessChild::new(child)),
+        )
+        .expect("sidecar should be registered");
         let grandchild_pid = match wait_for_pid_file(&pid_path, Duration::from_secs(10)) {
             Some(pid) => pid,
             None => {
-                child.kill();
+                shutdown_local_executor(&state, "test_cleanup");
                 panic!("grandchild pid");
             }
         };
         let _cleanup = ProcessCleanup::new(grandchild_pid);
 
-        child.kill();
+        shutdown_local_executor(&state, "test_shutdown");
 
+        assert!(
+            !process_alive(child_pid),
+            "sidecar process should be stopped before kill returns"
+        );
         assert!(
             wait_until_dead(grandchild_pid, Duration::from_secs(2)),
             "grandchild process should be stopped when sidecar is killed"
