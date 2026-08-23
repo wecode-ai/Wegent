@@ -498,6 +498,7 @@ jobs:
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_DESKTOP_SCENARIO_MODULE: ${{ matrix.segment == 'embedded-browser' && './scenarios/embedded-browser-agent.scenario.mjs' || matrix.segment == 'browser-multi-tabs' && './scenarios/embedded-browser-multi-tabs.scenario.mjs' || matrix.segment == 'browser-toolbar-actions' && './scenarios/embedded-browser-toolbar-actions.scenario.mjs' || '' }}
+          WEWORK_E2E_ISOLATED_XVFB: "true"
         run: |
           test -x "$CODEX_BIN"
           test -x "$WEWORK_E2E_APP_BIN"

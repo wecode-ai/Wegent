@@ -1091,7 +1091,7 @@ async function main() {
               'true',
               'Root Electron E2E may disable the Chromium sandbox only inside isolated Xvfb'
             )
-            return ['--no-sandbox']
+            return ['--no-sandbox', '--disable-gpu']
           })()
         : []
     const startDesktopAppProcess = async () => {
