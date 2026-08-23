@@ -445,9 +445,7 @@ export async function installWeworkAutomationBridge(
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
   await beforeSeed.catch(() => undefined)
-  void seedDesktopE2ECloudConnection().catch(error => {
-    console.error('[Wework] Failed to seed desktop E2E cloud connection:', error)
-  })
+  await seedDesktopE2ECloudConnection()
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {
