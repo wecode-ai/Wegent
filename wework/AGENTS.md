@@ -29,6 +29,7 @@ Before changing a Wework flow, identify the affected product area and trace its 
 - Use the shared typography scale and semantic `heading-*`, `text-chat`, and `text-code` roles. Never add arbitrary `text-[Npx]`, literal CSS `font-size`, or literal inline `fontSize` values; `pnpm lint` enforces this rule.
 - Custom Markdown renderers must preserve semantic attributes supplied by the parser, such as an ordered list's `start` value.
 - Preserve platform text-navigation semantics in the ProseMirror chat composer. Register only composer-specific key bindings instead of the document-level `baseKeymap`, and scope mention caret workarounds to unmodified arrow keys.
+- Focus popup composers through their exact editor target; a mixed `querySelector` returns the first matching element in DOM order, not the first selector in the list. In WKWebView, keep a completely empty contenteditable position native instead of replacing it with a decoration widget so programmatic focus can start the platform text input session.
 
 ## i18n
 

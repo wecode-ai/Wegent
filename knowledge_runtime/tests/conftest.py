@@ -4,11 +4,15 @@
 
 """Pytest configuration for knowledge_runtime tests."""
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 
 import pytest
-
 from knowledge_runtime.services.config_resolver import ConfigResolver
+from sqlalchemy.orm import Session
+
+from shared.models.db import Kind, User
+from shared.testing import capability_reference_database
 
 # ---------------------------------------------------------------------------
 # Fixtures for admin/other tests
@@ -50,6 +54,108 @@ def resolver() -> ConfigResolver:
 def mock_db() -> MagicMock:
     """Create a mock database session."""
     return MagicMock()
+
+
+_SHARED_KB_RETRIEVAL_CONFIG = {
+    "retriever_name": "test-retriever",
+    "retriever_namespace": "default",
+    "embedding_config": {
+        "model_name": "shared-embedding",
+        "model_namespace": "search-team",
+    },
+}
+_SHARED_RETRIEVER_SPEC = {
+    "storageConfig": {
+        "type": "qdrant",
+        "url": "http://qdrant:6333",
+    }
+}
+_SHARED_EMBEDDING_SPEC = {
+    "protocol": "openai",
+    "modelConfig": {
+        "env": {
+            "base_url": "http://embedding:8000/v1",
+            "model_id": "provider-embedding-id",
+        }
+    },
+    "embeddingConfig": {"dimensions": 1024},
+}
+
+
+def _persisted_kind(
+    *,
+    kind_id: int,
+    user_id: int,
+    kind: str,
+    name: str,
+    namespace: str,
+    spec: dict,
+) -> Kind:
+    return Kind(
+        id=kind_id,
+        user_id=user_id,
+        kind=kind,
+        name=name,
+        namespace=namespace,
+        is_active=True,
+        json={"spec": spec},
+    )
+
+
+def _shared_model_kinds() -> list[Kind]:
+    return [
+        _persisted_kind(
+            kind_id=1,
+            user_id=42,
+            kind="KnowledgeBase",
+            name="team-kb",
+            namespace="search-team",
+            spec={"retrievalConfig": _SHARED_KB_RETRIEVAL_CONFIG},
+        ),
+        _persisted_kind(
+            kind_id=2,
+            user_id=42,
+            kind="Retriever",
+            name="test-retriever",
+            namespace="default",
+            spec=_SHARED_RETRIEVER_SPEC,
+        ),
+        _persisted_kind(
+            kind_id=3,
+            user_id=77,
+            kind="Model",
+            name="shared-embedding",
+            namespace="default",
+            spec=_SHARED_EMBEDDING_SPEC,
+        ),
+    ]
+
+
+@pytest.fixture
+def shared_model_db() -> Iterator[Session]:
+    """Create a KB whose embedding Model is referenced into its group."""
+    with capability_reference_database(additional_tables=(User.__table__,)) as database:
+        database.session.add(User(id=42, user_name="kb-owner", password_hash="unused"))
+        database.session.add_all(_shared_model_kinds())
+        database.session.execute(
+            database.namespace.insert().values(
+                id=7,
+                name="search-team",
+                is_active=True,
+            )
+        )
+        database.session.execute(
+            database.resource_members.insert().values(
+                id=1,
+                resource_type="Model",
+                resource_id=3,
+                entity_type="namespace",
+                entity_id="7",
+                status="approved",
+            )
+        )
+        database.session.commit()
+        yield database.session
 
 
 # ---------------------------------------------------------------------------

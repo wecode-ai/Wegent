@@ -45,7 +45,11 @@ const DESKTOP_CONTROL_SERVER_PORT = readOptionalPort(
 )
 const MODEL_PROTOCOL_MATRIX_TIMEOUT_MS = 120_000
 const COMPOSER_READY_STABILITY_MS = 750
-const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = DEFAULT_STEP_TIMEOUT_MS
+const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = readPositiveTimeout(
+  process.env.WEWORK_E2E_CONTROL_DELIVERY_TIMEOUT_MS,
+  30_000,
+  'WEWORK_E2E_CONTROL_DELIVERY_TIMEOUT_MS'
+)
 const DESKTOP_CONTROL_RESULT_GRACE_MS = 5_000
 const QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS = 120_000
 
@@ -541,7 +545,6 @@ const CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT =
 const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_URL =
   'https://desktop-e2e-startup-probe.invalid/marketplace.git'
-const STARTUP_NETWORK_PROBE_REQUEST_PATTERN = /desktop-e2e-startup-probe\.invalid/i
 const AUTOMATION_NAME = 'Desktop E2E automation'
 const AUTOMATION_PROMPT = 'WEWORK_DESKTOP_E2E_AUTOMATION: report the current workspace status.'
 const AUTOMATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_AUTOMATION_COMPLETE'
@@ -1004,29 +1007,16 @@ class BlockingNetworkProxy {
     throw new Error('Codex did not reach the blocking network proxy')
   }
 
-  async waitForRequestMatchingAfter(requestCount, pattern, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < timeoutMs) {
-      const request = this.requests.slice(requestCount).find(candidate => pattern.test(candidate))
-      if (request) return request
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
-    }
-    const observedRequests = this.requests.slice(requestCount)
-    throw new Error(
-      `Codex did not send a startup request matching ${pattern}; observed=${JSON.stringify(observedRequests)}`
-    )
-  }
-
-  requestCount() {
-    return this.requests.length
-  }
-
   release() {
     if (this.released) return
     this.released = true
     for (const socket of this.sockets) {
       socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
     }
+  }
+
+  block() {
+    this.released = false
   }
 
   async stop() {
@@ -1783,7 +1773,6 @@ export {
   CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
   STARTUP_NETWORK_PROBE_MARKETPLACE_NAME,
   STARTUP_NETWORK_PROBE_MARKETPLACE_URL,
-  STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
   AUTOMATION_NAME,
   AUTOMATION_PROMPT,
   AUTOMATION_COMPLETION_TEXT,

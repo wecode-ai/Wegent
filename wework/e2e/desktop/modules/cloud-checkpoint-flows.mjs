@@ -300,6 +300,7 @@ async function verifyCloudCheckpoint({
   app,
   appIdentifier,
   cloudEnvironment,
+  codexHome,
   control,
   desktopScenario,
   executorLogPath,
@@ -333,6 +334,8 @@ async function verifyCloudCheckpoint({
   }
 
   if (checkpoint === 'plugin-auto-update') {
+    setPhase('cloud-plugin-auto-update-disable-codex-rpc')
+    await cloudEnvironment.restartCloudExecutorWithoutCodexPluginRpc()
     setPhase('cloud-plugin-auto-update-fixtures')
     await cloudEnvironment.seedPluginAutoUpdateFixtures(6)
     setPhase('cloud-plugin-auto-update')
@@ -360,7 +363,10 @@ async function verifyCloudCheckpoint({
       'success',
       'Plugin auto-update did not finish successfully in the real Tauri application'
     )
-    await cloudEnvironment.assertPluginAutoUpdateComplete(6)
+    await cloudEnvironment.assertPluginAutoUpdateComplete(codexHome, 6)
+    setPhase('cloud-plugin-auto-update-without-codex-rpc')
+    await cloudEnvironment.syncPluginAutoUpdatesToCloudDevice()
+    await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
     return
   }
 

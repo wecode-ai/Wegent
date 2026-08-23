@@ -26,19 +26,83 @@
 }
 
 .todo-panel-stack.has-conversation {
-  left: 12px;
+  width: min(860px, calc(100% - 24px));
+  max-width: calc(100% - 24px);
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 16px;
+  background: rgb(var(--color-bg-base));
+  box-shadow:
+    0 12px 28px -8px rgb(0 0 0 / 18%),
+    0 0 24px rgb(0 0 0 / 5%);
 }
 
 .todo-panel-stack.has-conversation .task-detail-workspace-panel-shell {
-  flex: 1 1 460px;
-  min-width: 0;
-  max-width: 460px;
+  display: none;
 }
 
 .todo-panel-stack.has-conversation .task-conversation-workspace-panel {
-  flex: 1 1 480px;
+  flex: 1 1 auto;
+  width: auto;
   min-width: 0;
-  max-width: 480px;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.task-conversation-issue-context {
+  width: 300px;
+  min-width: 300px;
+  border-right: 1px solid rgb(var(--color-border));
+}
+
+.task-conversation-resource-section + .task-conversation-resource-section {
+  border-top: 1px solid rgb(var(--color-border));
+}
+
+.task-conversation-resource-heading {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.task-conversation-resource-count {
+  min-width: 20px;
+  border-radius: 999px;
+  background: rgb(var(--color-bg-muted));
+  padding: 1px 6px;
+  color: rgb(var(--color-text-muted));
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.task-conversation-resource-row {
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-xs);
+  text-align: left;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.task-conversation-resource-row:hover,
+.task-conversation-resource-row.is-selected {
+  background: rgb(var(--color-bg-muted));
+  color: rgb(var(--color-text-primary));
 }
 
 @keyframes todo-panel-backdrop-enter {
@@ -156,8 +220,9 @@
     max-width: none;
   }
 
-  .todo-panel-stack.has-conversation .task-detail-workspace-panel-shell {
-    display: none;
+  .todo-panel-stack.has-conversation {
+    left: auto;
+    width: calc(100% - 24px);
   }
 
   .task-detail-workspace-panel-shell,
@@ -166,6 +231,11 @@
     width: 100%;
     min-width: 0;
     max-width: none;
+  }
+
+  .task-conversation-issue-context {
+    width: 260px;
+    min-width: 260px;
   }
 
   @keyframes task-conversation-workspace-panel-enter {
@@ -178,6 +248,12 @@
       opacity: 1;
       transform: translateX(0);
     }
+  }
+}
+
+@media (max-width: 700px) {
+  .task-conversation-issue-context {
+    display: none;
   }
 }
 

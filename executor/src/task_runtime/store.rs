@@ -11,7 +11,7 @@ use std::{
 };
 
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row, TransactionBehavior};
 use serde_json::{json, Value};
 use thiserror::Error;
 use uuid::Uuid;
@@ -2089,8 +2089,27 @@ impl LocalTaskStore {
     }
 
     pub fn list_task_bindings(&self, item_id: &str) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
+        self.list_task_bindings_batch(&[item_id.to_owned()])
+    }
+
+    pub fn list_task_bindings_batch(
+        &self,
+        item_ids: &[String],
+    ) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
+        let item_ids = item_ids
+            .iter()
+            .map(|item_id| item_id.trim())
+            .filter(|item_id| !item_id.is_empty())
+            .collect::<HashSet<_>>();
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = std::iter::repeat("?")
+            .take(item_ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
         let connection = self.connection()?;
-        let mut statement = connection.prepare(
+        let mut statement = connection.prepare(&format!(
             "SELECT id, COALESCE(cloud_project_id, json_extract(metadata, '$.project_id')),
                     COALESCE(loop_item_id, json_extract(metadata, '$.external_item_id')),
                     task_user_id, device_id,
@@ -2106,10 +2125,14 @@ impl LocalTaskStore {
                     linked_at
              FROM loop_items
              WHERE resource_type = 'execution' AND unlinked_at IS NULL
-               AND (loop_item_id = ?1 OR json_extract(metadata, '$.external_item_id') = ?1)
-             ORDER BY linked_at DESC",
-        )?;
-        let rows = statement.query_map([item_id], map_task_binding)?;
+               AND (
+                    loop_item_id IN ({placeholders})
+                    OR json_extract(metadata, '$.external_item_id') IN ({placeholders})
+               )
+             ORDER BY linked_at DESC"
+        ))?;
+        let parameters = item_ids.iter().copied().chain(item_ids.iter().copied());
+        let rows = statement.query_map(params_from_iter(parameters), map_task_binding)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(TaskRuntimeError::from)
     }
@@ -5857,6 +5880,73 @@ mod tests {
             store.find_task_binding("local-device", "runtime-1"),
             Err(TaskRuntimeError::TaskNotFound)
         ));
+    }
+
+    #[test]
+    fn lists_task_bindings_for_multiple_items_in_one_query() {
+        let (_directory, store) = store();
+        let project = local_project(&store);
+        let first = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "First bound task".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        let second = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Second bound task".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "none".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                    workflow: None,
+                },
+            )
+            .unwrap();
+        for (item, runtime_task_id) in [(&first, "runtime-1"), (&second, "runtime-2")] {
+            store
+                .bind_task(
+                    &project.id,
+                    Some(&item.id),
+                    None,
+                    RuntimeTaskAddress {
+                        device_id: "local-device".to_owned(),
+                        task_id: runtime_task_id.to_owned(),
+                        task_title: item.title.clone(),
+                        backend_task_id: None,
+                        workflow_node_id: None,
+                    },
+                )
+                .unwrap();
+        }
+
+        let bindings = store
+            .list_task_bindings_batch(&[
+                first.id.clone(),
+                second.id.clone(),
+                first.id.clone(),
+                String::new(),
+            ])
+            .unwrap();
+        let task_ids = bindings
+            .iter()
+            .map(|binding| binding.task_id.as_str())
+            .collect::<HashSet<_>>();
+
+        assert_eq!(bindings.len(), 2);
+        assert_eq!(task_ids, HashSet::from(["runtime-1", "runtime-2"]));
+        assert!(store.list_task_bindings_batch(&[]).unwrap().is_empty());
     }
 
     #[test]

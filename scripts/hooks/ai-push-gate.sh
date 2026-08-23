@@ -401,7 +401,7 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         # Vitest's jsdom workers are CPU and memory intensive. Let the suite use
         # the machine after the static checks finish instead of making all three
         # processes contend for the same resources.
-        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-4}"
+        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
         echo -e "   Running unit tests with $WEWORK_TEST_WORKERS workers..."
         VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
             pnpm --filter wework test > "$TEMP_DIR/wework_test.log" 2>&1

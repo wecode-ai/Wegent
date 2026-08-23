@@ -2,6 +2,16 @@ import { CODEX_PERSONAL_MARKETPLACE_ID, WEWORK_PERSONAL_MARKETPLACE_ID } from '.
 
 export const INTERNAL_DEVICE_MARKETPLACE_ID = 'wegent'
 
+// Historical aliases for the Wegent cloud marketplace. They all represent the
+// same built-in source and must not be rendered as user-added marketplace tabs.
+const WEGENT_CLOUD_MARKETPLACE_IDS = new Set([
+  'default',
+  'wework',
+  INTERNAL_DEVICE_MARKETPLACE_ID,
+  'wegent-market',
+  'wegent-marketplace',
+])
+
 // Local Codex packages that do not need GitHub. Keep in sync with executor
 // plugin_source_priority official OpenAI sources.
 const OPENAI_OFFICIAL_BUNDLED_MARKETPLACE_IDS = new Set([
@@ -21,8 +31,8 @@ const OPENAI_OFFICIAL_MARKETPLACE_IDS = new Set([
 
 const BUILT_IN_MARKETPLACE_IDS = new Set([
   ...OPENAI_OFFICIAL_MARKETPLACE_IDS,
+  ...WEGENT_CLOUD_MARKETPLACE_IDS,
   CODEX_PERSONAL_MARKETPLACE_ID,
-  INTERNAL_DEVICE_MARKETPLACE_ID,
   WEWORK_PERSONAL_MARKETPLACE_ID,
 ])
 
@@ -49,6 +59,10 @@ export function isOpenAiOfficialRemoteMarketplaceId(id?: string | null): boolean
 
 export function isInternalDeviceMarketplaceId(id?: string | null): boolean {
   return normalizeMarketplaceId(id) === INTERNAL_DEVICE_MARKETPLACE_ID
+}
+
+export function isWegentCloudMarketplaceId(id?: string | null): boolean {
+  return WEGENT_CLOUD_MARKETPLACE_IDS.has(normalizeMarketplaceId(id))
 }
 
 export function isBuiltInMarketplaceId(id?: string | null): boolean {

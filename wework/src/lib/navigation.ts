@@ -25,6 +25,15 @@ export function navigateTo(path: string) {
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
+export function replaceTo(path: string) {
+  const browserPath = toBrowserPath(path)
+  const currentPath = `${window.location.pathname}${window.location.search}`
+  if (currentPath === browserPath) return
+
+  window.history.replaceState(window.history.state, '', browserPath)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
 export function resolveDesktopAppRoute(app: DesktopAppKey): string {
   const registry = getActiveWorkbenchAppRegistry()
   const contribution =

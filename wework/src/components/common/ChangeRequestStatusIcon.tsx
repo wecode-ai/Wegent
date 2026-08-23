@@ -9,14 +9,15 @@ import {
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react'
-import { useState } from 'react'
-import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   changeRequestVisualStatus,
   type ChangeRequestVisualStatus,
 } from '@/features/workbench/changeRequestStatus'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
 import type { ChangeRequest } from '@/types/environment'
@@ -26,6 +27,11 @@ interface ChangeRequestStatusGlyphConfig {
   badgeIcon?: LucideIcon
   badgeClassName?: string
   badgeIconClassName?: string
+}
+
+interface ChangeRequestStatusSnapshot {
+  changeRequest: ChangeRequest | null
+  stale?: boolean
 }
 
 const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphConfig> = {
@@ -145,17 +151,56 @@ export function ChangeRequestStatusIcon({
   onContinueRepair,
   className,
   popoverAlign = 'right',
+  glyphSize = 'compact',
+  mainIconTestId,
 }: {
-  snapshot: TaskChangeRequestSnapshot | null
+  snapshot: ChangeRequestStatusSnapshot | null
   testId: string
   repairing?: boolean
   onContinueRepair?: () => Promise<void> | void
   className?: string
   popoverAlign?: 'left' | 'right'
+  glyphSize?: 'compact' | 'environment'
+  mainIconTestId?: string
 }) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLSpanElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLSpanElement>(null)
   const changeRequest = snapshot?.changeRequest
+  const popoverLayout = useAnchoredPortalMenu(open, triggerRef, popoverRef, {
+    align: popoverAlign === 'left' ? 'start' : 'end',
+    gap: 4,
+  })
+
+  useEffect(() => {
+    if (!open) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        !(event.target instanceof Node) ||
+        rootRef.current?.contains(event.target) ||
+        popoverRef.current?.contains(event.target)
+      ) {
+        return
+      }
+      setOpen(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
+
   if (!changeRequest) return null
   const status = changeRequestVisualStatus(changeRequest)
   const label = t(`workbench.change_request_status_${status}`, status)
@@ -163,11 +208,13 @@ export function ChangeRequestStatusIcon({
 
   return (
     <span
-      className={cn('relative inline-flex shrink-0', className)}
+      ref={rootRef}
+      className={cn('inline-flex shrink-0', className)}
       onClick={event => event.stopPropagation()}
     >
       <Tooltip label={`${prefix}${changeRequest.number} · ${label}`}>
         <button
+          ref={triggerRef}
           type="button"
           data-testid={testId}
           aria-label={`${prefix}${changeRequest.number} · ${label}`}
@@ -175,57 +222,74 @@ export function ChangeRequestStatusIcon({
           onClick={() => setOpen(current => !current)}
           className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-muted"
         >
-          <ChangeRequestStatusGlyph changeRequest={changeRequest} />
+          <ChangeRequestStatusGlyph
+            changeRequest={changeRequest}
+            size={glyphSize}
+            mainIconTestId={mainIconTestId}
+          />
         </button>
       </Tooltip>
-      {open ? (
-        <span
-          data-testid={`${testId}-popover`}
-          className={cn(
-            'absolute top-7 z-50 w-64 rounded-xl border border-border bg-popover p-3 text-left shadow-lg',
-            popoverAlign === 'left' ? 'left-0' : 'right-0'
-          )}
-        >
-          <span className="block truncate text-sm font-medium text-text-primary">
-            {prefix}
-            {changeRequest.number} · {changeRequest.title}
-          </span>
-          <span className="mt-1 block text-xs text-text-secondary">{label}</span>
-          {changeRequest.mergeQueueReason ? (
-            <span className="mt-1 line-clamp-3 block text-xs text-text-muted">
-              {changeRequest.mergeQueueReason}
-            </span>
-          ) : null}
-          {snapshot?.stale ? (
-            <span className="mt-1 block text-xs text-amber-600">
-              {t('workbench.change_request_status_stale', '状态可能已过期')}
-            </span>
-          ) : null}
-          <span className="mt-3 flex items-center justify-end gap-2">
-            <button
-              type="button"
-              data-testid={`${testId}-open`}
-              onClick={() => void openExternalUrl(changeRequest.url)}
-              className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+      {open && typeof document !== 'undefined'
+        ? createPortal(
+            <span
+              ref={popoverRef}
+              data-testid={`${testId}-popover`}
+              style={{
+                left: popoverLayout?.left ?? 0,
+                maxHeight: popoverLayout?.maxHeight,
+                top: popoverLayout?.top ?? 0,
+                visibility: popoverLayout ? 'visible' : 'hidden',
+              }}
+              className="fixed z-system-popover w-64 overflow-y-auto rounded-xl border border-border bg-popover p-3 text-left shadow-lg"
             >
-              {t('workbench.change_request_open', '打开 PR')}
-            </button>
-            {onContinueRepair ? (
-              <button
-                type="button"
-                data-testid={`${testId}-repair`}
-                disabled={repairing}
-                onClick={() => void onContinueRepair()}
-                className="h-7 rounded-md bg-text-primary px-2 text-xs text-background disabled:opacity-50"
-              >
-                {repairing
-                  ? t('workbench.change_request_repairing', 'AI 修复中')
-                  : t('workbench.change_request_continue_repair', '让 AI 继续修复')}
-              </button>
-            ) : null}
-          </span>
-        </span>
-      ) : null}
+              <span className="block truncate text-sm font-medium text-text-primary">
+                {prefix}
+                {changeRequest.number} · {changeRequest.title}
+              </span>
+              <span className="mt-1 block text-xs text-text-secondary">{label}</span>
+              {changeRequest.mergeQueueReason ? (
+                <span className="mt-1 line-clamp-3 block text-xs text-text-muted">
+                  {changeRequest.mergeQueueReason}
+                </span>
+              ) : null}
+              {snapshot?.stale ? (
+                <span className="mt-1 block text-xs text-amber-600">
+                  {t('workbench.change_request_status_stale', '状态可能已过期')}
+                </span>
+              ) : null}
+              <span className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  data-testid={`${testId}-open`}
+                  onClick={() => {
+                    setOpen(false)
+                    void openExternalUrl(changeRequest.url)
+                  }}
+                  className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                >
+                  {t('workbench.change_request_open', '打开 PR')}
+                </button>
+                {onContinueRepair ? (
+                  <button
+                    type="button"
+                    data-testid={`${testId}-repair`}
+                    disabled={repairing}
+                    onClick={() => {
+                      setOpen(false)
+                      void onContinueRepair()
+                    }}
+                    className="h-7 rounded-md bg-text-primary px-2 text-xs text-background disabled:opacity-50"
+                  >
+                    {repairing
+                      ? t('workbench.change_request_repairing', 'AI 修复中')
+                      : t('workbench.change_request_continue_repair', '让 AI 继续修复')}
+                  </button>
+                ) : null}
+              </span>
+            </span>,
+            document.body
+          )
+        : null}
     </span>
   )
 }

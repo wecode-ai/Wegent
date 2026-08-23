@@ -95,6 +95,7 @@ export interface SendCurrentInputOptions {
   modelSelection?: ModelSelectionConfig | null
   additionalSkills?: SkillRef[]
   clientUserMessageId?: string
+  optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
@@ -114,6 +115,7 @@ export interface CreateTemporaryRuntimeTaskOptions {
   project?: ProjectWithTasks | null
   source?: RuntimeTaskAddress | null
   attachments?: Attachment[]
+  optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
   onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
 }
@@ -130,6 +132,7 @@ export interface CreateProjectRuntimeTaskOptions {
    * globally selected model. */
   runtime?: RuntimeName
   attachments?: Attachment[]
+  optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   collaborationMode?: 'default' | 'plan'
@@ -454,6 +457,7 @@ export interface WorkbenchProviderProps {
   onStartupReadyChange?: (ready: boolean) => void
   workspaceTabId?: string
   consumePluginTrials?: boolean
+  publishDebugSnapshots?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean
 }

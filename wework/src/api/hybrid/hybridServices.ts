@@ -1284,6 +1284,7 @@ export function createHybridWorkbenchServices(
 
   return {
     ...cloudServices,
+    branchNameApi: localServices.branchNameApi,
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
     localProjectChatAgentApi: localServices.localProjectChatAgentApi,

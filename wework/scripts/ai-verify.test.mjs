@@ -4,46 +4,35 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import {
+  acknowledgeStartedCommand,
   appExitMessage,
   monitorAppProcess,
   readSessionForCleanup,
   resolveCommandTimeout,
   resolveStartupTimeout,
   startupFailureMessage,
-  takeWritableCommandPoll,
 } from './ai-verify.mjs'
 
-function commandPoll(response) {
-  return {
-    response,
-    timer: setTimeout(() => {}, 60_000),
-    closed: false,
-  }
-}
-
-describe('takeWritableCommandPoll', () => {
-  test('skips disconnected responses and returns the next writable poll', () => {
-    const disconnected = commandPoll({ destroyed: true, writableEnded: false })
-    const closed = commandPoll({ destroyed: false, writableEnded: false })
-    closed.closed = true
-    const ended = commandPoll({ destroyed: false, writableEnded: true })
-    const writable = commandPoll({ destroyed: false, writableEnded: false })
-    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
-
-    expect(takeWritableCommandPoll([disconnected, closed, ended, writable])).toBe(writable)
-    expect(clearTimeoutSpy).toHaveBeenCalledTimes(4)
-
-    clearTimeoutSpy.mockRestore()
+describe('acknowledgeStartedCommand', () => {
+  test('accepts the start acknowledgement for a pending command', () => {
+    expect(
+      acknowledgeStartedCommand(new Map([['command-1', {}]]), {
+        id: 'command-1',
+        clientId: 'client-1',
+      })
+    ).toEqual({ status: 200, value: { ok: true } })
   })
 
-  test('returns undefined when every pending response is stale', () => {
-    const stalePolls = [
-      commandPoll({ destroyed: true, writableEnded: false }),
-      commandPoll({ destroyed: false, writableEnded: true }),
-    ]
-
-    expect(takeWritableCommandPoll(stalePolls)).toBeUndefined()
-    expect(stalePolls).toHaveLength(0)
+  test('rejects acknowledgements for commands that are no longer pending', () => {
+    expect(
+      acknowledgeStartedCommand(new Map(), {
+        id: 'missing-command',
+        clientId: 'client-1',
+      })
+    ).toEqual({
+      status: 404,
+      value: { error: 'Unknown command missing-command' },
+    })
   })
 })
 

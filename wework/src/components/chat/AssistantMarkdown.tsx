@@ -43,6 +43,12 @@ const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HO
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
 const MARKDOWN_WINDOW_ROOT_MARGIN = '800px 0px'
 const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
+const STREAMING_DIAGRAM_LANGUAGES = new Map([
+  ['weworkstreamingmermaid', 'mermaid'],
+  ['weworkstreamingmmd', 'mmd'],
+  ['weworkstreamingplantuml', 'plantuml'],
+  ['weworkstreamingpuml', 'puml'],
+])
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
@@ -256,7 +262,10 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
               urlTransform={url => url}
               components={components}
             >
-              {prepareAssistantMarkdownContent(part.content)}
+              {prepareAssistantMarkdownContent(
+                part.content,
+                isStreaming && index === contentParts.length - 1
+              )}
             </Streamdown>
           </WindowedMarkdownChunk>
         ) : (
@@ -270,7 +279,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             urlTransform={url => url}
             components={components}
           >
-            {prepareAssistantMarkdownContent(part.content)}
+            {prepareAssistantMarkdownContent(part.content, isStreaming)}
           </Streamdown>
         )
       )}
@@ -357,6 +366,14 @@ function MarkdownCode({
     text.includes('\n')
   if (isBlock) {
     const lang = match ? match[1] || '' : ''
+    const streamingDiagramLanguage = STREAMING_DIAGRAM_LANGUAGES.get(lang.toLowerCase())
+    if (streamingDiagramLanguage) {
+      return (
+        <MarkdownCodeBlock lang={streamingDiagramLanguage} compact={compact} isStreaming>
+          {text || children}
+        </MarkdownCodeBlock>
+      )
+    }
     if (DIAGRAM_LANGUAGES.has(lang.toLowerCase())) {
       return <MarkdownDiagramPreview code={text.trimEnd()} language={lang} />
     }
@@ -397,8 +414,59 @@ function areAssistantMarkdownPropsEqual(
   )
 }
 
-function prepareAssistantMarkdownContent(content: string): string {
-  return encodeLocalMarkdownLinks(content.replace(CODEX_PLAN_TAG_PATTERN, ''))
+function prepareAssistantMarkdownContent(content: string, isStreaming = false): string {
+  const normalizedContent = content.replace(CODEX_PLAN_TAG_PATTERN, '')
+  return encodeLocalMarkdownLinks(
+    isStreaming ? markUnclosedDiagramFence(normalizedContent) : normalizedContent
+  )
+}
+
+function markUnclosedDiagramFence(content: string): string {
+  const lines = content.split('\n')
+  let openingFence: {
+    character: '`' | '~'
+    length: number
+    language: string
+    lineIndex: number
+    match: RegExpExecArray
+  } | null = null
+
+  for (const [lineIndex, line] of lines.entries()) {
+    if (!openingFence) {
+      const match =
+        /^(?<indent> {0,3})(?<fence>`{3,}|~{3,})(?<spacing>[ \t]*)(?<language>[\w+-]*)(?<remainder>[^\n]*)$/.exec(
+          line
+        )
+      if (!match?.groups) continue
+
+      const fence = match.groups.fence
+      const language = match.groups.language.toLowerCase()
+      openingFence = {
+        character: fence[0] as '`' | '~',
+        length: fence.length,
+        language,
+        lineIndex,
+        match,
+      }
+      continue
+    }
+
+    const closingFence = new RegExp(
+      `^ {0,3}${openingFence.character}{${openingFence.length},}[ \\t]*$`
+    )
+    if (closingFence.test(line)) {
+      openingFence = null
+    }
+  }
+
+  if (!openingFence || !DIAGRAM_LANGUAGES.has(openingFence.language)) return content
+
+  const { groups } = openingFence.match
+  if (!groups) return content
+  lines[openingFence.lineIndex] =
+    `${groups.indent}${groups.fence}${groups.spacing}` +
+    `weworkstreaming${openingFence.language}${groups.remainder}`
+  return lines.join('\n')
 }
 
 function stripUnsupportedContentReferenceCitations(content: string): string {

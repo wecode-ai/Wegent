@@ -24,6 +24,23 @@ use super::response::{RuntimeTaskLink, RuntimeWorkspaceLink};
 const INDEX_VERSION: u64 = 1;
 const DELETED_ARCHIVED_TASK_ID_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 const DELETED_ARCHIVED_TASK_ID_MAX_COUNT: usize = 2_000;
+const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
+    "cloudProjectId",
+    "cloud_project_id",
+    "executionRequest",
+    "execution_request",
+    "executorSession",
+    "goal",
+    "lastTurnId",
+    "modelSelection",
+    "model_selection",
+    "origin",
+    "runtime",
+    "supersededTranscriptTurnIds",
+    "threadPath",
+    "turnIdsBySubtask",
+    "userMessagePresentations",
+];
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
@@ -31,6 +48,10 @@ pub(crate) struct RuntimeWorkStore {
     index_path: PathBuf,
     index: Arc<Mutex<RuntimeWorkIndex>>,
     index_signature: Arc<Mutex<Option<IndexFileSignature>>>,
+    write_lock: Arc<Mutex<()>>,
+    last_written_payload: Arc<Mutex<Option<Vec<u8>>>>,
+    #[cfg(test)]
+    write_attempts: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -220,11 +241,15 @@ impl PersistedRuntimeTask {
 }
 
 fn persisted_runtime_handle(runtime_handle: &Value) -> Value {
-    let mut persisted = runtime_handle.as_object().cloned().unwrap_or_default();
-    persisted.remove("queuePosition");
-    persisted.remove("lastError");
-    persisted.remove("lastErrorCode");
-    Value::Object(persisted)
+    Value::Object(
+        runtime_handle
+            .as_object()
+            .into_iter()
+            .flat_map(|runtime_handle| runtime_handle.iter())
+            .filter(|(key, _)| PERSISTED_RUNTIME_HANDLE_KEYS.contains(&key.as_str()))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    )
 }
 
 fn merge_persisted_runtime_handle(current: &Value, persisted: Value) -> Value {
@@ -241,6 +266,19 @@ fn merge_persisted_runtime_handle(current: &Value, persisted: Value) -> Value {
     Value::Object(merged)
 }
 
+fn persisted_task_fingerprint(task: &RuntimeTaskLink) -> Vec<u8> {
+    let mut persisted = PersistedRuntimeTask::from_runtime(task);
+    persisted.updated_at = 0;
+    serde_json::to_vec(&persisted).unwrap_or_default()
+}
+
+fn persisted_index_requires_migration(index: &PersistedRuntimeWorkIndex) -> bool {
+    index
+        .tasks
+        .values()
+        .any(|task| task.runtime_handle != persisted_runtime_handle(&task.runtime_handle))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct IndexFileSignature {
     len: u64,
@@ -249,13 +287,26 @@ struct IndexFileSignature {
 
 impl RuntimeWorkStore {
     pub fn new(index_path: PathBuf) -> Self {
-        let index = read_index_from_path(&index_path);
+        let persisted_index = read_persisted_index_from_path(&index_path);
+        let migration_required = persisted_index_requires_migration(&persisted_index);
+        let index = persisted_index_into_runtime(persisted_index);
         let index_signature = index_file_signature(&index_path);
-        Self {
+        let last_written_payload = (!migration_required)
+            .then(|| serialize_index(&index).ok())
+            .flatten();
+        let store = Self {
             index_path,
             index: Arc::new(Mutex::new(index)),
             index_signature: Arc::new(Mutex::new(index_signature)),
+            write_lock: Arc::new(Mutex::new(())),
+            last_written_payload: Arc::new(Mutex::new(last_written_payload)),
+            #[cfg(test)]
+            write_attempts: Arc::new(AtomicU64::new(0)),
+        };
+        if migration_required {
+            store.persist_current_index();
         }
+        store
     }
 
     pub fn from_env() -> Self {
@@ -301,8 +352,10 @@ impl RuntimeWorkStore {
         let before_deleted_count = index.deleted_archived_task_ids.len();
         prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, current_time_ms());
         let deleted = index.deleted_archived_task_ids.contains_key(task_id);
-        if index.deleted_archived_task_ids.len() != before_deleted_count {
-            self.write_index(&index);
+        let should_persist = index.deleted_archived_task_ids.len() != before_deleted_count;
+        drop(index);
+        if should_persist {
+            self.persist_current_index();
         }
         deleted
     }
@@ -319,7 +372,8 @@ impl RuntimeWorkStore {
             }
         }
         prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, now_ms);
-        self.write_index(&index);
+        drop(index);
+        self.persist_current_index();
     }
 
     pub fn upsert_task(&self, link: RuntimeTaskLink) {
@@ -328,7 +382,8 @@ impl RuntimeWorkStore {
             return;
         };
         index.tasks.insert(link.local_task_id.clone(), link);
-        self.write_index(&index);
+        drop(index);
+        self.persist_current_index();
     }
 
     pub fn update_task(
@@ -348,10 +403,13 @@ impl RuntimeWorkStore {
         self.refresh_index_from_disk_if_changed();
         let mut index = self.index.lock().ok()?;
         let task = index.tasks.get_mut(local_task_id)?;
+        let before = persisted_task_fingerprint(task);
         updater(task);
         let updated = task.clone();
-        if persist {
-            self.write_index(&index);
+        let should_persist = persist && before != persisted_task_fingerprint(task);
+        drop(index);
+        if should_persist {
+            self.persist_current_index();
         }
         Some(updated)
     }
@@ -360,41 +418,58 @@ impl RuntimeWorkStore {
         self.refresh_index_from_disk_if_changed();
         let mut index = self.index.lock().ok()?;
         let removed = index.tasks.remove(local_task_id)?;
-        self.write_index(&index);
+        drop(index);
+        self.persist_current_index();
         Some(removed)
     }
 
-    fn write_index(&self, index: &RuntimeWorkIndex) {
-        if let Err(error) = self.persist_index(index) {
+    fn persist_current_index(&self) {
+        let Ok(_write_guard) = self.write_lock.lock() else {
+            return;
+        };
+        let payload = {
+            let Ok(index) = self.index.lock() else {
+                return;
+            };
+            match serialize_index(&index) {
+                Ok(payload) => payload,
+                Err(error) => {
+                    eprintln!(
+                        "[runtime-work-store] failed to serialize index {}: {error}",
+                        self.index_path.display()
+                    );
+                    return;
+                }
+            }
+        };
+        if self
+            .last_written_payload
+            .lock()
+            .ok()
+            .is_some_and(|last_payload| last_payload.as_ref() == Some(&payload))
+        {
+            return;
+        }
+
+        #[cfg(test)]
+        self.write_attempts.fetch_add(1, Ordering::Relaxed);
+        if let Err(error) = atomic_write_file(&self.index_path, &payload) {
             eprintln!(
                 "[runtime-work-store] failed to persist index {}: {error}",
                 self.index_path.display()
             );
+            return;
         }
-    }
-
-    fn persist_index(&self, index: &RuntimeWorkIndex) -> io::Result<()> {
-        let now_ms = current_time_ms();
-        let mut deleted_archived_task_ids = index.deleted_archived_task_ids.clone();
-        prune_deleted_archived_task_ids(&mut deleted_archived_task_ids, now_ms);
-        let payload = serialize_index(&RuntimeWorkIndex {
-            version: INDEX_VERSION,
-            tasks: index.tasks.clone(),
-            workspaces: index.workspaces.clone(),
-            deleted_archived_task_ids,
-        })
-        .map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("failed to serialize runtime work index: {error}"),
-            )
-        })?;
-        atomic_write_file(&self.index_path, &payload)?;
+        if let Ok(mut last_payload) = self.last_written_payload.lock() {
+            *last_payload = Some(payload);
+        }
         self.update_index_signature();
-        Ok(())
     }
 
     fn refresh_index_from_disk_if_changed(&self) {
+        let Ok(_write_guard) = self.write_lock.lock() else {
+            return;
+        };
         let current_signature = index_file_signature(&self.index_path);
         let changed = self
             .index_signature
@@ -408,6 +483,9 @@ impl RuntimeWorkStore {
         let persisted_index = read_persisted_index_from_path(&self.index_path);
         if let Ok(mut index) = self.index.lock() {
             merge_persisted_index(&mut index, persisted_index);
+        }
+        if let Ok(mut last_payload) = self.last_written_payload.lock() {
+            *last_payload = None;
         }
         if let Ok(mut signature) = self.index_signature.lock() {
             *signature = current_signature;
@@ -426,10 +504,6 @@ fn current_time_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or_default()
-}
-
-fn read_index_from_path(index_path: &Path) -> RuntimeWorkIndex {
-    persisted_index_into_runtime(read_persisted_index_from_path(index_path))
 }
 
 fn read_persisted_index_from_path(index_path: &Path) -> PersistedRuntimeWorkIndex {
@@ -469,15 +543,17 @@ fn merge_persisted_index(current: &mut RuntimeWorkIndex, persisted: PersistedRun
 }
 
 fn serialize_index(index: &RuntimeWorkIndex) -> Result<Vec<u8>, serde_json::Error> {
+    let mut deleted_archived_task_ids = index.deleted_archived_task_ids.clone();
+    prune_deleted_archived_task_ids(&mut deleted_archived_task_ids, current_time_ms());
     serde_json::to_vec(&PersistedRuntimeWorkIndex {
-        version: index.version,
+        version: INDEX_VERSION,
         tasks: index
             .tasks
             .iter()
             .map(|(task_id, task)| (task_id.clone(), PersistedRuntimeTask::from_runtime(task)))
             .collect(),
         workspaces: index.workspaces.clone(),
-        deleted_archived_task_ids: index.deleted_archived_task_ids.clone(),
+        deleted_archived_task_ids,
     })
 }
 
@@ -929,6 +1005,11 @@ mod tests {
             "queuePosition": 1,
             "lastError": "transient",
             "lastErrorCode": "transient_error",
+            "messages": [{"id": "cached-message"}],
+            "completedTranscriptMessages": [{"id": "completed-message"}],
+            "completedTranscriptThreadId": "thread-1",
+            "transcriptSnapshotMessages": [{"id": "snapshot-message"}],
+            "transcriptSnapshotThreadId": "thread-1",
             "modelSelection": {"modelName": "gpt-5.6-sol"}
         });
 
@@ -948,6 +1029,19 @@ mod tests {
         assert!(task["runtime_handle"].get("queuePosition").is_none());
         assert!(task["runtime_handle"].get("lastError").is_none());
         assert!(task["runtime_handle"].get("lastErrorCode").is_none());
+        assert!(task["runtime_handle"].get("messages").is_none());
+        assert!(task["runtime_handle"]
+            .get("completedTranscriptMessages")
+            .is_none());
+        assert!(task["runtime_handle"]
+            .get("completedTranscriptThreadId")
+            .is_none());
+        assert!(task["runtime_handle"]
+            .get("transcriptSnapshotMessages")
+            .is_none());
+        assert!(task["runtime_handle"]
+            .get("transcriptSnapshotThreadId")
+            .is_none());
         assert_eq!(
             task["runtime_handle"]["modelSelection"]["modelName"],
             "gpt-5.6-sol"
@@ -963,6 +1057,95 @@ mod tests {
         assert_eq!(restored.completed_at, None);
         assert!(restored.runtime_handle.get("queuePosition").is_none());
         assert!(restored.runtime_handle.get("lastError").is_none());
+    }
+
+    #[test]
+    fn startup_migrates_legacy_runtime_handle_payloads() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let index_path = directory.path().join("index.json");
+        fs::write(
+            &index_path,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "tasks": {
+                    "legacy-task": {
+                        "local_task_id": "legacy-task",
+                        "runtime_handle": {
+                            "modelSelection": {"modelName": "gpt-5.6-sol"},
+                            "messages": [{"id": "cached-message"}],
+                            "completedTranscriptMessages": [{"id": "completed-message"}],
+                            "transcriptSnapshotMessages": [{"id": "snapshot-message"}]
+                        }
+                    }
+                },
+                "workspaces": {}
+            }))
+            .expect("legacy index should serialize"),
+        )
+        .expect("legacy index should be written");
+
+        let store = RuntimeWorkStore::new(index_path.clone());
+
+        let restored = store
+            .get_task("legacy-task")
+            .expect("legacy task should be restored");
+        assert_eq!(
+            restored.runtime_handle["modelSelection"]["modelName"],
+            "gpt-5.6-sol"
+        );
+        assert!(restored.runtime_handle.get("messages").is_none());
+        assert!(restored
+            .runtime_handle
+            .get("completedTranscriptMessages")
+            .is_none());
+        assert!(restored
+            .runtime_handle
+            .get("transcriptSnapshotMessages")
+            .is_none());
+
+        let migrated: Value =
+            serde_json::from_slice(&fs::read(index_path).expect("index should be readable"))
+                .expect("index should contain JSON");
+        let runtime_handle = &migrated["tasks"]["legacy-task"]["runtime_handle"];
+        assert_eq!(runtime_handle["modelSelection"]["modelName"], "gpt-5.6-sol");
+        assert!(runtime_handle.get("messages").is_none());
+        assert!(runtime_handle.get("completedTranscriptMessages").is_none());
+        assert!(runtime_handle.get("transcriptSnapshotMessages").is_none());
+    }
+
+    #[test]
+    fn transient_runtime_updates_do_not_rewrite_the_index() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let index_path = directory.path().join("index.json");
+        let store = RuntimeWorkStore::new(index_path);
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            "runtime-task".to_owned(),
+            "/tmp/runtime-task".to_owned(),
+            "Runtime task".to_owned(),
+        ));
+        let writes_after_create = store.write_attempts.load(Ordering::Relaxed);
+
+        store.update_task("runtime-task", |task| {
+            task.status = "running".to_owned();
+            task.running = true;
+            task.updated_at += 1;
+            task.runtime_handle["messages"] = serde_json::json!([{"id": "streaming-message"}]);
+            task.runtime_handle["transcriptSnapshotMessages"] =
+                serde_json::json!([{"id": "snapshot-message"}]);
+        });
+
+        assert_eq!(
+            store.write_attempts.load(Ordering::Relaxed),
+            writes_after_create
+        );
+
+        store.update_task("runtime-task", |task| {
+            task.runtime_handle["modelSelection"] = serde_json::json!({"modelName": "gpt-5.6-sol"});
+        });
+        assert_eq!(
+            store.write_attempts.load(Ordering::Relaxed),
+            writes_after_create + 1
+        );
     }
 
     #[test]

@@ -17,6 +17,8 @@ source "$SCRIPT_DIR/lib/wework-macos-sidecar.sh"
 source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 # shellcheck source=lib/codex-code-statistics.sh
 source "$SCRIPT_DIR/lib/codex-code-statistics.sh"
+# shellcheck source=lib/wework-release-notes.sh
+source "$SCRIPT_DIR/lib/wework-release-notes.sh"
 
 EXPLICIT_VITE_API_BASE_URL="${VITE_API_BASE_URL+x}"
 EXPLICIT_VITE_API_BASE_URL_VALUE="${VITE_API_BASE_URL:-}"
@@ -258,7 +260,7 @@ verify_uploaded_artifacts() {
     fi
   done < <(
     node -e \
-      "const m=require(process.argv[1]); for (const a of m.assets) console.log(a.name)" \
+      "const m=require(process.argv[1]); for (const a of m.assets) { console.log(a.archiveName); console.log(a.descriptorName) }" \
       "$OUTPUT_DIR/release-runtime-assets.json"
   )
 }
@@ -371,9 +373,50 @@ verify_runtime_descriptors_in_app() {
 
   for descriptor in \
     bundled-execution-runtimes/node.json \
-    bundled-harness-runtime/runtime.json; do
+    bundled-harness-runtime/runtimes.json; do
     if [ ! -s "$resource_root/$descriptor" ]; then
       echo "MinIO app bundle is missing runtime descriptor: $descriptor" >&2
+      exit 1
+    fi
+  done
+}
+
+verify_codex_targets_in_app() {
+  local app_path="$1"
+  local codex_root="$app_path/Contents/Resources/binaries/codex"
+  local allowed_targets
+  local found_targets=""
+  local expected_target
+  local target_dir
+  local target
+
+  case "$MACOS_BUILD_TARGET" in
+    aarch64-apple-darwin|x86_64-apple-darwin)
+      allowed_targets="$MACOS_BUILD_TARGET"
+      ;;
+    universal-apple-darwin)
+      allowed_targets="aarch64-apple-darwin x86_64-apple-darwin"
+      ;;
+    *)
+      echo "Unsupported macOS build target: $MACOS_BUILD_TARGET" >&2
+      exit 1
+      ;;
+  esac
+
+  for target_dir in "$codex_root"/*; do
+    [ -d "$target_dir" ] || continue
+    target="$(basename "$target_dir")"
+    [ "$target" = "legal" ] && continue
+    if [[ " $allowed_targets " != *" $target "* ]]; then
+      echo "MinIO app bundle contains Codex for unexpected target: $target" >&2
+      exit 1
+    fi
+    found_targets="$found_targets $target"
+  done
+
+  for expected_target in $allowed_targets; do
+    if [[ " $found_targets " != *" $expected_target "* ]]; then
+      echo "MinIO app bundle is missing Codex for target: $expected_target" >&2
       exit 1
     fi
   done
@@ -395,6 +438,7 @@ build_release_artifacts() {
   fi
   BASE_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json" \
   CONFIG_OVERRIDE="$release_config" \
+  CODEX_TARGET="$MACOS_BUILD_TARGET" \
   VERSION="$VERSION" \
   UPDATER_ENDPOINT="$UPDATE_MANIFEST_BASE_URL/{{target}}-{{arch}}.json" \
   UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
@@ -440,6 +484,7 @@ build_release_artifacts() {
   (
     cd "$WEWORK_DIR"
     CARGO_TARGET_DIR="$PROJECT_TAURI_TARGET_DIR" \
+    WEWORK_RUNTIME_TARGET="$MACOS_BUILD_TARGET" \
     WEWORK_HARNESS_RUNTIME_BASE_URL="$UPDATE_BASE_URL" \
     WEWORK_EXECUTION_RUNTIME_BASE_URL="$UPDATE_BASE_URL" \
     VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \
@@ -460,6 +505,7 @@ build_release_artifacts() {
     exit 1
   fi
   verify_runtime_descriptors_in_app "$app_path"
+  verify_codex_targets_in_app "$app_path"
   wework_verify_macos_app_executor_sidecar "$bundle_root"
   wework_verify_code_statistics_hook "$bundle_root" "$MACOS_BUILD_TARGET"
   if [ -z "$archive_path" ] || [ ! -s "$archive_path" ] || [ ! -s "$archive_path.sig" ]; then
@@ -512,7 +558,7 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --notes)
-      RELEASE_NOTES="$2"
+      RELEASE_NOTES="$(wework_decode_release_notes "$2")"
       shift 2
       ;;
     --endpoint)

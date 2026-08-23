@@ -812,10 +812,35 @@ function resolvedDraftInputLength(snapshot) {
 }
 
 async function captureApplicationChatIdentity(control) {
-  const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-  return {
-    currentProjectId: snapshot.workbench?.currentProject?.id ?? null,
+  const startedAt = Date.now()
+  let candidateProjectId = null
+  let candidateSince = null
+  let hasCandidate = false
+  let lastSnapshot = null
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    lastSnapshot = snapshot
+    const currentProjectId = snapshot.workbench?.currentProject?.id ?? null
+    if (snapshot.workbench?.isBootstrapping === false) {
+      if (!hasCandidate || currentProjectId !== candidateProjectId) {
+        candidateProjectId = currentProjectId
+        candidateSince = Date.now()
+        hasCandidate = true
+      } else if (
+        candidateSince !== null &&
+        Date.now() - candidateSince >= COMPOSER_READY_STABILITY_MS
+      ) {
+        return { currentProjectId }
+      }
+    } else {
+      candidateSince = null
+      hasCandidate = false
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
+  throw new Error(
+    `The application chat identity did not stabilize: ${JSON.stringify(lastSnapshot)}`
+  )
 }
 
 async function assertFreshApplicationDraft(control, { before, canonical, visible, message }) {
@@ -843,7 +868,7 @@ async function assertFreshApplicationDraft(control, { before, canonical, visible
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(`${message}: ${JSON.stringify({ actual, snapshot: lastSnapshot })}`)
+  throw new Error(`${message}: ${JSON.stringify({ before, actual, snapshot: lastSnapshot })}`)
 }
 
 async function assertPluginComposerChip(control, pluginName) {

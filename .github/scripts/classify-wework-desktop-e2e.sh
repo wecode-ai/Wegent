@@ -62,25 +62,31 @@ cloud_segments=(
   plugin-auto-update
 )
 # Group checkpoints by observed Cloud CI duration and order each shard from
-# longest to shortest so the five serial runners finish at similar times.
+# longest to shortest so the eight serial runners finish at similar times.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  goal-lifecycle,window-lifecycle,cloud-worktree-tools,telemetry-consent
-  model-routing,project-automation,workspace-attachments,plugin-auto-update
-  embedded-browser,cloud-worktree-create,workspace-tabs,cloud-worktree-archive-restore,cloud-worktree-device-restart
-  resilience,rendering-extensions,cloud-worktree-queued-cancel,priority-filter,cloud-worktree-capability
-  core-task-flow,conversation-state,supervisor-lifecycle,automation-lifecycle,browser-multi-tabs,cloud-project-creation
+  goal-lifecycle,telemetry-consent,cloud-worktree-capability
+  model-routing,plugin-auto-update,priority-filter
+  embedded-browser,cloud-worktree-device-restart,cloud-project-creation
+  resilience,cloud-worktree-queued-cancel,browser-multi-tabs
+  core-task-flow,supervisor-lifecycle,automation-lifecycle
+  window-lifecycle,cloud-worktree-tools,cloud-worktree-archive-restore
+  project-automation,workspace-attachments,cloud-worktree-create
+  conversation-state,rendering-extensions,workspace-tabs
 )
-# Keep the number of core desktop runners fixed as checkpoints grow. Group
-# checkpoints by observed Core CI duration and order each shard so the serial
-# runners stay balanced while reusing the same prebuilt application.
+# Group checkpoints by observed Core CI duration and order each shard so the
+# eight serial runners stay balanced while reusing the same prebuilt
+# application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  rendering-extensions,resilience,runtime-task-queue
-  project-ai-settings,model-routing,window-lifecycle
-  core-task-flow,embedded-browser,browser-toolbar-actions,automation-lifecycle,priority-filter,temporary-chat
-  claude-runtime,workspace-attachments,local-harness,supervisor-lifecycle,codex-notification-isolation,local-file-preview
-  conversation-state,goal-lifecycle,workspace-tabs,project-automation,permission-modes
+  rendering-extensions,runtime-task-queue,local-file-preview
+  project-ai-settings,window-lifecycle,permission-modes
+  core-task-flow,temporary-chat,codex-notification-isolation
+  claude-runtime,workspace-attachments,local-harness
+  conversation-state,goal-lifecycle,workspace-tabs
+  resilience,supervisor-lifecycle
+  model-routing,project-automation,automation-lifecycle
+  embedded-browser,browser-toolbar-actions,priority-filter
 )
 
 validate_core_shards() {

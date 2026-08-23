@@ -74,6 +74,11 @@ use screenshot::screenshot_embedded_browser;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const BROWSER_WEBVIEW_LABEL: &str = "workspace-browser";
+const HARNESS_APP_BROWSER_LABEL_PREFIX: &str = "app-harness-";
+const INSECURE_HARNESS_BROWSER_DATA_DIRECTORY: &str = "browser-data-insecure-harness";
+#[cfg(target_os = "windows")]
+const INSECURE_HARNESS_BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-web-security";
 const EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:0";
 const EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR";
 const EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN";
@@ -813,10 +818,23 @@ fn relabel_tab_routes(
     Ok(())
 }
 
-fn browser_data_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn should_disable_web_security(label: &str) -> bool {
+    label.starts_with(HARNESS_APP_BROWSER_LABEL_PREFIX)
+}
+
+fn browser_data_directory(
+    app: &tauri::AppHandle,
+    disable_web_security: bool,
+) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
-        .map(|path| path.join(EMBEDDED_BROWSER_DATA_DIRECTORY))
+        .map(|path| {
+            path.join(if cfg!(target_os = "windows") && disable_web_security {
+                INSECURE_HARNESS_BROWSER_DATA_DIRECTORY
+            } else {
+                EMBEDDED_BROWSER_DATA_DIRECTORY
+            })
+        })
         .map_err(|error| format!("Failed to locate embedded browser data directory: {error}"))
 }
 
@@ -2014,7 +2032,8 @@ pub async fn embedded_browser_open(
     let app_for_load = app.clone();
     let app_for_popup = app.clone();
     let app_for_title = app.clone();
-    let data_directory = browser_data_directory(&app)?;
+    let disable_web_security = should_disable_web_security(&label);
+    let data_directory = browser_data_directory(&app, disable_web_security)?;
 
     let entry = EmbeddedBrowserEntry {
         native_label: native_label.clone(),
@@ -2358,6 +2377,13 @@ pub async fn embedded_browser_open(
             }
         });
 
+    #[cfg(target_os = "windows")]
+    let builder = if disable_web_security {
+        builder.additional_browser_args(INSECURE_HARNESS_BROWSER_ARGS)
+    } else {
+        builder
+    };
+
     #[cfg(desktop)]
     let builder = {
         let download_app = app.clone();
@@ -2448,6 +2474,41 @@ pub async fn embedded_browser_open(
             return Err(format!("Failed to create embedded browser: {error}"));
         }
     };
+
+    #[cfg(target_os = "macos")]
+    if disable_web_security {
+        if let Err(error) =
+            crate::embedded_browser_web_security::disable_web_security(&webview).await
+        {
+            log_embedded_browser_diagnostic(
+                &state,
+                &label,
+                "open_disable_web_security_failed",
+                json!({
+                    "nativeLabel": &native_label,
+                    "error": &error,
+                }),
+            );
+            if let Ok(mut webviews) = state.webviews.lock() {
+                remove_logical_entry_if_native_matches(
+                    &mut webviews,
+                    &label,
+                    &native_label,
+                    |current| current.native_label.as_str(),
+                );
+            }
+            let _ = webview.close();
+            return Err(error);
+        }
+        log_embedded_browser_diagnostic(
+            &state,
+            &label,
+            "open_web_security_disabled",
+            json!({
+                "nativeLabel": &native_label,
+            }),
+        );
+    }
 
     #[cfg(all(target_os = "macos", debug_assertions, not(wework_release_build)))]
     if let Err(error) =

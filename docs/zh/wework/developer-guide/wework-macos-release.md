@@ -12,7 +12,7 @@ Wework macOS 应用使用 Tauri updater 支持自动升级。本地或独立发�
 
 - 默认构建 `universal-apple-darwin`，生成一个同时支持 Apple Silicon 和 Intel Mac 的安装包。
 - updater manifest 同时写入 `darwin-aarch64` 和 `darwin-x86_64`，两个平台可以指向同一个 universal archive。
-- `src-tauri/tauri.conf.json` 不保存发布服务地址或 updater 公钥。本地发布脚本和 GitHub Actions 都通过 `wework/scripts/generate-release-config.mjs` 生成临时 Tauri config，在注入发布参数的同时完整保留基础配置中的 `bundle.resources`。Tauri config 覆盖会整体替换资源数组，因此发布路径不能单独维护一份不完整的 resources 列表。
+- `src-tauri/tauri.conf.json` 不保存发布服务地址或 updater 公钥。本地发布脚本和 GitHub Actions 都通过 `wework/scripts/generate-release-config.mjs` 生成临时 Tauri config，在注入发布参数的同时保留基础配置中的完整资源类型，并将宽泛的 Codex 资源规则收窄为当前构建目标。Tauri config 覆盖会整体替换资源数组，因此发布路径不能单独维护一份不完整的 resources 列表。
 - updater 私钥和发布 token 只通过环境变量或本机文件读取，不提交到仓库。
 - Codex CLI 不在本地编译。构建前通过 `wework/scripts/prepare-codex-binary.mjs` 按 `wework/codex-binaries.lock.json` 下载 npm tarball，校验 SHA-512 integrity 后打进 Tauri resources。
 
@@ -20,9 +20,23 @@ Wework macOS 应用使用 Tauri updater 支持自动升级。本地或独立发�
 
 Wework 桌面包会直接附带 Codex CLI，避免用户在首次运行时再安装。版本和每个平台的 tarball 校验值由 `wework/codex-binaries.lock.json` 固定。
 
-当前固定版本为稳定版 Codex `0.147.0`。升级时必须同时更新所有支持平台的 npm
+当前固定版本为稳定版 Codex `0.149.0`。升级时必须同时更新所有支持平台的 npm
 包版本、官方 registry tarball 地址与 SHA-512 integrity 值；不能直接替换已签名
 应用包中的二进制。请通过发布构建重新准备 sidecar、打包并代码签名。
+
+升级后先运行聚焦单测和全部目标准备命令，确认每个归档都能通过完整性校验，
+并且同时包含 `codex` 与 `codex-code-mode-host`：
+
+```bash
+pnpm --filter wework test scripts/prepare-codex-binary.test.mjs
+pnpm --filter wework run prepare:codex --all
+```
+
+然后根据 `wework/codex-binaries.lock.json` 中当前 macOS 目标的 `binaryPath`，
+对 `wework/src-tauri/binaries/codex/<target>/` 下准备出的准确二进制运行
+`--version`；不要使用 `PATH` 中的 `codex`。再通过
+`pnpm --filter wework ai:verify start` 在隔离的真实 Tauri 应用中至少验证
+Codex App Server 初始化、创建本地任务、完成一次真实 turn，以及插件列表加载。
 
 本地构建会自动准备当前目标平台的 Codex：
 
@@ -131,7 +145,7 @@ Linux 上的内置浏览器子 WebView 必须放在 `GtkOverlay` 和 `GtkFixed` 
 https://github.com/<owner>/<repo>/releases/download/wework-updater/{{target}}-{{arch}}.json
 ```
 
-macOS CI job 不调用 `release-mac-app.sh`，但两条发布路径共享 `wework/scripts/generate-release-config.mjs`。该生成器从 `src-tauri/tauri.conf.json` 复制完整的 `bundle.resources`，确保 Codex、hooks、bundled plugins 及隐藏的 marketplace manifests 都进入正式发布包。修改桌面资源清单时应更新基础 Tauri 配置，不要在 workflow 中重新复制资源列表。
+macOS CI job 不调用 `release-mac-app.sh`，但两条发布路径共享 `wework/scripts/generate-release-config.mjs`。该生成器从 `src-tauri/tauri.conf.json` 复制完整的资源类型，并根据 `CODEX_TARGET` 只保留当前平台的 Codex 二进制，确保 hooks、bundled plugins、runtime 描述及隐藏的 marketplace manifests 都进入正式发布包，同时避免持久工作区中的其他平台 Codex 被误打包。修改桌面资源清单时应更新基础 Tauri 配置，不要在 workflow 中重新复制资源列表。
 
 workflow 只能通过 GitHub Actions 手动触发，不会响应 tag push。启动 workflow 时选择发布渠道：
 
@@ -149,6 +163,23 @@ workflow 只能通过 GitHub Actions 手动触发，不会响应 tag push。启�
 - `stable-*` 只指向最新正式版。
 - `beta-*` 指向 Beta 和正式版中 SemVer 更高的版本，因此选择 Beta 的用户也会收到更新的正式版。
 - 新版本只有在 SemVer 高于当前渠道版本时才覆盖滚动 manifest，历史发布或较低版本不会让用户降级。
+
+DeepSeek Harness 和 Node.js Runtime 也发布在固定的 `wework-updater` Release，但不属于具体 Wework 应用版本的 assets。Harness 按 DSH 版本和平台生成独立的不可变资产；Node.js 按 Node 版本和平台生成资产。准备脚本使用依赖锁文件、Node ABI、签名身份和打包格式计算 Runtime 指纹：已存在的指纹会复用已发布的资产，只有依赖或这些构建输入变化时才发布新的 Runtime。CI 先上传归档再上传描述符，禁止覆盖或补齐只有一半的资产对，避免旧客户端保存的校验和失效。
+
+内部 MinIO 发布使用相同的 Runtime 资产模型。`build-minio-mac-release.sh` 和
+`build-minio-windows-release.sh` 会收集 Harness catalog 中的全部 DSH 版本以及
+Node.js Runtime，并把每个 Runtime 作为同名的 `.tar.gz` 与 `.json` 描述符成对发布。
+已存在的完整资产对只有在远端描述符与当前构建完全一致时才复用。为了迁移旧流程曾经
+只上传的归档，脚本仅在远端归档大小和 SHA-256 与当前描述符完全一致时补发描述符；
+归档内容不同或出现“只有描述符、没有归档”的状态时必须失败，不能覆盖旧归档。改变
+Runtime 打包结果但无法复用旧归档时，应提升准备脚本中的归档格式版本，使指纹和资产
+文件名一起变化。
+
+如果 Jenkins 的 `CHANGE_LOG` 仍是无权限修改的单行字符串参数，可以在输入中使用
+字面量 `\n` 表示换行，例如
+`## 更新内容\n\n- 修复发布流程\n- 优化 Runtime 下载`。macOS 和 Windows
+MinIO 发布脚本只对显式传入的 `--notes` 值执行该转换，写入 updater manifest
+时会恢复为真正的多行 Markdown。
 
 用户可以在 Wework 的“设置 → 关于”中打开“接收 Beta 版本更新”。默认关闭时客户端使用 `stable` target；打开后使用 `beta` target。切换后立即检查更新，并把选择保存在本机。
 

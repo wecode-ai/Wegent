@@ -2,15 +2,23 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
+from hashlib import sha256
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
+from minio.error import S3Error
 
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
+
+from minio_release_assets import (  # noqa: E402
+    load_runtime_asset_pairs,
+    publish_runtime_asset_pairs,
+)
 
 
 def load_script(name: str) -> ModuleType:
@@ -40,13 +48,30 @@ class FakeClient:
     def get_object(self, _bucket: str, object_name: str):
         return FakeResponse(self.objects[object_name])
 
+    def stat_object(self, _bucket: str, object_name: str):
+        if object_name not in self.objects:
+            raise S3Error(
+                None,
+                "NoSuchKey",
+                "missing",
+                object_name,
+                "request-id",
+                "host-id",
+            )
+        return SimpleNamespace(size=len(self.objects[object_name]))
+
 
 class FakeResponse:
     def __init__(self, content: bytes) -> None:
         self.content = content
+        self.offset = 0
 
-    def read(self) -> bytes:
-        return self.content
+    def read(self, size: int = -1) -> bytes:
+        if size < 0:
+            size = len(self.content) - self.offset
+        chunk = self.content[self.offset : self.offset + size]
+        self.offset += len(chunk)
+        return chunk
 
     def close(self) -> None:
         pass
@@ -155,91 +180,350 @@ def test_stable_versions_sort_after_beta_versions() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "script",
-    (
-        "upload-mac-release-to-s3.py",
-        "upload-windows-release-to-s3.py",
-    ),
-)
-def test_runtime_assets_are_loaded_from_the_release_manifest(
-    script: str, tmp_path: Path
+def write_runtime_pair(tmp_path: Path, kind: str, suffix: str) -> tuple[Path, Path]:
+    archive = tmp_path / f"{kind}-runtime-macos-arm64-{suffix}.tar.gz"
+    descriptor = archive.with_name(archive.name.removesuffix(".tar.gz") + ".json")
+    content = kind.encode()
+    archive.write_bytes(content)
+    descriptor.write_text(
+        json.dumps(
+            {
+                "assetName": archive.name,
+                "archiveBytes": len(content),
+                "archiveSha256": sha256(content).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return archive, descriptor
+
+
+def runtime_asset(kind: str, archive: Path, descriptor: Path) -> dict[str, str]:
+    return {
+        "kind": kind,
+        "archiveName": archive.name,
+        "descriptorName": descriptor.name,
+    }
+
+
+def test_runtime_asset_pairs_are_loaded_from_the_release_manifest(
+    tmp_path: Path,
 ) -> None:
-    module = load_script(script)
-    harness = tmp_path / "harness-runtime-macos-arm64-fixture.tar.gz"
-    node = tmp_path / "node-runtime-macos-arm64-fixture.tar.gz"
-    harness.write_bytes(b"harness")
-    node.write_bytes(b"node")
+    harness_rc7 = write_runtime_pair(tmp_path, "harness", "rc7")
+    harness_rc8 = write_runtime_pair(tmp_path, "harness", "rc8")
+    node = write_runtime_pair(tmp_path, "node", "fixture")
     (tmp_path / "release-runtime-assets.json").write_text(
         json.dumps(
             {
                 "assets": [
-                    {"kind": "harness", "name": harness.name},
-                    {"kind": "node", "name": node.name},
+                    runtime_asset("harness", *harness_rc7),
+                    runtime_asset("harness", *harness_rc8),
+                    runtime_asset("node", *node),
                 ]
             }
         ),
         encoding="utf-8",
     )
 
-    assert module.load_runtime_assets(tmp_path) == [harness, node]
+    pairs = load_runtime_asset_pairs(tmp_path)
+    assert [(pair.archive, pair.descriptor) for pair in pairs] == [
+        harness_rc7,
+        harness_rc8,
+        node,
+    ]
 
 
-@pytest.mark.parametrize(
-    "script",
-    (
-        "upload-mac-release-to-s3.py",
-        "upload-windows-release-to-s3.py",
-    ),
-)
-def test_runtime_asset_manifest_requires_both_runtime_kinds(
-    script: str, tmp_path: Path
+def test_runtime_asset_manifest_requires_node_and_harness_runtimes(
+    tmp_path: Path,
 ) -> None:
-    module = load_script(script)
+    harness = write_runtime_pair(tmp_path, "harness", "fixture")
     (tmp_path / "release-runtime-assets.json").write_text(
-        json.dumps({"assets": [{"kind": "harness", "name": "harness.tar.gz"}]}),
+        json.dumps({"assets": [runtime_asset("harness", *harness)]}),
         encoding="utf-8",
     )
 
-    with pytest.raises(SystemExit, match="harness and node"):
-        module.load_runtime_assets(tmp_path)
+    with pytest.raises(SystemExit, match="one node and at least one harness"):
+        load_runtime_asset_pairs(tmp_path)
 
 
-@pytest.mark.parametrize(
-    "script",
-    (
-        "upload-mac-release-to-s3.py",
-        "upload-windows-release-to-s3.py",
-    ),
-)
 def test_runtime_asset_manifest_rejects_paths_outside_the_release_directory(
-    script: str, tmp_path: Path
+    tmp_path: Path,
 ) -> None:
-    module = load_script(script)
+    node = write_runtime_pair(tmp_path, "node", "fixture")
     (tmp_path / "release-runtime-assets.json").write_text(
         json.dumps(
             {
                 "assets": [
-                    {"kind": "harness", "name": "../harness-runtime.tar.gz"},
-                    {"kind": "node", "name": "node-runtime.tar.gz"},
+                    {
+                        "kind": "harness",
+                        "archiveName": "../harness-runtime.tar.gz",
+                        "descriptorName": "harness-runtime.json",
+                    },
+                    runtime_asset("node", *node),
                 ]
             }
         ),
         encoding="utf-8",
     )
 
-    with pytest.raises(SystemExit, match="invalid asset name"):
-        module.load_runtime_assets(tmp_path)
+    with pytest.raises(SystemExit, match="invalid asset pair"):
+        load_runtime_asset_pairs(tmp_path)
+
+
+def test_runtime_asset_pairs_publish_archive_before_descriptor(
+    tmp_path: Path,
+) -> None:
+    harness = write_runtime_pair(tmp_path, "harness", "fixture")
+    node = write_runtime_pair(tmp_path, "node", "fixture")
+    (tmp_path / "release-runtime-assets.json").write_text(
+        json.dumps(
+            {
+                "assets": [
+                    runtime_asset("harness", *harness),
+                    runtime_asset("node", *node),
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = FakeClient()
+    uploaded = []
+
+    publish_runtime_asset_pairs(
+        client,
+        "releases",
+        "wework/macos",
+        tmp_path,
+        uploaded.append,
+    )
+
+    assert uploaded == [harness[0], harness[1], node[0], node[1]]
+
+
+def test_runtime_asset_pairs_reuse_complete_publications(tmp_path: Path) -> None:
+    harness = write_runtime_pair(tmp_path, "harness", "fixture")
+    node = write_runtime_pair(tmp_path, "node", "fixture")
+    assets = [
+        runtime_asset("harness", *harness),
+        runtime_asset("node", *node),
+    ]
+    (tmp_path / "release-runtime-assets.json").write_text(
+        json.dumps({"assets": assets}),
+        encoding="utf-8",
+    )
+    client = FakeClient()
+    for asset in assets:
+        client.objects[f"wework/macos/{asset['archiveName']}"] = b"archive"
+        client.objects[f"wework/macos/{asset['descriptorName']}"] = (
+            tmp_path / asset["descriptorName"]
+        ).read_bytes()
+
+    uploaded = []
+    publish_runtime_asset_pairs(
+        client,
+        "releases",
+        "wework/macos",
+        tmp_path,
+        uploaded.append,
+    )
+
+    assert uploaded == []
+
+
+def test_runtime_asset_pairs_reject_changed_published_descriptors(
+    tmp_path: Path,
+) -> None:
+    harness = write_runtime_pair(tmp_path, "harness", "fixture")
+    node = write_runtime_pair(tmp_path, "node", "fixture")
+    assets = [
+        runtime_asset("harness", *harness),
+        runtime_asset("node", *node),
+    ]
+    (tmp_path / "release-runtime-assets.json").write_text(
+        json.dumps({"assets": assets}),
+        encoding="utf-8",
+    )
+    client = FakeClient()
+    client.objects[f"wework/macos/{harness[0].name}"] = harness[0].read_bytes()
+    client.objects[f"wework/macos/{harness[1].name}"] = b"{}"
+
+    with pytest.raises(SystemExit, match="descriptor does not match"):
+        publish_runtime_asset_pairs(
+            client,
+            "releases",
+            "wework/macos",
+            tmp_path,
+            lambda _path: None,
+        )
+
+
+def test_runtime_asset_pairs_migrate_matching_legacy_archives(tmp_path: Path) -> None:
+    harness = write_runtime_pair(tmp_path, "harness", "fixture")
+    node = write_runtime_pair(tmp_path, "node", "fixture")
+    assets = [
+        runtime_asset("harness", *harness),
+        runtime_asset("node", *node),
+    ]
+    (tmp_path / "release-runtime-assets.json").write_text(
+        json.dumps({"assets": assets}),
+        encoding="utf-8",
+    )
+    client = FakeClient()
+    client.objects[f"wework/macos/{harness[0].name}"] = harness[0].read_bytes()
+    uploaded = []
+
+    publish_runtime_asset_pairs(
+        client,
+        "releases",
+        "wework/macos",
+        tmp_path,
+        uploaded.append,
+    )
+
+    assert uploaded == [harness[1], node[0], node[1]]
+
+
+def test_runtime_asset_pairs_reject_mismatched_legacy_archives(
+    tmp_path: Path,
+) -> None:
+    harness = write_runtime_pair(tmp_path, "harness", "fixture")
+    node = write_runtime_pair(tmp_path, "node", "fixture")
+    (tmp_path / "release-runtime-assets.json").write_text(
+        json.dumps(
+            {
+                "assets": [
+                    runtime_asset("harness", *harness),
+                    runtime_asset("node", *node),
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = FakeClient()
+    client.objects[f"wework/macos/{harness[0].name}"] = b"wrong"
+
+    with pytest.raises(SystemExit, match="archive does not match"):
+        publish_runtime_asset_pairs(
+            client,
+            "releases",
+            "wework/macos",
+            tmp_path,
+            lambda _path: None,
+        )
+
+
+def test_runtime_asset_pairs_reject_descriptor_only_publications(
+    tmp_path: Path,
+) -> None:
+    harness = write_runtime_pair(tmp_path, "harness", "fixture")
+    node = write_runtime_pair(tmp_path, "node", "fixture")
+    (tmp_path / "release-runtime-assets.json").write_text(
+        json.dumps(
+            {
+                "assets": [
+                    runtime_asset("harness", *harness),
+                    runtime_asset("node", *node),
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = FakeClient()
+    client.objects[f"wework/macos/{harness[1].name}"] = harness[1].read_bytes()
+
+    with pytest.raises(SystemExit, match="publication is incomplete"):
+        publish_runtime_asset_pairs(
+            client,
+            "releases",
+            "wework/macos",
+            tmp_path,
+            lambda _path: None,
+        )
 
 
 def test_minio_macos_build_inherits_the_complete_tauri_resource_list() -> None:
     script = (SCRIPT_DIR / "build-minio-mac-release.sh").read_text(encoding="utf-8")
 
     assert 'BASE_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json"' in script
+    assert 'CODEX_TARGET="$MACOS_BUILD_TARGET"' in script
+    assert 'WEWORK_RUNTIME_TARGET="$MACOS_BUILD_TARGET"' in script
     assert "verify_runtime_descriptors_in_app" in script
+    assert "verify_codex_targets_in_app" in script
+    assert "contains Codex for unexpected target" in script
     assert "bundled-execution-runtimes/node.json" in script
-    assert "bundled-harness-runtime/runtime.json" in script
+    assert "bundled-harness-runtime/runtimes.json" in script
     assert 'bash "$SCRIPT_DIR/release-mac-app.sh"' not in script
+
+
+def test_minio_windows_build_prepares_target_platform_runtimes() -> None:
+    script = (SCRIPT_DIR / "build-minio-windows-release.sh").read_text(encoding="utf-8")
+
+    assert 'WEWORK_RUNTIME_TARGET="$WINDOWS_BUILD_TARGET"' in script
+
+
+def test_node_runtime_format_version_avoids_legacy_minio_asset_names() -> None:
+    script = (SCRIPT_DIR / "prepare-execution-runtime.mjs").read_text(encoding="utf-8")
+
+    assert "node-runtime-tar-gzip-v2" in script
+    assert "WEWORK_RUNTIME_TARGET" in script
+    assert "SHASUMS256.txt" in script
+    assert "Target Node runtime has the wrong architecture" in script
+
+
+def test_harness_runtime_install_uses_the_requested_target_platform() -> None:
+    script = (SCRIPT_DIR / "prepare-harness-runtime.mjs").read_text(encoding="utf-8")
+
+    assert "WEWORK_RUNTIME_TARGET" in script
+    assert "dsh-runtime-tar-gzip-v5" in script
+    assert "supportedArchitectures" in script
+    assert "--ignore-scripts" in script
+    assert "prepareTargetSpawnHelpers" in script
+
+
+@pytest.mark.parametrize(
+    ("script_name", "target", "expected"),
+    [
+        ("prepare-execution-runtime.mjs", "x86_64-apple-darwin", "macos-x64"),
+        ("prepare-harness-runtime.mjs", "x86_64-apple-darwin", "macos-x64"),
+        ("prepare-execution-runtime.mjs", "x86_64-pc-windows-msvc", "windows-x64"),
+        ("prepare-harness-runtime.mjs", "x86_64-pc-windows-msvc", "windows-x64"),
+    ],
+)
+def test_runtime_preparation_resolves_the_requested_target(
+    script_name: str, target: str, expected: str
+) -> None:
+    environment = os.environ.copy()
+    environment["WEWORK_RUNTIME_TARGET"] = target
+
+    result = subprocess.run(
+        ["node", str(SCRIPT_DIR / script_name), "--print-runtime-platform"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.stdout.strip() == expected
+
+
+def test_minio_release_notes_decode_escaped_newlines() -> None:
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            """
+source "$1"
+wework_decode_release_notes '## 更新内容\\n\\n- 修复发布流程\\n- 保留普通文本'
+""",
+            "bash",
+            str(SCRIPT_DIR / "lib/wework-release-notes.sh"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout == "## 更新内容\n\n- 修复发布流程\n- 保留普通文本"
 
 
 def test_internal_updater_key_exports_private_key_content(tmp_path: Path) -> None:

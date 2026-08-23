@@ -1,0 +1,78 @@
+name: Feature request / 功能建议
+description: Propose an improvement grounded in a concrete use case / 基于具体场景提出改进建议
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem and desired outcome before proposing implementation details. This helps us find the simplest solution that fits the whole system.
+
+        请优先描述问题与期望结果，再补充实现建议，以便找到适合整个系统的最简方案。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checks / 提交前检查
+      options:
+        - label: I searched existing issues and did not find an equivalent request. / 我已搜索已有 Issue，未发现相同建议。
+          required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Target component / 目标模块
+      options:
+        - Wework desktop app
+        - Wegent web frontend
+        - Backend or API
+        - Executor or task runtime
+        - Chat shell
+        - Knowledge base or document conversion
+        - Deployment, installation, or CI
+        - Integrations or MCP
+        - Cross-component or new capability
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case / 问题与使用场景
+      description: Who has this problem, in what workflow, and why does it matter? / 谁在什么流程中遇到了什么问题，为什么值得解决？
+      placeholder: When ..., users need to ..., but currently ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome / 期望结果
+      description: Describe observable behavior and what success looks like. / 描述可观察的目标行为和验收结果。
+      placeholder: Users should be able to ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution / 建议方案
+      description: Optional. Explain a possible product or technical approach without assuming it is the only solution. / 可选。说明可能的产品或技术方案。
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 已考虑的替代方案
+      description: Describe current workarounds or other approaches you considered. / 描述当前绕过方式或考虑过的其他方案。
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Scope and impact / 范围与影响
+      description: Note compatibility, performance, security, migration, or documentation implications. / 说明兼容性、性能、安全、迁移或文档方面的影响。
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context / 补充信息
+      description: Add examples, mockups, links, or other useful context. / 可补充示例、原型、链接等信息。

@@ -562,6 +562,13 @@ impl TaskRuntime {
         self.local_store.list_task_bindings(item_id)
     }
 
+    pub fn list_task_bindings_batch(
+        &self,
+        item_ids: &[String],
+    ) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
+        self.local_store.list_task_bindings_batch(item_ids)
+    }
+
     pub fn list_chat_agents(&self, project_id: &str) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
         self.local_store.list_chat_agents(project_id)
     }
