@@ -280,6 +280,68 @@ fn linked_directory_ignores_pnpm_style_dependency_symlinks() {
     assert!(validate_package_directory(&app).is_ok());
 }
 
+#[cfg(unix)]
+#[test]
+fn linked_directory_rejects_symlinked_required_files() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let outside = directory.path().join("outside-plugin.md");
+    fs::write(&outside, "# Outside\n").unwrap();
+    fs::remove_file(app.join("PLUGIN.md")).unwrap();
+    symlink(&outside, app.join("PLUGIN.md")).unwrap();
+
+    assert!(matches!(
+        validate_package_directory(&app),
+        Err(error) if error.contains("symbolic links")
+    ));
+    assert!(
+        export_package_directory(&app, &directory.path().join("app.zip"))
+            .unwrap_err()
+            .contains("symbolic links")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_directory_rejects_symlinked_declared_package_directories() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let bundle = app.join("packages/bundle/editable-workbench");
+    let outside = directory.path().join("outside-package");
+    fs::rename(&bundle, &outside).unwrap();
+    symlink(&outside, &bundle).unwrap();
+
+    assert!(matches!(
+        validate_package_directory(&app),
+        Err(error) if error.contains("symbolic links")
+    ));
+    assert!(
+        export_package_directory(&app, &directory.path().join("app.zip"))
+            .unwrap_err()
+            .contains("symbolic links")
+    );
+}
+
 #[test]
 fn linked_installation_refreshes_edits_and_recovers_after_invalid_content() {
     let directory = tempdir().unwrap();

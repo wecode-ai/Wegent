@@ -380,6 +380,7 @@ fn validate_package_directory(path: &Path) -> Result<(HarnessAppManifest, String
         return Err("Harness app path must be a directory".to_string());
     }
     let manifest_path = root.join("plugin-manifest.json");
+    reject_editable_path_symlinks(&root, Path::new("plugin-manifest.json"))?;
     let manifest: HarnessAppManifest = serde_json::from_slice(
         &fs::read(&manifest_path)
             .map_err(|error| format!("Failed to read plugin-manifest.json: {error}"))?,
@@ -387,10 +388,12 @@ fn validate_package_directory(path: &Path) -> Result<(HarnessAppManifest, String
     .map_err(|error| format!("plugin-manifest.json is invalid: {error}"))?;
     validate_manifest(&manifest)?;
     for required in ["PLUGIN.md", "INSTALL.zh-CN.md"] {
+        reject_editable_path_symlinks(&root, Path::new(required))?;
         if !root.join(required).is_file() {
             return Err(format!("Harness app directory is missing {required}"));
         }
     }
+    reject_editable_path_symlinks(&root, Path::new(&manifest.entry.install_package))?;
     let install_package = root.join(&manifest.entry.install_package);
     if !install_package.is_dir()
         || !install_package.join("package.json").is_file()
@@ -793,6 +796,29 @@ fn collect_editable_directory_files(
     Ok(())
 }
 
+fn reject_editable_path_symlinks(root: &Path, relative: &Path) -> Result<(), String> {
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(component) = component else {
+            continue;
+        };
+        current.push(component);
+        let metadata = match fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(format!(
+                    "Failed to inspect Harness app source path: {error}"
+                ));
+            }
+        };
+        if metadata.file_type().is_symlink() {
+            return Err("Harness app source paths cannot contain symbolic links".to_string());
+        }
+    }
+    Ok(())
+}
+
 fn collect_editable_package_files(
     root: &Path,
     manifest: &HarnessAppManifest,
@@ -811,6 +837,7 @@ fn collect_editable_package_files(
             .collect()
     };
     for relative in package_paths {
+        reject_editable_path_symlinks(root, Path::new(relative))?;
         let package = root.join(relative);
         if package.is_dir() {
             collect_editable_directory_files(root, &package, &mut files)?;
