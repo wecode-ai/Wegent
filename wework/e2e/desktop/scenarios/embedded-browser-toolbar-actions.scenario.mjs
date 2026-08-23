@@ -281,23 +281,57 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await waitForPageNumber(
-        bridgeIdentity,
-        'window.innerWidth',
-        390,
-        4,
+      await waitForValue(
+        control,
+        DEVICE_WIDTH_SELECTOR,
+        '390',
         uiTimeoutMs,
-        'The responsive preset did not emulate a 390px viewport'
+        'The responsive preset width did not initialize'
       )
+      await waitForValue(
+        control,
+        DEVICE_HEIGHT_SELECTOR,
+        '844',
+        uiTimeoutMs,
+        'The responsive preset height did not initialize'
+      )
+      // WebKitGTK's zoom API scales rendering without changing window.innerWidth.
+      // WKWebView and WebView2 expose the emulated CSS viewport through innerWidth.
+      if (process.platform !== 'linux') {
+        await waitForPageNumber(
+          bridgeIdentity,
+          'window.innerWidth',
+          390,
+          4,
+          uiTimeoutMs,
+          'The responsive preset did not emulate a 390px viewport'
+        )
+      }
       await control.command('click', DEVICE_ROTATE_SELECTOR, { visible: true })
-      await waitForPageNumber(
-        bridgeIdentity,
-        'window.innerWidth',
-        844,
-        4,
+      await waitForValue(
+        control,
+        DEVICE_WIDTH_SELECTOR,
+        '844',
         uiTimeoutMs,
-        'Rotating the device viewport did not emulate an 844px width'
+        'Rotating the device viewport did not update its width'
       )
+      await waitForValue(
+        control,
+        DEVICE_HEIGHT_SELECTOR,
+        '390',
+        uiTimeoutMs,
+        'Rotating the device viewport did not update its height'
+      )
+      if (process.platform !== 'linux') {
+        await waitForPageNumber(
+          bridgeIdentity,
+          'window.innerWidth',
+          844,
+          4,
+          uiTimeoutMs,
+          'Rotating the device viewport did not emulate an 844px width'
+        )
+      }
       await control.command('click', RIGHT_PANEL_EXPAND_SELECTOR, { visible: true })
       await control.command('fill', DEVICE_WIDTH_SELECTOR, { value: '800', visible: true })
       await control.command('fill', DEVICE_HEIGHT_SELECTOR, { value: '600', visible: true })
