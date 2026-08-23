@@ -108,6 +108,33 @@ describe('localExecutor', () => {
     })
   })
 
+  test('reuses a healthy executor for repeated startup barriers', async () => {
+    invokeMock.mockImplementation(command => {
+      if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
+        return Promise.resolve({
+          id: 'wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          pluginCount: 0,
+        })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.ensure) {
+        return Promise.resolve({
+          running: true,
+          ready: true,
+          deviceId: 'local-device',
+          runtimeInstanceId: 'runtime-reused',
+        })
+      }
+      return Promise.reject(new Error(`Unexpected command: ${String(command)}`))
+    })
+
+    const first = await ensureLocalExecutorStarted()
+    const second = await ensureLocalExecutorStarted()
+
+    expect(second).toEqual(first)
+    expect(invokeMock).toHaveBeenCalledTimes(2)
+  })
+
   test('keeps an initialized bundled marketplace without adding it again', async () => {
     const path = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal'
     invokeMock.mockImplementation(command => {

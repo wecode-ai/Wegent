@@ -2451,6 +2451,7 @@ export function WorkbenchProvider({
   // plugin cache so the conversation toolbar can paint without waiting for
   // `/` or a plugin-picker click.
   useEffect(() => {
+    if (state.isBootstrapping) return undefined
     if (localAppsRefreshTimerRef.current !== null) {
       window.clearTimeout(localAppsRefreshTimerRef.current)
       localAppsRefreshTimerRef.current = null
@@ -2488,7 +2489,7 @@ export function WorkbenchProvider({
         localAppsRefreshTimerRef.current = null
       }
     }
-  }, [listLocalApps])
+  }, [listLocalApps, state.isBootstrapping])
 
   const previousProjectPluginNamesKeyRef = useRef(projectPluginNamesKey)
   useEffect(() => {

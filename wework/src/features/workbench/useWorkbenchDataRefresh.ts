@@ -582,6 +582,15 @@ export function useWorkbenchDataRefresh({
   useEffect(() => {
     let cancelled = false
     const startedAt = nowMs()
+    const cachedDevices = resolveDeviceListWithCache([], { useCacheFallback: true })
+    dispatch({
+      type: 'bootstrapped',
+      user,
+      defaultTeam: null,
+      projects: [],
+      devices: cachedDevices,
+      standaloneDeviceId: getRememberedStandaloneDeviceId(user, cachedDevices),
+    })
     const slowTimer = window.setTimeout(() => {
       if (!cancelled) {
         console.warn('[Wework] Workbench shell bootstrap is still running after 5000ms.')
@@ -612,9 +621,8 @@ export function useWorkbenchDataRefresh({
       })
       const standaloneDeviceId = getRememberedStandaloneDeviceId(user, devices)
 
-      // Do not force-clear currentProject / runtimeWork here. CLI `wework <path>` may
-      // open a workspace while bootstrap is still in flight; wiping those fields would
-      // leave the UI selected against a stale local-device alias with no online device.
+      // Refresh the shell snapshot without forcing currentProject/runtimeWork to empty.
+      // CLI `wework <path>` may open a workspace while discovery is still in flight.
       dispatch({
         type: 'bootstrapped',
         user,

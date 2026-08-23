@@ -14,6 +14,12 @@ export interface WeworkDevInstanceRow {
   value: string
 }
 
+declare global {
+  interface Window {
+    __WEWORK_DEV_INSTANCE__?: WeworkDevInstanceInfo
+  }
+}
+
 function envValue(key: keyof ImportMetaEnv): string | undefined {
   return import.meta.env[key]?.trim() || undefined
 }
@@ -23,6 +29,9 @@ export function getWeworkDevTitle(): string | null {
 }
 
 export function getWeworkDevInstanceInfo(): WeworkDevInstanceInfo | null {
+  const runtimeInfo = window.__WEWORK_DEV_INSTANCE__
+  if (runtimeInfo?.title) return runtimeInfo
+
   const title = envValue('VITE_WEWORK_DEV_TITLE')
   if (!title) return null
 

@@ -2718,6 +2718,17 @@ fn plugin_app_server_method_allowlist_covers_wework_plugin_runtime_surface() {
 }
 
 #[test]
+fn unrouted_notification_preview_is_bounded_and_utf8_safe() {
+    let raw = format!("{}中文", "x".repeat(8 * 1024));
+
+    let preview = bounded_unrouted_notification_preview(&raw);
+
+    assert!(preview.len() <= 4 * 1024 + '…'.len_utf8());
+    assert!(preview.ends_with('…'));
+    assert_eq!(bounded_unrouted_notification_preview("small"), "small");
+}
+
+#[test]
 fn cached_user_message_uses_explicit_payload_text() {
     let request = ExecutionRequest {
         subtask_id: "42".to_owned(),

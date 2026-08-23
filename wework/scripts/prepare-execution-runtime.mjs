@@ -13,7 +13,8 @@ import { macosSigningFingerprint } from './lib/deepseek-harness-signing.mjs'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const resourceDirectory = path.join(root, 'src-tauri', 'bundled-execution-runtimes')
 const descriptorPath = path.join(resourceDirectory, 'node.json')
-const cacheDirectory = path.join(root, 'node_modules', '.cache')
+const cacheDirectory =
+  process.env.WEWORK_RUNTIME_CACHE_DIR?.trim() || path.join(root, 'node_modules', '.cache')
 const assetDirectory = path.join(cacheDirectory, 'execution-runtime-assets')
 const materializedRoot = path.join(cacheDirectory, 'execution-runtime-node-dev')
 const staging = path.join(cacheDirectory, `wework-node-runtime-${process.pid}`)
@@ -91,6 +92,23 @@ async function materialize(assetPath, fingerprint) {
   console.log(`Node runtime root: ${materializedRoot}`)
 }
 
+async function reuseMaterializedRuntime(fingerprint) {
+  if (!materializeRequested) return false
+  try {
+    const identity = JSON.parse(
+      await readFile(path.join(materializedRoot, 'runtime.json'), 'utf8')
+    )
+    const nodePath = path.join(materializedRoot, 'bin', nodeBinaryName)
+    if (identity.fingerprint === fingerprint && (await stat(nodePath)).isFile()) {
+      console.log(`Node runtime root: ${materializedRoot}`)
+      return true
+    }
+  } catch {
+    // Prepare or repair the development runtime below.
+  }
+  return false
+}
+
 const nodeBinaryName = process.platform === 'win32' ? 'node.exe' : 'node'
 const signingFingerprint = macosSigningFingerprint(
   process.platform,
@@ -116,6 +134,10 @@ const publishedDescriptorUrl = `${baseUrl.replace(/\/+$/, '')}/${assetName.repla
   /\.tar\.gz$/,
   '.json'
 )}`
+
+if (await reuseMaterializedRuntime(fingerprint)) {
+  process.exit(0)
+}
 
 async function reusePublishedRuntime() {
   if (

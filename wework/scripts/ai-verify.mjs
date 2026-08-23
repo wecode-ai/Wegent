@@ -149,16 +149,16 @@ async function removeSessionAuthLink(session) {
 }
 
 export async function readSessionForCleanup(sessionPath, timeoutMs = failedStartCleanupGraceMs) {
-  const deadline = Date.now() + timeoutMs
+  const deadline = performance.now() + timeoutMs
   let session
-  while (Date.now() <= deadline) {
+  while (performance.now() <= deadline) {
     try {
       session = JSON.parse(await readFile(sessionPath, 'utf8'))
       if (Number.isInteger(session.launcherPid)) break
     } catch {
       // The controller may still be replacing the session file.
     }
-    const remainingMs = deadline - Date.now()
+    const remainingMs = deadline - performance.now()
     if (remainingMs <= 0) break
     await new Promise(resolvePromise =>
       setTimeout(resolvePromise, Math.min(cleanupSessionPollMs, remainingMs))
@@ -219,6 +219,7 @@ async function runServer(sessionPath, token) {
   const queue = []
   const pending = new Map()
   let ready = null
+  const probes = new Map()
   let app = null
   let appExit = null
   let shutdownPromise = null
@@ -234,6 +235,11 @@ async function runServer(sessionPath, token) {
       if (!authorized(request, token)) return json(response, 401, { error: 'Unauthorized' })
       if (request.method === 'POST' && url.pathname === '/ready') {
         ready = await readBody(request)
+        return json(response, 200, { ok: true })
+      }
+      if (request.method === 'POST' && url.pathname === '/probe') {
+        const nextProbe = await readBody(request)
+        probes.set(nextProbe.location ?? `unknown-${probes.size}`, nextProbe)
         return json(response, 200, { ok: true })
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
@@ -267,6 +273,7 @@ async function runServer(sessionPath, token) {
         return json(response, 200, {
           ready: Boolean(ready),
           readyInfo: ready,
+          probes: [...probes.values()],
           pid: app?.pid ?? null,
           appExited: appExit !== null,
           appExitCode: appExit?.code ?? null,
@@ -358,7 +365,7 @@ async function runServer(sessionPath, token) {
       nativeCodexHome,
       verifyCodexHomeInitialization: session.verifyCodexHomeInitialization,
       deviceId: session.deviceId,
-      appIdentifier: `io.wecode.wework.ai-verify.${session.deviceId.replaceAll('-', '')}`,
+      appIdentifier: 'io.wecode.wework.ai-verify',
       executorHome,
       sessionDirectory: session.directory,
     }),
@@ -391,8 +398,8 @@ async function request(session, token, path, method = 'GET', body) {
 }
 
 async function waitForFreshControlClient(session, token, previousClientId, timeoutMs) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
+  const deadline = performance.now() + timeoutMs
+  while (performance.now() < deadline) {
     const status = await request(session, token, '/status')
     const clientId = status.readyInfo?.clientId
     if (clientId && clientId !== previousClientId) return
@@ -444,10 +451,10 @@ async function main() {
       controllerError = error
     })
     const startupTimeout = resolveStartupTimeout(options.timeout)
-    const startupDeadline = Date.now() + startupTimeout
+    const startupDeadline = performance.now() + startupTimeout
     let lastStatus = null
     try {
-      while (Date.now() < startupDeadline) {
+      while (performance.now() < startupDeadline) {
         if (controllerError) {
           throw new Error(`AI verification controller failed to start: ${controllerError.message}`)
         }

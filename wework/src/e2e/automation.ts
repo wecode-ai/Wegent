@@ -118,7 +118,9 @@ function desktopControlUrl(): string | null {
 }
 
 function desktopControlHeaders(): HeadersInit | undefined {
-  const token = import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN?.trim()
+  const token =
+    getDesktopE2ERuntimeConfig().controlToken ??
+    import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN?.trim()
   return token ? { Authorization: `Bearer ${token}` } : undefined
 }
 
@@ -443,7 +445,9 @@ export async function installWeworkAutomationBridge(
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
   await beforeSeed.catch(() => undefined)
-  await seedDesktopE2ECloudConnection()
+  void seedDesktopE2ECloudConnection().catch(error => {
+    console.error('[Wework] Failed to seed desktop E2E cloud connection:', error)
+  })
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {
@@ -1860,11 +1864,16 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}`, {
       headers: desktopControlHeaders(),
     })
-  await getCurrentWindow().show()
-  await getCurrentWindow().unminimize()
-  await getCurrentWindow().setFocus()
   let commandRequest = pollForCommand()
-  await waitForDesktopControlTick()
+  await waitForVisibleWorkbench()
+  const currentWindow = getCurrentWindow()
+  void Promise.all([
+    currentWindow.show(),
+    currentWindow.unminimize(),
+    currentWindow.setFocus(),
+  ]).catch(error => {
+    console.warn('[Wework] Failed to foreground the desktop E2E window:', error)
+  })
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
@@ -1913,6 +1922,38 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
       commandRequest = pollForCommand()
     }
   }
+}
+
+async function waitForVisibleWorkbench(): Promise<void> {
+  const deadline = performance.now() + 60_000
+  while (performance.now() < deadline) {
+    const shell = document.querySelector<HTMLElement>('[data-testid="app-shell"]')
+    const content = document.querySelector<HTMLElement>('[data-testid="desktop-workbench-content"]')
+    const startupScreen = document.querySelector<HTMLElement>(
+      '[data-testid="local-runtime-initializer"]'
+    )
+    const workbenchLoading = document.querySelector<HTMLElement>(
+      '[data-testid="desktop-workbench-loading"]'
+    )
+    const startupError = document.querySelector<HTMLElement>(
+      '[data-testid="workbench-startup-error"]'
+    )
+    if (startupError && desktopControlElementVisible(startupError)) {
+      throw new Error('Wework displayed its startup error screen')
+    }
+    if (
+      shell &&
+      content &&
+      desktopControlElementVisible(shell) &&
+      desktopControlElementVisible(content) &&
+      (!startupScreen || !desktopControlElementVisible(startupScreen)) &&
+      (!workbenchLoading || !desktopControlElementVisible(workbenchLoading))
+    ) {
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+  }
+  throw new Error('Timed out waiting for the visible Wework workbench')
 }
 
 function installDesktopControlClient() {

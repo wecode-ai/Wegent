@@ -542,6 +542,7 @@ const E2E_BACKGROUND_WINDOW_ENV: &str = "WEWORK_E2E_BACKGROUND_WINDOW";
 struct DesktopE2ERuntimeConfig {
     cloud_backend_url: Option<String>,
     cloud_token: Option<String>,
+    control_token: Option<String>,
     control_url: Option<String>,
     model_server_url: Option<String>,
     posthog_host: Option<String>,
@@ -557,6 +558,7 @@ fn get_desktop_e2e_runtime_config() -> Option<DesktopE2ERuntimeConfig> {
     Some(DesktopE2ERuntimeConfig {
         cloud_backend_url: read("WEWORK_E2E_CLOUD_BACKEND_URL"),
         cloud_token: read("WEWORK_E2E_CLOUD_TOKEN"),
+        control_token: read("WEWORK_E2E_CONTROL_TOKEN"),
         control_url: read("WEWORK_E2E_CONTROL_URL"),
         model_server_url: read("WEWORK_E2E_MODEL_SERVER_URL"),
         posthog_host: read("WEWORK_E2E_POSTHOG_HOST"),
@@ -3099,6 +3101,50 @@ fn main_window_config<R: tauri::Runtime>(
 }
 
 #[cfg(desktop)]
+fn parse_runtime_dev_server_url(value: &str) -> Result<tauri::Url, String> {
+    let url = value
+        .parse::<tauri::Url>()
+        .map_err(|error| format!("Invalid WEWORK_DEV_SERVER_URL: {error}"))?;
+    let loopback_host = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+    if url.scheme() != "http" || !loopback_host {
+        return Err("WEWORK_DEV_SERVER_URL must use HTTP on a loopback host".to_string());
+    }
+    Ok(url)
+}
+
+#[cfg(desktop)]
+fn runtime_dev_server_url() -> Result<Option<tauri::Url>, String> {
+    std::env::var("WEWORK_DEV_SERVER_URL")
+        .ok()
+        .and_then(normalized_non_empty)
+        .map(|value| parse_runtime_dev_server_url(&value))
+        .transpose()
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn parse_webview_data_store_identifier(value: &str) -> Result<[u8; 16], String> {
+    let compact = value.replace('-', "");
+    if compact.len() != 32 {
+        return Err("WEWORK_WEBVIEW_DATA_STORE_ID must contain 32 hexadecimal digits".to_string());
+    }
+    let mut identifier = [0_u8; 16];
+    for (index, byte) in identifier.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&compact[index * 2..index * 2 + 2], 16)
+            .map_err(|_| "WEWORK_WEBVIEW_DATA_STORE_ID contains invalid hexadecimal".to_string())?;
+    }
+    Ok(identifier)
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn runtime_webview_data_store_identifier() -> Result<Option<[u8; 16]>, String> {
+    std::env::var("WEWORK_WEBVIEW_DATA_STORE_ID")
+        .ok()
+        .and_then(normalized_non_empty)
+        .map(|value| parse_webview_data_store_identifier(&value))
+        .transpose()
+}
+
+#[cfg(desktop)]
 fn create_main_window<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     action: Option<MainWindowOpenAction>,
@@ -3115,8 +3161,15 @@ fn create_main_window<R: tauri::Runtime>(
 
     let config = main_window_config(app)?;
     let app_handle = app.clone();
-    let window = WebviewWindowBuilder::from_config(app, &config)
-        .map_err(|error| format!("Failed to prepare main window: {error}"))?
+    let builder = WebviewWindowBuilder::from_config(app, &config)
+        .map_err(|error| format!("Failed to prepare main window: {error}"))?;
+    #[cfg(target_os = "macos")]
+    let builder = if let Some(identifier) = runtime_webview_data_store_identifier()? {
+        builder.data_store_identifier(identifier)
+    } else {
+        builder
+    };
+    let window = builder
         .on_page_load(move |_window, payload| {
             if payload.event() == PageLoadEvent::Finished {
                 emit_pending_main_window_open_action(&app_handle);
@@ -4459,6 +4512,8 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
+    #[cfg(all(desktop, target_os = "macos"))]
+    use super::parse_webview_data_store_identifier;
     use super::{
         can_replace_wework_cli_path, executor_home_attachment_root,
         inspect_workspace_path_candidates, install_wework_cli_impl,
@@ -4475,8 +4530,9 @@ mod tests {
     };
     #[cfg(desktop)]
     use super::{
-        close_native_sentry_guard, sanitize_native_sentry_event, should_probe_frontend_after_focus,
-        AppPreferences, AppPreferencesPatch, MainWindowDestroyExitGuard, PatchField,
+        close_native_sentry_guard, parse_runtime_dev_server_url, sanitize_native_sentry_event,
+        should_probe_frontend_after_focus, AppPreferences, AppPreferencesPatch,
+        MainWindowDestroyExitGuard, PatchField,
     };
     use std::collections::HashSet;
     #[cfg(desktop)]
@@ -4488,6 +4544,33 @@ mod tests {
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("test temp dir should be created");
         path
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn accepts_only_loopback_runtime_dev_server_urls() {
+        assert_eq!(
+            parse_runtime_dev_server_url("http://localhost:1420")
+                .expect("localhost URL")
+                .as_str(),
+            "http://localhost:1420/"
+        );
+        assert!(parse_runtime_dev_server_url("https://localhost:1420").is_err());
+        assert!(parse_runtime_dev_server_url("http://example.com:1420").is_err());
+    }
+
+    #[cfg(all(desktop, target_os = "macos"))]
+    #[test]
+    fn parses_isolated_webview_data_store_identifiers() {
+        assert_eq!(
+            parse_webview_data_store_identifier("00112233-4455-6677-8899-aabbccddeeff")
+                .expect("valid identifier"),
+            [
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff,
+            ]
+        );
+        assert!(parse_webview_data_store_identifier("not-a-uuid").is_err());
     }
 
     #[test]
@@ -5132,7 +5215,7 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.manage(workbench_plugins::WorkbenchPluginState::default());
 
-    let app = builder
+    let builder = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
         .manage(execution_environments::ExecutionEnvironmentState::default())
@@ -5442,8 +5525,16 @@ pub fn run() {
             #[cfg(desktop)]
             popout_window::show_popout_window,
             open_popout_task_in_main
-        ])
-        .build(tauri::generate_context!())
+        ]);
+    let mut context = tauri::generate_context!();
+    #[cfg(desktop)]
+    if let Some(url) =
+        runtime_dev_server_url().expect("invalid WEWORK_DEV_SERVER_URL configuration")
+    {
+        context.config_mut().build.dev_url = Some(url);
+    }
+    let app = builder
+        .build(context)
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {

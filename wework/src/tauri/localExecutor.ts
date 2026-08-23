@@ -67,6 +67,7 @@ export interface BundledPluginMarketplace {
 
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
 let initializedLocalExecutorStatus: LocalExecutorStatus | null = null
+let initializedLocalExecutorProxyUrl: string | null = null
 let initializedBundledPluginMarketplace: BundledPluginMarketplace | null = null
 let reconciledBundledPluginMarketplaceKey = ''
 let reconcilingBundledPluginMarketplaceKey = ''
@@ -230,6 +231,14 @@ export function getInitializedBundledPluginMarketplace(): BundledPluginMarketpla
 }
 
 export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
+  const proxyUrl = getLocalProxyUrl().trim() || null
+  if (
+    initializedLocalExecutorStatus &&
+    isExecutorHealthy(initializedLocalExecutorStatus) &&
+    initializedLocalExecutorProxyUrl === proxyUrl
+  ) {
+    return Promise.resolve(initializedLocalExecutorStatus)
+  }
   if (!ensureLocalExecutorStartedPromise) {
     ensureLocalExecutorStartedPromise = (async () => {
       const marketplace = await invoke<BundledPluginMarketplace>(
@@ -238,11 +247,11 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
       if (marketplace?.path) {
         initializedBundledPluginMarketplace = marketplace
       }
-      const proxyUrl = getLocalProxyUrl().trim()
       const status = await invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.ensure, {
-        proxyUrl: proxyUrl || null,
+        proxyUrl,
       })
       initializedLocalExecutorStatus = status
+      initializedLocalExecutorProxyUrl = proxyUrl
       return status
     })().finally(() => {
       ensureLocalExecutorStartedPromise = null
@@ -255,6 +264,7 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
 export function resetLocalExecutorStateForTests(): void {
   ensureLocalExecutorStartedPromise = null
   initializedLocalExecutorStatus = null
+  initializedLocalExecutorProxyUrl = null
   initializedBundledPluginMarketplace = null
   reconciledBundledPluginMarketplaceKey = ''
   reconcilingBundledPluginMarketplaceKey = ''
@@ -293,10 +303,11 @@ export function requestLocalExecutor<T = unknown>(
   params: Record<string, unknown> = {}
 ): Promise<T> {
   return invoke<T>(LOCAL_EXECUTOR_COMMANDS.request, { method, params }).catch((cause: unknown) => {
+    const error = String(cause)
     console.error('[local-ipc] request failed', {
       method,
       paramsKeys: Object.keys(params ?? {}),
-      error: String(cause),
+      error: error.length > 1_000 ? `${error.slice(0, 1_000)}…` : error,
       message: (cause as { message?: unknown } | null)?.message ?? null,
       stack: (cause as { stack?: unknown } | null)?.stack ?? null,
     })

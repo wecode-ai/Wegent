@@ -78,7 +78,7 @@ describe('LocalRuntimeInitializer', () => {
     vi.unstubAllEnvs()
   })
 
-  test('holds the app on the initialization screen until executor is ready', async () => {
+  test('mounts the app behind the initialization screen until executor is ready', async () => {
     ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
 
     render(
@@ -90,9 +90,9 @@ describe('LocalRuntimeInitializer', () => {
     expect(screen.getByTestId('local-runtime-initializer')).toBeInTheDocument()
     expect(screen.getByText('正在整理你的工作台')).toBeInTheDocument()
     expect(screen.queryByText(/执行器|daemon/i)).not.toBeInTheDocument()
-    expect(screen.queryByTestId('main-app')).not.toBeInTheDocument()
+    expect(screen.getByTestId('main-app')).not.toBeVisible()
 
-    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('main-app')).toBeVisible())
     expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
   })
 

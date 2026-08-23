@@ -3,6 +3,7 @@ packages:
   - wework
   - packages/*
 confirmModulesPurge: false
+verifyDepsBeforeRun: false
 allowBuilds:
   core-js: true
   dingtalk-workspace-cli: false

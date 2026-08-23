@@ -1,10 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  access,
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { arch, platform } from 'node:process'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import JSZip from 'jszip'
@@ -44,6 +56,45 @@ const archiveName = archives[target]
 if (!archiveName) throw new Error(`Unsupported DWS target: ${target}`)
 const isWindowsTarget = target.includes('windows')
 const executable = isWindowsTarget ? 'dws.exe' : 'dws'
+const destination = resolve(
+  'src-tauri',
+  'binaries',
+  `dws-${target}${isWindowsTarget ? '.exe' : ''}`
+)
+const useSharedCache = process.env.WEWORK_DWS_SHARED_CACHE === '1'
+
+async function pathExists(path) {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function sharedCachePath() {
+  const packageManifest = JSON.parse(await readFile(packageJson, 'utf8'))
+  const root =
+    process.env.WEWORK_RUNTIME_CACHE_DIR?.trim() ||
+    join(process.env.XDG_CACHE_HOME?.trim() || join(homedir(), '.cache'), 'wegent', 'wework-runtime')
+  return join(root, 'dws', `${packageManifest.version}-${target}`, executable)
+}
+
+async function exposeSharedBinary(sharedBinary) {
+  await mkdir(dirname(destination), { recursive: true })
+  await rm(destination, { force: true })
+  await symlink(sharedBinary, destination, 'file')
+  console.log(`Prepared shared DWS sidecar: ${destination} -> ${sharedBinary}`)
+}
+
+if (useSharedCache) {
+  const sharedBinary = await sharedCachePath()
+  if (await pathExists(sharedBinary)) {
+    await exposeSharedBinary(sharedBinary)
+    process.exit(0)
+  }
+}
+
 const temporaryDirectory = await mkdtemp(join(tmpdir(), 'wework-dws-'))
 
 async function findBinary(directory) {
@@ -86,16 +137,21 @@ try {
   }
   const source = await findBinary(temporaryDirectory)
   if (!source) throw new Error(`DWS binary is missing from ${archiveName}`)
-  const destination = resolve(
-    'src-tauri',
-    'binaries',
-    `dws-${target}${isWindowsTarget ? '.exe' : ''}`
-  )
-  await mkdir(dirname(destination), { recursive: true })
-  await copyFile(source, destination)
-  await rm(destination.replace(/(?:\.exe)?$/, '.debug-stub'), { force: true })
-  if (!isWindowsTarget) await chmod(destination, 0o755)
-  console.log(`Prepared DWS sidecar: ${destination}`)
+  if (useSharedCache) {
+    const sharedBinary = await sharedCachePath()
+    const temporarySharedBinary = `${sharedBinary}.${process.pid}.tmp`
+    await mkdir(dirname(sharedBinary), { recursive: true })
+    await copyFile(source, temporarySharedBinary)
+    if (!isWindowsTarget) await chmod(temporarySharedBinary, 0o755)
+    await rename(temporarySharedBinary, sharedBinary)
+    await exposeSharedBinary(sharedBinary)
+  } else {
+    await mkdir(dirname(destination), { recursive: true })
+    await copyFile(source, destination)
+    await rm(destination.replace(/(?:\.exe)?$/, '.debug-stub'), { force: true })
+    if (!isWindowsTarget) await chmod(destination, 0o755)
+    console.log(`Prepared DWS sidecar: ${destination}`)
+  }
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true })
 }

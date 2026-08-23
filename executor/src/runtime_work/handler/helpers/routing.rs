@@ -332,15 +332,28 @@ fn debug_unrouted_codex_notification(message: &Value, reason: &str) {
     let notification = codex_notification(message);
     let raw = serde_json::to_string(message)
         .unwrap_or_else(|error| format!("<failed to serialize raw message: {error}>"));
+    let raw_preview = bounded_unrouted_notification_preview(&raw);
     log_executor_event(
         "runtime work codex notification unrouted",
         &[
             ("reason", reason.to_owned()),
             ("method", notification.method),
             ("raw_len", raw.len().to_string()),
-            ("raw", raw),
+            ("raw", raw_preview),
         ],
     );
+}
+
+fn bounded_unrouted_notification_preview(raw: &str) -> String {
+    const MAX_BYTES: usize = 4 * 1024;
+    if raw.len() <= MAX_BYTES {
+        return raw.to_owned();
+    }
+    let mut end = MAX_BYTES;
+    while !raw.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &raw[..end])
 }
 
 fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
