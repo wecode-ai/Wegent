@@ -57,6 +57,7 @@ interface UseWorkbenchRuntimeTasksOptions {
   lifecycleStore: RuntimeTaskLifecycleStore
   markRuntimeTasksArchived: (addresses: RuntimeTaskAddress[]) => void
   refreshWorkLists: RefreshWorkLists
+  canNavigate?: () => boolean
 }
 
 const runtimeTranscriptRequests = new Map<string, Promise<RuntimePaneTranscript>>()
@@ -70,6 +71,7 @@ export function useWorkbenchRuntimeTasks({
   lifecycleStore,
   markRuntimeTasksArchived,
   refreshWorkLists,
+  canNavigate = () => true,
 }: UseWorkbenchRuntimeTasksOptions) {
   const { t } = useTranslation('common')
   const openedRuntimeTaskKeysRef = useRef<Set<string>>(new Set())
@@ -100,11 +102,11 @@ export function useWorkbenchRuntimeTasks({
         reopeningCurrentTask,
         navigate: options?.navigate === true,
       })
-      if (options?.navigate) {
+      if (options?.navigate && canNavigate()) {
         navigateTo(buildRuntimeTaskRoute(address))
       }
     },
-    [dispatch]
+    [canNavigate, dispatch]
   )
 
   const isCurrentRuntimeTask = useCallback(

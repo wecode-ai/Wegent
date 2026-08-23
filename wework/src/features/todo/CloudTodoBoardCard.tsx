@@ -415,7 +415,7 @@ function RuntimeTaskLiveActivity({
         'scrollbar-none min-w-0 overflow-y-auto',
         expanded
           ? 'max-h-44 text-chat text-text-primary'
-          : 'ml-5 mt-1.5 h-[60px] border-l border-border/70 pl-2 text-xs leading-5 text-text-muted'
+          : 'ml-5 mt-1.5 max-h-15 border-l border-border/70 pl-2 text-xs leading-5 text-text-muted'
       )}
     >
       {expanded ? (
