@@ -395,6 +395,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           return true
         }
         if (serialized.includes('E2E_EXTERNAL_EVENT_ROBOT_MARKER')) {
+          if (registrationCompleted) {
+            assert.ok(
+              serialized.includes('外部事件概述'),
+              'The rerun instruction did not include the external event overview'
+            )
+            assert.ok(
+              serialized.includes('Pipeline #456 failed'),
+              'The rerun instruction did not include the pipeline summary'
+            )
+          }
           if (requestContainsToolOutput(payload, REGISTER_CALL_ID)) {
             const result = registrationResult(payload)
             assert.ok(
@@ -598,14 +608,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       assert.equal(rerunStatuses['wait-1'], 'waiting')
       const waitNode = issue.workflow.nodes.find(node => node.id === 'wait-1')
       assert.equal(waitNode.wait_round, 1, 'The ci_failed event did not bump the wait round')
-      assert.ok(
-        (issue.automation?.prompt ?? '').includes('外部事件概述'),
-        'The rerun instruction did not include the external event overview'
-      )
-      assert.ok(
-        (issue.automation?.prompt ?? '').includes('Pipeline #456 failed'),
-        'The rerun instruction did not include the pipeline summary'
-      )
       await captureScreenshot(control, 'external-event-06-ci-failed-rerun.png')
 
       const mergeReceipt = await deliverWebhook(
