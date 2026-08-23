@@ -833,8 +833,11 @@ export function evictRuntimeConversation(address: RuntimeTaskAddress) {
 export function getRuntimeConversationCacheStats() {
   return {
     messageEntries: turnsByConversation.size,
+    messageKeys: [...turnsByConversation.keys()],
     scrollSnapshotEntries: scrollSnapshotsByConversation.size,
+    scrollSnapshotKeys: [...scrollSnapshotsByConversation.keys()],
     virtualMeasurementEntries: virtualMeasurementsByConversation.size,
+    virtualMeasurementKeys: [...virtualMeasurementsByConversation.keys()],
   }
 }
 

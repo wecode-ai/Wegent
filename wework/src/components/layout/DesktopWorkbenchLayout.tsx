@@ -1044,6 +1044,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
         {settingsOpen && (
           <ConnectionsSettingsPage
             autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
+            onAddCloudDeviceDialogAutoOpenHandled={() => setAutoOpenAddCloudDeviceDialog(false)}
             services={services}
             devices={state.devices}
             onOpenRuntimeTask={onOpenRuntimeTask}

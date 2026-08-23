@@ -315,11 +315,17 @@ describe('runtimeConversationCache', () => {
       },
     })
 
-    expect(getRuntimeConversationCacheStats().messageEntries).toBe(1)
+    expect(getRuntimeConversationCacheStats()).toMatchObject({
+      messageEntries: 1,
+      messageKeys: ['device-1:task-1'],
+    })
 
     evictRuntimeConversation(address)
 
-    expect(getRuntimeConversationCacheStats().messageEntries).toBe(0)
+    expect(getRuntimeConversationCacheStats()).toMatchObject({
+      messageEntries: 0,
+      messageKeys: [],
+    })
   })
 
   test('continues reducing assistant stream events while the pane is unmounted', () => {
@@ -907,6 +913,11 @@ describe('runtimeConversationCache', () => {
     cacheRuntimeConversationQueuePaused(address, true)
     markRuntimeConversationGuidanceInterrupted(address, ['client-guidance-1'])
 
+    expect(getRuntimeConversationCacheStats()).toMatchObject({
+      scrollSnapshotKeys: ['device-1:task-1'],
+      virtualMeasurementKeys: ['device-1:task-1'],
+    })
+
     evictRuntimeConversation(address)
 
     expect(getRuntimeConversationMessages(address)).toEqual([])
@@ -915,5 +926,9 @@ describe('runtimeConversationCache', () => {
     expect(getConversationScrollSnapshot('device-1:task-1')).toBeUndefined()
     expect(getConversationVirtualMeasurements('device-1:task-1')).toBeUndefined()
     expect(takeInterruptedRuntimeConversationGuidance(address, 'client-guidance-1')).toBe(false)
+    expect(getRuntimeConversationCacheStats()).toMatchObject({
+      scrollSnapshotKeys: [],
+      virtualMeasurementKeys: [],
+    })
   })
 })

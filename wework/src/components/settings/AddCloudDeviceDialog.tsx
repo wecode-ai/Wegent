@@ -105,9 +105,8 @@ export function AddCloudDeviceDialog({
           }
           const versionMismatch = device.executor_version === 'dev' || device.update_available
           setRemoteStatus(versionMismatch ? 'version_mismatch' : 'online')
-          const created = onCreatedRef.current(devices)
+          await onCreatedRef.current(devices)
           onCloseRef.current()
-          await created
           return
         } catch {
           if (cancelled) return

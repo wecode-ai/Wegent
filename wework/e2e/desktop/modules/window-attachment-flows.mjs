@@ -71,6 +71,11 @@ async function archiveTaskAndVerifyCacheEviction(control, taskRowTestId) {
     await control.command('performanceSnapshot', 'body')
   ).runtimeConversationCache
   const archivedTaskId = taskRowTestId.replace('runtime-local-task-row-', '')
+  const isArchivedTaskCacheKey = key => key.endsWith(`:${archivedTaskId}`)
+  assert.ok(
+    cacheBeforeArchive.messageKeys.some(isArchivedTaskCacheKey),
+    `The archived conversation was not cached before archive: ${archivedTaskId}`
+  )
   await ensureTaskRowVisible(control, taskRowTestId)
   await control.command('click', `[data-testid="runtime-local-task-archive-${archivedTaskId}"]`, {
     visible: true,
@@ -101,27 +106,33 @@ async function archiveTaskAndVerifyCacheEviction(control, taskRowTestId) {
       await control.command('performanceSnapshot', 'body')
     ).runtimeConversationCache
     if (
-      cacheAfterArchive.messageEntries < cacheBeforeArchive.messageEntries &&
-      cacheAfterArchive.scrollSnapshotEntries <= cacheBeforeArchive.scrollSnapshotEntries &&
-      cacheAfterArchive.virtualMeasurementEntries <= cacheBeforeArchive.virtualMeasurementEntries
+      !cacheAfterArchive.messageKeys.some(isArchivedTaskCacheKey) &&
+      !cacheAfterArchive.scrollSnapshotKeys.some(isArchivedTaskCacheKey) &&
+      !cacheAfterArchive.virtualMeasurementKeys.some(isArchivedTaskCacheKey)
     ) {
       break
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  assert.ok(
-    cacheAfterArchive.messageEntries < cacheBeforeArchive.messageEntries,
-    `Archiving retained conversation messages (${cacheBeforeArchive.messageEntries} -> ${cacheAfterArchive.messageEntries})`
-  )
-  assert.ok(
-    cacheAfterArchive.scrollSnapshotEntries <= cacheBeforeArchive.scrollSnapshotEntries &&
-      cacheAfterArchive.virtualMeasurementEntries <= cacheBeforeArchive.virtualMeasurementEntries,
-    'Archiving increased retained conversation view state'
-  )
   await writeFile(
     join(resultDir, 'conversation-switching-cache-eviction.json'),
     `${JSON.stringify({ before: cacheBeforeArchive, after: cacheAfterArchive }, null, 2)}\n`,
     'utf8'
+  )
+  assert.equal(
+    cacheAfterArchive.messageKeys.some(isArchivedTaskCacheKey),
+    false,
+    'Archiving retained conversation messages'
+  )
+  assert.equal(
+    cacheAfterArchive.scrollSnapshotKeys.some(isArchivedTaskCacheKey),
+    false,
+    'Archiving retained the conversation scroll snapshot'
+  )
+  assert.equal(
+    cacheAfterArchive.virtualMeasurementKeys.some(isArchivedTaskCacheKey),
+    false,
+    'Archiving retained the conversation virtual measurements'
   )
 }
 
