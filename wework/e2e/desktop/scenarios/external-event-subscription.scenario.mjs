@@ -643,10 +643,29 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       const finalStatuses = nodeStatuses(issue)
       assert.equal(finalStatuses['wait-1'], 'completed')
       assert.equal(issue.status, 'in_review')
-      await control.command('waitFor', '[data-testid="cloud-todo-workflow-node-wait-1"]', {
-        text: '已完成',
+      await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`)
+      if ((await control.command('getElementCount', '[data-testid="ai-chat-modal-close"]')) > 0) {
+        await control.command('click', '[data-testid="ai-chat-modal-close"]')
+      }
+      const mergedIssueCard = `${activeBoard} [data-testid="cloud-todo-card-${issue.id}"]`
+      await control.command('waitFor', mergedIssueCard, {
+        text: issue.title,
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', mergedIssueCard, { visible: true })
+      await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+        text: issue.title,
         timeoutMs: uiTimeoutMs,
       })
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-node-wait-1"]`,
+        {
+          text: '已完成',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await captureScreenshot(control, 'external-event-07-merged-issue-in-review.png')
     },
 
