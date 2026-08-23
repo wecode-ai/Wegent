@@ -202,6 +202,44 @@ fn web_smart_app_scaffold_is_a_valid_editable_directory() {
 }
 
 #[test]
+fn editable_package_accepts_and_exports_leading_current_directory_paths() {
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let manifest_path = app.join("plugin-manifest.json");
+    let mut edited: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    edited["entry"]["installPackage"] =
+        Value::String("./packages/bundle/editable-workbench".to_string());
+    edited["packages"][0]["path"] =
+        Value::String("./packages/bundle/editable-workbench".to_string());
+    write_json(&manifest_path, &edited).unwrap();
+
+    assert!(validate_package_directory(&app).is_ok());
+
+    let archive_path = directory.path().join("editable-workbench.zip");
+    export_package_directory(&app, &archive_path).unwrap();
+    let archive_file = fs::File::open(&archive_path).unwrap();
+    let mut archive = zip::ZipArchive::new(archive_file).unwrap();
+    let names = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect::<Vec<_>>();
+
+    assert!(names
+        .iter()
+        .any(|name| name.ends_with("packages/bundle/editable-workbench/package.json")));
+    assert!(names
+        .iter()
+        .any(|name| name.ends_with("packages/bundle/editable-workbench/cordis.patch.yml")));
+}
+
+#[test]
 fn linked_directory_checksum_changes_with_source_edits() {
     let directory = tempdir().unwrap();
     let app = directory.path().join("editable-workbench");

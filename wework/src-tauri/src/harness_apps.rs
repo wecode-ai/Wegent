@@ -867,9 +867,12 @@ impl EditablePackageRoot {
 
 fn editable_path_components(path: &Path) -> Result<Vec<OsString>, String> {
     path.components()
-        .map(|component| match component {
-            Component::Normal(value) => Ok(value.to_os_string()),
-            _ => Err("Harness app package path must stay relative".to_string()),
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(Ok(value.to_os_string())),
+            Component::CurDir => None,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => Some(Err(
+                "Harness app package path must stay relative".to_string(),
+            )),
         })
         .collect()
 }
