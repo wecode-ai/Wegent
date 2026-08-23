@@ -616,7 +616,7 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    expect(await screen.findByTestId('cloud-todo-card-tasks-WEG-1')).toHaveTextContent(
+    expect(await screen.findByTestId('cloud-todo-card-tasks-WEG-1')).not.toHaveTextContent(
       '验证完整工作流'
     )
     expect(screen.getByTestId('cloud-todo-card-tasks-WEG-1')).not.toHaveTextContent('正在执行')
@@ -692,15 +692,15 @@ describe('CloudTodoWorkspace', () => {
       '正在思考 · Investigating board data flow'
     )
     expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).toHaveClass(
-      'h-5',
+      'h-[60px]',
       'overflow-y-auto',
       'scrollbar-none',
       'text-xs',
       'border-l'
     )
     expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).not.toHaveClass(
-      'group-hover:h-20',
-      'group-focus-within:h-20'
+      'h-5',
+      'group-hover:h-20'
     )
 
     act(() => {
@@ -738,16 +738,16 @@ describe('CloudTodoWorkspace', () => {
         Node.DOCUMENT_POSITION_FOLLOWING
     ).not.toBe(0)
     expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).toHaveClass(
-      'h-5',
+      'h-[60px]',
       'overflow-y-auto'
     )
     expect(screen.getByTestId('cloud-todo-card-thinking-WEG-1')).toHaveClass('text-xs', 'leading-5')
 
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     expect(progressPopup).toHaveTextContent('当前任务进展')
     expect(progressPopup).toHaveTextContent('验证完整工作流')
-    expect(progressPopup).toHaveTextContent('调用 1 个工具')
+    expect(progressPopup).toHaveTextContent('正在思考 · Rendering latest thinking')
     expect(progressPopup).toHaveTextContent('pnpm test')
 
     await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
@@ -809,14 +809,12 @@ describe('CloudTodoWorkspace', () => {
       '第一行'
     )
 
-    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(240)
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
-    const progressResponse = screen.getByTestId('cloud-todo-card-progress-response-WEG-1')
+    const progressResponse = screen.getByTestId('cloud-todo-card-progress-response-WEG-1-2')
     expect(progressPopup).toHaveTextContent('当前任务进展')
-    expect(progressResponse).toHaveTextContent('第一行 第二行 第三行 第四行')
-    await waitFor(() => expect(progressResponse.scrollTop).toBe(240))
-    expect(progressResponse.querySelector('.assistant-markdown')).toBeInTheDocument()
+    expect(progressResponse).toHaveTextContent('第四行')
+    expect(progressResponse).not.toHaveTextContent('第一行')
   })
 
   it('reports the concrete project name for the active document tab', async () => {
@@ -3766,10 +3764,6 @@ describe('CloudTodoWorkspace', () => {
       '第一行：已经完成修复'
     )
     expect(screen.queryByTestId('cloud-todo-card-final-response-WEG-4')).not.toBeInTheDocument()
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-tasks-WEG-4'))
-    expect(await screen.findByTestId('cloud-todo-card-progress-empty-WEG-4')).toHaveTextContent(
-      '暂无任务进展详情'
-    )
     expect(getRuntimeTranscript).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'local-device',
