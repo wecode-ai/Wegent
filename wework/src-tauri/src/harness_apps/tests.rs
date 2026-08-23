@@ -158,9 +158,14 @@ fn remote_download_rejects_hash_mismatch() {
 fn installed_package_export_is_deterministic_and_valid() {
     let directory = tempdir().unwrap();
     let package = directory.path().join("package");
-    fs::create_dir_all(package.join("bundle")).unwrap();
-    fs::write(package.join("plugin-manifest.json"), manifest("0.1.0-rc.7")).unwrap();
-    fs::write(package.join("bundle/app.js"), "export default {}\n").unwrap();
+    scaffold_web_smart_app(
+        &package,
+        "exportable-workbench",
+        "Exportable workbench",
+        "Export deterministically",
+        "0.1.0-rc.7",
+    )
+    .unwrap();
     let first = directory.path().join("first.zip");
     let second = directory.path().join("second.zip");
 
@@ -218,6 +223,109 @@ fn linked_directory_checksum_changes_with_source_edits() {
     let (_, second) = validate_package_directory(&app).unwrap();
 
     assert_ne!(first, second);
+}
+
+#[test]
+fn linked_directory_ignores_dependency_and_build_directories() {
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let bundle = app.join("packages/bundle/editable-workbench");
+    fs::create_dir_all(bundle.join("node_modules/dependency")).unwrap();
+    fs::create_dir_all(bundle.join("dist")).unwrap();
+    fs::write(
+        bundle.join("node_modules/dependency/index.js"),
+        "dependency\n",
+    )
+    .unwrap();
+    fs::write(bundle.join("dist/index.js"), "build output\n").unwrap();
+    let (_, first) = validate_package_directory(&app).unwrap();
+
+    fs::write(bundle.join("node_modules/dependency/index.js"), "changed\n").unwrap();
+    fs::write(bundle.join("dist/index.js"), "changed\n").unwrap();
+    let (_, second) = validate_package_directory(&app).unwrap();
+
+    assert_eq!(first, second);
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_directory_ignores_pnpm_style_dependency_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let bundle = app.join("packages/bundle/editable-workbench");
+    let dependency = directory.path().join("dependency");
+    fs::create_dir_all(&dependency).unwrap();
+    fs::write(dependency.join("index.js"), "dependency\n").unwrap();
+    fs::create_dir_all(bundle.join("node_modules")).unwrap();
+    symlink(&dependency, bundle.join("node_modules/dependency")).unwrap();
+
+    assert!(validate_package_directory(&app).is_ok());
+}
+
+#[test]
+fn linked_installation_refreshes_edits_and_recovers_after_invalid_content() {
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let (manifest, checksum) = validate_package_directory(&app).unwrap();
+    let mut installation = HarnessAppInstallation {
+        id: manifest.name.clone(),
+        manifest,
+        package_path: app.display().to_string(),
+        sha256: checksum.clone(),
+        model_key: None,
+        resident: false,
+        runtime_version: None,
+        state: "installed".to_string(),
+        web_url: None,
+        error: None,
+        smart_app_id: None,
+        release_id: None,
+        source: "linked".to_string(),
+    };
+    let manifest_path = app.join("plugin-manifest.json");
+    let mut edited: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    edited["version"] = Value::String("0.2.0".to_string());
+    write_json(&manifest_path, &edited).unwrap();
+
+    assert!(refresh_linked_installation(&mut installation));
+    assert_eq!(installation.manifest.version, "0.2.0");
+    assert_ne!(installation.sha256, checksum);
+
+    fs::remove_file(app.join("PLUGIN.md")).unwrap();
+    assert!(refresh_linked_installation(&mut installation));
+    assert_eq!(installation.state, "failed");
+    assert!(installation.error.is_some());
+
+    fs::write(app.join("PLUGIN.md"), "# Editable workbench\n").unwrap();
+    assert!(refresh_linked_installation(&mut installation));
+    assert_eq!(installation.state, "installed");
+    assert!(installation.error.is_none());
 }
 
 #[test]

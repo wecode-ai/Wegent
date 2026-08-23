@@ -493,15 +493,30 @@ export function SmartAppsMarketplacePage({
       await ensureBundledPluginInstalled('smart-app-builder')
       const intentPrompt =
         intent === 'plugins'
-          ? '请检查现有配置，检索兼容的 DSH 插件并增量添加；保留已有功能。'
+          ? t(
+              'workbench.smart_apps_builder_intent_plugins',
+              '请检查现有配置，检索兼容的 DSH 插件并增量添加；保留已有功能。'
+            )
           : intent === 'created'
-            ? '这是刚从 Web 预设创建的空白工作台，请先检查脚手架，再根据我的需求继续开发。'
-            : '请在现有工作台上继续增量开发；先读取已有 manifest、依赖和 cordis.patch.yml。'
+            ? t(
+                'workbench.smart_apps_builder_intent_created',
+                '这是刚从 Web 预设创建的空白工作台，请先检查脚手架，再根据我的需求继续开发。'
+              )
+            : t(
+                'workbench.smart_apps_builder_intent_develop',
+                '请在现有工作台上继续增量开发；先读取已有 manifest、依赖和 cordis.patch.yml。'
+              )
       const queued = queuePluginReferenceTrial({
         pluginName: 'smart-app-builder',
         marketplaceName: 'wework-personal',
         displayName: t('workbench.smart_apps_builder_name', '智能工作台开发助手'),
-        prompt: `智能工作台目录：${installation.packagePath}\n${intentPrompt}\n完成后运行验证；需要分发时导出 ZIP，日常开发继续直接使用此目录。`,
+        prompt: `${t(
+          'workbench.smart_apps_builder_directory_prefix',
+          '智能工作台目录：'
+        )}${installation.packagePath}\n${intentPrompt}\n${t(
+          'workbench.smart_apps_builder_completion',
+          '完成后运行验证；需要分发时导出 ZIP，日常开发继续直接使用此目录。'
+        )}`,
         openInNewChat: true,
       })
       if (!queued) throw new Error('Smart App Builder reference could not be queued')
@@ -698,10 +713,19 @@ export function SmartAppsMarketplacePage({
             onSelect: () => void openBuilder(installation, 'develop'),
           },
           {
-            label: t('workbench.smart_apps_open_directory', '在 Finder 中打开'),
+            label: t('workbench.smart_apps_open_directory', '在文件管理器中打开'),
             icon: FolderOpen,
             testId: `smart-app-open-directory-${installation.id}`,
-            onSelect: () => void revealLocalFile(installation.packagePath),
+            onSelect: () => {
+              void revealLocalFile(installation.packagePath).catch(openError => {
+                setError(
+                  getErrorMessage(
+                    openError,
+                    t('workbench.smart_apps_open_directory_failed', '打开工作台文件夹失败。')
+                  )
+                )
+              })
+            },
           }
         )
       }

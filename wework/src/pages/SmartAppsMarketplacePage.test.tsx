@@ -16,12 +16,16 @@ const exportToDownloads = vi.fn()
 const createDirectory = vi.fn()
 const linkDirectory = vi.fn()
 const copyToDirectory = vi.fn()
+const revealLocalFile = vi.fn()
 
 vi.mock('@/hooks/useTranslation', () => {
   const translate = (_key: string, fallback?: string) => fallback ?? _key
   return { useTranslation: () => ({ t: translate }) }
 })
 vi.mock('@/lib/navigation', () => ({ navigateTo: (path: string) => navigateTo(path) }))
+vi.mock('@/lib/local-terminal', () => ({
+  revealLocalFile: (path: string) => revealLocalFile(path),
+}))
 vi.mock('@/features/plugins/pluginTrial', () => ({
   queuePluginReferenceTrial: (options: unknown) => queuePluginReferenceTrial(options),
 }))
@@ -167,6 +171,7 @@ describe('SmartAppsMarketplacePage', () => {
     })
     linkDirectory.mockReset()
     copyToDirectory.mockReset()
+    revealLocalFile.mockReset().mockResolvedValue(undefined)
   })
 
   test('shows official and shared marketplace metadata', async () => {
@@ -484,5 +489,22 @@ describe('SmartAppsMarketplacePage', () => {
     )
     expect(queuePluginReferenceTrial).not.toHaveBeenCalled()
     expect(navigateTo).not.toHaveBeenCalled()
+  })
+
+  test('reports a failure to open an editable workbench folder', async () => {
+    revealLocalFile.mockRejectedValue(new Error('open failed'))
+    listInstalled.mockResolvedValue([
+      {
+        ...importedInstallation,
+        source: 'linked',
+      },
+    ])
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId(`smart-app-actions-${importedInstallation.id}`))
+    fireEvent.pointerDown(screen.getByTestId(`smart-app-open-directory-${importedInstallation.id}`))
+
+    expect(await screen.findByText('open failed')).toBeInTheDocument()
+    expect(revealLocalFile).toHaveBeenCalledWith(importedInstallation.packagePath)
   })
 })

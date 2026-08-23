@@ -30,6 +30,16 @@ const MAX_ARCHIVE_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 250 * 1024 * 1024;
 const MAX_ENTRIES: usize = 8_000;
 const SMART_APP_PACKAGE_TYPE: &str = "deepseek-harness-plugin-bundle";
+const IGNORED_EDITABLE_DIRECTORIES: [&str; 8] = [
+    ".git",
+    ".next",
+    ".turbo",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+];
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -388,9 +398,7 @@ fn validate_package_directory(path: &Path) -> Result<(HarnessAppManifest, String
     {
         return Err("Harness app profile bundle is incomplete".to_string());
     }
-    let mut files = Vec::new();
-    collect_package_files(&root, &root, &mut files)?;
-    files.sort();
+    let files = collect_editable_package_files(&root, &manifest)?;
     let mut hash = Sha256::new();
     let mut total = 0_u64;
     for file in files {
@@ -604,19 +612,23 @@ pub fn create_harness_app_directory(
     if display_name.is_empty() {
         return Err("Smart app display name is required".to_string());
     }
+    let _registry = state
+        .registry
+        .lock()
+        .map_err(|_| "Harness app registry lock failed")?;
     let parent = fs::canonicalize(parent_path.trim())
         .map_err(|error| format!("Failed to resolve Smart app parent directory: {error}"))?;
     if !parent.is_dir() {
         return Err("Smart app parent path must be a directory".to_string());
     }
     let target = parent.join(name);
-    if target.exists() {
-        return Err("Smart app destination already exists".to_string());
-    }
-    let _registry = state
-        .registry
-        .lock()
-        .map_err(|_| "Harness app registry lock failed")?;
+    fs::create_dir(&target).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            "Smart app destination already exists".to_string()
+        } else {
+            format!("Failed to create Smart app destination: {error}")
+        }
+    })?;
     let result = (|| {
         let dsh_version = preferred_dsh_version(&app)?;
         scaffold_web_smart_app(
@@ -664,16 +676,16 @@ pub fn copy_harness_app_to_directory(
     {
         return Err("Smart app name must use lowercase letters, numbers, and hyphens".to_string());
     }
-    let parent = fs::canonicalize(parent_path.trim())
-        .map_err(|error| format!("Failed to resolve Smart app parent directory: {error}"))?;
-    let target = parent.join(name);
-    if target.exists() {
-        return Err("Smart app destination already exists".to_string());
-    }
     let _registry = state
         .registry
         .lock()
         .map_err(|_| "Harness app registry lock failed")?;
+    let parent = fs::canonicalize(parent_path.trim())
+        .map_err(|error| format!("Failed to resolve Smart app parent directory: {error}"))?;
+    if !parent.is_dir() {
+        return Err("Smart app parent path must be a directory".to_string());
+    }
+    let target = parent.join(name);
     let source = read_registry(&app)?
         .into_iter()
         .find(|item| item.id == installation_id)
@@ -681,6 +693,13 @@ pub fn copy_harness_app_to_directory(
     if source.smart_app_id.is_none() {
         return Err("Only marketplace Smart apps need to be copied before editing".to_string());
     }
+    fs::create_dir(&target).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            "Smart app destination already exists".to_string()
+        } else {
+            format!("Failed to create Smart app destination: {error}")
+        }
+    })?;
     let result = (|| {
         copy_directory(Path::new(&source.package_path), &target)?;
         let manifest_path = target.join("plugin-manifest.json");
@@ -740,24 +759,31 @@ fn write_verified_download<R: Read>(
     Ok(())
 }
 
-fn collect_package_files(
+fn collect_editable_directory_files(
     root: &Path,
     directory: &Path,
     files: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
     let entries = fs::read_dir(directory)
-        .map_err(|error| format!("Failed to read Harness app package: {error}"))?;
+        .map_err(|error| format!("Failed to read Harness app source package: {error}"))?;
     for entry in entries {
         let entry =
-            entry.map_err(|error| format!("Failed to read Harness app package: {error}"))?;
+            entry.map_err(|error| format!("Failed to read Harness app source package: {error}"))?;
         let path = entry.path();
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| IGNORED_EDITABLE_DIRECTORIES.contains(&name))
+        {
+            continue;
+        }
         let metadata = fs::symlink_metadata(&path)
-            .map_err(|error| format!("Failed to inspect Harness app package: {error}"))?;
+            .map_err(|error| format!("Failed to inspect Harness app source package: {error}"))?;
         if metadata.file_type().is_symlink() {
-            return Err("Harness app packages cannot contain symbolic links".to_string());
+            return Err("Harness app source packages cannot contain symbolic links".to_string());
         }
         if metadata.is_dir() {
-            collect_package_files(root, &path, files)?;
+            collect_editable_directory_files(root, &path, files)?;
         } else if metadata.is_file() {
             path.strip_prefix(root)
                 .map_err(|_| "Harness app package path escaped its root".to_string())?;
@@ -765,6 +791,36 @@ fn collect_package_files(
         }
     }
     Ok(())
+}
+
+fn collect_editable_package_files(
+    root: &Path,
+    manifest: &HarnessAppManifest,
+) -> Result<Vec<PathBuf>, String> {
+    let mut files = ["plugin-manifest.json", "PLUGIN.md", "INSTALL.zh-CN.md"]
+        .into_iter()
+        .map(|path| root.join(path))
+        .collect::<Vec<_>>();
+    let package_paths = if manifest.packages.is_empty() {
+        vec![manifest.entry.install_package.as_str()]
+    } else {
+        manifest
+            .packages
+            .iter()
+            .map(|package| package.path.as_str())
+            .collect()
+    };
+    for relative in package_paths {
+        let package = root.join(relative);
+        if package.is_dir() {
+            collect_editable_directory_files(root, &package, &mut files)?;
+        } else if package.is_file() {
+            files.push(package);
+        }
+    }
+    files.sort();
+    files.dedup();
+    Ok(files)
 }
 
 fn export_package_directory(
@@ -777,13 +833,8 @@ fn export_package_directory(
         fs::create_dir_all(parent)
             .map_err(|error| format!("Failed to create Harness app export directory: {error}"))?;
     }
-    let mut files = Vec::new();
-    collect_package_files(package_root, package_root, &mut files)?;
-    files.sort_by_key(|path| {
-        path.strip_prefix(package_root)
-            .unwrap_or(path)
-            .to_path_buf()
-    });
+    let (manifest, _) = validate_package_directory(package_root)?;
+    let files = collect_editable_package_files(package_root, &manifest)?;
     let output = fs::File::create(&temporary)
         .map_err(|error| format!("Failed to create Harness app export: {error}"))?;
     let mut archive = zip::ZipWriter::new(output);

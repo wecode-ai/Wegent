@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import JSZip from 'jszip'
@@ -535,6 +535,31 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'harness-apps-03f-linked-exported.png', 'body')
+      await control.command('click', `[data-testid="smart-app-actions-${CREATED_INSTALLATION_ID}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="smart-app-remove-local-${CREATED_INSTALLATION_ID}"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'click',
+        `[data-testid="smart-app-remove-local-${CREATED_INSTALLATION_ID}"]`
+      )
+      await control.command('waitFor', '[data-testid="smart-app-remove-local-confirm"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="smart-app-remove-local-confirm"]')
+      await waitForElementCount(
+        control,
+        `[data-testid="smart-app-created-item-${CREATED_INSTALLATION_ID}"]`,
+        0,
+        uiTimeoutMs,
+        'Unlinking an editable workbench left its card visible in My'
+      )
+      await access(join(resultDir, CREATED_INSTALLATION_ID, 'plugin-manifest.json'))
+      await captureScreenshot(control, 'harness-apps-03g-linked-folder-preserved.png', 'body')
       await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
         value: JSON.stringify([
           {

@@ -114,7 +114,7 @@ export function SmartAppDevelopmentDialog({
             data-testid="smart-app-development-close"
             disabled={submitting}
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-50"
+            className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-50"
           >
             <X className="h-4 w-4" />
           </button>
@@ -213,7 +213,13 @@ export function SmartAppDevelopmentDialog({
         ) : null}
 
         <div className="mt-6 flex justify-end gap-2">
-          <Button type="button" variant="outline" disabled={submitting} onClick={onClose}>
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="smart-app-development-cancel"
+            disabled={submitting}
+            onClick={onClose}
+          >
             {t('common.cancel', '取消')}
           </Button>
           <Button
