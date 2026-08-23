@@ -2246,6 +2246,74 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('mention-cloud-space-direct-action')).toBeInTheDocument()
   })
 
+  test('searches the sole project workspace from a new chat with multiple device workspaces', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const runtimeWork = createRuntimeWorkForProject(workspacePanelState.currentProject)!
+    runtimeWork.chats = [
+      {
+        deviceId: 'workspace-cloud-device',
+        available: true,
+        workspacePath: '/workspace/other-chat-a',
+        tasks: [],
+      },
+      {
+        deviceId: 'workspace-cloud-device',
+        available: true,
+        workspacePath: '/workspace/other-chat-b',
+        tasks: [],
+      },
+    ]
+    const searchWorkspaceEntries = vi.fn().mockResolvedValue({
+      files: [
+        {
+          root: '/workspace/project',
+          path: 'cloud-context-folder',
+          fileName: 'cloud-context-folder',
+          matchType: 'directory' as const,
+          score: 100,
+          indices: [0, 1, 2, 3, 4],
+        },
+      ],
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          ...baseProps.workspaceFileApi,
+          searchWorkspaceEntries,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          runtimeWork,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    const editor = (await screen.findByTestId('chat-message-input')) as HTMLElement & {
+      value: string
+    }
+    act(() => {
+      editor.value = '@cloud-context-folder'
+      editor.focus()
+    })
+
+    expect(await screen.findByTestId('workspace-mention-option-0')).toBeInTheDocument()
+    expect(searchWorkspaceEntries).toHaveBeenCalledWith(
+      'workspace-cloud-device',
+      '/workspace/project',
+      'cloud-context-folder',
+      expect.any(String)
+    )
+  })
+
   test('treats a runtime task missing from runtime work as a new project-space task', async () => {
     deliveryApiMock.available = true
     deliveryApiMock.listCloudProjects.mockResolvedValue({
