@@ -1,0 +1,10 @@
+{
+  "identifier": "harness-apps",
+  "description": "Allows harness app (smart app / plugin) pages served on the local loopback to capture their own webview through the native screenshot bridge.",
+  "local": false,
+  "webviews": ["*"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*"]
+  },
+  "permissions": ["wegent-capture:allow-capture-webview-snapshot"]
+}

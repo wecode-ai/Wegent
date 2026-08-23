@@ -33,6 +33,7 @@ mod system_drag;
 mod system_lock;
 mod system_sleep;
 mod todo_store;
+mod wegent_capture;
 mod workbench_background;
 #[cfg(desktop)]
 mod workbench_plugins;
@@ -5088,7 +5089,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_shell::init());
+        .plugin(tauri_plugin_shell::init())
+        .plugin(wegent_capture::plugin());
 
     #[cfg(desktop)]
     let builder = builder.plugin(

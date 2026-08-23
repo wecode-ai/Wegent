@@ -16,7 +16,11 @@ fn main() {
     prepare_dws_sidecar();
     verify_bundled_codex_binary();
     ensure_codex_resource_glob_exists();
-    tauri_build::build()
+    tauri_build::try_build(tauri_build::Attributes::new().plugin(
+        "wegent-capture",
+        tauri_build::InlinedPlugin::new().commands(&["capture_webview_snapshot"]),
+    ))
+    .expect("tauri-build should succeed");
 }
 
 fn configure_build_profile() {
