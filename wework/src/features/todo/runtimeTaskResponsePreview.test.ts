@@ -65,4 +65,65 @@ describe('runtimeTaskResponsePreview', () => {
       })
     ).toBe('测试通过')
   })
+
+  it('uses the final response from the latest turn instead of an older message', () => {
+    expect(
+      finalAssistantTranscriptText({
+        messages: [
+          {
+            role: 'assistant',
+            content: '几轮之前的 final content',
+          },
+        ],
+        turns: [
+          {
+            items: [
+              {
+                type: 'assistant_text',
+                content: '旧一轮回复',
+              },
+            ],
+          },
+          {
+            items: [
+              {
+                type: 'assistant_text',
+                content: '最后一轮回复',
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe('最后一轮回复')
+  })
+
+  it('does not fall back to an older response when the latest turn has no final content', () => {
+    expect(
+      finalAssistantTranscriptText({
+        messages: [
+          {
+            role: 'assistant',
+            content: '几轮之前的 final content',
+          },
+        ],
+        turns: [
+          {
+            items: [
+              {
+                type: 'assistant_text',
+                content: '旧一轮回复',
+              },
+            ],
+          },
+          {
+            items: [
+              {
+                type: 'block',
+              },
+            ],
+          },
+        ],
+      })
+    ).toBeNull()
+  })
 })
