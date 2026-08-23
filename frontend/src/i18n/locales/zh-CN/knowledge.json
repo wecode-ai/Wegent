@@ -245,6 +245,8 @@
       "confirmDelete": "确定要删除这个知识库吗？删除后无法恢复。",
       "cannotDeleteWithDocuments": "该知识库包含文档，无法删除。请先删除所有文档。",
       "deleteWarning": "该知识库包含 {{count}} 个文档，请先删除所有文档后再删除知识库。",
+      "deleteCodeWikiWarning": "删除代码 Wiki 会一并删除所有生成页面和仓库关联，且无法恢复。",
+      "deleteFailed": "删除知识库失败，请稍后重试。",
       "search": "搜索知识库...",
       "noResults": "没有匹配的知识库",
       "categoryFilter": {
@@ -307,6 +309,14 @@
       "batchMovePartial": "批量移动完成：成功 {{success}} 个，失败 {{failed}} 个。失败文档仍保留选中状态，请查看高亮项后重试"
     },
     "document": {
+      "retrievalProfile": {
+        "fallbackReasons": {
+          "retriever_unavailable": "配置的检索默认 Profile 不可用，将使用自动默认配置。",
+          "embedding_model_unavailable": "配置的检索默认 Profile 不可用，将使用自动默认配置。",
+          "profile_incomplete": "配置的检索默认 Profile 不完整，将使用自动默认配置。",
+          "unavailable": "检索默认 Profile 不可用，将使用自动默认配置。"
+        }
+      },
       "title": "文档",
       "upload": "添加资料",
       "edit": "编辑文档",
@@ -1179,7 +1189,8 @@
       "modelLabel": "生成模型",
       "modelDescription": "仓库代码会发送给该模型，请自行评估暴露风险。",
       "modelPlaceholder": "选择模型",
-      "modelRequired": "请选择生成模型"
+      "modelRequired": "请选择生成模型",
+      "created": "代码 Wiki 已创建，正在生成内容。"
     },
     "reader": {
       "regenerate": "重新生成",

@@ -1,13 +1,60 @@
-import type { CloudProject } from '@/api/deliveries'
+import { isDefaultWorkItemProject, type CloudProject } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeProjectSpaceRef, RuntimeTaskAddress } from '@/types/api'
 
 export type ProjectSpaceApi = NonNullable<WorkbenchServices['deliveryApi']>
+export type LocatedProjectSpace = CloudProject & {
+  location: 'local' | 'cloud'
+}
 
 export interface ProjectSpaceOption {
   key: string
   project: CloudProject
   api: ProjectSpaceApi
+}
+
+export { isDefaultWorkItemProject }
+
+export function projectStoreLocation(
+  projectStore: RuntimeProjectSpaceRef['projectStore']
+): 'local' | 'cloud' {
+  return projectStore === 'local' ? 'local' : 'cloud'
+}
+
+const projectSpaceTaskContextListeners = new Set<(task: RuntimeTaskAddress) => void>()
+const projectSpaceTaskBindingListeners = new Set<(task: RuntimeTaskAddress) => void>()
+
+export function publishProjectSpaceTaskContextChanged(task: RuntimeTaskAddress) {
+  for (const listener of projectSpaceTaskContextListeners) listener(task)
+}
+
+export function subscribeProjectSpaceTaskContextChanged(
+  listener: (task: RuntimeTaskAddress) => void
+) {
+  projectSpaceTaskContextListeners.add(listener)
+  return () => {
+    projectSpaceTaskContextListeners.delete(listener)
+  }
+}
+
+export function publishProjectSpaceTaskBindingChanged(task: RuntimeTaskAddress) {
+  for (const listener of projectSpaceTaskBindingListeners) listener(task)
+}
+
+export function subscribeProjectSpaceTaskBindingChanged(
+  listener: (task: RuntimeTaskAddress) => void
+) {
+  projectSpaceTaskBindingListeners.add(listener)
+  return () => {
+    projectSpaceTaskBindingListeners.delete(listener)
+  }
+}
+
+export async function loadDefaultWorkItemProject(
+  api: ProjectSpaceApi
+): Promise<CloudProject | null> {
+  const response = await api.listCloudProjects()
+  return response.items.find(isDefaultWorkItemProject) ?? null
 }
 
 export function projectSpaceRef(project: CloudProject): RuntimeProjectSpaceRef {
@@ -19,6 +66,21 @@ export function projectSpaceRef(project: CloudProject): RuntimeProjectSpaceRef {
 
 export function projectSpaceKey(ref: RuntimeProjectSpaceRef): string {
   return `${ref.projectStore}:${ref.projectId}`
+}
+
+export function projectKey(project: Pick<CloudProject, 'id' | 'project_store'>): string {
+  return projectSpaceKey({
+    projectStore: project.project_store,
+    projectId: project.id,
+  })
+}
+
+export function sameProjectSpace(
+  left: RuntimeProjectSpaceRef | null | undefined,
+  right: RuntimeProjectSpaceRef | null | undefined
+): boolean {
+  if (!left || !right) return left === right
+  return left.projectStore === right.projectStore && left.projectId === right.projectId
 }
 
 export function runtimeCloudProjectId(project: CloudProject | null): string | undefined {
@@ -46,11 +108,17 @@ export function projectSupportsRobotAutomation(project: CloudProject): boolean {
   return ['local', 'github', 'gitlab'].includes(project.task_provider)
 }
 
-export function findProjectSpaceContextForTask(
+export async function findProjectSpaceContextForTask(
   apis: ProjectSpaceApi[],
   task: RuntimeTaskAddress
 ): ReturnType<ProjectSpaceApi['findCloudContextForTask']> {
-  return Promise.any(apis.map(api => api.findCloudContextForTask(task)))
+  const results = await Promise.allSettled(apis.map(api => api.findCloudContextForTask(task)))
+  const contexts = results.flatMap(result => (result.status === 'fulfilled' ? [result.value] : []))
+  const userContext = contexts.find(context => !isDefaultWorkItemProject(context.project))
+  if (userContext) return userContext
+  if (contexts[0]) return contexts[0]
+  const errors = results.flatMap(result => (result.status === 'rejected' ? [result.reason] : []))
+  throw new AggregateError(errors, 'Task is not linked to a project space')
 }
 
 export async function loadProjectSpaceOptions(
@@ -70,6 +138,7 @@ export async function loadProjectSpaceOptions(
   for (const result of results) {
     if (result.status !== 'fulfilled') continue
     for (const option of result.value) {
+      if (isDefaultWorkItemProject(option.project)) continue
       if (!options.has(option.key)) options.set(option.key, option)
     }
   }

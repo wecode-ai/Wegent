@@ -3,7 +3,12 @@ import { applyInstalledPluginsToMarketplaceItems } from '@/api/local/codexPlugin
 import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { marketplaceItemMarketplaceId } from './pluginDistribution'
-import { linkedCloudPluginId, localPluginId } from './installedPluginMerge'
+import {
+  hasLocalCodexMaterialization,
+  linkedCloudPluginId,
+  localMaterializedVersion,
+  localPluginId,
+} from './installedPluginMerge'
 
 export function isLocalMarketplaceItem(item: PluginMarketplaceItem): boolean {
   if (item.latestReleaseId != null) return false
@@ -81,7 +86,11 @@ export function mergeMarketplaceCatalog(
   const cloudManagedInstalls = new Map<string, InstalledPlugin>()
   for (const plugin of installedPlugins) {
     const cloudPluginId = linkedCloudPluginId(plugin)
-    if (cloudPluginId !== null && localPluginId(plugin) !== null) {
+    if (
+      cloudPluginId !== null &&
+      localPluginId(plugin) !== null &&
+      typeof plugin.spec.pluginId !== 'number'
+    ) {
       localPublishedInstalls.set(String(cloudPluginId), plugin)
     }
     // Account installs from /installed-plugins carry spec.pluginId == catalog id.
@@ -94,11 +103,22 @@ export function mergeMarketplaceCatalog(
 
   const merged = new Map<string, PluginMarketplaceItem>()
   const cloudNames = new Set<string>()
+  const cloudKeysByCatalogId = new Map<string, string>()
   const ownedCloudKeysByName = new Map<string, string>()
   for (const item of cloudItems) {
     const localInstall = localPublishedInstalls.get(String(item.id))
     const cloudInstall = localInstall ? undefined : cloudManagedInstalls.get(String(item.id))
     const matchedInstall = localInstall ?? cloudInstall
+    const installedVersion = matchedInstall
+      ? localMaterializedVersion(matchedInstall) ||
+        (typeof matchedInstall.spec.pluginId !== 'number'
+          ? matchedInstall.spec.version?.trim() || null
+          : null)
+      : null
+    const catalogVersion = (item.version ?? '').trim()
+    const localVersionLags = Boolean(
+      installedVersion && catalogVersion && installedVersion !== catalogVersion
+    )
     // Cloud catalog ids are unique; never collapse distinct plugins by display name.
     const cloudKey = `cloud:${item.id}`
     merged.set(cloudKey, {
@@ -107,16 +127,23 @@ export function mergeMarketplaceCatalog(
         ? {
             installed: true,
             installedPluginId: localPluginId(matchedInstall) ?? item.installedPluginId,
-            installedLocally: Boolean(localInstall) || Boolean(item.installedLocally),
+            installedLocally:
+              Boolean(localInstall) ||
+              Boolean(item.installedLocally) ||
+              hasLocalCodexMaterialization(matchedInstall),
+            installedVersion,
             enabled: matchedInstall.spec.enabled,
             updateAvailable:
-              item.updateAvailable || matchedInstall.spec.installState === 'update_available',
+              item.updateAvailable ||
+              matchedInstall.spec.installState === 'update_available' ||
+              localVersionLags,
             currentDeviceInstallation: localInstall ? null : item.currentDeviceInstallation,
           }
         : {}),
     })
     const normalizedName = item.name.toLowerCase()
     cloudNames.add(normalizedName)
+    cloudKeysByCatalogId.set(String(item.id), cloudKey)
     if (item.accessRole === 'owner') ownedCloudKeysByName.set(normalizedName, cloudKey)
   }
   for (const item of localItems) {
@@ -130,8 +157,19 @@ export function mergeMarketplaceCatalog(
     // Built-in local mirrors of a cloud listing are already represented above.
     const normalizedName = item.name.toLowerCase()
     if (cloudNames.has(normalizedName)) {
+      const matchingCloudKey = cloudKeysByCatalogId.get(String(item.id))
+      if (matchingCloudKey) {
+        const cloudItem = merged.get(matchingCloudKey)
+        if (cloudItem && item.installedLocally && item.installedVersion) {
+          merged.set(matchingCloudKey, {
+            ...cloudItem,
+            installedLocally: true,
+            installedVersion: item.installedVersion,
+          })
+        }
+      }
       const ownedCloudKey = ownedCloudKeysByName.get(normalizedName)
-      const marketplacePath = item.manifest.marketplacePath
+      const marketplacePath = item.manifest?.marketplacePath
       if (
         ownedCloudKey &&
         marketplaceId &&

@@ -37,11 +37,9 @@ describe('localModelProviders', () => {
       modelDefaults: {
         k3: {
           contextWindow: 262_144,
-          codexCatalogModelId: 'wework-kimi-k3',
         },
         'kimi-for-coding': {
           contextWindow: 262_144,
-          codexCatalogModelId: 'wework-kimi-k2-7',
         },
       },
     })
@@ -61,7 +59,6 @@ describe('localModelProviders', () => {
         modelDefaults: {
           'kimi-k3': {
             contextWindow: 1_048_576,
-            codexCatalogModelId: 'wework-kimi-k3',
           },
           'kimi-k2.6': { contextWindow: 262_144 },
           'moonshot-v1-8k': { contextWindow: 8_192 },
@@ -84,11 +81,9 @@ describe('localModelProviders', () => {
         modelDefaults: {
           'deepseek-v4-flash': {
             contextWindow: 1_048_576,
-            codexCatalogModelId: 'wework-deepseek-v4-flash',
           },
           'deepseek-v4-pro': {
             contextWindow: 1_048_576,
-            codexCatalogModelId: 'wework-deepseek-v4-pro',
           },
         },
       },

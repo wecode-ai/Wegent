@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { ApiError } from '@/api/http'
 import type { MiniProgram, Site, SiteListItem, SitesApi } from '@/api/sites'
@@ -15,6 +15,10 @@ vi.mock('@/lib/clipboard', () => ({
 vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn().mockResolvedValue(true),
 }))
+
+afterEach(() => {
+  window.history.replaceState({}, '', '/sites')
+})
 
 const unpublishedSite: Site = {
   app_type: 'web',
@@ -309,6 +313,99 @@ describe('SitesWorkspace', () => {
       limit: 20,
     })
     expect(window.location.search).toBe('?app_type=miniapp')
+  })
+
+  test('shows experimental Smart apps beside Sites and Mini Programs', async () => {
+    window.history.replaceState({}, '', '/sites?app_type=web')
+    const api = createApi()
+
+    render(
+      <SitesWorkspace
+        api={api}
+        onCreate={vi.fn()}
+        smartAppsEnabled
+        smartAppsContent={<div data-testid="smart-apps-content">智能工作台市场</div>}
+      />
+    )
+    await screen.findByText('产品发布页')
+
+    expect(screen.getByTestId('applications-tab-web')).toHaveTextContent('站点')
+    expect(screen.getByTestId('applications-tab-miniapp')).toHaveTextContent('小程序')
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveTextContent('智能工作台')
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([
+      '智能工作台实验性',
+      '站点',
+      '小程序',
+    ])
+
+    await userEvent.click(screen.getByTestId('applications-tab-smart-app'))
+
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('smart-apps-content')).toBeInTheDocument()
+    expect(screen.queryByTestId('sites-search-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sites-create-button')).not.toBeInTheDocument()
+    expect(window.location.search).toBe('?app_type=smart_app')
+  })
+
+  test('selects Smart apps for the default Applications path without changing the path', async () => {
+    const api = createApi()
+
+    render(
+      <SitesWorkspace
+        api={api}
+        onCreate={vi.fn()}
+        smartAppsEnabled
+        smartAppsContent={<div data-testid="smart-apps-content">智能工作台市场</div>}
+      />
+    )
+
+    expect(await screen.findByTestId('smart-apps-content')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '智能工作台市场' })).toBeInTheDocument()
+    expect(screen.getByText('发现官方工作台，以及成员定向分享给你的工作台。')).toBeInTheDocument()
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(window.location.pathname).toBe('/sites')
+    expect(window.location.search).toBe('')
+    expect(api.listSites).not.toHaveBeenCalled()
+  })
+
+  test('opens a requested Smart apps view without loading the Sites collection', async () => {
+    window.history.replaceState({}, '', '/sites?app_type=smart_app')
+    const api = createApi()
+
+    render(
+      <SitesWorkspace
+        api={api}
+        onCreate={vi.fn()}
+        smartAppsEnabled
+        smartAppsContent={<div data-testid="smart-apps-content">智能工作台市场</div>}
+      />
+    )
+
+    expect(await screen.findByTestId('smart-apps-content')).toBeInTheDocument()
+    expect(api.listSites).not.toHaveBeenCalled()
+  })
+
+  test('uses the My workbench heading for the owned Smart apps view', async () => {
+    window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
+
+    render(
+      <SitesWorkspace
+        api={createApi()}
+        onCreate={vi.fn()}
+        smartAppsEnabled
+        smartAppsMode="owned"
+        smartAppsContent={<div data-testid="smart-apps-content">我的内容</div>}
+      />
+    )
+
+    expect(await screen.findByRole('heading', { name: '我的工作台' })).toBeInTheDocument()
+    expect(screen.getByText('管理你创建、导入和安装的智能应用。')).toBeInTheDocument()
   })
 
   test('invokes the Mini Program entry from the create menu', async () => {

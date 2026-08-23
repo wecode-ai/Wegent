@@ -10,7 +10,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 
 class DeviceStatusEnum(str, Enum):
@@ -54,12 +61,6 @@ class DeviceConnectionMode(str, Enum):
     # API = "api"  # For cloud provider API-based connections
 
 
-# Maximum concurrent tasks per device (0 = unlimited)
-# With ephemeral CC sessions (auto-close after each message),
-# slot limits are no longer needed for local devices.
-MAX_DEVICE_SLOTS = 0
-
-
 class DeviceRunningTask(BaseModel):
     """Information about a task running on a device."""
 
@@ -68,6 +69,43 @@ class DeviceRunningTask(BaseModel):
     title: str = Field(..., description="Task title")
     status: str = Field(..., description="Task status")
     created_at: Optional[str] = Field(None, description="Task creation timestamp")
+
+
+class RuntimeWorktreeFeatures(BaseModel):
+    """Runtime-owned managed Worktree feature contract."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    version: int = Field(..., ge=1)
+    managed: bool = False
+    deferred_prepare: bool = Field(False, alias="deferredPrepare")
+    snapshots: bool = False
+    restore: bool = False
+    preflight: bool = False
+    persistent_storage_verified: bool = Field(
+        False,
+        alias="persistentStorageVerified",
+    )
+
+
+class RuntimeFeatures(BaseModel):
+    """Online features implemented by the currently connected Runtime."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    schema_version: int = Field(..., ge=1, alias="schemaVersion")
+    worktrees: Optional[RuntimeWorktreeFeatures] = None
+
+
+def _normalize_runtime_features(value: Any) -> Optional[RuntimeFeatures]:
+    """Treat malformed optional Runtime feature metadata as absent."""
+
+    if value is None:
+        return None
+    try:
+        return RuntimeFeatures.model_validate(value)
+    except ValidationError:
+        return None
 
 
 class DeviceInfo(BaseModel):
@@ -92,7 +130,7 @@ class DeviceInfo(BaseModel):
         None, description="Device capabilities/tags (e.g., 'gpu', 'high-memory')"
     )
     slot_used: int = Field(0, description="Number of slots currently in use")
-    slot_max: int = Field(MAX_DEVICE_SLOTS, description="Maximum concurrent task slots")
+    slot_max: int = Field(0, description="Latest observed Runtime task limit")
     running_tasks: List[DeviceRunningTask] = Field(
         default_factory=list, description="List of tasks running on this device"
     )
@@ -117,6 +155,10 @@ class DeviceInfo(BaseModel):
     )
     socket_device_id: Optional[str] = Field(
         None, description="Online WebSocket route device ID for relay-backed devices"
+    )
+    runtime_features: Optional[RuntimeFeatures] = Field(
+        None,
+        description="Features reported by the currently online Runtime instance",
     )
     # Cloud device specific config
     cloud_config: Optional[Dict[str, Any]] = Field(
@@ -307,10 +349,39 @@ class DeviceRegisterPayload(BaseModel):
         max_length=100,
         description="Desktop app IPC device ID when device_type is app",
     )
+    runtime_features: Optional[RuntimeFeatures] = Field(
+        None,
+        description="Features implemented by this connected Runtime",
+    )
+    _validate_runtime_features = field_validator(
+        "runtime_features",
+        mode="before",
+    )(_normalize_runtime_features)
     bind_shell: BindShell = Field(
         BindShell.CLAUDECODE,
         description="Shell runtime binding (claudecode or openclaw)",
     )
+
+
+class RuntimeCapacityObservation(BaseModel):
+    """Authoritative live capacity reported by the local Runtime scheduler."""
+
+    limit: int = Field(..., ge=1, le=20)
+    active: int = Field(..., ge=0)
+    active_task_ids: List[str] = Field(default_factory=list, max_length=20)
+    queued: int = Field(..., ge=0)
+
+    @model_validator(mode="after")
+    def validate_active_task_identity(self) -> "RuntimeCapacityObservation":
+        normalized = [task_id.strip() for task_id in self.active_task_ids]
+        if (
+            any(not task_id for task_id in normalized)
+            or len(set(normalized)) != len(normalized)
+            or len(normalized) != self.active
+        ):
+            raise ValueError("active_task_ids must identify every active Runtime task")
+        self.active_task_ids = normalized
+        return self
 
 
 class DeviceHeartbeatPayload(BaseModel):
@@ -338,6 +409,24 @@ class DeviceHeartbeatPayload(BaseModel):
         max_length=255,
         description="Host peers should use for runtime direct transfers",
     )
+    runtime_instance_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=100,
+        description="Stable runtime installation ID for the capacity domain",
+    )
+    runtime_capacity: Optional[RuntimeCapacityObservation] = Field(
+        None,
+        description="Live scheduler capacity; missing observations cannot claim work",
+    )
+    runtime_features: Optional[RuntimeFeatures] = Field(
+        None,
+        description="Features implemented by the currently connected Runtime",
+    )
+    _validate_runtime_features = field_validator(
+        "runtime_features",
+        mode="before",
+    )(_normalize_runtime_features)
 
 
 class DeviceStatusPayload(BaseModel):

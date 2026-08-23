@@ -4,8 +4,12 @@ import type {
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
 } from '@/types/api'
-import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { isLocalStandaloneDevice } from '@/lib/device-selection'
+import { isWeWorkExecutorVersionCompatible } from '@/lib/device-capabilities'
+import type {
+  ProjectWorktreeAvailability,
+  ProjectWorktreeAvailabilityReason,
+} from '@/lib/worktree-availability'
 
 const PROJECT_MENU_VIEWPORT_MARGIN = 16
 const PROJECT_MENU_VERTICAL_PADDING = 12
@@ -64,6 +68,56 @@ export function getProjectDeviceId(project: ProjectWithTasks): string | undefine
 }
 
 export { isLocalStandaloneDevice }
+
+export function resolveComposerWorktreeAvailability({
+  project,
+  workspace,
+  device,
+  isGitProject,
+  availability,
+}: {
+  project: ProjectWithTasks | null | undefined
+  workspace: RuntimeDeviceWorkspace | null | undefined
+  device: DeviceInfo | undefined
+  isGitProject?: boolean
+  availability?: ProjectWorktreeAvailability
+}): ProjectWorktreeAvailability {
+  if (availability) return availability
+  const deviceId = workspace?.deviceId?.trim() || null
+  const sourcePath = workspace?.workspacePath?.trim() || null
+  if (!project) return { available: false, reason: 'no_project', deviceId, sourcePath }
+  if (isGitProject === false) {
+    return { available: false, reason: 'not_git', deviceId, sourcePath }
+  }
+
+  if (!workspace) {
+    return {
+      available: false,
+      reason: 'no_workspace',
+      deviceId: getProjectDeviceId(project) ?? null,
+      sourcePath: null,
+    }
+  }
+
+  const status = workspace.deviceStatus ?? device?.status
+  if (!workspace.available) {
+    return { available: false, reason: 'workspace_unavailable', deviceId, sourcePath }
+  }
+  if (status !== 'online' && status !== 'busy') {
+    return { available: false, reason: 'device_offline', deviceId, sourcePath }
+  }
+  if (device && !isWeWorkExecutorVersionCompatible(device.executor_version)) {
+    return { available: false, reason: 'executor_unsupported', deviceId, sourcePath }
+  }
+
+  return { available: false, reason: 'preflight_pending', deviceId, sourcePath }
+}
+
+export function getProjectWorktreeUnavailableMessageKey(
+  reason: Exclude<ProjectWorktreeAvailabilityReason, 'available'>
+): string {
+  return `workbench.worktree_unavailable_${reason}`
+}
 
 export function isLocalProjectWorkspaceDevice(device: DeviceInfo | undefined): boolean {
   return Boolean(device && isLocalStandaloneDevice(device))
@@ -133,25 +187,19 @@ export function resolveProjectExecutionUi({
   project,
   executionMode,
   executionModeLocked,
-  selectedWorkspaceIsRemote,
-  isGitProject,
+  worktreeAvailability,
 }: {
   project: ProjectWithTasks | null | undefined
   executionMode: ProjectExecutionMode
   executionModeLocked: boolean
-  selectedWorkspaceIsRemote: boolean
-  isGitProject?: boolean
+  worktreeAvailability: ProjectWorktreeAvailability
 }) {
-  const supportsWorktree = Boolean(
-    project && supportsGitWorktreeExecution(project) && isGitProject !== false
-  )
-  const displayedMode: ProjectExecutionMode =
-    supportsWorktree && executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace'
+  const displayedMode: ProjectExecutionMode = project ? executionMode : 'current_workspace'
 
   return {
     displayedMode,
-    supportsWorktree,
-    canShowModeControl: supportsWorktree,
-    canOpenModeMenu: supportsWorktree && !selectedWorkspaceIsRemote && !executionModeLocked,
+    supportsWorktree: worktreeAvailability.available,
+    canShowModeControl: Boolean(project),
+    canOpenModeMenu: Boolean(project) && !executionModeLocked,
   }
 }

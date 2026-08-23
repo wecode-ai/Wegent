@@ -4,11 +4,12 @@
 
 set -eu
 
-rm -rf wework packages shared package.json pnpm-lock.yaml pnpm-workspace.yaml
+rm -rf wework packages patches shared package.json pnpm-lock.yaml pnpm-workspace.yaml
 
 cp -R ../../../wework ./wework
 mkdir -p ./packages
 cp -R ../../../packages/chat-core ./packages/chat-core
+cp -R ../../../patches ./patches
 mkdir -p ./shared
 cp -R ../../../shared/assets ./shared/assets
 cp ../../../package.json ../../../pnpm-lock.yaml ../../../pnpm-workspace.yaml ./

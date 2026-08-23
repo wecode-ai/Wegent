@@ -62,9 +62,10 @@ describe('task search permissions', () => {
             name: 'Public project',
             project_key: 'PUBLIC',
             description: '',
+            project_store: 'backend',
           },
         ]}
-        projectItems={{ 'project-1': [restrictedItem] }}
+        projectItems={{ 'backend:project-1': [restrictedItem] }}
         projectMembers={{}}
         query="other"
         onQueryChange={() => undefined}

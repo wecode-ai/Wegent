@@ -3,7 +3,6 @@ import type {
   RuntimeGoalStatus,
   RuntimeTaskAddress,
   RuntimeTaskSummary,
-  RuntimeTranscriptResponse,
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
@@ -32,6 +31,7 @@ const EMPTY_STORE_SNAPSHOT: RuntimeTaskLifecycleStoreSnapshot = {
 const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'subscribe',
   'getSnapshot',
+  'getCurrentTask',
   'getTask',
   'selectTask',
 ])
@@ -39,15 +39,22 @@ const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
 export class RuntimeTaskLifecycleStore {
   private readonly machines = new Map<string, RuntimeTaskMachine>()
   private readonly deviceAliases = new Map<string, string>()
+  private readonly previousRunningTaskKeys: Set<string>
   private readonly listeners = new Set<Listener>()
   private readonly unreadStorageKey: string
+  private readonly runningStorageKey: string
   private currentTaskKey: string | null = null
   private persistedUnreadSerialized: string | null = null
+  private persistedRunningSerialized: string | null = null
   private version = 0
   private snapshot = EMPTY_STORE_SNAPSHOT
 
   constructor(userId: number | string | null | undefined) {
-    this.unreadStorageKey = `wework.runtimeTaskLifecycle.${userId ?? 'anonymous'}.unread.v1`
+    const storageScope = `wework.runtimeTaskLifecycle.${userId ?? 'anonymous'}`
+    this.unreadStorageKey = `${storageScope}.unread.v2`
+    this.runningStorageKey = `${storageScope}.running.v2`
+    this.previousRunningTaskKeys = readStoredTaskKeys(this.runningStorageKey)
+    this.persistedRunningSerialized = serializeTaskKeys(this.previousRunningTaskKeys)
   }
 
   subscribe = (listener: Listener): (() => void) => {
@@ -56,6 +63,11 @@ export class RuntimeTaskLifecycleStore {
   }
 
   getSnapshot = (): RuntimeTaskLifecycleStoreSnapshot => this.snapshot
+
+  getCurrentTask(): RuntimeTaskLifecycleSnapshot | null {
+    if (!this.currentTaskKey) return null
+    return this.snapshot.tasks.get(this.currentTaskKey) ?? null
+  }
 
   getTask(address: RuntimeTaskAddress | null | undefined): RuntimeTaskLifecycleSnapshot | null {
     if (!address) return null
@@ -97,7 +109,7 @@ export class RuntimeTaskLifecycleStore {
     const currentSnapshot = this.getTask(address)
     if (
       expectedSnapshot !== undefined &&
-      lifecycleTransitionChanged(expectedSnapshot, currentSnapshot)
+      runtimeTaskLifecycleTransitionChanged(expectedSnapshot, currentSnapshot)
     ) {
       return false
     }
@@ -116,9 +128,18 @@ export class RuntimeTaskLifecycleStore {
 
   syncRuntimeTranscriptSnapshot(
     address: RuntimeTaskAddress,
-    transcript: Pick<RuntimeTranscriptResponse, 'running' | 'turns'>
+    transcript: {
+      running?: boolean
+      turns: Array<{
+        id: string | null
+        status?: string | null
+        completedAt?: string | number | null
+      }>
+    }
   ): void {
     if (transcript.running === true) {
+      const current = this.getTask(address)
+      if (current && current.turn.outcome !== null && !current.derived.isRunning) return
       this.executorStarted(address)
       return
     }
@@ -139,6 +160,7 @@ export class RuntimeTaskLifecycleStore {
     ) {
       const currentTurnId = this.getTask(address)?.turn.id
       if (currentTurnId && terminalTurn?.id === currentTurnId) {
+        this.executorSettled(address)
         this.turnSettled(address, currentTurnId, terminalTurnOutcome(terminalTurn.status))
       }
       return
@@ -172,8 +194,16 @@ export class RuntimeTaskLifecycleStore {
     this.publish()
   }
 
-  sendRequested(address: RuntimeTaskAddress): void {
-    this.dispatch(address, { type: 'send_requested' })
+  sendRequested(
+    address: RuntimeTaskAddress,
+    options: { workspaceCreationKind?: 'worktree' } = {}
+  ): void {
+    this.dispatch(address, {
+      type: 'send_requested',
+      ...(options.workspaceCreationKind
+        ? { workspaceCreationKind: options.workspaceCreationKind }
+        : {}),
+    })
   }
 
   sendAccepted(address: RuntimeTaskAddress): void {
@@ -221,6 +251,7 @@ export class RuntimeTaskLifecycleStore {
     transcript: RuntimePaneTranscript,
     options: SyncTranscriptOptions = {}
   ): void {
+    this.syncRuntimeTranscriptSnapshot(address, transcript)
     const streamingTurn = transcript.turns.findLast(
       turn => turn.status === 'pending' || turn.status === 'streaming'
     )
@@ -238,6 +269,8 @@ export class RuntimeTaskLifecycleStore {
         turnId: streamingTurn?.id,
       })
     } else if (transcript.running === true) {
+      const current = this.getTask(address)
+      if (current && current.turn.outcome !== null && !current.derived.isRunning) return
       this.executorStarted(address)
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
       this.executorSettled(address)
@@ -255,7 +288,9 @@ export class RuntimeTaskLifecycleStore {
 
   remove(address: RuntimeTaskAddress): void {
     const canonicalAddress = this.canonicalizeAddress(address)
-    const deleted = this.machines.delete(getRuntimeTaskLifecycleKey(canonicalAddress))
+    const key = getRuntimeTaskLifecycleKey(canonicalAddress)
+    const deleted = this.machines.delete(key)
+    this.previousRunningTaskKeys.delete(key)
     if (deleted) this.publish()
   }
 
@@ -282,6 +317,8 @@ export class RuntimeTaskLifecycleStore {
       event.type === 'executor_snapshot_received' ? { ...event, address: canonicalAddress } : event
     const machine = this.ensureMachine(canonicalAddress)
     const previous = machine.getSnapshot()
+    const key = previous.key
+    const wasRunning = previous.derived.isRunning || this.previousRunningTaskKeys.has(key)
     if (
       canonicalEvent.type === 'executor_snapshot_received' &&
       previous.task &&
@@ -293,7 +330,23 @@ export class RuntimeTaskLifecycleStore {
     let changed = eventChanged
     const next = machine.getSnapshot()
     if (
-      previous.derived.isRunning &&
+      canonicalEvent.type === 'turn_settled' &&
+      previous.task?.running === true &&
+      import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1'
+    ) {
+      console.info('[Wework] Runtime turn settled before executor became idle', {
+        deviceId: canonicalAddress.deviceId,
+        taskId: canonicalAddress.taskId,
+        turnId: canonicalEvent.turnId ?? previous.turn.id,
+        previousExecutionPhase: previous.execution.phase,
+        nextExecutionPhase: next.execution.phase,
+        previousTurnPhase: previous.turn.phase,
+        nextTurnPhase: next.turn.phase,
+        executorSnapshotRunning: previous.task.running,
+      })
+    }
+    if (
+      wasRunning &&
       !next.derived.isRunning &&
       !next.derived.isQueued &&
       next.goalStatus !== 'active' &&
@@ -301,6 +354,8 @@ export class RuntimeTaskLifecycleStore {
     ) {
       changed = machine.dispatch({ type: 'marked_unread' }) || changed
     }
+    if (next.derived.isRunning) this.previousRunningTaskKeys.add(key)
+    else this.previousRunningTaskKeys.delete(key)
     if (next.derived.isRunning || next.key === this.currentTaskKey) {
       changed = machine.dispatch({ type: 'marked_read' }) || changed
     }
@@ -385,15 +440,21 @@ export class RuntimeTaskLifecycleStore {
         goalStatus: previousState.goalStatus,
       })
     }
+    const sendRequestedEvent: RuntimeTaskLifecycleEvent = {
+      type: 'send_requested',
+      ...(previousState.workspaceCreationKind
+        ? { workspaceCreationKind: previousState.workspaceCreationKind }
+        : {}),
+    }
     if (previousState.executionPhase === 'starting') {
-      nextMachine.dispatch({ type: 'send_requested' })
+      nextMachine.dispatch(sendRequestedEvent)
     } else if (previousState.executionPhase === 'running') {
       nextMachine.dispatch({ type: 'executor_started' })
     }
     if (previousState.turnPhase === 'streaming') {
       nextMachine.dispatch({ type: 'turn_started', turnId: previousState.activeTurnId })
     } else if (previousState.turnPhase === 'submitting') {
-      nextMachine.dispatch({ type: 'send_requested' })
+      nextMachine.dispatch(sendRequestedEvent)
     } else if (previousState.turnPhase === 'awaiting') {
       nextMachine.dispatch({ type: 'send_accepted' })
     }
@@ -404,6 +465,9 @@ export class RuntimeTaskLifecycleStore {
       })
     }
     if (previousState.unread) nextMachine.dispatch({ type: 'marked_unread' })
+    if (this.previousRunningTaskKeys.delete(previousKey)) {
+      this.previousRunningTaskKeys.add(nextKey)
+    }
     this.machines.delete(previousKey)
     if (this.currentTaskKey === previousKey) this.currentTaskKey = nextKey
   }
@@ -429,32 +493,37 @@ export class RuntimeTaskLifecycleStore {
       unreadTaskKeys,
     }
     this.persistUnreadKeys(unreadTaskKeys)
+    this.persistRunningKeys()
     this.listeners.forEach(listener => listener())
   }
 
   private readUnreadKeys(): Set<string> {
-    if (typeof window === 'undefined') return new Set()
-    try {
-      const value = JSON.parse(window.localStorage.getItem(this.unreadStorageKey) ?? '[]')
-      const keys = new Set<string>(
-        Array.isArray(value) ? value.filter(item => typeof item === 'string') : []
-      )
-      this.persistedUnreadSerialized = serializeUnreadKeys(keys)
-      return keys
-    } catch {
-      return new Set()
-    }
+    const keys = readStoredTaskKeys(this.unreadStorageKey)
+    this.persistedUnreadSerialized = serializeTaskKeys(keys)
+    return keys
   }
 
   private persistUnreadKeys(keys: ReadonlySet<string>): void {
     if (typeof window === 'undefined') return
-    const serialized = serializeUnreadKeys(keys)
+    const serialized = serializeTaskKeys(keys)
     if (serialized === this.persistedUnreadSerialized) return
     try {
       window.localStorage.setItem(this.unreadStorageKey, serialized)
       this.persistedUnreadSerialized = serialized
     } catch (error) {
       console.warn('Failed to persist runtime task unread state', error)
+    }
+  }
+
+  private persistRunningKeys(): void {
+    if (typeof window === 'undefined') return
+    const serialized = serializeTaskKeys(this.previousRunningTaskKeys)
+    if (serialized === this.persistedRunningSerialized) return
+    try {
+      window.localStorage.setItem(this.runningStorageKey, serialized)
+      this.persistedRunningSerialized = serialized
+    } catch (error) {
+      console.warn('Failed to persist runtime task running state', error)
     }
   }
 }
@@ -484,7 +553,7 @@ export function createRuntimeTaskLifecycleOwnershipView(
   })
 }
 
-function lifecycleTransitionChanged(
+export function runtimeTaskLifecycleTransitionChanged(
   expected: RuntimeTaskLifecycleSnapshot | null,
   current: RuntimeTaskLifecycleSnapshot | null
 ): boolean {
@@ -494,8 +563,21 @@ function lifecycleTransitionChanged(
     expected.turn.phase !== current.turn.phase ||
     expected.turn.id !== current.turn.id ||
     expected.turn.outcome !== current.turn.outcome ||
-    expected.goalStatus !== current.goalStatus
+    expected.goalStatus !== current.goalStatus ||
+    expected.continuable !== current.continuable
   )
+}
+
+export function consumeRuntimeTaskLifecycleBlock(
+  blockedSnapshots: Map<string, RuntimeTaskLifecycleSnapshot | null>,
+  key: string,
+  current: RuntimeTaskLifecycleSnapshot | null
+): boolean {
+  if (!blockedSnapshots.has(key)) return true
+  const blocked = blockedSnapshots.get(key) ?? null
+  if (!runtimeTaskLifecycleTransitionChanged(blocked, current)) return false
+  blockedSnapshots.delete(key)
+  return true
 }
 
 function isTerminalTurnStatus(status: string | null | undefined): boolean {
@@ -566,6 +648,16 @@ function emptyRuntimeTaskSummary(address: RuntimeTaskAddress): RuntimeTaskSummar
   }
 }
 
-function serializeUnreadKeys(keys: ReadonlySet<string>): string {
+function serializeTaskKeys(keys: ReadonlySet<string>): string {
   return JSON.stringify([...keys].slice(-200))
+}
+
+function readStoredTaskKeys(storageKey: string): Set<string> {
+  if (typeof window === 'undefined') return new Set()
+  try {
+    const value = JSON.parse(window.localStorage.getItem(storageKey) ?? '[]')
+    return new Set(Array.isArray(value) ? value.filter(item => typeof item === 'string') : [])
+  } catch {
+    return new Set()
+  }
 }

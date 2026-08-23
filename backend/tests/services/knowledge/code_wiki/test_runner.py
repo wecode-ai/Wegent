@@ -401,6 +401,7 @@ def _publish_a_first_wiki(test_db, knowledge_base, test_user, tasks) -> WikiGene
         test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
     )
     _write_page(test_db, started.generation, "index")
+    _write_page(test_db, started.generation, "architecture")
     _write_page(test_db, started.generation, "architecture/backend")
     finish_run(test_db, generation=started.generation, succeeded=True, head_commit=HEAD)
     return started.generation

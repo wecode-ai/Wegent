@@ -63,6 +63,8 @@ Wework 云端 runtime 执行使用和本地模式一致的 app IPC 协议。前�
 
 云端 executor 仍连接 Backend 的 `/local-executor` namespace。executor 内部复用本地 `RuntimeWorkRpcHandler` 执行 `runtime.tasks.create`、`runtime.tasks.send`、`runtime.tasks.list`、`runtime.tasks.transcript` 等方法，并把 Responses API 风格的 app IPC event 通过 `runtime:event` 透传回 `/wework-runtime`。Wework 前端复用本地流式事件 mapper 消费这些事件，因此本地模式和云端模式在 runtime 执行流程上保持一致。
 
+`device.execute_command` 的中继超时必须使用请求中的 `timeout_seconds`，并在前端确认等待上增加固定宽限时间。普通 runtime 请求继续使用默认 75 秒。这样 Git Clone 等长命令不会被外层 IPC 在命令自身超时之前提前判定失败，同时仍受 executor 的 600 秒上限约束。
+
 多实例 Backend 通过 Socket.IO Redis manager 把 RPC 转发到持有 executor 连接的 worker。Redis 中带 `socket_id` 的设备在线记录是转发入口；不能用当前 worker 的进程内连接表预判 executor 已断线，否则会把连接在其他 worker 上的设备误标为离线。
 
 ## 本机 executor 生命周期
@@ -110,7 +112,7 @@ wework /path/to/project
 
 API Key 留空时，本地 runtime 会向 Codex provider 配置传入 `dummy` bearer token，用于支持无鉴权的本地 OpenAI-compatible 服务。本地模型配置和内置本机 Codex 模型都会以 `UnifiedModel(type: "runtime")` 进入现有模型选择器。
 
-“测试连接”会强制模型调用一个确定性的能力探针工具，只有模型返回对应 tool call 才通过；普通文本回复不能证明模型具备 Agent 工具能力。`custom` Responses 模式使用 Codex 的 `apply_patch` custom tool 名称和 grammar 完成探针，`function` 模式使用普通函数探针。执行任务时，executor 会为该自定义模型生成显式 Codex model catalog：`custom` 和 `function` 模式发布 `apply_patch`，`shell` 模式仅发布 shell 编辑工具。
+“测试连接”会强制模型调用一个确定性的能力探针工具，只有模型返回对应 tool call 才通过；普通文本回复不能证明模型具备 Agent 工具能力。`custom` Responses 模式使用 Codex 的 `apply_patch` custom tool 名称和 grammar 完成探针，`function` 模式使用普通函数探针。OpenAI Responses 探针使用 `stream: true` 并从 SSE 事件读取工具调用，与 Codex 实际执行路径一致，也能兼容非流式响应中 `output` 为空的提供方。执行任务时，executor 会为该自定义模型生成显式 Codex model catalog：`custom` 和 `function` 模式发布 `apply_patch`，`shell` 模式仅发布 shell 编辑工具。
 
 DeepSeek V4-Flash 和 V4-Pro 是内置 provider profile：上游地址为 `https://api.deepseek.com/responses`，模型目录 ID 分别为 `wework-deepseek-v4-flash` 和 `wework-deepseek-v4-pro`，上下文窗口均为 1,048,576 tokens，推理等级支持 `low`、`high`、`max` 且默认使用 `high`。模型目录开启并行工具、multi-agent v2 和 Web Search，只声明文本输入，不声明图片生成。Wework 从 DeepSeek `/models` 发现模型后只保留当前 Codex profile 支持的 `deepseek-v4-flash` 和 `deepseek-v4-pro`；旧版由该 profile 管理的 Chat Completions 配置会在读取时迁移到 Responses API、`custom` 工具模式和实时搜索。
 

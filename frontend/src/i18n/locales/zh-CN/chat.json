@@ -60,6 +60,11 @@
     "playVideoSegment": "播放视频片段",
     "pauseVideoSegment": "暂停视频片段",
     "invalidVideoSegmentRange": "该片段超出视频实际时长，无法播放",
+    "videoChapters": "视频章节",
+    "videoChaptersProgress": "视频章节播放进度",
+    "videoChaptersCount_one": "{{count}} 个章节",
+    "videoChaptersCount_other": "{{count}} 个章节",
+    "videoChaptersTruncated": "仅显示前部分章节，部分已省略。",
     "footerCited": "引用 {{documents}} 个文档，来自 {{sources}} 个知识源",
     "footerNoHit": "{{count}} 个知识源未命中",
     "footerSkipped": "跳过 {{count}} 个不可用来源",
@@ -751,6 +756,7 @@
     "no_models": "暂无可用的视频模型",
     "ratio_section": "比例",
     "duration_section": "时长",
+    "duration_auto": "智能时长",
     "resolution_section": "分辨率"
   },
   "image": {

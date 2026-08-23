@@ -35,6 +35,7 @@ class IMPrivateSession:
     channel_id: int
     conversation_id: str
     sender_id: str
+    proactive_recipient_id: str = ""
     display_name: str = ""
     mode: str = IMSessionMode.CHAT
     state: str = IMSessionState.IDLE

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   checkForWeworkUpdate,
+  downloadPendingWeworkUpdate,
   installPendingWeworkUpdate,
   type WeworkUpdateChannel,
   type WeworkUpdateDownloadProgress,
@@ -17,6 +18,7 @@ import {
 } from './app-release-notes'
 import {
   APP_UPDATE_AUTO_CHECK_MIN_AGE_MS,
+  APP_UPDATE_AUTO_DOWNLOAD_KEY,
   APP_UPDATE_CHANNEL_KEY,
   APP_UPDATE_INITIAL_CHECK_DELAY_MS,
   APP_UPDATE_LAST_AUTO_CHECK_KEY,
@@ -43,6 +45,10 @@ interface UpdateCheckResult {
 
 function readUpdateChannel(): WeworkUpdateChannel {
   return window.localStorage.getItem(APP_UPDATE_CHANNEL_KEY) === 'beta' ? 'beta' : 'stable'
+}
+
+function readAutoUpdateEnabled(): boolean {
+  return window.localStorage.getItem(APP_UPDATE_AUTO_DOWNLOAD_KEY) !== 'false'
 }
 
 function lastAutoCheckKey(channel: WeworkUpdateChannel): string {
@@ -74,6 +80,7 @@ function messageFor(error: unknown): string {
 export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const appVersion = useAppVersion()
   const [updateChannel, setUpdateChannelState] = useState<WeworkUpdateChannel>(readUpdateChannel)
+  const [autoUpdateEnabled, setAutoUpdateEnabledState] = useState(readAutoUpdateEnabled)
   const [availableUpdate, setAvailableUpdate] = useState<WeworkUpdateInfo | null>(null)
   const [pendingReleaseNotes, setPendingReleaseNotes] =
     useState<WeworkInstalledReleaseNotes | null>(readPendingWeworkReleaseNotes)
@@ -84,6 +91,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const updateChannelRef = useRef(updateChannel)
+  const autoUpdateEnabledRef = useRef(autoUpdateEnabled)
   const activeCheckRef = useRef<{
     channel: WeworkUpdateChannel
     promise: Promise<UpdateCheckResult>
@@ -98,6 +106,10 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     if (simulationTimerRef.current === null) return
     window.clearInterval(simulationTimerRef.current)
     simulationTimerRef.current = null
+  }, [])
+
+  const startBackgroundDownload = useCallback(() => {
+    void downloadPendingWeworkUpdate().catch(() => undefined)
   }, [])
 
   const runCheck = useCallback(
@@ -162,6 +174,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
             setStatus('available')
             setMessage(null)
             setError(null)
+            if (autoUpdateEnabledRef.current) {
+              startBackgroundDownload()
+            }
           } else if (!silent) {
             setStatus('upToDate')
             setMessage('upToDate')
@@ -189,7 +204,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [availableUpdate, status, updateChannel]
+    [availableUpdate, startBackgroundDownload, status, updateChannel]
   )
 
   const checkNow = useCallback(() => runCheck({ silent: false }), [runCheck])
@@ -237,6 +252,19 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     }
     setPendingReleaseNotes(null)
   }, [installedReleaseNotes])
+
+  const setAutoUpdateEnabled = useCallback(
+    (enabled: boolean) => {
+      window.localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, String(enabled))
+      autoUpdateEnabledRef.current = enabled
+      setAutoUpdateEnabledState(enabled)
+
+      if (enabled && availableUpdate && status !== 'installing') {
+        startBackgroundDownload()
+      }
+    },
+    [availableUpdate, startBackgroundDownload, status]
+  )
 
   const setUpdateChannel = useCallback(
     async (channel: WeworkUpdateChannel) => {
@@ -308,6 +336,8 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     if (!isTauriRuntime()) return
 
     const maybeAutoCheck = () => {
+      if (availableUpdate || status === 'installing') return
+
       const now = Date.now()
       if (!shouldAutoCheck(updateChannel, now)) return
 
@@ -322,11 +352,12 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(initialTimer)
       window.clearInterval(intervalTimer)
     }
-  }, [runCheck, updateChannel])
+  }, [availableUpdate, runCheck, status, updateChannel])
 
   const value = useMemo<AppUpdateContextValue>(
     () => ({
       updateChannel,
+      autoUpdateEnabled,
       availableUpdate,
       installedReleaseNotes,
       status,
@@ -336,10 +367,12 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       checkNow,
       installUpdate,
       dismissInstalledReleaseNotes,
+      setAutoUpdateEnabled,
       setUpdateChannel,
     }),
     [
       availableUpdate,
+      autoUpdateEnabled,
       checkNow,
       dismissInstalledReleaseNotes,
       downloadProgress,
@@ -348,6 +381,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       installedReleaseNotes,
       message,
       setUpdateChannel,
+      setAutoUpdateEnabled,
       status,
       updateChannel,
     ]

@@ -238,12 +238,10 @@ fn resolve_plugin_root_candidates(
         ));
     }
 
-    let home = env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| AppIpcError::new("internal_error", "HOME is not set"))?;
-    let executor_home = env::var_os("WEGENT_EXECUTOR_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".wegent-executor"));
+    let executor_home = resolve_executor_home(
+        env::var_os("WEGENT_EXECUTOR_HOME").map(PathBuf::from),
+        dirs::home_dir(),
+    )?;
 
     let mut candidates: Vec<PathBuf> = Vec::new();
     let store_plugins = executor_home.join("capabilities/store/plugins");
@@ -284,6 +282,15 @@ fn resolve_plugin_root_candidates(
         ));
     }
     Ok(candidates)
+}
+
+fn resolve_executor_home(
+    configured_executor_home: Option<PathBuf>,
+    platform_home: Option<PathBuf>,
+) -> Result<PathBuf, AppIpcError> {
+    configured_executor_home
+        .or_else(|| platform_home.map(|home| home.join(".wegent-executor")))
+        .ok_or_else(|| AppIpcError::new("internal_error", "Home directory is not available"))
 }
 
 fn has_plugin_manifest(path: &Path) -> bool {
@@ -454,6 +461,22 @@ fn browser_auth_sessions() -> &'static Mutex<HashMap<String, BrowserAuthSession>
     BROWSER_AUTH_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+async fn active_browser_auth_state(plugin_key: &str, connector_slug: &str) -> Option<Value> {
+    let state = {
+        let sessions = browser_auth_sessions().lock().await;
+        sessions
+            .values()
+            .find(|session| {
+                session.plugin_key == plugin_key
+                    && session.connector_slug == connector_slug
+                    && !session.task.is_finished()
+            })
+            .map(|session| Arc::clone(&session.state))
+    }?;
+    let response = state.lock().await.clone();
+    Some(response)
+}
+
 async fn start_browser_auth(
     payload: Value,
     plugin_root: PathBuf,
@@ -466,6 +489,9 @@ async fn start_browser_auth(
         .or_else(|| string_field(&payload, "connector_slug"))
         .or_else(|| string_field(&payload, "slug"))
         .ok_or_else(|| AppIpcError::new("bad_request", "connectorSlug is required"))?;
+    if let Some(state) = active_browser_auth_state(&plugin_key, &connector_slug).await {
+        return Ok(state);
+    }
     let session_id = Uuid::new_v4().to_string();
     let state = Arc::new(Mutex::new(browser_session_state(
         "preparing",
@@ -860,6 +886,43 @@ mod tests {
             .any(|pair| pair == ["--wait-seconds", "0"]));
     }
 
+    #[tokio::test]
+    async fn reuses_active_browser_auth_session_state() {
+        let plugin_key = format!("plugin-{}", Uuid::new_v4());
+        let connector_slug = "browser-auth".to_owned();
+        let session_id = Uuid::new_v4().to_string();
+        let state = Arc::new(tokio::sync::Mutex::new(browser_session_state(
+            "waiting_browser",
+            "Complete authorization in the browser",
+            &session_id,
+        )));
+        let task = tokio::spawn(async { std::future::pending::<()>().await });
+        browser_auth_sessions().lock().await.insert(
+            session_id.clone(),
+            BrowserAuthSession {
+                plugin_key: plugin_key.clone(),
+                connector_slug: connector_slug.clone(),
+                state,
+                task,
+            },
+        );
+
+        let reused = active_browser_auth_state(&plugin_key, &connector_slug)
+            .await
+            .expect("active session");
+
+        assert_eq!(
+            reused.get("sessionId").and_then(Value::as_str),
+            Some(session_id.as_str())
+        );
+        let session = browser_auth_sessions()
+            .lock()
+            .await
+            .remove(&session_id)
+            .expect("inserted session");
+        session.task.abort();
+    }
+
     #[test]
     fn reject_absolute_and_parent_paths() {
         assert!(validate_relative_arg("scripts/run.sh").is_ok());
@@ -919,6 +982,15 @@ mod tests {
             Some(value) => env::set_var("WEGENT_CODEX_HOME", value),
             None => env::remove_var("WEGENT_CODEX_HOME"),
         }
+    }
+
+    #[test]
+    fn resolve_executor_home_uses_runtime_path_without_platform_home() {
+        let executor_home = PathBuf::from("runtime/executor-home");
+
+        let resolved = resolve_executor_home(Some(executor_home.clone()), None).unwrap();
+
+        assert_eq!(resolved, executor_home);
     }
 
     #[test]

@@ -53,6 +53,13 @@ export interface DeviceListResponse {
   total: number
 }
 
+export interface DeviceRuntimeSettingsResponse {
+  device_id: string
+  max_concurrent_tasks: number
+  active_tasks: number
+  queued_tasks: number
+}
+
 export interface UpgradeDeviceOptions {
   force?: boolean
   auto_confirm?: boolean
@@ -103,6 +110,7 @@ export interface RemoteDeviceStartupCommand {
 }
 
 export interface CreateDockerRemoteDeviceCommandRequest {
+  container_name?: string
   client_origin?: string
 }
 

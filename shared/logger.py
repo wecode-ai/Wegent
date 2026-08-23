@@ -14,10 +14,12 @@ Supports automatic request_id injection into log messages via ContextVar.
 
 import atexit
 import logging
+import math
 import multiprocessing
 import os
 import sys
-from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+import time
+from logging.handlers import QueueHandler, QueueListener, TimedRotatingFileHandler
 from typing import Optional
 
 
@@ -73,18 +75,56 @@ class NonBlockingStreamHandler(logging.StreamHandler):
             pass
 
 
-_FILE_HANDLER: Optional[RotatingFileHandler] = None
+class HourlyRotatingFileHandler(TimedRotatingFileHandler):
+    """Rotate on natural hour boundaries with multi-process locking."""
+
+    def computeRollover(self, currentTime: float) -> float:
+        if self.utc:
+            offset = 0
+        else:
+            offset = -time.timezone
+            if time.daylight and time.localtime(currentTime).tm_isdst:
+                offset = -time.altzone
+        local_time = currentTime + offset
+        next_hour = (math.floor(local_time / 3600) + 1) * 3600
+        return next_hour - offset
+
+    def doRollover(self) -> None:
+        import fcntl
+
+        lock_path = self.baseFilename + ".lock"
+        with open(lock_path, "a") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                self._do_rollover_locked()
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+    def _do_rollover_locked(self) -> None:
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+
+        rollover_time = self.rolloverAt - self.interval
+        time_tuple = (
+            time.gmtime(rollover_time) if self.utc else time.localtime(rollover_time)
+        )
+        destination = self.rotation_filename(
+            self.baseFilename + "." + time.strftime(self.suffix, time_tuple)
+        )
+        if not os.path.exists(destination):
+            self.rotate(self.baseFilename, destination)
+
+        self.stream = self._open()
+        now = int(time.time())
+        new_rollover = self.computeRollover(now)
+        while new_rollover <= now:
+            new_rollover += self.interval
+        self.rolloverAt = new_rollover
+
+
+_FILE_HANDLER: Optional[HourlyRotatingFileHandler] = None
 _FILE_HANDLER_PATH: Optional[str] = None
-
-
-def _get_int_env(name: str, default: int) -> int:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        return default
 
 
 def _logger_has_handler(logger: logging.Logger, handler: logging.Handler) -> bool:
@@ -97,8 +137,8 @@ def _file_log_handler(
     format: str,
     datefmt: str,
     include_request_id: bool,
-) -> Optional[RotatingFileHandler]:
-    """Return the shared rotating file handler when file logging is configured."""
+) -> Optional[HourlyRotatingFileHandler]:
+    """Return the shared hourly file handler when file logging is configured."""
     global _FILE_HANDLER, _FILE_HANDLER_PATH
 
     log_file = os.environ.get("WEGENT_LOG_FILE_PATH", "").strip()
@@ -113,15 +153,18 @@ def _file_log_handler(
             _FILE_HANDLER_PATH = None
 
     if _FILE_HANDLER is None:
-        os.makedirs(os.path.dirname(log_file), exist_ok=True)
-        max_bytes = _get_int_env("WEGENT_LOG_FILE_MAX_BYTES", 10 * 1024 * 1024)
-        backup_count = _get_int_env("WEGENT_LOG_FILE_BACKUP_COUNT", 5)
-        handler = RotatingFileHandler(
-            log_file,
-            maxBytes=max_bytes,
-            backupCount=backup_count,
+        log_dir = os.path.dirname(log_file)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        handler = HourlyRotatingFileHandler(
+            filename=log_file,
+            when="h",
+            interval=1,
+            backupCount=0,
             encoding="utf-8",
+            utc=False,
         )
+        handler.suffix = "%Y%m%d-%H%z"
         handler.setFormatter(logging.Formatter(format, datefmt))
         if include_request_id:
             handler.addFilter(RequestIdFilter())
@@ -135,14 +178,10 @@ def _file_log_handler(
 def configure_file_logging(
     log_file: str,
     *,
-    max_bytes: int = 10 * 1024 * 1024,
-    backup_count: int = 5,
     level: int = logging.INFO,
 ) -> None:
-    """Enable shared rotating file logging for existing and future loggers."""
+    """Enable shared hourly file logging for existing and future loggers."""
     os.environ["WEGENT_LOG_FILE_PATH"] = log_file
-    os.environ["WEGENT_LOG_FILE_MAX_BYTES"] = str(max_bytes)
-    os.environ["WEGENT_LOG_FILE_BACKUP_COUNT"] = str(backup_count)
 
     handler = _file_log_handler(
         level=level,

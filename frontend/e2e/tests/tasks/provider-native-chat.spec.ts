@@ -8,6 +8,7 @@ import {
 } from '../../fixtures/provider-native-knowledge'
 import { ProviderNativeKnowledgePage } from '../../pages/tasks/provider-native-knowledge.page'
 import { ApiClient, createApiClient } from '../../utils/api-client'
+import { waitForTaskTerminal } from '../../utils/provider-native-test-support'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -20,10 +21,6 @@ const LIST_DOCUMENTS_TOOL = 'wegent_kb_list_documents'
 const READ_DOCUMENT_TOOL = 'wegent_kb_read_document_content'
 const SEARCH_KNOWLEDGE_BASE_TOOL = 'wegent_kb_search_knowledge_base'
 const WEGENT_SKILL_HEADING = '# Wegent Knowledge Base Skill'
-
-interface RuntimeCheckResponse {
-  task_status: string
-}
 
 interface RecordedToolCall {
   id: string
@@ -511,29 +508,9 @@ test.describe('Provider-native Wegent knowledge access', () => {
   ): Promise<number> {
     await knowledgePage.sendMessage(prompt)
     const taskId = await knowledgePage.waitForTaskId()
-    await waitForBackendTerminal(request, taskId)
+    await waitForTaskTerminal(token, taskId)
     await expect(page.getByTestId('send-button')).toBeVisible({ timeout: 30000 })
     return taskId
-  }
-
-  async function waitForBackendTerminal(request: APIRequestContext, taskId: number): Promise<void> {
-    const deadline = Date.now() + 60000
-    let status = 'UNKNOWN'
-    while (Date.now() < deadline) {
-      const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}/runtime-check`, {
-        headers: authHeaders(),
-      })
-      status =
-        response.status() === 200
-          ? ((await response.json()) as RuntimeCheckResponse).task_status.toUpperCase()
-          : `HTTP_${response.status()}`
-      if (status.startsWith('COMPLETED')) return
-      if (status.startsWith('FAILED') || status.startsWith('CANCELLED')) {
-        throw new Error(`Task ${taskId} reached terminal status ${status}`)
-      }
-      await new Promise(resolve => setTimeout(resolve, 500))
-    }
-    expect(status, `Task ${taskId} should complete`).toMatch(/^COMPLETED/)
   }
 
   async function collectEvidence(request: APIRequestContext, taskId: number, prompt: string) {

@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from app.services.execution.request_builder import TaskRequestBuilder
 from shared.models.execution import ExecutionRequest
+from shared.models.openai_converter import OpenAIRequestConverter
 
 
 def _bot_kind_with_ghost(
@@ -394,7 +395,7 @@ class TestBuildMcpServers:
         assert servers["native-server"]["timeout"] == 900000
 
 
-def test_wework_space_mcp_uses_existing_chat_and_code_shell_contracts(test_db, mocker):
+def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(test_db, mocker):
     builder = TaskRequestBuilder(test_db)
     subtask = SimpleNamespace(
         id=2,
@@ -402,7 +403,20 @@ def test_wework_space_mcp_uses_existing_chat_and_code_shell_contracts(test_db, m
         executor_name="",
         executor_namespace="",
     )
-    task = SimpleNamespace(id=1, json={"spec": {}}, project_id=None)
+    task = SimpleNamespace(
+        id=1,
+        json={
+            "spec": {},
+            "metadata": {
+                "labels": {
+                    "source": "board_team_assignment",
+                    "weworkSpaceProjectId": "100",
+                    "weworkSpaceTaskId": "SPACE-1",
+                }
+            },
+        },
+        project_id=None,
+    )
     user = SimpleNamespace(id=7, user_name="alice")
     team = SimpleNamespace(id=5, name="team-a", namespace="default", json={})
     bot = SimpleNamespace(id=9)
@@ -440,7 +454,6 @@ def test_wework_space_mcp_uses_existing_chat_and_code_shell_contracts(test_db, m
         user=user,
         team=team,
         message="hello",
-        include_wework_space_mcp=True,
     )
 
     assert result.mcp_servers == [
@@ -461,6 +474,24 @@ def test_wework_space_mcp_uses_existing_chat_and_code_shell_contracts(test_db, m
             "headers": {"Authorization": "Bearer task-jwt"},
         }
     ]
+    assert "get_current_context" in result.system_prompt
+    chat_shell_request = OpenAIRequestConverter.from_execution_request(result)
+    assert chat_shell_request["tools"] == [
+        {
+            "type": "mcp",
+            "server_label": "wegent-wework-space",
+            "server_url": "http://localhost:8000/mcp/wework-space/sse",
+            "server_type": "streamable-http",
+            "require_approval": "never",
+            "server_auth": {"Authorization": "Bearer task-jwt"},
+        }
+    ]
+
+
+def test_generic_wegent_task_does_not_auto_inject_board_mcp():
+    task = SimpleNamespace(id=1, json={"metadata": {"labels": {}}})
+
+    assert TaskRequestBuilder._is_board_wegent_task(task) is False
 
 
 class TestPrepareMcpForClaudeCode:

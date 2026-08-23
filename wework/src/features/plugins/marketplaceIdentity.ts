@@ -2,15 +2,21 @@ import { CODEX_PERSONAL_MARKETPLACE_ID, WEWORK_PERSONAL_MARKETPLACE_ID } from '.
 
 export const INTERNAL_DEVICE_MARKETPLACE_ID = 'wegent'
 
+// Local Codex packages that do not need GitHub. Keep in sync with executor
+// plugin_source_priority official OpenAI sources.
+const OPENAI_OFFICIAL_BUNDLED_MARKETPLACE_IDS = new Set([
+  'openai-bundled',
+  'openai-primary-runtime',
+])
+
 // Keep in sync with executor plugin_source_priority official OpenAI sources.
 // Do not use an openai-* prefix match; that is too broad for non-marketplace ids.
 const OPENAI_OFFICIAL_MARKETPLACE_IDS = new Set([
+  ...OPENAI_OFFICIAL_BUNDLED_MARKETPLACE_IDS,
   'openai-api-curated',
-  'openai-bundled',
   'openai-curated',
   'openai-curated-remote',
   'openai-official',
-  'openai-primary-runtime',
 ])
 
 const BUILT_IN_MARKETPLACE_IDS = new Set([
@@ -26,6 +32,19 @@ function normalizeMarketplaceId(id?: string | null): string {
 
 export function isOpenAiOfficialMarketplaceId(id?: string | null): boolean {
   return OPENAI_OFFICIAL_MARKETPLACE_IDS.has(normalizeMarketplaceId(id))
+}
+
+export function isOpenAiOfficialBundledMarketplaceId(id?: string | null): boolean {
+  return OPENAI_OFFICIAL_BUNDLED_MARKETPLACE_IDS.has(normalizeMarketplaceId(id))
+}
+
+/** Official marketplaces that reconcile over GitHub / remote Codex sources. */
+export function isOpenAiOfficialRemoteMarketplaceId(id?: string | null): boolean {
+  const normalized = normalizeMarketplaceId(id)
+  return (
+    OPENAI_OFFICIAL_MARKETPLACE_IDS.has(normalized) &&
+    !OPENAI_OFFICIAL_BUNDLED_MARKETPLACE_IDS.has(normalized)
+  )
 }
 
 export function isInternalDeviceMarketplaceId(id?: string | null): boolean {

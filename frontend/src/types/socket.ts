@@ -237,6 +237,8 @@ export interface SourceReference {
     title?: string
     description?: string
   }>
+  /** Whether the segment list was truncated (direct injection / kb_head). */
+  segments_truncated?: boolean
 }
 
 export interface RetrievalSummaryPayload {

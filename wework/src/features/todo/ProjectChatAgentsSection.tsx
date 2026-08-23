@@ -1,5 +1,5 @@
 import { Bot, Code2, ListChecks, Plus, ShieldCheck, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
@@ -9,12 +9,44 @@ import { SectionTitle, SettingsGroup, SettingsRow } from '@/components/common/Se
 import { useTranslation } from '@/hooks/useTranslation'
 import { isSupportedModelFamily } from '@/lib/model-ui'
 import type { UnifiedModel } from '@/types/api'
+import type { Team } from '@/types/api'
 import { CloudTodoModal } from './CloudTodoModal'
 
 interface ProjectChatAgentTemplate {
   name: string
   capabilityDescription: string
   systemPrompt: string
+}
+
+function deviceMatchesEnvironment(
+  device: { device_type?: string },
+  environment: ProjectChatAgent['executionEnvironment']
+) {
+  return environment === 'local'
+    ? device.device_type === 'local' || device.device_type === 'app'
+    : device.device_type === 'cloud' || device.device_type === 'remote'
+}
+
+function resolveExecutionDevice(
+  current: string,
+  devices: Array<{
+    device_id: string
+    device_type?: string
+    status?: string
+    is_default?: boolean
+  }>,
+  environment: ProjectChatAgent['executionEnvironment']
+) {
+  const matchingDevices = devices.filter(device => deviceMatchesEnvironment(device, environment))
+  if (matchingDevices.some(device => device.device_id === current)) return current
+  const preferredDevice =
+    matchingDevices.find(device => device.status === 'online' && device.is_default) ??
+    matchingDevices.find(device => device.status === 'online') ??
+    matchingDevices.find(device => device.status === 'busy' && device.is_default) ??
+    matchingDevices.find(device => device.status === 'busy') ??
+    matchingDevices.find(device => device.is_default) ??
+    matchingDevices[0]
+  return preferredDevice?.device_id ?? ''
 }
 
 const templateButtonClass =
@@ -25,17 +57,23 @@ export function ProjectChatAgentsSection({
   projectChatAgentApi,
   deviceApi,
   modelApi,
+  teamApi,
   localProjects,
   runtimeWork,
   canManage,
+  createRequestKey = 0,
+  onAgentsChange,
 }: {
   project: CloudProject
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
   deviceApi?: WorkbenchServices['deviceApi']
   modelApi?: WorkbenchServices['modelApi']
+  teamApi?: WorkbenchServices['teamApi']
   localProjects: ProjectWithTasks[]
   runtimeWork?: RuntimeWorkListResponse | null
   canManage: boolean
+  createRequestKey?: number
+  onAgentsChange?: (agents: ProjectChatAgent[]) => void
 }) {
   const { t } = useTranslation('common')
   // Local project spaces keep their data on this device, so their robots can
@@ -55,23 +93,36 @@ export function ProjectChatAgentsSection({
     useState<ProjectChatAgent['visibility']>('creator_admin')
   const [agentExecutionEnvironment, setAgentExecutionEnvironment] =
     useState<ProjectChatAgent['executionEnvironment']>('local')
+  const [agentRuntime, setAgentRuntime] = useState<ProjectChatAgent['runtime']>('codex')
+  const [agentWegentTeamId, setAgentWegentTeamId] = useState<number | ''>('')
   const [agentExecutionMode, setAgentExecutionMode] =
     useState<ProjectChatAgent['executionMode']>('auto')
+  const [agentMaxConcurrentExecutions, setAgentMaxConcurrentExecutions] = useState(1)
   const [agentExecutionDeviceId, setAgentExecutionDeviceId] = useState<string>('')
   const [agentLocalProjectId, setAgentLocalProjectId] = useState<number | ''>('')
   const [availableDevices, setAvailableDevices] = useState<
     Array<{ device_id: string; device_type?: string; status?: string }>
   >([])
   const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
+  const [availableTeams, setAvailableTeams] = useState<Team[]>([])
   const [error, setError] = useState<string | null>(null)
   const [agentSaveAttempted, setAgentSaveAttempted] = useState(false)
+  const sectionRef = useRef<HTMLElement>(null)
+  const handledCreateRequestKey = useRef(0)
+  const collectionRevision = useRef(0)
+  const agentExecutionEnvironmentRef = useRef(agentExecutionEnvironment)
 
   useEffect(() => {
     if (!projectChatAgentApi) return
     let active = true
+    const requestedAtRevision = collectionRevision.current
     void projectChatAgentApi
       .list(project.id)
-      .then(agents => active && setChatAgents(agents))
+      .then(agents => {
+        if (!active || requestedAtRevision !== collectionRevision.current) return
+        setChatAgents(agents)
+        onAgentsChange?.(agents)
+      })
       .catch(
         cause =>
           active &&
@@ -82,7 +133,7 @@ export function ProjectChatAgentsSection({
     return () => {
       active = false
     }
-  }, [project.id, projectChatAgentApi, t])
+  }, [onAgentsChange, project.id, projectChatAgentApi, t])
 
   useEffect(() => {
     if (!deviceApi?.listDevices) return
@@ -90,7 +141,11 @@ export function ProjectChatAgentsSection({
     deviceApi
       .listDevices()
       .then(devices => {
-        if (active) setAvailableDevices(devices)
+        if (!active) return
+        setAvailableDevices(devices)
+        setAgentExecutionDeviceId(current =>
+          resolveExecutionDevice(current, devices, agentExecutionEnvironmentRef.current)
+        )
       })
       .catch(() => {
         if (active) setAvailableDevices([])
@@ -119,6 +174,18 @@ export function ProjectChatAgentsSection({
     }
   }, [modelApi])
 
+  useEffect(() => {
+    if (!teamApi) return
+    let active = true
+    void teamApi
+      .listTeams()
+      .then(teams => active && setAvailableTeams(teams.filter(team => team.is_active !== false)))
+      .catch(() => active && setAvailableTeams([]))
+    return () => {
+      active = false
+    }
+  }, [teamApi])
+
   const activeChatAgents = chatAgents.filter(agent => agent.status === 'active')
   // Runtime-catalog models are discovered on the local device, so a robot
   // bound to cloud execution cannot use them.
@@ -126,6 +193,9 @@ export function ProjectChatAgentsSection({
     agentExecutionEnvironment === 'cloud'
       ? availableModels.filter(model => model.type !== 'runtime')
       : availableModels
+  const executionDevices = availableDevices.filter(device =>
+    deviceMatchesEnvironment(device, agentExecutionEnvironment)
+  )
   // A cloud robot can only bind a code project that already has an available
   // workspace on the selected cloud device. The runtime work registry is the
   // same source the device management page uses.
@@ -163,20 +233,36 @@ export function ProjectChatAgentsSection({
     })
   }
 
-  function openCreateChatAgent(template?: ProjectChatAgentTemplate) {
-    setAgentSaveAttempted(false)
-    setCreatingChatAgent(true)
-    setEditingChatAgent(null)
-    setAgentName(template?.name ?? t('workbench.project_chat_new_agent'))
-    setAgentModel('')
-    setAgentSystemPrompt(template?.systemPrompt ?? '')
-    setAgentCapabilityDescription(template?.capabilityDescription ?? '')
-    setAgentVisibility('creator_admin')
-    setAgentExecutionEnvironment('local')
-    setAgentExecutionMode('auto')
-    setAgentExecutionDeviceId('')
-    setAgentLocalProjectId('')
-  }
+  const openCreateChatAgent = useCallback(
+    (template?: ProjectChatAgentTemplate) => {
+      setAgentSaveAttempted(false)
+      setCreatingChatAgent(true)
+      setEditingChatAgent(null)
+      setAgentName(template?.name ?? t('workbench.project_chat_new_agent'))
+      setAgentModel('')
+      setAgentSystemPrompt(template?.systemPrompt ?? '')
+      setAgentCapabilityDescription(template?.capabilityDescription ?? '')
+      setAgentVisibility('creator_admin')
+      setAgentExecutionEnvironment('local')
+      agentExecutionEnvironmentRef.current = 'local'
+      setAgentRuntime('codex')
+      setAgentWegentTeamId('')
+      setAgentExecutionMode('auto')
+      setAgentMaxConcurrentExecutions(1)
+      setAgentExecutionDeviceId(resolveExecutionDevice('', availableDevices, 'local'))
+      setAgentLocalProjectId('')
+    },
+    [availableDevices, t]
+  )
+
+  useEffect(() => {
+    if (createRequestKey <= handledCreateRequestKey.current) return
+    handledCreateRequestKey.current = createRequestKey
+    if (typeof sectionRef.current?.scrollIntoView === 'function') {
+      sectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+    openCreateChatAgent()
+  }, [createRequestKey, openCreateChatAgent])
 
   async function archiveChatAgent(agent: ProjectChatAgent) {
     if (agentBusy || !projectChatAgentApi) return
@@ -186,7 +272,10 @@ export function ProjectChatAgentsSection({
         version: agent.version,
         status: 'archived',
       })
-      setChatAgents(current => current.map(item => (item.id === updated.id ? updated : item)))
+      const nextAgents = chatAgents.map(item => (item.id === updated.id ? updated : item))
+      collectionRevision.current += 1
+      setChatAgents(nextAgents)
+      onAgentsChange?.(nextAgents)
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : t('workbench.project_chat_agents_save_failed')
@@ -204,17 +293,17 @@ export function ProjectChatAgentsSection({
     setAgentSystemPrompt(agent.systemPrompt)
     setAgentCapabilityDescription(agent.capabilityDescription ?? '')
     setAgentVisibility(agent.visibility)
-    setAgentExecutionEnvironment(localProjectOnly ? 'local' : agent.executionEnvironment)
+    const executionEnvironment = localProjectOnly ? 'local' : agent.executionEnvironment
+    setAgentExecutionEnvironment(executionEnvironment)
+    agentExecutionEnvironmentRef.current = executionEnvironment
+    setAgentRuntime(agent.runtime)
+    setAgentWegentTeamId(agent.wegentTeamId ?? '')
     setAgentExecutionMode(agent.executionMode)
+    setAgentMaxConcurrentExecutions(agent.maxConcurrentExecutions)
     setAgentLocalProjectId(agent.localProjectId ?? '')
     const boundDevice = agent.executionDeviceId ?? ''
-    const deviceIsLocalCapable = availableDevices.some(
-      device =>
-        device.device_id === boundDevice &&
-        (device.device_type === 'local' || device.device_type === 'app')
-    )
     setAgentExecutionDeviceId(
-      localProjectOnly && boundDevice && !deviceIsLocalCapable ? '' : boundDevice
+      resolveExecutionDevice(boundDevice, availableDevices, executionEnvironment)
     )
   }
 
@@ -227,38 +316,93 @@ export function ProjectChatAgentsSection({
     )
       return
     setAgentSaveAttempted(true)
-    if (!agentModel.trim() || !agentExecutionDeviceId) return
+    setError(null)
+    if (
+      (agentRuntime === 'codex' && (!agentModel.trim() || !agentExecutionDeviceId)) ||
+      (agentRuntime === 'wegent' && agentWegentTeamId === '')
+    )
+      return
     setAgentBusy(true)
     try {
+      if (
+        agentRuntime === 'codex' &&
+        agentMaxConcurrentExecutions > 1 &&
+        agentLocalProjectId !== ''
+      ) {
+        const runtimeProject = (runtimeWork?.projects ?? []).find(
+          item => item.project.id === agentLocalProjectId
+        )
+        const runtimeWorkspace = runtimeProject?.deviceWorkspaces.find(
+          workspace => workspace.deviceId === agentExecutionDeviceId && workspace.available
+        )
+        const localProject = localProjects.find(item => item.id === agentLocalProjectId)
+        const localProjectDeviceId = localProject?.config?.device_id?.trim()
+        const localProjectPath =
+          !localProjectDeviceId || localProjectDeviceId === agentExecutionDeviceId
+            ? (localProject?.config?.path?.trim() ??
+              localProject?.config?.workspace?.localPath?.trim())
+            : undefined
+        const workspacePath = runtimeWorkspace?.workspacePath.trim() || localProjectPath
+        if (!deviceApi || !workspacePath) {
+          throw new Error(t('workbench.project_chat_agent_concurrency_requires_git'))
+        }
+        const gitCheck = await deviceApi.executeCommand(agentExecutionDeviceId, {
+          command_key: 'git_is_worktree',
+          args: [workspacePath],
+          timeout_seconds: 15,
+          max_output_bytes: 4096,
+        })
+        const gitOutput = Array.isArray(gitCheck.stdout)
+          ? gitCheck.stdout.join('\n')
+          : typeof gitCheck.stdout === 'string'
+            ? gitCheck.stdout
+            : ''
+        if (!gitCheck.success || gitOutput.trim() !== 'true') {
+          throw new Error(t('workbench.project_chat_agent_concurrency_requires_git'))
+        }
+      }
       if (creatingChatAgent) {
         const agent = await projectChatAgentApi.create(project.id, {
           name: agentName.trim(),
-          runtime: 'codex',
-          model: agentModel.trim(),
+          runtime: agentRuntime,
+          wegentTeamId: agentWegentTeamId === '' ? null : agentWegentTeamId,
+          model: agentRuntime === 'codex' ? agentModel.trim() : null,
           systemPrompt: agentSystemPrompt,
           capabilityDescription: agentCapabilityDescription.trim(),
           visibility: agentVisibility,
           executionEnvironment: agentExecutionEnvironment,
           executionMode: agentExecutionMode,
-          executionDeviceId: agentExecutionDeviceId,
-          localProjectId: agentLocalProjectId === '' ? null : agentLocalProjectId,
+          maxConcurrentExecutions: agentMaxConcurrentExecutions,
+          executionDeviceId: agentRuntime === 'codex' ? agentExecutionDeviceId : null,
+          localProjectId:
+            agentRuntime === 'codex' && agentLocalProjectId !== '' ? agentLocalProjectId : null,
         })
-        setChatAgents(current => [...current, agent])
+        const nextAgents = [...chatAgents, agent]
+        collectionRevision.current += 1
+        setChatAgents(nextAgents)
+        onAgentsChange?.(nextAgents)
         setCreatingChatAgent(false)
       } else if (editingChatAgent) {
         const updated = await projectChatAgentApi.update(project.id, editingChatAgent.id, {
           version: editingChatAgent.version,
           name: agentName.trim(),
-          model: agentModel.trim(),
+          runtime: agentRuntime,
+          wegentTeamId: agentWegentTeamId === '' ? null : agentWegentTeamId,
+          model: agentRuntime === 'codex' ? agentModel.trim() : null,
           systemPrompt: agentSystemPrompt,
           capabilityDescription: agentCapabilityDescription.trim(),
           visibility: agentVisibility,
           executionEnvironment: agentExecutionEnvironment,
           executionMode: agentExecutionMode,
-          executionDeviceId: agentExecutionDeviceId || null,
-          localProjectId: agentLocalProjectId === '' ? null : agentLocalProjectId,
+          maxConcurrentExecutions: agentMaxConcurrentExecutions,
+          executionDeviceId: agentRuntime === 'codex' ? agentExecutionDeviceId || null : null,
+          localProjectId:
+            agentRuntime === 'codex' && agentLocalProjectId !== '' ? agentLocalProjectId : null,
         })
-        setChatAgents(current => current.map(item => (item.id === updated.id ? updated : item)))
+        const nextAgents = chatAgents.map(item => (item.id === updated.id ? updated : item))
+        collectionRevision.current += 1
+        setChatAgents(nextAgents)
+        onAgentsChange?.(nextAgents)
         setEditingChatAgent(null)
       }
     } catch (cause) {
@@ -271,7 +415,11 @@ export function ProjectChatAgentsSection({
   }
 
   return (
-    <section data-testid="cloud-project-chat-agents" className="mt-8 border-t border-border pt-8">
+    <section
+      ref={sectionRef}
+      data-testid="cloud-project-chat-agents"
+      className="mt-8 scroll-mt-4 border-t border-border pt-8"
+    >
       <div
         className={`flex items-center justify-between gap-3${activeChatAgents.length ? ' mb-3' : ''}`}
       >
@@ -417,12 +565,16 @@ export function ProjectChatAgentsSection({
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{agent.name}</span>
                 <span className="mt-0.5 block truncate text-xs text-text-muted">
-                  {agent.runtime}
+                  {agent.runtime === 'wegent' ? 'Wegent' : 'Wework'}
                   {agent.model ? ` · ${agent.model}` : ''}
                   {' · '}
-                  {agent.executionEnvironment === 'cloud'
-                    ? t('workbench.project_chat_agent_env_cloud')
-                    : t('workbench.project_chat_agent_env_local')}
+                  {agent.runtime === 'wegent'
+                    ? availableTeams.find(team => team.id === agent.wegentTeamId)?.displayName ||
+                      availableTeams.find(team => team.id === agent.wegentTeamId)?.name ||
+                      'Wegent'
+                    : agent.executionEnvironment === 'cloud'
+                      ? t('workbench.project_chat_agent_env_cloud')
+                      : t('workbench.project_chat_agent_env_local')}
                   {' · '}
                   {agent.executionMode === 'manual_approval'
                     ? t('workbench.project_chat_agent_mode_manual')
@@ -536,11 +688,22 @@ export function ProjectChatAgentsSection({
                   >
                     <MenuSelect
                       testId="cloud-project-chat-agent-environment"
-                      value={agentExecutionEnvironment}
+                      value={agentRuntime === 'wegent' ? 'wegent' : agentExecutionEnvironment}
                       pill
                       onChange={value => {
+                        if (value === 'wegent') {
+                          if (localProjectOnly) return
+                          setAgentRuntime('wegent')
+                          setAgentExecutionDeviceId('')
+                          setAgentLocalProjectId('')
+                          setAgentModel('')
+                          return
+                        }
                         const next = value as ProjectChatAgent['executionEnvironment']
+                        setAgentRuntime('codex')
+                        setAgentWegentTeamId('')
                         if (localProjectOnly && next !== 'local') return
+                        agentExecutionEnvironmentRef.current = next
                         setAgentExecutionEnvironment(next)
                         // A project binding is resolved against the selected
                         // device, so changing environments clears the old one.
@@ -554,125 +717,147 @@ export function ProjectChatAgentsSection({
                           )
                           return model?.type === 'runtime' ? '' : current
                         })
-                        setAgentExecutionDeviceId(current => {
-                          const currentDevice = availableDevices.find(
-                            device => device.device_id === current
-                          )
-                          if (!currentDevice) return ''
-                          const matches =
-                            next === 'local'
-                              ? currentDevice.device_type === 'local' ||
-                                currentDevice.device_type === 'app'
-                              : currentDevice.device_type === 'cloud' ||
-                                currentDevice.device_type === 'remote'
-                          return matches ? current : ''
-                        })
+                        setAgentExecutionDeviceId(current =>
+                          resolveExecutionDevice(current, availableDevices, next)
+                        )
                       }}
                       options={[
                         { value: 'local', label: t('workbench.project_chat_agent_env_local') },
                         ...(!localProjectOnly
-                          ? [{ value: 'cloud', label: t('workbench.project_chat_agent_env_cloud') }]
+                          ? [
+                              {
+                                value: 'cloud',
+                                label: t('workbench.project_chat_agent_env_cloud'),
+                              },
+                              { value: 'wegent', label: 'Wegent' },
+                            ]
                           : []),
                       ]}
                     />
                   </SettingsRow>
-                  <SettingsRow
-                    label={t('workbench.project_chat_agent_device')}
-                    description={t('workbench.project_chat_agent_device_relation')}
-                    requiredLabel={t('common.required')}
-                    error={
-                      agentSaveAttempted && !agentExecutionDeviceId
-                        ? t('workbench.project_chat_agent_device_select')
-                        : undefined
-                    }
-                  >
-                    <MenuSelect
-                      testId="cloud-project-chat-agent-device"
-                      value={agentExecutionDeviceId}
-                      pill
-                      placeholder={t('workbench.project_chat_agent_device_select')}
-                      invalid={agentSaveAttempted && !agentExecutionDeviceId}
-                      onChange={value => {
-                        setAgentExecutionDeviceId(value)
-                        // The bound project must have a workspace on the new device.
-                        setAgentLocalProjectId(current => {
-                          if (current === '' || agentExecutionEnvironment === 'local')
-                            return current
-                          const stillAvailable = (runtimeWork?.projects ?? []).some(
-                            projectWork =>
-                              String(projectWork.project.id) === String(current) &&
-                              projectWork.deviceWorkspaces.some(
-                                workspace => workspace.deviceId === value && workspace.available
-                              )
-                          )
-                          return stillAvailable ? current : ''
-                        })
-                      }}
-                      options={availableDevices
-                        .filter(device =>
-                          agentExecutionEnvironment === 'local'
-                            ? device.device_type === 'local' || device.device_type === 'app'
-                            : device.device_type === 'cloud' || device.device_type === 'remote'
-                        )
-                        .map(device => ({
-                          value: device.device_id,
-                          label: `${device.device_id}${device.status ? `（${device.status}）` : ''}`,
+                  {agentRuntime === 'wegent' ? (
+                    <SettingsRow
+                      label={t('workbench.project_chat_agent_wegent_team')}
+                      description={t('workbench.project_chat_agent_wegent_team_relation')}
+                      requiredLabel={t('common.required')}
+                      error={
+                        agentSaveAttempted && agentWegentTeamId === ''
+                          ? t('workbench.project_chat_agent_wegent_team_select')
+                          : undefined
+                      }
+                    >
+                      <MenuSelect
+                        testId="cloud-project-chat-agent-wegent-team"
+                        value={agentWegentTeamId === '' ? '' : String(agentWegentTeamId)}
+                        pill
+                        placeholder={t('workbench.project_chat_agent_wegent_team_select')}
+                        invalid={agentSaveAttempted && agentWegentTeamId === ''}
+                        onChange={value => setAgentWegentTeamId(value ? Number(value) : '')}
+                        options={availableTeams.map(team => ({
+                          value: String(team.id),
+                          label: team.displayName || team.name,
                         }))}
-                    />
-                  </SettingsRow>
-                  <SettingsRow
-                    label={t('workbench.project_chat_agent_execution_project')}
-                    description={t('workbench.project_chat_agent_execution_project_relation')}
-                  >
-                    <MenuSelect
-                      testId="cloud-project-chat-agent-execution-project"
-                      value={currentExecutionProject}
-                      pill
-                      onChange={value => setAgentLocalProjectId(value === '' ? '' : Number(value))}
-                      options={[
-                        {
-                          value: '',
-                          label: t('workbench.project_chat_agent_execution_project_none'),
-                        },
-                        ...executionProjectOptions,
-                      ]}
-                    />
-                  </SettingsRow>
+                      />
+                    </SettingsRow>
+                  ) : (
+                    <>
+                      <SettingsRow
+                        label={t('workbench.project_chat_agent_device')}
+                        description={t('workbench.project_chat_agent_device_relation')}
+                        requiredLabel={t('common.required')}
+                        error={
+                          agentSaveAttempted && !agentExecutionDeviceId
+                            ? t('workbench.project_chat_agent_device_select')
+                            : undefined
+                        }
+                      >
+                        <MenuSelect
+                          testId="cloud-project-chat-agent-device"
+                          value={agentExecutionDeviceId}
+                          pill
+                          placeholder={t('workbench.project_chat_agent_device_select')}
+                          invalid={agentSaveAttempted && !agentExecutionDeviceId}
+                          onChange={value => {
+                            setAgentExecutionDeviceId(value)
+                            // The bound project must have a workspace on the new device.
+                            setAgentLocalProjectId(current => {
+                              if (current === '' || agentExecutionEnvironment === 'local')
+                                return current
+                              const stillAvailable = (runtimeWork?.projects ?? []).some(
+                                projectWork =>
+                                  String(projectWork.project.id) === String(current) &&
+                                  projectWork.deviceWorkspaces.some(
+                                    workspace => workspace.deviceId === value && workspace.available
+                                  )
+                              )
+                              return stillAvailable ? current : ''
+                            })
+                          }}
+                          options={executionDevices.map(device => ({
+                            value: device.device_id,
+                            label: `${device.device_id}${device.status ? `（${device.status}）` : ''}`,
+                          }))}
+                        />
+                      </SettingsRow>
+                      <SettingsRow
+                        label={t('workbench.project_chat_agent_execution_project')}
+                        description={t('workbench.project_chat_agent_execution_project_relation')}
+                      >
+                        <MenuSelect
+                          testId="cloud-project-chat-agent-execution-project"
+                          value={currentExecutionProject}
+                          pill
+                          onChange={value =>
+                            setAgentLocalProjectId(value === '' ? '' : Number(value))
+                          }
+                          options={[
+                            {
+                              value: '',
+                              label: t('workbench.project_chat_agent_execution_project_none'),
+                            },
+                            ...executionProjectOptions,
+                          ]}
+                        />
+                      </SettingsRow>
+                    </>
+                  )}
                 </SettingsGroup>
               </section>
 
               <section data-testid="cloud-project-chat-agent-execution-group">
                 <SectionTitle title={t('workbench.project_chat_agent_execution_group')} />
                 <SettingsGroup>
-                  <SettingsRow
-                    label={t('workbench.project_chat_agent_model')}
-                    description={t('workbench.project_chat_agent_model_relation')}
-                    requiredLabel={t('common.required')}
-                    error={
-                      agentSaveAttempted && !agentModel.trim()
-                        ? t('workbench.project_chat_agent_model_placeholder')
-                        : undefined
-                    }
-                  >
-                    <MenuSelect
-                      testId="cloud-project-chat-agent-model"
-                      value={agentModel}
-                      pill
-                      placeholder={t('workbench.project_chat_agent_model_placeholder')}
-                      invalid={agentSaveAttempted && !agentModel.trim()}
-                      onChange={setAgentModel}
-                      options={[
-                        ...(agentModel &&
-                        !environmentModels.some(model => model.name === agentModel)
-                          ? [{ value: agentModel, label: agentModel }]
-                          : []),
-                        ...environmentModels.map(model => ({
-                          value: model.name,
-                          label: model.displayName ?? model.name,
-                        })),
-                      ]}
-                    />
-                  </SettingsRow>
+                  {agentRuntime === 'codex' ? (
+                    <SettingsRow
+                      label={t('workbench.project_chat_agent_model')}
+                      description={t('workbench.project_chat_agent_model_relation')}
+                      requiredLabel={t('common.required')}
+                      error={
+                        agentSaveAttempted && !agentModel.trim()
+                          ? t('workbench.project_chat_agent_model_placeholder')
+                          : undefined
+                      }
+                    >
+                      <MenuSelect
+                        testId="cloud-project-chat-agent-model"
+                        value={agentModel}
+                        pill
+                        placeholder={t('workbench.project_chat_agent_model_placeholder')}
+                        invalid={agentSaveAttempted && !agentModel.trim()}
+                        onChange={setAgentModel}
+                        options={[
+                          ...(agentModel &&
+                          !environmentModels.some(model => model.name === agentModel)
+                            ? [{ value: agentModel, label: agentModel }]
+                            : []),
+                          ...environmentModels.map(model => ({
+                            value: model.name,
+                            label: model.displayName ?? model.name,
+                          })),
+                        ]}
+                      />
+                    </SettingsRow>
+                  ) : null}
                   <SettingsRow label={t('workbench.project_chat_agent_mode')}>
                     <MenuSelect
                       testId="cloud-project-chat-agent-mode"
@@ -688,6 +873,27 @@ export function ProjectChatAgentsSection({
                           label: t('workbench.project_chat_agent_mode_manual'),
                         },
                       ]}
+                    />
+                  </SettingsRow>
+                  <SettingsRow
+                    label={t('workbench.project_chat_agent_max_concurrent_executions')}
+                    description={t(
+                      'workbench.project_chat_agent_max_concurrent_executions_relation'
+                    )}
+                  >
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      step={1}
+                      data-testid="cloud-project-chat-agent-max-concurrent-executions"
+                      value={agentMaxConcurrentExecutions}
+                      onChange={event =>
+                        setAgentMaxConcurrentExecutions(
+                          Math.max(1, Math.min(20, Number(event.target.value) || 1))
+                        )
+                      }
+                      className="h-8 w-20 rounded-lg border border-border bg-background px-2 text-right text-sm text-text-primary outline-none focus:border-text-tertiary"
                     />
                   </SettingsRow>
                 </SettingsGroup>

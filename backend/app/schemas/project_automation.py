@@ -82,7 +82,7 @@ def _validate_assignment_fields(
 class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
     name: str = Field(min_length=1, max_length=255)
     prompt: str = Field(min_length=1, max_length=100_000)
-    trigger_type: Literal["schedule", "event"] = "schedule"
+    trigger_type: Literal["schedule", "event", "workflow"] = "schedule"
     event_type: Literal["task.created"] | None = None
     event_config: dict[str, Any] = Field(default_factory=dict)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
@@ -114,7 +114,7 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
     version: int = Field(ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=255)
     prompt: str | None = Field(default=None, min_length=1, max_length=100_000)
-    trigger_type: Literal["schedule", "event"] | None = None
+    trigger_type: Literal["schedule", "event", "workflow"] | None = None
     event_type: Literal["task.created"] | None = None
     event_config: dict[str, Any] | None = None
     assignment_mode: AutomationAssignmentMode | None = None
@@ -161,7 +161,7 @@ class ProjectAutomationView(ProjectChatSchema):
     project_id: str
     name: str
     prompt: str
-    trigger_type: Literal["schedule", "event"]
+    trigger_type: Literal["schedule", "event", "workflow"]
     event_type: Literal["task.created"] | None
     event_config: dict[str, Any]
     assignment_mode: AutomationAssignmentMode
@@ -203,6 +203,6 @@ class ProjectAutomationRunView(ProjectChatSchema):
     updated_at: datetime
     completed_at: datetime | None = None
     retryable: bool = False
-    trigger_type: Literal["schedule", "event"] | None = None
+    trigger_type: Literal["schedule", "event", "workflow"] | None = None
     event_type: Literal["task.created"] | None = None
     event_config: dict[str, Any] | None = None

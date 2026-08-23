@@ -4,10 +4,52 @@ import {
   friendlyTitleForTask,
   loadTemporaryChatSource,
   prepareRuntimeAttachmentsForDevice,
+  resolveRuntimeTaskCreateWorkspacePath,
   runtimeExecutablePathForTarget,
   resolveTemporaryChatSource,
   runtimeThreadId,
+  titleModelForGeneration,
 } from './useWorkbenchRuntimeMessaging'
+
+describe('resolveRuntimeTaskCreateWorkspacePath', () => {
+  test('keeps the source path for a current-workspace task without a response path', () => {
+    expect(
+      resolveRuntimeTaskCreateWorkspacePath({
+        sourcePath: '/workspace/project',
+        requestedWorktree: false,
+      })
+    ).toBe('/workspace/project')
+  })
+
+  test('requires the Executor planned path for a Worktree task', () => {
+    expect(() =>
+      resolveRuntimeTaskCreateWorkspacePath({
+        sourcePath: '/workspace/project',
+        requestedWorktree: true,
+      })
+    ).toThrow('did not return a planned workspace path')
+  })
+
+  test('rejects a Worktree response that falls back to the base workspace', () => {
+    expect(() =>
+      resolveRuntimeTaskCreateWorkspacePath({
+        sourcePath: '/workspace/project/',
+        responsePath: '/workspace/project',
+        requestedWorktree: true,
+      })
+    ).toThrow('returned the base workspace path')
+  })
+
+  test('accepts a distinct planned Worktree path', () => {
+    expect(
+      resolveRuntimeTaskCreateWorkspacePath({
+        sourcePath: '/workspace/project',
+        responsePath: '/executor/worktrees/task-1/project',
+        requestedWorktree: true,
+      })
+    ).toBe('/executor/worktrees/task-1/project')
+  })
+})
 
 function attachment(overrides: Partial<Attachment> = {}): Attachment {
   return {
@@ -190,6 +232,43 @@ describe('friendlyTitleForTask', () => {
       modelId: 'local-model:title',
       modelType: 'runtime',
       modelOptions: { collaborationMode: 'default' },
+    })
+  })
+})
+
+describe('titleModelForGeneration', () => {
+  test('uses the configured title model without requiring automatic task titles to be enabled', () => {
+    expect(
+      titleModelForGeneration(
+        {
+          friendlyTaskTitleModel: {
+            modelName: 'local-model:title',
+            modelType: 'runtime',
+            executionModelId: 'local-model:title',
+            executionModelType: 'runtime',
+          },
+        },
+        [{ name: 'local-model:title', type: 'runtime' }] as never,
+        {
+          modelId: 'local-model:task',
+          modelType: 'runtime',
+          modelOptions: {},
+        }
+      )
+    ).toMatchObject({ modelId: 'local-model:title', modelType: 'runtime' })
+  })
+
+  test('uses the current execution model while preferences are still loading', () => {
+    expect(
+      titleModelForGeneration(undefined, [], {
+        modelId: 'gpt-5.6-sol',
+        modelType: 'public',
+        modelOptions: { reasoning: 'low' },
+      })
+    ).toEqual({
+      modelId: 'gpt-5.6-sol',
+      modelType: 'public',
+      modelOptions: { reasoning: 'low' },
     })
   })
 })

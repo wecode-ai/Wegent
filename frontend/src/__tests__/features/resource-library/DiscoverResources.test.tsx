@@ -13,6 +13,7 @@ import type { ResourceLibraryListing } from '@/features/resource-library/types'
 const mockToast = jest.fn()
 const mockPush = jest.fn()
 const mockReplace = jest.fn()
+const mockRefreshTeams = jest.fn()
 const mockObserve = jest.fn()
 const mockUnobserve = jest.fn()
 const mockDisconnect = jest.fn()
@@ -53,6 +54,12 @@ jest.mock('@/apis/resourceLibrary', () => ({
 jest.mock('@/hooks/use-toast', () => ({
   useToast: () => ({
     toast: mockToast,
+  }),
+}))
+
+jest.mock('@/contexts/TeamContext', () => ({
+  useTeamContext: () => ({
+    refreshTeams: mockRefreshTeams,
   }),
 }))
 
@@ -153,6 +160,7 @@ function createListing(overrides: Partial<ResourceLibraryListing> = {}): Resourc
 describe('DiscoverResources', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockRefreshTeams.mockResolvedValue([])
     mockSearchParams = new URLSearchParams()
     mockResourceLibraryApi.listListings.mockResolvedValue({
       items: [createListing()],
@@ -503,6 +511,34 @@ describe('DiscoverResources', () => {
     })
   })
 
+  it('loads search results only for the selected marketplace', async () => {
+    mockSearchParams = new URLSearchParams('keyword=summary')
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing({
+          id: 1,
+          resource_type: 'agent',
+          display_name: 'Summary Agent',
+          bind_modes: ['chat'],
+        }),
+      ],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+
+    render(<DiscoverResources resourceType="agent" hideSearch />)
+
+    expect(await screen.findByText('Summary Agent')).toBeInTheDocument()
+    expect(mockResourceLibraryApi.listListings).toHaveBeenCalledWith({
+      resourceType: 'agent',
+      keyword: 'summary',
+      targetNamespace: 'default',
+      cursor: undefined,
+      limit: 20,
+    })
+  })
+
   it('loads more resources when the scroll trigger enters the viewport', async () => {
     mockResourceLibraryApi.listListings
       .mockResolvedValueOnce({
@@ -761,6 +797,10 @@ describe('DiscoverResources', () => {
     expect(mockResourceLibraryApi.installListing).toHaveBeenCalledWith(82, {
       targetNamespace: 'default',
     })
+    expect(mockRefreshTeams).toHaveBeenCalledTimes(1)
+    expect(mockRefreshTeams.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPush.mock.invocationCallOrder[0]
+    )
     expect(mockToast).not.toHaveBeenCalled()
   })
 

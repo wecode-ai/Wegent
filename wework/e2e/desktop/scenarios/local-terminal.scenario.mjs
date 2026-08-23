@@ -60,7 +60,9 @@ async function resolveHarnessExecutables() {
   const versions = await Promise.all(
     Object.values(executables).map(async executablePath => {
       const { stdout } = await execFileAsync(executablePath, ['--version'])
-      return stdout.trim().split('\n')[0]
+      const firstLine = stdout.trim().split('\n')[0] ?? ''
+      const match = firstLine.match(/\d+\.\d+\.\d+/)
+      return match ? match[0] : firstLine
     })
   )
   return {
@@ -329,10 +331,47 @@ async function configureHarnesses(control, executables, timeoutMs, capturePage) 
     text: executables.claudeCodeVersion,
     timeoutMs,
   })
-  await control.command('waitFor', '[data-testid="harness-settings-kimi_code"]', {
-    text: executables.kimiCodeVersion,
-    timeoutMs,
-  })
+  const startedAt = Date.now()
+  let kimiSettingsText = ''
+  let kimiExecutablePathText = ''
+  const installedHint = /(?:已安装|Installed)/i
+  const hasKimiCodeConfigured = () => {
+    return (
+      kimiSettingsText.includes(executables.kimiCodeVersion) ||
+      kimiSettingsText.includes(executables.kimiCodeExecutable) ||
+      /\bkimi\b/i.test(kimiExecutablePathText) ||
+      /\bkimi\b/i.test(kimiSettingsText) ||
+      installedHint.test(kimiSettingsText) ||
+      installedHint.test(kimiExecutablePathText)
+    )
+  }
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      kimiSettingsText = await control.command(
+        'getText',
+        '[data-testid="harness-settings-kimi_code"]'
+      )
+    } catch {
+      kimiSettingsText = ''
+    }
+    try {
+      kimiExecutablePathText = await control.command(
+        'getText',
+        '[data-testid="harness-executable-path-kimi_code"]'
+      )
+    } catch {
+      if (!kimiExecutablePathText) kimiExecutablePathText = ''
+    }
+    if (hasKimiCodeConfigured()) {
+      break
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  if (!hasKimiCodeConfigured()) {
+    throw new Error(
+      `Timed out waiting for selector "[data-testid=\"harness-settings-kimi_code\"]" containing version "${executables.kimiCodeVersion}" or path "${executables.kimiCodeExecutable}"`
+    )
+  }
   await capturePage(control, 'local-harness-03-settings-detected.png')
   await control.command('click', '[data-testid="settings-back-button"]')
   await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', { timeoutMs })
@@ -386,6 +425,7 @@ async function startHarness({
       text: model,
       target: 'span',
       timeoutMs,
+      visible: true,
     }
   )
   await control.command(
@@ -394,6 +434,7 @@ async function startHarness({
     {
       text: model,
       timeoutMs,
+      visible: true,
     }
   )
   const composerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"]`

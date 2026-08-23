@@ -187,7 +187,8 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
         filename={file.name}
         type={viewerType}
         size={file.size}
-        className="h-full w-full"
+        data-viewer-theme={themeType}
+        className="wework-workspace-file-viewer h-full w-full"
         options={viewerOptions}
       />
       {isDiagram ? (
@@ -259,7 +260,7 @@ function WorkspaceMarkdownPreview({ file }: { file: WorkspaceTextFileResponse })
       className="scrollbar-soft min-w-0 flex-1 overflow-y-scroll bg-background"
     >
       <div className="mx-auto max-w-4xl px-8 py-6 text-base leading-7 text-text-primary">
-        <AssistantMarkdown content={file.content} />
+        <AssistantMarkdown content={file.content} variant="document" />
       </div>
       {file.truncated && (
         <div className="sticky bottom-0 border-t border-border bg-background/95 px-4 py-2 text-xs text-amber-700 backdrop-blur-sm">
@@ -461,7 +462,7 @@ function WorkspaceFilePreviewContent({
             <button
               type="button"
               data-testid="workspace-file-add-comment-button"
-              className="h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-white disabled:opacity-50"
+              className="h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
               disabled={!comment.trim()}
               onClick={addComment}
             >

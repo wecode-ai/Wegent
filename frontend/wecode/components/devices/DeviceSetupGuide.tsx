@@ -10,24 +10,26 @@
 'use client'
 
 import { useState } from 'react'
-import { Monitor, Cloud, X } from 'lucide-react'
+import { Monitor, Cloud, Server, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { LocalExecutorGuide } from './LocalExecutorGuide'
 import { CloudDeviceCreateSection } from '@wecode/components/devices/CloudDeviceCreateSection'
+import { RemoteDockerDeviceCreateSection } from './RemoteDockerDeviceCreateSection'
 
 export interface DeviceSetupGuideProps {
   backendUrl: string
   authToken: string
   guideUrl?: string
   onDeviceCreated: () => void
+  onDeviceDetected?: () => void
   onClose?: () => void
   showCloseButton?: boolean
   cloudDeviceCount?: number
 }
 
-type DeviceType = 'local' | 'cloud'
+type DeviceType = 'local' | 'remote' | 'cloud'
 
 /**
  * Device setup guide with tabbed interface for device type selection.
@@ -38,7 +40,16 @@ type DeviceType = 'local' | 'cloud'
  * - Cloud device shows creation section with Mail Skill configuration
  * - Optional close button to return to device list
  */
-export function DeviceSetupGuide({ backendUrl, authToken, guideUrl, onDeviceCreated, onClose, showCloseButton, cloudDeviceCount = 0 }: DeviceSetupGuideProps) {
+export function DeviceSetupGuide({
+  backendUrl,
+  authToken,
+  guideUrl,
+  onDeviceCreated,
+  onDeviceDetected,
+  onClose,
+  showCloseButton,
+  cloudDeviceCount = 0,
+}: DeviceSetupGuideProps) {
   const { t } = useTranslation('devices')
   const [deviceType, setDeviceType] = useState<DeviceType>('local')
 
@@ -52,9 +63,7 @@ export function DeviceSetupGuide({ backendUrl, authToken, guideUrl, onDeviceCrea
             onClick={() => setDeviceType('local')}
             className={cn(
               'flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors relative',
-              deviceType === 'local'
-                ? 'text-primary'
-                : 'text-text-muted hover:text-text-secondary'
+              deviceType === 'local' ? 'text-primary' : 'text-text-muted hover:text-text-secondary'
             )}
           >
             <Monitor className="w-4 h-4" />
@@ -66,12 +75,26 @@ export function DeviceSetupGuide({ backendUrl, authToken, guideUrl, onDeviceCrea
 
           <button
             type="button"
+            data-testid="remote-device-setup-tab"
+            onClick={() => setDeviceType('remote')}
+            className={cn(
+              'flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors relative',
+              deviceType === 'remote' ? 'text-primary' : 'text-text-muted hover:text-text-secondary'
+            )}
+          >
+            <Server className="w-4 h-4" />
+            {t('remote_device')}
+            {deviceType === 'remote' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+            )}
+          </button>
+
+          <button
+            type="button"
             onClick={() => setDeviceType('cloud')}
             className={cn(
               'flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors relative',
-              deviceType === 'cloud'
-                ? 'text-primary'
-                : 'text-text-muted hover:text-text-secondary'
+              deviceType === 'cloud' ? 'text-primary' : 'text-text-muted hover:text-text-secondary'
             )}
           >
             <Cloud className="w-4 h-4" />
@@ -99,8 +122,16 @@ export function DeviceSetupGuide({ backendUrl, authToken, guideUrl, onDeviceCrea
       <div className="p-6">
         {deviceType === 'local' ? (
           <LocalExecutorGuide backendUrl={backendUrl} authToken={authToken} guideUrl={guideUrl} />
+        ) : deviceType === 'remote' ? (
+          <RemoteDockerDeviceCreateSection
+            onDeviceCreated={onDeviceCreated}
+            onDeviceDetected={onDeviceDetected}
+          />
         ) : (
-          <CloudDeviceCreateSection onDeviceCreated={onDeviceCreated} currentDeviceCount={cloudDeviceCount} />
+          <CloudDeviceCreateSection
+            onDeviceCreated={onDeviceCreated}
+            currentDeviceCount={cloudDeviceCount}
+          />
         )}
       </div>
     </div>

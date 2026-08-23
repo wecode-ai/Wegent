@@ -12,7 +12,7 @@ use crate::embedded_browser;
 
 const AGENT_PLUGIN_SCHEMA: &str = "https://agent-plugins.org/schemas/plugin.json";
 const EXECUTOR_SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
-const HARNESS_ADAPTER_VERSION: u8 = 3;
+const HARNESS_ADAPTER_VERSION: u8 = 4;
 const EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV: &str =
     "WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE";
 const WEWORK_LOCAL_ROUTER_API_KEY: &str = "wework-local-router";
@@ -739,23 +739,52 @@ fn copy_directory_within(source: &Path, destination: &Path, boundary: &Path) -> 
     Ok(())
 }
 
+pub(crate) fn mcp_server_map(document: &Value) -> Option<&Map<String, Value>> {
+    let object = document.as_object()?;
+    for wrapper in ["mcp_servers", "mcpServers"] {
+        if let Some(servers) = object.get(wrapper) {
+            return servers.as_object();
+        }
+    }
+    Some(object)
+}
+
+fn resolve_plugin_mcp_path(source: &PluginSource, relative: &str) -> Option<PathBuf> {
+    let relative = relative.strip_prefix("./")?;
+    if relative.is_empty() {
+        return None;
+    }
+    let path = fs::canonicalize(source.root.join(relative)).ok()?;
+    (path.is_file() && path.starts_with(&source.root)).then_some(path)
+}
+
+fn read_plugin_mcp_document(source: &PluginSource) -> Option<Value> {
+    if let Some(declaration) =
+        read_plugin_manifest(&source.root).and_then(|manifest| manifest.get("mcpServers").cloned())
+    {
+        if declaration.is_object() {
+            return Some(declaration);
+        }
+        let path = resolve_plugin_mcp_path(source, declaration.as_str()?)?;
+        return serde_json::from_slice(&fs::read(path).ok()?).ok();
+    }
+
+    ["mcp.json", ".mcp.json"].into_iter().find_map(|relative| {
+        let bytes = fs::read(source.root.join(relative)).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    })
+}
+
 fn read_plugin_mcp_servers(source: &PluginSource) -> Vec<(String, Value)> {
-    ["mcp.json", ".mcp.json"]
-        .into_iter()
-        .find_map(|relative| {
-            let bytes = fs::read(source.root.join(relative)).ok()?;
-            let document: Value = serde_json::from_slice(&bytes).ok()?;
-            let servers = document.get("mcpServers")?.as_object()?;
-            Some(
-                servers
-                    .iter()
-                    .filter_map(|(name, server)| {
-                        server
-                            .is_object()
-                            .then(|| (name.clone(), expand_plugin_values(server, source)))
-                    })
-                    .collect(),
-            )
+    read_plugin_mcp_document(source)
+        .as_ref()
+        .and_then(mcp_server_map)
+        .map(|servers| {
+            servers
+                .iter()
+                .filter(|(_, server)| server.is_object())
+                .map(|(name, server)| (name.clone(), expand_plugin_values(server, source)))
+                .collect()
         })
         .unwrap_or_default()
 }
@@ -793,16 +822,35 @@ fn unique_server_name(plugin: &str, name: &str, servers: &Map<String, Value>) ->
 
 fn adapt_claude_mcp_server(server: &Value, source: &PluginSource) -> Option<Value> {
     let mut server = server.as_object()?.clone();
-    if server.get("cwd").is_none() && server.get("command").is_some() {
+    let is_stdio = server.get("command").and_then(Value::as_str).is_some();
+    if server.get("cwd").is_none() && is_stdio {
         server.insert(
             "cwd".to_string(),
             Value::String(source.root.display().to_string()),
         );
     }
-    if server.get("type").and_then(Value::as_str) == Some("streamable-http") {
-        server.insert("type".to_string(), Value::String("http".to_string()));
+    if !is_stdio && server.get("url").and_then(Value::as_str).is_some() {
+        let target_type = match server.get("type").and_then(Value::as_str) {
+            Some("sse") => "sse",
+            _ => "http",
+        };
+        server.insert("type".to_string(), Value::String(target_type.to_string()));
+        server.insert("headers".to_string(), merged_remote_headers(&server));
+        server.remove("http_headers");
     }
     Some(Value::Object(server))
+}
+
+fn merged_remote_headers(server: &Map<String, Value>) -> Value {
+    let mut headers = server
+        .get("http_headers")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(legacy_headers) = server.get("headers").and_then(Value::as_object) {
+        headers.extend(legacy_headers.clone());
+    }
+    Value::Object(headers)
 }
 
 fn adapt_opencode_mcp_server(server: &Value, source: Option<&PluginSource>) -> Option<Value> {
@@ -841,7 +889,7 @@ fn adapt_opencode_mcp_server(server: &Value, source: Option<&PluginSource>) -> O
     Some(json!({
         "type": "remote",
         "url": url,
-        "headers": server.get("headers").cloned().unwrap_or_else(|| Value::Object(Map::new())),
+        "headers": merged_remote_headers(server),
         "enabled": true,
     }))
 }

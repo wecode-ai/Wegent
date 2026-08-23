@@ -13,11 +13,32 @@ function requiredEnvironment(name) {
 const baseConfigPath = requiredEnvironment('BASE_CONFIG')
 const outputConfigPath = requiredEnvironment('CONFIG_OVERRIDE')
 const baseConfig = JSON.parse(await readFile(baseConfigPath, 'utf8'))
-const resources = baseConfig.bundle?.resources
+const baseResources = baseConfig.bundle?.resources
 
-if (!Array.isArray(resources)) {
+if (!Array.isArray(baseResources)) {
   throw new Error(`Base Tauri config has no bundle.resources array: ${baseConfigPath}`)
 }
+
+function codexTargetsForBuildTarget(buildTarget) {
+  if (!buildTarget) return []
+  if (buildTarget === 'universal-apple-darwin') {
+    return ['aarch64-apple-darwin', 'x86_64-apple-darwin']
+  }
+  return [buildTarget]
+}
+
+const codexTargets = codexTargetsForBuildTarget(process.env.CODEX_TARGET?.trim())
+const resources =
+  codexTargets.length === 0
+    ? baseResources
+    : baseResources.flatMap(resource =>
+        resource === 'binaries/codex/**/*'
+          ? [
+              ...codexTargets.map(target => `binaries/codex/${target}/**/*`),
+              'binaries/codex/legal/**/*',
+            ]
+          : [resource]
+      )
 
 const config = {
   version: requiredEnvironment('VERSION'),

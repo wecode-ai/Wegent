@@ -5,6 +5,22 @@ import { describe, expect, test } from 'vitest'
 const sourceRoot = resolve(process.cwd(), 'src')
 
 const guardedFiles = [
+  'components/chat/AssistantMarkdown.tsx',
+  'components/chat/CodexTurnArtifacts.tsx',
+  'components/chat/composer/CompactChatComposer.tsx',
+  'components/chat/composer/ComposerToolbar.tsx',
+  'components/chat/composer/ContextUsageIndicator.tsx',
+  'components/chat/composer/ModelAutomaticReasoningOption.tsx',
+  'components/chat/composer/ModelSelector.tsx',
+  'components/common/ActionMenu.tsx',
+  'components/layout/DesktopAppSwitcher.tsx',
+  'components/layout/workspace-panels/FileWorkspacePanel.tsx',
+  'components/plugins/PluginCatalogSections.tsx',
+  'components/projects/DeviceFolderPicker.tsx',
+  'components/projects/ProjectCreateDialog.tsx',
+  'features/todo/TodoCreateDialog.tsx',
+  'features/todo/TodoDetailPanel.tsx',
+  'features/todo/TodoWorkItems.tsx',
   'components/layout/DesktopSidebar.tsx',
   'components/layout/DesktopSettingsMenu.tsx',
   'components/layout/EnvironmentInfoPopover.tsx',
@@ -44,6 +60,17 @@ const forbiddenGlobalZIndexClasses = [
 ]
 
 describe('theme token guard', () => {
+  test('styles do not reference the removed background token alias', () => {
+    const guardedStylePaths = [
+      resolve(process.cwd(), 'src/styles/globals.css'),
+      resolve(sourceRoot, 'features/todo/task-detail-layout.css'),
+    ]
+
+    for (const stylePath of guardedStylePaths) {
+      expect(readFileSync(stylePath, 'utf8')).not.toContain('--color-background')
+    }
+  })
+
   test('tailwind exposes semantic surface colors', () => {
     const tailwindConfigPath = resolve(process.cwd(), 'tailwind.config.js')
     const source = readFileSync(tailwindConfigPath, 'utf8').replace(/\r\n/g, '\n')
@@ -100,6 +127,24 @@ describe('theme token guard', () => {
     expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-corner {')
     expect(source).toContain('border: 1px solid transparent;')
     expect(source).toContain('border-radius: 999px;')
+  })
+
+  test('browser annotation toolbar surface derives from theme tokens for dark mode', () => {
+    const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
+    const globalsSource = readFileSync(globalsPath, 'utf8')
+    const panelPath = resolve(
+      sourceRoot,
+      'components/layout/workspace-panels/WorkspaceBrowserPanel.tsx'
+    )
+    const panelSource = readFileSync(panelPath, 'utf8')
+
+    expect(globalsSource).toContain('--color-browser-annotation-surface: color-mix(')
+    expect(globalsSource).toContain('rgb(var(--color-bg-surface)) 82%')
+    expect(globalsSource).toContain('rgb(var(--color-focus)) 18%')
+    expect(panelSource).not.toMatch(/\b(?:bg|border|text)-blue-(?:50|100|200|700)\b/)
+    expect(panelSource).toContain('bg-[var(--color-browser-annotation-surface)]')
+    expect(panelSource).toContain('border-[var(--color-browser-annotation-border)]')
+    expect(panelSource).toContain('bg-[var(--color-browser-annotation-chip)]')
   })
 
   test.each(guardedFiles)(

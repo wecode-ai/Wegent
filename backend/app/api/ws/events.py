@@ -411,6 +411,9 @@ class SourceReference(BaseModel):
     segments: Optional[List[VideoSegmentReference]] = Field(
         None, description="Retrieved time ranges for a video source"
     )
+    segments_truncated: Optional[bool] = Field(
+        None, description="Whether the video segment list was truncated"
+    )
 
 
 class RetrievalSummaryPayload(BaseModel):

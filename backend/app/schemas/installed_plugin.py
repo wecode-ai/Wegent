@@ -89,6 +89,34 @@ class PluginConnectorComponent(BaseModel):
     )
 
 
+class WorkbenchFrontendModule(BaseModel):
+    """Same-realm frontend entry exported by a Wework plugin package."""
+
+    entry: str
+    export: str = "default"
+    sha256: str
+
+
+class WorkbenchDesktopSidecar(BaseModel):
+    """Desktop JSON-RPC sidecar declared by a Wework plugin package."""
+
+    command: str
+    args: List[str] = Field(default_factory=list)
+    sha256: str
+    capabilities: List[str] = Field(default_factory=list)
+
+
+class WorkbenchPluginComponent(BaseModel):
+    """Optional Wework workbench runtime contribution."""
+
+    apiVersion: Literal["1"] = "1"
+    required: bool = False
+    pinnedToClientVersion: bool = False
+    clientVersion: Optional[str] = None
+    frontend: Optional[WorkbenchFrontendModule] = None
+    desktop: Optional[WorkbenchDesktopSidecar] = None
+
+
 class InstalledPluginComponents(BaseModel):
     """Cross-runtime plugin component inventory."""
 
@@ -102,6 +130,7 @@ class InstalledPluginComponents(BaseModel):
     monitors: List[PluginPathComponent] = Field(default_factory=list)
     bins: List[PluginPathComponent] = Field(default_factory=list)
     settings: Optional[Dict[str, Any]] = None
+    workbench: Optional[WorkbenchPluginComponent] = None
 
 
 class PluginInterface(BaseModel):
@@ -320,6 +349,28 @@ class PluginDeviceSyncResponse(BaseModel):
     deviceId: str
     pendingCount: int = 0
     sync: DeviceCapabilitySyncResponse
+
+
+class PluginDeviceReportItem(BaseModel):
+    """One package version observed on the reporting device."""
+
+    installedPluginId: int = Field(gt=0)
+    releaseId: int = Field(gt=0)
+    version: str = Field(min_length=1)
+
+
+class PluginDeviceReportRequest(BaseModel):
+    """Local packages already present on a device; do not push installs."""
+
+    plugins: List[PluginDeviceReportItem] = Field(default_factory=list)
+
+
+class PluginDeviceReportResponse(BaseModel):
+    """Result of acknowledging local plugin presence on one device."""
+
+    deviceId: str
+    acknowledgedCount: int = 0
+    acknowledgedInstalledPluginIds: List[int] = Field(default_factory=list)
 
 
 class PluginAutoUpdateItem(BaseModel):

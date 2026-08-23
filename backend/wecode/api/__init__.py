@@ -36,6 +36,19 @@ from wecode.service.system_skill_providers import weibo_system_skill_provider
 
 system_skill_provider_registry.register(weibo_system_skill_provider)
 
+# Replace the open-source remote device command policy with the internal one.
+from app.services.device.remote_device_startup import (
+    register_remote_device_command_provider,
+)
+from wecode.config.remote_device_config import remote_device_settings
+from wecode.service.remote_device_startup_provider import (
+    WecodeRemoteDeviceCommandProvider,
+)
+
+register_remote_device_command_provider(
+    WecodeRemoteDeviceCommandProvider(remote_device_settings)
+)
+
 import wecode.api.agents_endpoint_patch  # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
 import wecode.api.device_monitor_patch  # noqa: F401  register internal admin restart handler
 import wecode.api.executors_endpoint_patch  # noqa: F401  patch /tasks/dispatch endpoint to replace API key placeholders (pull mode, backup)

@@ -7,13 +7,14 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from knowledge_runtime.services.config_resolver import (
     ConfigResolutionError,
     ConfigResolver,
     IndexConfig,
     QueryConfig,
 )
+from sqlalchemy.orm import Session
+
 from shared.models import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -190,6 +191,33 @@ class TestResolveQueryConfig:
         assert result.retrieval_config.top_k == 10
         assert result.retrieval_config.score_threshold == 0.8
         assert result.retrieval_config.retrieval_mode == "vector"
+
+    def test_resolves_embedding_model_shared_into_kb_namespace(
+        self,
+        resolver: ConfigResolver,
+        shared_model_db: Session,
+    ) -> None:
+        """A group-visible model reference resolves to its source Model Kind."""
+        query_config = resolver.resolve_query_config(
+            shared_model_db,
+            knowledge_base_id=1,
+            user_id=42,
+        )
+        index_config = resolver.resolve_index_config(
+            shared_model_db,
+            knowledge_base_id=1,
+            user_id=42,
+        )
+
+        assert query_config.embedding_model_config.model_name == "shared-embedding"
+        assert query_config.embedding_model_config.model_namespace == "search-team"
+        assert (
+            query_config.embedding_model_config.resolved_config["model_id"]
+            == "provider-embedding-id"
+        )
+        assert index_config.embedding_model_config == (
+            query_config.embedding_model_config
+        )
 
     def test_hybrid_retrieval_mode(
         self, resolver: ConfigResolver, mock_db: MagicMock

@@ -6,6 +6,7 @@
 
 import secrets
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 from jose import JWTError, jwt
 
@@ -30,6 +31,18 @@ def generate_public_attachment_token(
         "exp": now + expires_delta,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def build_public_attachment_download_url(
+    attachment_id: int,
+    expires_delta: timedelta,
+    base_url: str = "",
+) -> str:
+    """Create a public attachment download URL with a scoped expiring token."""
+    token = generate_public_attachment_token(attachment_id, expires_delta)
+    query = urlencode({"token": token})
+    prefix = base_url.strip().rstrip("/")
+    return f"{prefix}/api/attachments/download/shared?{query}"
 
 
 def verify_public_attachment_token(token: str) -> dict:

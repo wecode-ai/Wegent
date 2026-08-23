@@ -20,6 +20,22 @@ from wecode.service.cloud_device_git_tokens import build_git_token_envs
 
 logger = logging.getLogger(__name__)
 
+CLOUD_EXECUTOR_HOME = "/home/ubuntu/.wegent-executor"
+CLOUD_WORKSPACE_ROOT = f"{CLOUD_EXECUTOR_HOME}/workspace"
+
+
+def build_cloud_device_runtime_envs(device_id: str) -> Dict[str, str]:
+    """Build the stable runtime environment for a managed cloud device."""
+    if not device_id:
+        return {}
+    return {
+        "DEVICE_TYPE": "cloud",
+        "WEGENT_EXECUTOR_HOME": CLOUD_EXECUTOR_HOME,
+        "LOCAL_WORKSPACE_ROOT": CLOUD_WORKSPACE_ROOT,
+        "WEGENT_EXECUTOR_HOME_ID": device_id,
+        "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED": "true",
+    }
+
 
 def generate_cloud_init_script(
     user_name: str,
@@ -220,6 +236,10 @@ def _generate_user_data_script(
     git_token_exports = _generate_git_token_exports(git_tokens)
     git_clone_config = _generate_git_clone_config(git_tokens, user_name)
     ubuntu_password_section = _generate_ubuntu_password_section(ubuntu_password)
+    runtime_env_exports = "\n".join(
+        f'export {key}="{_escape_double_quoted_env_value(value)}"'
+        for key, value in build_cloud_device_runtime_envs(device_id).items()
+    )
 
     # Build openclaw curl command and install arguments
     openclaw_section = ""
@@ -307,6 +327,7 @@ export WEGENT_USER_NAME="{user_name}"
 # Export server-generated device ID and name
 export DEVICE_ID="{device_id}"
 export DEVICE_NAME="{device_name}"
+{runtime_env_exports}
 
 # Download and execute the shared install script
 {curl_download_cmd} | bash -s -- {install_args}

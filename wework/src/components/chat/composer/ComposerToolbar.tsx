@@ -1,13 +1,11 @@
 import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
-import type { CloudProject } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { LocalDeviceApp, ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
-import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
@@ -20,11 +18,14 @@ import {
   RUNTIME_PERMISSION_MODE_OPTION,
   runtimePermissionMode,
 } from '@/features/workbench/runtimePermissionMode'
+import { cn } from '@/lib/utils'
 
 interface ComposerToolbarProps {
+  className?: string
   canSend: boolean
   disabled?: boolean
   pluginPickerIconOnly?: boolean
+  showExecutionTools?: boolean
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
@@ -53,23 +54,23 @@ interface ComposerToolbarProps {
   onPause?: () => void
   showWorkspaceMenu?: boolean
   projectWorkMenuContext?: Omit<ComponentProps<typeof PopoutWorkspaceMenu>, 'disabled'>
+  projectPhrases?: QuickPhrase[]
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
   sendButtonTestId?: string
   leadingContext?: ReactNode
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
-  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
-  selectedCloudProjectId?: CloudProject['id']
-  onSelectCloudProject?: (project: CloudProject) => void
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
 const NARROW_MODEL_SELECTOR_MAX_WIDTH = 160
 
 export function ComposerToolbar({
+  className,
   canSend,
   disabled = false,
   pluginPickerIconOnly = false,
+  showExecutionTools = true,
   models,
   selectedModel,
   activeModel,
@@ -98,14 +99,12 @@ export function ComposerToolbar({
   onPause,
   showWorkspaceMenu,
   projectWorkMenuContext,
+  projectPhrases = [],
   onQuickPhraseSelect,
   onSubmit,
   sendButtonTestId = 'send-message-button',
   leadingContext,
   onListLocalApps,
-  cloudProjectCandidates,
-  selectedCloudProjectId,
-  onSelectCloudProject,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -138,27 +137,35 @@ export function ComposerToolbar({
       ref={toolbarRef}
       data-testid="composer-toolbar"
       data-compact={compact ? 'true' : 'false'}
-      className="mt-auto flex min-h-8 min-w-0 items-center justify-between gap-2 pt-1"
+      className={cn(
+        'mt-auto flex min-h-8 min-w-0 items-center justify-between gap-2 pt-1',
+        className
+      )}
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <div data-composer-toolbar-group="features" className="flex min-w-0 items-center gap-2">
         <AddContextMenu
           disabled={disabled}
           onFileSelect={onFileSelect}
-          onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
-          onSetGoal={onSetGoal}
-          onConfigureSupervisor={onConfigureSupervisor}
-          supervisorEnabled={supervisorEnabled}
-          supervisorPending={supervisorPending}
-          cloudProjectCandidates={cloudProjectCandidates}
-          selectedCloudProjectId={selectedCloudProjectId}
-          onSelectCloudProject={onSelectCloudProject}
+          onSetPlanMode={showExecutionTools && !planModeActive ? onSetPlanMode : undefined}
+          onSetGoal={showExecutionTools ? onSetGoal : undefined}
+          onConfigureSupervisor={showExecutionTools ? onConfigureSupervisor : undefined}
+          supervisorEnabled={showExecutionTools && supervisorEnabled}
+          supervisorPending={showExecutionTools && supervisorPending}
         />
-        <QuickPhraseMenu disabled={disabled} onSelect={onQuickPhraseSelect} />
-        <PluginPickerMenu
-          disabled={disabled}
-          iconOnly={compact || pluginPickerIconOnly}
-          onListLocalApps={onListLocalApps}
-        />
+        {showExecutionTools ? (
+          <>
+            <QuickPhraseMenu
+              disabled={disabled}
+              projectPhrases={projectPhrases}
+              onSelect={onQuickPhraseSelect}
+            />
+            <PluginPickerMenu
+              disabled={disabled}
+              iconOnly={compact || pluginPickerIconOnly}
+              onListLocalApps={onListLocalApps}
+            />
+          </>
+        ) : null}
         {leadingContext}
         {goalDraftActive ? (
           <GoalDraftPill onCancel={onCancelGoalDraft} />
@@ -175,38 +182,42 @@ export function ComposerToolbar({
           />
         ) : null}
       </div>
-      <div className="flex min-w-0 items-center gap-1.5">
-        <PermissionModeSelector
-          value={runtimePermissionMode(selectedModelOptions)}
-          disabled={disabled}
-          iconOnly
-          onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
-        />
-        <ContextUsageIndicator
-          usage={contextUsage}
-          disabled={disabled}
-          onCompactContext={onCompactContext}
-        />
-        {modelSelectorOverride ??
-          (isModelSelectionReady ? (
-            <ModelSelector
-              models={models}
-              selectedModel={selectedModel}
-              selectedModelOptions={selectedModelOptions}
-              nextTurn={isStreaming && modelChangePending}
-              openSignal={modelSelectorOpenSignal}
-              onOpenChange={onModelSelectorOpenChange}
+      <div data-composer-toolbar-group="actions" className="flex min-w-0 items-center gap-1.5">
+        {showExecutionTools ? (
+          <>
+            <PermissionModeSelector
+              value={runtimePermissionMode(selectedModelOptions)}
               disabled={disabled}
-              onSelectModel={onSelectModel}
-              onSelectModelAndOptions={onSelectModelAndOptions}
-              onSelectModelOption={onSelectModelOption}
-              onBlockedModelSelect={onBlockedModelSelect}
-              buttonClassName="opacity-90 hover:opacity-100"
-              maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
+              iconOnly
+              onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
             />
-          ) : (
-            <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
-          ))}
+            <ContextUsageIndicator
+              usage={contextUsage}
+              disabled={disabled}
+              onCompactContext={onCompactContext}
+            />
+            {modelSelectorOverride ??
+              (isModelSelectionReady ? (
+                <ModelSelector
+                  models={models}
+                  selectedModel={selectedModel}
+                  selectedModelOptions={selectedModelOptions}
+                  nextTurn={isStreaming && modelChangePending}
+                  openSignal={modelSelectorOpenSignal}
+                  onOpenChange={onModelSelectorOpenChange}
+                  disabled={disabled}
+                  onSelectModel={onSelectModel}
+                  onSelectModelAndOptions={onSelectModelAndOptions}
+                  onSelectModelOption={onSelectModelOption}
+                  onBlockedModelSelect={onBlockedModelSelect}
+                  buttonClassName="opacity-90 hover:opacity-100"
+                  maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
+                />
+              ) : (
+                <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
+              ))}
+          </>
+        ) : null}
         {showWorkspaceMenu && projectWorkMenuContext ? (
           <PopoutWorkspaceMenu {...projectWorkMenuContext} disabled={disabled} />
         ) : null}
@@ -218,16 +229,17 @@ export function ComposerToolbar({
           >
             <button
               type="button"
+              data-composer-primary-action="true"
               data-testid="pause-response-button"
               onClick={onPause}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white hover:bg-[#333]"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background hover:bg-text-primary/90"
               aria-label={t('workbench.pause_response', '暂停回复')}
             >
               <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
             </button>
           </Tooltip>
         ) : isStreaming && canSend ? (
-          <div className="flex items-center rounded-full bg-[#1f1f1f] text-white">
+          <div className="flex items-center rounded-full bg-text-primary text-background">
             <Tooltip
               label={t('workbench.send_after_turn', '当前回复结束后发送')}
               align="end"
@@ -235,8 +247,9 @@ export function ComposerToolbar({
             >
               <button
                 type="submit"
+                data-composer-primary-action="true"
                 data-testid={sendButtonTestId}
-                className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-[#333]"
+                className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-text-primary/90"
                 aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
               >
                 <ArrowUp className="h-4 w-4" />
@@ -246,7 +259,7 @@ export function ComposerToolbar({
               ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
               testId="send-mode-menu-button"
               icon={ChevronDown}
-              triggerClassName="flex h-8 w-7 items-center justify-center rounded-r-full border-l border-white/20 hover:bg-[#333]"
+              triggerClassName="flex h-8 w-7 items-center justify-center rounded-r-full border-l border-background/20 hover:bg-text-primary/90"
               items={[
                 {
                   label: t('workbench.send_after_turn', '当前回复结束后发送'),
@@ -298,9 +311,10 @@ export function ComposerToolbar({
           >
             <button
               type="submit"
+              data-composer-primary-action="true"
               data-testid={sendButtonTestId}
               disabled={!canSend}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white disabled:cursor-not-allowed disabled:bg-text-muted/45 disabled:text-background"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background disabled:cursor-not-allowed disabled:bg-text-muted/45"
               aria-label={t('workbench.send_message', '发送消息')}
             >
               <ArrowUp className="h-4 w-4" />

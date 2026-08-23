@@ -14,8 +14,10 @@ const appearanceMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/components/chat/AssistantMarkdown', () => ({
-  AssistantMarkdown: ({ content }: { content: string }) => (
-    <div data-testid="assistant-markdown">{content}</div>
+  AssistantMarkdown: ({ content, variant }: { content: string; variant?: string }) => (
+    <div data-testid="assistant-markdown" data-variant={variant}>
+      {content}
+    </div>
   ),
 }))
 
@@ -27,9 +29,30 @@ vi.mock('@pierre/diffs/react', () => ({
 }))
 
 vi.mock('@file-viewer/react', () => ({
-  default: (props: { filename: string; type?: string; options?: Record<string, unknown> }) => {
+  default: (props: {
+    filename: string
+    type?: string
+    options?: Record<string, unknown>
+    className?: string
+    'data-viewer-theme'?: string
+  }) => {
     fileViewerMocks.render(props)
-    return <div data-testid="file-viewer">{props.filename}</div>
+    return (
+      <div
+        data-testid="file-viewer"
+        data-viewer-theme={props['data-viewer-theme']}
+        className={props.className}
+      >
+        <div className="image-viewer">
+          <div className="image-stage">
+            <img alt={`${props.filename} preview`} />
+          </div>
+          <div className="image-lightbox">
+            <img alt={`${props.filename} fullscreen preview`} />
+          </div>
+        </div>
+      </div>
+    )
   },
 }))
 
@@ -72,6 +95,7 @@ test('renders Markdown files as a scrollable preview by default', () => {
     'scrollbar-soft'
   )
   expect(screen.getByTestId('assistant-markdown')).toHaveTextContent('# Project')
+  expect(screen.getByTestId('assistant-markdown')).toHaveAttribute('data-variant', 'document')
   expect(codeViewMocks.render).not.toHaveBeenCalled()
 })
 
@@ -148,8 +172,22 @@ test('uses the application dark theme for code and binary previews', () => {
 
   expect(fileViewerMocks.render).toHaveBeenLastCalledWith(
     expect.objectContaining({
+      'data-viewer-theme': 'dark',
+      className: expect.stringContaining('wework-workspace-file-viewer'),
       options: expect.objectContaining({ theme: 'dark' }),
     })
+  )
+
+  const imageViewer = screen.getByTestId('file-viewer')
+  expect(imageViewer).toHaveAttribute('data-viewer-theme', 'dark')
+  expect(imageViewer).toHaveClass('wework-workspace-file-viewer')
+  expect(imageViewer.querySelector('.image-viewer .image-stage img')).toHaveAttribute(
+    'alt',
+    'diagram.png preview'
+  )
+  expect(imageViewer.querySelector('.image-viewer .image-lightbox img')).toHaveAttribute(
+    'alt',
+    'diagram.png fullscreen preview'
   )
 })
 

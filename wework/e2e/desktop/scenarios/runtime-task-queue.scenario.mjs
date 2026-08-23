@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { access } from 'node:fs/promises'
 
+import { createSingleRootLocalProject } from '../modules/shared.mjs'
+
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const ACTIVE_WORKSPACE_TAB_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
@@ -9,6 +11,8 @@ const PROMPTS = {
   first: 'QUEUE_1_RUNNING_WEWORK_DESKTOP_E2E',
   second: 'QUEUE_2_WAITING_WEWORK_DESKTOP_E2E',
   third: 'QUEUE_3_WAITING_WEWORK_DESKTOP_E2E',
+  fourth: 'QUEUE_4_RUNNING_BEFORE_LIMIT_INCREASE_WEWORK_DESKTOP_E2E',
+  fifth: 'QUEUE_5_STARTS_AFTER_LIMIT_INCREASE_WEWORK_DESKTOP_E2E',
 }
 
 function sse(events) {
@@ -71,18 +75,15 @@ async function pathExists(path) {
 }
 
 async function sendNewTask(control, knownRows, prompt, timeoutMs, executionMode = 'local_path') {
-  await control.command(
-    'click',
+  await control.command('click', '[data-testid="project-new-conversation-button"]')
+  await control.command('waitFor', COMPOSER_SELECTOR)
+  await control.command('waitFor', '[data-testid="execution-mode-button"]')
+  await control.command('click', '[data-testid="execution-mode-button"]')
+  const executionModeSelector =
     executionMode === 'git_worktree'
-      ? '[data-testid="project-new-conversation-button"]'
-      : '[data-testid="new-chat-button"]'
-  )
-  await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
-  if (executionMode === 'git_worktree') {
-    await control.command('waitFor', '[data-testid="execution-mode-button"]', { timeoutMs })
-    await control.command('click', '[data-testid="execution-mode-button"]')
-    await control.command('click', '[data-testid="execution-mode-git-worktree-button"]')
-  }
+      ? '[data-testid="execution-mode-git-worktree-button"]'
+      : '[data-testid="execution-mode-current-workspace-button"]'
+  await control.command('clickWhenEnabled', executionModeSelector)
   await control.command('fill', COMPOSER_SELECTOR, { value: prompt })
   await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
   const rowTestId = await waitForNewTaskRow(control, knownRows, timeoutMs)
@@ -177,7 +178,7 @@ async function ensureRuntimeProjectExpanded(control, timeoutMs) {
   return { requireVisible, sidebarSelector }
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   let active = false
   const requests = []
   const releases = new Map()
@@ -252,6 +253,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await prepareScreenshot(control, null)
       await captureScreenshot(control, 'runtime-queue-01-limit-one.png', 'body')
       await control.command('click', '[data-testid="settings-back-button"]')
+      await createSingleRootLocalProject(control, workspacePath, 'runtime-task-queue')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
 
       const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
@@ -445,6 +447,52 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       )
       await prepareScreenshot(control)
       await captureScreenshot(control, 'runtime-queue-05-drained-in-order.png', 'body')
+
+      const fourth = await sendNewTask(control, knownRows, PROMPTS.fourth, uiTimeoutMs)
+      await waitForRequestCount(requests, 4, uiTimeoutMs)
+      await control.command(
+        'waitFor',
+        `${sidebarSelector} [data-testid="runtime-local-task-running-${fourth.taskId}"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: sidebarVisible,
+        }
+      )
+      const fifth = await sendNewTask(control, knownRows, PROMPTS.fifth, uiTimeoutMs)
+      await control.command(
+        'waitFor',
+        `${sidebarSelector} [data-testid="runtime-local-task-queued-${fifth.taskId}"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: sidebarVisible,
+        }
+      )
+      assert.equal(requests.length, 4, 'The regression task did not wait at concurrency one')
+
+      await control.command('click', '[data-testid="settings-button"]')
+      await control.command('click', '[data-testid="settings-menu-button"]')
+      await control.command('waitFor', '[data-testid="general-max-concurrent-tasks-select"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('select', '[data-testid="general-max-concurrent-tasks-select"]', {
+        value: '2',
+      })
+      await waitForRequestCount(requests, 5, uiTimeoutMs)
+      await control.command('click', '[data-testid="settings-back-button"]')
+      const { requireVisible: refreshedSidebarVisible, sidebarSelector: refreshedSidebarSelector } =
+        await ensureRuntimeProjectExpanded(control, uiTimeoutMs)
+      await control.command(
+        'waitFor',
+        `${refreshedSidebarSelector} [data-testid="runtime-local-task-running-${fifth.taskId}"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: refreshedSidebarVisible,
+        }
+      )
+      await prepareScreenshot(control)
+      await captureScreenshot(control, 'runtime-queue-06-limit-increase-drained.png', 'body')
+      releases.get(PROMPTS.fourth)?.()
+      releases.get(PROMPTS.fifth)?.()
       active = false
     },
 

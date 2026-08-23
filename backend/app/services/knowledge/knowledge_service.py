@@ -987,23 +987,10 @@ class KnowledgeService:
             True if deleted, False if not found
 
         Raises:
-            ValueError: If permission denied or knowledge base has documents
+            ValueError: If permission denied, a non-generated document would be lost,
+                or the code wiki still has a generation in progress
         """
         from app.services.share import knowledge_share_service
-
-        # First, try to get the KB without permission check to check namespace
-        kb = (
-            db.query(Kind)
-            .filter(
-                Kind.id == knowledge_base_id,
-                Kind.kind == "KnowledgeBase",
-                Kind.is_active == True,
-            )
-            .first()
-        )
-
-        if not kb:
-            return False
 
         kb, has_access = KnowledgeService.get_knowledge_base(
             db, knowledge_base_id, user_id
@@ -1015,13 +1002,37 @@ class KnowledgeService:
         ):
             raise ValueError("You do not have permission to manage this knowledge base")
 
-        # Check if knowledge base has documents - prevent deletion if documents exist
-        document_count = KnowledgeService.get_document_count(db, knowledge_base_id)
-        if document_count > 0:
+        kb = KnowledgeService._lock_active_knowledge_base(db, kb)
+        if not kb:
+            return False
+
+        documents = (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.kind_id == knowledge_base_id)
+            .all()
+        )
+        is_code_wiki = KnowledgeService._validate_code_wiki_deletion(db, kb, documents)
+        if documents and not is_code_wiki:
             raise ValueError(
-                f"Cannot delete knowledge base with {document_count} document(s). "
+                f"Cannot delete knowledge base with {len(documents)} document(s). "
                 "Please delete all documents first."
             )
+
+        attachment_refs = {
+            (attachment_id, document.user_id)
+            for document in documents
+            for attachment_id in (
+                document.attachment_id,
+                document.converted_attachment_id,
+            )
+            if attachment_id
+        }
+        purge_spec = KnowledgeService._build_code_wiki_purge_spec(
+            db, kb, user_id, documents
+        )
+
+        for document in documents:
+            db.delete(document)
 
         # Delete all folders belonging to this knowledge base to prevent orphaned records.
         # Folders have no FK constraint on kind_id, so they must be cleaned up explicitly.
@@ -1048,7 +1059,141 @@ class KnowledgeService:
         # Physically delete the knowledge base
         db.delete(kb)
         db.commit()
+        KnowledgeService._cleanup_deleted_code_wiki_resources(
+            db, knowledge_base_id, purge_spec, attachment_refs
+        )
         return True
+
+    @staticmethod
+    def _lock_active_knowledge_base(
+        db: Session, knowledge_base: Kind
+    ) -> Optional[Kind]:
+        """Lock an active KB so document writes and deletion serialize."""
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base.id,
+                Kind.kind == "KnowledgeBase",
+                Kind.namespace == knowledge_base.namespace,
+                Kind.name == knowledge_base.name,
+                Kind.user_id == knowledge_base.user_id,
+                Kind.is_active.is_(True),
+            )
+            .with_for_update()
+            .first()
+        )
+
+    @staticmethod
+    def _validate_code_wiki_deletion(
+        db: Session, knowledge_base: Kind, documents: list[KnowledgeDocument]
+    ) -> bool:
+        """Ensure a Code Wiki has no live run or user-owned documents."""
+        spec = (knowledge_base.json or {}).get("spec", {})
+        is_code_wiki = spec.get("kbType") == KnowledgeBaseType.CODE_WIKI.value
+        if not is_code_wiki:
+            return False
+
+        from app.models.wiki import WikiGeneration, WikiGenerationStatus
+
+        in_flight = (
+            db.query(WikiGeneration.id)
+            .filter(
+                WikiGeneration.kind_id == knowledge_base.id,
+                WikiGeneration.status.in_(
+                    [WikiGenerationStatus.PENDING, WikiGenerationStatus.RUNNING]
+                ),
+            )
+            .first()
+        )
+        if in_flight:
+            raise ValueError(
+                "Cannot delete code wiki while a generation is in progress"
+            )
+
+        if any(
+            not KnowledgeService._is_generated_code_wiki_document(document)
+            for document in documents
+        ):
+            raise ValueError(
+                "Cannot delete Code Wiki because it contains manually added "
+                "documents. Remove or move them first."
+            )
+        return True
+
+    @staticmethod
+    def _build_code_wiki_purge_spec(
+        db: Session,
+        knowledge_base: Kind,
+        user_id: int,
+        documents: list[KnowledgeDocument],
+    ) -> Optional[Any]:
+        """Build the RAG cleanup request before deleting generated pages."""
+        spec = (knowledge_base.json or {}).get("spec", {})
+        if not documents or not spec.get("retrievalConfig"):
+            return None
+
+        from app.services.rag.runtime_resolver import RagRuntimeResolver
+
+        try:
+            return RagRuntimeResolver().build_public_purge_index_runtime_spec(
+                db=db,
+                knowledge_base_id=knowledge_base.id,
+                user_id=user_id,
+                user_name=None,
+            )
+        except Exception as exc:
+            batch_logger.warning(
+                "Could not prepare RAG cleanup for code wiki %s: %s",
+                knowledge_base.id,
+                exc,
+            )
+            return None
+
+    @staticmethod
+    def _cleanup_deleted_code_wiki_resources(
+        db: Session,
+        knowledge_base_id: int,
+        purge_spec: Optional[Any],
+        attachment_refs: set[tuple[int, int]],
+    ) -> None:
+        """Clean external resources after the Code Wiki database deletion commits."""
+        if purge_spec is not None:
+            try:
+                _run_async_in_new_loop(
+                    _get_delete_gateway().purge_knowledge_index(purge_spec, db=db)
+                )
+            except Exception as exc:
+                batch_logger.error(
+                    "Failed to delete RAG index for code wiki %s: %s",
+                    knowledge_base_id,
+                    exc,
+                    exc_info=True,
+                )
+
+        if not attachment_refs:
+            return
+
+        from app.services.context import context_service
+
+        for attachment_id, owner_id in attachment_refs:
+            try:
+                context_service.delete_context(
+                    db=db,
+                    context_id=attachment_id,
+                    user_id=owner_id,
+                )
+            except Exception as exc:
+                batch_logger.error(
+                    "Failed to delete generated attachment %s: %s",
+                    attachment_id,
+                    exc,
+                    exc_info=True,
+                )
+
+    @staticmethod
+    def _is_generated_code_wiki_document(document: KnowledgeDocument) -> bool:
+        """Whether deletion may remove this Code Wiki document automatically."""
+        return document.origin == ContentOrigin.GENERATED.value
 
     @staticmethod
     def update_knowledge_base_type(
@@ -1420,6 +1565,10 @@ class KnowledgeService:
             raise ValueError(
                 "You do not have permission to add documents to this knowledge base"
             )
+
+        kb = KnowledgeService._lock_active_knowledge_base(db, kb)
+        if not kb:
+            raise ValueError("Knowledge base not found or access denied")
 
         validated_folder_id = data.folder_id
 

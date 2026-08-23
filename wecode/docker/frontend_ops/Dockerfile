@@ -14,6 +14,7 @@ RUN corepack enable && corepack prepare pnpm@10.34.3 --activate
 RUN pnpm config set registry https://registry.npmmirror.com
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY frontend/package.json ./frontend/package.json
 COPY frontend/scripts ./frontend/scripts
 COPY frontend/.husky ./frontend/.husky

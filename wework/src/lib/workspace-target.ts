@@ -39,7 +39,12 @@ interface ResolveProjectRuntimeWorkspaceTargetsOptions {
 
 export interface RuntimeWorkspaceContext {
   project: ProjectWithTasks | null
-  workspaceTarget: WorkspaceTarget
+  workspaceTarget: WorkspaceTarget | null
+}
+
+export interface RuntimeTaskSource {
+  workspace: RuntimeDeviceWorkspace
+  task: RuntimeTaskSummary
 }
 
 export function createLocalFileWorkspaceTarget(
@@ -161,15 +166,28 @@ export function resolveProjectRuntimeWorkspaceTargets({
 function workspaceTargetFromRuntimeTask(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary
-): WorkspaceTarget {
-  const workspacePath =
+): WorkspaceTarget | null {
+  const taskWorkspacePath = task.workspacePath.trim()
+  const groupWorkspacePath = workspace.workspacePath.trim()
+  const queuedIndependentWorkspace =
+    task.status === 'queued' &&
+    (task.workspaceKind === 'worktree' ||
+      workspace.workspaceKind === 'worktree' ||
+      Boolean(task.worktreeId) ||
+      Boolean(workspace.worktreeId) ||
+      (Boolean(taskWorkspacePath) &&
+        Boolean(groupWorkspacePath) &&
+        taskWorkspacePath !== groupWorkspacePath))
+  if (queuedIndependentWorkspace) return null
+
+  const resolvedWorkspacePath =
     workspace.workspaceKind === 'worktree' || workspace.worktreeId
       ? workspace.workspacePath
       : task.workspacePath || workspace.workspacePath
 
   return {
     deviceId: workspaceTargetDeviceId(workspace),
-    path: workspacePath,
+    path: resolvedWorkspacePath,
     source: 'runtime',
     taskId: task.taskId,
     ...(workspace.workspaceSource !== undefined
@@ -192,6 +210,26 @@ function runtimeTaskMatches(
 
   const taskPath = task.workspacePath || workspace.workspacePath
   return addressPath === taskPath || addressPath === workspace.workspacePath
+}
+
+export function resolveRuntimeTaskSource({
+  currentRuntimeTask,
+  runtimeWork,
+}: Pick<
+  ResolveRuntimeWorkspaceContextOptions,
+  'currentRuntimeTask' | 'runtimeWork'
+>): RuntimeTaskSource | null {
+  if (!currentRuntimeTask) return null
+  for (const workspace of [
+    ...(runtimeWork?.projects.flatMap(project => project.deviceWorkspaces) ?? []),
+    ...(runtimeWork?.chats ?? []),
+  ]) {
+    const task = workspace.tasks.find(item =>
+      runtimeTaskMatches(currentRuntimeTask, workspace, item)
+    )
+    if (task) return { workspace, task }
+  }
+  return null
 }
 
 export function resolveRuntimeWorkspaceContext({
@@ -231,6 +269,10 @@ export function resolveRuntimeWorkspaceContext({
 
   const workspacePath = currentRuntimeTask.workspacePath?.trim()
   if (!workspacePath) return null
+  if (currentRuntimeTask.workspaceKind === 'worktree' || currentRuntimeTask.worktreeId) {
+    return null
+  }
+
   return {
     project: null,
     workspaceTarget: {

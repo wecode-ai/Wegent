@@ -268,6 +268,14 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
     setShowDocument(true)
   }, [])
 
+  const handleChatEmptyStateChange = useCallback((empty: boolean) => {
+    setChatIsEmpty(empty)
+    // A page selected while the chat was empty sets this flag even though no overlay
+    // exists yet. The first message replaces that empty state; it must also clear the
+    // stale request to read or the document immediately covers the new conversation.
+    if (!empty) setShowDocument(false)
+  }, [])
+
   const handleRegenerate = useCallback(async () => {
     setConfirmingRegenerate(false)
     setRegenerating(true)
@@ -506,7 +514,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                       knownPaths={knownPaths}
                       onNavigate={openPage}
                       onScrollHostChange={setScrollHost}
-                      onEmptyStateChange={setChatIsEmpty}
+                      onEmptyStateChange={handleChatEmptyStateChange}
                     />
                   }
                 />

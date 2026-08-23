@@ -4,6 +4,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const BROWSER_INPUT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
@@ -48,6 +50,7 @@ const BROWSER_ANNOTATE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="wo
 const BROWSER_ANNOTATION_CLOSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotation-close-button"]`
 const BROWSER_ANNOTATION_CLEAR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotation-clear-button"]`
 const BROWSER_ANNOTATION_COUNT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotation-count"]`
+const BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotation-original-view-button"]`
 const BROWSER_ANNOTATION_DISCARD_CONFIRM_SELECTOR =
   '[data-testid="workspace-browser-annotation-discard-confirm-button"]'
 const BROWSER_CLEAR_STARTED_TEXT = '开始清除浏览数据'
@@ -61,6 +64,7 @@ const ANNOTATION_COMMENT = 'Make this target more prominent'
 const ANNOTATION_NAVIGATION_COMMENT = 'This comment must not survive navigation'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoDir = resolve(scriptDir, '..', '..', '..', '..')
+let desktopScenarioExecutorBinary = null
 
 async function readBrowserPanelLabel(control, scopeSelector, timeoutMs) {
   const selector = `${scopeSelector} ${WORKBENCH_BROWSER_LABEL_SELECTOR}`
@@ -353,6 +357,7 @@ async function waitForRuntimeTaskId(control, timeoutMs) {
 
 async function withBrowserMcp(identity, label, callback) {
   const executorPath =
+    desktopScenarioExecutorBinary ||
     process.env.WEWORK_E2E_EXECUTOR_BIN ||
     join(
       repoDir,
@@ -469,6 +474,9 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
   let cacheResourceRequests = 0
 
   return {
+    setExecutorBinary(path) {
+      desktopScenarioExecutorBinary = path
+    },
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === REDIRECT_PATH) {
         response.writeHead(302, { location: FIXTURE_PATH })
@@ -511,6 +519,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
     },
 
     async verify(control) {
+      await ensureExperimentalFeaturesEnabled(control)
       const fixtureUrl = `${control.url}${FIXTURE_PATH}`
       const redirectUrl = `${control.url}${REDIRECT_PATH}`
       const annotationFixtureUrl = `${control.url}${ANNOTATION_FIXTURE_PATH}`
@@ -775,6 +784,79 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         timeoutMs: 5_000,
       })
       assert.equal(readyWait.ok, true, `Bridge fixture wait failed: ${JSON.stringify(readyWait)}`)
+
+      const fixtureServerUrl = new URL(control.url)
+      const schemeLessLocalhostUrl = `localhost:${fixtureServerUrl.port}${FIXTURE_PATH}`
+      const normalizedLocalhostUrl = `http://${schemeLessLocalhostUrl}`
+      assert.equal(
+        await control.command('getAttribute', BROWSER_INPUT_SELECTOR, {
+          value: 'autocapitalize',
+        }),
+        'none',
+        'The browser address bar did not disable automatic capitalization'
+      )
+      assert.equal(
+        await control.command('getAttribute', BROWSER_INPUT_SELECTOR, {
+          value: 'autocomplete',
+        }),
+        'off',
+        'The browser address bar did not disable autocomplete'
+      )
+      assert.equal(
+        await control.command('getAttribute', BROWSER_INPUT_SELECTOR, {
+          value: 'autocorrect',
+        }),
+        'off',
+        'The browser address bar did not disable automatic correction'
+      )
+      assert.equal(
+        await control.command('getAttribute', BROWSER_INPUT_SELECTOR, {
+          value: 'spellcheck',
+        }),
+        'false',
+        'The browser address bar did not disable spell checking'
+      )
+      await control.command('fill', BROWSER_INPUT_SELECTOR, {
+        value: schemeLessLocalhostUrl,
+      })
+      assert.equal(
+        await control.command('getValue', BROWSER_INPUT_SELECTOR),
+        schemeLessLocalhostUrl,
+        'The browser address bar changed lowercase localhost before submission'
+      )
+      await control.command('submit', BROWSER_INPUT_SELECTOR)
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        normalizedLocalhostUrl,
+        uiTimeoutMs,
+        'The browser address bar did not default a scheme-less localhost URL to HTTP'
+      )
+      const localhostWait = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: READY_TEXT } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        localhostWait.ok,
+        true,
+        `The HTTP localhost fixture did not load: ${JSON.stringify(localhostWait)}`
+      )
+      const localhostLocation = await bridgeCall({
+        action: 'evaluate',
+        expression: 'location.href',
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        localhostLocation.ok,
+        true,
+        `HTTP localhost location evaluation failed: ${JSON.stringify(localhostLocation)}`
+      )
+      assert.equal(
+        localhostLocation.value,
+        normalizedLocalhostUrl,
+        'The embedded browser did not navigate to the normalized HTTP URL'
+      )
       await new Promise(resolve => setTimeout(resolve, 300))
 
       const pendingAgentWait = bridgeCall({
@@ -1036,6 +1118,72 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         targetColor.value,
         'rgb(239, 68, 68)',
         'Annotation adjustment did not update the target'
+      )
+      await control.command('waitFor', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      const originalViewPressedBefore = await control.command(
+        'getAttribute',
+        BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR,
+        { value: 'aria-pressed' }
+      )
+      assert.equal(
+        originalViewPressedBefore,
+        'false',
+        'Hold-to-view-original button should start unpressed'
+      )
+      await control.command('pointerDownOnly', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR)
+      const originalViewPressedDuring = await control.command(
+        'getAttribute',
+        BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR,
+        { value: 'aria-pressed' }
+      )
+      assert.equal(
+        originalViewPressedDuring,
+        'true',
+        'Hold-to-view-original button did not stay pressed while held'
+      )
+      const originalViewTargetColor = await bridgeCall({
+        action: 'evaluate',
+        expression: "document.querySelector('#annotation-target')?.style.color || ''",
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        originalViewTargetColor.ok,
+        true,
+        `Original view target color evaluation failed: ${JSON.stringify(originalViewTargetColor)}`
+      )
+      assert.equal(
+        originalViewTargetColor.value,
+        '',
+        'Hold-to-view-original did not restore the original target style'
+      )
+      await control.command('pointerUp', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR)
+      await control.command('click', BROWSER_ANNOTATION_COUNT_SELECTOR)
+      const originalViewPressedAfter = await control.command(
+        'getAttribute',
+        BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR,
+        { value: 'aria-pressed' }
+      )
+      assert.equal(
+        originalViewPressedAfter,
+        'false',
+        'Hold-to-view-original button changed pressed state after focus loss'
+      )
+      const replayedTargetColor = await bridgeCall({
+        action: 'evaluate',
+        expression: "document.querySelector('#annotation-target')?.style.color || ''",
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        replayedTargetColor.ok,
+        true,
+        `Replayed target color evaluation failed: ${JSON.stringify(replayedTargetColor)}`
+      )
+      assert.equal(
+        replayedTargetColor.value,
+        'rgb(239, 68, 68)',
+        'Annotation adjustment did not replay after releasing original view'
       )
       const annotationScreenshot =
         process.platform === 'darwin'

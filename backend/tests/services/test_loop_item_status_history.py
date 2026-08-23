@@ -95,7 +95,9 @@ def test_drag_records_user_update(test_db, test_user) -> None:
     assert last["by_user_id"] == test_user.id
 
 
-def test_ai_completed_reconcile_records_entry(test_db, test_user) -> None:
+def test_ai_completed_read_projects_state_without_mutating_history(
+    test_db, test_user
+) -> None:
     project = _make_project(test_db, test_user)
     item = _create_item(test_db, project, test_user)
     item.metadata_json = {
@@ -123,17 +125,14 @@ def test_ai_completed_reconcile_records_entry(test_db, test_user) -> None:
     test_db.commit()
 
     values = loop_item_service.response_values(test_db, item, test_user.id)
-    history = values["status_history"]
-    assert len(history) == 2
-    last = history[-1]
-    assert last["trigger"] == "ai_completed"
-    assert last["to_status"] == "in_review"
-    assert last["to_status_name"] == "待确认"
-    assert last["by_user_id"] is None
+    assert values["ai_state"]["status"] == "succeeded"
+    assert len(values["status_history"]) == 1
+    assert values["status"] == "inbox"
 
     test_db.refresh(item)
     values_again = loop_item_service.response_values(test_db, item, test_user.id)
-    assert len(values_again["status_history"]) == 2
+    assert len(values_again["status_history"]) == 1
+    assert item.status == "inbox"
 
 
 def test_creator_only_project_still_records(test_db, test_user) -> None:
@@ -213,7 +212,7 @@ def test_status_removal_bulk_clear_appends_entries(test_db, test_user) -> None:
     assert last["by_user_id"] == test_user.id
 
 
-def test_task_started_binding_records_entry(test_db, test_user) -> None:
+def test_task_binding_does_not_claim_runtime_has_started(test_db, test_user) -> None:
     project = _make_project(test_db, test_user)
     item = _create_item(test_db, project, test_user)
 
@@ -229,10 +228,6 @@ def test_task_started_binding_records_entry(test_db, test_user) -> None:
     )
     test_db.refresh(item)
 
-    assert item.status == "in_progress"
+    assert item.status == "inbox"
     history = _history(item)
-    assert len(history) == 2
-    last = history[-1]
-    assert last["trigger"] == "task_started"
-    assert last["to_status"] == "in_progress"
-    assert last["by_user_id"] == test_user.id
+    assert len(history) == 1

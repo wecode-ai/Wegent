@@ -18,7 +18,10 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.device import DeviceConnectionMode, DeviceType
-from app.services.device.local_provider import LocalDeviceProvider
+from app.services.device.local_provider import (
+    LocalDeviceProvider,
+    runtime_capacity_slot_values,
+)
 from app.services.device.version_service import executor_version_service
 
 
@@ -94,6 +97,9 @@ class CloudDeviceProvider(LocalDeviceProvider):
             "runtime_transfer_host": spec.get("runtimeTransferHost"),
             "runtime_instance_id": spec.get("runtimeInstanceId"),
             "app_device_id": spec.get("appDeviceId"),
+            "runtime_features": (
+                online_info.get("runtime_features") if online_info else None
+            ),
             "cloud_config": spec.get("cloudConfig"),
             "bind_shell": spec.get("bindShell", "claudecode"),
         }
@@ -106,7 +112,6 @@ class CloudDeviceProvider(LocalDeviceProvider):
     ) -> List[Dict[str, Any]]:
         """List all cloud devices for a user."""
         from app.core.cache import cache_manager
-        from app.schemas.device import MAX_DEVICE_SLOTS
 
         devices = (
             db.query(Kind)
@@ -159,6 +164,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
             running_task_ids = []
             if online_info and "running_task_ids" in online_info:
                 running_task_ids = online_info["running_task_ids"]
+            slot_used, slot_max = runtime_capacity_slot_values(online_info)
 
             executor_version = (
                 online_info.get("executor_version") if online_info else None
@@ -187,8 +193,8 @@ class CloudDeviceProvider(LocalDeviceProvider):
                     "last_heartbeat": (
                         online_info.get("last_heartbeat") if online_info else None
                     ),
-                    "slot_used": len(running_task_ids),
-                    "slot_max": MAX_DEVICE_SLOTS,
+                    "slot_used": slot_used,
+                    "slot_max": slot_max,
                     "running_tasks": [],
                     "executor_version": executor_version,
                     "latest_version": latest_version,
@@ -197,6 +203,9 @@ class CloudDeviceProvider(LocalDeviceProvider):
                     "runtime_transfer_host": spec.get("runtimeTransferHost"),
                     "runtime_instance_id": spec.get("runtimeInstanceId"),
                     "app_device_id": spec.get("appDeviceId"),
+                    "runtime_features": (
+                        online_info.get("runtime_features") if online_info else None
+                    ),
                     "cloud_config": spec.get("cloudConfig"),
                     "bind_shell": spec.get("bindShell", "claudecode"),
                 }

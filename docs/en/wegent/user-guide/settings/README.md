@@ -19,6 +19,7 @@ The Settings module provides configuration functionality for the Wegent system, 
 | [Keyboard Shortcuts](./keyboard-shortcuts.md)           | Manage local shortcuts for the Wework desktop app              |
 | [Desktop App Preferences](./desktop-app-preferences.md) | Configure Wework desktop launch, background, and tray behavior |
 | [Browser settings](./browser-settings.md)               | Configure built-in browser links, privacy, and downloads       |
+| [Workbench tabs](./workspace-tabs.md)                    | Configure fixed, startup, and temporary regular tabs            |
 
 ---
 

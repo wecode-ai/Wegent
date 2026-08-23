@@ -5,11 +5,30 @@ export interface RuntimeTaskCompletionNotification {
   body: string
 }
 
-export async function sendRuntimeTaskCompletionNotification({
+interface SystemNotificationTestState {
+  notifications: RuntimeTaskCompletionNotification[]
+}
+
+function systemNotificationTestState(): SystemNotificationTestState | null {
+  if (import.meta.env.VITE_WEWORK_E2E !== 'true') return null
+  const root = globalThis as typeof globalThis & {
+    __WEWORK_E2E_SYSTEM_NOTIFICATIONS__?: SystemNotificationTestState
+  }
+  root.__WEWORK_E2E_SYSTEM_NOTIFICATIONS__ ??= { notifications: [] }
+  return root.__WEWORK_E2E_SYSTEM_NOTIFICATIONS__
+}
+
+export async function sendSystemNotification({
   title,
   body,
 }: RuntimeTaskCompletionNotification): Promise<void> {
   if (!isTauriRuntime()) return
+
+  const testState = systemNotificationTestState()
+  if (testState) {
+    testState.notifications.push({ title, body })
+    return
+  }
 
   try {
     const notification = await import('@tauri-apps/plugin-notification')
@@ -22,6 +41,6 @@ export async function sendRuntimeTaskCompletionNotification({
 
     notification.sendNotification({ title, body })
   } catch (error) {
-    console.error('[Wework] Failed to send task completion notification', error)
+    console.error('[Wework] Failed to send system notification', error)
   }
 }

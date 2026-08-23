@@ -1,5 +1,7 @@
 import { getRuntimeConfig } from '@/config/runtime'
 import type { DesktopAppKey } from '@/components/layout/DesktopAppSwitcher'
+import { getActiveWorkbenchAppRegistry } from '@/plugin-runtime/apps'
+import { CORE_WORKBENCH_APPS } from '@/plugin-runtime/core-apps-data'
 
 function joinBrowserPath(basePath: string | undefined, path: string): string {
   const normalizedBasePath = !basePath || basePath === '/' ? '' : basePath.replace(/\/+$/, '')
@@ -24,16 +26,11 @@ export function navigateTo(path: string) {
 }
 
 export function resolveDesktopAppRoute(app: DesktopAppKey): string {
-  switch (app) {
-    case 'wework':
-      return '/'
-    case 'todo':
-      return '/todo'
-    case 'wegent':
-      return '/app/wegent'
-    default:
-      return '/'
-  }
+  const registry = getActiveWorkbenchAppRegistry()
+  const contribution =
+    registry.resolve(app) ?? CORE_WORKBENCH_APPS.find(candidate => candidate.key === app)
+  if (!contribution) return '/'
+  return contribution.mode === 'native' ? contribution.path || '/' : `/app/${contribution.key}`
 }
 
 export interface RuntimeTaskRoute {

@@ -1,20 +1,54 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
+import { Archive, Bot, CalendarDays, Ellipsis, Flag, ListTodo } from 'lucide-react'
 import {
-  Archive,
-  Bot,
-  CalendarDays,
-  ChevronRight,
-  Ellipsis,
-  Flag,
-  ListTodo,
-  Plus,
-} from 'lucide-react'
-import { useState } from 'react'
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
+import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
+import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
+import { AssistantMessage } from '@/components/chat/MessageList'
+import { AssistantThinkingIndicator } from '@/components/chat/AssistantThinkingIndicator'
+import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
+import {
+  getToolActivityFilePaths,
+  getToolActivityKind,
+  getToolActivitySearchItem,
+} from '@/components/chat/blocks/toolBlockActivity'
+import { getInputField } from '@/components/chat/blocks/toolBlockKinds'
 import { Tooltip } from '@/components/ui/tooltip'
+import { HoverCard } from '@/components/ui/hover-card'
+import {
+  getRuntimeConversationLiveActivitySnapshot,
+  getRuntimeConversationMessages,
+  subscribeRuntimeConversation,
+} from '@/features/workbench/runtimeConversationCache'
+import {
+  runtimeLiveActivityFromSnapshot,
+  type RuntimeLiveActivity,
+  type RuntimeLiveToolActivity,
+} from '@/features/workbench/runtimeThinking'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import type { RuntimeTaskAddress } from '@/types/api'
+import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
+import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
+import {
+  autoRepairStatus,
+  stoppedTaskNeedsAttention,
+} from '@/features/workbench/changeRequestStatus'
+import { isLoopItemExecutionActive } from './cloudMyWorkModel'
+import {
+  finalAssistantMessagesText,
+  latestResponseLine,
+  latestAssistantMessage,
+} from './runtimeTaskResponsePreview'
 import { priorityBadgeClasses } from './todoShared'
 
 export interface BoardCardDisplaySettings {
@@ -45,14 +79,22 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
   const showFooter = display.showPriority || display.showDate || display.showAssignee
   const assigneeName =
     item.assignee_name ||
+    item.assignee_team_name ||
     (item.assignee_agent_id
       ? item.assignee_agent_name || agentNames?.[item.assignee_agent_id] || null
       : null)
 
   return (
     <>
-      <span className="line-clamp-1 pr-5 text-base font-medium leading-5 text-text-primary">
-        {item.title}
+      <span className="flex min-w-0 items-center gap-2 pr-5 text-base font-medium leading-5 text-text-primary">
+        {item.is_unread ? (
+          <span
+            data-testid={`cloud-todo-card-unread-${item.id}`}
+            className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+            aria-hidden="true"
+          />
+        ) : null}
+        <span className="line-clamp-1 min-w-0">{item.title}</span>
       </span>
       {item.description ? (
         <span className="mt-1 line-clamp-2 text-sm leading-[18px] text-text-secondary">
@@ -108,7 +150,9 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
                   className="inline-flex min-w-0 items-center gap-1.5"
                 >
                   <span className="sr-only">负责人</span>
-                  {item.assignee_agent_id ? <Bot className="h-3.5 w-3.5 shrink-0" /> : null}
+                  {item.assignee_agent_id || item.assignee_team_id ? (
+                    <Bot className="h-3.5 w-3.5 shrink-0" />
+                  ) : null}
                   <span className="truncate">{assigneeName}</span>
                 </span>
               </Tooltip>
@@ -122,34 +166,96 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
   )
 }
 
+export interface CloudTodoBoardTaskBinding {
+  id: number
+  device_id: string
+  task_id: string
+  task_title: string | null
+  running: boolean
+  changeRequestTarget?: TaskChangeRequestTarget | null
+  finalResponsePreview?: string | null
+  finalResponseMessage?: WorkbenchMessage | null
+  finalResponseLoaded?: boolean
+}
+
 interface CloudTodoBoardCardProps {
   item: CloudLoopItem
-  childCount: number
+  taskBindings?: CloudTodoBoardTaskBinding[]
   onClick: () => void
-  onAddChild: () => void
-  onOpenChildren: () => void
   onArchive: () => void
   onOpenActivity?: () => void
   display: BoardCardDisplaySettings
   agentNames?: Record<string, string>
   dragDisabled?: boolean
   archiveDisabled?: boolean
+  changeRequestMonitor?: ChangeRequestMonitor | null
+  onContinueChangeRequestRepair?: (
+    binding: CloudTodoBoardTaskBinding,
+    snapshot: TaskChangeRequestSnapshot
+  ) => Promise<void>
 }
 
 export function CloudTodoBoardCard({
   item,
-  childCount,
+  taskBindings = [],
   onClick,
-  onAddChild,
-  onOpenChildren,
   onArchive,
+  onOpenActivity,
   display,
   agentNames,
   dragDisabled = false,
   archiveDisabled = false,
+  changeRequestMonitor = null,
+  onContinueChangeRequestRepair,
 }: CloudTodoBoardCardProps) {
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
+  const hasActiveTask = isLoopItemExecutionActive(item)
+  const runningTaskBinding = taskBindings.find(binding => binding.running)
+  const currentTaskBinding = runningTaskBinding ?? taskBindings[0]
+  const changeRequestSnapshot = useTaskChangeRequest(
+    changeRequestMonitor,
+    currentTaskBinding?.changeRequestTarget ?? null
+  )
+  const showCurrentTask = Boolean(
+    currentTaskBinding &&
+    (currentTaskBinding.running ||
+      hasActiveTask ||
+      item.status === 'in_review' ||
+      stoppedTaskNeedsAttention(changeRequestSnapshot?.changeRequest ?? null))
+  )
+  const [repairingChangeRequest, setRepairingChangeRequest] = useState(false)
+  const currentTaskAddress = useMemo<RuntimeTaskAddress | null>(
+    () =>
+      currentTaskBinding
+        ? {
+            deviceId: currentTaskBinding.device_id,
+            taskId: currentTaskBinding.task_id,
+          }
+        : null,
+    [currentTaskBinding]
+  )
+  const currentActivityAddress = useMemo<RuntimeTaskAddress | null>(
+    () =>
+      currentTaskBinding && (currentTaskBinding.running || hasActiveTask)
+        ? {
+            deviceId: currentTaskBinding.device_id,
+            taskId: currentTaskBinding.task_id,
+          }
+        : null,
+    [currentTaskBinding, hasActiveTask]
+  )
+  const currentActivity = useRuntimeTaskActivity(currentActivityAddress)
+  const currentTaskMessage = useRuntimeTaskLatestAssistantMessage(currentTaskAddress)
+  const cachedFinalResponsePreview = useRuntimeTaskFinalResponse(
+    item.status === 'in_review' ? currentTaskAddress : null
+  )
+  const finalResponseText = currentTaskBinding?.finalResponsePreview || cachedFinalResponsePreview
+  const finalResponsePreview = finalResponseText ? latestResponseLine(finalResponseText) : null
+  const finalResponseLoaded =
+    currentTaskBinding?.finalResponseLoaded || cachedFinalResponsePreview !== null
+  const showFinalResponsePreview =
+    item.status === 'in_review' && finalResponseLoaded && Boolean(finalResponsePreview)
   const {
     attributes,
     listeners,
@@ -171,7 +277,7 @@ export function CloudTodoBoardCard({
       data-testid={`cloud-todo-card-drop-${item.id}`}
       style={{ transform: CSS.Translate.toString(transform) }}
       className={cn(
-        'group relative w-full touch-none overflow-hidden rounded-xl border border-border bg-background text-left shadow-sm transition hover:-translate-y-px hover:border-text-primary/15 hover:shadow-md',
+        'group relative h-fit w-full touch-none overflow-hidden rounded-xl border border-border bg-background text-left shadow-sm transition hover:-translate-y-px hover:border-text-primary/15 hover:shadow-md',
         isDragging && 'opacity-25 shadow-none',
         isOver && !isDragging && 'border-focus ring-1 ring-focus/50'
       )}
@@ -227,47 +333,371 @@ export function CloudTodoBoardCard({
         <CloudTodoCardContent item={item} display={display} agentNames={agentNames} />
       </button>
 
-      <div className="relative border-t border-dashed border-text-primary/15 bg-muted/30 px-3.5 py-2 transition-colors hover:bg-muted/50 focus-within:bg-muted/50 before:pointer-events-none before:absolute before:-left-2 before:-top-2 before:z-10 before:h-4 before:w-4 before:rounded-full before:bg-muted after:pointer-events-none after:absolute after:-right-2 after:-top-2 after:z-10 after:h-4 after:w-4 after:rounded-full after:bg-muted">
-        {childCount > 0 ? (
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              data-testid={`cloud-todo-open-children-${item.id}`}
-              onClick={onOpenChildren}
-              className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-0.5 text-xs font-medium text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50"
-            >
-              <ListTodo className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">子任务 </span>
-              <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-text-primary/5 px-1 text-xs font-medium text-text-secondary">
-                {childCount}
-              </span>
-              <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0" />
-            </button>
-            <button
-              type="button"
-              data-testid={`cloud-todo-card-add-child-${item.id}`}
-              disabled={item.can_edit === false}
-              onClick={onAddChild}
-              className="flex h-7 shrink-0 items-center gap-1 border-l border-border/60 pl-3 text-xs text-text-muted transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 disabled:hidden"
-              aria-label="新建子任务"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              添加子任务
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            data-testid={`cloud-todo-card-add-child-${item.id}`}
-            disabled={item.can_edit === false}
-            onClick={onAddChild}
-            className="flex h-7 w-full items-center gap-1.5 rounded-md px-1 text-xs text-text-muted transition hover:bg-muted hover:text-text-primary disabled:hidden"
+      {currentTaskBinding && showCurrentTask ? (
+        <HoverCard
+          testId={`cloud-todo-card-progress-popup-${item.id}`}
+          interactive
+          openOnFocus
+          estimatedWidth={360}
+          estimatedHeight={240}
+          cardClassName="w-[360px] max-w-[calc(100vw-1rem)]"
+          content={
+            <RuntimeTaskProgressPopup
+              item={item}
+              binding={currentTaskBinding}
+              activity={currentActivity}
+              message={
+                currentActivity.active
+                  ? currentTaskMessage
+                  : (currentTaskBinding.finalResponseMessage ?? currentTaskMessage)
+              }
+              finalResponseText={finalResponseText}
+            />
+          }
+        >
+          <div
+            role={onOpenActivity ? 'button' : undefined}
+            tabIndex={onOpenActivity ? 0 : undefined}
+            aria-label={
+              onOpenActivity
+                ? currentTaskBinding.task_title || currentTaskBinding.task_id
+                : undefined
+            }
+            data-testid={`cloud-todo-card-tasks-${item.id}`}
+            onClick={onOpenActivity}
+            onKeyDown={event => {
+              if (!onOpenActivity || (event.key !== 'Enter' && event.key !== ' ')) return
+              event.preventDefault()
+              onOpenActivity()
+            }}
+            className={cn(
+              'w-full border-t border-border/60 px-3.5 py-2 text-left transition',
+              onOpenActivity
+                ? 'cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/30'
+                : 'cursor-default'
+            )}
           >
-            <Plus className="h-3.5 w-3.5" />
-            新建子任务
-          </button>
-        )}
-      </div>
+            <div className="flex min-w-0 items-center gap-2 text-xs text-text-secondary">
+              {changeRequestSnapshot?.changeRequest ? (
+                <ChangeRequestStatusIcon
+                  snapshot={changeRequestSnapshot}
+                  testId={`cloud-todo-card-change-request-${item.id}-${currentTaskBinding.id}`}
+                  popoverAlign="left"
+                  repairing={repairingChangeRequest}
+                  onContinueRepair={
+                    autoRepairStatus(changeRequestSnapshot.changeRequest) &&
+                    onContinueChangeRequestRepair
+                      ? async () => {
+                          setRepairingChangeRequest(true)
+                          try {
+                            await onContinueChangeRequestRepair(
+                              currentTaskBinding,
+                              changeRequestSnapshot
+                            )
+                          } finally {
+                            setRepairingChangeRequest(false)
+                          }
+                        }
+                      : undefined
+                  }
+                />
+              ) : (
+                <ListTodo className="h-3.5 w-3.5" />
+              )}
+              <span
+                data-testid={`cloud-todo-card-task-${item.id}-${currentTaskBinding.id}`}
+                className="min-w-0 flex-1 truncate"
+                title={currentTaskBinding.task_title || currentTaskBinding.task_id}
+              >
+                {showFinalResponsePreview ? (
+                  <span data-testid={`cloud-todo-card-final-response-${item.id}`}>
+                    {finalResponsePreview}
+                  </span>
+                ) : (
+                  currentTaskBinding.task_title || currentTaskBinding.task_id
+                )}
+              </span>
+            </div>
+            {currentActivity.active ? (
+              <RuntimeTaskLiveActivity itemId={item.id} activity={currentActivity} />
+            ) : null}
+          </div>
+        </HoverCard>
+      ) : null}
     </article>
   )
+}
+
+function RuntimeTaskLiveActivity({
+  itemId,
+  activity,
+  expanded = false,
+}: {
+  itemId: string
+  activity: RuntimeLiveActivity
+  expanded?: boolean
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const lastTool = activity.tools.at(-1)
+  const completedTools = activity.tools.filter(
+    block => block.status === 'done' || block.status === 'error'
+  )
+  const activeTools = activity.tools.filter(
+    block => block.status !== 'done' && block.status !== 'error'
+  )
+  const processingBlocks = useMemo<ProcessingBlock[]>(
+    () =>
+      activity.tools.map(block => ({
+        ...block,
+        type: 'tool',
+        subtaskId: `board:${itemId}`,
+      })),
+    [activity.tools, itemId]
+  )
+
+  useLayoutEffect(() => {
+    const scrollArea = scrollRef.current
+    if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
+  }, [activity.thinking, activity.tools.length, lastTool?.status, lastTool?.toolInput])
+
+  return (
+    <div
+      ref={scrollRef}
+      data-testid={
+        expanded ? `cloud-todo-card-popup-activity-${itemId}` : `cloud-todo-card-activity-${itemId}`
+      }
+      className={cn(
+        'scrollbar-none min-w-0 overflow-y-auto',
+        expanded
+          ? 'max-h-44 text-chat text-text-primary'
+          : 'ml-5 mt-1.5 h-5 border-l border-border/70 pl-2 text-xs leading-5 text-text-muted'
+      )}
+    >
+      {expanded ? (
+        processingBlocks.length > 0 ? (
+          <ToolBlocksDisplay
+            blocks={processingBlocks}
+            isStreaming={activity.active}
+            processingPhase="live"
+            showInterToolThinking
+            thinkingContent={activity.thinking}
+            stateKey={`cloud-todo-card:${itemId}:progress-popup`}
+          />
+        ) : activity.thinking ? (
+          <AssistantThinkingIndicator
+            content={activity.thinking}
+            testId={`cloud-todo-card-popup-thinking-${itemId}`}
+          />
+        ) : null
+      ) : (
+        <>
+          {completedTools.map(block => (
+            <RuntimeTaskToolActivity key={block.id} itemId={itemId} block={block} />
+          ))}
+          {activity.thinking ? (
+            <div className="flex h-5 min-w-0 items-center">
+              <AssistantThinkingIndicator
+                content={activity.thinking}
+                testId={`cloud-todo-card-thinking-${itemId}`}
+                className="text-xs leading-5"
+              />
+            </div>
+          ) : null}
+          {activeTools.map(block => (
+            <RuntimeTaskToolActivity key={block.id} itemId={itemId} block={block} />
+          ))}
+        </>
+      )}
+    </div>
+  )
+}
+
+function RuntimeTaskProgressPopup({
+  item,
+  binding,
+  activity,
+  message,
+  finalResponseText,
+}: {
+  item: CloudLoopItem
+  binding: CloudTodoBoardTaskBinding
+  activity: RuntimeLiveActivity
+  message: WorkbenchMessage | null
+  finalResponseText: string | null
+}) {
+  const { t } = useTranslation('common')
+  const taskTitle = binding.task_title || binding.task_id
+
+  return (
+    <div
+      data-testid={`cloud-todo-card-progress-popup-content-${item.id}`}
+      className="min-w-0 space-y-2"
+    >
+      <div className="min-w-0 border-b border-border/60 pb-2">
+        <div className="text-sm font-medium leading-5 text-text-primary">
+          {t('todo.task_progress_details', '当前任务进展')}
+        </div>
+        <div className="mt-0.5 line-clamp-2 text-xs leading-5 text-text-secondary">{taskTitle}</div>
+      </div>
+      {message ? (
+        <RuntimeTaskMessage itemId={item.id} message={message} />
+      ) : activity.active ? (
+        <RuntimeTaskLiveActivity itemId={item.id} activity={activity} expanded />
+      ) : finalResponseText ? (
+        <RuntimeTaskMessage
+          itemId={item.id}
+          message={{
+            id: `board-progress-${item.id}`,
+            role: 'assistant',
+            content: finalResponseText,
+            status: 'done',
+            createdAt: '',
+          }}
+        />
+      ) : (
+        <p
+          data-testid={`cloud-todo-card-progress-empty-${item.id}`}
+          className="text-xs leading-5 text-text-muted"
+        >
+          {t('todo.task_progress_empty', '暂无任务进展详情')}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function RuntimeTaskMessage({ itemId, message }: { itemId: string; message: WorkbenchMessage }) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const scrollArea = scrollRef.current
+    if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
+  }, [message])
+
+  return (
+    <div
+      ref={scrollRef}
+      data-testid={`cloud-todo-card-progress-response-${itemId}`}
+      className="max-h-56 min-w-0 overscroll-contain overflow-y-auto"
+    >
+      <AssistantMessage
+        message={message}
+        conversationKey={`cloud-todo-card:${itemId}:progress-popup`}
+        devices={[]}
+      />
+    </div>
+  )
+}
+
+function RuntimeTaskToolActivity({
+  itemId,
+  block,
+}: {
+  itemId: string
+  block: RuntimeLiveActivity['tools'][number]
+}) {
+  const { t } = useTranslation('chat')
+  const running = block.status !== 'done' && block.status !== 'error'
+
+  return (
+    <div
+      data-testid={`cloud-todo-card-tool-${itemId}-${block.id}`}
+      className="flex h-5 min-w-0 items-center"
+    >
+      <span className={cn('min-w-0 truncate', running && 'waiting-thinking-text')}>
+        {runtimeToolActivityText(block, t)}
+      </span>
+    </div>
+  )
+}
+
+function useRuntimeTaskActivity(address: RuntimeTaskAddress | null): RuntimeLiveActivity {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      address ? subscribeRuntimeConversation(address, listener) : () => undefined,
+    [address]
+  )
+  const getSnapshot = useCallback(
+    () => (address ? getRuntimeConversationLiveActivitySnapshot(address) : ''),
+    [address]
+  )
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+  return useMemo(() => runtimeLiveActivityFromSnapshot(snapshot), [snapshot])
+}
+
+function useRuntimeTaskFinalResponse(address: RuntimeTaskAddress | null): string | null {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      address ? subscribeRuntimeConversation(address, listener) : () => undefined,
+    [address]
+  )
+  const getSnapshot = useCallback(
+    () => (address ? finalAssistantMessagesText(getRuntimeConversationMessages(address)) : null),
+    [address]
+  )
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+}
+
+function useRuntimeTaskLatestAssistantMessage(
+  address: RuntimeTaskAddress | null
+): WorkbenchMessage | null {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      address ? subscribeRuntimeConversation(address, listener) : () => undefined,
+    [address]
+  )
+  const getSnapshot = useCallback(
+    () =>
+      address
+        ? JSON.stringify(latestAssistantMessage(getRuntimeConversationMessages(address)))
+        : '',
+    [address]
+  )
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+  return useMemo(
+    () => (snapshot ? (JSON.parse(snapshot) as WorkbenchMessage | null) : null),
+    [snapshot]
+  )
+}
+
+function runtimeToolActivityText(
+  block: RuntimeLiveToolActivity,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const kind = getToolActivityKind(block)
+  const paths = getToolActivityFilePaths(block)
+  const path = paths[0] ? displayActivityPath(paths[0]) : ''
+  const command = getInputField(block, 'command', 'cmd', 'commandLine')?.replace(/\s+/g, ' ').trim()
+  const search = getToolActivitySearchItem(block)
+  const running = block.status !== 'done' && block.status !== 'error'
+
+  if (kind === 'command') {
+    return activityLabel(t('tool_activity.command_action'), command)
+  }
+  if (kind === 'file') {
+    return activityLabel(t('tool_activity.file_action'), path)
+  }
+  if (kind === 'search') {
+    return activityLabel(
+      t(running ? 'tool_activity.search_running' : 'tool_activity.search_done'),
+      search?.query
+    )
+  }
+  if (kind === 'edit') {
+    return activityLabel(t('tool_activity.edit_action'), path)
+  }
+  if (kind === 'create') {
+    return activityLabel(t('tool_activity.create_action'), path)
+  }
+  return activityLabel(t('tool_activity.other_action'), block.toolName)
+}
+
+function activityLabel(label: string, detail: string | undefined): string {
+  return detail ? `${label} · ${detail}` : label
+}
+
+function displayActivityPath(path: string): string {
+  return path.replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? path
 }

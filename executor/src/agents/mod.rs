@@ -8,6 +8,7 @@ use serde_json::Value;
 
 mod agno;
 mod backend_url;
+mod cargo_cache;
 mod claude_code;
 mod claude_options;
 mod codex;
@@ -39,9 +40,10 @@ use claude_code::{
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub(crate) use codex::{
     codex_runtime_approval_policy, configured_inference_model_provider, executor_home,
-    mcp_server_elicitation_request_user_input_params, select_wework_codex_user_instructions,
-    wework_codex_home, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
-    CODEX_READ_ONLY_PERMISSION_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE,
+    mcp_server_elicitation_request_user_input_params, replace_config,
+    select_wework_codex_user_instructions, wework_codex_home,
+    CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
+    CODEX_WORKSPACE_PERMISSION_PROFILE,
 };
 pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
@@ -82,8 +84,8 @@ impl AgentCommandPlanner {
     }
 
     pub fn command_for(&self, request: &ExecutionRequest) -> Result<CommandSpec, String> {
-        match request.resolved_agent_kind() {
-            AgentKind::ClaudeCode => Ok(build_claude_command(
+        let spec = match request.resolved_agent_kind() {
+            AgentKind::ClaudeCode => build_claude_command(
                 request,
                 request
                     .extra
@@ -93,10 +95,11 @@ impl AgentCommandPlanner {
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .unwrap_or(&self.claude_binary),
-            )),
-            AgentKind::CodeX => Ok(build_codex_app_server_command(&self.codex_binary)),
-            agent_kind => Err(format!("unsupported agent kind: {agent_kind:?}")),
-        }
+            ),
+            AgentKind::CodeX => build_codex_app_server_command(&self.codex_binary),
+            agent_kind => return Err(format!("unsupported agent kind: {agent_kind:?}")),
+        };
+        Ok(cargo_cache::configure_command(request, spec))
     }
 }
 
@@ -276,9 +279,7 @@ impl AgentProcessEngine {
 impl AgentEngine for AgentProcessEngine {
     type RunFuture = Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>;
 
-    fn run(&self, mut request: ExecutionRequest) -> Self::RunFuture {
-        // Project-space MCP servers belong to Codex runs only; coding agents
-        // such as Claude Code must not receive them.
+    fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
         let agent_kind = request.resolved_agent_kind();
         let bot_count = request.bot.as_array().map(|bots| bots.len()).unwrap_or(0);
         log_executor_event(
@@ -289,9 +290,6 @@ impl AgentEngine for AgentProcessEngine {
                 ("bot_count", bot_count.to_string()),
             ],
         );
-        if agent_kind == AgentKind::CodeX {
-            crate::task_runtime::mcp::ensure_space_mcp_server(&mut request);
-        }
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
@@ -381,15 +379,13 @@ impl AgentEngine for AgentProcessEngine {
 
     fn run_with_events<S>(
         &self,
-        mut request: ExecutionRequest,
+        request: ExecutionRequest,
         sink: S,
         builder: ResponsesEventBuilder,
     ) -> Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>
     where
         S: EventSink,
     {
-        // Project-space MCP servers belong to Codex runs only; coding agents
-        // such as Claude Code must not receive them.
         let agent_kind = request.resolved_agent_kind();
         let bot_count = request.bot.as_array().map(|bots| bots.len()).unwrap_or(0);
         log_executor_event(
@@ -400,9 +396,6 @@ impl AgentEngine for AgentProcessEngine {
                 ("bot_count", bot_count.to_string()),
             ],
         );
-        if agent_kind == AgentKind::CodeX {
-            crate::task_runtime::mcp::ensure_space_mcp_server(&mut request);
-        }
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();

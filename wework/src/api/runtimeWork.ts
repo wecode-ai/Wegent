@@ -73,9 +73,13 @@ import type {
   RuntimeProjectTaskReorderRequest,
   RuntimeSidebarMutationResponse,
   RuntimeTaskPinRequest,
+  RuntimeWorktreeCapabilitiesRequest,
+  RuntimeWorktreeCapabilitiesResponse,
   RuntimeWorktreeDeleteRequest,
   RuntimeWorktreeListResponse,
   RuntimeWorktreeMutationResponse,
+  RuntimeWorktreePreflightRequest,
+  RuntimeWorktreePreflightResponse,
   RuntimeWorktreePrepareRequest,
   RuntimeWorktreeSettings,
   RuntimeWorktreeSettingsPatch,
@@ -242,6 +246,16 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     setRuntimeTaskPinned(data: RuntimeTaskPinRequest): Promise<RuntimeSidebarMutationResponse> {
       return client.post('/runtime-work/sidebar/tasks/pin', data)
+    },
+    getWorktreeCapabilities(
+      data: RuntimeWorktreeCapabilitiesRequest
+    ): Promise<RuntimeWorktreeCapabilitiesResponse> {
+      return client.post('/runtime-work/worktrees/capabilities', data)
+    },
+    preflightWorktree(
+      data: RuntimeWorktreePreflightRequest
+    ): Promise<RuntimeWorktreePreflightResponse> {
+      return client.post('/runtime-work/worktrees/preflight', data)
     },
     getWorktreeSettings(data: { deviceId: string }): Promise<RuntimeWorktreeSettings> {
       return client.post('/runtime-work/worktrees/settings', data)

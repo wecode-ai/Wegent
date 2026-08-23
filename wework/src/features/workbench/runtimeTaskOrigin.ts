@@ -5,13 +5,6 @@ function runtimeTaskOrigin(task: Pick<RuntimeTaskSummary, 'runtimeHandle'>) {
   return origin && typeof origin === 'object' ? (origin as Record<string, unknown>) : null
 }
 
-export function runtimeTaskBoardOrigin(
-  task: Pick<RuntimeTaskSummary, 'runtimeHandle'>
-): 'board_comment' | 'board_task' | null {
-  const type = runtimeTaskOrigin(task)?.type
-  return type === 'board_comment' || type === 'board_task' ? type : null
-}
-
 export function isProjectAutomationManagerRuntimeTask(
   task: Pick<RuntimeTaskSummary, 'runtimeHandle'>
 ): boolean {

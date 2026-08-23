@@ -317,6 +317,18 @@ describe('getErrorMessageFromCode', () => {
 })
 
 describe('uploadFile', () => {
+  const originalBlobArrayBuffer = Blob.prototype.arrayBuffer
+
+  beforeAll(() => {
+    Blob.prototype.arrayBuffer = function arrayBuffer() {
+      return Promise.resolve(new ArrayBuffer(this.size))
+    }
+  })
+
+  afterAll(() => {
+    Blob.prototype.arrayBuffer = originalBlobArrayBuffer
+  })
+
   beforeEach(() => {
     MockXMLHttpRequest.instances = []
     MockXMLHttpRequest.activeCount = 0
@@ -329,27 +341,61 @@ describe('uploadFile', () => {
     jest.restoreAllMocks()
   })
 
-  it('uploads video through the unified attachment endpoint', async () => {
-    const file = new File(['video'], 'reference.mp4', { type: 'video/mp4' })
+  it('uploads ordinary Chat video through Weibo and saves its fid', async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          file_token: 'file-token',
+          chunk_size: 10,
+          auth: 'auth-token',
+          request_id: 'init-request',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 42,
+          filename: 'clip.mp4',
+          file_size: 5,
+          mime_type: 'video/mp4',
+          status: 'ready',
+          type_data: { storage_backend: 'weibo', fid: 12345 },
+        }),
+      })
+    global.fetch = fetchMock as typeof fetch
+
+    const file = new File(['video'], 'clip.mp4', { type: 'video/mp4' })
     const resultPromise = uploadFile(file)
 
-    expect(MockXMLHttpRequest.instances).toHaveLength(1)
+    await waitForCondition(() => MockXMLHttpRequest.instances.some(xhr => xhr.sent))
     const request = MockXMLHttpRequest.instances[0]
-    expect(request.requestUrl).toBe('/api/attachments/upload?storage_purpose=default')
+    expect(request.requestUrl).toContain('up-cn1.video.weibocdn.com')
 
     request.complete({
-      id: 42,
-      filename: 'reference.mp4',
-      file_size: file.size,
-      mime_type: 'video/mp4',
-      status: 'ready',
+      fid: '12345',
+      request_id: 'upload-request',
     })
 
     await expect(resultPromise).resolves.toMatchObject({
       id: 42,
-      filename: 'reference.mp4',
-      mime_type: 'video/mp4',
+      filename: 'clip.mp4',
+      type_data: { storage_backend: 'weibo', fid: 12345 },
     })
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      '/api/attachments/weibo-init',
+      expect.objectContaining({ method: 'POST' })
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/attachments/upload-video-metadata',
+      expect.objectContaining({
+        body: expect.stringContaining('"fid":12345'),
+        method: 'POST',
+      })
+    )
   })
 
   it('marks video model materials for reference storage', async () => {

@@ -144,6 +144,7 @@ def test_a_first_publish_creates_the_pages_and_moves_the_pointer(
 ):
     generation = _generation(test_db, knowledge_base.id)
     _page(test_db, generation, "index", "overview")
+    _page(test_db, generation, "architecture", "architecture overview")
     _page(test_db, generation, "architecture/backend", "details")
 
     result = publish_generation(
@@ -155,7 +156,11 @@ def test_a_first_publish_creates_the_pages_and_moves_the_pointer(
     )
 
     assert result.published
-    assert _live_paths(test_db, knowledge_base.id) == {"index", "architecture/backend"}
+    assert _live_paths(test_db, knowledge_base.id) == {
+        "index",
+        "architecture",
+        "architecture/backend",
+    }
     assert published_generation_id(knowledge_base) == generation.id
 
 

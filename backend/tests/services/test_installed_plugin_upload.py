@@ -190,9 +190,172 @@ def test_upload_plugin_rejects_mismatched_runtime_manifest_names(test_db, test_u
         )
 
     assert exc_info.value.status_code == 400
-    assert exc_info.value.detail == (
-        "Codex and Claude Code plugin manifest names must match"
+    assert (
+        exc_info.value.detail
+        == "Codex and Claude Code plugin manifest names must match"
     )
+
+
+def test_upload_plugin_parses_wework_frontend_and_desktop_components(
+    test_db, test_user
+):
+    frontend = b"export default function activate() {}"
+    desktop = b"#!/bin/sh\n"
+    manifest = {
+        "name": "workbench-tools",
+        "version": "1.0.0",
+        "description": "Workbench extension",
+        "apiVersion": "1",
+        "frontend": {
+            "entry": "dist/frontend.js",
+            "sha256": hashlib.sha256(frontend).hexdigest(),
+        },
+        "desktop": {
+            "command": "bin/sidecar",
+            "sha256": hashlib.sha256(desktop).hexdigest(),
+            "capabilities": ["workspace.read"],
+        },
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            ".codex-plugin/plugin.json",
+            '{"name":"workbench-tools","version":"1.0.0"}',
+        )
+        archive.writestr(".wework-plugin/plugin.json", json.dumps(manifest))
+        archive.writestr("dist/frontend.js", frontend)
+        archive.writestr("bin/sidecar", desktop)
+
+    installed = InstalledPluginService().upload_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        package_bytes=buffer.getvalue(),
+        filename="workbench-tools.zip",
+    )
+
+    assert installed.spec.components.workbench is not None
+    assert installed.spec.components.workbench.frontend is not None
+    assert installed.spec.components.workbench.frontend.entry == "dist/frontend.js"
+    assert installed.spec.components.workbench.desktop is not None
+    assert installed.spec.components.workbench.desktop.capabilities == [
+        "workspace.read"
+    ]
+
+
+def test_upload_plugin_rejects_invalid_wework_integrity(test_db, test_user):
+    manifest = {
+        "name": "workbench-tools",
+        "apiVersion": "1",
+        "frontend": {
+            "entry": "dist/frontend.js",
+            "sha256": "not-a-sha256",
+        },
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            ".codex-plugin/plugin.json",
+            '{"name":"workbench-tools"}',
+        )
+        archive.writestr(".wework-plugin/plugin.json", json.dumps(manifest))
+        archive.writestr("dist/frontend.js", "export default function activate() {}")
+
+    with pytest.raises(HTTPException) as exc_info:
+        InstalledPluginService().upload_plugin(
+            db=test_db,
+            user_id=test_user.id,
+            package_bytes=buffer.getvalue(),
+            filename="workbench-tools.zip",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "frontend.sha256" in exc_info.value.detail
+
+
+@pytest.mark.parametrize(
+    ("manifest_patch", "expected_detail"),
+    [
+        (
+            {"required": True},
+            "required plugins must set pinnedToClientVersion",
+        ),
+        (
+            {"pinnedToClientVersion": True},
+            "pinned plugins must declare clientVersion",
+        ),
+    ],
+)
+def test_upload_plugin_rejects_unpinned_required_wework_components(
+    test_db,
+    test_user,
+    manifest_patch,
+    expected_detail,
+):
+    frontend = b"export default function activate() {}"
+    manifest = {
+        "name": "workbench-tools",
+        "apiVersion": "1",
+        "frontend": {
+            "entry": "dist/frontend.js",
+            "sha256": hashlib.sha256(frontend).hexdigest(),
+        },
+        **manifest_patch,
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            ".codex-plugin/plugin.json",
+            '{"name":"workbench-tools"}',
+        )
+        archive.writestr(".wework-plugin/plugin.json", json.dumps(manifest))
+        archive.writestr("dist/frontend.js", frontend)
+
+    with pytest.raises(HTTPException) as exc_info:
+        InstalledPluginService().upload_plugin(
+            db=test_db,
+            user_id=test_user.id,
+            package_bytes=buffer.getvalue(),
+            filename="workbench-tools.zip",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert expected_detail in exc_info.value.detail
+
+
+def test_workbench_companion_manifest_cannot_define_package_identity(
+    test_db,
+    test_user,
+):
+    frontend = b"export default function activate() {}"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            ".wework-plugin/plugin.json",
+            json.dumps(
+                {
+                    "apiVersion": "1",
+                    "frontend": {
+                        "entry": "dist/frontend.js",
+                        "sha256": hashlib.sha256(frontend).hexdigest(),
+                    },
+                }
+            ),
+        )
+        archive.writestr(
+            ".codex-plugin/plugin.json",
+            '{"name":"canonical-plugin","version":"1.0.0"}',
+        )
+        archive.writestr("dist/frontend.js", frontend)
+
+    installed = InstalledPluginService().upload_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        package_bytes=buffer.getvalue(),
+        filename="canonical-plugin.zip",
+    )
+
+    assert installed.spec.source.pluginKey == "canonical-plugin"
+    assert installed.spec.components.workbench is not None
 
 
 def test_publish_and_install_marketplace_plugin(test_db, test_user):

@@ -20,6 +20,8 @@ import { delimiter, dirname, join, resolve, basename, isAbsolute } from 'node:pa
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
+import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
@@ -433,16 +435,9 @@ function resolveCommand(command) {
 
 function run(command, args, options = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
-    let finalCommand = resolveCommand(command)
-    let finalArgs = args
-
-    if (
-      process.platform === 'win32' &&
-      (finalCommand.endsWith('.cmd') || finalCommand.endsWith('.bat'))
-    ) {
-      finalArgs = ['/c', finalCommand, ...args]
-      finalCommand = 'cmd.exe'
-    }
+    const resolved = wrapWindowsScriptCommand(resolveCommand(command), args)
+    const finalCommand = resolved.command
+    const finalArgs = resolved.args
 
     const child = spawn(finalCommand, finalArgs, {
       stdio: 'inherit',
@@ -552,7 +547,7 @@ async function main() {
   let sidecarSource
 
   if (useDevReload) {
-    log('Building wegent-executor-dev sidecar...')
+    log('Building executor dev-reload binaries...')
     await run(
       'cargo',
       [
@@ -563,6 +558,8 @@ async function main() {
         'dev-reload',
         '--bin',
         'wegent-executor-dev',
+        '--bin',
+        'wegent-executor',
         '--target',
         target,
       ],
@@ -571,6 +568,8 @@ async function main() {
 
     sidecarSource = join(executorTargetDir, target, 'debug', 'wegent-executor-dev.exe')
     process.env.WEGENT_EXECUTOR_SOURCE_DIR = EXECUTOR_DIR
+    process.env.WEGENT_EXECUTOR_BUILD_TARGET = target
+    process.env.WEGENT_EXECUTOR_PREBUILT = '1'
   } else {
     log('Building wegent-executor sidecar...')
     await run(
@@ -610,6 +609,35 @@ async function main() {
   log('Preparing DWS sidecar...')
   process.env.WEWORK_DWS_TARGET = target
   await run('pnpm', ['run', 'prepare:dws'], { cwd: WEWORK_DIR })
+  if (!process.env.WEWORK_HARNESS_RUNTIME_ROOT && !process.env.WEWORK_DEEPSEEK_HARNESS_ROOT) {
+    await run('pnpm', ['run', 'prepare:harness-runtime', '--', '--materialize'], {
+      cwd: WEWORK_DIR,
+    })
+    process.env.WEWORK_HARNESS_RUNTIME_ROOT = join(
+      WEWORK_DIR,
+      'node_modules',
+      '.cache',
+      'harness-runtime-dev'
+    )
+  } else {
+    await run('pnpm', ['run', 'prepare:harness-runtime'], { cwd: WEWORK_DIR })
+  }
+  if (!process.env.WEWORK_NODE_RUNTIME_ROOT) {
+    await run('pnpm', ['run', 'prepare:execution-runtime', '--', '--materialize'], {
+      cwd: WEWORK_DIR,
+    })
+    process.env.WEWORK_NODE_RUNTIME_ROOT = join(
+      WEWORK_DIR,
+      'node_modules',
+      '.cache',
+      'execution-runtime-node-dev'
+    )
+  }
+  log(
+    `Using Harness runtime root: ${
+      process.env.WEWORK_HARNESS_RUNTIME_ROOT || process.env.WEWORK_DEEPSEEK_HARNESS_ROOT
+    }`
+  )
 
   if (useDevReload) {
     process.env.WEGENT_EXECUTOR_TARGET_DIR = executorTargetDir

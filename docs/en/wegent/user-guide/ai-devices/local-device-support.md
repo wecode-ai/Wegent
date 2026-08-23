@@ -91,20 +91,16 @@ The operation is repeatable. Skills with the same directory name are not overwri
 
 ### Building a Device Image
 
-The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wecode/wegent-executor/bin/wegent-executor`.
+The repository provides `docker/device/Dockerfile` for cloud device or local device base images. It follows the official code-server `install.sh` flow to install a pinned standalone release under `/usr/local`. The image also installs the Claude Code and Codex CLIs, Node.js 22, Python, Git, and places the built `wegent-executor` at `/app/executor` and `~/.wecode/wegent-executor/bin/wegent-executor`.
 
-The default user inside the image is `wegent`, and the default password is `wegent`. This account is intended for code-server and terminal shell access inside the container. For production deployments, restrict access through runtime configuration, access control, or upstream platform authentication.
+The default system user inside the image is `wegent`, with `wegent` as its system password for terminal shell access. Following the local device installer, code-server starts with `auth: none` but listens only on `127.0.0.1:18080`. Remote IDE access must go through the device gateway's session-token validation; do not expose port 18080 outside the container or host.
 
-Before building, prepare a Linux executor binary that matches the target platform, and confirm the base image supports the same platform. For example, when building a Linux AMD64 image, `executor/dist/wegent-executor` must be a Linux x86-64 ELF file, not a macOS Mach-O binary. When building a Linux ARM64 image, the base Ubuntu image rootfs must also be arm64.
+The Dockerfile compiles the executor in a builder stage for the target platform and validates both the base-image rootfs and final ELF architecture. The public release workflow builds and verifies Linux AMD64 and ARM64 images.
 
 ```bash
-WECODE_CLI_CC_TOKEN=xxx \
-WECODE_CLI_CC_INSTALL_URL=xxx \
 docker buildx build --platform linux/amd64 \
   -f docker/device/Dockerfile \
   -t wegent-device:linux-amd64 \
-  --secret id=wecode_cli_cc_token,env=WECODE_CLI_CC_TOKEN \
-  --secret id=wecode_cli_cc_install_url,env=WECODE_CLI_CC_INSTALL_URL \
   --load .
 ```
 
@@ -116,14 +112,42 @@ Pass executor connection settings as runtime environment variables when running 
 docker run -d --platform linux/amd64 \
   --name wegent-device \
   -p 17888:17888 \
-  -e CODE_SERVER_PASSWORD=wegent \
-  -e WEGENT_BACKEND_URL=http://host.docker.internal:8000 \
+  -e WEGENT_BACKEND_URL=https://backend.example.com \
   -e WEGENT_AUTH_TOKEN="$WEGENT_AUTH_TOKEN" \
-  -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
-  wegent-device:linux-amd64
+  ghcr.io/wecode-ai/wegent-device:<version>
 ```
 
-`WEGENT_BACKEND_URL` must be reachable from inside the container. If the Backend runs on the same macOS or Windows host, use `http://host.docker.internal:8000`; generated remote Docker commands automatically add `--add-host host.docker.internal:host-gateway` when needed for Linux Docker compatibility. `DEVICE_PUBLIC_BASE_URL` is the browser-reachable URL for the container session gateway; local runs usually use `http://localhost:17888`.
+`WEGENT_BACKEND_URL` is the HTTP API address used by the Executor. Port 17888 exposes the token-gated device session gateway; make sure the address generated from `client_origin` is reachable from the user's browser. You can customize public package and system mirrors through the Dockerfile build arguments without changing the Dockerfile.
+
+### Managed Cloud Device Persistence Contract
+
+A managed cloud device may expose Git Worktree support only when the deployment platform mounts durable storage at the fixed path `/home/wegent/.wecode/wegent-executor`. This directory contains project workspaces, Chats workspaces, managed Worktrees, the Runtime Task Store, `worktrees.json`, snapshot refs, capability caches, and session state. A restarted or replaced instance must reattach the same volume at the same absolute path before starting the Executor.
+
+The deployment must set `WEGENT_EXECUTOR_HOME_ID` to the stable logical device ID and keep `LOCAL_WORKSPACE_ROOT` inside `WEGENT_EXECUTOR_HOME`. At startup, the device image rejects relative or changed mount paths, unwritable storage, an instance whose logical device ID conflicts with the identity persisted on the volume, and a second Executor attempting to write the same Executor Home. The image can validate path, identity, writability, and the single-writer lock, but it cannot prove that the underlying storage is durable. The cloud provider must therefore treat volume attachment, reattachment, backup, and restore as deployment acceptance gates.
+
+If the cloud platform cannot guarantee these conditions, it must not enable cloud Worktrees based on Executor capability alone. Losing the volume after instance replacement is an unrecoverable storage failure; the system must not create an empty directory with the same name or continue in the base project workspace.
+
+The repository includes a phased acceptance probe. Run `seed` on the old instance to create a real Git repository, Git Worktree, and Runtime-state marker. After the platform replaces the instance and reattaches the same persistent volume at the same absolute path, run `verify` on the replacement. `WEGENT_ACCEPTANCE_INSTANCE_ID` must be a real platform identity such as a Pod UID or VM instance ID, and the second phase must use a different value:
+
+```bash
+export WEGENT_EXECUTOR_HOME=/home/wegent/.wecode/wegent-executor
+export LOCAL_WORKSPACE_ROOT="$WEGENT_EXECUTOR_HOME/workspace"
+export WEGENT_EXECUTOR_HOME_ID=<stable-logical-device-id>
+export WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true
+export WEGENT_ACCEPTANCE_INSTANCE_ID=<old-instance-id>
+export WEGENT_ACCEPTANCE_VOLUME_ID=<pvc-or-pv-uid>
+scripts/acceptance/executor-home-persistence-probe.sh seed
+
+# After replacing the instance and reattaching the same persistent volume:
+export WEGENT_ACCEPTANCE_INSTANCE_ID=<replacement-instance-id>
+# WEGENT_ACCEPTANCE_VOLUME_ID must remain the same platform volume UID.
+scripts/acceptance/executor-home-persistence-probe.sh verify
+scripts/acceptance/executor-home-persistence-probe.sh cleanup
+```
+
+Every `seed`, `verify`, and `cleanup` phase calls the real Executor App IPC `runtime.worktrees.capabilities` and requires `persistentStorageVerified=true`. The probe creates the Worktree through `runtime.worktrees.prepare`, reconciles it after replacement through `runtime.worktrees.list`, and cleans it through `runtime.worktrees.delete`; it no longer substitutes a hand-written `git worktree add` for the Executor lifecycle. `verify` also checks the platform volume UID, logical-device identity, the stable `runtime_instance_id` in `device-config.json`, absolute Executor Home and Workspace paths, source-repository HEAD, the Git common directory, the Worktree `.git` file, Worktree contents, and Runtime state across the replacement. The probe exits nonzero for the same instance ID, a different volume UID, a different Runtime Instance ID, a different device ID, changed paths, or lost data; none of those results may be treated as a pass.
+
+Backend pins `runtimeInstanceId` when a Cloud or Remote device first registers. A later registration for the same logical device with a new or empty Runtime Instance ID fails as a persistent-storage identity mismatch; it cannot overwrite the established value or create a bypass device record. Consequently, mounting a fresh empty volume cannot silently bring the old device online even when the deployment still supplies the original `DEVICE_ID`: the new volume generates a different Runtime Instance ID. Local and App devices retain their existing update behavior.
 
 ### Adding a Remote Docker Device
 
@@ -131,7 +155,7 @@ Remote Docker devices are for connecting a self-managed server or container host
 
 Each user can create at most one cloud device. If a cloud device already exists, the add-device dialog disables cloud device creation while still allowing remote Docker command generation.
 
-In Wework, open **Settings** -> **Connections**, click **Add device**, select **Remote Docker device**, and generate the startup command. Wegent pre-registers a `remote` Device record, derives the image and `WEGENT_BACKEND_URL` from the current Backend environment, creates a new remote device API key, and returns a `docker run` command containing the device ID and runtime parameters. Run that command on the target host, and the container registers as a remote device under the **Remote devices** group.
+In Wework, open **Settings** -> **Connections**, or click **Add device** on Wegent's **AI devices** page, then select **Remote Docker device** and generate the startup command. Command generation creates credentials only; it does not pre-register an offline Device record. The device appears in the separate **Remote devices** group only after the Executor successfully registers.
 
 The generated command contains parameters like:
 
@@ -142,24 +166,39 @@ docker run -d \
   -e DEVICE_TYPE=remote \
   -e EXECUTOR_MODE=local \
   -e DEVICE_ID=<generated-device-id> \
+  -e WEGENT_EXECUTOR_HOME_ID=<generated-device-id> \
+  -e WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true \
   -e DEVICE_NAME=<generated-device-name> \
   -e WEGENT_BACKEND_URL=https://backend.example.com \
   -e WEGENT_AUTH_TOKEN=<generated-api-key> \
-  -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
+  -e DEVICE_PUBLIC_BASE_URL=http://device.example.com:17888 \
   -p 17888:17888 \
   -v wegent-remote-device-home:/home/wegent/.wecode/wegent-executor \
   ghcr.io/wecode-ai/wegent-device:latest
 ```
 
-The generation API uses the current Backend environment to generate `WEGENT_BACKEND_URL`, in this order: `REMOTE_DEVICE_BACKEND_URL`, `BACKEND_INTERNAL_URL`, then the current request host. `WEGENT_AUTH_TOKEN` is a newly created remote device API key for each generated command and is not persisted in the Device CRD `remoteConfig`. `DEVICE_PUBLIC_BASE_URL` is derived from the current frontend host so the browser can open the device session gateway.
+The generation API keeps `client_origin` optional for compatibility. It uses that origin, the request origin, or the Backend address to generate `DEVICE_PUBLIC_BASE_URL`. `WEGENT_AUTH_TOKEN` is a newly created remote device API key for each command and only appears in that command.
 
-The default image is controlled by the Backend environment variable `REMOTE_DEVICE_DOCKER_IMAGE`; if unset, Wegent uses `ghcr.io/wecode-ai/wegent-device:latest`. If a deployment must use an internal registry, the deployer should set `REMOTE_DEVICE_DOCKER_IMAGE=<your-registry>/<your-image>:<tag>` in the Backend runtime environment. Users do not need to enter an image address manually.
+`-v wegent-remote-device-home:/home/wegent/.wecode/wegent-executor` mounts the Docker named volume `wegent-remote-device-home` as the Executor home. It persists workspaces, downloaded capabilities, configuration, and runtime data so a recreated container can reuse them. `WEGENT_EXECUTOR_HOME_ID` pins that volume to the logical device. `WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true` declares that this startup command has provided and verified a stable volume, a fixed absolute mount path, and single-writer ownership; only then does Executor advertise Remote Worktrees to Wework. Never set it for a temporary directory, anonymous volume, or deployment that has not passed persistence acceptance. `DEVICE_ID` and the connection token come from the startup command environment rather than this volume. To keep upgrades from using an old binary stored in the volume, each container start refreshes `bin/wegent-executor` from the current image while preserving the remaining data. Removing the container does not remove the named volume; only an explicit `docker volume rm wegent-remote-device-home` clears it.
 
-By default, the device image only starts `wegent-executor` and the code-server session gateway. Wework project terminals are relayed through the existing Socket.IO connection between Backend and Executor, so devices do not need a public address. IDE/code-server sessions for cloud and remote Docker devices use the session gateway at `DEVICE_PUBLIC_BASE_URL`, so that address must be reachable from the user's browser. Public Wework does not provide cloud desktop support; some product distributions may add it through the optional extension.
+The device image is controlled by the Backend environment variable `REMOTE_DEVICE_DOCKER_IMAGE` and defaults to `ghcr.io/wecode-ai/wegent-device:latest`. Pin a released version or digest when reproducibility matters. The public release workflow publishes multi-architecture images and validates the image architecture, OCI version, source revision, and Executor version.
+
+Before enabling Remote Docker Worktrees, run the real-container acceptance on a target host with an available Docker daemon:
+
+```bash
+WEGENT_REMOTE_DEVICE_ACCEPTANCE_IMAGE=ghcr.io/wecode-ai/wegent-device:<version> \
+  scripts/acceptance/remote-device-worktree-persistence.sh
+```
+
+Set `WEGENT_REMOTE_DEVICE_REBUILD_IMAGE=<new-version-or-digest>` to include an image-upgrade check. The script uses an isolated named volume and verifies initial container startup, real Executor Runtime Instance initialization, the Worktree capability durability attestation, real Executor Worktree prepare/list/delete RPCs, rejection of a second writer, container deletion, image rebuild, preservation of the same volume identity and Runtime Instance, binary refresh, rejection of a different logical device, a second persistence verification, and cleanup. A missing Docker CLI, unavailable daemon, or failed invariant produces a nonzero exit instead of a skip. Set `WEGENT_ACCEPTANCE_KEEP_ARTIFACTS=1` to retain the containers and volume for diagnostics.
+
+The intranet firewall on the target host must allow the browser to reach port 17888, but this port must not be exposed to the public internet. Port 17888 only serves token-protected IDE sessions. The session gateway validates the token, sets an HttpOnly cookie, and redirects to a URL without the token; it does not expose anonymous code-server access.
+
+By default, the device image only starts `wegent-executor` and the code-server session gateway. Wework project terminals are relayed through the existing Socket.IO connection between Backend and Executor, so devices do not need a public address. IDE/code-server sessions for cloud and remote Docker devices use the session gateway at the automatically detected address, so the detected device IP must be reachable from the user's browser. Public Wework does not provide cloud desktop support; some product distributions may add it through the optional extension.
 
 - `POST /api/projects/{project_id}/terminal`: starts a writable PTY in the project path and returns a `transport=socketio` terminal session ID. The browser connects through Backend's `/terminal` Socket.IO namespace.
-- `POST /api/projects/{project_id}/code-server`: returns a short-token code-server URL. The code-server process inside the device image runs with a fixed password, and the session gateway logs in server-side so the browser does not see the code-server login page or password.
-- `POST /api/devices/{device_id}/code-server`: opens code-server on a specific device. The optional request-body `path` opens that remote project directory; omitting it uses the default workspace used by Settings. Executor accepts only the default workspace, roots configured through `WEGENT_WORKSPACE_ROOTS`, and saved Codex project roots. Paths outside those boundaries are rejected.
+- `POST /api/projects/{project_id}/code-server`: returns a short-token code-server URL. The code-server process only listens on the container loopback address with `auth: none`; the session gateway validates the short-lived token before the browser can reach it.
+- `POST /api/devices/{device_id}/code-server`: opens code-server on a specific device. The optional request-body `path` opens that remote project directory; when omitted, Executor resolves its own default workspace (`/home/wegent/.wecode/wegent-executor/workspace` in the device image). Executor accepts only the default workspace, roots configured through `WEGENT_WORKSPACE_ROOTS`, and saved Codex project roots. Paths outside those boundaries are rejected.
 
 Terminal sessions work for local, cloud, and remote Docker devices. Backend records the `session_id`, user, device, and executor socket binding, and the frontend connects to the `/terminal` namespace with the existing login JWT. After the browser joins the session room, Backend sends an acknowledged `terminal:attach` event through the `/local-executor` namespace. Executor only then reads the initial output buffered by the PTY and returns `terminal:output` and `terminal:exit` events, so the first shell prompt cannot be lost before the browser subscribes. Backend also relays input, resize, and close events to the device, while Executor manages the PTY directly. Code-server is a persistent in-container process, and cloud and remote Docker devices use the gateway to open the requested project path. Local devices do not support code-server project sessions.
 

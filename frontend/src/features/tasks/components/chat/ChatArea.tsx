@@ -2592,6 +2592,7 @@ function ChatAreaContent({
       {shouldMountQueueMessageHandler && (
         <QueueMessageHandler onQueueMessageLoaded={handleQueueMessageLoaded} />
       )}
+      {chatState.weiboBindingPrompt}
       {/* Auto-send message from URL query parameter ?q=xxx&teamId=xxx */}
       <QueryParamAutoSend
         teams={teams}

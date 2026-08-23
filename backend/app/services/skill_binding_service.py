@@ -219,13 +219,50 @@ class SkillBindingService:
         self, db: Session, group_namespace: str, user_id: int
     ) -> set[int]:
         """Return active Skill ids installed in a group."""
-        skill_ids: set[int] = set()
-        for binding in self.list_group_bindings(db, group_namespace, user_id):
-            skill_id = self._extract_skill_id(binding)
-            if skill_id is None or not self._get_active_skill(db, skill_id):
-                continue
-            skill_ids.add(skill_id)
-        return skill_ids
+        role = get_effective_role_in_group(db, user_id, group_namespace)
+        if not role or not has_permission(role, GroupRole.Reporter):
+            return set()
+        return self.list_group_skill_ids_for_authorized_namespaces(
+            db, [group_namespace]
+        )
+
+    def list_group_skill_ids_for_authorized_namespaces(
+        self,
+        db: Session,
+        group_namespaces: list[str],
+    ) -> set[int]:
+        """Return active Skill ids bound to already-authorized groups."""
+        if not group_namespaces:
+            return set()
+
+        bindings = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == SKILL_BINDING_KIND,
+                Kind.namespace.in_(group_namespaces),
+                Kind.is_active,
+            )
+            .all()
+        )
+        skill_ids = {
+            skill_id
+            for binding in bindings
+            if self._is_group_binding(binding, binding.namespace)
+            if (skill_id := self._extract_skill_id(binding)) is not None
+        }
+        if not skill_ids:
+            return set()
+
+        return {
+            skill_id
+            for (skill_id,) in db.query(Kind.id)
+            .filter(
+                Kind.id.in_(skill_ids),
+                Kind.kind == "Skill",
+                Kind.is_active,
+            )
+            .all()
+        }
 
     def is_skill_available_to_group(
         self,

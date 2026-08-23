@@ -25,7 +25,7 @@ import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { DeviceInfo } from '@/apis/devices'
 import { getToken } from '@/apis/user'
-import { Monitor, Loader2 } from 'lucide-react'
+import { Monitor, Loader2, Server } from 'lucide-react'
 import { getSocketUrl } from '@/lib/runtime-config'
 import {
   DeviceCard,
@@ -86,6 +86,13 @@ export default function DevicesPage() {
 
   // Guide visibility state
   const [showSetupGuide, setShowSetupGuide] = useState(false)
+  const handleDeviceCreated = useCallback(() => {
+    void refreshDevices()
+    setShowSetupGuide(false)
+  }, [refreshDevices])
+  const handleDeviceDetected = useCallback(() => {
+    void refreshDevices()
+  }, [refreshDevices])
 
   // Edit alias dialog state
   const [editAliasDevice, setEditAliasDevice] = useState<DeviceInfo | null>(null)
@@ -186,12 +193,8 @@ export default function DevicesPage() {
                   backendUrl={backendUrl}
                   authToken={authToken}
                   guideUrl={guideUrl}
-                  onDeviceCreated={() => {
-                    refreshDevices()
-                    if (devices.length > 0) {
-                      setShowSetupGuide(false)
-                    }
-                  }}
+                  onDeviceCreated={handleDeviceCreated}
+                  onDeviceDetected={handleDeviceDetected}
                   onClose={() => setShowSetupGuide(false)}
                   showCloseButton={devices.length > 0}
                   cloudDeviceCount={
@@ -215,6 +218,28 @@ export default function DevicesPage() {
                   devices={sortedDevices}
                   type="local"
                   emptyMessage={t('no_local_devices')}
+                >
+                  {device => (
+                    <DeviceCard
+                      device={device}
+                      onStartTask={handlers.handleStartTask}
+                      onSetDefault={handlers.handleSetDefault}
+                      onDelete={handlers.handleDeleteDevice}
+                      onCancelTask={handlers.handleCancelTask}
+                      onUpgrade={handlers.handleUpgradeDevice}
+                      onEditAlias={handleOpenEditAliasDialog}
+                      isUpgrading={isDeviceUpgrading(device.device_id)}
+                      upgradeStatus={getUpgradeStatus(device.device_id)}
+                    />
+                  )}
+                </DeviceSection>
+
+                <DeviceSection
+                  title={t('remote_devices_section')}
+                  icon={Server}
+                  devices={sortedDevices}
+                  type="remote"
+                  emptyMessage={t('no_remote_devices')}
                 >
                   {device => (
                     <DeviceCard

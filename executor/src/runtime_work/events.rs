@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use serde_json::{json, Map, Value};
 use tokio::sync::broadcast;
@@ -26,13 +30,35 @@ use super::{
         workbench_block_from_notification,
     },
     util::{
-        extract_text, is_completed_plan_item, item_id, item_type, now_ms, raw_string_field,
-        string_field,
+        extract_text, is_codex_context_compaction_item_type, is_completed_plan_item, item_id,
+        item_type, now_ms, raw_string_field, runtime_task_title, string_field,
     },
 };
 
 const MAX_TOOL_OUTPUT_DELTA_BYTES: usize = 64 * 1024;
 const MAX_TOOL_OUTPUT_BUFFER_BYTES: usize = 512 * 1024;
+static LAST_RUNTIME_EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn next_runtime_event_sequence() -> u64 {
+    let wall_clock = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .min(u128::from(u64::MAX)) as u64;
+    let mut previous = LAST_RUNTIME_EVENT_SEQUENCE.load(Ordering::Relaxed);
+    loop {
+        let next = wall_clock.max(previous.saturating_add(1));
+        match LAST_RUNTIME_EVENT_SEQUENCE.compare_exchange_weak(
+            previous,
+            next,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return next,
+            Err(current) => previous = current,
+        }
+    }
+}
 
 fn codex_error_will_retry(params: &Value) -> bool {
     params
@@ -59,6 +85,10 @@ fn reconnecting_model_kind(request: &ExecutionRequest) -> Option<String> {
 
 fn codex_notification_resumes_turn(method: &str) -> bool {
     method.starts_with("item/") || method.starts_with("turn/")
+}
+
+pub(crate) fn is_context_compaction_request(request: &ExecutionRequest) -> bool {
+    request.subtask_id.ends_with("-context-compact")
 }
 
 pub(crate) fn emit_response_event(
@@ -93,6 +123,7 @@ pub(crate) fn emit_response_event(
             "data": data,
             "deviceId": device_id,
             "runtime": "codex",
+            "eventSeq": next_runtime_event_sequence(),
         },
     });
     if let Some(client_user_message_id) = request
@@ -113,6 +144,14 @@ pub(crate) fn emit_response_event(
     if let Some(source) = request.extra.get("source") {
         if let Some(payload_object) = payload.get_mut("payload").and_then(Value::as_object_mut) {
             payload_object.insert("source".to_owned(), source.clone());
+        }
+    }
+    if terminal {
+        if let Some(title) = runtime_task_title(request) {
+            if let Some(payload_object) = payload.get_mut("payload").and_then(Value::as_object_mut)
+            {
+                payload_object.insert("taskTitle".to_owned(), Value::String(title));
+            }
         }
     }
     if let Some(generated_user_message) = request.extra.get("runtime_generated_user_message") {
@@ -210,6 +249,7 @@ pub(crate) struct CodexNotificationEventMapper {
     tool_output_deltas: BTreeMap<String, String>,
     goal_status: Option<String>,
     reconnecting_block_id: Option<String>,
+    completed_context_compaction_ids: BTreeSet<String>,
 }
 
 struct ProcessTextStream {
@@ -361,6 +401,10 @@ impl CodexNotificationEventMapper {
                     self.forget_subagent_item(notification.params);
                     return;
                 }
+                if is_context_compaction_notification(notification.params) {
+                    self.emit_context_compaction_once(&emit_context, notification.params);
+                    return;
+                }
                 if self.emit_applied_guidance(&emit_context, notification.params) {
                     return;
                 }
@@ -414,13 +458,7 @@ impl CodexNotificationEventMapper {
                 );
             }
             "context/compaction" => {
-                emit_context_compaction_event(
-                    event_tx,
-                    device_id,
-                    local_task_id,
-                    request,
-                    notification.params,
-                );
+                self.emit_context_compaction_once(&emit_context, notification.params);
             }
             "thread/tokenUsage/updated" => {
                 emit_response_event(
@@ -507,6 +545,24 @@ impl CodexNotificationEventMapper {
 
     fn has_active_goal(&self) -> bool {
         self.goal_status.as_deref() == Some("active")
+    }
+
+    fn emit_context_compaction_once(&mut self, context: &EventEmitContext<'_>, params: &Value) {
+        let item = params
+            .get("item")
+            .or_else(|| params.get("turn"))
+            .unwrap_or(params);
+        let block_id = item_id(item, "context_compaction");
+        if !self.completed_context_compaction_ids.insert(block_id) {
+            return;
+        }
+        emit_context_compaction_event(
+            context.event_tx,
+            context.device_id,
+            context.local_task_id,
+            context.request,
+            params,
+        );
     }
 
     fn emit_reconnecting(&mut self, context: &EventEmitContext<'_>, params: &Value) {
@@ -1271,8 +1327,20 @@ fn emit_context_compaction_event(
     );
 }
 
+fn is_context_compaction_notification(params: &Value) -> bool {
+    let item = params
+        .get("item")
+        .or_else(|| params.get("turn"))
+        .unwrap_or(params);
+    is_codex_context_compaction_item_type(&item_type(item))
+}
+
 fn context_compaction_block(params: &Value) -> Value {
-    let block_id = item_id(params, "context_compaction");
+    let item = params
+        .get("item")
+        .or_else(|| params.get("turn"))
+        .unwrap_or(params);
+    let block_id = item_id(item, "context_compaction");
     json!({
         "id": block_id,
         "type": "tool",
@@ -2042,7 +2110,22 @@ mod tests {
         let request = ExecutionRequest {
             task_id: "task-1".to_owned(),
             subtask_id: "codex-turn-1".to_owned(),
-            extra: Map::from_iter([("client_user_message_id".to_owned(), json!("client-user-1"))]),
+            extra: Map::from_iter([
+                ("client_user_message_id".to_owned(), json!("client-user-1")),
+                (
+                    "source".to_owned(),
+                    json!({"source": "im", "channel_type": "dingtalk"}),
+                ),
+                (
+                    "runtime_generated_user_message".to_owned(),
+                    json!({
+                        "id": "client-user-1",
+                        "message": "continue from dingtalk",
+                        "createdAt": 1_780_000_000_000_i64,
+                        "source": {"source": "im", "channel_type": "dingtalk"}
+                    }),
+                ),
+            ]),
             ..ExecutionRequest::default()
         };
 
@@ -2058,6 +2141,48 @@ mod tests {
         let event = event_rx.try_recv().expect("response event");
         assert_eq!(event["payload"]["subtaskId"], "codex-turn-1");
         assert_eq!(event["payload"]["clientUserMessageId"], "client-user-1");
+        assert_eq!(event["payload"]["source"]["source"], "im");
+        assert_eq!(
+            event["payload"]["runtimeGeneratedUserMessage"]["message"],
+            "continue from dingtalk"
+        );
+        assert!(event["payload"]["eventSeq"].as_u64().unwrap_or_default() > 0);
+    }
+
+    #[test]
+    fn emits_runtime_task_title_only_with_terminal_response_events() {
+        let (event_tx, mut event_rx) = broadcast::channel(2);
+        let request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            subtask_id: "codex-turn-1".to_owned(),
+            extra: Map::from_iter([(
+                "runtimeTaskTitle".to_owned(),
+                json!("Analyze production issue"),
+            )]),
+            ..ExecutionRequest::default()
+        };
+
+        emit_response_event(
+            &Some(event_tx.clone()),
+            "device-1",
+            "response.output_text.delta",
+            "local-task-1",
+            &request,
+            json!({"delta": "working"}),
+        );
+        emit_response_event(
+            &Some(event_tx),
+            "device-1",
+            "response.completed",
+            "local-task-1",
+            &request,
+            json!({"value": "done"}),
+        );
+
+        let progress = event_rx.try_recv().expect("progress event");
+        let terminal = event_rx.try_recv().expect("terminal event");
+        assert!(progress["payload"].get("taskTitle").is_none());
+        assert_eq!(terminal["payload"]["taskTitle"], "Analyze production issue");
     }
 
     #[test]
@@ -2716,6 +2841,36 @@ mod tests {
                 }
             }),
         );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "context/compaction",
+                "params": {
+                    "item": {
+                        "id": "ctx-1",
+                        "type": "contextCompaction"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "ctx-2",
+                        "type": "contextCompaction"
+                    }
+                }
+            }),
+        );
 
         let pending = event_rx
             .try_recv()
@@ -2728,6 +2883,53 @@ mod tests {
         assert_eq!(pending["payload"]["data"]["block"]["status"], "pending");
         assert_eq!(completed["event"], "response.block.created");
         assert_eq!(completed["payload"]["data"]["block"]["id"], "ctx-1");
+        assert_eq!(
+            completed["payload"]["data"]["block"]["tool_name"],
+            "context_compaction"
+        );
+        assert_eq!(completed["payload"]["data"]["block"]["status"], "done");
+        let second_completed = event_rx
+            .try_recv()
+            .expect("a later context compaction should also be emitted");
+        assert_eq!(second_completed["payload"]["data"]["block"]["id"], "ctx-2");
+        assert_eq!(
+            second_completed["payload"]["data"]["block"]["status"],
+            "done"
+        );
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn maps_completed_context_compaction_nested_under_turn() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "turn": {
+                        "id": "ctx-turn-1",
+                        "type": "contextCompaction"
+                    }
+                }
+            }),
+        );
+
+        let completed = event_rx
+            .try_recv()
+            .expect("nested turn compaction should be emitted");
+        assert_eq!(completed["event"], "response.block.created");
+        assert_eq!(completed["payload"]["data"]["block"]["id"], "ctx-turn-1");
         assert_eq!(
             completed["payload"]["data"]["block"]["tool_name"],
             "context_compaction"
@@ -4178,6 +4380,59 @@ mod tests {
     }
 
     #[test]
+    fn maps_mcp_form_elicitation_to_interactive_tool_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "id": 73,
+                "method": "mcpServer/elicitation/request",
+                "params": {
+                    "serverName": "wegent-sites",
+                    "mode": "form",
+                    "message": "请选择内网访问范围。",
+                    "requestedSchema": {
+                        "type": "object",
+                        "properties": {
+                            "audience": {
+                                "type": "string",
+                                "title": "访问范围",
+                                "enum": ["all", "owner"],
+                                "enumNames": ["所有人", "仅自己"]
+                            }
+                        },
+                        "required": ["audience"]
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("MCP form elicitation event should be emitted");
+        let block = &event["payload"]["data"]["block"];
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(block["id"], "request-user-input-73");
+        assert_eq!(block["tool_name"], "request_user_input");
+        assert_eq!(block["status"], "pending");
+        assert_eq!(block["render_payload"]["kind"], "request_user_input");
+        assert_eq!(block["render_payload"]["serverName"], "wegent-sites");
+        assert_eq!(
+            block["render_payload"]["questions"][0]["options"][1],
+            json!({"label": "仅自己", "description": "owner"})
+        );
+    }
+
+    #[test]
     fn maps_codex_command_approval_to_interactive_tool_block() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
@@ -4747,7 +5002,7 @@ mod tests {
                         {
                             "path": "/workspace/repo/live.txt",
                             "kind": { "type": "add" },
-                            "diff": "first\nsecond\n"
+                            "diff": "title\n- first\n- second\n"
                         }
                     ]
                 }
@@ -4764,7 +5019,23 @@ mod tests {
         );
         assert_eq!(
             updated["payload"]["data"]["updates"]["file_changes"]["additions"],
-            2
+            3
+        );
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["file_changes"]["deletions"],
+            0
+        );
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["file_changes"]["diff"],
+            concat!(
+                "diff --git a/live.txt b/live.txt\n",
+                "--- /dev/null\n",
+                "+++ b/live.txt\n",
+                "@@ -0,0 +1,3 @@\n",
+                "+title\n",
+                "+- first\n",
+                "+- second\n"
+            )
         );
 
         let created = event_rx

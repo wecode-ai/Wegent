@@ -23,15 +23,24 @@ from app.models.delivery import (
     LoopItem,
     loop_datetime_is_unset,
 )
+from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
-from app.schemas.delivery import DeliveryCreate, LoopItemTaskBind
+from app.schemas.delivery import (
+    DeliveryChatSelection,
+    DeliveryCreate,
+    DeliveryFinalize,
+    DeliveryFulfillment,
+    LoopItemTaskBind,
+)
 from app.services.delivery.access import require_loop_item_access
 from app.services.delivery.storage import (
     DeliveryStorage,
     DeliveryStorageUnavailableError,
     delivery_storage,
 )
+from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
+from app.services.loop_item_unread import advance_content_revision
 
 MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 MAX_CHAT_BYTES = 10 * 1024 * 1024
@@ -71,9 +80,12 @@ class DeliveryService:
         if item.status == "completed":
             raise HTTPException(status.HTTP_409_CONFLICT, "TODO is already completed")
         markdown = values.markdown.encode()
+        chat_snapshot = values.chat or self._select_chat_messages(
+            db, item, values.chat_selection
+        )
         chat = (
-            json.dumps(values.chat, ensure_ascii=False).encode()
-            if values.chat
+            json.dumps(chat_snapshot, ensure_ascii=False).encode()
+            if chat_snapshot is not None
             else None
         )
         if len(markdown) > MAX_MARKDOWN_BYTES or (chat and len(chat) > MAX_CHAT_BYTES):
@@ -134,6 +146,55 @@ class DeliveryService:
             if written:
                 self.storage.remove_objects(written)
             raise
+
+    @staticmethod
+    def _select_chat_messages(
+        db: Session,
+        item: LoopItem,
+        selection: DeliveryChatSelection | None,
+    ) -> dict[str, Any] | None:
+        if selection is None:
+            return None
+        query = db.query(ProjectChatMessage).filter(
+            ProjectChatMessage.project_id == str(item.cloud_project_id),
+            ProjectChatMessage.task_id == item.id,
+            loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+        )
+        if selection.mode == "latest":
+            rows = (
+                query.order_by(ProjectChatMessage.id.desc())
+                .limit(selection.count or 1)
+                .all()
+            )
+            rows.reverse()
+        elif selection.mode == "message_ids":
+            rows = (
+                query.filter(ProjectChatMessage.message_id.in_(selection.message_ids))
+                .order_by(ProjectChatMessage.id.asc())
+                .all()
+            )
+            found = {row.message_id for row in rows}
+            missing = [
+                message_id
+                for message_id in selection.message_ids
+                if message_id not in found
+            ]
+            if missing:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND,
+                    f"Chat messages not found: {', '.join(missing)}",
+                )
+        else:
+            rows = query.order_by(ProjectChatMessage.id.asc()).all()
+        from app.services.project_chat.service import project_chat_service
+
+        return {
+            "selection": selection.model_dump(mode="json"),
+            "messages": [
+                project_chat_service.to_view(row).model_dump(mode="json")
+                for row in rows
+            ],
+        }
 
     def add_asset(
         self,
@@ -211,18 +272,47 @@ class DeliveryService:
         db.delete(delivery)
         db.commit()
 
-    def finalize(self, db: Session, delivery_id: str, user_id: int) -> Delivery:
+    def finalize(
+        self,
+        db: Session,
+        delivery_id: str,
+        user_id: int,
+        values: DeliveryFinalize,
+    ) -> Delivery:
         delivery = self._require_delivery(db, delivery_id, user_id, draft=True)
-        item = require_loop_item_access(
+        authorized_item = require_loop_item_access(
             db, delivery.loop_item_id, user_id, BaseRole.Developer
         )
+        item = (
+            db.query(LoopItem)
+            .filter(LoopItem.id == authorized_item.id)
+            .with_for_update()
+            .first()
+        )
+        if item is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+        source_binding = None
         if delivery.source_task_binding_id:
-            self._require_active_task_binding(
+            source_binding = self._require_active_task_binding(
                 db, item.id, delivery.source_task_binding_id
             )
         assets = self.list_assets(db, delivery.id)
+        workflow_node = self._workflow_node(item, source_binding)
+        fulfillments = self._validate_fulfillments(
+            workflow_node,
+            assets,
+            values.fulfillments,
+        )
+        delivery.metadata_json = {
+            **(
+                delivery.metadata_json
+                if isinstance(delivery.metadata_json, dict)
+                else {}
+            ),
+            "fulfillments": fulfillments,
+        }
         manifest = {
-            "version": 1,
+            "version": 2,
             "deliveryId": delivery.id,
             "cloudProjectId": item.cloud_project_id,
             "loopItemId": delivery.loop_item_id,
@@ -239,6 +329,7 @@ class DeliveryService:
                 }
                 for asset in assets
             ],
+            "fulfillments": fulfillments,
         }
         manifest_key = f"{self._delivery_prefix_for(db, delivery)}/manifest.json"
         self.storage.put_json(manifest_key, manifest)
@@ -247,6 +338,32 @@ class DeliveryService:
             delivery.manifest_object_key = manifest_key
             delivery.status = "delivered"
             delivery.delivered_at = now
+            if source_binding is not None and source_binding.workflow_node_id:
+                db.flush()
+                self._attach_workflow_delivery(
+                    item,
+                    workflow_node_id=source_binding.workflow_node_id,
+                    delivery_id=delivery.id,
+                )
+                self._complete_automated_node_if_fulfilled(
+                    db,
+                    item,
+                    source_binding.workflow_node_id,
+                )
+                item.current_delivery_id = delivery.id
+                item.metadata_json = advance_content_revision(
+                    item.metadata_json, actor_user_id=user_id
+                )
+                item.version += 1
+                db.commit()
+                db.refresh(delivery)
+                publish_loop_item_changed(
+                    db,
+                    item=item,
+                    reason="delivery_finalized",
+                    actor_user_id=user_id,
+                )
+                return delivery
             if item.status != "completed":
                 project = db.get(CloudProject, item.cloud_project_id)
                 if project is not None:
@@ -267,14 +384,226 @@ class DeliveryService:
             item.status = "completed"
             item.current_delivery_id = delivery.id
             item.completed_at = now
+            item.metadata_json = advance_content_revision(
+                item.metadata_json, actor_user_id=user_id
+            )
             item.version += 1
             db.commit()
             db.refresh(delivery)
+            publish_loop_item_changed(
+                db,
+                item=item,
+                reason="delivery_finalized",
+                actor_user_id=user_id,
+            )
             return delivery
         except Exception:
             db.rollback()
             self.storage.remove_objects([manifest_key])
             raise
+
+    @staticmethod
+    def _workflow_node(
+        item: LoopItem,
+        source_binding: LoopItemTaskBinding | None,
+    ) -> dict[str, Any] | None:
+        if source_binding is None or not source_binding.workflow_node_id:
+            return None
+        metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        workflow = metadata.get("workflow")
+        nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+        if not isinstance(nodes, list):
+            raise HTTPException(status.HTTP_409_CONFLICT, "Issue has no workflow")
+        node = next(
+            (
+                dict(candidate)
+                for candidate in nodes
+                if isinstance(candidate, dict)
+                and candidate.get("id") == source_binding.workflow_node_id
+            ),
+            None,
+        )
+        if node is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
+        return node
+
+    @staticmethod
+    def _validate_fulfillments(
+        node: dict[str, Any] | None,
+        assets: list[DeliveryAsset],
+        values: list[DeliveryFulfillment],
+    ) -> list[dict[str, Any]]:
+        if node is None:
+            if values:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "Deliverable fulfillments require a workflow stage",
+                )
+            return []
+        requirements = {
+            str(requirement.get("id")): requirement
+            for requirement in node.get("required_deliverables") or []
+            if isinstance(requirement, dict) and requirement.get("id")
+        }
+        if requirements and not values:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Workflow Delivery must fulfill at least one required deliverable",
+            )
+        assets_by_id = {asset.id: asset for asset in assets}
+        serialized: list[dict[str, Any]] = []
+        for fulfillment in values:
+            requirement = requirements.get(fulfillment.requirement_id)
+            if requirement is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    f"Unknown workflow deliverable requirement: "
+                    f"{fulfillment.requirement_id}",
+                )
+            if requirement.get("value_type") != fulfillment.kind:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    f"Workflow deliverable type mismatch: "
+                    f"{fulfillment.requirement_id}",
+                )
+            DeliveryService._validate_fulfillment_assets(
+                requirement,
+                fulfillment,
+                assets_by_id,
+            )
+            serialized.append(fulfillment.model_dump(mode="json"))
+        return serialized
+
+    @staticmethod
+    def _validate_fulfillment_assets(
+        requirement: dict[str, Any],
+        fulfillment: DeliveryFulfillment,
+        assets_by_id: dict[str, DeliveryAsset],
+    ) -> None:
+        if fulfillment.kind == "file":
+            selected = [
+                assets_by_id.get(asset_id) for asset_id in fulfillment.asset_ids
+            ]
+            if any(asset is None for asset in selected):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "File fulfillment references an asset outside this Delivery",
+                )
+            constraints = requirement.get("file_constraints") or {}
+            minimum = int(constraints.get("min_files") or 1)
+            maximum = int(constraints.get("max_files") or 1)
+            if not minimum <= len(selected) <= maximum:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "File fulfillment count does not satisfy the requirement",
+                )
+            accepted = constraints.get("accepted_types") or []
+            if accepted and any(
+                not DeliveryService._asset_matches(asset, accepted)
+                for asset in selected
+                if asset is not None
+            ):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "File fulfillment type does not satisfy the requirement",
+                )
+        elif fulfillment.kind == "code_snapshot":
+            asset = assets_by_id.get(fulfillment.asset_id)
+            if asset is None or asset.sha256 != fulfillment.sha256:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "Code snapshot does not match this Delivery asset",
+                )
+
+    @staticmethod
+    def _asset_matches(asset: DeliveryAsset, accepted: list[str]) -> bool:
+        content_type = str(asset.content_type or "").lower()
+        display_name = str(asset.display_name or "").lower()
+        for raw_pattern in accepted:
+            pattern = str(raw_pattern).strip().lower()
+            if not pattern:
+                continue
+            if pattern.startswith(".") and display_name.endswith(pattern):
+                return True
+            if pattern.endswith("/*") and content_type.startswith(pattern[:-1]):
+                return True
+            if content_type == pattern:
+                return True
+        return False
+
+    @staticmethod
+    def _complete_automated_node_if_fulfilled(
+        db: Session,
+        item: LoopItem,
+        workflow_node_id: str,
+    ) -> None:
+        from app.services.project_workflow_projection import apply_workflow_nodes
+        from app.services.workflow_deliverables import missing_requirement_ids
+
+        metadata = dict(item.metadata_json or {})
+        workflow = metadata.get("workflow")
+        raw_nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+        if not isinstance(raw_nodes, list):
+            return
+        nodes = [dict(node) if isinstance(node, dict) else {} for node in raw_nodes]
+        node = next(
+            (
+                candidate
+                for candidate in nodes
+                if candidate.get("id") == workflow_node_id
+            ),
+            None,
+        )
+        if (
+            node is None
+            or not node.get("automation_rule_id")
+            or node.get("status") != "awaiting_deliverables"
+            or missing_requirement_ids(db, node)
+        ):
+            return
+        node["status"] = "completed"
+        apply_workflow_nodes(item, workflow=workflow, nodes=nodes)
+
+    @staticmethod
+    def fulfillment_values(delivery: Delivery) -> list[dict[str, Any]]:
+        metadata = (
+            delivery.metadata_json if isinstance(delivery.metadata_json, dict) else {}
+        )
+        values = metadata.get("fulfillments")
+        if not isinstance(values, list):
+            return []
+        return [dict(value) for value in values if isinstance(value, dict)]
+
+    @staticmethod
+    def _attach_workflow_delivery(
+        item: LoopItem,
+        *,
+        workflow_node_id: str,
+        delivery_id: str,
+    ) -> None:
+        metadata = dict(item.metadata_json or {})
+        workflow = metadata.get("workflow")
+        raw_nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+        if not isinstance(raw_nodes, list):
+            raise HTTPException(status.HTTP_409_CONFLICT, "Issue has no workflow")
+        nodes: list[dict] = []
+        found = False
+        for raw_node in raw_nodes:
+            node = dict(raw_node) if isinstance(raw_node, dict) else {}
+            if node.get("id") == workflow_node_id:
+                delivery_ids = list(node.get("delivery_ids") or [])
+                if delivery_id not in delivery_ids:
+                    delivery_ids.append(delivery_id)
+                node["delivery_ids"] = delivery_ids
+                found = True
+            nodes.append(node)
+        if not found:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
+        next_workflow = dict(workflow)
+        next_workflow["version"] = int(workflow.get("version") or 1) + 1
+        next_workflow["nodes"] = nodes
+        metadata["workflow"] = next_workflow
+        item.metadata_json = metadata
 
     def list_deliveries(
         self, db: Session, item_id: str, user_id: int
@@ -306,6 +635,22 @@ class DeliveryService:
         if delivery.status != "delivered":
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery asset not found")
         return self.storage.download_url(asset.object_key)
+
+    def read_asset_content(
+        self, db: Session, asset_id: str, user_id: int
+    ) -> tuple[bytes, str, str]:
+        asset = db.get(DeliveryAsset, asset_id)
+        if asset is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery asset not found")
+        delivery = self._require_delivery(db, asset.delivery_id, user_id)
+        if delivery.status != "delivered":
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery asset not found")
+        content = self.storage.get_bytes(
+            asset.object_key,
+            settings.DELIVERY_MAX_ASSET_SIZE_MB * 1024 * 1024,
+        )
+        filename = asset.display_name or asset.relative_path
+        return content, asset.content_type or "application/octet-stream", filename
 
     def read_markdown(self, delivery: Delivery) -> str:
         return self.storage.get_bytes(

@@ -95,6 +95,7 @@ const mockViewport = vi.hoisted(() => ({
 }))
 
 const workbenchValue: WorkbenchContextValue = {
+  services: {},
   state: {
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
     defaultTeam: null,
@@ -135,6 +136,7 @@ const workbenchValue: WorkbenchContextValue = {
     selectedModel: null,
     selectedModelOptions: {},
     selectedSkills: [],
+    attachmentStateByScope: {},
     attachments: [],
     uploadingFiles: new Map(),
     errors: new Map(),
@@ -147,9 +149,13 @@ const workbenchValue: WorkbenchContextValue = {
     setSelectedSkills: vi.fn(),
     toggleSkill: vi.fn(),
     handleFileSelect: vi.fn(),
+    handleFileSelectForScope: vi.fn(),
     addExistingAttachment: vi.fn(),
+    addExistingAttachmentForScope: vi.fn(),
     removeAttachment: vi.fn(),
+    removeAttachmentForScope: vi.fn(),
     resetAttachments: vi.fn(),
+    resetAttachmentsForScope: vi.fn(),
     listLocalSkills: vi.fn().mockResolvedValue([]),
   },
   selectProject: vi.fn(),
@@ -234,7 +240,7 @@ function installedCodexSitesPlugin(): InstalledPlugin {
         catalogItemId: '100',
         marketplace: 'wegent',
       },
-      displayName: '站点',
+      displayName: '快速建站',
       description: 'Build and deploy websites with Wegent Sites',
       version: '0.1.0',
       installState: 'installed',
@@ -254,7 +260,7 @@ function installedCodexSitesPlugin(): InstalledPlugin {
         bins: [],
       },
       interface: {
-        displayName: '站点',
+        displayName: '快速建站',
         defaultPrompt: ['Build an internal website and validate it locally'],
       },
       packageRef: null,
@@ -323,7 +329,7 @@ function installedCodexMiniProgramPlugin(): InstalledPlugin {
         catalogItemId: '102',
         marketplace: 'wegent',
       },
-      displayName: '微博小程序开发助手',
+      displayName: '微博小程序H5开发助手',
       description: 'Build and publish mini programs',
       version: '0.1.0',
       installState: 'installed',
@@ -343,7 +349,7 @@ function installedCodexMiniProgramPlugin(): InstalledPlugin {
         bins: [],
       },
       interface: {
-        displayName: '微博小程序开发助手',
+        displayName: '微博小程序H5开发助手',
         defaultPrompt: ['创建并发布一个小程序'],
       },
       packageRef: null,
@@ -1090,7 +1096,7 @@ describe('App plugins route', () => {
       }
       throw new Error(`Unexpected request: ${url}`)
     })
-    window.history.pushState({}, '', '/sites')
+    window.history.pushState({}, '', '/sites?app_type=web')
 
     renderApp()
     await updateAppPreferences({ experimentalFeaturesEnabled: true })
@@ -1120,8 +1126,8 @@ describe('App plugins route', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         input:
-          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
-        pluginName: '站点',
+          '[$快速建站](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '快速建站',
         openInNewChat: true,
       }
     )
@@ -1184,8 +1190,8 @@ describe('App plugins route', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         input:
-          '[$微博小程序开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
-        pluginName: '微博小程序开发助手',
+          '[$微博小程序H5开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
+        pluginName: '微博小程序H5开发助手',
         openInNewChat: true,
       }
     )
@@ -1242,8 +1248,8 @@ describe('App plugins route', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         input:
-          '[$微博小程序开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
-        pluginName: '微博小程序开发助手',
+          '[$微博小程序H5开发助手](plugin://weibo-miniapp-h5-develop-agent@wegent) 创建并发布一个小程序',
+        pluginName: '微博小程序H5开发助手',
       }
     )
   })
@@ -1308,8 +1314,8 @@ describe('App plugins route', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         input:
-          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
-        pluginName: '站点',
+          '[$快速建站](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '快速建站',
       }
     )
   })
@@ -1361,8 +1367,8 @@ describe('App plugins route', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         input:
-          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
-        pluginName: '站点',
+          '[$快速建站](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '快速建站',
       }
     )
   })
@@ -1416,8 +1422,8 @@ describe('App plugins route', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         input:
-          '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
-        pluginName: '站点',
+          '[$快速建站](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
+        pluginName: '快速建站',
       }
     )
   })
@@ -1810,6 +1816,42 @@ describe('App plugins route', () => {
     expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
     expect(screen.getByTestId('plugin-management-browse-marketplace-button')).toBeInTheDocument()
     expect(screen.queryByPlaceholderText('供应商 Token')).not.toBeInTheDocument()
+  })
+
+  test('opens Smart apps beside Sites and Mini Programs in Applications', async () => {
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+    await updateAppPreferences({ experimentalFeaturesEnabled: true })
+
+    await userEvent.click(await screen.findByTestId('applications-tab-smart-app'))
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/sites')
+      expect(window.location.search).toBe('?app_type=smart_app')
+    })
+    expect(screen.getByTestId('applications-tab-web')).toHaveTextContent('站点')
+    expect(screen.getByTestId('applications-tab-miniapp')).toHaveTextContent('小程序')
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveTextContent('智能工作台')
+    expect(screen.getByTestId('smart-apps-marketplace-page')).toBeInTheDocument()
+    expect(screen.getByTestId('smart-apps-section-marketplace')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+  })
+
+  test('hides Smart apps and exits its Applications view while experiments are disabled', async () => {
+    window.history.pushState({}, '', '/sites?app_type=smart_app')
+
+    renderApp()
+
+    expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/sites')
+      expect(window.location.search).toBe('')
+    })
+    expect(screen.queryByTestId('applications-tab-smart-app')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('smart-apps-marketplace-page')).not.toBeInTheDocument()
   })
 
   test('renders plugin management on direct /plugins/manage visit', async () => {

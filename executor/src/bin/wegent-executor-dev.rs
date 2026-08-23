@@ -15,6 +15,8 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 
 const DEBOUNCE_DELAY: Duration = Duration::from_millis(350);
 const EXIT_RESTART_DELAY: Duration = Duration::from_secs(1);
+const BUILD_TARGET_ENV: &str = "WEGENT_EXECUTOR_BUILD_TARGET";
+const PREBUILT_ENV: &str = "WEGENT_EXECUTOR_PREBUILT";
 
 enum DevEvent {
     FileChanged,
@@ -43,6 +45,7 @@ fn run() -> Result<(), String> {
     );
 
     let mut child: Option<Child> = None;
+    let mut rebuild_requested = !executor_prebuilt();
     let mut restart_requested = true;
 
     loop {
@@ -54,7 +57,12 @@ fn run() -> Result<(), String> {
 
         if restart_requested {
             stop_child(&mut child);
-            child = rebuild_and_spawn(&manifest_dir, &manifest_path, &executor_args)?;
+            child = if rebuild_requested {
+                rebuild_and_spawn(&manifest_dir, &manifest_path, &executor_args)?
+            } else {
+                Some(spawn_executor(&manifest_dir, &executor_args)?)
+            };
+            rebuild_requested = false;
             restart_requested = false;
         }
 
@@ -65,6 +73,7 @@ fn run() -> Result<(), String> {
                     return Ok(());
                 }
                 eprintln!("executor source changed; restarting");
+                rebuild_requested = true;
                 restart_requested = true;
             }
             Ok(DevEvent::Shutdown) => {
@@ -182,13 +191,16 @@ fn rebuild_and_spawn(
         return Ok(None);
     }
 
+    spawn_executor(manifest_dir, executor_args).map(Some)
+}
+
+fn spawn_executor(manifest_dir: &Path, executor_args: &[String]) -> Result<Child, String> {
     let binary = debug_binary_path(manifest_dir);
-    let child = Command::new(&binary)
+    Command::new(&binary)
         .args(executor_args)
         .current_dir(manifest_dir)
         .spawn()
-        .map_err(|error| format!("failed to start {}: {error}", binary.display()))?;
-    Ok(Some(child))
+        .map_err(|error| format!("failed to start {}: {error}", binary.display()))
 }
 
 fn build_executor(manifest_path: &Path) -> Result<bool, String> {
@@ -196,13 +208,7 @@ fn build_executor(manifest_path: &Path) -> Result<bool, String> {
         .parent()
         .ok_or_else(|| "Invalid manifest path: no parent directory".to_owned())?;
     let target_dir = cargo_target_dir(manifest_dir);
-    let output = Command::new("cargo")
-        .arg("build")
-        .arg("--manifest-path")
-        .arg(manifest_path)
-        .arg("--bin")
-        .arg("wegent-executor")
-        .env("CARGO_TARGET_DIR", &target_dir)
+    let output = executor_build_command(manifest_path, &target_dir)
         .output()
         .map_err(|error| format!("failed to run cargo build: {error}"))?;
     if !output.stdout.is_empty() {
@@ -214,15 +220,42 @@ fn build_executor(manifest_path: &Path) -> Result<bool, String> {
     Ok(output.status.success())
 }
 
+fn executor_build_command(manifest_path: &Path, target_dir: &Path) -> Command {
+    let mut command = Command::new("cargo");
+    command
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(manifest_path)
+        .arg("--features")
+        .arg("dev-reload")
+        .arg("--bin")
+        .arg("wegent-executor")
+        .env("CARGO_TARGET_DIR", target_dir);
+    if let Some(target) = executor_build_target() {
+        command.arg("--target").arg(target);
+    }
+    command
+}
+
 fn debug_binary_path(manifest_dir: &Path) -> PathBuf {
     let executable = if cfg!(windows) {
         "wegent-executor.exe"
     } else {
         "wegent-executor"
     };
-    cargo_target_dir(manifest_dir)
-        .join("debug")
-        .join(executable)
+    let mut path = cargo_target_dir(manifest_dir);
+    if let Some(target) = executor_build_target() {
+        path.push(target);
+    }
+    path.join("debug").join(executable)
+}
+
+fn executor_build_target() -> Option<std::ffi::OsString> {
+    env::var_os(BUILD_TARGET_ENV).filter(|value| !value.is_empty())
+}
+
+fn executor_prebuilt() -> bool {
+    env::var(PREBUILT_ENV).is_ok_and(|value| value == "1")
 }
 
 fn cargo_target_dir(manifest_dir: &Path) -> PathBuf {
@@ -315,6 +348,12 @@ mod tests {
             Self { key, previous }
         }
 
+        fn set_text(key: &'static str, value: &str) -> Self {
+            let previous = env::var_os(key);
+            env::set_var(key, value);
+            Self { key, previous }
+        }
+
         fn remove(key: &'static str) -> Self {
             let previous = env::var_os(key);
             env::remove_var(key);
@@ -337,6 +376,7 @@ mod tests {
         let _guard = env_lock();
         let target_dir = env::temp_dir().join("wegent-executor-dev-target");
         let _env = EnvVarGuard::set("CARGO_TARGET_DIR", &target_dir);
+        let _target = EnvVarGuard::remove(BUILD_TARGET_ENV);
 
         assert_eq!(
             debug_binary_path(Path::new("/tmp/executor")),
@@ -348,6 +388,7 @@ mod tests {
     fn debug_binary_path_defaults_to_manifest_target_dir() {
         let _guard = env_lock();
         let _env = EnvVarGuard::remove("CARGO_TARGET_DIR");
+        let _target = EnvVarGuard::remove(BUILD_TARGET_ENV);
         let manifest_dir = Path::new("/tmp/executor");
 
         assert_eq!(
@@ -357,6 +398,64 @@ mod tests {
                 .join("debug")
                 .join(executable_name())
         );
+    }
+
+    #[test]
+    fn debug_binary_path_includes_explicit_build_target() {
+        let _guard = env_lock();
+        let target_dir = env::temp_dir().join("wegent-executor-dev-target");
+        let _env = EnvVarGuard::set("CARGO_TARGET_DIR", &target_dir);
+        let _target = EnvVarGuard::set_text(BUILD_TARGET_ENV, "x86_64-pc-windows-msvc");
+
+        assert_eq!(
+            debug_binary_path(Path::new("/tmp/executor")),
+            target_dir
+                .join("x86_64-pc-windows-msvc")
+                .join("debug")
+                .join(executable_name())
+        );
+    }
+
+    #[test]
+    fn executor_build_command_reuses_dev_reload_features_and_target() {
+        let _guard = env_lock();
+        let _target = EnvVarGuard::set_text(BUILD_TARGET_ENV, "x86_64-pc-windows-msvc");
+        let manifest_path = Path::new("/tmp/executor/Cargo.toml");
+        let target_dir = Path::new("/tmp/executor-target");
+
+        let command = executor_build_command(manifest_path, target_dir);
+        let args = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            [
+                "build",
+                "--manifest-path",
+                "/tmp/executor/Cargo.toml",
+                "--features",
+                "dev-reload",
+                "--bin",
+                "wegent-executor",
+                "--target",
+                "x86_64-pc-windows-msvc",
+            ]
+        );
+    }
+
+    #[test]
+    fn executor_prebuilt_requires_explicit_one() {
+        let _guard = env_lock();
+        let _env = EnvVarGuard::remove(PREBUILT_ENV);
+        assert!(!executor_prebuilt());
+
+        env::set_var(PREBUILT_ENV, "0");
+        assert!(!executor_prebuilt());
+
+        env::set_var(PREBUILT_ENV, "1");
+        assert!(executor_prebuilt());
     }
 
     #[test]

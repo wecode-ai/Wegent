@@ -140,15 +140,12 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     )
     await control.command(
       'waitFor',
-      `[data-testid="runtime-priority-list"] [data-testid="${requestInputTaskRowTestId}"]`,
+      `[data-testid="runtime-priority-section"] [data-testid="${requestInputTaskRowTestId}"]`,
       {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       }
     )
-    await captureVerificationScreenshot(
-      control,
-      'priority-filter-03-handled-task-stays-priority.png'
-    )
+    await captureVerificationScreenshot(control, 'priority-filter-03-handled-task-settled.png')
 
     await control.command('press', 'body', { key: 'Meta+Alt+U' })
     await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
@@ -590,6 +587,76 @@ async function verifyBackgroundCompletionRestore({
       `Reloading duplicated "${text}"`
     )
   }
+
+  const completedTaskDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const completedTaskAddress = completedTaskDebugSnapshot.workbench?.currentRuntimeTask
+  assert.equal(
+    completedTaskAddress?.taskId,
+    taskId,
+    'The completed task address was unavailable before My Work lifecycle verification'
+  )
+  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+    value: JSON.stringify({
+      address: completedTaskAddress,
+      type: 'transcript_received',
+      transcript: {
+        taskId,
+        messages: [],
+        running: true,
+        turns: [{ id: 'my-work-stale-snapshot-turn', items: [], status: 'streaming' }],
+      },
+    }),
+  })
+  await control.command('waitFor', `[data-testid="${runningTaskTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await control.command('navigate', 'body', { value: '/todo' })
+  await control.command('waitFor', '[data-testid="cloud-my-work"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="cloud-my-work"]')
+  await control.command('waitFor', `[data-testid="my-work-group-running-${taskId}"]`, {
+    text: 'WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const myWorkSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="cloud-my-work-view"]')
+  )
+  assert.equal(
+    myWorkSnapshot.testIds.includes(`my-work-group-done-${taskId}`),
+    false,
+    'My Work used the stale completed Runtime snapshot instead of the shared running lifecycle'
+  )
+
+  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+    value: JSON.stringify({
+      address: completedTaskAddress,
+      type: 'transcript_received',
+      transcript: {
+        taskId,
+        messages: [],
+        running: false,
+        turns: [],
+      },
+    }),
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(`my-work-group-done-${taskId}`) &&
+      !snapshot.testIds.includes(`my-work-group-running-${taskId}`),
+    'My Work did not move the settled local task from running to done',
+    DEFAULT_STEP_TIMEOUT_MS,
+    '[data-testid="cloud-my-work-view"]'
+  )
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
 }
 
 async function waitForTaskRowByText(control, expectedText) {

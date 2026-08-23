@@ -2,16 +2,84 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""Tests for video polling recovery."""
+
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.execution.agents.video.recovery import _do_recover_video_jobs
+from app.services.execution.agents.video.recovery import (
+    STALE_THRESHOLD_SECONDS,
+    _do_recover_video_jobs,
+    _is_polling_context_stale,
+    _recover_video_jobs_sync,
+    recover_video_jobs,
+    recover_video_jobs_after_stale_delay,
+)
+
+
+def test_polling_context_stale_after_threshold() -> None:
+    now = datetime.now(timezone.utc)
+
+    assert _is_polling_context_stale(
+        {
+            "status": "polling",
+            "last_poll_at": (
+                now - timedelta(seconds=STALE_THRESHOLD_SECONDS + 1)
+            ).isoformat(),
+        },
+        now,
+        subtask_id=1,
+    )
+
+
+def test_polling_context_fresh_before_threshold() -> None:
+    now = datetime.now(timezone.utc)
+
+    assert not _is_polling_context_stale(
+        {
+            "status": "polling",
+            "last_poll_at": (now - timedelta(seconds=1)).isoformat(),
+        },
+        now,
+        subtask_id=1,
+    )
 
 
 @pytest.mark.asyncio
-async def test_recovery_requeues_external_workflow_with_existing_video_poller() -> None:
+async def test_recovery_runs_blocking_work_in_thread() -> None:
+    with patch(
+        "app.services.execution.agents.video.recovery.asyncio.to_thread",
+        new=AsyncMock(return_value=3),
+    ) as to_thread:
+        recovered_count = await recover_video_jobs()
+
+    to_thread.assert_awaited_once_with(_recover_video_jobs_sync)
+    assert recovered_count == 3
+
+
+@pytest.mark.asyncio
+async def test_delayed_recovery_runs_second_pass() -> None:
+    with (
+        patch(
+            "app.services.execution.agents.video.recovery.asyncio.sleep",
+            new=AsyncMock(),
+        ) as sleep,
+        patch(
+            "app.services.execution.agents.video.recovery.recover_video_jobs",
+            new=AsyncMock(return_value=2),
+        ) as recover,
+    ):
+        recovered_count = await recover_video_jobs_after_stale_delay()
+
+    sleep.assert_awaited_once_with(STALE_THRESHOLD_SECONDS + 1)
+    recover.assert_awaited_once_with()
+    assert recovered_count == 2
+
+
+def test_recovery_requeues_external_workflow_with_existing_video_poller() -> None:
     subtask = SimpleNamespace(
         id=2,
         task_id=1,
@@ -49,7 +117,7 @@ async def test_recovery_requeues_external_workflow_with_existing_video_poller() 
         ),
         patch("app.tasks.video_tasks.dispatch_video_polling_task") as dispatch,
     ):
-        recovered = await _do_recover_video_jobs()
+        recovered = _do_recover_video_jobs()
 
     assert recovered == 1
     assert dispatch.call_args.kwargs["workflow_type"] == "example_workflow"
