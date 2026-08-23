@@ -58,6 +58,31 @@ wegent_wework_cache_entry_matches_fingerprint() {
     [ "$(cat "$cache_entry/dependency-fingerprint")" = "$fingerprint" ]
 }
 
+wegent_wework_cache_entry_ready() {
+  local cache_entry="$1"
+  local fingerprint="$2"
+  local cached_virtual_store="$cache_entry/pnpm-virtual-store"
+
+  [ -d "$cached_virtual_store" ] &&
+    wegent_root_node_modules_view_ready "$cache_entry" &&
+    wegent_virtual_store_root_links_ready "$cached_virtual_store" &&
+    wegent_workspace_node_modules_views_ready "$cache_entry" &&
+    wegent_wework_cache_entry_matches_fingerprint "$cache_entry" "$fingerprint"
+}
+
+wegent_wait_for_wework_cache_writer() {
+  local cache_lock="$1"
+  local timeout_seconds="${WEGENT_WEWORK_NODE_MODULES_CACHE_LOCK_TIMEOUT_SECONDS:-600}"
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while [ -d "$cache_lock" ]; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
 wegent_wework_node_modules_view_ready() {
   local node_modules="$1"
 
@@ -186,32 +211,30 @@ ensure_wework_worktree_node_modules() {
       echo "Run 'pnpm install --frozen-lockfile' before publishing the worktree cache." >&2
       return 1
     fi
-    if [ ! -d "$cached_virtual_store" ] ||
-      ! wegent_root_node_modules_view_ready "$cache_entry" ||
-      ! wegent_virtual_store_root_links_ready "$cached_virtual_store" ||
-      ! wegent_workspace_node_modules_views_ready "$cache_entry" ||
-      ! wegent_wework_cache_entry_matches_fingerprint "$cache_entry" "$fingerprint"; then
+    if ! wegent_wework_cache_entry_ready "$cache_entry" "$fingerprint"; then
       mkdir -p "$cache_root"
       cache_lock="${cache_entry}.lock"
       if mkdir "$cache_lock" 2>/dev/null; then
-        mkdir -p "$cache_entry"
-        if [ ! -d "$cached_virtual_store" ]; then
-          mv "$project_dir/node_modules/.pnpm" "$cached_virtual_store"
-          ln -s "$cached_virtual_store" "$project_dir/node_modules/.pnpm"
-        fi
-        if ! wegent_root_node_modules_view_ready "$cache_entry"; then
-          wegent_clone_root_node_modules_view "$project_dir/node_modules" "$cache_entry"
-        fi
-        if ! wegent_virtual_store_root_links_ready "$cached_virtual_store"; then
-          wegent_link_root_dependencies_into_virtual_store \
-            "$project_dir/node_modules" \
-            "$cached_virtual_store"
-        fi
-        if ! wegent_workspace_node_modules_views_ready "$cache_entry"; then
-          wegent_cache_workspace_node_modules_views "$project_dir" "$cache_entry"
-        fi
-        printf '%s\n' "$fingerprint" >"$cache_entry/dependency-fingerprint"
-        rmdir "$cache_lock"
+        (
+          trap 'rmdir "$cache_lock" 2>/dev/null || true' EXIT
+          mkdir -p "$cache_entry"
+          if [ ! -d "$cached_virtual_store" ]; then
+            mv "$project_dir/node_modules/.pnpm" "$cached_virtual_store"
+            ln -s "$cached_virtual_store" "$project_dir/node_modules/.pnpm"
+          fi
+          if ! wegent_root_node_modules_view_ready "$cache_entry"; then
+            wegent_clone_root_node_modules_view "$project_dir/node_modules" "$cache_entry"
+          fi
+          if ! wegent_virtual_store_root_links_ready "$cached_virtual_store"; then
+            wegent_link_root_dependencies_into_virtual_store \
+              "$project_dir/node_modules" \
+              "$cached_virtual_store"
+          fi
+          if ! wegent_workspace_node_modules_views_ready "$cache_entry"; then
+            wegent_cache_workspace_node_modules_views "$project_dir" "$cache_entry"
+          fi
+          printf '%s\n' "$fingerprint" >"$cache_entry/dependency-fingerprint"
+        )
       fi
     fi
     if wegent_workspace_node_modules_views_ready "$cache_entry"; then
@@ -224,11 +247,12 @@ ensure_wework_worktree_node_modules() {
   fingerprint="$(wegent_wework_dependency_fingerprint "$project_dir")"
   cache_entry="$cache_root/$fingerprint"
   cached_virtual_store="$cache_entry/pnpm-virtual-store"
-  if [ ! -d "$cached_virtual_store" ] ||
-    ! wegent_root_node_modules_view_ready "$cache_entry" ||
-    ! wegent_virtual_store_root_links_ready "$cached_virtual_store" ||
-    ! wegent_workspace_node_modules_views_ready "$cache_entry" ||
-    ! wegent_wework_cache_entry_matches_fingerprint "$cache_entry" "$fingerprint"; then
+  cache_lock="${cache_entry}.lock"
+  if [ -d "$cache_lock" ] && ! wegent_wait_for_wework_cache_writer "$cache_lock"; then
+    echo "Error: timed out waiting for another worktree to publish the Wework dependency cache." >&2
+    return 1
+  fi
+  if ! wegent_wework_cache_entry_ready "$cache_entry" "$fingerprint"; then
     echo "Error: Wework dependencies are not installed and no matching worktree cache exists." >&2
     echo "Run 'pnpm install --frozen-lockfile' once in any worktree with these dependencies." >&2
     return 1
