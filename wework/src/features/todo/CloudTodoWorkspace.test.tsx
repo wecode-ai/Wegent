@@ -727,6 +727,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).toHaveClass('text-xs')
     expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).not.toHaveClass(
       'h-[60px]',
+      'max-h-15',
       'overflow-y-auto',
       'scrollbar-none',
       'group-hover:h-20',
