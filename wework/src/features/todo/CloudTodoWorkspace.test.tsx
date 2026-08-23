@@ -725,7 +725,7 @@ describe('CloudTodoWorkspace', () => {
       '正在思考 · Investigating board data flow'
     )
     expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).toHaveClass(
-      'h-[60px]',
+      'max-h-15',
       'overflow-y-auto',
       'scrollbar-none',
       'text-xs',
@@ -771,7 +771,7 @@ describe('CloudTodoWorkspace', () => {
         Node.DOCUMENT_POSITION_FOLLOWING
     ).not.toBe(0)
     expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).toHaveClass(
-      'h-[60px]',
+      'max-h-15',
       'overflow-y-auto'
     )
     expect(screen.getByTestId('cloud-todo-card-thinking-WEG-1')).toHaveClass('text-xs', 'leading-5')
