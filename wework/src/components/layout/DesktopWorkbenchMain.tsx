@@ -1653,6 +1653,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ) === index
     )
   }, [effectiveWorkspaceTarget, projectFileWorkspaceTargets])
+  const soleProjectWorkspaceTarget =
+    projectFileWorkspaceTargets.length === 1 ? projectFileWorkspaceTargets[0] : null
   const composerWorkspaceTarget =
     workspaceTarget ??
     (activeDeviceId && state.standaloneWorkspacePath
@@ -1662,6 +1664,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           source: 'runtime' as const,
         }
       : null) ??
+    soleProjectWorkspaceTarget ??
     (activeDeviceId && soleActiveDeviceWorkspacePath
       ? {
           deviceId: activeDeviceId,
