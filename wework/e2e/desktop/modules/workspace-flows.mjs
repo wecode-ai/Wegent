@@ -733,11 +733,11 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
       snapshot.testIds.includes(`workspace-tab-content-board-${activeBoardTabSuffix}`) &&
       !snapshot.testIds.includes('cloud-todo-board-loading') &&
       snapshot.text.includes('WEWORK_DESKTOP_E2E_TASK'),
-    'The work-item board did not settle on the completed tracked task'
+    'The work-item board did not settle on the tracked task awaiting confirmation'
   )
   await control.command(
     'waitFor',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-column-completed"]`,
+    `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`,
     {
       text: 'WEWORK_DESKTOP_E2E_TASK',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -745,7 +745,7 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
   )
   await captureVerificationScreenshot(
     control,
-    'workspace-05-completed-on-board.png',
+    'workspace-05-awaiting-confirmation-on-board.png',
     activeBoardContentSelector
   )
   const boardCardSelector = [
