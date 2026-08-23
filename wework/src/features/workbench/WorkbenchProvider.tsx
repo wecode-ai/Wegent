@@ -1098,6 +1098,7 @@ export function WorkbenchProvider({
     dispatch,
     executorClient,
     services: resolvedServices,
+    syncCloudBackground: syncRemoteProjects,
   })
 
   const localRuntimeStateDeviceId = useMemo(

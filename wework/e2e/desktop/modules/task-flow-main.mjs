@@ -3377,9 +3377,11 @@ last_updated = "2026-07-30T00:00:00Z"`
       await control.command('finishAnimations', 'body')
       const collapsedSidebarMetrics = await waitForElementWidth(
         control,
-        '[data-testid="desktop-sidebar"]',
+        '[data-workspace-tab-content]:not([aria-hidden="true"]) [data-testid="desktop-sidebar"]',
         width => width <= 1,
-        'The desktop sidebar'
+        'The desktop sidebar',
+        1_500,
+        { visible: false }
       )
       assert.ok(
         collapsedSidebarMetrics.width <= 1,

@@ -85,6 +85,7 @@ interface UseWorkbenchDataRefreshOptions {
   dispatch: Dispatch<WorkbenchAction>
   executorClient: ExecutorClient
   services: WorkbenchServices
+  syncCloudBackground?: boolean
 }
 
 // Cloud synchronization is detached from the local workbench bootstrap. Give
@@ -212,6 +213,7 @@ export function useWorkbenchDataRefresh({
   dispatch,
   executorClient,
   services,
+  syncCloudBackground = true,
 }: UseWorkbenchDataRefreshOptions) {
   const initialCachedRemoteRuntimeWork = useMemo(
     () => readCachedRemoteRuntimeWork(user.id),
@@ -655,12 +657,14 @@ export function useWorkbenchDataRefresh({
             ),
           })
         }
-        void refreshCloudBackgroundData(devices, runtimeWork, {
-          projects: [],
-          standaloneDeviceId,
-          trigger: 'bootstrap',
-          isCancelled: () => cancelled,
-        }).catch(() => undefined)
+        if (syncCloudBackground) {
+          void refreshCloudBackgroundData(devices, runtimeWork, {
+            projects: [],
+            standaloneDeviceId,
+            trigger: 'bootstrap',
+            isCancelled: () => cancelled,
+          }).catch(() => undefined)
+        }
       })
 
       if (defaultTeamResult.status === 'rejected') {
@@ -686,6 +690,7 @@ export function useWorkbenchDataRefresh({
     refreshCloudBackgroundData,
     selectVisibleRuntimeWork,
     services.teamApi,
+    syncCloudBackground,
     user,
   ])
 
@@ -740,7 +745,7 @@ export function useWorkbenchDataRefresh({
           state.standaloneWorkspacePath
         ),
       })
-      if (options?.syncCloud !== false) {
+      if (syncCloudBackground && options?.syncCloud !== false) {
         void refreshCloudBackgroundData(devices, localRuntimeWork, {
           projects: state.projects,
           standaloneDeviceId: state.standaloneDeviceId,
@@ -758,6 +763,7 @@ export function useWorkbenchDataRefresh({
       releaseConfirmedArchivedRuntimeTasks,
       selectVisibleRuntimeWork,
       services.cloudBackgroundApi,
+      syncCloudBackground,
       state.projects,
       state.runtimeWork,
       state.standaloneDeviceId,

@@ -3294,6 +3294,34 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('cloud-work-error')).toHaveTextContent('')
   })
 
+  test('does not synchronize cloud background data for an inactive workspace tab', async () => {
+    const listTeams = vi.fn().mockResolvedValue([])
+    const listDevices = vi.fn().mockResolvedValue([])
+    const listRuntimeWork = vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
+    const services = createWorkbenchServices({
+      cloudBackgroundApi: {
+        listTeams,
+        listDevices,
+        listRuntimeWork,
+      },
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={services}
+        syncRemoteProjects={false}
+      >
+        <BootstrapProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(screen.getByTestId('boot-state')).toHaveTextContent('alice'))
+    expect(listTeams).not.toHaveBeenCalled()
+    expect(listDevices).not.toHaveBeenCalled()
+    expect(listRuntimeWork).not.toHaveBeenCalled()
+  })
+
   test('keeps available status during refresh and becomes unavailable when backend reads fail', async () => {
     const teamsRefresh = deferred<Team[]>()
     const devicesRefresh = deferred<DeviceInfo[]>()

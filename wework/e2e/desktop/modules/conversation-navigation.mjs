@@ -841,16 +841,24 @@ async function reopenCurrentTurnNavigationTask(
   const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
   const taskId = debugSnapshot.workbench?.currentRuntimeTask?.taskId
   assert.ok(taskId, 'The turn-navigation fixture did not expose its runtime task ID')
+  const taskWorkspaceTabTestId = await control.command(
+    'getAttribute',
+    '[data-testid^="workspace-tab-select-task-"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   const restartedApp = await restartDesktopApp()
-  await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
-  await control.command('clickWhenEnabled', `[data-testid="runtime-local-task-row-${taskId}"]`, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  const taskWorkspaceTabSelector = `[data-testid="${taskWorkspaceTabTestId}"]`
+  await control.command('click', taskWorkspaceTabSelector, {
     visible: true,
+  })
+  await control.command('waitFor', `${taskWorkspaceTabSelector}[aria-selected="true"]`, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command(
     'waitFor',
