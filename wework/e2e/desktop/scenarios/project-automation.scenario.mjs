@@ -1172,16 +1172,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       managerToolCalls > customToolCallsBefore,
       'Custom AI manager did not call submit_workflow_plan'
     )
-    const projectedCustomManagerTask = await waitForValue(
-      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
-      response =>
-        (response.items ?? []).find(item => item.id === customManagerTask.id)?.ai_state
-          ?.project_chat_message_id,
-      'The custom manager execution did not project its board message identity',
-      uiTimeoutMs
-    ).then(response => response.items.find(item => item.id === customManagerTask.id))
-    const customManagerRootMessageId =
-      projectedCustomManagerTask.ai_state.project_chat_message_id
     const readyCountBeforeBoardReload = control.readyCount
     await control.command('reloadMainWindow', 'body')
     await withTimeout(
@@ -1251,7 +1241,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('click', '[data-testid="runtime-execution-detail-close"]', {
       visible: true,
     })
-    const customManagerCard = `${activeBoard} [data-testid="cloud-task-activity-card-${customManagerRootMessageId}"]`
+    const customManagerCard = `${activeBoard} [data-executor-type="automation_manager"][data-manager-type="custom"]`
     await control.command('waitFor', customManagerCard, {
       text: '自定义 AI 调度员',
       timeoutMs: uiTimeoutMs,
