@@ -28,8 +28,14 @@ import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
 import { waitForFolderPathReady, waitForFolderPickerInitialized } from './workspace-flows.mjs'
 
-const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
+const DESKTOP_READY_TIMEOUT_MS = readPositiveTimeout(
+  process.env.WEWORK_E2E_DESKTOP_READY_TIMEOUT_MS,
+  (process.env.WEWORK_E2E_DESKTOP_RUNTIME?.trim() || 'electron') === 'electron'
+    ? WORKBENCH_READY_TIMEOUT_MS
+    : 60_000,
+  'WEWORK_E2E_DESKTOP_READY_TIMEOUT_MS'
+)
 const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
   process.env.WEWORK_E2E_STEP_TIMEOUT_MS,
   10_000,
