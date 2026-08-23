@@ -71,9 +71,14 @@ assert_warmup_case "workflow change" "$warmup_all_true" \
   ".github/workflows/ci-cache-warmup.yml"
 
 node_only="${warmup_all_false/node=false/node=true}"
-assert_warmup_case "pnpm lock" "$node_only" "pnpm-lock.yaml"
+node_and_wework_target="${node_only/wework_target=false/wework_target=true}"
+assert_warmup_case "pnpm lock" "$node_and_wework_target" "pnpm-lock.yaml"
 assert_warmup_case "workspace manifest" "$node_only" "pnpm-workspace.yaml"
 assert_warmup_case "Wework manifest" "$node_only" "wework/package.json"
+assert_warmup_case "Wework Electron manifest" "$node_and_wework_target" \
+  "wework/electron/package.json"
+assert_warmup_case "Wework Electron lock" "$node_and_wework_target" \
+  "wework/electron/pnpm-lock.yaml"
 assert_warmup_case "Claude CLI lock" "$node_only" \
   ".github/claude-code-cli/package-lock.json"
 
@@ -183,11 +188,15 @@ macos_warmup_section="$(
     '/^  warm-wework-macos-rust:/,/^  prepare-wework-desktop-image:/p' \
     "$warmup_workflow"
 )"
-if [[ "$macos_warmup_section" != *'name: Warm Wework macOS Rust Cache'* ]] ||
+if [[ "$macos_warmup_section" != *'name: Warm Wework macOS Electron Build Cache'* ]] ||
   [[ "$macos_warmup_section" != *'runs-on: macos-14'* ]] ||
+  [[ "$macos_warmup_section" != *"needs.changes.outputs.wework_target == 'true'"* ]] ||
   [[ "$macos_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
-  [[ "$macos_warmup_section" != *'task-flow.e2e.mjs --build-only'* ]]; then
-  fail "Wework macOS memory builds must be prewarmed with the shared sccache"
+  [[ "$macos_warmup_section" != *'wework-electron-app-v1-'* ]] ||
+  [[ "$macos_warmup_section" != *'executor/target'* ]] ||
+  [[ "$macos_warmup_section" != *'~/Library/Caches/electron'* ]] ||
+  [[ "$macos_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]]; then
+  fail "Wework macOS Electron builds must be prewarmed with the shared build cache"
 fi
 
 if grep -R -q 'type=gha' \
@@ -355,10 +364,10 @@ fi
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-wework_target_key='wework-desktop-e2e-v3-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/src-tauri/Cargo.lock'\'') }}'
+wework_target_key='wework-electron-e2e-v1-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/electron/package.json'\'', '\''wework/electron/pnpm-lock.yaml'\'', '\''pnpm-lock.yaml'\'') }}'
 if ! grep -Fq "$wework_target_key" "$workflow_dir/wework-e2e.yml" ||
   ! grep -Fq "$wework_target_key" "$warmup_workflow"; then
-  fail "Wework E2E and warmup must share the desktop Cargo target cache"
+  fail "Wework E2E and warmup must share the Electron build cache"
 fi
 
 desktop_warmup_section="$(
@@ -372,9 +381,10 @@ if [[ "$desktop_warmup_section" != *'image: ${{ needs.prepare-wework-desktop-ima
   [[ "$desktop_warmup_section" != *'HOME: /root'* ]] ||
   [[ "$desktop_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
   [[ "$desktop_warmup_section" != *'executor/target'* ]] ||
-  [[ "$desktop_warmup_section" != *'wework/src-tauri/target'* ]] ||
+  [[ "$desktop_warmup_section" != *'~/.cache/electron'* ]] ||
+  [[ "$desktop_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]] ||
   [[ "$desktop_warmup_section" =~ install-wework-tauri-system-dependencies|dtolnay/rust-toolchain ]]; then
-  fail "Wework desktop Rust warmup must use target and sccache inside the E2E container"
+  fail "Wework desktop Electron warmup must use shared build caches inside the E2E container"
 fi
 
 printf 'CI cache policy tests passed\n'

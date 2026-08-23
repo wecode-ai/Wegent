@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use crate::logging::{format_executor_log, write_executor_error_line, write_executor_log_line};
 
 const RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES: usize = 512 * 1024;
+const APP_IPC_COMPRESSION_THRESHOLD_BYTES: usize = 1024 * 1024;
 const RUNTIME_RPC_MAX_ENCODED_BYTES: usize = 980_000;
 const APP_IPC_MAX_ENCODED_BYTES: usize = 15 * 1024 * 1024;
 const RUNTIME_RPC_COMPRESSED_ENCODING: &str = "gzip+base64+json";
@@ -20,6 +21,7 @@ pub(super) fn encode_runtime_rpc_response(method: &str, response: Value) -> Valu
         "runtime:rpc",
         method,
         response,
+        RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES,
         RUNTIME_RPC_MAX_ENCODED_BYTES,
         "runtime_rpc",
     )
@@ -30,6 +32,7 @@ pub(crate) fn encode_app_ipc_response(method: &str, response: Value) -> Value {
         "app IPC",
         method,
         response,
+        APP_IPC_COMPRESSION_THRESHOLD_BYTES,
         APP_IPC_MAX_ENCODED_BYTES,
         "app_ipc",
     )
@@ -39,6 +42,7 @@ fn encode_json_response(
     log_prefix: &str,
     method: &str,
     response: Value,
+    compression_threshold_bytes: usize,
     max_encoded_bytes: usize,
     error_prefix: &str,
 ) -> Value {
@@ -55,7 +59,7 @@ fn encode_json_response(
             );
         }
     };
-    if raw.len() <= RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES {
+    if raw.len() <= compression_threshold_bytes {
         return response;
     }
 

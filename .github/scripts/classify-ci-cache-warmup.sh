@@ -48,9 +48,14 @@ classify_path() {
       changed[executor_rust]=true
       ;;
     .github/claude-code-cli/* | frontend/src/* | package.json | \
-      pnpm-lock.yaml | pnpm-workspace.yaml | \
+      pnpm-workspace.yaml | \
       frontend/package.json | wework/package.json | packages/*/package.json)
       changed[node]=true
+      ;;
+    pnpm-lock.yaml | wework/electron/package.json | \
+      wework/electron/pnpm-lock.yaml)
+      changed[node]=true
+      changed[wework_target]=true
       ;;
     backend/uv.lock | executor_manager/uv.lock | \
       knowledge_engine/uv.lock | shared/uv.lock | \
