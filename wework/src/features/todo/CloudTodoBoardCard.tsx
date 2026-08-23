@@ -117,7 +117,7 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
       ) : null}
 
       {showFooter ? (
-        <span className="mt-2.5 flex min-h-6 items-center gap-3 border-t border-border/60 pt-2.5 text-xs text-text-muted">
+        <span className="mt-2.5 flex min-h-6 items-center gap-3 text-xs text-text-muted">
           {display.showPriority ? (
             <span
               className={cn(
@@ -167,7 +167,6 @@ export interface CloudTodoBoardTaskBinding {
   running: boolean
   changeRequestTarget?: TaskChangeRequestTarget | null
   finalResponsePreview?: string | null
-  finalResponseMessage?: WorkbenchMessage | null
   finalResponseLoaded?: boolean
 }
 
@@ -243,9 +242,9 @@ export function CloudTodoBoardCard({
       testId={`cloud-todo-card-progress-popup-${item.id}`}
       interactive
       openOnFocus
-      estimatedWidth={360}
-      estimatedHeight={260}
-      cardClassName="w-[360px] max-w-[calc(100vw-1rem)]"
+      estimatedWidth={440}
+      estimatedHeight={360}
+      cardClassName="w-[440px] max-w-[calc(100vw-1rem)]"
       content={
         <RuntimeTaskProgressPopup
           item={item}
@@ -264,7 +263,8 @@ export function CloudTodoBoardCard({
         data-testid={`cloud-todo-card-drop-${item.id}`}
         style={{ transform: CSS.Translate.toString(transform) }}
         className={cn(
-          'group relative h-fit w-full touch-none overflow-hidden rounded-xl border border-border bg-background text-left shadow-sm transition hover:-translate-y-px hover:border-text-primary/15 hover:shadow-md',
+          'group relative h-fit w-full touch-none overflow-hidden rounded-xl border text-left shadow-sm transition hover:-translate-y-px hover:border-text-primary/15 hover:shadow-md',
+          item.is_unread ? 'border-blue-500/15 bg-blue-500/[0.04]' : 'border-border bg-background',
           isDragging && 'opacity-25 shadow-none',
           isOver && !isDragging && 'border-focus ring-1 ring-focus/50'
         )}
@@ -336,7 +336,7 @@ export function CloudTodoBoardCard({
               event.preventDefault()
               onOpenActivity()
             }}
-            className="w-full border-t border-border/60 px-3.5 py-2"
+            className="w-full px-3.5 pb-3"
           >
             {progressTaskBindings.map(binding => (
               <RuntimeTaskProgressSummary
@@ -457,6 +457,49 @@ function RuntimeTaskLiveActivity({
   )
 }
 
+function RuntimeTaskCompactActivity({
+  itemId,
+  activity,
+  responsePreview,
+  reserveTrailingAction,
+}: {
+  itemId: string
+  activity: RuntimeLiveActivity
+  responsePreview: string | null
+  reserveTrailingAction: boolean
+}) {
+  const latestTool = activity.tools.at(-1)
+
+  return (
+    <div data-testid={`cloud-todo-card-activity-${itemId}`} className="min-w-0 text-xs">
+      {responsePreview ? (
+        <div
+          data-testid={`cloud-todo-card-response-${itemId}`}
+          className={cn('h-5 truncate leading-5 text-text-muted', reserveTrailingAction && 'pr-7')}
+        >
+          {responsePreview}
+        </div>
+      ) : activity.thinking ? (
+        <div className={cn('flex h-5 min-w-0 items-center', reserveTrailingAction && 'pr-7')}>
+          <AssistantThinkingIndicator
+            content={activity.thinking}
+            testId={`cloud-todo-card-thinking-${itemId}`}
+            className="text-xs leading-5"
+          />
+        </div>
+      ) : null}
+      {latestTool ? (
+        <div
+          data-testid={`cloud-todo-card-tool-line-${itemId}`}
+          className="ml-2 min-w-0 border-l border-border pl-3 text-text-muted"
+        >
+          <RuntimeTaskToolActivity itemId={itemId} block={latestTool} />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function RuntimeTaskProgressSummary({
   item,
   binding,
@@ -496,29 +539,33 @@ function RuntimeTaskProgressSummary({
   const cachedFinalResponse = useRuntimeTaskFinalResponse(
     item.status === 'in_review' ? taskAddress : null
   )
-  const finalResponseText = binding.finalResponsePreview || cachedFinalResponse
+  const finalResponseText = binding.finalResponseLoaded
+    ? (binding.finalResponsePreview ?? null)
+    : cachedFinalResponse
   const responseText =
-    activity.active && message?.content?.trim()
-      ? message.content
-      : binding.finalResponseMessage?.content || finalResponseText
-  const responsePreview = responseText ? latestResponseLine(responseText) : null
+    activity.active && message?.content?.trim() ? message.content : finalResponseText
+  const responsePreview = responseText
+    ? compact
+      ? latestResponseLine(responseText)
+      : responseText.trim()
+    : null
   const taskTitle = binding.task_title || binding.task_id
+  const showCompactChangeRequest = compact && Boolean(changeRequestSnapshot?.changeRequest)
 
   return (
     <div
       data-testid={`cloud-todo-card-task-summary-${item.id}-${binding.id}`}
-      className={cn('min-w-0 text-left', compact && 'rounded-md px-1 py-0.5')}
+      className={cn('min-w-0 text-left', compact && 'relative rounded-md px-1 py-0.5')}
     >
-      {compact && changeRequestSnapshot?.changeRequest ? (
-        <div className="mb-1 flex h-4 items-center">
-          <ChangeRequestStatusIcon
-            snapshot={changeRequestSnapshot}
-            testId={`cloud-todo-card-change-request-${item.id}-${binding.id}`}
-            popoverAlign="left"
-            repairing={repairingChangeRequest}
-            onContinueRepair={onContinueChangeRequestRepair}
-          />
-        </div>
+      {showCompactChangeRequest ? (
+        <ChangeRequestStatusIcon
+          snapshot={changeRequestSnapshot}
+          testId={`cloud-todo-card-change-request-${item.id}-${binding.id}`}
+          className="absolute right-0 top-0 z-10"
+          popoverAlign="left"
+          repairing={repairingChangeRequest}
+          onContinueRepair={onContinueChangeRequestRepair}
+        />
       ) : null}
       {!compact ? (
         <div className="flex min-w-0 items-center gap-2 text-xs text-text-secondary">
@@ -542,7 +589,14 @@ function RuntimeTaskProgressSummary({
           </span>
         </div>
       ) : null}
-      {responsePreview ? (
+      {compact && activity.active ? (
+        <RuntimeTaskCompactActivity
+          itemId={item.id}
+          activity={activity}
+          responsePreview={responsePreview}
+          reserveTrailingAction={showCompactChangeRequest}
+        />
+      ) : responsePreview ? (
         <div
           data-testid={
             activity.active
@@ -552,10 +606,10 @@ function RuntimeTaskProgressSummary({
                 : `cloud-todo-card-progress-response-${item.id}-${binding.id}`
           }
           className={cn(
-            'line-clamp-3 min-h-[60px] text-xs leading-5 text-text-muted',
+            'text-xs leading-5 text-text-muted',
             compact
-              ? 'border-l border-border/70 pl-2'
-              : 'ml-5 mt-1.5 border-l border-border/70 pl-2'
+              ? cn('h-5 truncate', showCompactChangeRequest && 'pr-7')
+              : 'ml-5 mt-1.5 max-h-60 overflow-y-auto whitespace-pre-wrap break-words border-l border-border/70 pl-2 pr-1'
           )}
         >
           {responsePreview}

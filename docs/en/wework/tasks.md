@@ -20,9 +20,9 @@ For an existing task, open the right-side **Environment** panel and select **Lin
 
 ### Review board-task progress
 
-Board cards show the task title only, so task text is not repeated. A running task shows up to three lines of its latest progress below the card content: Wework shows an AI response summary when text is being generated, otherwise it shows thinking or the most recent tool activity. The progress region shrinks to fit fewer than three lines and scrolls within the region when more content is available.
+The linked-task progress area does not repeat the runtime task title. While a task is running, the first row shows the latest AI text or thinking state, and a second indented row with a short vertical guide shows the most recent tool or edit action. PR/MR status remains a trailing action. After execution stops, the card shows only the last non-empty line from the final response of the latest turn and never falls back to an older turn. Unread cards use a subtle background in addition to the unread indicator.
 
-Hover anywhere on a card to open its progress preview. When one board task has several tasks running, the preview initially lists a summary for each one. Hovering an individual task narrows the preview to that task's progress.
+Hover anywhere on a card to open a wider progress preview. The preview shows the complete multiline final response from the latest turn, with longer content scrolling inside the response area. When one board task has several tasks running, the preview initially lists a summary for each one. Hovering an individual task narrows the preview to that task's progress.
 
 ## Manage project-space automation
 

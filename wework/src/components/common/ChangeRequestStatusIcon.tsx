@@ -58,14 +58,14 @@ const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphCo
     badgeClassName: 'text-red-500',
   },
   merge_queue_queued: {
-    mainClassName: 'text-text-secondary',
+    mainClassName: 'text-amber-500',
     badgeIcon: Clock3,
-    badgeClassName: 'text-text-muted',
+    badgeClassName: 'text-amber-500',
   },
   merge_queue_checking: {
-    mainClassName: 'text-text-secondary',
+    mainClassName: 'text-amber-500',
     badgeIcon: Loader2,
-    badgeClassName: 'text-text-muted',
+    badgeClassName: 'text-amber-500',
     badgeIconClassName: 'animate-spin',
   },
   merge_queue_failed: {

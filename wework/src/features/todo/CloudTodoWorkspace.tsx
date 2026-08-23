@@ -97,7 +97,6 @@ import {
   completeChangeRequestAutoRepair,
 } from '@/features/workbench/changeRequestStatus'
 import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
-import { runtimeMessagesToWorkbenchMessages } from '@/features/workbench/runtimePaneMessages'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
 import { AITableView } from '@/features/todo/AITableView'
@@ -109,7 +108,6 @@ import type {
   RuntimeWorkListResponse,
   User as UserProfile,
 } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
 import { stopLocalRobotQueueExecution } from './localRobotQueueDispatcher'
@@ -139,10 +137,7 @@ import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { BoardQuickCreate } from './BoardQuickCreate'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
 import { isRuntimeMyWorkItem, runtimeMyWorkItems } from './runtimeMyWork'
-import {
-  finalAssistantTranscriptMessage,
-  finalAssistantTranscriptText,
-} from './runtimeTaskResponsePreview'
+import { finalAssistantTranscriptText } from './runtimeTaskResponsePreview'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { IssueComposer } from './IssueComposer'
@@ -1276,7 +1271,6 @@ export function CloudTodoWorkspace({
       {
         signature: string
         text: string | null
-        message: WorkbenchMessage | null
       }
     >
   >({})
@@ -1497,13 +1491,6 @@ export function CloudTodoWorkspace({
                   taskId: binding.task_id,
                 })
               ]?.text ?? null,
-            finalResponseMessage:
-              runtimeFinalResponsePreviews[
-                runtimeConversationKey({
-                  deviceId: binding.device_id,
-                  taskId: binding.task_id,
-                })
-              ]?.message ?? null,
             finalResponseLoaded:
               runtimeConversationKey({
                 deviceId: binding.device_id,
@@ -2485,7 +2472,6 @@ export function CloudTodoWorkspace({
       return
     }
     for (const item of items) {
-      if (item.status !== 'in_review') continue
       for (const binding of itemTaskBindings[item.id] ?? []) {
         const addressKey = runtimeConversationKey({
           deviceId: binding.device_id,
@@ -2518,12 +2504,9 @@ export function CloudTodoWorkspace({
               return
             }
             const text = finalAssistantTranscriptText(transcript)
-            const message = finalAssistantTranscriptMessage({
-              messages: runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
-            })
             setRuntimeFinalResponsePreviews(current => ({
               ...current,
-              [addressKey]: { signature, text, message },
+              [addressKey]: { signature, text },
             }))
           })
           .catch(error => {
@@ -2539,7 +2522,7 @@ export function CloudTodoWorkspace({
             }
             setRuntimeFinalResponsePreviews(current => ({
               ...current,
-              [addressKey]: { signature, text: null, message: null },
+              [addressKey]: { signature, text: null },
             }))
           })
           .finally(() => {
