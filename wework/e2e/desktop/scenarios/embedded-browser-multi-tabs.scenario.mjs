@@ -3,19 +3,22 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const ACTIVE_WORKBENCH_SELECTOR =
-  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+  '[data-workspace-tab-content][aria-hidden="false"] [data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const RIGHT_PANEL_TOGGLE_SELECTOR =
   '[data-workspace-tab-portal-owner]:not([hidden]) [data-testid="toggle-right-workspace-panel-button"]'
 const RIGHT_NEW_TAB_CHAT_OPTION_SELECTOR =
-  '[data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-chat-option"]'
+  ACTIVE_WORKBENCH_SELECTOR +
+  ' [data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-chat-option"]'
 const RIGHT_NEW_TAB_TERMINAL_OPTION_SELECTOR =
-  '[data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-terminal-option"]'
+  ACTIVE_WORKBENCH_SELECTOR +
+  ' [data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-terminal-option"]'
 const ACTIVE_BROWSER_PANEL_SELECTOR =
   ACTIVE_WORKBENCH_SELECTOR +
   ' [data-testid="right-workspace-panel"] div:not(.hidden) > [data-testid="workspace-browser-panel"]'
 const BROWSER_INPUT_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-url-input"]'
-const FIRST_BROWSER_TAB_SELECTOR = '[data-testid="right-workspace-browser-tab-1"]'
+const FIRST_BROWSER_TAB_SELECTOR =
+  ACTIVE_WORKBENCH_SELECTOR + ' [data-testid="right-workspace-browser-tab-1"]'
 const FIRST_BROWSER_LOADING_ICON_SELECTOR =
   FIRST_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-1-loading-icon"]'
 const FIRST_BROWSER_TAB_CLOSE_SELECTOR =
@@ -24,8 +27,10 @@ const BROWSER_RELOAD_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-reload-button"]'
 const BROWSER_NAVIGATION_ERROR_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-navigation-error"]'
-const RIGHT_WORKSPACE_NEW_TAB_SELECTOR = '[data-testid="right-workspace-new-tab-button"]'
-const RIGHT_WORKSPACE_TABBAR_SELECTOR = '[data-testid="right-workspace-tabbar"]'
+const RIGHT_WORKSPACE_NEW_TAB_SELECTOR =
+  ACTIVE_WORKBENCH_SELECTOR + ' [data-testid="right-workspace-new-tab-button"]'
+const RIGHT_WORKSPACE_TABBAR_SELECTOR =
+  ACTIVE_WORKBENCH_SELECTOR + ' [data-testid="right-workspace-tabbar"]'
 const FIXTURE_A_PATH = '/embedded-browser-multi-tabs-a'
 const FIXTURE_B_PATH = '/embedded-browser-multi-tabs-b'
 const NAVIGATION_FAILURE_PATH = '/embedded-browser-navigation-failure'
@@ -312,7 +317,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         RIGHT_WORKSPACE_TABBAR_SELECTOR
       )
       const mixedTabbarText = (
-        await control.command('getText', RIGHT_WORKSPACE_TABBAR_SELECTOR)
+        await control.command('getText', RIGHT_WORKSPACE_TABBAR_SELECTOR, { visible: true })
       ).replace(/\s+/g, '')
       const chatLabel = mixedTabbarText.includes('临时聊天') ? '临时聊天' : 'Temporarychat'
       const terminalLabel = mixedTabbarText.includes('终端') ? '终端' : 'Terminal'

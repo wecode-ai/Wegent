@@ -313,12 +313,13 @@ async function waitForSnapshot(
   predicate,
   message,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
-  selector = 'body'
+  selector = 'body',
+  visible = false
 ) {
   const startedAt = Date.now()
   let lastSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
-    const snapshot = JSON.parse(await control.command('snapshot', selector))
+    const snapshot = JSON.parse(await control.command('snapshot', selector, { visible }))
     lastSnapshot = snapshot
     if (predicate(snapshot)) return snapshot
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))

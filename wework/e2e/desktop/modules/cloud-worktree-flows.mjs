@@ -256,19 +256,23 @@ async function deleteWorktreeFromSettings(control, task) {
   await control.command('navigate', 'body', { value: '/settings/worktrees' })
   await control.command('waitFor', '[data-testid="worktrees-settings-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    visible: true,
   })
   const deviceSelect = '[data-testid="worktrees-device-select"]'
-  if (Number(await control.command('getElementCount', deviceSelect)) > 0) {
-    await control.command('select', deviceSelect, { value: task.deviceId })
+  if (Number(await control.command('getElementCount', deviceSelect, { visible: true })) > 0) {
+    await control.command('select', deviceSelect, { value: task.deviceId, visible: true })
   }
   const deleteSelector = `[data-testid="delete-worktree-button-${task.taskId}"]`
   await control.command('waitFor', deleteSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    visible: true,
   })
-  await control.command('clickWhenEnabled', deleteSelector)
+  await control.command('clickWhenEnabled', deleteSelector, { visible: true })
   await waitForCondition(
     async () =>
-      Number(await control.command('getElementCount', deleteSelector).catch(() => '0')) === 0,
+      Number(
+        await control.command('getElementCount', deleteSelector, { visible: true }).catch(() => '0')
+      ) === 0,
     WORKBENCH_READY_TIMEOUT_MS,
     `Deleting ${task.taskId} did not remove it from Worktree settings`
   )

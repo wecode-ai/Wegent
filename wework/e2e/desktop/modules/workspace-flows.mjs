@@ -862,7 +862,7 @@ async function verifyWorkspaceTabIsolation(control) {
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const initial = JSON.parse(await control.command('snapshot', 'body'))
+  const initial = JSON.parse(await control.command('snapshot', 'body', { visible: true }))
   const initialTaskIds = workspaceTabIds(initial, 'task')
   const initialBoardIds = workspaceTabIds(initial, 'board')
   const initialAgentIds = workspaceTabIds(initial, 'agent')

@@ -497,9 +497,12 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
         snapshot.testIds.includes(manualTaskMark) &&
         snapshot.testIds.includes('send-message-button') &&
         !snapshot.testIds.includes(`runtime-local-task-running-${manualTaskId}`),
-      'The completed automation task did not become available for pinning'
+      'The completed automation task did not become available for pinning',
+      DEFAULT_STEP_TIMEOUT_MS,
+      'body',
+      true
     )
-    await control.command('click', `[data-testid="${manualTaskMark}"]`)
+    await control.command('click', `[data-testid="${manualTaskMark}"]`, { visible: true })
     await waitForSnapshot(
       control,
       snapshot => snapshot.testIds.includes('sidebar-pinned-section'),

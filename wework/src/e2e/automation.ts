@@ -502,13 +502,16 @@ function desktopControlElementMetrics(selector: string, visible = false): string
   )
 }
 
-function desktopControlSnapshot(selector = 'body'): string {
-  const root = findDesktopControlElements(selector)[0]
+function desktopControlSnapshot(selector = 'body', visible = false): string {
+  const root =
+    selector === 'body'
+      ? findDesktopControlElements(selector)[0]
+      : findDesktopControlElement(selector, visible)
   if (!root) throw new Error(`Unable to find selector "${selector}"`)
   const testIdElements = [
     ...(root.dataset.testid ? [root] : []),
     ...Array.from(root.querySelectorAll<HTMLElement>('[data-testid]')),
-  ]
+  ].filter(element => !visible || desktopControlElementVisible(element))
   const testIds = testIdElements
     .map(element => element.dataset.testid)
     .filter((testId): testId is string => Boolean(testId))
@@ -1490,7 +1493,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(range.toString().length)
     }
     case 'snapshot':
-      return desktopControlSnapshot(command.selector)
+      return desktopControlSnapshot(command.selector, command.visible)
     case 'getClipboardText':
       return getDesktopE2EClipboardText()
     case 'scrollIntoView': {
@@ -1820,7 +1823,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return pressDesktopControlKey(command.selector, command.key ?? '', command.visible)
     }
     case 'select': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const element = findDesktopControlElement(command.selector, command.visible)
       if (!(element instanceof HTMLSelectElement)) {
         throw new Error(`Selector "${command.selector}" is not a select element`)
       }

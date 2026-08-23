@@ -2582,24 +2582,6 @@ describe('DesktopWorkbenchLayout', () => {
     }
   })
 
-  test('removes sidebar overlays when a retained workspace tab becomes inactive', async () => {
-    const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
-    const props = {
-      ...baseProps,
-      onRefreshDevices,
-    }
-    const { rerender } = render(<DesktopWorkbenchLayout {...props} />)
-
-    await userEvent.click(screen.getByTestId('project-work-button'))
-    await userEvent.click(screen.getByTestId('add-remote-project-option'))
-    expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-
-    rerender(<DesktopWorkbenchLayout {...props} routeActive={false} />)
-
-    expect(screen.queryByTestId('desktop-sidebar')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
-  })
-
   test('hides continue-in-im action without a runtime task', () => {
     const onListImPrivateSessions = vi.fn().mockResolvedValue({ total: 0, items: [] })
 

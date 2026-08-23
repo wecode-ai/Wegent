@@ -644,7 +644,9 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       await captureWorkbench(control, 'local-harness-07-opencode-running.png')
 
-      const harnessSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      const harnessSnapshot = JSON.parse(
+        await control.command('snapshot', 'body', { visible: true })
+      )
       assert.ok(
         harnessSnapshot.testIds.includes('central-harness-terminal'),
         'OpenCode did not replace the central message area'
