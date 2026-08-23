@@ -312,6 +312,7 @@ async function prepareTarget(target, entry) {
     await ensureExtractedTarget(tarballPath, targetRoot, binaryPath, codeModeHostPath)
   })
 
+  await mkdir(outputRoot, { recursive: true })
   await withDirectoryLock(`${outputTargetRoot}.prepare-lock`, async () => {
     await exposeTarget(targetRoot, outputTargetRoot)
     await writeFile(
