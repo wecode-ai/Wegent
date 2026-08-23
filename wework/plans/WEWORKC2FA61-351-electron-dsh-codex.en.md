@@ -206,15 +206,16 @@ The multi-View tab model and localhost bridge are not final architecture.
   persistence, E2E selectors, and Electron-native browser boundary. Mounting
   the full upstream `dsh-better-sidebar` panel beside it would create a second
   shell and would not preserve Wework behavior.
-- Core DSH publishes the generic `ctx.weworkExtensions` service with protocol
-  identifier `wework.extensions.v1`. Extension point IDs use
+- Core DSH publishes the generic `ctx.wework` host service with protocol
+  identifier `wework.host.v1`. Its registry is `ctx.wework.extensions` with
+  protocol `wework.extensions.v1`. Extension point IDs use
   `wework.<surface>.<slot>.<kind>`; the first point is
   `wework.workspace.sidebar.tab`. Future points may include
   `wework.workspace.bottom-panel.tab`, `wework.workspace.toolbar.action`, and
   `wework.composer.action`, but they are not advertised before their contracts
   are implemented and frozen.
 - Plugins use
-  `weworkExtensions.register('wework.workspace.sidebar.tab', contribution)`.
+  `ctx.wework.extensions.register('wework.workspace.sidebar.tab', contribution)`.
   The primary TypeScript contract uses `WeworkWorkspaceSidebar*` names, and
   contributed tabs appear in Wework's existing launcher, new-tab menu, and tab
   strip.

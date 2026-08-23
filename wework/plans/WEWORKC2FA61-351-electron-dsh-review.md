@@ -10,8 +10,8 @@ Wework 内置浏览器均在最终 Electron 打包产物中完成验证。
 
 主协议与命名：
 
-- DSH service：`ctx.weworkExtensions`
-- protocol：`wework.extensions.v1`
+- DSH 宿主服务：`ctx.wework`（`wework.host.v1`）
+- 扩展注册表：`ctx.wework.extensions`（`wework.extensions.v1`）
 - 首个扩展点：`wework.workspace.sidebar.tab`
 - 命名规则：`wework.<surface>.<slot>.<kind>`
 - 候选后续扩展点：
@@ -33,15 +33,15 @@ Wework 内置浏览器均在最终 Electron 打包产物中完成验证。
 
 ## 截图链
 
-| 步骤 | 操作与断言                                                                                                                                                             | 证据                                                                                       |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| 1    | 在插件管理界面手工安装真实 Git 插件；界面明确显示主协议 `weworkExtensions` / `wework.workspace.sidebar.tab`，并把 `betterSidebar` 标记为兼容适配层；插件状态为“已激活” | [01-plugin-manager-installed.png](assets/WEWORKC2FA61-351/01-plugin-manager-installed.png) |
-| 2    | 重启 Core DSH 后打开 Wework 原右侧栏；原生 launcher 中出现插件贡献的“追问”和“追问记录”，没有第二套 sidebar 壳                                                          | [02-extension-launchers.png](assets/WEWORKC2FA61-351/02-extension-launchers.png)           |
-| 3    | 点击“追问记录”；扩展 surface 的 `data-wework-extension-mount-state` 为 `mounted`，显示插件真实空态                                                                     | [03-extension-history.png](assets/WEWORKC2FA61-351/03-extension-history.png)               |
-| 4    | 点击“追问”；扩展 surface 的 mount state 为 `mounted`，真实 textarea、模型选择与动作控件可见                                                                            | [04-extension-ask.png](assets/WEWORKC2FA61-351/04-extension-ask.png)                       |
-| 5    | 从同一工作台打开底部 Terminal；Core DSH PTY 返回当前仓库路径和真实 shell prompt，不再显示“启动失败”或黑色空截图                                                        | [05-terminal-working.png](assets/WEWORKC2FA61-351/05-terminal-working.png)                 |
-| 6    | 从同一右侧栏新增 Wework 内置浏览器并提交 `https://example.com`；原生网页正常加载，插件 tab、浏览器 tab 与右侧动作按钮保持同一标题行                                    | [06-browser-integrated.png](assets/WEWORKC2FA61-351/06-browser-integrated.png)             |
-| 7    | 打开浏览器更多菜单；菜单层覆盖原生网页内容且可点击，不再被 WebContentsView / webview 遮挡                                                                              | [07-browser-menu-overlay.png](assets/WEWORKC2FA61-351/07-browser-menu-overlay.png)         |
+| 步骤 | 操作与断言                                                                                                                                                                                                                               | 证据                                                                                       |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 1    | 在插件管理界面手工安装真实 Git 插件；插件状态为“已激活”。截图拍摄时界面仍显示早期服务名 `weworkExtensions`，本轮已将正式 API 收敛为 `ctx.wework.extensions`；扩展点保持 `wework.workspace.sidebar.tab`，`betterSidebar` 仍仅为兼容适配层 | [01-plugin-manager-installed.png](assets/WEWORKC2FA61-351/01-plugin-manager-installed.png) |
+| 2    | 重启 Core DSH 后打开 Wework 原右侧栏；原生 launcher 中出现插件贡献的“追问”和“追问记录”，没有第二套 sidebar 壳                                                                                                                            | [02-extension-launchers.png](assets/WEWORKC2FA61-351/02-extension-launchers.png)           |
+| 3    | 点击“追问记录”；扩展 surface 的 `data-wework-extension-mount-state` 为 `mounted`，显示插件真实空态                                                                                                                                       | [03-extension-history.png](assets/WEWORKC2FA61-351/03-extension-history.png)               |
+| 4    | 点击“追问”；扩展 surface 的 mount state 为 `mounted`，真实 textarea、模型选择与动作控件可见                                                                                                                                              | [04-extension-ask.png](assets/WEWORKC2FA61-351/04-extension-ask.png)                       |
+| 5    | 从同一工作台打开底部 Terminal；Core DSH PTY 返回当前仓库路径和真实 shell prompt，不再显示“启动失败”或黑色空截图                                                                                                                          | [05-terminal-working.png](assets/WEWORKC2FA61-351/05-terminal-working.png)                 |
+| 6    | 从同一右侧栏新增 Wework 内置浏览器并提交 `https://example.com`；原生网页正常加载，插件 tab、浏览器 tab 与右侧动作按钮保持同一标题行                                                                                                      | [06-browser-integrated.png](assets/WEWORKC2FA61-351/06-browser-integrated.png)             |
+| 7    | 打开浏览器更多菜单；菜单层覆盖原生网页内容且可点击，不再被 WebContentsView / webview 遮挡                                                                                                                                                | [07-browser-menu-overlay.png](assets/WEWORKC2FA61-351/07-browser-menu-overlay.png)         |
 
 浏览器原生内容的独立捕获：
 [06-browser-content.png](assets/WEWORKC2FA61-351/06-browser-content.png)。

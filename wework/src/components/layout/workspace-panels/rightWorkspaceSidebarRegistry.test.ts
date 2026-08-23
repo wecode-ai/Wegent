@@ -88,16 +88,17 @@ describe('rightWorkspaceBetterSidebar', () => {
     const sessions = { marker: 'dsh-sessions' }
     window.__WEWORK_DSH_EXTENSIONS_BRIDGE__ = {
       context: {
-        weworkExtensions: window.__WEWORK_DSH_EXTENSIONS__!,
+        wework: window.__WEWORK_DSH_HOST__!,
         betterSidebar: rightWorkspaceBetterSidebar,
         sessions,
       },
-      weworkExtensions: window.__WEWORK_DSH_EXTENSIONS__!,
+      wework: window.__WEWORK_DSH_HOST__!,
       service: rightWorkspaceBetterSidebar,
       attachHost: vi.fn(),
     }
 
-    expect(rightWorkspaceExtensionContext.weworkExtensions).toBe(window.__WEWORK_DSH_EXTENSIONS__)
+    expect(rightWorkspaceExtensionContext.wework).toBe(window.__WEWORK_DSH_HOST__)
+    expect(rightWorkspaceExtensionContext.wework.extensions).toBe(window.__WEWORK_DSH_EXTENSIONS__)
     expect(rightWorkspaceExtensionContext.betterSidebar).toBe(rightWorkspaceBetterSidebar)
     expect(rightWorkspaceExtensionContext.sessions).toBe(sessions)
 

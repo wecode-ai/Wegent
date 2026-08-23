@@ -81,8 +81,8 @@ export function CoreDshPluginManagementSection() {
         <header className="mb-3">
           <h2 className="heading-section text-text-primary">Core DSH 扩展</h2>
           <p className="mt-1 text-sm leading-5 text-text-secondary">
-            主协议是 Wework 发布的 weworkExtensions，侧边栏标签页扩展点为
-            wework.workspace.sidebar.tab；betterSidebar 仅作为兼容适配层。
+            主协议是 Wework 发布的 ctx.wework 扩展宿主，插件通过 ctx.wework.extensions.register
+            注册扩展点；当前已发布 wework.workspace.sidebar.tab，betterSidebar 仅作为兼容适配层。
           </p>
         </header>
         <form

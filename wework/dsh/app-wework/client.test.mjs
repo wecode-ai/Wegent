@@ -145,22 +145,20 @@ test('publishes Wework extensions independently from the application renderer', 
       return () => {}
     },
   })
-  assert.deepEqual(effects, [
-    'wework-app: extension bridge cleanup',
-    'wework-app: styles',
-  ])
+  assert.deepEqual(effects, ['wework-app: extension bridge cleanup', 'wework-app: styles'])
   assert.deepEqual(Array.from(client.inject), [
     'weworkDesktop',
     'sessions',
     'connection',
     'workspaces',
   ])
-  assert.equal(provided[0].name, 'weworkExtensions')
-  assert.equal(provided[0].service.protocol, 'wework.extensions.v1')
-  assert.deepEqual(Array.from(provided[0].service.extensionPoints), [
+  assert.equal(provided[0].name, 'wework')
+  assert.equal(provided[0].service.protocol, 'wework.host.v1')
+  assert.equal(provided[0].service.extensions.protocol, 'wework.extensions.v1')
+  assert.deepEqual(Array.from(provided[0].service.extensions.extensionPoints), [
     'wework.workspace.sidebar.tab',
   ])
-  assert.equal('sidebar' in provided[0].service, false)
+  assert.equal('sidebar' in provided[0].service.extensions, false)
   assert.equal(provided[1].name, 'betterSidebar')
   assert.equal(provided[1].service.version, '0.15.2-wework.1')
 })
@@ -204,10 +202,7 @@ test('queues better-sidebar registrations and reattaches them to the Wework host
   })
   const renderedChild = client.__testDocument.surface.element.props.children[0]
   assert.equal(renderedChild.type, descriptor.component)
-  assert.equal(
-    renderedChild.props.ctx.sessions.marker,
-    'real-context'
-  )
+  assert.equal(renderedChild.props.ctx.sessions.marker, 'real-context')
   assert.equal(renderedChild.props.store.getSnapshot().state.panelOpen, true)
   mounted.dispose()
   assert.equal(client.__testDocument.surface.unmounted, true)
@@ -268,12 +263,12 @@ test('limits dynamic tabs and removes an uninstalled app', async () => {
   for (let index = 0; index < client.MAX_DYNAMIC_TABS; index += 1) {
     state = client.openSmartApp(state, { appId: String(index) })
   }
-  assert.throws(
-    () => client.openSmartApp(state, { appId: 'overflow' }),
-    /At most 20 dynamic tabs/
-  )
+  assert.throws(() => client.openSmartApp(state, { appId: 'overflow' }), /At most 20 dynamic tabs/)
   const removed = client.removeSmartApp(state, '0')
-  assert.equal(removed.dynamicTabs.some(tab => tab.id === 'smart-app:0'), false)
+  assert.equal(
+    removed.dynamicTabs.some(tab => tab.id === 'smart-app:0'),
+    false
+  )
 })
 
 test('drops corrupted and duplicate persisted bindings', async () => {

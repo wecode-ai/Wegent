@@ -1010,7 +1010,7 @@ async function main() {
       SELECTED_DESKTOP_SEGMENT === 'harness-apps' ? await prepareHarnessRuntimeRoots() : null
     const electronCoreRuntimeRoot =
       DESKTOP_RUNTIME === 'electron'
-        ? join(weworkDir, 'node_modules', '.cache', 'harness-runtime-dev')
+        ? process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || null
         : null
     if (electronCoreRuntimeRoot) {
       assert.equal(
@@ -1059,8 +1059,10 @@ async function main() {
         ? {
             WEWORK_DESKTOP_RUNTIME: 'electron',
             WEWORK_EXECUTOR_PATH: executorBinary,
-            WEWORK_HARNESS_RUNTIME_ROOT: electronCoreRuntimeRoot,
             WEWORK_USER_DATA_DIR: join(resultDir, 'electron-user-data'),
+            ...(electronCoreRuntimeRoot
+              ? { WEWORK_HARNESS_RUNTIME_ROOT: electronCoreRuntimeRoot }
+              : {}),
           }
         : {}),
       ...(harnessRuntimes

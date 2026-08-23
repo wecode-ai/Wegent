@@ -1766,7 +1766,8 @@ WP-150 退出证据：
   `dsh-better-sidebar` 的整套面板会产生第二套壳和重复运行时，无法保持原
   Wework 效果。同时，若把产品协议命名为 sidebar 或 better-sidebar，未来底部
   面板、工具栏、输入区等能力会被迫依赖错误抽象。
-- 决策：Core DSH 发布通用服务 `ctx.weworkExtensions`，协议标识为
+- 决策：Core DSH 发布通用宿主服务 `ctx.wework`，宿主协议标识为
+  `wework.host.v1`；扩展注册表位于 `ctx.wework.extensions`，协议标识为
   `wework.extensions.v1`。扩展点采用稳定的产品级分层命名
   `wework.<surface>.<slot>.<kind>`；首个扩展点是
   `wework.workspace.sidebar.tab`。后续可平行增加
@@ -1775,7 +1776,7 @@ WP-150 退出证据：
   `extensionPoints`。
 - 结果：保留原 `RightWorkspacePanel` 的 DOM、样式、尺寸、持久化、E2E selector
   和 Electron 原生浏览器边界。插件通过
-  `weworkExtensions.register('wework.workspace.sidebar.tab', contribution)`
+  `ctx.wework.extensions.register('wework.workspace.sidebar.tab', contribution)`
   把 Tab 加入原启动器、原“新建标签页”菜单和原标签栏。主路径的 TypeScript
   契约使用 `WeworkWorkspaceSidebar*` 命名，不把兼容来源泄漏到产品 API。
 - 兼容边界：`ctx.betterSidebar` 和

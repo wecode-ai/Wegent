@@ -38,6 +38,7 @@ window.__ModuleLoader__.load({
     ])
     const FIXED_TAB_IDS = new Set(FIXED_TABS.map(tab => tab.id))
     const BETTER_SIDEBAR_VERSION = '0.15.2-wework.1'
+    const WEWORK_HOST_VERSION = '1.0.0'
     const WEWORK_EXTENSIONS_VERSION = '1.0.0'
     const WEWORK_SIDEBAR_TAB_EXTENSION_POINT = 'wework.workspace.sidebar.tab'
     const BETTER_SIDEBAR_FEATURES = Object.freeze([
@@ -329,7 +330,7 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const weworkExtensions = Object.freeze({
+      const extensions = Object.freeze({
         protocol: 'wework.extensions.v1',
         version: WEWORK_EXTENSIONS_VERSION,
         extensionPoints: Object.freeze([WEWORK_SIDEBAR_TAB_EXTENSION_POINT]),
@@ -339,6 +340,11 @@ window.__ModuleLoader__.load({
           }
           return registerSidebarTab(contribution)
         },
+      })
+      const wework = Object.freeze({
+        protocol: 'wework.host.v1',
+        version: WEWORK_HOST_VERSION,
+        extensions,
       })
 
       const service = Object.freeze({
@@ -412,7 +418,7 @@ window.__ModuleLoader__.load({
       return {
         context,
         service,
-        weworkExtensions,
+        wework,
         attachHost(nextExtensionHost, nextSidebarHost) {
           if (extensionHost === nextExtensionHost && sidebarHost === nextSidebarHost) return
           detachHost()
@@ -879,7 +885,7 @@ window.__ModuleLoader__.load({
           hostWindow.__WEWORK_DSH_BETTER_SIDEBAR__
         )
       }
-      ctx.provide('weworkExtensions', bridge.weworkExtensions)
+      ctx.provide('wework', bridge.wework)
       ctx.provide('betterSidebar', bridge.service)
       ctx.effect(
         () => () => {

@@ -83,12 +83,12 @@ export interface WeworkWorkspaceSidebarOpenTabSeed {
 }
 
 export interface WeworkExtensionContext {
-  weworkExtensions: WeworkExtensionsService
+  wework: WeworkHostService
   betterSidebar: DshBetterSidebarService
   [service: string]: unknown
 }
 
-export interface WeworkExtensionsService {
+export interface WeworkExtensionRegistry {
   readonly protocol: 'wework.extensions.v1'
   readonly version: string
   readonly extensionPoints: readonly WeworkExtensionPoint[]
@@ -96,6 +96,12 @@ export interface WeworkExtensionsService {
     extensionPoint: typeof WEWORK_WORKSPACE_SIDEBAR_TAB_EXTENSION_POINT,
     descriptor: WeworkWorkspaceSidebarTabDescriptor
   ): () => void
+}
+
+export interface WeworkHostService {
+  readonly protocol: 'wework.host.v1'
+  readonly version: string
+  readonly extensions: WeworkExtensionRegistry
 }
 
 export type RightWorkspaceExtensionTab = `dsh:${string}`
@@ -172,7 +178,7 @@ function notifyState() {
 }
 
 function reportPluginError(stage: string, error: unknown) {
-  console.error(`[Wework better-sidebar] ${stage} failed:`, error)
+  console.error(`[Wework extension host] ${stage} failed:`, error)
 }
 
 export function titleOfWeworkWorkspaceSidebarTab(
@@ -218,10 +224,12 @@ export const rightWorkspaceBetterSidebar: DshBetterSidebarService = {
   features: SERVICE_FEATURES,
   registerTab(descriptor) {
     if (!descriptor.id.trim()) {
-      throw new Error('[Wework better-sidebar] tab id is required')
+      throw new Error('[Wework extension host] sidebar tab id is required')
     }
     if (descriptors.has(descriptor.id)) {
-      throw new Error(`[Wework better-sidebar] tab type "${descriptor.id}" already registered`)
+      throw new Error(
+        `[Wework extension host] sidebar tab type "${descriptor.id}" already registered`
+      )
     }
     descriptors.set(descriptor.id, descriptor)
     notifyRegistry()
@@ -271,7 +279,7 @@ export const rightWorkspaceBetterSidebar: DshBetterSidebarService = {
 }
 
 const rightWorkspaceExtensionContextBase: WeworkExtensionContext = {
-  weworkExtensions: undefined as unknown as WeworkExtensionsService,
+  wework: undefined as unknown as WeworkHostService,
   betterSidebar: rightWorkspaceBetterSidebar,
 }
 
@@ -279,7 +287,7 @@ export const rightWorkspaceExtensionContext: WeworkExtensionContext = new Proxy(
   rightWorkspaceExtensionContextBase,
   {
     get(target, property, receiver) {
-      if (property === 'weworkExtensions') return window.__WEWORK_DSH_EXTENSIONS__
+      if (property === 'wework') return window.__WEWORK_DSH_HOST__
       if (property === 'betterSidebar') return rightWorkspaceBetterSidebar
       const dshContext =
         typeof window === 'undefined'
@@ -319,25 +327,26 @@ export function resolveRightWorkspaceExtensionDescriptor(
 
 declare global {
   interface Window {
-    __WEWORK_DSH_EXTENSIONS__?: WeworkExtensionsService
+    __WEWORK_DSH_HOST__?: WeworkHostService
+    __WEWORK_DSH_EXTENSIONS__?: WeworkExtensionRegistry
     __WEWORK_DSH_EXTENSIONS_BRIDGE__?: {
       context: WeworkExtensionContext
       service: DshBetterSidebarService
-      weworkExtensions: WeworkExtensionsService
-      attachHost(extensionHost: WeworkExtensionsService, sidebarHost: DshBetterSidebarService): void
+      wework: WeworkHostService
+      attachHost(extensionHost: WeworkExtensionRegistry, sidebarHost: DshBetterSidebarService): void
     }
     __WEWORK_DSH_BETTER_SIDEBAR__?: DshBetterSidebarService
     __WEWORK_DSH_BETTER_SIDEBAR_BRIDGE__?: {
       context: WeworkExtensionContext
       service: DshBetterSidebarService
-      weworkExtensions: WeworkExtensionsService
-      attachHost(extensionHost: WeworkExtensionsService, sidebarHost: DshBetterSidebarService): void
+      wework: WeworkHostService
+      attachHost(extensionHost: WeworkExtensionRegistry, sidebarHost: DshBetterSidebarService): void
     }
   }
 }
 
 if (typeof window !== 'undefined') {
-  const weworkExtensions: WeworkExtensionsService = {
+  const extensions: WeworkExtensionRegistry = {
     protocol: 'wework.extensions.v1',
     version: '1.0.0',
     extensionPoints: [WEWORK_WORKSPACE_SIDEBAR_TAB_EXTENSION_POINT],
@@ -348,12 +357,15 @@ if (typeof window !== 'undefined') {
       return rightWorkspaceBetterSidebar.registerTab(descriptor)
     },
   }
-  rightWorkspaceExtensionContextBase.weworkExtensions = weworkExtensions
-  window.__WEWORK_DSH_EXTENSIONS__ = weworkExtensions
+  const wework: WeworkHostService = {
+    protocol: 'wework.host.v1',
+    version: '1.0.0',
+    extensions,
+  }
+  rightWorkspaceExtensionContextBase.wework = wework
+  window.__WEWORK_DSH_HOST__ = wework
+  window.__WEWORK_DSH_EXTENSIONS__ = extensions
   window.__WEWORK_DSH_BETTER_SIDEBAR__ = rightWorkspaceBetterSidebar
-  window.__WEWORK_DSH_EXTENSIONS_BRIDGE__?.attachHost(weworkExtensions, rightWorkspaceBetterSidebar)
-  window.__WEWORK_DSH_BETTER_SIDEBAR_BRIDGE__?.attachHost(
-    weworkExtensions,
-    rightWorkspaceBetterSidebar
-  )
+  window.__WEWORK_DSH_EXTENSIONS_BRIDGE__?.attachHost(extensions, rightWorkspaceBetterSidebar)
+  window.__WEWORK_DSH_BETTER_SIDEBAR_BRIDGE__?.attachHost(extensions, rightWorkspaceBetterSidebar)
 }
