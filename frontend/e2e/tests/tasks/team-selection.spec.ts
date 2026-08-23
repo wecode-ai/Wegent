@@ -334,18 +334,16 @@ test.describe('Team Selection', () => {
 
     test('should restore from localStorage when navigating to new chat', async ({ page }) => {
       // Set preferred team
-      await page.goto('/chat')
+      await page.goto('/chat', { waitUntil: 'domcontentloaded' })
       await page.evaluate(() => {
         localStorage.setItem('wegent_last_team_id_chat', '1')
       })
 
       // Navigate to a task
-      await page.goto('/chat?taskId=999')
-      await page.waitForLoadState('domcontentloaded')
+      await page.goto('/chat?taskId=999', { waitUntil: 'domcontentloaded' })
 
       // Navigate back to new chat
-      await page.goto('/chat')
-      await page.waitForLoadState('domcontentloaded')
+      await page.goto('/chat', { waitUntil: 'domcontentloaded' })
 
       // Team should be restored from localStorage
       // Verify by checking localStorage was read (hard to verify UI without mock)
