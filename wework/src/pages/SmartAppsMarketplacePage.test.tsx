@@ -13,6 +13,9 @@ const deleteInstalled = vi.fn()
 const stopInstalled = vi.fn()
 const updateInstalled = vi.fn()
 const exportToDownloads = vi.fn()
+const createDirectory = vi.fn()
+const linkDirectory = vi.fn()
+const copyToDirectory = vi.fn()
 
 vi.mock('@/hooks/useTranslation', () => {
   const translate = (_key: string, fallback?: string) => fallback ?? _key
@@ -47,6 +50,9 @@ vi.mock('@/api/local/harnessApps', () => ({
     stop: (id: string) => stopInstalled(id),
     update: (id: string, updates: unknown) => updateInstalled(id, updates),
     exportToDownloads: (id: string) => exportToDownloads(id),
+    createDirectory: (input: unknown) => createDirectory(input),
+    linkDirectory: (path: string) => linkDirectory(path),
+    copyToDirectory: (id: string, input: unknown) => copyToDirectory(id, input),
   },
 }))
 
@@ -126,6 +132,7 @@ const importedInstallation = {
   state: 'installed' as const,
   webUrl: null,
   error: null,
+  source: 'managed' as const,
 }
 
 describe('SmartAppsMarketplacePage', () => {
@@ -152,6 +159,14 @@ describe('SmartAppsMarketplacePage', () => {
       manifest: null,
       issues: [],
     })
+    createDirectory.mockReset().mockResolvedValue({
+      ...importedInstallation,
+      id: 'blank-workbench',
+      packagePath: '/tmp/blank-workbench',
+      source: 'linked',
+    })
+    linkDirectory.mockReset()
+    copyToDirectory.mockReset()
   })
 
   test('shows official and shared marketplace metadata', async () => {
@@ -257,6 +272,20 @@ describe('SmartAppsMarketplacePage', () => {
     )
     expect(screen.getByTestId('smart-app-created-item-research-desk')).toHaveClass('min-h-52')
     expect(screen.getByTestId('smart-app-created-item-research-desk')).not.toHaveClass('min-h-64')
+  })
+
+  test('identifies a folder-linked workbench separately from an imported package', async () => {
+    listInstalled.mockResolvedValue([
+      {
+        ...importedInstallation,
+        id: 'linked-workbench',
+        source: 'linked',
+      },
+    ])
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    expect(await screen.findByText('关联文件夹')).toBeInTheDocument()
+    expect(screen.queryByText('本地导入')).not.toBeInTheDocument()
   })
 
   test('exports a created or imported installation package to Downloads', async () => {
@@ -434,8 +463,25 @@ describe('SmartAppsMarketplacePage', () => {
     render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
 
     fireEvent.click(screen.getByTestId('smart-apps-created-create'))
+    fireEvent.change(screen.getByTestId('smart-app-development-display-name'), {
+      target: { value: '空白工作台' },
+    })
+    fireEvent.change(screen.getByTestId('smart-app-development-name'), {
+      target: { value: 'blank-workbench' },
+    })
+    fireEvent.change(screen.getByTestId('smart-app-development-parent-path'), {
+      target: { value: '/tmp' },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-development-confirm'))
 
     expect(await screen.findByText('智能工作台开发助手安装失败，请重试。')).toBeInTheDocument()
+    expect(createDirectory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        displayName: '空白工作台',
+        name: 'blank-workbench',
+        parentPath: '/tmp',
+      })
+    )
     expect(queuePluginReferenceTrial).not.toHaveBeenCalled()
     expect(navigateTo).not.toHaveBeenCalled()
   })

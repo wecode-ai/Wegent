@@ -7,6 +7,7 @@ import JSZip from 'jszip'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
 const RC7_INSTALLATION_ID = 'dsh-e2e-smoke-rc7'
+const CREATED_INSTALLATION_ID = 'dsh-e2e-created'
 const APP_ROUTE = `/app/harness-${INSTALLATION_ID}`
 const MODEL_LABEL = 'Desktop E2E Chat'
 const RECIPIENT_NAME = 'smart-app-e2e-recipient'
@@ -455,17 +456,85 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="smart-apps-created-create"]')
+      await control.command('waitFor', '[data-testid="smart-app-development-dialog"]', {
+        text: '创建空白工作台',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('fill', '[data-testid="smart-app-development-display-name"]', {
+        value: '空白 E2E 工作台',
+      })
+      await control.command('fill', '[data-testid="smart-app-development-name"]', {
+        value: CREATED_INSTALLATION_ID,
+      })
+      await control.command('fill', '[data-testid="smart-app-development-parent-path"]', {
+        value: resultDir,
+      })
+      await control.command('fill', '[data-testid="smart-app-development-description"]', {
+        value: '验证 Web 预设、持续开发和文件夹运行',
+      })
+      await captureScreenshot(control, 'harness-apps-03a-create-web-preset.png', 'body')
+      await control.command('clickWhenEnabled', '[data-testid="smart-app-development-confirm"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', '[data-testid="chat-message-input"]', {
         text: '智能工作台开发助手',
         timeoutMs: uiTimeoutMs,
       })
-      await captureScreenshot(control, 'harness-apps-03a-builder-chat.png', 'body')
+      await captureScreenshot(control, 'harness-apps-03b-builder-chat.png', 'body')
       await control.command('navigate', 'body', {
         value: '/sites?app_type=smart_app&view=owned',
       })
       await control.command('waitFor', '[data-testid="smart-apps-owned-page"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command(
+        'waitFor',
+        `[data-testid="smart-app-created-item-${CREATED_INSTALLATION_ID}"]`,
+        {
+          text: '空白 E2E 工作台',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await captureScreenshot(control, 'harness-apps-03c-linked-web-workbench.png', 'body')
+      await control.command('click', `[data-testid="smart-app-actions-${CREATED_INSTALLATION_ID}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="smart-app-add-plugins-${CREATED_INSTALLATION_ID}"]`,
+        {
+          text: '添加 DSH 插件',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await captureScreenshot(control, 'harness-apps-03d-development-actions.png', 'body')
+      await control.command(
+        'click',
+        `[data-testid="smart-app-add-plugins-${CREATED_INSTALLATION_ID}"]`
+      )
+      await control.command('waitFor', '[data-testid="chat-message-input"]', {
+        text: '增量添加',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-03e-add-plugin-chat.png', 'body')
+      await control.command('navigate', 'body', {
+        value: '/sites?app_type=smart_app&view=owned',
+      })
+      await control.command(
+        'waitFor',
+        `[data-testid="smart-app-created-item-${CREATED_INSTALLATION_ID}"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('click', `[data-testid="smart-app-actions-${CREATED_INSTALLATION_ID}"]`)
+      await control.command(
+        'click',
+        `[data-testid="smart-app-export-package-${CREATED_INSTALLATION_ID}"]`
+      )
+      await control.command('waitFor', '[data-testid="smart-app-export-success"]', {
+        text: '安装包已导出到下载目录',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-03f-linked-exported.png', 'body')
       await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
         value: JSON.stringify([
           {

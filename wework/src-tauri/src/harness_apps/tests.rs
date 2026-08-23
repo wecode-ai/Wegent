@@ -112,6 +112,7 @@ fn installation_registry_defaults_resident_for_existing_records() {
     assert!(!installation.resident);
     assert!(installation.smart_app_id.is_none());
     assert!(installation.release_id.is_none());
+    assert_eq!(installation.source, "managed");
 }
 
 #[test]
@@ -172,6 +173,54 @@ fn installed_package_export_is_deterministic_and_valid() {
 }
 
 #[test]
+fn web_smart_app_scaffold_is_a_valid_editable_directory() {
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("blank-workbench");
+
+    scaffold_web_smart_app(
+        &app,
+        "blank-workbench",
+        "Blank workbench",
+        "Start from the Web preset",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let (manifest, checksum) = validate_package_directory(&app).unwrap();
+
+    assert_eq!(manifest.name, "blank-workbench");
+    assert_eq!(manifest.entry.profile, "web");
+    assert_eq!(manifest.requirements.dsh, "0.1.0-rc.8");
+    assert_eq!(checksum.len(), 64);
+    assert!(app
+        .join("packages/bundle/blank-workbench/cordis.patch.yml")
+        .is_file());
+}
+
+#[test]
+fn linked_directory_checksum_changes_with_source_edits() {
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let (_, first) = validate_package_directory(&app).unwrap();
+
+    fs::write(
+        app.join("packages/bundle/editable-workbench/src/index.ts"),
+        "export const smartApp = { edited: true }\n",
+    )
+    .unwrap();
+    let (_, second) = validate_package_directory(&app).unwrap();
+
+    assert_ne!(first, second);
+}
+
+#[test]
 fn manifest_rejects_install_package_escape() {
     let mut parsed: HarnessAppManifest = serde_json::from_str(&manifest("0.1.0-rc.8")).unwrap();
     parsed.entry.install_package = "../outside".to_string();
@@ -208,6 +257,7 @@ fn instance_patch_binds_provider_and_model() {
         error: None,
         smart_app_id: None,
         release_id: None,
+        source: "managed".to_string(),
     };
 
     let output = prepare_instance_bundle(&installation, directory.path(), true)
@@ -284,6 +334,7 @@ fn standard_dsh_release_materializes_and_installs_all_declared_packages() {
         error: None,
         smart_app_id: None,
         release_id: None,
+        source: "managed".to_string(),
     };
 
     let packages = prepare_instance_bundle(&installation, directory.path(), true).unwrap();
@@ -320,6 +371,7 @@ fn instance_patch_adds_agent_default_model_when_the_bundle_has_no_model_fields()
         error: None,
         smart_app_id: None,
         release_id: None,
+        source: "managed".to_string(),
     };
 
     let output = prepare_instance_bundle(&installation, directory.path(), true)
@@ -358,6 +410,7 @@ fn instance_patch_rejects_an_incomplete_model_pair() {
         error: None,
         smart_app_id: None,
         release_id: None,
+        source: "managed".to_string(),
     };
 
     let error = prepare_instance_bundle(&installation, directory.path(), true).unwrap_err();
