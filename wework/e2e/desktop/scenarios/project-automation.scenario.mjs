@@ -831,8 +831,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     )
     const workflowBinding = workflowBindings.find(binding => binding.workflow_node_id === 'stage-1')
     assert.ok(workflowBinding)
-    const workflowTaskRow = `[data-testid="cloud-todo-open-workflow-task-stage-1-${workflowBinding.id}"]`
+    const workflowTaskRow = `${activeBoard} [data-testid="cloud-todo-open-workflow-task-stage-1-${workflowBinding.id}"]`
     await control.command('click', '[data-testid="ai-chat-modal-close"]')
+    const workflowIssueCard = `${activeBoard} [data-testid="cloud-todo-card-${workflowIssue.id}"]`
+    await control.command('waitFor', workflowIssueCard, {
+      text: workflowIssue.title,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', workflowIssueCard, { visible: true })
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+      text: workflowIssue.title,
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('waitFor', workflowTaskRow, {
       timeoutMs: uiTimeoutMs,
     })
@@ -859,7 +870,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       visible: true,
     })
-    const workflowIssueCard = `${activeBoard} [data-testid="cloud-todo-card-${workflowIssue.id}"]`
     await control.command('waitFor', workflowIssueCard, {
       text: workflowIssue.title,
       timeoutMs: uiTimeoutMs,
@@ -1213,6 +1223,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       }
     )
     const managerExecutionShortcut = `${activeBoard} [data-testid="cloud-todo-workflow-manager-open-execution"]`
+    await control.command('waitFor', managerExecutionShortcut, {
+      text: '查看执行细节',
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('scrollIntoView', managerExecutionShortcut)
     await control.command('waitFor', managerExecutionShortcut, {
       text: '查看执行细节',

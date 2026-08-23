@@ -16,3 +16,5 @@ pub mod pty;
 pub mod session;
 pub mod session_gateway;
 pub mod workspace_files;
+
+pub(crate) const RUNTIME_EVENT_BUFFER_CAPACITY: usize = 8192;

@@ -56,6 +56,7 @@ export const HOST_CAPABILITIES = [
   'smartApps.delete',
   'smartApps.download',
   'smartApps.export',
+  'smartApps.exportToDownloads',
   'smartApps.install',
   'smartApps.list',
   'smartApps.preview',

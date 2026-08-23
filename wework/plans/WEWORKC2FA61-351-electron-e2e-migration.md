@@ -20,6 +20,16 @@ Electron + Core DSH + Executor 架构。测试断言、场景夹具和 checkpoin
 
 状态：`NOT_STARTED`、`IN_PROGRESS`、`IMPLEMENTED`、`PASSED`、`BLOCKED`。
 
+## 当前结论
+
+- 45 个桌面 checkpoint 已全部迁移到共享 Electron runner，并逐个实机验证通过。
+- 4 个插件分段已全部迁移并逐个实机验证通过。
+- 22 个独立桌面场景均已由 checkpoint 显式映射，进入统一 runner 和 CI。
+- 3 个 Playwright Web E2E 文件均已验证通过。
+- 默认桌面运行时为 Electron；Tauri 仅保留显式回归入口，不再承载默认验证。
+- Core DSH 不维护 Renderer 静态方法白名单，调用面由
+  `executor.protocol.describe.renderer_methods` 动态声明和校验。
+
 ## 基础设施
 
 | 项目                                | 状态        | Electron 命令或证据                                                                                  |
@@ -101,7 +111,7 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | `claude-runtime`                  | `claude-runtime.scenario.mjs`                   | PASSED | `2026-08-23T05-27-56-087Z-49057`，1m 35s |
 | `local-file-preview`              | `local-file-preview.scenario.mjs`               | PASSED | `2026-08-23T06-23-06-401Z-96018`，24s    |
 | `local-harness`                   | `local-terminal.scenario.mjs`                   | PASSED | `2026-08-23T07-27-58-073Z-72292`，42s    |
-| `harness-apps`                    | `harness-apps.scenario.mjs`                     | PASSED | `2026-08-23T08-17-24-636Z-70583`，1m 51s |
+| `harness-apps`                    | `harness-apps.scenario.mjs`                     | PASSED | `2026-08-23T13-40-39-648Z-29751`         |
 | `browser-multi-tabs`              | `embedded-browser-multi-tabs.scenario.mjs`      | PASSED | `2026-08-23T08-50-53-603Z-10432`，34s    |
 | `embedded-browser`                | `embedded-browser-agent.scenario.mjs`           | PASSED | `2026-08-23T10-11-23-405Z-45839`，55s    |
 | `browser-toolbar-actions`         | `embedded-browser-toolbar-actions.scenario.mjs` | PASSED | `2026-08-23T10-59-55-871Z-36223`，22s    |
@@ -110,24 +120,40 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 
 | 分段                           | 状态   | 最近一次 Electron 验证           |
 | ------------------------------ | ------ | -------------------------------- |
-| `plugin-marketplace-lifecycle` | PASSED | `2026-08-23T11-28-24-266Z-51802` |
-| `plugin-lifecycle`             | PASSED | `2026-08-23T12-18-40-765Z-51071` |
+| `plugin-marketplace-lifecycle` | PASSED | `2026-08-23T14-13-21-281Z-62260` |
+| `plugin-lifecycle`             | PASSED | `2026-08-23T14-11-03-745Z-41421` |
 | `skill-mention-rendering`      | PASSED | `2026-08-23T12-29-47-542Z-798`   |
 | `sites-plugin-auto-install`    | PASSED | `2026-08-23T12-31-52-898Z-10302` |
 
 ## 独立桌面场景
 
-这些模块当前没有全部直接出现在 `DESKTOP_CHECKPOINTS`，仍需保留可独立运行能力。
+所有场景均由 `run-checkpoints.mjs` 显式映射到 checkpoint；场景本身不维护
+Electron/Tauri 两份业务断言。
 
-| 场景                                            | 状态   | 归属                      |
-| ----------------------------------------------- | ------ | ------------------------- |
-| `cloud-space-mention.scenario.mjs`              | PASSED | `cloud-space-mention`     |
-| `conversation-mention.scenario.mjs`             | PASSED | `conversation-state`      |
-| `embedded-browser-agent.scenario.mjs`           | PASSED | `embedded-browser`        |
-| `embedded-browser-multi-tabs.scenario.mjs`      | PASSED | `browser-multi-tabs`      |
-| `embedded-browser-toolbar-actions.scenario.mjs` | PASSED | `browser-toolbar-actions` |
-| `local-terminal.scenario.mjs`                   | PASSED | `local-harness`           |
-| `streaming-text.scenario.mjs`                   | PASSED | `rendering-extensions`    |
+| 场景                                            | 状态   | 归属                              |
+| ----------------------------------------------- | ------ | --------------------------------- |
+| `change-request-status.scenario.mjs`            | PASSED | `change-request-status`           |
+| `claude-runtime.scenario.mjs`                   | PASSED | `claude-runtime`                  |
+| `cloud-space-mention.scenario.mjs`              | PASSED | `cloud-space-mention`             |
+| `codex-notification-isolation.scenario.mjs`     | PASSED | `codex-notification-isolation`    |
+| `context-compaction.scenario.mjs`               | PASSED | `context-compaction`              |
+| `conversation-mention.scenario.mjs`             | PASSED | `conversation-state`              |
+| `embedded-browser-agent.scenario.mjs`           | PASSED | `embedded-browser`                |
+| `embedded-browser-multi-tabs.scenario.mjs`      | PASSED | `browser-multi-tabs`              |
+| `embedded-browser-toolbar-actions.scenario.mjs` | PASSED | `browser-toolbar-actions`         |
+| `harness-apps.scenario.mjs`                     | PASSED | `harness-apps`                    |
+| `local-file-preview.scenario.mjs`               | PASSED | `local-file-preview`              |
+| `local-terminal.scenario.mjs`                   | PASSED | `local-harness`                   |
+| `offline-local-project-space.scenario.mjs`      | PASSED | `offline-local-project-space`     |
+| `project-assignment-notification.scenario.mjs`  | PASSED | `project-assignment-notification` |
+| `project-automation.scenario.mjs`               | PASSED | `project-automation`              |
+| `running-conversation-history.scenario.mjs`     | PASSED | `running-conversation-history`    |
+| `runtime-task-queue.scenario.mjs`               | PASSED | `runtime-task-queue`              |
+| `runtime-terminal-convergence.scenario.mjs`     | PASSED | `runtime-terminal-convergence`    |
+| `split-workbench.scenario.mjs`                  | PASSED | `split-workbench`                 |
+| `streaming-text.scenario.mjs`                   | PASSED | `rendering-extensions`            |
+| `task-attachments.scenario.mjs`                 | PASSED | `task-attachments`                |
+| `temporary-chat.scenario.mjs`                   | PASSED | `temporary-chat`                  |
 
 ## Playwright Web E2E
 
@@ -261,3 +287,8 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | 2026-08-23 | Web E2E：Responses API mock                         | `pnpm e2e -- e2e/tests/response-api-mock.spec.ts`                                                                     | PASS | 7 passed，12.2s                                                                                                                                                                                                                                                                                                                                                                                    |
 | 2026-08-23 | Web E2E：上游 mock                                  | `pnpm e2e -- e2e/tests/upstream-mocks.spec.ts`                                                                        | PASS | 2 passed，3.6s                                                                                                                                                                                                                                                                                                                                                                                     |
 | 2026-08-23 | Electron CI 接线静态验证                            | `bash .github/scripts/test-classify-ci-changes.sh`、`bash -n`、YAML 解析                                              | PASS | 共享构建产物改为完整 Electron 应用目录；core/cloud/plugin 与 macOS memory/Inspector 作业均使用同一 Electron 包                                                                                                                                                                                                                                                                                     |
+| 2026-08-23 | `harness-apps` 合并主分支后的完整验证               | `pnpm e2e:desktop -- --segment harness-apps`                                                                          | PASS | `2026-08-23T13-40-39-648Z-29751`；最新版 DSH 工作台应用安装、导出和独立进程生命周期通过，RC7 继续按产品契约拒绝                                                                                                                                                                                                                                                                                    |
+| 2026-08-23 | Executor Renderer 动态 capability                   | Executor 合约测试、Electron 类型检查和真实插件流程                                                                    | PASS | `executor.protocol.describe.renderer_methods` 声明插件导入、链接解除和个人插件删除方法；Core DSH 仅按运行时声明校验，没有第二份静态白名单                                                                                                                                                                                                                                                          |
+| 2026-08-23 | Electron Executor Codex Home 隔离                   | `managed-executor-runtime.test.ts`、真实 `plugin-lifecycle`                                                           | PASS | `2026-08-23T14-11-03-745Z-41421`；Electron 显式覆盖 `CODEX_HOME`/`WEGENT_CODEX_HOME`，隔离目录中 `auth.json` 不存在，离线导入与删除期间没有外部请求                                                                                                                                                                                                                                                |
+| 2026-08-23 | `plugin-lifecycle` 合并主分支后的完整验证           | `pnpm e2e:desktop -- --segment plugin-lifecycle`                                                                      | PASS | `2026-08-23T14-11-03-745Z-41421`，1m 59s；本地导入、Codex 配置提交、缓存与个人市场删除、断网约束、市场安装/聊天使用/卸载全部通过                                                                                                                                                                                                                                                                   |
+| 2026-08-23 | `plugin-marketplace-lifecycle` 合并主分支后的验证   | `pnpm e2e:desktop -- --segment plugin-marketplace-lifecycle`                                                          | PASS | `2026-08-23T14-13-21-281Z-62260`，58s；独立市场插件生命周期全部通过                                                                                                                                                                                                                                                                                                                                |

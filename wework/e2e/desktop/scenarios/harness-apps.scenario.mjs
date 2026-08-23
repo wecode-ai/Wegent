@@ -154,7 +154,8 @@ async function createOfficialSource(resultDir, packagePath) {
     join(source, 'smart-app-marketplace.json'),
     JSON.stringify({
       summary: 'Official desktop E2E Smart app',
-      descriptionMd: '# Official desktop E2E Smart app',
+      descriptionMd:
+        '# DSH E2E Smoke 0.1.0-rc.8\n\n面向现场演示的智能资料处理应用。上传文件后，可以选择工作表与文本列并完成分类。\n\n## 主要能力\n\n- 自动检查文件结构和数据预览\n- 支持自定义分类标签和兜底分类\n- 实时展示处理进度与失败行\n- 保留原始文件并下载处理结果\n\n## 演示建议\n\n准备一个包含文本列的小型文件，使用正向、负向和中性作为标签，快速展示完整流程。',
       tags: ['data_analysis'],
       icon: 'icon.png',
       releaseNotes: 'Initial official E2E release',
@@ -375,6 +376,27 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         text: 'DSH E2E Smoke',
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('click', '[data-testid="smart-app-marketplace-item-1"] > button')
+      await control.command('waitFor', '[data-testid="smart-app-details"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="smart-app-details-content"]', {
+        text: '主要能力',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="smart-app-details-footer"]', {
+        text: '下载并安装',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-03-details.png', 'body')
+      await control.command('press', 'body', { key: 'Escape' })
+      await waitForElementCount(
+        control,
+        '[data-testid="smart-app-details"]',
+        0,
+        uiTimeoutMs,
+        'Smart app details dialog did not close after Escape'
+      )
       await control.command('click', '[data-testid="smart-app-marketplace-install-1"]')
       await control.command('waitFor', '[data-testid="harness-app-preview"]', {
         timeoutMs: uiTimeoutMs,
@@ -413,10 +435,14 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         }
       )
       await captureScreenshot(control, 'harness-apps-03a-official-running.png', 'body')
-      await control.command('waitFor', '[data-testid="harness-app-stop-market-1"]', {
+      await control.command('waitFor', '[data-testid="smart-app-marketplace-actions-1"]', {
         timeoutMs: 60_000,
       })
-      await control.command('click', '[data-testid="harness-app-stop-market-1"]')
+      await control.command('click', '[data-testid="smart-app-marketplace-actions-1"]')
+      await control.command('waitFor', `[data-testid="smart-app-stop-menu-market-1"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `[data-testid="smart-app-stop-menu-market-1"]`)
       await control.command('waitFor', '[data-testid="harness-app-start-market-1"]', {
         timeoutMs: 30_000,
       })
@@ -426,7 +452,10 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       })
       await control.command('click', '[data-testid="smart-apps-section-owned"]')
       await control.command('waitFor', '[data-testid="smart-apps-owned-page"]', {
-        text: '我的创建',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', 'body', {
+        text: '我的工作台',
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="smart-apps-created-create"]')
@@ -514,20 +543,20 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         timeoutMs: uiTimeoutMs,
       })
       await control.command('navigate', 'body', {
-        value: '/sites?app_type=smart_app&view=installed',
+        value: '/sites?app_type=smart_app&view=owned',
       })
       await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="smart-apps-section-installed"]', {
-        text: '已安装',
+      await control.command('waitFor', '[data-testid="smart-apps-section-owned"]', {
+        text: '我的',
         timeoutMs: uiTimeoutMs,
       })
       const harnessManagementSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
         harnessManagementSnapshot.location.includes('app_type=smart_app') &&
-          harnessManagementSnapshot.location.includes('view=installed'),
-        `Installed Smart apps did not open: ${harnessManagementSnapshot.location}`
+          harnessManagementSnapshot.location.includes('view=owned'),
+        `My Smart apps did not open: ${harnessManagementSnapshot.location}`
       )
       const managementTabId = await control.command(
         'getAttribute',
@@ -535,7 +564,23 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         { value: 'data-workspace-tab-content' }
       )
       assert.ok(managementTabId, 'Harness management page did not expose its workspace tab ID')
+      const activeWorkspaceContentSelector = '[data-workspace-tab-content][aria-hidden="false"]'
       await captureScreenshot(control, 'harness-apps-05-installed.png', 'body')
+      await control.command('click', `[data-testid="smart-app-actions-${INSTALLATION_ID}"]`)
+      await control.command(
+        'waitFor',
+        `[data-testid="smart-app-export-package-${INSTALLATION_ID}"]`,
+        {
+          text: '导出安装包',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('click', `[data-testid="smart-app-export-package-${INSTALLATION_ID}"]`)
+      await control.command('waitFor', '[data-testid="smart-app-export-success"]', {
+        text: '安装包已导出到下载目录。',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-05a-exported.png', 'body')
 
       const modelSelector = `[data-testid="harness-app-model-${INSTALLATION_ID}"]`
       const initialModelKey = await control.command('getValue', modelSelector)
@@ -675,7 +720,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command('waitFor', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`, {
+      await control.command('waitFor', `[data-testid="harness-app-open-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'harness-apps-09-running.png', 'body')
@@ -704,7 +749,14 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command('click', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`)
+      await control.command(
+        'click',
+        `[data-testid="smart-app-created-item-${INSTALLATION_ID}"]:has([data-testid="harness-app-open-${INSTALLATION_ID}"]) [data-testid="smart-app-actions-${INSTALLATION_ID}"]`
+      )
+      await control.command('waitFor', `[data-testid="smart-app-stop-menu-${INSTALLATION_ID}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `[data-testid="smart-app-stop-menu-${INSTALLATION_ID}"]`)
       await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`, {
         timeoutMs: 30_000,
       })
@@ -760,11 +812,18 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-add-smart-app"]')
-      await control.command('click', '[data-testid="smart-apps-section-installed"]')
-      await control.command('waitFor', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`, {
+      await control.command('click', '[data-testid="smart-apps-section-owned"]')
+      await control.command('waitFor', `[data-testid="harness-app-open-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', `[data-testid="harness-app-stop-${INSTALLATION_ID}"]`)
+      await control.command(
+        'click',
+        `[data-testid="smart-app-created-item-${INSTALLATION_ID}"]:has([data-testid="harness-app-open-${INSTALLATION_ID}"]) [data-testid="smart-app-actions-${INSTALLATION_ID}"]`
+      )
+      await control.command('waitFor', `[data-testid="smart-app-stop-menu-${INSTALLATION_ID}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `[data-testid="smart-app-stop-menu-${INSTALLATION_ID}"]`)
       await control.command('waitFor', `[data-testid="harness-app-start-${INSTALLATION_ID}"]`, {
         timeoutMs: 30_000,
       })
@@ -786,10 +845,34 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       const returnedMarketplaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
         returnedMarketplaceSnapshot.location.includes('/sites?app_type=smart_app') &&
-          !returnedMarketplaceSnapshot.location.includes('view=installed'),
-        `Installed Smart apps did not return to the marketplace: ${returnedMarketplaceSnapshot.location}`
+          !returnedMarketplaceSnapshot.location.includes('view=owned'),
+        `My Smart apps did not return to the marketplace: ${returnedMarketplaceSnapshot.location}`
       )
       await captureScreenshot(control, 'harness-apps-15-returned-to-marketplace.png', 'body')
+
+      await control.command(
+        'click',
+        `${activeWorkspaceContentSelector} [data-testid="smart-app-marketplace-actions-1"]`
+      )
+      await control.command('waitFor', '[data-testid="smart-app-remove-local-market-1"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="smart-app-remove-local-market-1"]')
+      await control.command('waitFor', '[data-testid="smart-app-remove-local-confirm"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="smart-app-remove-local-confirm"]')
+      await waitForElementCount(
+        control,
+        '[data-testid="smart-app-marketplace-actions-1"]',
+        0,
+        uiTimeoutMs,
+        'Removing a marketplace installation left its local actions visible'
+      )
+      await control.command('waitFor', '[data-testid="smart-app-marketplace-item-1-state"]', {
+        text: '未安装',
+        timeoutMs: uiTimeoutMs,
+      })
 
       await setExperimentalFeatures(control, false, uiTimeoutMs)
       await control.command('navigate', 'body', { value: '/sites' })

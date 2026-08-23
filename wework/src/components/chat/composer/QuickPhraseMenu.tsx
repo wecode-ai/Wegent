@@ -8,7 +8,7 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { navigateTo } from '@/lib/navigation'
 import { getAppPreferences, updateAppPreferences, type QuickPhrase } from '@/tauri/appPreferences'
 import { useQuickPhrases } from '@/hooks/useQuickPhrases'
-import { useAnchoredPortalMenu } from './useAnchoredPortalMenu'
+import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
 import { useOutsideClick } from './useOutsideClick'
 
 interface QuickPhraseMenuProps {

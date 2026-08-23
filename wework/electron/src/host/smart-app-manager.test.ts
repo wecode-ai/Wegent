@@ -48,6 +48,16 @@ describe('SmartAppManager', () => {
       valid: true,
       manifest: { name: 'fixture-app' },
     })
+
+    const saved = await manager.exportToDownloads(installation.id)
+    expect(saved.destinationPath).toBe(join(root, 'downloads', 'fixture-app-1.0.0.zip'))
+    await expect(manager.preview(saved.destinationPath)).resolves.toMatchObject({
+      valid: true,
+      manifest: { name: 'fixture-app' },
+    })
+
+    const duplicate = await manager.exportToDownloads(installation.id)
+    expect(duplicate.destinationPath).toBe(join(root, 'downloads', 'fixture-app-1.0.0 (1).zip'))
   })
 
   test('rejects package paths escaping the archive root', async () => {
@@ -130,6 +140,7 @@ describe('SmartAppManager', () => {
 function createManager(root: string): SmartAppManager {
   return new SmartAppManager({
     dataDirectory: join(root, 'data'),
+    downloadsDirectory: join(root, 'downloads'),
     logDirectory: join(root, 'logs'),
     runtimeRoot: join(root, 'runtime'),
     environment: {},

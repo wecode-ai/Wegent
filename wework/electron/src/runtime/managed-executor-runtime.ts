@@ -1,8 +1,18 @@
 import { randomBytes, randomUUID } from 'node:crypto'
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs'
+import { homedir } from 'node:os'
 import { rm } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import type { Socket } from 'node:net'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { RuntimeSupervisor } from './runtime-supervisor.js'
 
 export interface ManagedExecutorRuntimeOptions {
@@ -23,11 +33,12 @@ export class ManagedExecutorRuntime {
 
   constructor(private readonly options: ManagedExecutorRuntimeOptions) {
     this.endpoint = localExecutorEndpoint()
+    const environment = prepareManagedExecutorEnvironment(options)
     this.process = new RuntimeSupervisor({
       command: options.command,
       args: options.args,
       env: {
-        ...options.environment,
+        ...environment,
         WEGENT_APP_IPC_DEVICE_ID: options.deviceId,
         WEGENT_APP_IPC_ENDPOINT: this.endpoint,
         WEGENT_APP_IPC_TOKEN: this.token,
@@ -64,6 +75,61 @@ export class ManagedExecutorRuntime {
       await rm(this.endpoint, { force: true })
     }
   }
+}
+
+export function prepareManagedExecutorEnvironment(
+  options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'>
+): NodeJS.ProcessEnv {
+  const executorHome =
+    options.environment.WEGENT_EXECUTOR_HOME?.trim() || join(options.dataDirectory, 'executor')
+  const codexHome = options.environment.WEGENT_CODEX_HOME?.trim() || join(executorHome, 'codex')
+  const nativeCodexHome = resolveNativeCodexHome(options.environment, codexHome)
+  if (nativeCodexHome) prepareCodexAuth(nativeCodexHome, codexHome)
+  return {
+    ...options.environment,
+    CODEX_HOME: codexHome,
+    WEGENT_CODEX_HOME: codexHome,
+    WEGENT_EXECUTOR_HOME: executorHome,
+  }
+}
+
+function resolveNativeCodexHome(
+  environment: NodeJS.ProcessEnv,
+  managedCodexHome: string
+): string | null {
+  if (environment.VITE_WEWORK_E2E === 'true') {
+    return environment.WEWORK_E2E_NATIVE_CODEX_HOME?.trim() || null
+  }
+  const configured = environment.CODEX_HOME?.trim()
+  if (configured && resolve(configured) !== resolve(managedCodexHome)) return configured
+  const home = environment.HOME?.trim() || homedir()
+  return join(home, '.codex')
+}
+
+function prepareCodexAuth(nativeCodexHome: string, managedCodexHome: string): void {
+  const source = join(nativeCodexHome, 'auth.json')
+  const target = join(managedCodexHome, 'auth.json')
+  mkdirSync(managedCodexHome, { recursive: true, mode: 0o700 })
+  if (samePath(source, target) || !existsSync(source)) return
+  if (existsSync(target)) return
+  try {
+    const metadata = lstatSync(target)
+    if (!metadata.isSymbolicLink()) return
+    const linked = resolve(managedCodexHome, readlinkSync(target))
+    if (linked === resolve(source)) return
+    rmSync(target, { force: true })
+  } catch {
+    // Missing targets are expected on first launch.
+  }
+  if (process.platform === 'win32') {
+    copyFileSync(source, target)
+    return
+  }
+  symlinkSync(source, target)
+}
+
+function samePath(left: string, right: string): boolean {
+  return resolve(left) === resolve(right)
 }
 
 function connectEventStream(

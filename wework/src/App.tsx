@@ -315,6 +315,7 @@ export function WorkspaceTabSurface({
               workspaceTabId={tab.id}
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
+              publishDebugSnapshots={active && !iframe}
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >

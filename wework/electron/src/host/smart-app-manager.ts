@@ -1,7 +1,7 @@
 import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
 import extractZip from 'extract-zip'
@@ -46,6 +46,10 @@ export interface SmartAppExport {
   manifest: WorkbenchAppManifest
 }
 
+export interface SmartAppSavedExport extends SmartAppExport {
+  destinationPath: string
+}
+
 export interface SmartAppRuntimeHost {
   open(launch: WorkbenchRuntimeLaunch): Promise<void>
   close(tabId: string): Promise<void>
@@ -55,6 +59,7 @@ export interface SmartAppRuntimeHost {
 
 export interface SmartAppManagerOptions {
   dataDirectory: string
+  downloadsDirectory: string
   logDirectory: string
   runtimeRoot: string
   environment: NodeJS.ProcessEnv
@@ -344,6 +349,15 @@ export class SmartAppManager {
     }
   }
 
+  async exportToDownloads(installationId: string): Promise<SmartAppSavedExport> {
+    const exported = await this.export(installationId)
+    await mkdir(this.options.downloadsDirectory, { recursive: true })
+    const filename = `${safeName(exported.manifest.name)}-${exported.manifest.version}.zip`
+    const destinationPath = await uniquePath(this.options.downloadsDirectory, filename)
+    await copyFile(exported.archivePath, destinationPath)
+    return { ...exported, destinationPath }
+  }
+
   async upload(archivePath: string, uploadUrl: string): Promise<void> {
     const url = new URL(uploadUrl)
     if (url.protocol !== 'https:') throw new Error('Smart app upload must use HTTPS')
@@ -600,6 +614,18 @@ async function exists(path: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+async function uniquePath(directory: string, filename: string): Promise<string> {
+  const path = join(directory, filename)
+  if (!(await exists(path))) return path
+  const extension = '.zip'
+  const stem = filename.endsWith(extension) ? filename.slice(0, -extension.length) : filename
+  for (let index = 1; index < 1000; index += 1) {
+    const candidate = join(directory, `${stem} (${index})${extension}`)
+    if (!(await exists(candidate))) return candidate
+  }
+  throw new Error('Downloads directory has too many Smart app exports with the same name')
 }
 
 function freePort(): Promise<number> {

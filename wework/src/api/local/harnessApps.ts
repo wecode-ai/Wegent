@@ -59,6 +59,10 @@ export interface HarnessAppExport {
   manifest: HarnessAppManifest
 }
 
+export interface HarnessAppSavedExport extends HarnessAppExport {
+  destinationPath: string
+}
+
 export const harnessAppsApi = {
   preview(archivePath: string) {
     if (isElectronRuntime()) {
@@ -89,6 +93,21 @@ export const harnessAppsApi = {
       return invokeDesktopHost<HarnessAppExport>('smartApps.export', { installationId })
     }
     return invoke<HarnessAppExport>('export_harness_app_package', { installationId })
+  },
+  async exportToDownloads(installationId: string): Promise<HarnessAppSavedExport> {
+    if (isElectronRuntime()) {
+      return invokeDesktopHost<HarnessAppSavedExport>('smartApps.exportToDownloads', {
+        installationId,
+      })
+    }
+    const exported = await invoke<HarnessAppExport>('export_harness_app_package', {
+      installationId,
+    })
+    const destinationPath = await invoke<string>('download_local_file_to_downloads', {
+      sourcePath: exported.archivePath,
+      filename: `${exported.manifest.name}-${exported.manifest.version}.zip`,
+    })
+    return { ...exported, destinationPath }
   },
   upload(archivePath: string, uploadUrl: string) {
     if (isElectronRuntime()) {

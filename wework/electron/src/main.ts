@@ -518,6 +518,7 @@ async function configureDesktopRuntime(): Promise<void> {
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
       dataDirectory: app.getPath('userData'),
+      downloadsDirectory: app.getPath('downloads'),
       logDirectory: app.getPath('logs'),
       runtimeRoot,
       environment,

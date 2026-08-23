@@ -471,6 +471,9 @@ export function createElectronCapabilityRouter(
   router.register('smartApps.export', params =>
     requiredSmartApps(smartApps).export(stringParam(params, 'installationId'))
   )
+  router.register('smartApps.exportToDownloads', params =>
+    requiredSmartApps(smartApps).exportToDownloads(stringParam(params, 'installationId'))
+  )
   router.register('smartApps.upload', params =>
     requiredSmartApps(smartApps).upload(
       stringParam(params, 'archivePath'),

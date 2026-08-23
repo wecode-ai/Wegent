@@ -1261,6 +1261,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           app,
           appIdentifier,
           cloudEnvironment,
+          codexHome,
           control,
           desktopScenario,
           executorLogPath,
@@ -1592,6 +1593,8 @@ last_updated = "2026-07-30T00:00:00Z"`
       if (shouldRunPluginSegment('plugin-lifecycle')) {
         phase = 'plugin-lifecycle'
         await verifyMarketplacePluginLifecycle({
+          blockingNetworkProxy,
+          codexHome,
           control,
           executorHome,
           marketplacePath: marketplacePluginPath,

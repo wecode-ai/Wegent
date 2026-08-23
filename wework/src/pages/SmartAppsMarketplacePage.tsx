@@ -2,15 +2,26 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } fro
 import JSZip from 'jszip'
 import {
   Boxes,
+  CalendarDays,
   CheckCircle2,
+  CirclePlus,
   Download,
+  ExternalLink,
+  Globe2,
   Loader2,
+  LockKeyhole,
   PackageCheck,
+  PackageOpen,
+  Play,
+  Puzzle,
   Search,
+  Settings2,
   Share2,
   ShieldCheck,
+  Square,
+  Trash2,
   Upload,
-  WandSparkles,
+  Users,
   X,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -28,12 +39,13 @@ import {
   type HarnessAppManifest,
   type HarnessAppPreview,
 } from '@/api/local/harnessApps'
+import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { SmartAppsSectionNav } from '@/components/smart-apps/SmartAppsSectionNav'
 import { Button } from '@/components/ui/button'
 import { HarnessAppInstallDialog } from '@/features/harness-apps/HarnessAppInstallDialog'
-import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
+import { useHarnessAppManagement } from '@/features/harness-apps/useHarnessAppManagement'
 import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
@@ -49,10 +61,50 @@ interface PendingInstall {
   preview: HarnessAppPreview
 }
 
+type OwnedFilter = 'all' | 'created' | 'installed'
+type MarketplaceSort = 'recommended' | 'updated'
+
+interface OwnedSmartAppCard {
+  category: Exclude<OwnedFilter, 'all'>
+  installation: HarnessAppInstallation | null
+  item: SmartAppMarketplaceItem | null
+  key: string
+}
+
+// Keep successful local removals authoritative across route remounts. A new install
+// of the same package clears the marker below.
+const locallyRemovedInstallationIds = new Set<string>()
+const HARNESS_APP_INSTALLATIONS_CHANGED_EVENT = 'wework:harness-app-installations-changed'
+
+interface HarnessAppInstallationsChangedDetail {
+  type: 'installed' | 'removed' | 'restored'
+  installationId: string
+  installation?: HarnessAppInstallation
+}
+
+function notifyHarnessAppInstallationsChanged(detail: HarnessAppInstallationsChangedDetail) {
+  window.dispatchEvent(new CustomEvent(HARNESS_APP_INSTALLATIONS_CHANGED_EVENT, { detail }))
+}
+
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
   return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function formatUpdatedAt(value: string, language: string): string {
+  const timestamp = new Date(value).getTime()
+  if (!Number.isFinite(timestamp)) return ''
+  const elapsed = timestamp - Date.now()
+  const absoluteElapsed = Math.abs(elapsed)
+  const formatter = new Intl.RelativeTimeFormat(language, { numeric: 'auto' })
+  if (absoluteElapsed < 60 * 60 * 1000) {
+    return formatter.format(Math.round(elapsed / (60 * 1000)), 'minute')
+  }
+  if (absoluteElapsed < 24 * 60 * 60 * 1000) {
+    return formatter.format(Math.round(elapsed / (60 * 60 * 1000)), 'hour')
+  }
+  return formatter.format(Math.round(elapsed / (24 * 60 * 60 * 1000)), 'day')
 }
 
 function smartAppErrorMessage(error: unknown, fallback: string, storageUnavailable: string) {
@@ -156,19 +208,19 @@ export function SmartAppsMarketplacePage({
   mode = 'marketplace',
 }: SmartAppsMarketplacePageProps) {
   const { t, i18n } = useTranslation('common')
-  const { projectChat } = useWorkbench()
-  const modelOptions = useMemo(
-    () => listLocalHarnessModelOptions('opencode', projectChat.models),
-    [projectChat.models]
-  )
   const [items, setItems] = useState<SmartAppMarketplaceItem[]>([])
+  const [marketItems, setMarketItems] = useState<SmartAppMarketplaceItem[]>([])
   const [installed, setInstalled] = useState<HarnessAppInstallation[]>([])
+  const [removedInstallationIds, setRemovedInstallationIds] = useState<Set<string>>(() => new Set())
   const [tags, setTags] = useState<SmartAppMarketplaceTag[]>([])
   const [query, setQuery] = useState('')
   const [source, setSource] = useState<'all' | 'official' | 'shared'>('all')
   const [tag, setTag] = useState('')
+  const [marketplaceSort, setMarketplaceSort] = useState<MarketplaceSort>('recommended')
+  const [ownedFilter, setOwnedFilter] = useState<OwnedFilter>('all')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
+  const [exportNotice, setExportNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<SmartAppMarketplaceItem | null>(null)
   const [pendingInstall, setPendingInstall] = useState<PendingInstall | null>(null)
@@ -182,33 +234,24 @@ export function SmartAppsMarketplacePage({
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
-  const installModelKey = modelKey || modelOptions[0]?.key || ''
-  const createdInstallations = useMemo(
-    () => installed.filter(installation => !installation.smartAppId),
-    [installed]
-  )
-  const createdNames = useMemo(
-    () => new Set(createdInstallations.map(installation => installation.manifest.name)),
-    [createdInstallations]
-  )
-  const catalogItems = useMemo(
-    () => (mode === 'owned' ? items.filter(item => !createdNames.has(item.name)) : items),
-    [createdNames, items, mode]
-  )
-  const hasItems = catalogItems.length > 0 || (mode === 'owned' && createdInstallations.length > 0)
+  const [pendingDelete, setPendingDelete] = useState<HarnessAppInstallation | null>(null)
+  const refreshRequestRef = useRef(0)
 
   const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestRef.current
     setLoading(true)
     setError(null)
     try {
       const localPromise = harnessAppsApi.list().catch(() => [])
       const local = await localPromise
+      if (requestId !== refreshRequestRef.current) return
       setInstalled(local)
       if (!api) {
         setItems([])
+        setMarketItems([])
         return
       }
-      const [catalog, tagCatalog] = await Promise.all([
+      const [catalog, marketplace, tagCatalog] = await Promise.all([
         mode === 'owned'
           ? api.listOwned()
           : api.listMarketplace({
@@ -216,11 +259,15 @@ export function SmartAppsMarketplacePage({
               source: source === 'all' ? undefined : source,
               tag: tag || undefined,
             }),
+        mode === 'owned' ? api.listMarketplace() : null,
         api.listTags().catch(() => ({ version: 0, items: [] })),
       ])
+      if (requestId !== refreshRequestRef.current) return
       setItems(catalog.items)
+      setMarketItems(marketplace?.items ?? catalog.items)
       setTags(tagCatalog.items.filter(item => item.enabled).sort((a, b) => a.sort - b.sort))
     } catch (loadError) {
+      if (requestId !== refreshRequestRef.current) return
       setError(
         smartAppErrorMessage(
           loadError,
@@ -229,9 +276,70 @@ export function SmartAppsMarketplacePage({
         )
       )
     } finally {
-      setLoading(false)
+      if (requestId === refreshRequestRef.current) setLoading(false)
     }
   }, [api, mode, query, source, t, tag])
+
+  const activeInstallations = useMemo(
+    () =>
+      installed.filter(
+        item => !removedInstallationIds.has(item.id) && !locallyRemovedInstallationIds.has(item.id)
+      ),
+    [installed, removedInstallationIds]
+  )
+  const {
+    changeModel,
+    hasSelectedModel,
+    modelOptions,
+    open: openInstalledApp,
+    start: startInstalledApp,
+    stop: stopInstalledApp,
+  } = useHarnessAppManagement({
+    installations: activeInstallations,
+    onBusyChange: setBusy,
+    onError: setError,
+    onRefresh: refresh,
+  })
+  const installModelKey = modelKey || modelOptions[0]?.key || ''
+  const ownedCards = useMemo<OwnedSmartAppCard[]>(() => {
+    return activeInstallations.map(installation => {
+      const ownedItem = items.find(
+        item => item.id === installation.smartAppId || item.name === installation.manifest.name
+      )
+      const marketItem = installation.smartAppId
+        ? marketItems.find(item => item.id === installation.smartAppId)
+        : null
+      return {
+        category: (ownedItem || !installation.smartAppId
+          ? 'created'
+          : 'installed') as OwnedSmartAppCard['category'],
+        installation,
+        item: ownedItem ?? marketItem ?? null,
+        key: `local-${installation.id}`,
+      }
+    })
+  }, [activeInstallations, items, marketItems])
+  const visibleOwnedCards = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase()
+    return ownedCards.filter(card => {
+      if (ownedFilter !== 'all' && card.category !== ownedFilter) return false
+      if (!normalizedQuery) return true
+      const title = card.item?.displayName ?? card.installation?.manifest.displayName ?? ''
+      const description = card.item?.summary ?? card.installation?.manifest.description ?? ''
+      return `${title} ${description}`.toLocaleLowerCase().includes(normalizedQuery)
+    })
+  }, [ownedCards, ownedFilter, query])
+  const visibleMarketplaceItems = useMemo(
+    () =>
+      marketplaceSort === 'updated'
+        ? [...items].sort(
+            (left, right) =>
+              new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+          )
+        : items,
+    [items, marketplaceSort]
+  )
+  const hasItems = mode === 'owned' ? visibleOwnedCards.length > 0 : items.length > 0
 
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), query ? 250 : 0)
@@ -239,11 +347,52 @@ export function SmartAppsMarketplacePage({
   }, [refresh, query])
 
   useEffect(() => {
+    const refreshWhenReenteringSmartApps = () => {
+      const params = new URLSearchParams(window.location.search)
+      if (window.location.pathname !== '/sites' || params.get('app_type') !== 'smart_app') return
+      void refresh()
+    }
+    window.addEventListener('popstate', refreshWhenReenteringSmartApps)
+    return () => window.removeEventListener('popstate', refreshWhenReenteringSmartApps)
+  }, [refresh])
+
+  useEffect(() => {
+    const syncLocalInstallationChange = (event: Event) => {
+      const detail = (event as CustomEvent<HarnessAppInstallationsChangedDetail>).detail
+      if (detail.type === 'removed') {
+        locallyRemovedInstallationIds.add(detail.installationId)
+        setRemovedInstallationIds(current => new Set(current).add(detail.installationId))
+        setInstalled(current => current.filter(item => item.id !== detail.installationId))
+        return
+      }
+
+      locallyRemovedInstallationIds.delete(detail.installationId)
+      setRemovedInstallationIds(current => {
+        const next = new Set(current)
+        next.delete(detail.installationId)
+        return next
+      })
+      if (detail.installation) {
+        setInstalled(current => [
+          ...current.filter(item => item.id !== detail.installationId),
+          detail.installation as HarnessAppInstallation,
+        ])
+      }
+    }
+    window.addEventListener(HARNESS_APP_INSTALLATIONS_CHANGED_EVENT, syncLocalInstallationChange)
+    return () =>
+      window.removeEventListener(
+        HARNESS_APP_INSTALLATIONS_CHANGED_EVENT,
+        syncLocalInstallationChange
+      )
+  }, [])
+
+  useEffect(() => {
     if (mode !== 'owned' || publishRequestHandled) return
     const params = new URLSearchParams(window.location.search)
     const installationId = params.get('installationId')
     if (params.get('action') !== 'publish' || !installationId) return
-    const installation = installed.find(item => item.id === installationId)
+    const installation = activeInstallations.find(item => item.id === installationId)
     if (!installation) return
     queueMicrotask(() => {
       setPublishRequestHandled(true)
@@ -254,10 +403,10 @@ export function SmartAppsMarketplacePage({
           : null
       )
     })
-  }, [installed, items, mode, publishRequestHandled])
+  }, [activeInstallations, items, mode, publishRequestHandled])
 
   function localState(item: SmartAppMarketplaceItem) {
-    const installation = installed.find(candidate => candidate.smartAppId === item.id)
+    const installation = activeInstallations.find(candidate => candidate.smartAppId === item.id)
     if (!installation) return null
     return {
       installation,
@@ -292,29 +441,26 @@ export function SmartAppsMarketplacePage({
     if (!pendingInstall || !installModelKey) return
     const current = localState(pendingInstall.item)?.installation
     if (current?.state === 'running') {
-      if (
-        window.confirm(
-          t(
-            'workbench.smart_apps_update_go_installed_confirm',
-            '工作台正在运行，是否前往“已安装”停止后更新？'
-          )
-        )
-      ) {
-        navigateTo('/sites?app_type=smart_app&view=installed')
-      }
-      return
+      const shouldStop = window.confirm(
+        t('workbench.smart_apps_update_stop_confirm', '更新需要先停止正在运行的工作台，是否继续？')
+      )
+      if (!shouldStop || !(await stopInstalledApp(current, false))) return
     }
     setBusy('install')
     setError(null)
     try {
-      await harnessAppsApi.install(pendingInstall.preview, installModelKey, {
+      const installation = await harnessAppsApi.install(pendingInstall.preview, installModelKey, {
         smartAppId: pendingInstall.item.id,
         releaseId: pendingInstall.item.latestReleaseId,
+      })
+      notifyHarnessAppInstallationsChanged({
+        type: 'installed',
+        installationId: installation.id,
+        installation,
       })
       setPendingInstall(null)
       setModelKey('')
       await refresh()
-      navigateTo('/sites?app_type=smart_app&view=installed&notice=installed')
     } catch (installError) {
       setError(
         getErrorMessage(
@@ -366,7 +512,12 @@ export function SmartAppsMarketplacePage({
             t('workbench.smart_apps_invalid_package', '不是有效的智能工作台安装包')
         )
       }
-      await harnessAppsApi.install(preview, null)
+      const installation = await harnessAppsApi.install(preview, null)
+      notifyHarnessAppInstallationsChanged({
+        type: 'installed',
+        installationId: installation.id,
+        installation,
+      })
       await refresh()
     } catch (importError) {
       setError(
@@ -396,6 +547,139 @@ export function SmartAppsMarketplacePage({
     await importCreatedPackage(decodeURIComponent(new URL(uri).pathname))
   }
 
+  function availableUpdate(installation: HarnessAppInstallation) {
+    if (!installation.smartAppId) return null
+    const marketplace = marketItems.find(item => item.id === installation.smartAppId)
+    if (!marketplace || marketplace.latestReleaseId === installation.releaseId) return null
+    return marketplace
+  }
+
+  function runtimeStateLabel(installation: HarnessAppInstallation) {
+    if (installation.state === 'running') {
+      return t('workbench.harness_apps_state_running', '运行中')
+    }
+    if (installation.state === 'failed') {
+      return t('workbench.harness_apps_state_failed', '启动失败')
+    }
+    return t('workbench.harness_apps_state_installed', '已安装')
+  }
+
+  function focusModelSelector(installation: HarnessAppInstallation) {
+    document
+      .querySelector<HTMLSelectElement>(
+        `[data-testid="harness-app-model-${CSS.escape(installation.id)}"]`
+      )
+      ?.focus()
+  }
+
+  async function exportInstallation(installation: HarnessAppInstallation) {
+    setBusy(installation.id)
+    setError(null)
+    setExportNotice(null)
+    try {
+      await harnessAppsApi.exportToDownloads(installation.id)
+      setExportNotice(t('workbench.smart_apps_exported', '安装包已导出到下载目录。'))
+    } catch (exportError) {
+      setError(
+        getErrorMessage(exportError, t('workbench.smart_apps_export_failed', '安装包导出失败。'))
+      )
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  function localActions(
+    installation: HarnessAppInstallation,
+    item: SmartAppMarketplaceItem | null
+  ): ActionMenuItem[] {
+    const actions: ActionMenuItem[] = []
+    if (mode === 'owned') {
+      actions.push({
+        label: t('workbench.smart_apps_change_model', '修改模型'),
+        icon: Settings2,
+        testId: `smart-app-change-model-${installation.id}`,
+        disabled: installation.state === 'running',
+        onSelect: () => focusModelSelector(installation),
+      })
+    }
+    if (mode === 'marketplace') {
+      actions.push({
+        label: t('workbench.smart_apps_manage_in_my', '在我的工作台中管理'),
+        icon: Boxes,
+        testId: `smart-app-manage-local-${installation.id}`,
+        onSelect: () => navigateTo('/sites?app_type=smart_app&view=owned'),
+      })
+    } else if (item?.accessRole === 'owner') {
+      actions.push({
+        label: t('workbench.smart_apps_manage_access', '管理分享范围'),
+        icon: Share2,
+        testId: `smart-app-manage-access-${installation.id}`,
+        onSelect: () => setShareItem(item),
+      })
+    }
+    if (mode === 'owned' && (!installation.smartAppId || item?.accessRole === 'owner')) {
+      actions.push({
+        label: t('workbench.smart_apps_export_package', '导出安装包'),
+        icon: PackageOpen,
+        testId: `smart-app-export-package-${installation.id}`,
+        disabled: busy === installation.id,
+        onSelect: () => exportInstallation(installation),
+      })
+    }
+    if (installation.state === 'running') {
+      actions.push({
+        label: t('workbench.harness_apps_stop', '停止'),
+        icon: Square,
+        testId: `smart-app-stop-menu-${installation.id}`,
+        onSelect: () => void stopInstalledApp(installation),
+      })
+    }
+    actions.push(
+      { separator: true, label: '', testId: `smart-app-local-separator-${installation.id}` },
+      {
+        label: t('workbench.smart_apps_remove_local', '从本机移除'),
+        icon: Trash2,
+        testId: `smart-app-remove-local-${installation.id}`,
+        danger: true,
+        onSelect: () => setPendingDelete(installation),
+      }
+    )
+    return actions
+  }
+
+  async function deleteLocalInstallation() {
+    if (!pendingDelete) return
+    const installation = pendingDelete
+    const installationId = pendingDelete.id
+    setBusy(installationId)
+    setError(null)
+    try {
+      if (pendingDelete.state === 'running' && !(await stopInstalledApp(pendingDelete, false))) {
+        return
+      }
+      setBusy(installationId)
+      refreshRequestRef.current += 1
+      notifyHarnessAppInstallationsChanged({ type: 'removed', installationId })
+      setPendingDelete(null)
+      await harnessAppsApi.delete(installationId)
+      await refresh()
+    } catch (deleteError) {
+      notifyHarnessAppInstallationsChanged({
+        type: 'restored',
+        installationId,
+        installation,
+      })
+      setError(
+        getErrorMessage(
+          deleteError,
+          t('workbench.harness_apps_delete_failed', '卸载智能工作台失败。')
+        )
+      )
+    } finally {
+      setBusy(null)
+    }
+  }
+
   return (
     <section
       data-testid={mode === 'owned' ? 'smart-apps-owned-page' : 'smart-apps-marketplace-page'}
@@ -403,26 +687,8 @@ export function SmartAppsMarketplacePage({
       onDrop={mode === 'owned' ? event => void dropCreatedPackage(event) : undefined}
     >
       <SmartAppsSectionNav active={mode === 'owned' ? 'owned' : 'marketplace'} />
-      <header className="mt-5 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="heading-base">
-            {mode === 'owned'
-              ? t('workbench.smart_apps_owned', '我的创建')
-              : t('workbench.smart_apps_marketplace_title', '智能工作台市场')}
-          </h1>
-          <p className="mt-1 text-sm text-text-secondary">
-            {mode === 'owned'
-              ? t(
-                  'workbench.smart_apps_owned_description',
-                  '创建或导入智能工作台，并按需发布给成员或部门。'
-                )
-              : t(
-                  'workbench.smart_apps_marketplace_description',
-                  '发现官方工作台，以及成员定向分享给你的工作台。'
-                )}
-          </p>
-        </div>
-        {mode === 'owned' ? (
+      {mode === 'owned' ? (
+        <header className="mt-4 flex justify-end md:absolute md:right-8 md:top-4 md:mt-0">
           <div className="flex gap-2">
             <Button
               size="sm"
@@ -430,10 +696,10 @@ export function SmartAppsMarketplacePage({
               data-testid="smart-apps-created-create"
               onClick={() => void createSmartApp()}
             >
-              <WandSparkles className="h-4 w-4" />
+              <CirclePlus className="h-4 w-4" />
               {creating
                 ? t('workbench.smart_apps_preparing', '正在准备…')
-                : t('workbench.smart_apps_create', '创建智能工作台')}
+                : t('workbench.smart_apps_create', '创建工作台')}
             </Button>
             <Button
               size="sm"
@@ -444,59 +710,135 @@ export function SmartAppsMarketplacePage({
               {importing ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Upload className="h-4 w-4" />
+                <Download className="h-4 w-4" />
               )}
               {importing
                 ? t('workbench.smart_apps_importing', '导入中…')
                 : t('workbench.smart_apps_import_app', '导入工作台')}
             </Button>
           </div>
-        ) : null}
-      </header>
+        </header>
+      ) : null}
 
-      {mode === 'marketplace' ? (
-        <div className="mt-5 flex flex-wrap gap-2">
-          <label className="relative min-w-[220px] flex-1">
-            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-text-muted" />
-            <input
-              data-testid="smart-apps-marketplace-search"
-              value={query}
-              placeholder={t('workbench.smart_apps_search', '搜索工作台')}
-              className="h-9 w-full rounded-lg border border-border/50 bg-background pl-9 pr-3 text-sm outline-none focus:border-focus"
-              onChange={event => setQuery(event.target.value)}
-            />
-          </label>
-          <select
-            data-testid="smart-apps-marketplace-source"
-            value={source}
-            className="h-9 rounded-lg border border-border/50 bg-background px-3 text-sm"
-            onChange={event => setSource(event.target.value as typeof source)}
-          >
-            <option value="all">{t('workbench.smart_apps_source_all', '全部来源')}</option>
-            <option value="official">
-              {t('workbench.smart_apps_source_official', '官方工作台')}
-            </option>
-            <option value="shared">{t('workbench.smart_apps_source_shared', '分享给我')}</option>
-          </select>
-          <select
-            data-testid="smart-apps-marketplace-tag"
-            value={tag}
-            className="h-9 rounded-lg border border-border/50 bg-background px-3 text-sm"
-            onChange={event => setTag(event.target.value)}
-          >
-            <option value="">{t('workbench.smart_apps_tag_all', '全部标签')}</option>
-            {tags.map(item => (
-              <option key={item.id} value={item.id}>
-                {i18n.language.startsWith('zh') ? item.name_zh : item.name_en}
+      <div className="mt-5 flex flex-wrap gap-3">
+        <label className="relative min-w-[220px] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-text-muted" />
+          <input
+            data-testid={
+              mode === 'owned' ? 'smart-apps-owned-search' : 'smart-apps-marketplace-search'
+            }
+            value={query}
+            placeholder={t('workbench.smart_apps_search', '搜索工作台')}
+            className="h-9 w-full rounded-lg border border-border/50 bg-background pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/15"
+            onChange={event => setQuery(event.target.value)}
+          />
+        </label>
+        {mode === 'marketplace' ? (
+          <>
+            <select
+              data-testid="smart-apps-marketplace-source"
+              value={source}
+              className="h-9 rounded-lg border border-border/50 bg-background px-3 text-sm outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+              onChange={event => setSource(event.target.value as typeof source)}
+            >
+              <option value="all">{t('workbench.smart_apps_source_all', '全部来源')}</option>
+              <option value="official">
+                {t('workbench.smart_apps_source_official', '官方工作台')}
               </option>
+              <option value="shared">{t('workbench.smart_apps_source_shared', '分享给我')}</option>
+            </select>
+            <select
+              data-testid="smart-apps-marketplace-tag"
+              value={tag}
+              className="h-9 rounded-lg border border-border/50 bg-background px-3 text-sm outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+              onChange={event => setTag(event.target.value)}
+            >
+              <option value="">{t('workbench.smart_apps_tag_all', '全部标签')}</option>
+              {tags.map(item => (
+                <option key={item.id} value={item.id}>
+                  {i18n.language.startsWith('zh') ? item.name_zh : item.name_en}
+                </option>
+              ))}
+            </select>
+          </>
+        ) : (
+          <div
+            className="flex h-9 items-center rounded-lg border border-border/50 bg-surface/30 p-0.5"
+            data-testid="smart-apps-owned-filters"
+          >
+            {(
+              [
+                ['all', t('workbench.smart_apps_filter_all', '全部'), ownedCards.length],
+                [
+                  'created',
+                  t('workbench.smart_apps_filter_created', '我创建/导入的'),
+                  ownedCards.filter(card => card.category === 'created').length,
+                ],
+                [
+                  'installed',
+                  t('workbench.smart_apps_filter_installed', '我安装的'),
+                  ownedCards.filter(card => card.category === 'installed').length,
+                ],
+              ] as Array<[OwnedFilter, string, number]>
+            ).map(([value, label, count]) => (
+              <button
+                key={value}
+                type="button"
+                data-testid={`smart-apps-owned-filter-${value}`}
+                aria-pressed={ownedFilter === value}
+                className={`h-8 rounded-md px-3 text-sm transition-colors ${
+                  ownedFilter === value
+                    ? 'bg-background font-medium text-text-primary shadow-sm'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+                onClick={() => setOwnedFilter(value)}
+              >
+                {label} <span className="ml-1 text-xs text-text-muted">{count}</span>
+              </button>
             ))}
-          </select>
+          </div>
+        )}
+      </div>
+
+      {!loading && hasItems ? (
+        <div className="mt-4 flex min-h-8 items-center justify-between gap-4 text-xs text-text-muted">
+          <span>
+            {t('workbench.smart_apps_result_count', '共 {{count}} 个工作台').replace(
+              '{{count}}',
+              String(mode === 'owned' ? visibleOwnedCards.length : items.length)
+            )}
+          </span>
+          {mode === 'marketplace' ? (
+            <select
+              data-testid="smart-apps-marketplace-sort"
+              value={marketplaceSort}
+              aria-label={t('workbench.smart_apps_sort_label', '排序方式')}
+              className="h-8 rounded-lg border border-transparent bg-transparent px-2 text-sm text-text-primary outline-none hover:bg-muted focus:border-focus focus:ring-2 focus:ring-focus/15"
+              onChange={event => setMarketplaceSort(event.target.value as MarketplaceSort)}
+            >
+              <option value="recommended">
+                {t('workbench.smart_apps_sort_recommended', '推荐排序')}
+              </option>
+              <option value="updated">{t('workbench.smart_apps_sort_updated', '最近更新')}</option>
+            </select>
+          ) : null}
         </div>
       ) : null}
 
       {createError || error ? (
         <p role="alert" className="mt-4 rounded-lg bg-danger/10 p-3 text-sm text-danger">
           {createError ?? error}
+        </p>
+      ) : null}
+
+      {exportNotice ? (
+        <p
+          role="status"
+          data-testid="smart-app-export-success"
+          className="mt-4 flex items-center gap-2 rounded-lg bg-success/10 p-3 text-sm text-success"
+        >
+          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+          {exportNotice}
         </p>
       ) : null}
 
@@ -512,10 +854,10 @@ export function SmartAppsMarketplacePage({
             <Button
               size="sm"
               variant="outline"
-              onClick={() => navigateTo('/sites?app_type=smart_app&view=installed')}
+              onClick={() => navigateTo('/sites?app_type=smart_app&view=owned')}
             >
               <PackageCheck className="h-4 w-4" />
-              {t('workbench.smart_apps_view_installed', '查看已安装')}
+              {t('workbench.smart_apps_view_my', '查看我的工作台')}
             </Button>
           }
         />
@@ -529,14 +871,14 @@ export function SmartAppsMarketplacePage({
           icon={<Boxes className="h-6 w-6" />}
           title={
             mode === 'owned'
-              ? t('workbench.smart_apps_owned_empty', '还没有创建智能工作台')
+              ? t('workbench.smart_apps_my_empty', '还没有符合条件的工作台')
               : t('workbench.smart_apps_marketplace_empty', '没有找到智能工作台')
           }
           description={
             mode === 'owned'
               ? t(
-                  'workbench.smart_apps_owned_empty_hint',
-                  '可以创建新的智能工作台，或导入一个本地 ZIP 工作台。'
+                  'workbench.smart_apps_my_empty_hint',
+                  '可以调整筛选条件、从市场安装，或导入一个本地 ZIP 工作台。'
                 )
               : t(
                   'workbench.smart_apps_marketplace_empty_hint',
@@ -547,149 +889,322 @@ export function SmartAppsMarketplacePage({
       ) : (
         <div
           data-testid={mode === 'owned' ? 'smart-apps-created-list' : undefined}
-          className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3"
+          className="mt-3 grid gap-4 md:grid-cols-2"
         >
           {mode === 'owned'
-            ? createdInstallations.map(installation => {
-                const published = items.find(item => item.name === installation.manifest.name)
-                const sameVersion = published?.version === installation.manifest.version
+            ? visibleOwnedCards.map(card => {
+                const { installation, item } = card
+                const title = item?.displayName ?? installation?.manifest.displayName ?? ''
+                const description = item?.summary ?? installation?.manifest.description ?? ''
+                const isOwner = item?.accessRole === 'owner'
+                const sameVersion = Boolean(
+                  item && installation && item.version === installation.manifest.version
+                )
+                const update = installation ? availableUpdate(installation) : null
+                const shouldPublish = Boolean(
+                  card.category === 'created' && installation && (!item || !sameVersion)
+                )
+                const stateTone =
+                  installation?.state === 'failed'
+                    ? 'danger'
+                    : update
+                      ? 'accent'
+                      : installation
+                        ? 'success'
+                        : 'muted'
+                const stateLabel = installation
+                  ? update
+                    ? t('workbench.smart_apps_update_available', '有可用更新')
+                    : runtimeStateLabel(installation)
+                  : t('workbench.smart_apps_not_installed', '未安装')
                 return (
-                  <article
-                    key={installation.id}
-                    data-testid={`smart-app-created-item-${installation.id}`}
-                    className="flex flex-col rounded-2xl border border-border/35 bg-surface/25 p-4 hover:bg-surface/45"
-                  >
-                    <div className="flex flex-1 items-start gap-3">
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-background">
-                        <Boxes className="h-5 w-5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="truncate font-medium">
-                            {installation.manifest.displayName}
-                          </h2>
-                          <span className="rounded-md bg-background px-1.5 py-0.5 text-xs text-text-muted">
-                            {published
-                              ? t('workbench.smart_apps_published', '已发布')
-                              : t('workbench.smart_apps_unpublished', '未发布')}
+                  <SmartAppCard
+                    key={card.key}
+                    testId={
+                      card.category === 'created' && installation
+                        ? `smart-app-created-item-${installation.id}`
+                        : item
+                          ? `smart-app-owned-item-${item.id}`
+                          : undefined
+                    }
+                    iconUrl={item?.iconUrl}
+                    title={title}
+                    sourceLabel={
+                      card.category === 'created'
+                        ? installation && !installation.smartAppId
+                          ? t('workbench.smart_apps_local_import', '本地导入')
+                          : t('workbench.smart_apps_created_by_me', '我创建')
+                        : t('workbench.smart_apps_market_install', '市场安装')
+                    }
+                    description={description}
+                    tags={item?.tags ?? []}
+                    visibility={{
+                      kind:
+                        item?.accessRole === 'official'
+                          ? 'public'
+                          : item?.accessRole === 'owner'
+                            ? 'restricted'
+                            : 'private',
+                      label:
+                        item?.accessRole === 'official'
+                          ? t('workbench.smart_apps_visibility_public', '公开')
+                          : item?.accessRole === 'owner'
+                            ? t('workbench.smart_apps_visibility_restricted', '指定成员')
+                            : t('workbench.smart_apps_visibility_private', '仅自己'),
+                      onClick: isOwner && item ? () => setShareItem(item) : undefined,
+                      testId: item ? `smart-app-visibility-${item.id}` : undefined,
+                    }}
+                    stateLabel={stateLabel}
+                    stateTone={stateTone}
+                    version={installation?.manifest.version ?? item?.version ?? ''}
+                    onDetails={item ? () => setSelected(item) : undefined}
+                    supplementary={
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 text-xs text-text-muted">
+                        {installation ? (
+                          <label className="flex min-w-0 items-center gap-1">
+                            <span>{t('workbench.harness_apps_bound_model', '模型')}：</span>
+                            <select
+                              data-testid={`harness-app-model-${installation.id}`}
+                              aria-label={t('workbench.smart_apps_change_model', '修改模型')}
+                              className="min-w-0 max-w-44 rounded-md border border-border/50 bg-background px-1.5 py-0.5 text-xs text-text-secondary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15 disabled:cursor-not-allowed disabled:opacity-60"
+                              value={installation.modelKey ?? ''}
+                              disabled={
+                                busy === installation.id || installation.state === 'running'
+                              }
+                              onChange={event => void changeModel(installation, event.target.value)}
+                            >
+                              {!installation.modelKey ? (
+                                <option value="">
+                                  {t('workbench.harness_apps_model_choose', '请选择模型')}
+                                </option>
+                              ) : null}
+                              {modelOptions.map(option => (
+                                <option key={option.key} value={option.key}>
+                                  {option.label}
+                                </option>
+                              ))}
+                              {!hasSelectedModel(installation) && installation.modelKey ? (
+                                <option value={installation.modelKey}>
+                                  {t('workbench.harness_apps_model_unavailable', '模型不可用')}
+                                </option>
+                              ) : null}
+                            </select>
+                          </label>
+                        ) : null}
+                        {item?.updatedAt ? (
+                          <span>
+                            {t('workbench.smart_apps_updated_relative', '更新于 {{time}}').replace(
+                              '{{time}}',
+                              formatUpdatedAt(item.updatedAt, i18n?.language ?? 'zh-CN')
+                            )}
                           </span>
-                        </div>
-                        <p className="mt-1 line-clamp-2 text-sm leading-5 text-text-secondary">
-                          {installation.manifest.description}
-                        </p>
+                        ) : null}
                       </div>
-                    </div>
-                    <div className="mt-4 flex items-center justify-between border-t border-border/25 pt-3">
-                      <span className="text-xs text-text-muted">
-                        v{installation.manifest.version}
-                      </span>
-                      <div className="flex gap-1">
-                        {published ? (
-                          <Button size="sm" variant="ghost" onClick={() => setShareItem(published)}>
-                            <Share2 className="h-4 w-4" />
-                            {t('workbench.smart_apps_share', '分享')}
+                    }
+                    actions={
+                      <>
+                        {shouldPublish && installation ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            data-testid={`smart-app-created-publish-${installation.id}`}
+                            disabled={!api || busy === installation.id}
+                            onClick={() => {
+                              setPublishInstallation(installation)
+                              setPublishItem(item)
+                            }}
+                          >
+                            <Upload className="h-4 w-4" />
+                            {item
+                              ? t('workbench.smart_apps_publish_version', '发布新版本')
+                              : t('workbench.smart_apps_publish', '发布')}
                           </Button>
                         ) : null}
-                        <Button
-                          size="sm"
-                          data-testid={`smart-app-created-publish-${installation.id}`}
-                          disabled={!api || sameVersion}
-                          onClick={() => {
-                            setPublishInstallation(installation)
-                            setPublishItem(published ?? null)
-                          }}
-                        >
-                          <Upload className="h-4 w-4" />
-                          {sameVersion
-                            ? t('workbench.smart_apps_published', '已发布')
-                            : t('workbench.smart_apps_publish', '发布')}
-                        </Button>
-                      </div>
-                    </div>
-                  </article>
+                        {update ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy === installation?.id}
+                            onClick={() => void download(update)}
+                          >
+                            <Download className="h-4 w-4" />
+                            {t('workbench.smart_apps_update', '更新')}
+                          </Button>
+                        ) : null}
+                        {installation ? (
+                          installation.state === 'running' ? (
+                            <Button
+                              size="sm"
+                              data-testid={`harness-app-open-${installation.id}`}
+                              disabled={busy === installation.id}
+                              onClick={() => openInstalledApp(installation)}
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                              {t('workbench.harness_apps_open', '打开')}
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              data-testid={`harness-app-start-${installation.id}`}
+                              disabled={busy === installation.id || !hasSelectedModel(installation)}
+                              onClick={() => startInstalledApp(installation)}
+                            >
+                              <Play className="h-4 w-4" />
+                              {t('workbench.harness_apps_start', '运行')}
+                            </Button>
+                          )
+                        ) : item ? (
+                          <Button
+                            size="sm"
+                            data-testid={`smart-app-owned-install-${item.id}`}
+                            disabled={busy === `download-${item.id}`}
+                            onClick={() => void download(item)}
+                          >
+                            <Download className="h-4 w-4" />
+                            {t('workbench.harness_apps_install', '安装')}
+                          </Button>
+                        ) : null}
+                        {isOwner ? (
+                          <Button size="sm" variant="outline" onClick={() => setShareItem(item)}>
+                            {t('workbench.smart_apps_manage_access', '管理范围')}
+                          </Button>
+                        ) : null}
+                        {installation ? (
+                          <ActionMenu
+                            ariaLabel={t('workbench.smart_apps_more_actions', '更多操作')}
+                            testId={`smart-app-actions-${installation.id}`}
+                            items={localActions(installation, item)}
+                            placement="bottom-end"
+                            triggerClassName="flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+                          />
+                        ) : null}
+                      </>
+                    }
+                  />
                 )
               })
             : null}
-          {catalogItems.map(item => {
-            const state = localState(item)
-            return (
-              <article
-                key={item.id}
-                data-testid={`smart-app-marketplace-item-${item.id}`}
-                className="flex flex-col rounded-2xl border border-border/35 bg-surface/25 p-4 hover:bg-surface/45"
-              >
-                <button
-                  className="flex flex-1 items-start gap-3 text-left"
-                  onClick={() => setSelected(item)}
-                >
-                  {item.iconUrl ? (
-                    <img src={item.iconUrl} alt="" className="h-12 w-12 rounded-xl object-cover" />
-                  ) : (
-                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-background">
-                      <Boxes className="h-5 w-5" />
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="truncate font-medium">{item.displayName}</h2>
-                      <span className="rounded-md bg-background px-1.5 py-0.5 text-xs text-text-muted">
-                        {item.sourceType === 'official'
-                          ? t('workbench.smart_apps_official', '官方')
-                          : item.ownerDisplayName}
+          {mode === 'marketplace' &&
+            visibleMarketplaceItems.map(item => {
+              const state = localState(item)
+              const modelLabel = state
+                ? (modelOptions.find(option => option.key === state.installation.modelKey)?.label ??
+                  t('workbench.harness_apps_model_unavailable', '模型不可用'))
+                : t('workbench.smart_apps_model_selected_on_install', '安装时选择')
+              return (
+                <SmartAppCard
+                  key={item.id}
+                  testId={`smart-app-marketplace-item-${item.id}`}
+                  iconUrl={item.iconUrl}
+                  title={item.displayName}
+                  sourceLabel={
+                    item.sourceType === 'official'
+                      ? t('workbench.smart_apps_official', '官方')
+                      : t('workbench.smart_apps_shared_with_me', '分享给我')
+                  }
+                  description={item.summary}
+                  tags={item.tags}
+                  visibility={{
+                    kind: item.sourceType === 'official' ? 'public' : 'restricted',
+                    label:
+                      item.sourceType === 'official'
+                        ? t('workbench.smart_apps_visibility_public', '公开')
+                        : t('workbench.smart_apps_visibility_restricted', '指定成员'),
+                  }}
+                  stateLabel={
+                    state
+                      ? state.update
+                        ? t('workbench.smart_apps_update_available', '有可用更新')
+                        : runtimeStateLabel(state.installation)
+                      : t('workbench.smart_apps_not_installed', '未安装')
+                  }
+                  stateTone={
+                    state?.installation.state === 'failed'
+                      ? 'danger'
+                      : state?.update
+                        ? 'accent'
+                        : state
+                          ? 'success'
+                          : 'muted'
+                  }
+                  version={item.version}
+                  supplementary={
+                    <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-text-muted">
+                      <span>
+                        {t('workbench.harness_apps_bound_model', '模型')}：{modelLabel}
+                      </span>
+                      <span>
+                        {t('workbench.smart_apps_size', '大小')}：{formatBytes(item.sizeBytes)}
                       </span>
                     </div>
-                    <p className="mt-1 line-clamp-2 text-sm leading-5 text-text-secondary">
-                      {item.summary}
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {item.tags.map(value => (
-                        <span
-                          key={value}
-                          className="rounded-md bg-background px-1.5 py-0.5 text-xs text-text-muted"
-                        >
-                          {value}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </button>
-                <div className="mt-4 flex items-center justify-between border-t border-border/25 pt-3">
-                  <span className="text-xs text-text-muted">
-                    v{item.version} · {formatBytes(item.sizeBytes)}
-                  </span>
-                  <div className="flex gap-1">
-                    {mode === 'owned' ? (
-                      <>
-                        <Button size="sm" variant="ghost" onClick={() => setShareItem(item)}>
-                          <Share2 className="h-4 w-4" />
-                          {t('workbench.smart_apps_share', '分享')}
-                        </Button>
-                      </>
-                    ) : (
-                      <Button
-                        size="sm"
-                        data-testid={`smart-app-marketplace-install-${item.id}`}
-                        variant={state && !state.update ? 'outline' : 'default'}
-                        disabled={busy === `download-${item.id}` || Boolean(state && !state.update)}
-                        onClick={() => void download(item)}
-                      >
-                        {busy === `download-${item.id}` ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                  }
+                  onDetails={() => setSelected(item)}
+                  actions={
+                    <>
+                      {state ? (
+                        state.update ? (
+                          <Button
+                            size="sm"
+                            data-testid={`smart-app-marketplace-install-${item.id}`}
+                            disabled={busy === `download-${item.id}`}
+                            onClick={() => void download(item)}
+                          >
+                            <Download className="h-4 w-4" />
+                            {t('workbench.smart_apps_update', '更新')}
+                          </Button>
+                        ) : state.installation.state === 'running' ? (
+                          <Button
+                            size="sm"
+                            data-testid={`harness-app-open-${state.installation.id}`}
+                            disabled={busy === state.installation.id}
+                            onClick={() => openInstalledApp(state.installation)}
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                            {t('workbench.harness_apps_open', '打开')}
+                          </Button>
                         ) : (
-                          <Download className="h-4 w-4" />
-                        )}
-                        {state
-                          ? state.update
-                            ? t('workbench.smart_apps_update', '更新')
-                            : t('workbench.smart_apps_installed', '已安装')
-                          : t('workbench.harness_apps_install', '安装')}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </article>
-            )
-          })}
+                          <Button
+                            size="sm"
+                            data-testid={`harness-app-start-${state.installation.id}`}
+                            disabled={
+                              busy === state.installation.id ||
+                              !hasSelectedModel(state.installation)
+                            }
+                            onClick={() => startInstalledApp(state.installation)}
+                          >
+                            <Play className="h-4 w-4" />
+                            {t('workbench.harness_apps_start', '运行')}
+                          </Button>
+                        )
+                      ) : (
+                        <Button
+                          size="sm"
+                          data-testid={`smart-app-marketplace-install-${item.id}`}
+                          disabled={busy === `download-${item.id}`}
+                          onClick={() => void download(item)}
+                        >
+                          {busy === `download-${item.id}` ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Download className="h-4 w-4" />
+                          )}
+                          {t('workbench.harness_apps_install', '安装')}
+                        </Button>
+                      )}
+                      {state ? (
+                        <ActionMenu
+                          ariaLabel={t('workbench.smart_apps_more_actions', '更多操作')}
+                          testId={`smart-app-marketplace-actions-${item.id}`}
+                          items={localActions(state.installation, item)}
+                          placement="bottom-end"
+                          triggerClassName="flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
+                        />
+                      ) : null}
+                    </>
+                  }
+                />
+              )
+            })}
         </div>
       )}
 
@@ -743,7 +1258,159 @@ export function SmartAppsMarketplacePage({
           }}
         />
       ) : null}
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title={t('workbench.smart_apps_remove_local_title', '从本机移除工作台？')}
+        description={t(
+          'workbench.smart_apps_remove_local_description',
+          '将停止运行并删除本机文件。已发布版本和分享范围不会受到影响。'
+        )}
+        cancelLabel={t('common.cancel', '取消')}
+        confirmLabel={t('workbench.smart_apps_remove_local_confirm', '移除')}
+        confirmTestId="smart-app-remove-local-confirm"
+        destructive
+        pending={Boolean(pendingDelete && busy === pendingDelete.id)}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={() => void deleteLocalInstallation()}
+      />
     </section>
+  )
+}
+
+function SmartAppCard({
+  actions,
+  description,
+  iconUrl,
+  onDetails,
+  sourceLabel,
+  stateLabel,
+  stateTone,
+  supplementary,
+  tags,
+  testId,
+  title,
+  version,
+  visibility,
+}: {
+  actions: React.ReactNode
+  description: string
+  iconUrl?: string
+  onDetails?: () => void
+  sourceLabel?: string
+  stateLabel: string
+  stateTone: 'accent' | 'danger' | 'muted' | 'success'
+  supplementary?: React.ReactNode
+  tags: string[]
+  testId?: string
+  title: string
+  version: string
+  visibility: {
+    kind: 'private' | 'public' | 'restricted'
+    label: string
+    onClick?: () => void
+    testId?: string
+  }
+}) {
+  const stateClassName =
+    stateTone === 'success'
+      ? 'text-success'
+      : stateTone === 'danger'
+        ? 'text-red-500'
+        : stateTone === 'accent'
+          ? 'text-blue-600'
+          : 'text-text-muted'
+  const VisibilityIcon =
+    visibility.kind === 'public' ? Globe2 : visibility.kind === 'restricted' ? Users : LockKeyhole
+  const visibilityContent = (
+    <>
+      <VisibilityIcon className="h-3.5 w-3.5" aria-hidden="true" />
+      <span>{visibility.label}</span>
+    </>
+  )
+  const identity = (
+    <>
+      {iconUrl ? (
+        <img src={iconUrl} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
+      ) : (
+        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-border/40 bg-surface/30 text-text-secondary">
+          <Boxes className="h-6 w-6" />
+        </span>
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-base font-medium text-text-primary">{title}</span>
+          {sourceLabel ? (
+            <span className="shrink-0 rounded-md bg-muted/60 px-2 py-0.5 text-xs text-text-muted">
+              {sourceLabel}
+            </span>
+          ) : null}
+        </span>
+        <span className="mt-1 line-clamp-2 text-sm leading-5 text-text-secondary">
+          {description}
+        </span>
+        {tags.length > 0 ? (
+          <span className="mt-2 flex flex-wrap gap-1">
+            {tags.slice(0, 3).map(tag => (
+              <span
+                key={tag}
+                className="rounded-md bg-muted/45 px-2 py-0.5 text-xs text-text-muted"
+              >
+                {tag}
+              </span>
+            ))}
+          </span>
+        ) : null}
+      </span>
+    </>
+  )
+
+  return (
+    <article
+      data-testid={testId}
+      className="flex min-h-52 flex-col rounded-2xl border border-border/45 bg-background p-5 transition-colors hover:border-border/70 hover:bg-surface/20"
+    >
+      {onDetails ? (
+        <button
+          type="button"
+          className="flex items-start gap-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+          onClick={onDetails}
+        >
+          {identity}
+        </button>
+      ) : (
+        <div className="flex items-start gap-4">{identity}</div>
+      )}
+      <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 pt-4 text-xs">
+        {visibility.onClick ? (
+          <button
+            type="button"
+            data-testid={visibility.testId}
+            className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border/50 bg-background px-2 text-text-primary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+            onClick={visibility.onClick}
+          >
+            {visibilityContent}
+          </button>
+        ) : (
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border/50 px-2 text-text-primary">
+            {visibilityContent}
+          </span>
+        )}
+        <span
+          data-testid={testId ? `${testId}-state` : undefined}
+          className={`inline-flex items-center gap-1.5 ${stateClassName}`}
+        >
+          <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+          {stateLabel}
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-text-muted">
+          <Puzzle className="h-3.5 w-3.5" aria-hidden="true" />v{version}
+        </span>
+      </div>
+      <div className="mt-3 flex min-h-9 flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0 flex-1">{supplementary}</div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{actions}</div>
+      </div>
+    </article>
   )
 }
 
@@ -784,20 +1451,55 @@ function SmartAppDetails({
   onInstall: () => void
 }) {
   const { t } = useTranslation('common')
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const rawDescription = (item.descriptionMd || item.summary).trim()
+  const descriptionLines = rawDescription.split(/\r?\n/)
+  const firstHeading = descriptionLines[0]?.trim().replace(/^#+\s*/, '')
+  const description =
+    firstHeading === item.displayName
+      ? descriptionLines.slice(1).join('\n').trim() || item.summary
+      : rawDescription
+
+  useEffect(() => {
+    closeRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
   return (
-    <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-end justify-center sm:items-center sm:p-4">
+    <div
+      className="plugin-dialog-overlay fixed inset-0 z-modal flex items-end justify-center sm:items-center sm:p-4"
+      onClick={onClose}
+    >
       <section
         role="dialog"
         aria-modal="true"
+        aria-labelledby="smart-app-details-title"
         data-testid="smart-app-details"
-        className="plugin-dialog-surface max-h-[90vh] w-full max-w-2xl overflow-y-auto p-6"
+        className="plugin-dialog-surface flex max-h-[min(760px,92dvh)] w-full max-w-[720px] flex-col overflow-hidden rounded-b-none sm:rounded-b-[20px]"
+        onClick={event => event.stopPropagation()}
       >
-        <header className="flex items-start gap-4">
-          {item.iconUrl ? (
-            <img src={item.iconUrl} alt="" className="h-16 w-16 rounded-2xl object-cover" />
-          ) : null}
+        <header
+          className="plugin-dialog-divider flex shrink-0 items-start gap-4 border-b px-5 py-4 sm:px-6 sm:py-5"
+          data-testid="smart-app-details-header"
+        >
+          <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/30 bg-surface">
+            {item.iconUrl ? (
+              <img src={item.iconUrl} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <Boxes className="h-6 w-6 text-text-muted" aria-hidden="true" />
+            )}
+          </div>
           <div className="min-w-0 flex-1">
-            <h2 className="heading-small">{item.displayName}</h2>
+            <h2 id="smart-app-details-title" className="heading-subsection truncate">
+              {item.displayName}
+            </h2>
             <p className="mt-1 text-sm text-text-secondary">
               {item.sourceType === 'official'
                 ? t('workbench.smart_apps_wework_official', 'Wework 官方')
@@ -809,53 +1511,133 @@ function SmartAppDetails({
             </p>
           </div>
           <button
+            ref={closeRef}
+            type="button"
             aria-label={t('common.close', '关闭')}
-            className="flex h-9 w-9 items-center justify-center rounded-lg hover:bg-surface"
+            data-testid="smart-app-details-close"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text-primary"
             onClick={onClose}
           >
             <X className="h-4 w-4" />
           </button>
         </header>
-        <div className="mt-5 flex flex-wrap gap-3 rounded-xl bg-surface p-3 text-xs text-text-secondary">
-          <span className="flex items-center gap-1">
-            <ShieldCheck className="h-4 w-4 text-green-600" />
-            {t('workbench.smart_apps_scan_passed', '安全扫描通过')}
-          </span>
-          <span>{formatBytes(item.sizeBytes)}</span>
-          <span>
-            {t('workbench.smart_apps_updated_at', '更新于 {{date}}').replace(
-              '{{date}}',
-              new Date(item.updatedAt).toLocaleDateString()
+        <div
+          className="scrollbar-soft min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6"
+          data-testid="smart-app-details-content"
+        >
+          <div className="grid overflow-hidden rounded-xl border border-border/30 bg-surface/35 text-sm sm:grid-cols-3 sm:divide-x sm:divide-border/30">
+            <div className="flex min-h-14 items-center gap-2.5 px-4 py-3">
+              <ShieldCheck className="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
+              <span className="font-medium text-text-primary">
+                {t('workbench.smart_apps_scan_passed', '安全扫描通过')}
+              </span>
+            </div>
+            <div className="flex min-h-14 items-center gap-2.5 border-t border-border/30 px-4 py-3 sm:border-t-0">
+              <PackageOpen className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+              <span className="text-text-secondary">{formatBytes(item.sizeBytes)}</span>
+            </div>
+            <div className="flex min-h-14 items-center gap-2.5 border-t border-border/30 px-4 py-3 sm:border-t-0">
+              <CalendarDays className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+              <span className="text-text-secondary">
+                {t('workbench.smart_apps_updated_at', '更新于 {{date}}').replace(
+                  '{{date}}',
+                  new Date(item.updatedAt).toLocaleDateString()
+                )}
+              </span>
+            </div>
+          </div>
+
+          {item.screenshotUrls.length ? (
+            <div className="mt-5 flex snap-x gap-3 overflow-x-auto pb-1">
+              {item.screenshotUrls.map(url => (
+                <img
+                  key={url}
+                  src={url}
+                  alt={t('workbench.smart_apps_screenshot', '工作台截图')}
+                  className="h-44 shrink-0 snap-start rounded-xl border border-border/40 object-cover"
+                />
+              ))}
+            </div>
+          ) : null}
+
+          <article
+            className="mt-5 text-sm leading-6 text-text-secondary"
+            data-testid="smart-app-details-description"
+          >
+            <ReactMarkdown
+              components={{
+                h1: ({ children }) => (
+                  <h3 className="mb-2 mt-5 text-base font-medium text-text-primary first:mt-0">
+                    {children}
+                  </h3>
+                ),
+                h2: ({ children }) => (
+                  <h3 className="mb-2 mt-5 text-base font-medium text-text-primary first:mt-0">
+                    {children}
+                  </h3>
+                ),
+                h3: ({ children }) => (
+                  <h4 className="mb-2 mt-4 text-sm font-medium text-text-primary first:mt-0">
+                    {children}
+                  </h4>
+                ),
+                p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+                ul: ({ children }) => (
+                  <ul className="mb-3 list-disc space-y-1.5 pl-5 last:mb-0">{children}</ul>
+                ),
+                ol: ({ children, start }) => (
+                  <ol start={start} className="mb-3 list-decimal space-y-1.5 pl-5 last:mb-0">
+                    {children}
+                  </ol>
+                ),
+                li: ({ children }) => <li className="pl-0.5">{children}</li>,
+                strong: ({ children }) => (
+                  <strong className="font-medium text-text-primary">{children}</strong>
+                ),
+                code: ({ children }) => (
+                  <code className="rounded bg-surface px-1 py-0.5 font-mono text-xs text-text-primary">
+                    {children}
+                  </code>
+                ),
+                blockquote: ({ children }) => (
+                  <blockquote className="my-3 border-l-2 border-border pl-3 text-text-muted">
+                    {children}
+                  </blockquote>
+                ),
+              }}
+            >
+              {description}
+            </ReactMarkdown>
+          </article>
+
+          {item.releaseNotes ? (
+            <section className="plugin-dialog-divider mt-5 border-t pt-4">
+              <h3 className="text-sm font-medium text-text-primary">
+                {t('workbench.smart_apps_release_notes', '版本说明')}
+              </h3>
+              <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-text-secondary">
+                {item.releaseNotes}
+              </p>
+            </section>
+          ) : null}
+        </div>
+        <footer
+          className="plugin-dialog-divider flex shrink-0 justify-end border-t px-5 py-4 sm:px-6"
+          data-testid="smart-app-details-footer"
+        >
+          <Button
+            size="sm"
+            className="min-w-28"
+            disabled={busy || Boolean(state && !state.update)}
+            onClick={onInstall}
+          >
+            {busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : state && !state.update ? (
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Download className="h-4 w-4" aria-hidden="true" />
             )}
-          </span>
-        </div>
-        {item.screenshotUrls.length ? (
-          <div className="mt-5 flex gap-3 overflow-x-auto">
-            {item.screenshotUrls.map(url => (
-              <img
-                key={url}
-                src={url}
-                alt={t('workbench.smart_apps_screenshot', '工作台截图')}
-                className="h-44 rounded-xl border object-cover"
-              />
-            ))}
-          </div>
-        ) : null}
-        <div className="prose prose-sm mt-5 max-w-none text-text-secondary">
-          <ReactMarkdown>{item.descriptionMd || item.summary}</ReactMarkdown>
-        </div>
-        {item.releaseNotes ? (
-          <div className="mt-5">
-            <h3 className="text-sm font-medium">
-              {t('workbench.smart_apps_release_notes', '版本说明')}
-            </h3>
-            <p className="mt-1 whitespace-pre-wrap text-sm text-text-secondary">
-              {item.releaseNotes}
-            </p>
-          </div>
-        ) : null}
-        <footer className="mt-6 flex justify-end">
-          <Button disabled={busy || Boolean(state && !state.update)} onClick={onInstall}>
             {state
               ? state.update
                 ? t('workbench.smart_apps_update', '更新')
@@ -1352,7 +2134,7 @@ function SmartAppPublishDialog({
             <p className="text-sm text-text-secondary">
               {t(
                 'workbench.smart_apps_inherit_access_hint',
-                '新版本默认沿用当前分享范围，可发布后在“我的创建”中调整。'
+                '新版本默认沿用当前分享范围，可发布后在“我的”中调整。'
               )}
             </p>
           ) : (

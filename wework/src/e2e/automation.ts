@@ -1950,6 +1950,20 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         )
       )
     }
+    case 'deleteLocalPluginPackage': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        pluginId?: string
+        pluginName?: string
+      }
+      if (!input.pluginId || !input.pluginName) {
+        throw new Error('deleteLocalPluginPackage requires pluginId and pluginName')
+      }
+      const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+      const api = createLocalCodexPluginApi()
+      await api.uninstallInstalledPlugin(input.pluginId)
+      await api.deletePersonalPlugin(input.pluginName)
+      return ''
+    }
     case 'hover':
       return hoverDesktopControlElement(command.selector)
     case 'pointerLeave':

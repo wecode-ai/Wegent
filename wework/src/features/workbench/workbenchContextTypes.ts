@@ -458,6 +458,7 @@ export interface WorkbenchProviderProps {
   workspaceTabId?: string
   debugSnapshotEnabled?: boolean
   consumePluginTrials?: boolean
+  publishDebugSnapshots?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean
 }

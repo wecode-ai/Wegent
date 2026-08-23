@@ -12,6 +12,7 @@
   --color-bg-surface: 247 247 248;
   --color-bg-hover: 20 184 166 / 0.08;
   --color-focus: 51 156 255;
+  --color-success: 0 162 64;
   --color-destructive: 220 38 38;
   --color-text-primary: 26 26 26;
   --color-text-secondary: 102 102 102;
@@ -463,6 +464,7 @@
   --color-bg-surface: 28 31 36;
   --color-bg-hover: 45 212 191 / 0.12;
   --color-focus: 51 156 255;
+  --color-success: 64 201 119;
   --color-destructive: 248 113 113;
   --color-text-primary: 241 245 249;
   --color-text-secondary: 203 213 225;

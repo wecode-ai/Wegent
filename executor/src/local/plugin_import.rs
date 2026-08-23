@@ -67,6 +67,13 @@ pub struct UnlinkPluginReleaseRequest {
     pub local_plugin_name: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletePersonalPluginRequest {
+    pub marketplace_path: String,
+    pub plugin_name: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalPluginImportIssue {
@@ -217,6 +224,92 @@ pub fn unlink_plugin_release(request: UnlinkPluginReleaseRequest) -> Result<(), 
     let mut links = load_plugin_cloud_links(&marketplace_root);
     links.retain(|link| link.local_plugin_name != plugin_name);
     write_plugin_cloud_links(&marketplace_root, links)
+}
+
+pub fn delete_personal_plugin(request: DeletePersonalPluginRequest) -> Result<(), String> {
+    let plugin_name = validate_plugin_name(&request.plugin_name)?;
+    let resolved = Path::new(&request.marketplace_path)
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved);
+    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let plugin_path = marketplace_root.join("plugins").join(plugin_name);
+    let metadata = fs::symlink_metadata(&plugin_path)
+        .map_err(|error| format!("Failed to inspect personal plugin: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("Plugin is not a managed personal plugin directory".to_owned());
+    }
+    let canonical_plugin = plugin_path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve personal plugin: {error}"))?;
+    let canonical_plugins_root = marketplace_root
+        .join("plugins")
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve personal plugin directory: {error}"))?;
+    if canonical_plugin.parent() != Some(canonical_plugins_root.as_path())
+        || !canonical_plugin.join(".codex-plugin/plugin.json").is_file()
+    {
+        return Err("Plugin is not a managed personal plugin".to_owned());
+    }
+
+    let manifest_paths = [
+        marketplace_root.join(".agents/plugins/marketplace.json"),
+        marketplace_root.join(".claude-plugin/marketplace.json"),
+    ];
+    let registered = manifest_paths
+        .iter()
+        .any(|path| marketplace_manifest_contains_plugin(path, plugin_name).unwrap_or(false));
+    if !registered {
+        return Err("Plugin is not registered in this personal marketplace".to_owned());
+    }
+
+    let backup_root = marketplace_root.join(".wegent").join(format!(
+        "plugin-delete-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&backup_root)
+        .map_err(|error| format!("Failed to create personal plugin deletion backup: {error}"))?;
+    let manifest_backups = manifest_paths
+        .iter()
+        .map(|path| fs::read(path).ok())
+        .collect::<Vec<_>>();
+    let cloud_link_path = plugin_cloud_link_registry_path(&marketplace_root);
+    let cloud_link_backup = fs::read(&cloud_link_path).ok();
+    fs::rename(&canonical_plugin, backup_root.join("plugin"))
+        .map_err(|error| format!("Failed to stage personal plugin deletion: {error}"))?;
+
+    let mutation = (|| {
+        for path in &manifest_paths {
+            remove_marketplace_plugin_entry(path, plugin_name)?;
+        }
+        let mut links = load_plugin_cloud_links(&marketplace_root);
+        links.retain(|link| link.local_plugin_name != plugin_name);
+        write_plugin_cloud_links(&marketplace_root, links)
+    })();
+    if let Err(error) = mutation {
+        for (path, backup) in manifest_paths.iter().zip(manifest_backups) {
+            if let Some(bytes) = backup {
+                let _ = write_atomic_file(path, &bytes);
+            }
+        }
+        match cloud_link_backup {
+            Some(bytes) => {
+                let _ = write_atomic_file(&cloud_link_path, &bytes);
+            }
+            None => {
+                let _ = fs::remove_file(&cloud_link_path);
+            }
+        }
+        let _ = fs::rename(backup_root.join("plugin"), &canonical_plugin);
+        let _ = fs::remove_dir_all(&backup_root);
+        return Err(error);
+    }
+    fs::remove_dir_all(&backup_root)
+        .map_err(|error| format!("Failed to finalize personal plugin deletion: {error}"))
 }
 
 fn preview_plugin_import_at(
@@ -1180,6 +1273,55 @@ fn upsert_marketplace_plugin_entry(manifest_path: &Path, plugin_name: &str) -> R
     )
 }
 
+fn marketplace_manifest_contains_plugin(
+    manifest_path: &Path,
+    plugin_name: &str,
+) -> Result<bool, String> {
+    if !manifest_path.is_file() {
+        return Ok(false);
+    }
+    let manifest = serde_json::from_slice::<Value>(
+        &fs::read(manifest_path)
+            .map_err(|error| format!("Failed to read {}: {error}", manifest_path.display()))?,
+    )
+    .map_err(|error| format!("Invalid marketplace manifest: {error}"))?;
+    if manifest.get("name").and_then(Value::as_str) != Some(PERSONAL_MARKETPLACE_ID) {
+        return Ok(false);
+    }
+    Ok(manifest
+        .get("plugins")
+        .and_then(Value::as_array)
+        .is_some_and(|plugins| {
+            plugins
+                .iter()
+                .any(|plugin| plugin.get("name").and_then(Value::as_str) == Some(plugin_name))
+        }))
+}
+
+fn remove_marketplace_plugin_entry(manifest_path: &Path, plugin_name: &str) -> Result<(), String> {
+    if !manifest_path.is_file() {
+        return Ok(());
+    }
+    let mut manifest = serde_json::from_slice::<Value>(
+        &fs::read(manifest_path)
+            .map_err(|error| format!("Failed to read {}: {error}", manifest_path.display()))?,
+    )
+    .map_err(|error| format!("Invalid marketplace manifest: {error}"))?;
+    if manifest.get("name").and_then(Value::as_str) != Some(PERSONAL_MARKETPLACE_ID) {
+        return Err("Refusing to mutate a non-personal marketplace".to_owned());
+    }
+    let plugins = manifest
+        .get_mut("plugins")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "Marketplace plugins must be an array".to_owned())?;
+    plugins.retain(|plugin| plugin.get("name").and_then(Value::as_str) != Some(plugin_name));
+    write_atomic_file(
+        manifest_path,
+        &serde_json::to_vec_pretty(&manifest)
+            .map_err(|error| format!("Failed to serialize marketplace manifest: {error}"))?,
+    )
+}
+
 fn plugin_import_backup_root(
     marketplace_root: &Path,
     rollback_id: &str,
@@ -1337,5 +1479,18 @@ mod tests {
             rollback_id: imported.rollback_id,
         })
         .unwrap();
+
+        delete_personal_plugin(DeletePersonalPluginRequest {
+            marketplace_path: marketplace.display().to_string(),
+            plugin_name: "example-plugin".to_owned(),
+        })
+        .unwrap();
+        assert!(!marketplace.join("plugins/example-plugin").exists());
+        for manifest in [
+            marketplace.join(".agents/plugins/marketplace.json"),
+            marketplace.join(".claude-plugin/marketplace.json"),
+        ] {
+            assert!(!marketplace_manifest_contains_plugin(&manifest, "example-plugin").unwrap());
+        }
     }
 }

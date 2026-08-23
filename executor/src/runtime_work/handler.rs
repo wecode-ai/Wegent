@@ -10,7 +10,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex, Weak,
+        Arc, Mutex, OnceLock, Weak,
     },
     time::{Duration, Instant},
 };
@@ -53,6 +53,7 @@ mod collection;
 mod fork_transfer;
 mod hooks;
 mod notifications;
+mod plugin_install;
 mod queries;
 mod robot_queue_rpc;
 mod sidebar;
@@ -455,7 +456,6 @@ pub struct RuntimeWorkRpcHandler {
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
-    codex_app_server_restart_gate: Arc<AsyncMutex<()>>,
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
@@ -633,7 +633,6 @@ impl RuntimeWorkRpcHandler {
             codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
                 CodexRuntimeProxyConfig::default(),
             )),
-            codex_app_server_restart_gate: Arc::new(AsyncMutex::new(())),
             event_tx: None,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
@@ -805,6 +804,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
             "runtime.codex.personality.read" => self.read_codex_personality().await,
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
+            "runtime.codex.plugin.install_local_first" => self.install_local_plugin(payload).await,
+            "runtime.codex.plugin.uninstall_local" => self.uninstall_local_plugin(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
             "runtime.codex.runtime_config.update" => {
                 self.update_codex_runtime_config(payload).await
@@ -884,6 +885,11 @@ impl RuntimeWorkRpcHandler {
             )),
         }
     }
+}
+
+fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
+    static GATE: OnceLock<AsyncMutex<()>> = OnceLock::new();
+    GATE.get_or_init(|| AsyncMutex::new(()))
 }
 
 include!("handler/helpers.rs");

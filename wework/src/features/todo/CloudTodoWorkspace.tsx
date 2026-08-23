@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from 'react'
 import {
   DndContext,
@@ -20,6 +21,7 @@ import {
 } from '@dnd-kit/core'
 import {
   Archive,
+  ArrowLeft,
   Bot,
   Check,
   ChevronDown,
@@ -28,17 +30,21 @@ import {
   Cloud,
   Copy,
   Ellipsis,
+  File,
   GitBranch,
   Grid3X3,
   HardDrive,
   ListTodo,
   LockKeyhole,
+  MessageSquare,
   Plus,
   Search,
   Settings,
+  X,
 } from 'lucide-react'
 import type {
   CloudLoopItem,
+  CloudLoopItemAttachment,
   CloudMyWorkItem,
   CloudProject,
   CloudProjectMember,
@@ -91,6 +97,7 @@ import {
   completeChangeRequestAutoRepair,
 } from '@/features/workbench/changeRequestStatus'
 import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
+import { runtimeMessagesToWorkbenchMessages } from '@/features/workbench/runtimePaneMessages'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
 import { AITableView } from '@/features/todo/AITableView'
@@ -102,6 +109,7 @@ import type {
   RuntimeWorkListResponse,
   User as UserProfile,
 } from '@/types/api'
+import type { WorkbenchMessage } from '@/types/workbench'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
 import { stopLocalRobotQueueExecution } from './localRobotQueueDispatcher'
@@ -131,7 +139,10 @@ import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { BoardQuickCreate } from './BoardQuickCreate'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
 import { isRuntimeMyWorkItem, runtimeMyWorkItems } from './runtimeMyWork'
-import { finalAssistantTranscriptPreview } from './runtimeTaskResponsePreview'
+import {
+  finalAssistantTranscriptMessage,
+  finalAssistantTranscriptText,
+} from './runtimeTaskResponsePreview'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { IssueComposer } from './IssueComposer'
@@ -141,6 +152,7 @@ import { associateLoopItemTags, loopItemLocalProject } from '@/api/localProjectA
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } from './todoShared'
 import { AiChatModal } from './AiChatModal'
+import { BackgroundTaskStarter } from './BackgroundTaskStarter'
 import {
   shouldDeferWorkItemMoveUntilTaskCreated,
   shouldPrepareWorkItemTask,
@@ -153,6 +165,41 @@ import type { WorkflowDeliverableDraft } from './WorkflowStageCompletionDialog'
 type ProjectView = 'board' | 'table' | 'files' | 'automation' | 'manage'
 type RootView = 'projects' | 'my-work' | 'settings'
 type ProjectTaskProvider = 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
+
+function IssueResourceSection({
+  icon,
+  title,
+  count,
+  empty,
+  children,
+}: {
+  icon: ReactNode
+  title: string
+  count: number
+  empty: string
+  children: ReactNode
+}) {
+  return (
+    <section className="task-conversation-resource-section">
+      <header className="task-conversation-resource-heading">
+        <span className="text-text-muted">{icon}</span>
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        <span className="task-conversation-resource-count">{count}</span>
+      </header>
+      {count > 0 ? (
+        <div className="space-y-0.5 px-2 pb-2">{children}</div>
+      ) : (
+        <p className="px-4 pb-3 text-xs text-text-muted">{empty}</p>
+      )}
+    </section>
+  )
+}
+
+function formatCompactFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 type NativeBoardGroupBy = 'status' | 'priority' | 'assignee' | 'tag'
 
 const nativeBoardGroupFields: AITableField[] = [
@@ -417,7 +464,6 @@ type SelectedTaskBinding = Pick<
 type TaskComposerRequest = {
   workItemId: string
   initialInput: string
-  autoSubmit: boolean
   backgroundAfterSend: boolean
   workflowNodeId?: string
   inheritFromTask?: RuntimeTaskAddress | null
@@ -1225,7 +1271,14 @@ export function CloudTodoWorkspace({
     LocatedLoopItem[] | null
   >(null)
   const [runtimeFinalResponsePreviews, setRuntimeFinalResponsePreviews] = useState<
-    Record<string, { signature: string; text: string | null }>
+    Record<
+      string,
+      {
+        signature: string
+        text: string | null
+        message: WorkbenchMessage | null
+      }
+    >
   >({})
   const runtimeFinalResponseRequestsRef = useRef(new Set<string>())
   const runtimeFinalResponseLatestSignatureRef = useRef(new Map<string, string>())
@@ -1444,6 +1497,13 @@ export function CloudTodoWorkspace({
                   taskId: binding.task_id,
                 })
               ]?.text ?? null,
+            finalResponseMessage:
+              runtimeFinalResponsePreviews[
+                runtimeConversationKey({
+                  deviceId: binding.device_id,
+                  taskId: binding.task_id,
+                })
+              ]?.message ?? null,
             finalResponseLoaded:
               runtimeConversationKey({
                 deviceId: binding.device_id,
@@ -2457,10 +2517,13 @@ export function CloudTodoWorkspace({
             if (runtimeFinalResponseLatestSignatureRef.current.get(addressKey) !== signature) {
               return
             }
-            const text = finalAssistantTranscriptPreview(transcript)
+            const text = finalAssistantTranscriptText(transcript)
+            const message = finalAssistantTranscriptMessage({
+              messages: runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
+            })
             setRuntimeFinalResponsePreviews(current => ({
               ...current,
-              [addressKey]: { signature, text },
+              [addressKey]: { signature, text, message },
             }))
           })
           .catch(error => {
@@ -2471,6 +2534,13 @@ export function CloudTodoWorkspace({
               },
               error,
             })
+            if (runtimeFinalResponseLatestSignatureRef.current.get(addressKey) !== signature) {
+              return
+            }
+            setRuntimeFinalResponsePreviews(current => ({
+              ...current,
+              [addressKey]: { signature, text: null, message: null },
+            }))
           })
           .finally(() => {
             runtimeFinalResponseRequestsRef.current.delete(requestKey)
@@ -2610,7 +2680,6 @@ export function CloudTodoWorkspace({
       setTaskComposerRequest({
         workItemId: item.id,
         initialInput: workItemTaskInput(item),
-        autoSubmit: false,
         backgroundAfterSend: true,
       })
       return
@@ -2707,7 +2776,6 @@ export function CloudTodoWorkspace({
         setTaskComposerRequest({
           workItemId: locatedUpdated.id,
           initialInput: workItemTaskInput(locatedUpdated),
-          autoSubmit: column.status === 'in_progress',
           backgroundAfterSend: column.status === 'in_progress',
         })
       } else if (
@@ -2913,10 +2981,10 @@ export function CloudTodoWorkspace({
         setSelectedItem(locatedItem)
       }
       if (input.createTask) {
+        setBackgroundTaskItemId(locatedItem.id)
         setTaskComposerRequest({
           workItemId: locatedItem.id,
           initialInput: workItemTaskInput(locatedItem),
-          autoSubmit: true,
           backgroundAfterSend: true,
         })
       }
@@ -2936,9 +3004,43 @@ export function CloudTodoWorkspace({
   const taskPanelOpen = Boolean(
     selectedItem &&
     aiChatProject &&
+    backgroundTaskItemId !== selectedItem.id &&
     (selectedTaskBinding?.work_item_id === selectedItem.id ||
       taskComposerRequest?.workItemId === selectedItem.id)
   )
+  const taskStartingInBackground = backgroundTaskItemId === selectedItem?.id
+  const [issueResourceAttachmentState, setIssueResourceAttachmentState] = useState<{
+    itemId: string | null
+    attachments: CloudLoopItemAttachment[]
+  }>({ itemId: null, attachments: [] })
+  const issueResourceAttachments =
+    issueResourceAttachmentState.itemId === selectedItem?.id
+      ? issueResourceAttachmentState.attachments
+      : []
+  const issueResourceAttachmentsLoading = Boolean(
+    taskPanelOpen &&
+    selectedItem &&
+    selectedItemApi &&
+    issueResourceAttachmentState.itemId !== selectedItem.id
+  )
+
+  useEffect(() => {
+    if (!taskPanelOpen || !selectedItem || !selectedItemApi) return
+    let active = true
+    void selectedItemApi.listLoopItemAttachments(selectedItem.id).then(
+      attachments => {
+        if (!active) return
+        setIssueResourceAttachmentState({ itemId: selectedItem.id, attachments })
+      },
+      () => {
+        if (!active) return
+        setIssueResourceAttachmentState({ itemId: selectedItem.id, attachments: [] })
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [selectedItem, selectedItemApi, taskPanelOpen])
 
   function closeTaskPanel() {
     setSelectedTaskBinding(null)
@@ -2952,11 +3054,74 @@ export function CloudTodoWorkspace({
   }
 
   function closeTopPanel() {
-    if (taskPanelOpen) {
-      closeTaskPanel()
-      return
-    }
     closeIssuePanelStack()
+  }
+
+  async function prepareSelectedItemTask(address: RuntimeTaskAddress) {
+    if (!selectedItem) return
+    const itemApi = apiForProject(selectedItemProject)
+    if (!itemApi) return
+    try {
+      const latest = await itemApi.getLoopItem(selectedItem.id)
+      const workflowNodeId =
+        taskComposerRequest?.workItemId === selectedItem.id
+          ? taskComposerRequest.workflowNodeId
+          : undefined
+      await itemApi.bindTask(latest.id, address, latest.title, workflowNodeId)
+      publishProjectSpaceTaskBindingChanged(address)
+      setBoardRefreshNonce(value => value + 1)
+      return async () => {
+        await itemApi.unbindTask(latest.id, address)
+        publishProjectSpaceTaskBindingChanged(address)
+        setBoardRefreshNonce(value => value + 1)
+      }
+    } catch (cause) {
+      setBoardError(cause instanceof Error ? cause.message : '关联任务与 Issue 失败，请重试')
+      setBoardRefreshNonce(value => value + 1)
+      throw cause
+    }
+  }
+
+  async function handleSelectedItemTaskCreated(
+    _address: RuntimeTaskAddress,
+    localProject: ProjectWithTasks | null
+  ) {
+    if (!selectedItem) return
+    const itemApi = apiForProject(selectedItemProject)
+    if (!itemApi) return
+    try {
+      const latest = await itemApi.getLoopItem(selectedItem.id)
+      const associatedTags =
+        isMyTasksBoard && localProject ? associateLoopItemTags(latest, localProject) : latest.tags
+      const associationChanged =
+        associatedTags.length !== latest.tags.length ||
+        associatedTags.some((tag, index) => tag !== latest.tags[index])
+      const updated =
+        latest.status === 'inbox' || associationChanged
+          ? await itemApi.updateLoopItem(latest.id, {
+              version: latest.version,
+              ...(latest.status === 'inbox' ? { status: 'pending' } : {}),
+              ...(associationChanged ? { tags: associatedTags } : {}),
+            })
+          : latest
+      const locatedUpdated = {
+        ...updated,
+        project_store: selectedItem.project_store,
+      }
+      setItems(current =>
+        current.map(item =>
+          item.id === locatedUpdated.id ? preferNewestLoopItemSnapshot(item, locatedUpdated) : item
+        )
+      )
+      setSelectedItem(current =>
+        current?.id === locatedUpdated.id
+          ? preferNewestLoopItemSnapshot(current, locatedUpdated)
+          : current
+      )
+    } catch (cause) {
+      setBoardError(cause instanceof Error ? cause.message : '关联任务与 Issue 失败，请重试')
+      setBoardRefreshNonce(value => value + 1)
+    }
   }
 
   useEffect(() => {
@@ -2965,16 +3130,14 @@ export function CloudTodoWorkspace({
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
-      if (taskPanelOpen) {
-        setSelectedTaskBinding(null)
-        setTaskComposerRequest(null)
-        return
-      }
+      setBackgroundTaskItemId(null)
       setSelectedItem(null)
+      setSelectedTaskBinding(null)
+      setTaskComposerRequest(null)
     }
     window.addEventListener('keydown', handleEscape, true)
     return () => window.removeEventListener('keydown', handleEscape, true)
-  }, [backgroundTaskItemId, selectedItem, taskPanelOpen])
+  }, [backgroundTaskItemId, selectedItem])
 
   return (
     <div
@@ -4070,6 +4233,8 @@ export function CloudTodoWorkspace({
                                       onClick={() => {
                                         if (item.can_view_detail !== false) {
                                           setBackgroundTaskItemId(null)
+                                          setSelectedTaskBinding(null)
+                                          setTaskComposerRequest(null)
                                           setSelectedItem(item)
                                         }
                                       }}
@@ -4195,12 +4360,147 @@ export function CloudTodoWorkspace({
             className="todo-panel-backdrop"
           />
         ) : null}
-        {selectedItem ? (
+        {selectedItem && !taskStartingInBackground ? (
           <div
             data-testid="cloud-todo-panel-stack"
             data-conversation-open={taskPanelOpen ? 'true' : 'false'}
             className={cn('todo-panel-stack', taskPanelOpen && 'has-conversation')}
           >
+            {taskPanelOpen && backgroundTaskItemId !== selectedItem.id ? (
+              <aside
+                data-testid="cloud-todo-compact-issue"
+                className="task-conversation-issue-context flex min-h-0 flex-col bg-background"
+              >
+                <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
+                  <button
+                    type="button"
+                    data-testid="cloud-todo-compact-issue-back"
+                    onClick={closeTaskPanel}
+                    aria-label="返回 Issue 详情"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </button>
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-secondary">
+                    {selectedItem.id} · Issue 附件
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="cloud-todo-panel-close"
+                    onClick={closeIssuePanelStack}
+                    aria-label="关闭"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </header>
+                <div className="min-h-0 flex-1 overflow-y-auto py-2">
+                  <IssueResourceSection
+                    icon={<File className="h-3.5 w-3.5" />}
+                    title="文件附件"
+                    count={issueResourceAttachments.length}
+                    empty={issueResourceAttachmentsLoading ? '正在加载…' : '暂无文件附件'}
+                  >
+                    {issueResourceAttachments.map(attachment => (
+                      <button
+                        key={attachment.id}
+                        type="button"
+                        data-testid={`cloud-todo-resource-attachment-${attachment.id}`}
+                        onClick={() =>
+                          void selectedItemApi?.downloadLoopItemAttachment(
+                            attachment.id,
+                            attachment.display_name
+                          )
+                        }
+                        className="task-conversation-resource-row"
+                      >
+                        <File className="h-4 w-4 shrink-0 text-text-muted" />
+                        <span className="min-w-0 flex-1 truncate">{attachment.display_name}</span>
+                        <span className="shrink-0 text-xs text-text-muted">
+                          {formatCompactFileSize(attachment.size_bytes)}
+                        </span>
+                      </button>
+                    ))}
+                  </IssueResourceSection>
+
+                  <IssueResourceSection
+                    icon={<MessageSquare className="h-3.5 w-3.5" />}
+                    title="任务会话"
+                    count={(itemTaskBindings[selectedItem.id] ?? []).length}
+                    empty="暂无任务会话"
+                  >
+                    {(itemTaskBindings[selectedItem.id] ?? []).map(binding => {
+                      const selected = selectedTaskBinding?.id === binding.id
+                      return (
+                        <button
+                          key={binding.id}
+                          type="button"
+                          data-testid={`cloud-todo-resource-conversation-${binding.id}`}
+                          data-selected={selected ? 'true' : 'false'}
+                          onClick={() => {
+                            setTaskComposerRequest(null)
+                            setSelectedTaskBinding({
+                              ...binding,
+                              work_item_id: selectedItem.id,
+                            })
+                          }}
+                          className={cn(
+                            'task-conversation-resource-row',
+                            selected && 'is-selected'
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              'h-2 w-2 shrink-0 rounded-full',
+                              selected ? 'bg-primary' : 'bg-text-muted/50'
+                            )}
+                          />
+                          <span className="min-w-0 flex-1 truncate">
+                            {binding.task_title || binding.task_id}
+                          </span>
+                          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                        </button>
+                      )
+                    })}
+                  </IssueResourceSection>
+
+                  <IssueResourceSection
+                    icon={<ListTodo className="h-3.5 w-3.5" />}
+                    title="子 Issue"
+                    count={
+                      detailAllItems.filter(candidate => candidate.parent_id === selectedItem.id)
+                        .length
+                    }
+                    empty="暂无子 Issue"
+                  >
+                    {detailAllItems
+                      .filter(candidate => candidate.parent_id === selectedItem.id)
+                      .map(child => (
+                        <button
+                          key={child.id}
+                          type="button"
+                          data-testid={`cloud-todo-resource-child-${child.id}`}
+                          onClick={() => {
+                            setSelectedTaskBinding(null)
+                            setTaskComposerRequest(null)
+                            setSelectedItem(child)
+                          }}
+                          className="task-conversation-resource-row"
+                        >
+                          <span
+                            className={cn(
+                              'h-2 w-2 shrink-0 rounded-full',
+                              columnDotClasses[child.status]
+                            )}
+                          />
+                          <span className="min-w-0 flex-1 truncate">{child.title}</span>
+                          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                        </button>
+                      ))}
+                  </IssueResourceSection>
+                </div>
+              </aside>
+            ) : null}
             {backgroundTaskItemId !== selectedItem.id &&
             selectedItem.can_view_detail !== false &&
             selectedItemApi ? (
@@ -4264,11 +4564,12 @@ export function CloudTodoWorkspace({
                       })
                     }
                   }
+                  const backgroundAfterSend = selectedItem.status === 'pending' && !workflowNodeId
+                  setBackgroundTaskItemId(backgroundAfterSend ? selectedItem.id : null)
                   setTaskComposerRequest({
                     workItemId: selectedItem.id,
                     initialInput: workflowNode ? workflowStageTaskInput(workflowNode) : '',
-                    autoSubmit: false,
-                    backgroundAfterSend: selectedItem.status === 'pending' && !workflowNodeId,
+                    backgroundAfterSend,
                     workflowNodeId,
                     inheritFromTask,
                   })
@@ -4446,106 +4747,66 @@ export function CloudTodoWorkspace({
                     ? taskComposerRequest.initialInput
                     : ''
                 }
-                autoSubmitInitialTaskInput={
-                  taskComposerRequest?.workItemId === selectedItem.id
-                    ? taskComposerRequest.autoSubmit
-                    : false
-                }
                 workflowNodeId={
                   taskComposerRequest?.workItemId === selectedItem.id
                     ? taskComposerRequest.workflowNodeId
                     : undefined
                 }
-                onClose={closeTaskPanel}
+                onClose={closeIssuePanelStack}
+                onBack={closeTaskPanel}
                 onAddressChange={address => {
-                  if (
+                  const backgroundAfterSend =
                     taskComposerRequest?.workItemId === selectedItem.id &&
                     taskComposerRequest.backgroundAfterSend
-                  ) {
-                    setBackgroundTaskItemId(selectedItem.id)
+                  if (backgroundAfterSend) {
+                    setBackgroundTaskItemId(null)
+                    setSelectedItem(null)
+                    setSelectedTaskBinding(null)
+                  } else {
+                    setSelectedTaskBinding({
+                      id: -Date.now(),
+                      device_id: address.deviceId,
+                      task_id: address.taskId,
+                      task_title: null,
+                      work_item_id: selectedItem.id,
+                    })
                   }
-                  setSelectedTaskBinding({
-                    id: -Date.now(),
-                    device_id: address.deviceId,
-                    task_id: address.taskId,
-                    task_title: null,
-                    work_item_id: selectedItem.id,
-                  })
                   setTaskComposerRequest(null)
                   setBoardRefreshNonce(value => value + 1)
                 }}
-                prepareTask={async address => {
-                  const itemApi = apiForProject(selectedItemProject)
-                  if (!itemApi) return
-                  try {
-                    const latest = await itemApi.getLoopItem(selectedItem.id)
-                    const workflowNodeId =
-                      taskComposerRequest?.workItemId === selectedItem.id
-                        ? taskComposerRequest.workflowNodeId
-                        : undefined
-                    await itemApi.bindTask(latest.id, address, latest.title, workflowNodeId)
-                    publishProjectSpaceTaskBindingChanged(address)
-                    setBoardRefreshNonce(value => value + 1)
-                    return async () => {
-                      await itemApi.unbindTask(latest.id, address)
-                      publishProjectSpaceTaskBindingChanged(address)
-                      setBoardRefreshNonce(value => value + 1)
-                    }
-                  } catch (cause) {
-                    setBoardError(
-                      cause instanceof Error ? cause.message : '关联任务与 Issue 失败，请重试'
-                    )
-                    setBoardRefreshNonce(value => value + 1)
-                    throw cause
-                  }
-                }}
-                onTaskCreated={async (_address, localProject) => {
-                  const itemApi = apiForProject(selectedItemProject)
-                  if (!itemApi) return
-                  try {
-                    const latest = await itemApi.getLoopItem(selectedItem.id)
-                    const associatedTags =
-                      isMyTasksBoard && localProject
-                        ? associateLoopItemTags(latest, localProject)
-                        : latest.tags
-                    const associationChanged =
-                      associatedTags.length !== latest.tags.length ||
-                      associatedTags.some((tag, index) => tag !== latest.tags[index])
-                    const updated =
-                      latest.status === 'inbox' || associationChanged
-                        ? await itemApi.updateLoopItem(latest.id, {
-                            version: latest.version,
-                            ...(latest.status === 'inbox' ? { status: 'pending' } : {}),
-                            ...(associationChanged ? { tags: associatedTags } : {}),
-                          })
-                        : latest
-                    const locatedUpdated = {
-                      ...updated,
-                      project_store: selectedItem.project_store,
-                    }
-                    setItems(current =>
-                      current.map(item =>
-                        item.id === locatedUpdated.id
-                          ? preferNewestLoopItemSnapshot(item, locatedUpdated)
-                          : item
-                      )
-                    )
-                    setSelectedItem(current =>
-                      current?.id === locatedUpdated.id
-                        ? preferNewestLoopItemSnapshot(current, locatedUpdated)
-                        : current
-                    )
-                  } catch (cause) {
-                    setBoardError(
-                      cause instanceof Error ? cause.message : '关联任务与 Issue 失败，请重试'
-                    )
-                    setBoardRefreshNonce(value => value + 1)
-                  }
-                }}
+                prepareTask={prepareSelectedItemTask}
+                onTaskCreated={handleSelectedItemTaskCreated}
                 onOpenRuntimeTask={onOpenRuntimeTask}
               />
             ) : null}
           </div>
+        ) : null}
+        {selectedItem &&
+        aiChatProject &&
+        taskStartingInBackground &&
+        taskComposerRequest?.workItemId === selectedItem.id ? (
+          <BackgroundTaskStarter
+            project={aiChatProject}
+            localProjects={localProjects}
+            task={selectedItem}
+            input={taskComposerRequest.initialInput}
+            initialLocalProjectId={
+              localProjectIdForItem(selectedItem) ??
+              (isMyTasksBoard ? selectedLocalProject?.id : null)
+            }
+            inheritFromTask={taskComposerRequest.inheritFromTask}
+            workflowNodeId={taskComposerRequest.workflowNodeId}
+            onAddressChange={() => {
+              setBackgroundTaskItemId(null)
+              setSelectedItem(null)
+              setSelectedTaskBinding(null)
+              setTaskComposerRequest(null)
+              setBoardRefreshNonce(value => value + 1)
+            }}
+            prepareTask={prepareSelectedItemTask}
+            onTaskCreated={handleSelectedItemTaskCreated}
+            onError={setBoardError}
+          />
         ) : null}
         {selectedProject && projectAssistantOpen && !selectedItem ? (
           <ProjectSpaceChatSidebar

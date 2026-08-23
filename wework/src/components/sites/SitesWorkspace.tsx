@@ -7,6 +7,7 @@ import type { Site, SiteAppType, SiteListItem, SitesApi } from '@/api/sites'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { replaceTo } from '@/lib/navigation'
 import { track } from '@/telemetry/client'
 import {
   DEFAULT_APPLICATION_TYPE,
@@ -31,6 +32,7 @@ interface SitesWorkspaceProps {
   onOpenPlugins?: () => void
   smartAppsContent?: ReactNode
   smartAppsEnabled?: boolean
+  smartAppsMode?: 'marketplace' | 'owned'
 }
 
 type ApplicationWorkspaceType = SiteAppType | 'smart_app'
@@ -225,8 +227,10 @@ export function SitesWorkspace({
   onOpenPlugins,
   smartAppsContent,
   smartAppsEnabled = false,
+  smartAppsMode = 'marketplace',
 }: SitesWorkspaceProps) {
   const { t } = useTranslation('sites')
+  const { t: commonT } = useTranslation('common')
   const applicationTypes = useApplicationTypeDefinitions(api)
   const [activeAppType, setActiveAppType] = useState<ApplicationWorkspaceType>(() =>
     getInitialAppType(smartAppsEnabled)
@@ -254,6 +258,19 @@ export function SitesWorkspace({
   }, [smartAppsEnabled])
 
   const smartAppsActive = smartAppsEnabled && activeAppType === 'smart_app'
+  const pageTitle = smartAppsActive
+    ? smartAppsMode === 'owned'
+      ? commonT('workbench.smart_apps_my_title', '我的工作台')
+      : commonT('workbench.smart_apps_marketplace_title', '智能工作台市场')
+    : t('title', '应用')
+  const pageDescription = smartAppsActive
+    ? smartAppsMode === 'owned'
+      ? commonT('workbench.smart_apps_my_description', '管理你创建、导入和安装的智能应用。')
+      : commonT(
+          'workbench.smart_apps_marketplace_description',
+          '发现官方工作台，以及成员定向分享给你的工作台。'
+        )
+    : t('subtitle', '创建、管理并发布你的应用')
   const activeSiteAppType = activeAppType === 'smart_app' ? DEFAULT_APPLICATION_TYPE : activeAppType
   const activeApplicationType =
     applicationTypes.find(item => item.definition.appType === activeSiteAppType) ??
@@ -275,11 +292,11 @@ export function SitesWorkspace({
     setActiveAppType(appType)
     setQuery('')
     setDebouncedQuery('')
-    const url = new URL(window.location.href)
-    url.searchParams.set('app_type', appType)
-    url.searchParams.delete('view')
-    url.searchParams.delete('action')
-    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+    const params = new URLSearchParams(window.location.search)
+    params.set('app_type', appType)
+    params.delete('view')
+    params.delete('action')
+    replaceTo(`/sites?${params.toString()}`)
   }, [])
 
   useEffect(() => {
@@ -460,12 +477,15 @@ export function SitesWorkspace({
         </div>
       </div>
 
-      <div className="mx-auto flex w-full max-w-[920px] flex-col px-5 pb-14 pt-5 md:px-8 md:pt-4">
+      <div
+        className={[
+          'relative mx-auto flex w-full flex-col px-5 pb-14 pt-5 md:px-8 md:pt-4',
+          smartAppsActive ? 'max-w-[1120px]' : 'max-w-[920px]',
+        ].join(' ')}
+      >
         <section className="space-y-1.5">
-          <h1 className="text-xl font-normal leading-9 text-text-primary">{t('title', '应用')}</h1>
-          <p className="text-base leading-6 text-text-secondary md:text-lg">
-            {t('subtitle', '创建、管理并发布你的应用')}
-          </p>
+          <h1 className="text-xl font-normal leading-9 text-text-primary">{pageTitle}</h1>
+          <p className="text-base leading-6 text-text-secondary md:text-lg">{pageDescription}</p>
         </section>
 
         <div

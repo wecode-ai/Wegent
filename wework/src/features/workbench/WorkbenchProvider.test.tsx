@@ -23,6 +23,7 @@ import { MessageList } from '@/components/chat/MessageList'
 import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
 import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
+import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
 import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
@@ -859,6 +860,15 @@ function RemoteRuntimeCacheProbe() {
 function PluginTrialInputProbe({ testId }: { testId: string }) {
   const { paneSession } = useWorkbenchProbeSession()
   return <span data-testid={testId}>{paneSession.input}</span>
+}
+
+function DebugSnapshotInputProbe({ testId, value }: { testId: string; value: string }) {
+  const { paneSession } = useWorkbenchProbeSession()
+  return (
+    <button type="button" data-testid={testId} onClick={() => paneSession.setInput(value)}>
+      Set draft
+    </button>
+  )
 }
 
 function ProjectSendProbe({
@@ -10753,6 +10763,53 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('inactive-plugin-trial-input')).toBeEmptyDOMElement()
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test('lets only the active workspace tab publish workbench diagnostics', async () => {
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    const services = createWorkbenchServices()
+    render(
+      <>
+        <WorkbenchProvider
+          user={user}
+          services={services}
+          consumePluginTrials={false}
+          publishDebugSnapshots={false}
+          syncRemoteProjects={false}
+          syncRuntimeTaskLifecycle={false}
+        >
+          <WorkbenchProbeSessionProvider>
+            <DebugSnapshotInputProbe testId="set-inactive-draft" value="inactive draft" />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+        <WorkbenchProvider
+          user={user}
+          services={services}
+          consumePluginTrials
+          publishDebugSnapshots
+          syncRemoteProjects={false}
+          syncRuntimeTaskLifecycle={false}
+        >
+          <WorkbenchProbeSessionProvider>
+            <DebugSnapshotInputProbe testId="set-active-draft" value="active draft" />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </>
+    )
+
+    await userEvent.click(screen.getByTestId('set-active-draft'))
+    await waitFor(() =>
+      expect(getWorkbenchDebugSnapshot().workbench?.composer?.currentInputLength).toBe(
+        'active draft'.length
+      )
+    )
+
+    await userEvent.click(screen.getByTestId('set-inactive-draft'))
+    await new Promise(resolve => window.setTimeout(resolve, 200))
+
+    expect(getWorkbenchDebugSnapshot().workbench?.composer?.currentInputLength).toBe(
+      'active draft'.length
+    )
   })
 
   test('preserves a queued plugin trial until the workspace tab becomes active', async () => {

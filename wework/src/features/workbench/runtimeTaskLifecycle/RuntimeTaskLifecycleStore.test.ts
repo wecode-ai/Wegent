@@ -340,6 +340,72 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
   })
 
+  test('does not revive a completed task from a late active snapshot after its Goal completes', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'done',
+          completedAt: 1_787_321_634_000,
+          goalStatus: 'complete',
+        })
+      )
+    )
+    store.goalStatusReceived(address, 'complete')
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'active',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+          goalStatus: 'complete',
+        })
+      )
+    )
+
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.task).toMatchObject({
+      running: false,
+      status: 'done',
+      goalStatus: 'complete',
+    })
+  })
+
+  test('allows an explicit send to restart a completed task after its Goal completes', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'done',
+          completedAt: 1_787_321_634_000,
+          goalStatus: 'complete',
+        })
+      )
+    )
+    store.goalStatusReceived(address, 'complete')
+    store.sendRequested(address)
+    store.sendAccepted(address)
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'active',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+          goalStatus: 'complete',
+        })
+      )
+    )
+
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.turn.phase).toBe('awaiting')
+  })
+
   test('keeps terminal executor snapshots idle even when running remains true', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const terminalTask = task({ running: true, status: 'complete' })

@@ -818,19 +818,34 @@ async fn restart_reconciliation_fails_only_explicitly_interrupted_execution() {
         .unwrap();
     let record = handler
         .worktrees
-        .prepare(&source, "task-executing", None, false)
+        .prepare(&source, "task-source", None, false)
         .unwrap();
-    let mut link = RuntimeTaskLink::new_pending(
-        "task-executing".to_owned(),
+    let mut source_link = RuntimeTaskLink::new_pending(
+        "task-source".to_owned(),
         record.path.clone(),
-        "Executing Worktree".to_owned(),
+        "Source Worktree".to_owned(),
     );
-    link.updated_at = 1_780_000_000_000;
-    handler.upsert_local_task(link);
+    source_link.updated_at = 1_780_000_000_000;
+    handler.upsert_local_task(source_link);
+    let mut fork_link = RuntimeTaskLink::new_pending(
+        "task-fork".to_owned(),
+        record.path.clone(),
+        "Forked Worktree".to_owned(),
+    );
+    fork_link.updated_at = 1_780_000_000_000;
+    handler.upsert_local_task(fork_link);
     handler
         .worktrees
-        .begin_execution(Path::new(&record.path), "task-executing", 7)
-        .expect("execution evidence should be persisted");
+        .begin_execution(Path::new(&record.path), "task-fork", 7)
+        .expect("a forked task should be able to execute in its source worktree");
+    assert!(
+        handler
+            .worktrees
+            .begin_execution(Path::new(&record.path), "task-source", 8)
+            .unwrap_err()
+            .contains("already executing task task-fork"),
+        "a second task must not execute concurrently in the shared worktree"
+    );
 
     handler.store = RuntimeWorkStore::new(index_path);
     handler.worktrees = WorktreeManager::new(state_path.clone());
@@ -838,14 +853,19 @@ async fn restart_reconciliation_fails_only_explicitly_interrupted_execution() {
 
     let task = handler
         .store
-        .get_task("task-executing")
-        .expect("interrupted task should remain diagnosable");
+        .get_task("task-fork")
+        .expect("interrupted fork task should remain diagnosable");
     assert_eq!(task.status, "failed");
     assert!(!task.running);
     assert!(task.runtime_handle["lastError"]
         .as_str()
         .unwrap()
         .contains("was executing"));
+    assert_eq!(
+        handler.store.get_task("task-source").unwrap().status,
+        "active",
+        "restart reconciliation must not fail the worktree creator when its fork was executing"
+    );
     let state = serde_json::from_slice::<Value>(&fs::read(state_path).unwrap()).unwrap();
     assert_eq!(
         state["records"][normalize_workspace_path(&record.path)]["executionLease"],
@@ -3441,12 +3461,11 @@ async fn codex_app_server_restart_rpc_returns_success() {
 }
 
 #[tokio::test]
-async fn codex_app_server_restart_waits_for_an_existing_restart() {
-    let handler = RuntimeWorkRpcHandler::new("device-1", "unused-codex-binary");
-    let restart_guard = handler.codex_app_server_restart_gate.lock().await;
-    let pending_handler = handler.clone();
+async fn codex_app_server_restart_waits_for_process_wide_gate() {
+    let handler = RuntimeWorkRpcHandler::new("device-2", "unused-codex-binary");
+    let restart_guard = codex_app_server_restart_gate().lock().await;
     let pending_restart = tokio::spawn(async move {
-        pending_handler
+        handler
             .restart_codex_app_server_with_expected_models(json!({"ifIdle": true}), Vec::new())
             .await
     });
@@ -4176,7 +4195,7 @@ fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
         ]
     });
 
-    let targets = cleanup_targets_for_task(&manager, &link);
+    let targets = cleanup_targets_for_task(&manager, &link, true);
     let target_paths = targets
         .iter()
         .map(|target| target.path.to_string_lossy().to_string())
@@ -4263,7 +4282,7 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
         "Task".to_owned(),
     );
 
-    let targets = cleanup_targets_for_task(&manager, &link);
+    let targets = cleanup_targets_for_task(&manager, &link, true);
     let target_paths = targets
         .iter()
         .map(|target| target.path.to_string_lossy().to_string())

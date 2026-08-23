@@ -121,6 +121,17 @@ interface LocalPluginPackageImportResult {
   rollbackId: string
 }
 
+export interface LocalPluginImportCompletion {
+  pluginName: string
+  displayName: string
+  version: string
+}
+
+interface LocalPluginInstallCommitResult {
+  pluginKey: string
+  localCommitted: boolean
+}
+
 export interface LocalPluginCloudLink {
   localPluginName: string
   cloudPluginId: number
@@ -135,6 +146,23 @@ async function readLocalPluginCloudLinks(marketplacePath: string): Promise<Local
   }
   return invoke<LocalPluginCloudLink[]>('local_executor_read_plugin_cloud_links', {
     marketplacePath,
+  })
+}
+
+async function unlinkLocalPluginRelease(
+  marketplacePath: string,
+  localPluginName: string
+): Promise<void> {
+  if (isElectronRuntime()) {
+    await requestLocalExecutor('executor.plugins.links.unlink', {
+      marketplacePath,
+      localPluginName,
+    })
+    return
+  }
+  await invoke('local_executor_unlink_plugin_release', {
+    marketplacePath,
+    localPluginName,
   })
 }
 
@@ -179,7 +207,7 @@ export interface LocalCodexPluginApi {
   importPluginPackage(
     preview: LocalPluginImportPreview,
     overwrite: boolean
-  ): Promise<InstalledPlugin>
+  ): Promise<LocalPluginImportCompletion>
   savePluginExample(destinationPath: string): Promise<string>
   deletePersonalPlugin(pluginName: string, marketplacePath?: string): Promise<void>
   readState(params?: {
@@ -1032,8 +1060,8 @@ interface EnsurePersonalPluginResult {
 async function resolveWeworkPersonalMarketplacePath(
   state?: LocalCodexPluginsState | null
 ): Promise<string> {
-  const current = state ?? cachedState ?? (await readState({ skipPersonalReconcile: true }))
-  const marketplace = current.marketplaces.find(item => item.id === WEWORK_PERSONAL_MARKETPLACE_ID)
+  const current = state ?? cachedState
+  const marketplace = current?.marketplaces.find(item => item.id === WEWORK_PERSONAL_MARKETPLACE_ID)
   if (marketplace && isLocalMarketplacePath(marketplace.path)) {
     return normalizeMarketplaceSource(marketplace.path)
   }
@@ -1041,7 +1069,39 @@ async function resolveWeworkPersonalMarketplacePath(
   if (bundled?.path && isLocalMarketplacePath(bundled.path)) {
     return normalizeMarketplaceSource(bundled.path)
   }
+  const loaded = await readState({ skipPersonalReconcile: true })
+  const loadedMarketplace = loaded.marketplaces.find(
+    item => item.id === WEWORK_PERSONAL_MARKETPLACE_ID
+  )
+  if (loadedMarketplace && isLocalMarketplacePath(loadedMarketplace.path)) {
+    return normalizeMarketplaceSource(loadedMarketplace.path)
+  }
   throw new Error(`The ${WEWORK_PERSONAL_MARKETPLACE_ID} marketplace is unavailable`)
+}
+
+async function uninstallWeworkPersonalPluginLocally(
+  pluginName: string,
+  marketplacePath: string
+): Promise<void> {
+  const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
+    'runtime.codex.plugin.uninstall_local',
+    {
+      marketplacePath: codexMarketplaceManifestSource(marketplacePath),
+      pluginName,
+    }
+  )
+  if (!commit.localCommitted) {
+    throw new Error('Plugin did not reach its local uninstall commit')
+  }
+  clearLocalCodexPluginsReadStateCache()
+  try {
+    await unlinkLocalPluginRelease(marketplacePath, pluginName)
+  } catch (error) {
+    throw new LocalPluginUninstallCleanupError(
+      getErrorMessage(error, 'Failed to unlink local plugin release'),
+      { cause: error }
+    )
+  }
 }
 
 async function ensurePluginInWeworkPersonal(options: {
@@ -1062,9 +1122,8 @@ async function ensurePluginInWeworkPersonal(options: {
   )
   if (options.installAfterMigrate !== false && ensured.migrated) {
     try {
-      await codexAppServerRequest('plugin/install', {
+      await requestLocalExecutor('runtime.codex.plugin.install_local_first', {
         marketplacePath: codexMarketplaceManifestSource(ensured.marketplacePath),
-        remoteMarketplaceName: null,
         pluginName: ensured.pluginName,
       })
     } catch (error) {
@@ -2769,7 +2828,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       }
     },
     async deletePersonalPlugin(pluginName, sourceMarketplacePath) {
-      if (!isTauriRuntime()) {
+      if (!isTauriRuntime() && !isElectronRuntime()) {
         throw new Error('Deleting a personal plugin requires the Wework desktop app')
       }
       const marketplacePath =
@@ -2777,10 +2836,15 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           ? sourceMarketplacePath.trim()
           : await resolveWeworkPersonalMarketplacePath()
       try {
-        await invoke('local_executor_delete_personal_plugin', {
-          marketplacePath,
-          pluginName,
-        })
+        await (isElectronRuntime()
+          ? requestLocalExecutor('executor.plugins.personal.delete', {
+              marketplacePath,
+              pluginName,
+            })
+          : invoke('local_executor_delete_personal_plugin', {
+              marketplacePath,
+              pluginName,
+            }))
       } catch (error) {
         throw new Error(getErrorMessage(error, 'Failed to delete personal plugin'), {
           cause: error,
@@ -2905,20 +2969,15 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           }))
       clearLocalCodexPluginsReadStateCache()
       try {
-        await codexAppServerRequest('plugin/install', {
-          marketplacePath: codexMarketplaceManifestSource(marketplacePath),
-          remoteMarketplaceName: null,
-          pluginName: imported.pluginName,
-        })
-        const nextState = await readState({
-          marketplaceId: WEWORK_PERSONAL_MARKETPLACE_ID,
-          refresh: true,
-        })
-        const installed = nextState.installedPlugins.find(plugin =>
-          installedPluginMatchesImportedPersonalPlugin(plugin, imported.pluginName)
+        const commit = await requestLocalExecutor<LocalPluginInstallCommitResult>(
+          'runtime.codex.plugin.install_local_first',
+          {
+            marketplacePath: codexMarketplaceManifestSource(marketplacePath),
+            pluginName: imported.pluginName,
+          }
         )
-        if (!installed) {
-          throw new Error('Plugin package installed but was not returned by App Server')
+        if (!commit.localCommitted) {
+          throw new Error('Plugin package did not reach its local installation commit')
         }
         await (
           isElectronRuntime()
@@ -2933,26 +2992,31 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         ).catch(error => {
           console.warn('[Wework] failed to clear plugin import backup', error)
         })
-        return installed
+        return {
+          pluginName: imported.pluginName,
+          displayName: imported.displayName,
+          version: imported.version,
+        }
       } catch (error) {
-        await (
-          isElectronRuntime()
-            ? requestLocalExecutor('executor.plugins.import_package.rollback', {
-                marketplacePath,
-                rollbackId: imported.rollbackId,
-              })
-            : invoke('local_executor_rollback_plugin_import', {
-                marketplacePath,
-                rollbackId: imported.rollbackId,
-              })
-        ).catch(() => undefined)
+        const message = error instanceof Error ? error.message : String(error)
+        const commitMayStillBeRunning =
+          /local_plugin_commit_timeout/i.test(message) ||
+          /runtime\.codex\.plugin\.install_local_first timed out/i.test(message)
+        if (!commitMayStillBeRunning) {
+          await (
+            isElectronRuntime()
+              ? requestLocalExecutor('executor.plugins.import_package.rollback', {
+                  marketplacePath,
+                  rollbackId: imported.rollbackId,
+                })
+              : invoke('local_executor_rollback_plugin_import', {
+                  marketplacePath,
+                  rollbackId: imported.rollbackId,
+                })
+          ).catch(() => undefined)
+        }
         clearLocalCodexPluginsReadStateCache()
-        throw new Error(
-          `Plugin package installation failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          { cause: error }
-        )
+        throw new Error(`Plugin package installation failed: ${message}`, { cause: error })
       }
     },
     savePluginExample(destinationPath) {
@@ -3244,8 +3308,17 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return installed
     },
     async uninstallInstalledPlugin(id) {
-      const currentState = cachedState ?? (await readState({ mergeAllMarketplaces: true }))
       const requestedId = String(id)
+      const localPersonalSuffix = `@${WEWORK_PERSONAL_MARKETPLACE_ID}`
+      if (requestedId.endsWith(localPersonalSuffix)) {
+        const pluginName = requestedId.slice(0, -localPersonalSuffix.length)
+        if (pluginName) {
+          const marketplacePath = await resolveWeworkPersonalMarketplacePath()
+          await uninstallWeworkPersonalPluginLocally(pluginName, marketplacePath)
+          return
+        }
+      }
+      const currentState = cachedState ?? (await readState({ mergeAllMarketplaces: true }))
       const marketplaceItem = currentState.marketplaceItems.find(
         item =>
           String(item.id) === requestedId ||
@@ -3297,6 +3370,19 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         marketplaceItem?.name ||
         requestedId.split('@')[0] ||
         requestedId
+      if (marketplaceName === WEWORK_PERSONAL_MARKETPLACE_ID) {
+        const personalMarketplace = currentState.marketplaces.find(
+          marketplace =>
+            marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID &&
+            marketplace.path &&
+            isLocalMarketplacePath(marketplace.path)
+        )
+        if (!personalMarketplace?.path) {
+          throw new Error('Wework personal marketplace path is unavailable')
+        }
+        await uninstallWeworkPersonalPluginLocally(String(pluginName), personalMarketplace.path)
+        return
+      }
       const remotePluginId =
         (typeof payload.remotePluginId === 'string' && payload.remotePluginId.trim()) ||
         (typeof installed?.spec.source.catalogItemId === 'string' &&
@@ -3366,15 +3452,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         )
         if (personalMarketplace?.path) {
           try {
-            await (isElectronRuntime()
-              ? requestLocalExecutor('executor.plugins.links.unlink', {
-                  marketplacePath: personalMarketplace.path,
-                  localPluginName: String(pluginName),
-                })
-              : invoke('local_executor_unlink_plugin_release', {
-                  marketplacePath: personalMarketplace.path,
-                  localPluginName: String(pluginName),
-                }))
+            await unlinkLocalPluginRelease(personalMarketplace.path, String(pluginName))
           } catch (error) {
             throw new LocalPluginUninstallCleanupError(
               getErrorMessage(error, 'Failed to unlink local plugin release'),

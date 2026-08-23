@@ -156,7 +156,8 @@ where
     T: LocalBackendTransport,
 {
     pub fn new(config: LocalBackendConfig, transport: T) -> Self {
-        let (runtime_event_tx, runtime_event_rx) = broadcast::channel(512);
+        let (runtime_event_tx, runtime_event_rx) =
+            broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
         let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
             RuntimeWorkRpcHandler::with_event_sender(
                 config.device_id.clone(),
@@ -1062,7 +1063,7 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
     let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
     let runtime_instance_id = backend_config.runtime_instance_id.clone();
-    let (runtime_event_tx, _) = broadcast::channel(512);
+    let (runtime_event_tx, _) = broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
     let backend_connection_snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
         Arc::new(Mutex::new(None));
     let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
