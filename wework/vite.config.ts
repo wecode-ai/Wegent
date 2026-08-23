@@ -124,7 +124,13 @@ export default defineConfig({
     // Keep local and pre-push runs below the resource-contention point where
     // jsdom-heavy files begin timing out nondeterministically.
     maxWorkers: 2,
-    exclude: [...configDefaults.exclude, 'e2e/**', 'test-results/**'],
+    exclude: [
+      ...configDefaults.exclude,
+      'dsh/**/*.test.mjs',
+      'e2e/**',
+      'scripts/harness-runtime-metadata.test.mjs',
+      'test-results/**',
+    ],
     coverage: {
       provider: 'istanbul',
       reporter: ['text', 'json', 'lcov'],
