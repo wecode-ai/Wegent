@@ -214,6 +214,9 @@ jobs:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
           setup-toolchain: "false"
 
+      - name: Install Wework Electron dependencies
+        run: pnpm --dir wework/electron install --frozen-lockfile
+
       - name: Set up sccache
         uses: ./.github/actions/setup-sccache
 
@@ -635,7 +638,9 @@ jobs:
             ${{ runner.os }}-pnpm-store-v1-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir wework/electron install --frozen-lockfile
 
       - name: Save shared macOS pnpm store
         if: github.ref == 'refs/heads/main' && steps.macos-pnpm-cache.outputs.cache-hit != 'true'

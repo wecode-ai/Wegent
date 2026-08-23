@@ -11,7 +11,7 @@ let count = 0
 try { count = Number(readFileSync(path, 'utf8')) } catch {}
 count += 1
 writeFileSync(path, String(count))
-if (count < 3) process.exit(23)
+if (count < 3) setTimeout(() => process.exit(23), 20)
 console.log('ready token=top-secret')
 setInterval(() => {}, 1000)
 `
