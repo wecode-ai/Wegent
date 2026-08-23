@@ -1629,7 +1629,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'clickWhenEnabled': {
       await waitForDesktopControlElement({ ...command, enabled: true })
       const element = findDesktopControlElements(command.selector).find(
-        desktopControlElementEnabled
+        candidate =>
+          (!command.visible || desktopControlElementVisible(candidate)) &&
+          desktopControlElementEnabled(candidate)
       )
       if (!element) {
         throw new Error(`Selector "${command.selector}" became disabled before click`)
