@@ -20,7 +20,7 @@ For an existing task, open the right-side **Environment** panel and select **Lin
 
 ### Review board-task progress
 
-Board cards show the task title only, so task text is not repeated. A running task keeps three lines for its latest progress below the card content: Wework shows an AI response summary when text is being generated, otherwise it shows thinking or the most recent tool activity.
+Board cards show the task title only, so task text is not repeated. A running task shows up to three lines of its latest progress below the card content: Wework shows an AI response summary when text is being generated, otherwise it shows thinking or the most recent tool activity. The progress region shrinks to fit fewer than three lines and scrolls within the region when more content is available.
 
 Hover anywhere on a card to open its progress preview. When one board task has several tasks running, the preview initially lists a summary for each one. Hovering an individual task narrows the preview to that task's progress.
 
