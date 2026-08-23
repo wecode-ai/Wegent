@@ -853,6 +853,91 @@ describe('CloudTodoWorkspace', () => {
     expect(progressResponse).toHaveClass('max-h-60', 'overflow-y-auto', 'whitespace-pre-wrap')
   })
 
+  it('loads persisted task output for an in-progress Issue on the board', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [
+      {
+        id: 2,
+        loop_item_id: item.id,
+        task_user_id: 1,
+        device_id: 'local-device',
+        task_id: 'runtime-in-progress',
+        task_title: '修复看板输出',
+        backend_task_id: null,
+        linked_at: '2026-08-23T00:01:00Z',
+      },
+    ])
+    const getRuntimeTranscript = vi.fn(async request => ({
+      taskId: request.taskId,
+      workspacePath: '/tmp/wegent',
+      runtime: 'codex' as const,
+      running: false,
+      messages: [
+        {
+          id: 'assistant-output',
+          role: 'assistant',
+          content: '已经定位问题\n正在验证修复',
+          created_at: '2026-08-23T00:02:00Z',
+        },
+      ],
+      turns: [],
+    }))
+    workbenchServices.runtimeWorkApi = {
+      getRuntimeTranscript,
+    } as WorkbenchServices['runtimeWorkApi']
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        runtimeWork={{
+          projects: [
+            {
+              project: { id: project.id, name: project.name },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'local-device',
+                  available: true,
+                  workspacePath: '/tmp/wegent',
+                  tasks: [
+                    {
+                      taskId: 'runtime-in-progress',
+                      workspacePath: '/tmp/wegent',
+                      title: '修复看板输出',
+                      runtime: 'codex',
+                      running: false,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        }}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+
+    expect(await screen.findByTestId('cloud-todo-card-final-response-WEG-1')).toHaveTextContent(
+      '正在验证修复'
+    )
+    expect(getRuntimeTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'local-device',
+        taskId: 'runtime-in-progress',
+        limit: 20,
+      })
+    )
+
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
+    expect(
+      await screen.findByTestId('cloud-todo-card-progress-response-WEG-1-2')
+    ).toHaveTextContent('正在验证修复')
+  })
+
   it('reports the concrete project name for the active document tab', async () => {
     const onActiveProjectChange = vi.fn()
 
