@@ -595,6 +595,13 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     return () => window.clearTimeout(timer)
   }, [effectiveSidebarCollapsed, sidebarPreviewOpen])
 
+  useEffect(() => {
+    if (routeActive) return
+    setBlankProjectDialogOpen(false)
+    setStandaloneWorkspaceDialogMode(null)
+    setProjectWorkEditProject(null)
+  }, [routeActive])
+
   const openStandaloneFolderProject = useCallback(
     async (
       mode: StandaloneWorkspaceDialogMode,
@@ -1007,10 +1014,11 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         {!routeWorkItemsOpen && <WorkbenchBackground />}
-        {!settingsOpen &&
+        {routeActive &&
+          !settingsOpen &&
           !routeWorkItemsOpen &&
           renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
-        {!settingsOpen && !routeWorkItemsOpen && effectiveSidebarCollapsed && (
+        {routeActive && !settingsOpen && !routeWorkItemsOpen && effectiveSidebarCollapsed && (
           <>
             <div
               data-testid="desktop-sidebar-hover-edge"
@@ -1136,66 +1144,70 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
           </div>
         </div>
       </div>
-      <StandaloneBlankProjectDialog
-        open={blankProjectDialogOpen}
-        devices={state.devices}
-        preferredDeviceId={
-          state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
-        }
-        onClose={() => setBlankProjectDialogOpen(false)}
-        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-        onListDeviceDirectories={onListDeviceDirectories}
-        onCreateDeviceDirectory={onCreateDeviceDirectory}
-        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-      />
-      <StandaloneFolderProjectDialog
-        key={standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
-        open={standaloneWorkspaceDialogMode !== null}
-        mode={standaloneWorkspaceDialogMode ?? 'existing'}
-        remoteIntent={standaloneRemoteDialogIntent}
-        preferNativeLocalPicker={standalonePreferNativeLocalPicker}
-        devices={state.devices}
-        preferredDeviceId={
-          state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
-        }
-        onClose={closeStandaloneFolderProject}
-        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-        onListDeviceDirectories={onListDeviceDirectories}
-        onCreateDeviceDirectory={onCreateDeviceDirectory}
-        onCloneGitRepository={onCloneGitRepository}
-        onStartGitCloneProject={startGitCloneProject}
-        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
-        onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
-        onRefreshDevices={onRefreshDevices}
-      />
-      <ProjectCreateDialog
-        open={projectWorkEditProject !== null}
-        mode="existing"
-        project={projectWorkEditProject}
-        devices={state.devices}
-        onClose={() => {
-          setProjectWorkEditProject(null)
-        }}
-        onOpenCloudDeviceSettings={() => {
-          setProjectWorkEditProject(null)
-          openCloudDeviceSettings()
-        }}
-        onCreateProject={onCreateProject}
-        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
-        onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
-        onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
-        preferredDeviceId={
-          state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
-        }
-        upgradingDevices={upgradingDevices}
-        onUpgradeDevice={onUpgradeDevice}
-        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
-        onListDeviceDirectories={onListDeviceDirectories}
-        onCreateDeviceDirectory={onCreateDeviceDirectory}
-        onListGitRepositories={onListGitRepositories}
-        onListGitBranches={onListGitBranches}
-      />
+      {routeActive && (
+        <>
+          <StandaloneBlankProjectDialog
+            open={blankProjectDialogOpen}
+            devices={state.devices}
+            preferredDeviceId={
+              state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+            }
+            onClose={() => setBlankProjectDialogOpen(false)}
+            onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+            onListDeviceDirectories={onListDeviceDirectories}
+            onCreateDeviceDirectory={onCreateDeviceDirectory}
+            onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+          />
+          <StandaloneFolderProjectDialog
+            key={standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
+            open={standaloneWorkspaceDialogMode !== null}
+            mode={standaloneWorkspaceDialogMode ?? 'existing'}
+            remoteIntent={standaloneRemoteDialogIntent}
+            preferNativeLocalPicker={standalonePreferNativeLocalPicker}
+            devices={state.devices}
+            preferredDeviceId={
+              state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+            }
+            onClose={closeStandaloneFolderProject}
+            onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+            onListDeviceDirectories={onListDeviceDirectories}
+            onCreateDeviceDirectory={onCreateDeviceDirectory}
+            onCloneGitRepository={onCloneGitRepository}
+            onStartGitCloneProject={startGitCloneProject}
+            onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+            onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
+            onRefreshDevices={onRefreshDevices}
+          />
+          <ProjectCreateDialog
+            open={projectWorkEditProject !== null}
+            mode="existing"
+            project={projectWorkEditProject}
+            devices={state.devices}
+            onClose={() => {
+              setProjectWorkEditProject(null)
+            }}
+            onOpenCloudDeviceSettings={() => {
+              setProjectWorkEditProject(null)
+              openCloudDeviceSettings()
+            }}
+            onCreateProject={onCreateProject}
+            onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+            onPrepareDeviceWorkspace={onPrepareDeviceWorkspace}
+            onDeleteDeviceWorkspace={onDeleteDeviceWorkspace}
+            preferredDeviceId={
+              state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+            }
+            upgradingDevices={upgradingDevices}
+            onUpgradeDevice={onUpgradeDevice}
+            onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+            onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+            onListDeviceDirectories={onListDeviceDirectories}
+            onCreateDeviceDirectory={onCreateDeviceDirectory}
+            onListGitRepositories={onListGitRepositories}
+            onListGitBranches={onListGitBranches}
+          />
+        </>
+      )}
       <ContinueInImDialog
         key={
           imNotificationDialogMode

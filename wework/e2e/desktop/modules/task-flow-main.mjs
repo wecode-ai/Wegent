@@ -1878,21 +1878,28 @@ last_updated = "2026-07-30T00:00:00Z"`
         testId.startsWith('project-menu-')
       )
     )
-    await control.command('click', '[data-testid="project-work-button"]')
-    await control.command('click', '[data-testid="add-local-project-option"]')
+    await control.command('click', '[data-testid="project-work-button"]', { visible: true })
+    await control.command('click', '[data-testid="add-local-project-option"]', { visible: true })
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      visible: true,
     })
     await waitForFolderPickerInitialized(control)
     await control.command('fill', '[data-testid="device-folder-path-input"]', {
       value: workspacePath,
+      visible: true,
     })
     assert.equal(
-      await control.command('getValue', '[data-testid="device-folder-path-input"]'),
+      await control.command('getValue', '[data-testid="device-folder-path-input"]', {
+        visible: true,
+      }),
       workspacePath,
       'The device folder path did not update before confirmation'
     )
-    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await control.command('press', '[data-testid="device-folder-path-input"]', {
+      key: 'Enter',
+      visible: true,
+    })
     await waitForFolderPathReady(control, workspacePath)
     await control.command(
       'clickWhenEnabled',
@@ -1900,24 +1907,35 @@ last_updated = "2026-07-30T00:00:00Z"`
       {
         stableMs: COMPOSER_READY_STABILITY_MS,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        visible: true,
       }
     )
     await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      visible: true,
     })
     assert.equal(
-      await control.command('getValue', '[data-testid="local-project-create-name-input"]'),
+      await control.command('getValue', '[data-testid="local-project-create-name-input"]', {
+        visible: true,
+      }),
       'workspace',
       'The project name did not default to the first source folder name'
     )
-    await control.command('click', '[data-testid="add-local-project-create-folders"]')
+    await control.command('click', '[data-testid="add-local-project-create-folders"]', {
+      visible: true,
+    })
     await control.command('waitFor', '[data-testid="local-project-create-folder-picker"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      visible: true,
     })
     await control.command('fill', '[data-testid="device-folder-path-input"]', {
       value: secondaryProjectPath,
+      visible: true,
     })
-    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await control.command('press', '[data-testid="device-folder-path-input"]', {
+      key: 'Enter',
+      visible: true,
+    })
     await waitForFolderPathReady(control, secondaryProjectPath)
     await control.command(
       'clickWhenEnabled',
@@ -1925,11 +1943,13 @@ last_updated = "2026-07-30T00:00:00Z"`
       {
         stableMs: COMPOSER_READY_STABILITY_MS,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        visible: true,
       }
     )
     await control.command('waitFor', '[data-testid="local-project-create-root-1"]', {
       text: 'secondary-project-root',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      visible: true,
     })
     await control.command(
       'clickWhenEnabled',

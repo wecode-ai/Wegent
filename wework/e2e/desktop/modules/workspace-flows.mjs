@@ -27,10 +27,17 @@ import {
 async function waitForFolderPathReady(control, expectedPath) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const inputValue = await control.command('getValue', '[data-testid="device-folder-path-input"]')
+    const inputValue = await control.command(
+      'getValue',
+      '[data-testid="device-folder-path-input"]',
+      {
+        visible: true,
+      }
+    )
     const directoryText = await control.command(
       'getText',
-      '[data-testid="device-folder-directory-list"]'
+      '[data-testid="device-folder-directory-list"]',
+      { visible: true }
     )
     if (inputValue === expectedPath && !/Loading directories|正在加载目录/.test(directoryText)) {
       return
@@ -43,10 +50,17 @@ async function waitForFolderPathReady(control, expectedPath) {
 async function waitForFolderPickerInitialized(control) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const inputValue = await control.command('getValue', '[data-testid="device-folder-path-input"]')
+    const inputValue = await control.command(
+      'getValue',
+      '[data-testid="device-folder-path-input"]',
+      {
+        visible: true,
+      }
+    )
     const directoryText = await control.command(
       'getText',
-      '[data-testid="device-folder-directory-list"]'
+      '[data-testid="device-folder-directory-list"]',
+      { visible: true }
     )
     if (inputValue.length > 0 && !/Loading directories|正在加载目录/.test(directoryText)) {
       return

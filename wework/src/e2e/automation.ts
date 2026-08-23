@@ -462,6 +462,11 @@ function findDesktopControlElements(selector: string): HTMLElement[] {
   return elements
 }
 
+function findDesktopControlElement(selector: string, visible = false): HTMLElement | undefined {
+  const elements = findDesktopControlElements(selector)
+  return visible ? elements.find(desktopControlElementVisible) : elements[0]
+}
+
 function desktopControlElementText(selector: string, visible = false): string {
   const elements = findDesktopControlElements(selector)
   return (visible ? elements.filter(desktopControlElementVisible) : elements)
@@ -742,8 +747,12 @@ function pressDesktopControlPointer(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
-async function pressDesktopControlKey(selector: string, key: string): Promise<string> {
-  const element = findDesktopControlElements(selector)[0]
+async function pressDesktopControlKey(
+  selector: string,
+  key: string,
+  visible = false
+): Promise<string> {
+  const element = findDesktopControlElement(selector, visible)
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
   element.focus()
   const keyboardEvent = parseDesktopControlKey(key)
@@ -1457,7 +1466,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return element.style.getPropertyValue(property)
     }
     case 'getValue': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const element = findDesktopControlElement(command.selector, command.visible)
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       if (
         element instanceof HTMLInputElement ||
@@ -1691,7 +1700,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     }
     case 'fill': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const element = findDesktopControlElement(command.selector, command.visible)
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
@@ -1804,7 +1813,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'pointerMove':
       return moveDesktopControlPointer(command)
     case 'press': {
-      return pressDesktopControlKey(command.selector, command.key ?? '')
+      return pressDesktopControlKey(command.selector, command.key ?? '', command.visible)
     }
     case 'select': {
       const element = findDesktopControlElements(command.selector)[0]
