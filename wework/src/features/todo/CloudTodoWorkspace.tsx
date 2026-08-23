@@ -2485,7 +2485,6 @@ export function CloudTodoWorkspace({
       return
     }
     for (const item of items) {
-      if (item.status !== 'in_review') continue
       for (const binding of itemTaskBindings[item.id] ?? []) {
         const addressKey = runtimeConversationKey({
           deviceId: binding.device_id,
