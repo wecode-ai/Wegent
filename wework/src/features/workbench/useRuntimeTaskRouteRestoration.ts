@@ -25,7 +25,7 @@ export function useRuntimeTaskRouteRestoration(enabled = true) {
   )
 
   const routeRuntimeTask = useMemo(() => {
-    if (!enabled || state.isBootstrapping) return null
+    if (!enabled || state.isBootstrapping || !state.runtimeWork) return null
 
     const location = new URL(runtimeTaskLocation, window.location.origin)
     const route = parseRuntimeTaskRoute(stripAppBasePath(location.pathname), location.search)
