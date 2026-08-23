@@ -1880,6 +1880,39 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('keeps the Electron webview painted while blocking interaction behind an overlay', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      desktopHost: 'electron',
+    }
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+    const webviewHost = await screen.findByTestId('workspace-browser-electron-webview')
+    expect(webviewHost).toHaveStyle({ pointerEvents: 'auto', visibility: 'visible' })
+    expect(webviewHost.parentElement).toHaveStyle({ zIndex: '10' })
+
+    embeddedBrowserMocks.captureEmbeddedBrowserSnapshot.mockClear()
+    dispatchBrowserOcclusionChange('workspace-add-menu', true)
+
+    await waitFor(() => {
+      expect(webviewHost).toHaveStyle({ pointerEvents: 'none', visibility: 'visible' })
+    })
+    expect(embeddedBrowserMocks.captureEmbeddedBrowserSnapshot).not.toHaveBeenCalled()
+
+    dispatchBrowserOcclusionChange('workspace-add-menu', false)
+    await waitFor(() => {
+      expect(webviewHost).toHaveStyle({ pointerEvents: 'auto', visibility: 'visible' })
+    })
+  })
+
   test('does not capture a snapshot for an inactive browser tab', async () => {
     mockBrowserHostRect()
     const { rerender } = render(<WorkspaceBrowserPanel active />)

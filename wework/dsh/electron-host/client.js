@@ -95,6 +95,9 @@ window.__ModuleLoader__.load({
         rendererHealth: Object.freeze({
           getState: () => invoke('rendererHealth.getState'),
         }),
+        runtime: Object.freeze({
+          restartCoreDsh: () => invoke('runtime.restartCoreDsh'),
+        }),
         shell: Object.freeze({
           openExternal: url => invoke('shell.openExternal', { url }),
         }),
@@ -112,13 +115,11 @@ window.__ModuleLoader__.load({
     const inject = []
     function apply(ctx) {
       const generation = createWeworkDesktopClient()
-      ctx.effect(() => {
-        const disposeService = ctx.reflect.provide('weworkDesktop', generation.service)
-        return () => {
-          generation.dispose()
-          void disposeService()
-        }
-      }, 'wework-electron-host: renderer desktop service generation')
+      ctx.provide('weworkDesktop', generation.service)
+      ctx.effect(
+        () => () => generation.dispose(),
+        'wework-electron-host: renderer desktop service generation'
+      )
     }
 
     exports.WeworkDesktopClientError = WeworkDesktopClientError

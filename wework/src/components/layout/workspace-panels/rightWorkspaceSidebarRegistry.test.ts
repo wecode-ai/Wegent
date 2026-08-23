@@ -3,6 +3,7 @@ import {
   attachRightWorkspaceSidebarController,
   encodeRightWorkspaceExtensionTabId,
   rightWorkspaceBetterSidebar,
+  rightWorkspaceExtensionContext,
 } from './rightWorkspaceSidebarRegistry'
 
 describe('rightWorkspaceBetterSidebar', () => {
@@ -81,5 +82,25 @@ describe('rightWorkspaceBetterSidebar', () => {
     expect(encodeRightWorkspaceExtensionTabId('dsh-sidebar-qa:ask')).toBe(
       'dsh:dsh-sidebar-qa%3Aask'
     )
+  })
+
+  test('passes the real DSH client context to contributed components', () => {
+    const sessions = { marker: 'dsh-sessions' }
+    window.__WEWORK_DSH_EXTENSIONS_BRIDGE__ = {
+      context: {
+        weworkExtensions: window.__WEWORK_DSH_EXTENSIONS__!,
+        betterSidebar: rightWorkspaceBetterSidebar,
+        sessions,
+      },
+      weworkExtensions: window.__WEWORK_DSH_EXTENSIONS__!,
+      service: rightWorkspaceBetterSidebar,
+      attachHost: vi.fn(),
+    }
+
+    expect(rightWorkspaceExtensionContext.weworkExtensions).toBe(window.__WEWORK_DSH_EXTENSIONS__)
+    expect(rightWorkspaceExtensionContext.betterSidebar).toBe(rightWorkspaceBetterSidebar)
+    expect(rightWorkspaceExtensionContext.sessions).toBe(sessions)
+
+    delete window.__WEWORK_DSH_EXTENSIONS_BRIDGE__
   })
 })

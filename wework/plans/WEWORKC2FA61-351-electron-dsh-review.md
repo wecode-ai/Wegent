@@ -1,0 +1,71 @@
+# Electron + Core DSH 核心流程验证记录
+
+验证日期：2026-08-23
+
+## 结论
+
+本轮验证确认 Wework 保留原生工作台外壳，并由 Core DSH 提供通用扩展宿主。
+`betterSidebar` 只是兼容适配器，不是产品主协议。真实 DSH 插件、底部终端和
+Wework 内置浏览器均在最终 Electron 打包产物中完成验证。
+
+主协议与命名：
+
+- DSH service：`ctx.weworkExtensions`
+- protocol：`wework.extensions.v1`
+- 首个扩展点：`wework.workspace.sidebar.tab`
+- 命名规则：`wework.<surface>.<slot>.<kind>`
+- 候选后续扩展点：
+  `wework.workspace.bottom-panel.tab`、
+  `wework.workspace.toolbar.action`、
+  `wework.composer.action`
+- 兼容旁路：`ctx.betterSidebar`、
+  `window.__WEWORK_DSH_BETTER_SIDEBAR__`
+
+## 环境
+
+- 分支：`feature/electron-dsh-codex-poc`
+- Electron 应用：
+  `wework/electron/release/WeWork-darwin-arm64/WeWork.app`
+- `ai:verify` 会话：
+  `test-results/ai-verify/2026-08-23T20-27-15-096Z-75951`
+- 插件：`github:ChenRuoT/dsh-sidebar-qa`，版本 `0.4.0`
+- 浏览器验证页：Example Domain
+
+## 截图链
+
+| 步骤 | 操作与断言                                                                                                                                                             | 证据                                                                                       |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 1    | 在插件管理界面手工安装真实 Git 插件；界面明确显示主协议 `weworkExtensions` / `wework.workspace.sidebar.tab`，并把 `betterSidebar` 标记为兼容适配层；插件状态为“已激活” | [01-plugin-manager-installed.png](assets/WEWORKC2FA61-351/01-plugin-manager-installed.png) |
+| 2    | 重启 Core DSH 后打开 Wework 原右侧栏；原生 launcher 中出现插件贡献的“追问”和“追问记录”，没有第二套 sidebar 壳                                                          | [02-extension-launchers.png](assets/WEWORKC2FA61-351/02-extension-launchers.png)           |
+| 3    | 点击“追问记录”；扩展 surface 的 `data-wework-extension-mount-state` 为 `mounted`，显示插件真实空态                                                                     | [03-extension-history.png](assets/WEWORKC2FA61-351/03-extension-history.png)               |
+| 4    | 点击“追问”；扩展 surface 的 mount state 为 `mounted`，真实 textarea、模型选择与动作控件可见                                                                            | [04-extension-ask.png](assets/WEWORKC2FA61-351/04-extension-ask.png)                       |
+| 5    | 从同一工作台打开底部 Terminal；Core DSH PTY 返回当前仓库路径和真实 shell prompt，不再显示“启动失败”或黑色空截图                                                        | [05-terminal-working.png](assets/WEWORKC2FA61-351/05-terminal-working.png)                 |
+| 6    | 从同一右侧栏新增 Wework 内置浏览器并提交 `https://example.com`；原生网页正常加载，插件 tab、浏览器 tab 与右侧动作按钮保持同一标题行                                    | [06-browser-integrated.png](assets/WEWORKC2FA61-351/06-browser-integrated.png)             |
+| 7    | 打开浏览器更多菜单；菜单层覆盖原生网页内容且可点击，不再被 WebContentsView / webview 遮挡                                                                              | [07-browser-menu-overlay.png](assets/WEWORKC2FA61-351/07-browser-menu-overlay.png)         |
+
+浏览器原生内容的独立捕获：
+[06-browser-content.png](assets/WEWORKC2FA61-351/06-browser-content.png)。
+
+## 自动验证
+
+本轮相关聚焦验证：
+
+```bash
+pnpm run typecheck
+pnpm --dir electron typecheck
+pnpm --dir electron exec vitest run \
+  src/host/electron-capabilities.test.ts \
+  src/runtime/core-dsh-runtime.test.ts
+pnpm exec vitest run \
+  scripts/ai-verify.test.mjs \
+  src/components/layout/workspace-panels/WorkspaceBrowserPanel.test.tsx \
+  src/components/layout/workspace-panels/rightWorkspaceSidebarRegistry.test.ts
+node --test \
+  dsh/app-wework/client.test.mjs \
+  dsh/app-wework/plugin-manager.test.mjs \
+  dsh/electron-host/client.test.mjs
+npm_config_registry=https://registry.npmjs.org pnpm --dir electron build:package
+```
+
+`git push` 会按仓库约定执行完整 pre-push 验证；不通过重试、跳过或修改旧 E2E
+断言换取通过。

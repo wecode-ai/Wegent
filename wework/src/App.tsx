@@ -48,6 +48,7 @@ import {
   isElectronRuntime,
   isTauriRuntime,
 } from '@/lib/runtime-environment'
+import { CoreDshExtensionRuntime } from '@/features/dsh-plugins/CoreDshExtensionRuntime'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
@@ -887,6 +888,7 @@ function AppShell() {
       restoreSessionTabs={!isMainWindow}
     >
       <ElectronWorkbenchTabBridge />
+      {isElectron && !isPopoutWindow ? <CoreDshExtensionRuntime /> : null}
       <div
         data-testid="app-shell"
         className={cn(

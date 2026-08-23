@@ -33,6 +33,12 @@ import {
 export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
 
 export async function captureWebContentsDataUrl(contents: WebContents): Promise<string> {
+  const image = await contents.capturePage()
+  if (!image.isEmpty()) {
+    const dataUrl = image.toDataURL()
+    if (dataUrl.length > 'data:image/png;base64,'.length) return dataUrl
+  }
+
   const debugSession = contents.debugger
   const alreadyAttached = debugSession.isAttached()
   if (!alreadyAttached) debugSession.attach()
@@ -75,6 +81,7 @@ export interface ElectronE2EHost {
     executorPid: number | null
     workbenchRuntimes: unknown[]
   }
+  scheduleCoreDshRestart: () => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
   popoutWindowSnapshot: () => {
     exists: boolean
@@ -122,6 +129,7 @@ export function createElectronCapabilityRouter(
       executorPid: null,
       workbenchRuntimes: [],
     }),
+    scheduleCoreDshRestart: () => undefined,
     openWorkspace: () => Promise.reject(new Error('Workspace windows are unavailable')),
     popoutWindowSnapshot: () => ({ exists: false, focused: false, visible: false }),
     setSystemDragContext: () => undefined,
@@ -406,6 +414,10 @@ export function createElectronCapabilityRouter(
     return updated
   })
   router.register('rendererHealth.getState', () => rendererHealth())
+  router.register('runtime.restartCoreDsh', () => {
+    e2eHost.scheduleCoreDshRestart()
+    return { scheduled: true }
+  })
   router.register('shell.openExternal', async params => {
     const url = new URL(stringParam(params, 'url'))
     if (!['https:', 'http:', 'mailto:'].includes(url.protocol)) {

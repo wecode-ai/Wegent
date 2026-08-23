@@ -32,7 +32,7 @@ import type {
   WorkspaceTarget,
 } from '@/types/workspace-files'
 import type { BrowserAnnotationCommand, BrowserAnnotationScope } from '@/types/browser-annotation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import type { EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
 import { cn } from '@/lib/utils'
@@ -43,15 +43,15 @@ import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import { DshSidebarExtensionPanel } from './DshSidebarExtensionPanel'
 import {
   resolveRightWorkspaceExtensionDescriptor,
   rightWorkspaceBetterSidebar,
-  rightWorkspaceBetterSidebarContext,
   isRightWorkspaceExtensionTab,
-  isDshBetterSidebarTabAvailable,
-  titleOfDshBetterSidebarTab,
-  type DshBetterSidebarScope,
-  type DshBetterSidebarTabDescriptor,
+  isWeworkWorkspaceSidebarTabAvailable,
+  titleOfWeworkWorkspaceSidebarTab,
+  type WeworkWorkspaceScope,
+  type WeworkWorkspaceSidebarTabDescriptor,
   type RightWorkspaceExtensionTab,
   type RightWorkspaceExtensionTabState,
 } from './rightWorkspaceSidebarRegistry'
@@ -173,7 +173,7 @@ interface RightWorkspacePanelProps {
   planContent?: string | null
   workItemPanel?: ReactNode
   extensionTabs?: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
-  extensionScope: DshBetterSidebarScope
+  extensionScope: WeworkWorkspaceScope
   browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   onBrowserStateChange: (
     tab: RightWorkspaceBrowserTab,
@@ -353,7 +353,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const showTabs = visibleTabs.length > 0
   const platform = getPlatform()
   const renderTabsInTitlebar =
-    renderTabsInAppTitlebar && isTauriRuntime() && platform !== 'win' && visible && showTabs
+    renderTabsInAppTitlebar && isDesktopRuntime() && platform !== 'win' && visible && showTabs
   const harnessSessionsById = new Map(
     harnessSessions.map(session => [session.sessionId, session] as const)
   )
@@ -418,11 +418,11 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
       .map(
         (descriptor): WorkspaceAddMenuItem => ({
-          id: `dsh-better-sidebar:${descriptor.id}`,
+          id: `wework-sidebar-extension:${descriptor.id}`,
           testId: `right-workspace-extension-option-${descriptor.id}`,
           icon: PanelRight,
-          label: titleOfDshBetterSidebarTab(descriptor),
-          disabled: !isDshBetterSidebarTabAvailable(
+          label: titleOfWeworkWorkspaceSidebarTab(descriptor),
+          disabled: !isWeworkWorkspaceSidebarTabAvailable(
             descriptor,
             extensionScope,
             rightWorkspaceBetterSidebar.getSnapshot().state ?? {
@@ -489,7 +489,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       data-testid="right-workspace-tabbar"
       role="tablist"
       className={cn(
-        'relative z-chrome flex shrink-0 items-center gap-1.5 pointer-events-auto',
+        'electron-titlebar-interactive-region relative z-chrome flex shrink-0 items-center gap-1.5 pointer-events-auto',
         renderTabsInTitlebar
           ? 'h-[38px] w-full bg-transparent pl-4 pr-2'
           : cn(
@@ -719,13 +719,12 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               data-testid={`right-workspace-extension-panel-${descriptor.id}`}
               className={cn('min-h-0 flex-1 flex-col', activeView === tab ? 'flex' : 'hidden')}
             >
-              {descriptor.component({
-                ctx: rightWorkspaceBetterSidebarContext,
-                store: rightWorkspaceBetterSidebar,
-                scope: extensionScope,
-                tab: extensionState.tab,
-                visible: visible && activeView === tab,
-              })}
+              <DshSidebarExtensionPanel
+                descriptor={descriptor}
+                scope={extensionScope}
+                tab={extensionState.tab}
+                visible={visible && activeView === tab}
+              />
             </div>
           )
         })}
@@ -906,8 +905,8 @@ function RightWorkspaceLauncher({
   canBrowseFiles: boolean
   allowTemporaryChat: boolean
   workspaceActions: WorkspaceAddMenuItem[]
-  extensionTabs: readonly DshBetterSidebarTabDescriptor[]
-  extensionScope: DshBetterSidebarScope
+  extensionTabs: readonly WeworkWorkspaceSidebarTabDescriptor[]
+  extensionScope: WeworkWorkspaceScope
   onSelectReview: () => void
   onSelectTerminal: () => void
   onSelectBrowser: () => void
@@ -931,10 +930,10 @@ function RightWorkspaceLauncher({
               key={descriptor.id}
               data-testid={`right-workspace-extension-option-${descriptor.id}`}
               icon={PanelRight}
-              label={titleOfDshBetterSidebarTab(descriptor)}
+              label={titleOfWeworkWorkspaceSidebarTab(descriptor)}
               onClick={() => rightWorkspaceBetterSidebar.openTab({ type: descriptor.id })}
               disabled={
-                !isDshBetterSidebarTabAvailable(
+                !isWeworkWorkspaceSidebarTabAvailable(
                   descriptor,
                   extensionScope,
                   rightWorkspaceBetterSidebar.getSnapshot().state ?? {
@@ -1045,7 +1044,7 @@ function getRightWorkspaceTabLabel(
   if (isRightWorkspaceExtensionTab(tab)) {
     const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionTabs[tab])
     if (!descriptor) return t('workbench.workspace_tab_plugin', '插件')
-    return titleOfDshBetterSidebarTab(descriptor)
+    return titleOfWeworkWorkspaceSidebarTab(descriptor)
   }
   if (tab === 'review') return t('workbench.workspace_tab_review', '审查')
   if (isRightWorkspaceTerminalTab(tab)) {

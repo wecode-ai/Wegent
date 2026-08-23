@@ -1,4 +1,4 @@
-import { BrowserWindow, session, shell, WebContentsView, type DownloadItem } from 'electron'
+import { BrowserWindow, session, shell, type DownloadItem, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { prepareLocalFileNavigation } from './local-file-preview.js'
@@ -26,7 +26,7 @@ export interface BrowserPageState {
 interface BrowserEntry {
   label: string
   nativeLabel: string
-  view: WebContentsView
+  contents: WebContents
   bounds: BrowserBounds
   visible: boolean
   ready: boolean
@@ -73,9 +73,21 @@ interface BrowserDownload {
 }
 
 const MAX_EVENTS = 1024
+export const EMBEDDED_BROWSER_PARTITION = 'persist:wework-browser'
+export const EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX = 'persist:wework-browser-app-route:'
+export const EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR = ':host:'
 
 export class EmbeddedBrowserManager {
   private readonly entries = new Map<string, BrowserEntry>()
+  private readonly attachedContents = new Map<string, WebContents>()
+  private readonly attachmentWaiters = new Map<
+    string,
+    Set<{
+      resolve: (contents: WebContents) => void
+      reject: (error: Error) => void
+      timeout: NodeJS.Timeout
+    }>
+  >()
   private readonly activeTabs = new Map<string, string>()
   private readonly downloads = new Map<string, BrowserDownload>()
   private readonly agentControlPaused = new Set<string>()
@@ -83,16 +95,37 @@ export class EmbeddedBrowserManager {
   private readonly events: BrowserHostEvent[] = []
   private eventSequence = 0
 
-  constructor(
-    private readonly window: () => BrowserWindow | null,
-    private readonly contentOffset: () => { x: number; y: number }
-  ) {
-    session.defaultSession.on('will-download', (_event, item, webContents) => {
-      const entry = [...this.entries.values()].find(
-        candidate => candidate.view.webContents.id === webContents.id
-      )
-      if (entry) this.trackDownload(entry, item)
+  constructor() {
+    session
+      .fromPartition(EMBEDDED_BROWSER_PARTITION)
+      .on('will-download', (_event, item, webContents) => {
+        const entry = [...this.entries.values()].find(
+          candidate => candidate.contents.id === webContents.id
+        )
+        if (entry) this.trackDownload(entry, item)
+      })
+  }
+
+  attach(label: string, contents: WebContents): void {
+    const normalizedLabel = requiredLabel(label)
+    const previous = this.attachedContents.get(normalizedLabel)
+    if (previous && previous.id !== contents.id && !previous.isDestroyed()) previous.close()
+    this.attachedContents.set(normalizedLabel, contents)
+    contents.once('destroyed', () => {
+      if (this.attachedContents.get(normalizedLabel)?.id === contents.id) {
+        this.attachedContents.delete(normalizedLabel)
+      }
+      if (this.entries.get(normalizedLabel)?.contents.id === contents.id) {
+        this.entries.delete(normalizedLabel)
+      }
     })
+    const waiters = this.attachmentWaiters.get(normalizedLabel)
+    if (!waiters) return
+    this.attachmentWaiters.delete(normalizedLabel)
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeout)
+      waiter.resolve(contents)
+    }
   }
 
   async open(input: {
@@ -107,25 +140,18 @@ export class EmbeddedBrowserManager {
     if (existing) {
       existing.bounds = validBounds(input.bounds)
       existing.visible = input.visible
-      this.layout(existing)
-      if (input.navigateExisting && existing.view.webContents.getURL() !== input.url) {
+      if (input.navigateExisting && existing.contents.getURL() !== input.url) {
         const url = validBrowserUrl(input.url)
         existing.requestedUrl = url
         await this.load(existing, url)
       }
       return this.state(label)
     }
-    const view = new WebContentsView({
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-      },
-    })
+    const contents = await this.waitForAttachedContents(label)
     const entry: BrowserEntry = {
       label,
       nativeLabel: `electron-browser-${randomUUID()}`,
-      view,
+      contents,
       bounds: validBounds(input.bounds),
       visible: input.visible,
       ready: false,
@@ -135,7 +161,7 @@ export class EmbeddedBrowserManager {
       ownsDeviceMetricsDebugger: false,
       navigationError: null,
     }
-    view.webContents.setWindowOpenHandler(({ url }) => {
+    contents.setWindowOpenHandler(({ url }) => {
       if (isBrowserUrl(url)) {
         this.emit('popup', {
           popupId: randomUUID(),
@@ -155,10 +181,10 @@ export class EmbeddedBrowserManager {
       return { action: 'deny' }
     })
     const emitPageState = () => this.emitPageState(entry)
-    view.webContents.on('did-start-loading', emitPageState)
-    view.webContents.on('did-stop-loading', emitPageState)
-    view.webContents.on('page-title-updated', emitPageState)
-    view.webContents.on('did-navigate', (_event, url) => {
+    contents.on('did-start-loading', emitPageState)
+    contents.on('did-stop-loading', emitPageState)
+    contents.on('page-title-updated', emitPageState)
+    contents.on('did-navigate', (_event, url) => {
       if (url !== entry.previewDisplayUrl) {
         entry.requestedUrl = url
         entry.previewDisplayUrl = null
@@ -166,7 +192,7 @@ export class EmbeddedBrowserManager {
       }
       emitPageState()
     })
-    view.webContents.on('did-navigate-in-page', (_event, url) => {
+    contents.on('did-navigate-in-page', (_event, url) => {
       if (url !== entry.previewDisplayUrl) {
         entry.requestedUrl = url
         entry.previewDisplayUrl = null
@@ -174,15 +200,14 @@ export class EmbeddedBrowserManager {
       }
       emitPageState()
     })
-    view.webContents.on('did-fail-load', (_event, code, message, validatedURL, isMainFrame) => {
+    contents.on('did-fail-load', (_event, code, message, validatedURL, isMainFrame) => {
       if (!isMainFrame || code === -3) return
       this.recordNavigationFailure(entry, code, message, validatedURL || entry.requestedUrl)
     })
-    view.webContents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
+    contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
       if (isMainFrame) entry.navigationError = null
     })
     this.entries.set(label, entry)
-    this.attach(entry)
     await this.load(entry, entry.requestedUrl as string)
     entry.ready = true
     return this.state(label)
@@ -192,7 +217,6 @@ export class EmbeddedBrowserManager {
     const entry = this.required(label)
     entry.bounds = validBounds(bounds)
     entry.visible = visible
-    this.layout(entry)
   }
 
   async navigate(label: string, url: string): Promise<void> {
@@ -203,16 +227,16 @@ export class EmbeddedBrowserManager {
   }
 
   reload(label: string): void {
-    this.required(label).view.webContents.reload()
+    this.required(label).contents.reload()
   }
 
   goBack(label: string): void {
-    const contents = this.required(label).view.webContents
+    const contents = this.required(label).contents
     if (contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack()
   }
 
   goForward(label: string): void {
-    const contents = this.required(label).view.webContents
+    const contents = this.required(label).contents
     if (contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward()
   }
 
@@ -220,14 +244,14 @@ export class EmbeddedBrowserManager {
     if (!Number.isFinite(scaleFactor) || scaleFactor < 0.25 || scaleFactor > 5) {
       throw new Error('Browser zoom factor is invalid')
     }
-    this.required(label).view.webContents.setZoomFactor(scaleFactor)
+    this.required(label).contents.setZoomFactor(scaleFactor)
   }
 
   async setDeviceMetrics(
     label: string,
     metrics: { width: number; height: number } | null
   ): Promise<void> {
-    const contents = this.required(label).view.webContents
+    const contents = this.required(label).contents
     const target = contents.debugger
     const entry = this.required(label)
     if (metrics && !target.isAttached()) {
@@ -256,12 +280,12 @@ export class EmbeddedBrowserManager {
   }
 
   async evaluate(label: string, expression: string): Promise<unknown> {
-    return this.required(label).view.webContents.executeJavaScript(expression, true)
+    return this.required(label).contents.executeJavaScript(expression, true)
   }
 
   state(label: string): BrowserPageState {
     const entry = this.required(label)
-    const contents = entry.view.webContents
+    const contents = entry.contents
     const currentUrl = contents.getURL()
     const visibleCurrentUrl =
       currentUrl === entry.previewDisplayUrl && entry.previewSourceUrl
@@ -302,7 +326,6 @@ export class EmbeddedBrowserManager {
         entry.label.startsWith(`${normalizedBaseLabel}-`)
       ) {
         entry.visible = entry.label === normalizedActiveLabel
-        this.layout(entry)
       }
     }
   }
@@ -445,9 +468,8 @@ export class EmbeddedBrowserManager {
     for (const [approvalId, approval] of this.agentApprovals) {
       if (approval.label === label) this.agentApprovals.delete(approvalId)
     }
-    const target = this.window()
-    if (target && !target.isDestroyed()) target.contentView.removeChildView(entry.view)
-    if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close()
+    this.attachedContents.delete(label)
+    if (!entry.contents.isDestroyed()) entry.contents.close()
   }
 
   closeMany(labels: string[]): void {
@@ -463,16 +485,17 @@ export class EmbeddedBrowserManager {
       }
       return []
     })
-    await session.defaultSession.clearStorageData({
+    const browserSession = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
+    await browserSession.clearStorageData({
       ...(storages?.length ? { storages: [...new Set(storages)] } : {}),
     })
-    if (!kinds || kinds.includes('cache')) await session.defaultSession.clearCache()
+    if (!kinds || kinds.includes('cache')) await browserSession.clearCache()
     return this.entries.size
   }
 
   async capture(label: string): Promise<string> {
     const entry = this.required(label)
-    const target = entry.view.webContents.debugger
+    const target = entry.contents.debugger
     const ownsAttachment = !target.isAttached()
     if (ownsAttachment) target.attach('1.3')
     try {
@@ -500,8 +523,8 @@ export class EmbeddedBrowserManager {
     closedVisible: boolean
   }> {
     const entry = this.required(this.activeLabel(label))
-    const contents = entry.view.webContents
-    const beforeFrame = await stableBrowserFrame(entry.view)
+    const contents = entry.contents
+    const beforeFrame = browserFrame(entry.bounds)
     const beforeWindowCount = this.nativeWindowCount()
     contents.openDevTools({ mode: 'detach', activate: true })
     await waitForState(
@@ -509,7 +532,7 @@ export class EmbeddedBrowserManager {
       5_000,
       'Timed out waiting for detached embedded browser Inspector'
     )
-    const afterFrame = browserFrame(entry.view.getBounds())
+    const afterFrame = browserFrame(entry.bounds)
     const afterWindowCount = this.nativeWindowCount()
     contents.closeDevTools()
     await waitForState(
@@ -529,7 +552,7 @@ export class EmbeddedBrowserManager {
 
   private nativeWindowCount(): number {
     const detachedInspectors = [...this.entries.values()].filter(entry => {
-      const contents = entry.view.webContents
+      const contents = entry.contents
       return contents.isDevToolsOpened() && contents.devToolsWebContents !== null
     }).length
     return BrowserWindow.getAllWindows().length + detachedInspectors
@@ -574,7 +597,7 @@ export class EmbeddedBrowserManager {
   }
 
   layoutAll(): void {
-    for (const entry of this.entries.values()) this.layout(entry)
+    // Renderer-owned <webview> elements follow their DOM layout automatically.
   }
 
   stop(): void {
@@ -583,6 +606,13 @@ export class EmbeddedBrowserManager {
     }
     this.downloads.clear()
     this.closeMany([...this.entries.keys()])
+    for (const [label, waiters] of this.attachmentWaiters) {
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timeout)
+        waiter.reject(new Error(`Embedded browser stopped before webview attached: ${label}`))
+      }
+    }
+    this.attachmentWaiters.clear()
   }
 
   private required(label: string): BrowserEntry {
@@ -590,23 +620,6 @@ export class EmbeddedBrowserManager {
     const entry = this.entries.get(normalized)
     if (!entry) throw new Error(`Embedded browser is unavailable: ${normalized}`)
     return entry
-  }
-
-  private attach(entry: BrowserEntry): void {
-    const target = this.window()
-    if (!target || target.isDestroyed()) throw new Error('Desktop window is unavailable')
-    target.contentView.addChildView(entry.view)
-    this.layout(entry)
-  }
-
-  private layout(entry: BrowserEntry): void {
-    const offset = this.contentOffset()
-    entry.view.setBounds({
-      x: Math.round(offset.x + entry.bounds.x),
-      y: Math.round(offset.y + entry.bounds.y),
-      width: entry.visible ? Math.max(0, Math.round(entry.bounds.width)) : 0,
-      height: entry.visible ? Math.max(0, Math.round(entry.bounds.height)) : 0,
-    })
   }
 
   private trackDownload(entry: BrowserEntry, item: DownloadItem): void {
@@ -672,7 +685,7 @@ export class EmbeddedBrowserManager {
       }
       entry.previewDisplayUrl = navigation.kind === 'preview' ? navigation.displayUrl : null
       entry.previewSourceUrl = navigation.kind === 'preview' ? navigation.sourceUrl : null
-      await entry.view.webContents.loadURL(navigation.displayUrl)
+      await entry.contents.loadURL(navigation.displayUrl)
     } catch (error) {
       if (!entry.navigationError) {
         const message = error instanceof Error ? error.message : String(error)
@@ -683,7 +696,7 @@ export class EmbeddedBrowserManager {
   }
 
   private currentVisibleUrl(entry: BrowserEntry): string | null {
-    const currentUrl = entry.view.webContents.getURL()
+    const currentUrl = entry.contents.getURL()
     if (currentUrl === entry.previewDisplayUrl && entry.previewSourceUrl) {
       return entry.previewSourceUrl
     }
@@ -708,28 +721,30 @@ export class EmbeddedBrowserManager {
     })
     if (this.events.length > MAX_EVENTS) this.events.shift()
   }
+
+  private waitForAttachedContents(label: string): Promise<WebContents> {
+    const attached = this.attachedContents.get(label)
+    if (attached && !attached.isDestroyed()) return Promise.resolve(attached)
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const waiters = this.attachmentWaiters.get(label)
+        if (waiters) {
+          for (const waiter of waiters) {
+            if (waiter.resolve === resolve) waiters.delete(waiter)
+          }
+          if (waiters.size === 0) this.attachmentWaiters.delete(label)
+        }
+        reject(new Error(`Timed out waiting for embedded browser webview: ${label}`))
+      }, 5_000)
+      const waiters = this.attachmentWaiters.get(label) ?? new Set()
+      waiters.add({ resolve, reject, timeout })
+      this.attachmentWaiters.set(label, waiters)
+    })
+  }
 }
 
 function browserFrame(bounds: BrowserBounds): number[] {
   return [bounds.x, bounds.y, bounds.width, bounds.height]
-}
-
-async function stableBrowserFrame(view: WebContentsView): Promise<number[]> {
-  let previous = browserFrame(view.getBounds())
-  let stableSamples = 0
-  const deadline = Date.now() + 5_000
-  while (Date.now() <= deadline) {
-    await new Promise(resolve => setTimeout(resolve, 50))
-    const current = browserFrame(view.getBounds())
-    if (current.every((value, index) => value === previous[index])) {
-      stableSamples += 1
-      if (stableSamples >= 15) return current
-    } else {
-      previous = current
-      stableSamples = 0
-    }
-  }
-  throw new Error('Timed out waiting for embedded browser frame to stabilize')
 }
 
 async function waitForState(

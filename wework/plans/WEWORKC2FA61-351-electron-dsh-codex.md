@@ -1758,29 +1758,37 @@ WP-150 退出证据：
 - 安全边界：只启动当前用户 shell；限制 session ID、cwd、尺寸、环境项、输入、
   session 数、快照和事件历史；Cordis generation 销毁时清理全部 PTY。
 
-### ADR-012：Wework 右侧栏采用 better-sidebar 兼容注册表
+### ADR-012：发布通用 Wework 扩展协议，右侧栏是首个扩展点
 
 - 状态：实施中。
 - 原因：现有右侧栏已经覆盖审查、文件、终端、浏览器、临时聊天、Harness 和 Issue
   详情，并且拥有完整的尺寸、标题栏、持久化和 E2E 契约。直接挂载上游
   `dsh-better-sidebar` 的整套面板会产生第二套壳和重复运行时，无法保持原
-  Wework 效果。
-- 结果：保留原 `RightWorkspacePanel` 的 DOM、样式和 Electron 原生浏览器边界，
-  把扩展能力抽成 `rightWorkspaceBetterSidebar` 注册表。注册表对齐
-  `registerTab/getTabs/getTab/openTab/closeTab/activateTab/updateTab`、状态订阅、
-  targeted scope、single/dedupe、badge 和 lifecycle 的 better-sidebar 词汇；
-  插件 Tab 进入原启动器、原“新建标签页”菜单和原标签栏。
-- 接入边界：同页面插件通过
-  `window.__WEWORK_DSH_BETTER_SIDEBAR__` 或 TypeScript 模块注册 React
-  descriptor。React component 函数不能跨 WebContents/页面序列化，因此运行在
-  独立 Workbench DSH 页面中的第三方插件不能直接向 Core Wework 页面传组件；
-  它们仍由各自的 `dsh-better-sidebar` 承载。后续若把 Core Wework UI 编译成
-  DSH client module，可将该注册表直接作为 `ctx.betterSidebar` provider，接口
-  不再重写。
-- 当前支持范围：Tab 注册、排序、隐藏、可用性、单例/去重、自定义创建、图标、
-  metadata、打开/激活/关闭/更新、按 session scope 路由和状态订阅。文件 viewer、
-  split tree、插件设置页和 URL claim 仍由上游 Workbench sidebar 负责，不伪装
-  为已兼容。
+  Wework 效果。同时，若把产品协议命名为 sidebar 或 better-sidebar，未来底部
+  面板、工具栏、输入区等能力会被迫依赖错误抽象。
+- 决策：Core DSH 发布通用服务 `ctx.weworkExtensions`，协议标识为
+  `wework.extensions.v1`。扩展点采用稳定的产品级分层命名
+  `wework.<surface>.<slot>.<kind>`；首个扩展点是
+  `wework.workspace.sidebar.tab`。后续可平行增加
+  `wework.workspace.bottom-panel.tab`、`wework.workspace.toolbar.action`、
+  `wework.composer.action`，但只有实现并冻结契约后才进入
+  `extensionPoints`。
+- 结果：保留原 `RightWorkspacePanel` 的 DOM、样式、尺寸、持久化、E2E selector
+  和 Electron 原生浏览器边界。插件通过
+  `weworkExtensions.register('wework.workspace.sidebar.tab', contribution)`
+  把 Tab 加入原启动器、原“新建标签页”菜单和原标签栏。主路径的 TypeScript
+  契约使用 `WeworkWorkspaceSidebar*` 命名，不把兼容来源泄漏到产品 API。
+- 兼容边界：`ctx.betterSidebar` 和
+  `window.__WEWORK_DSH_BETTER_SIDEBAR__` 仅是旁路适配器，用于接收现有
+  better-sidebar 的 `registerTab`、生命周期、scope、single/dedupe、badge 和
+  state subscription 词汇，再转投同一个 Wework 扩展宿主。它不拥有第二套 UI
+  壳，也不是新增 Wework 扩展点时的命名模板。
+- 页面边界：React component 函数不能跨 WebContents 序列化。Core DSH
+  同源 client module 在自身 React runtime 中渲染贡献，再挂入 Wework 提供的
+  surface host；独立 Workbench DSH 进程仍在自己的页面内承载其插件。
+- 当前支持范围：`wework.workspace.sidebar.tab` 支持注册、排序、隐藏、可用性、
+  单例/去重、自定义创建、图标、metadata、打开/激活/关闭/更新、按 session
+  scope 路由和状态订阅。其他候选扩展点尚未发布，不伪装为已兼容。
 
 ## 25. 中断恢复记录
 

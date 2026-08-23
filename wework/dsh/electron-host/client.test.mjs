@@ -94,28 +94,21 @@ test('preserves structured Host errors and rejects retained generation reference
 test('registers and disposes the Renderer Cordis service with its generation', async () => {
   const client = await loadClient(async () => jsonResponse(200, {}))
   let provided
-  let unprovided = false
   let disposeEffect
   client.apply({
     effect(factory, label) {
       assert.equal(label, 'wework-electron-host: renderer desktop service generation')
       disposeEffect = factory()
     },
-    reflect: {
-      provide(name, service) {
-        provided = { name, service }
-        return async () => {
-          unprovided = true
-        }
-      },
+    provide(name, service) {
+      provided = { name, service }
+      return () => {}
     },
   })
 
   assert.equal(provided.name, 'weworkDesktop')
   assert.equal(typeof provided.service.rendererHealth.getState, 'function')
   disposeEffect()
-  await new Promise(resolve => setImmediate(resolve))
-  assert.equal(unprovided, true)
   await assert.rejects(
     () => provided.service.describe(),
     error => error.code === 'service_disposed'

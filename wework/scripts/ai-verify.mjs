@@ -58,6 +58,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'paste-paths': 'pastePaths',
   'pointer-move': 'pointerMove',
   press: 'press',
+  submit: 'submit',
   'scroll-into-view': 'scrollIntoView',
   'select-text': 'selectText',
   'show-popout': 'showPopoutWindow',

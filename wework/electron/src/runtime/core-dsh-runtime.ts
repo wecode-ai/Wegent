@@ -1,9 +1,24 @@
-import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
 export const CORE_DSH_VERSION = '0.1.1-rc.2'
 const PROFILE_NAME = 'wework-core'
 const PROFILE_STAMP = '.wework-runtime.json'
+const CORE_DEPENDENCIES = [
+  '@wegent/dsh-app-wework',
+  '@wegent/dsh-electron-host',
+  '@wegent/dsh-executor-runtime',
+  '@wegent/dsh-terminal-runtime',
+] as const
+const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example', 'dsh-better-sidebar'] as const
+const CORE_BUNDLES = [
+  '@deepseek-ai/dsh-base',
+  '@wegent/dsh-electron-host',
+  '@wegent/dsh-terminal-runtime',
+  '@wegent/dsh-app-wework',
+  '@deepseek-ai/dsh-web-app',
+  '@wegent/dsh-executor-runtime',
+] as const
 
 interface RuntimeIdentity {
   dshVersion: string
@@ -117,15 +132,47 @@ async function prepareProfile(options: {
   dshHome: string
 }): Promise<void> {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
+  const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
   const expectedStamp = {
     dshVersion: options.runtime.version,
     role: 'core',
     sourceFingerprint: options.runtime.sourceFingerprint,
   }
-  if (await stampMatches(join(profileRoot, PROFILE_STAMP), expectedStamp)) return
+  const currentManifest = await readJsonFile(join(profileRoot, 'package.json'))
+  const currentManifestRoot = objectRecord(currentManifest)
+  const stampIsCurrent = await stampMatches(join(profileRoot, PROFILE_STAMP), expectedStamp)
+  const coreDependenciesAreCurrent = hasCurrentCoreDependencies(currentManifest, options.runtime)
+  await ensureNodePtySpawnHelpersExecutable(profileRoot)
+  if (stampIsCurrent && !hasRemovedCoreDependency(currentManifest) && coreDependenciesAreCurrent) {
+    await ensureCoreWorkspace(workspacePath)
+    return
+  }
 
-  await rm(profileRoot, { recursive: true, force: true })
   await mkdir(profileRoot, { recursive: true, mode: 0o700 })
+  if (currentManifest && !coreDependenciesAreCurrent) {
+    await Promise.all(
+      [
+        join(profileRoot, 'pnpm-lock.yaml'),
+        join(profileRoot, 'node_modules', '.pnpm', 'lock.yaml'),
+        join(profileRoot, 'node_modules', '.modules.yaml'),
+      ].map(path => rm(path, { force: true }))
+    )
+  }
+  const currentDependencies = stringRecord(currentManifestRoot.dependencies)
+  const userDependencies = Object.fromEntries(
+    Object.entries(currentDependencies).filter(
+      ([name]) =>
+        !CORE_DEPENDENCIES.includes(name as never) &&
+        !REMOVED_CORE_DEPENDENCIES.includes(name as never)
+    )
+  )
+  const currentProfile = objectRecord(objectRecord(currentManifestRoot.dsh).profile)
+  const currentBundles = stringArray(currentProfile.bundles)
+  const userBundles = currentBundles.filter(
+    bundle =>
+      !CORE_BUNDLES.includes(bundle as never) &&
+      !REMOVED_CORE_DEPENDENCIES.includes(bundle as never)
+  )
   await writeFile(
     join(profileRoot, 'package.json'),
     `${JSON.stringify(
@@ -133,6 +180,7 @@ async function prepareProfile(options: {
         name: `dsh-profile-${PROFILE_NAME}`,
         private: true,
         dependencies: {
+          ...userDependencies,
           '@wegent/dsh-app-wework': `file:${options.runtime.appPluginRoot}`,
           '@wegent/dsh-electron-host': `file:${options.runtime.pluginRoot}`,
           '@wegent/dsh-executor-runtime': `file:${options.runtime.executorPluginRoot}`,
@@ -140,14 +188,7 @@ async function prepareProfile(options: {
         },
         dsh: {
           profile: {
-            bundles: [
-              '@deepseek-ai/dsh-base',
-              '@wegent/dsh-electron-host',
-              '@wegent/dsh-terminal-runtime',
-              '@wegent/dsh-app-wework',
-              '@deepseek-ai/dsh-web-app',
-              '@wegent/dsh-executor-runtime',
-            ],
+            bundles: [...CORE_BUNDLES, ...userBundles],
           },
         },
       },
@@ -158,11 +199,7 @@ async function prepareProfile(options: {
   )
   await writeFile(join(profileRoot, 'cordis.yml'), '[]\n', { mode: 0o600 })
   await writeFile(join(profileRoot, 'cordis.patch.yml'), '[]\n', { mode: 0o600 })
-  await writeFile(
-    join(profileRoot, 'pnpm-workspace.yaml'),
-    'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n',
-    { mode: 0o600 }
-  )
+  await ensureCoreWorkspace(workspacePath)
   const pluginPackages = [
     ['@wegent/dsh-app-wework', options.runtime.appPluginRoot],
     ['@wegent/dsh-electron-host', options.runtime.pluginRoot],
@@ -173,9 +210,91 @@ async function prepareProfile(options: {
     const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
     await cp(source, destination, { recursive: true })
   }
+  await ensureNodePtySpawnHelpersExecutable(profileRoot)
   await writeFile(join(profileRoot, PROFILE_STAMP), `${JSON.stringify(expectedStamp, null, 2)}\n`, {
     mode: 0o600,
   })
+}
+
+async function ensureCoreWorkspace(workspacePath: string): Promise<void> {
+  const fallback = 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n'
+  let workspace = (await readTextFile(workspacePath)) || fallback
+  if (/^allowBuilds:\s*$/m.test(workspace)) {
+    if (/^\s{2}node-pty:.*$/m.test(workspace)) {
+      workspace = workspace.replace(/^\s{2}node-pty:.*$/m, '  node-pty: true')
+    } else {
+      workspace = workspace.replace(/^allowBuilds:\s*$/m, 'allowBuilds:\n  node-pty: true')
+    }
+  } else {
+    workspace = `${workspace.trimEnd()}\n\nallowBuilds:\n  node-pty: true\n`
+  }
+  await writeFile(workspacePath, workspace, { mode: 0o600 })
+}
+
+async function ensureNodePtySpawnHelpersExecutable(profileRoot: string): Promise<void> {
+  const prebuildsRoot = join(profileRoot, 'node_modules', 'node-pty', 'prebuilds')
+  let platforms
+  try {
+    platforms = await readdir(prebuildsRoot, { withFileTypes: true })
+  } catch {
+    return
+  }
+  await Promise.all(
+    platforms
+      .filter(entry => entry.isDirectory())
+      .map(entry => chmod(join(prebuildsRoot, entry.name, 'spawn-helper'), 0o755).catch(() => {}))
+  )
+}
+
+async function readJsonFile(path: string): Promise<unknown | null> {
+  try {
+    return JSON.parse(await readFile(path, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+async function readTextFile(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+  )
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter(item => typeof item === 'string') : []
+}
+
+function hasRemovedCoreDependency(manifest: unknown): boolean {
+  const root = objectRecord(manifest)
+  const profile = objectRecord(objectRecord(root.dsh).profile)
+  const dependencies = stringRecord(root.dependencies)
+  const bundles = stringArray(profile.bundles)
+  return REMOVED_CORE_DEPENDENCIES.some(name => name in dependencies || bundles.includes(name))
+}
+
+function hasCurrentCoreDependencies(manifest: unknown, runtime: CoreDshRuntime): boolean {
+  const dependencies = stringRecord(objectRecord(manifest).dependencies)
+  return (
+    dependencies['@wegent/dsh-app-wework'] === `file:${runtime.appPluginRoot}` &&
+    dependencies['@wegent/dsh-electron-host'] === `file:${runtime.pluginRoot}` &&
+    dependencies['@wegent/dsh-executor-runtime'] === `file:${runtime.executorPluginRoot}` &&
+    dependencies['@wegent/dsh-terminal-runtime'] === `file:${runtime.terminalPluginRoot}`
+  )
 }
 
 async function runtimeDirectories(root: string): Promise<string[]> {

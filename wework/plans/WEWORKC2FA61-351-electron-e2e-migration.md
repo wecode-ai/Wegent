@@ -47,16 +47,16 @@ Electron + Core DSH + Executor 架构。测试断言、场景夹具和 checkpoin
 
 以下命令必须通过同一个 CLI 在 Electron 上可用：
 
-| 命令组     | 命令                                                                                                                                     | 状态   |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| 生命周期   | `start`、`status`、`stop`、`reload`                                                                                                      | PASSED |
-| DOM        | `snapshot`、`debug`、`text`、`wait-for`、`metrics`、`get-attribute`、`active-element`                                                    | PASSED |
-| 输入       | `click`、`click-at`、`click-then-macrotask`、`context-menu`、`fill`、`press`、`hover`、`pointer-move`、`select-text`、`scroll-into-view` | PASSED |
-| 附件       | `drop-file`、`drop-paths`、`paste-paths`、`system-drag-drop`                                                                             | PASSED |
-| 截图       | `capture`、`capture-browser`、`capture-popout`、`capture-workspace`                                                                      | PASSED |
-| 窗口       | `close-to-tray`、`request-close`、`show-popout`、`dismiss-popout`、`window-focus-snapshot`                                               | PASSED |
-| 浏览器     | `verify-browser-inspector`                                                                                                               | PASSED |
-| 本地运行时 | `seed-local-project`、`preview-plugin-import`、`import-plugin-package`、`set-local-proxy-url`、`terminal-snapshot`                       | PASSED |
+| 命令组     | 命令                                                                                                                                               | 状态   |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| 生命周期   | `start`、`status`、`stop`、`reload`                                                                                                                | PASSED |
+| DOM        | `snapshot`、`debug`、`text`、`wait-for`、`metrics`、`get-attribute`、`active-element`                                                              | PASSED |
+| 输入       | `click`、`click-at`、`click-then-macrotask`、`context-menu`、`fill`、`submit`、`press`、`hover`、`pointer-move`、`select-text`、`scroll-into-view` | PASSED |
+| 附件       | `drop-file`、`drop-paths`、`paste-paths`、`system-drag-drop`                                                                                       | PASSED |
+| 截图       | `capture`、`capture-browser`、`capture-popout`、`capture-workspace`                                                                                | PASSED |
+| 窗口       | `close-to-tray`、`request-close`、`show-popout`、`dismiss-popout`、`window-focus-snapshot`                                                         | PASSED |
+| 浏览器     | `verify-browser-inspector`                                                                                                                         | PASSED |
+| 本地运行时 | `seed-local-project`、`preview-plugin-import`、`import-plugin-package`、`set-local-proxy-url`、`terminal-snapshot`                                 | PASSED |
 
 ## 桌面 checkpoint
 
@@ -292,3 +292,4 @@ Electron/Tauri 两份业务断言。
 | 2026-08-23 | Electron Executor Codex Home 隔离                   | `managed-executor-runtime.test.ts`、真实 `plugin-lifecycle`                                                           | PASS | `2026-08-23T14-11-03-745Z-41421`；Electron 显式覆盖 `CODEX_HOME`/`WEGENT_CODEX_HOME`，隔离目录中 `auth.json` 不存在，离线导入与删除期间没有外部请求                                                                                                                                                                                                                                                |
 | 2026-08-23 | `plugin-lifecycle` 合并主分支后的完整验证           | `pnpm e2e:desktop -- --segment plugin-lifecycle`                                                                      | PASS | `2026-08-23T14-11-03-745Z-41421`，1m 59s；本地导入、Codex 配置提交、缓存与个人市场删除、断网约束、市场安装/聊天使用/卸载全部通过                                                                                                                                                                                                                                                                   |
 | 2026-08-23 | `plugin-marketplace-lifecycle` 合并主分支后的验证   | `pnpm e2e:desktop -- --segment plugin-marketplace-lifecycle`                                                          | PASS | `2026-08-23T14-13-21-281Z-62260`，58s；独立市场插件生命周期全部通过                                                                                                                                                                                                                                                                                                                                |
+| 2026-08-23 | Wework 通用扩展宿主、终端与内置浏览器实机复核       | Electron `ai:verify` 会话 `2026-08-23T20-27-15-096Z-75951`                                                            | PASS | 手工安装并激活真实 `github:ChenRuoT/dsh-sidebar-qa`；Core DSH 重启后插件通过主协议 `wework.extensions.v1` 的 `wework.workspace.sidebar.tab` 暴露“追问/追问记录”，两个 surface 均完成真实 React mount；`betterSidebar` 仅作为兼容适配器。底部终端显示真实 PTY prompt；Wework 内置浏览器成功加载 Example Domain，原生页面未遮挡菜单。完整截图链见 `WEWORKC2FA61-351-electron-dsh-review.md`          |

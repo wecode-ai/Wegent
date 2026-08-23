@@ -199,26 +199,35 @@ The multi-View tab model and localhost bridge are not final architecture.
 - Make Electron the default desktop.
 - Delete remaining Tauri commands, configuration, builds, release paths, compatibility code, and flags.
 
-## ADR-012 — The Wework right sidebar uses a better-sidebar-compatible registry
+## ADR-012 — Publish a generic Wework extension protocol; sidebar is its first point
 
 - Status: in progress.
 - Keep the existing `RightWorkspacePanel` DOM, visual shell, sizing,
   persistence, E2E selectors, and Electron-native browser boundary. Mounting
   the full upstream `dsh-better-sidebar` panel beside it would create a second
   shell and would not preserve Wework behavior.
-- Expose `rightWorkspaceBetterSidebar` with the better-sidebar tab vocabulary:
-  registration, discovery, open/close/activate/update, state subscription,
-  targeted session scope, single/dedupe behavior, metadata, icons, badges, and
-  lifecycle callbacks. Contributed tabs appear in the existing launcher,
-  new-tab menu, and tab strip.
-- Same-page plugins can register through the TypeScript module or
-  `window.__WEWORK_DSH_BETTER_SIDEBAR__`. React component functions cannot be
-  serialized across WebContents or pages, so plugins inside an isolated
-  Workbench DSH page remain hosted by that page's upstream better-sidebar.
-- File viewers, split trees, plugin settings, and URL claims are not presented
-  as compatible yet. If the Core Wework UI later becomes a DSH client module,
-  this registry can become the `ctx.betterSidebar` provider without replacing
-  plugin descriptors.
+- Core DSH publishes the generic `ctx.weworkExtensions` service with protocol
+  identifier `wework.extensions.v1`. Extension point IDs use
+  `wework.<surface>.<slot>.<kind>`; the first point is
+  `wework.workspace.sidebar.tab`. Future points may include
+  `wework.workspace.bottom-panel.tab`, `wework.workspace.toolbar.action`, and
+  `wework.composer.action`, but they are not advertised before their contracts
+  are implemented and frozen.
+- Plugins use
+  `weworkExtensions.register('wework.workspace.sidebar.tab', contribution)`.
+  The primary TypeScript contract uses `WeworkWorkspaceSidebar*` names, and
+  contributed tabs appear in Wework's existing launcher, new-tab menu, and tab
+  strip.
+- `ctx.betterSidebar` and
+  `window.__WEWORK_DSH_BETTER_SIDEBAR__` are compatibility adapters only. They
+  translate existing better-sidebar registration, lifecycle, scope,
+  single/dedupe, badge, and state-subscription vocabulary into the same Wework
+  extension host. They do not own a second shell and are not the naming model
+  for future Wework extension points.
+- React component functions cannot be serialized across WebContents. The Core
+  DSH same-origin client renders a contribution with its own React runtime and
+  mounts it into a Wework-provided surface host. Plugins in an isolated
+  Workbench DSH process remain hosted inside that process.
 
 ## Current status
 

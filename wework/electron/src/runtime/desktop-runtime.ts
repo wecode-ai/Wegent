@@ -91,6 +91,19 @@ export class DesktopRuntime {
     return this.workbench.close(tabId)
   }
 
+  async restartCoreDsh(): Promise<void> {
+    if (!this.started) throw new Error('Core desktop runtime is not ready')
+    const previous = this.coreDsh
+    this.coreDsh = null
+    await previous?.stop()
+    try {
+      await this.startCoreDsh()
+    } catch (error) {
+      this.coreDsh = null
+      throw error
+    }
+  }
+
   async stop(): Promise<void> {
     this.started = false
     const coreDsh = this.coreDsh
@@ -143,7 +156,7 @@ export class DesktopRuntime {
       cwd = launch.cwd
       dshHome = launch.dshHome
     }
-    this.coreDsh = new DshRuntime({
+    const runtime = new DshRuntime({
       name: 'dsh-core',
       url: dshUrl,
       probeUrls: [
@@ -165,7 +178,14 @@ export class DesktopRuntime {
       },
       hostPipe: this.options.hostPipe,
     })
-    await this.coreDsh.start()
+    this.coreDsh = runtime
+    try {
+      await runtime.start()
+    } catch (error) {
+      if (this.coreDsh === runtime) this.coreDsh = null
+      await runtime.stop().catch(() => {})
+      throw error
+    }
   }
 }
 

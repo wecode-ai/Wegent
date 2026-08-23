@@ -3,3 +3,4 @@
       name: '@wegent/dsh-app-wework'
       inject:
         - webServer
+        - weworkDesktop

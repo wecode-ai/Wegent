@@ -50,6 +50,7 @@ export const HOST_CAPABILITIES = [
   'preferences.get',
   'preferences.update',
   'rendererHealth.getState',
+  'runtime.restartCoreDsh',
   'shell.openExternal',
   'shell.openPath',
   'shell.showItemInFolder',

@@ -1,11 +1,15 @@
 import type { ReactNode } from 'react'
 
-export interface DshBetterSidebarScope {
+export const WEWORK_WORKSPACE_SIDEBAR_TAB_EXTENSION_POINT = 'wework.workspace.sidebar.tab' as const
+
+export type WeworkExtensionPoint = typeof WEWORK_WORKSPACE_SIDEBAR_TAB_EXTENSION_POINT
+
+export interface WeworkWorkspaceScope {
   sessionId: string
   cwd?: string
 }
 
-export interface DshBetterSidebarTab {
+export interface WeworkWorkspaceSidebarTab {
   id: string
   type: string
   title: string
@@ -14,53 +18,61 @@ export interface DshBetterSidebarTab {
   meta?: unknown
 }
 
-export interface DshBetterSidebarState {
+export interface WeworkWorkspaceSidebarState {
   panelOpen: boolean
-  tabs: readonly DshBetterSidebarTab[]
+  tabs: readonly WeworkWorkspaceSidebarTab[]
   activeTabId: string | null
 }
 
-export interface DshBetterSidebarSnapshot {
+export interface WeworkWorkspaceSidebarSnapshot {
   sessionId?: string
-  state?: DshBetterSidebarState
+  state?: WeworkWorkspaceSidebarState
 }
 
-export interface DshBetterSidebarTabComponentProps {
-  ctx: DshBetterSidebarContext
+export interface WeworkWorkspaceSidebarTabComponentProps {
+  ctx: WeworkExtensionContext
   store: DshBetterSidebarService
-  scope: DshBetterSidebarScope
-  tab: DshBetterSidebarTab
+  scope: WeworkWorkspaceScope
+  tab: WeworkWorkspaceSidebarTab
   visible: boolean
 }
 
-export interface DshBetterSidebarTabDescriptor {
+export interface WeworkWorkspaceSidebarTabDescriptor {
   id: string
   title: string | (() => string)
   icon?: ReactNode | ((size: number) => ReactNode)
   order?: number
   hidden?: boolean
   available?: (
-    ctx: DshBetterSidebarContext,
-    scope: DshBetterSidebarScope,
-    state: DshBetterSidebarState
+    ctx: WeworkExtensionContext,
+    scope: WeworkWorkspaceScope,
+    state: WeworkWorkspaceSidebarState
   ) => boolean
   single?: boolean
-  dedupeKey?: (tab: DshBetterSidebarTab) => string | undefined
-  createTab?: (
-    state: DshBetterSidebarState
-  ) => { tab: DshBetterSidebarTab; patch?: Partial<DshBetterSidebarState> } | null
+  dedupeKey?: (tab: WeworkWorkspaceSidebarTab) => string | undefined
+  createTab?: (state: WeworkWorkspaceSidebarState) => {
+    tab: WeworkWorkspaceSidebarTab
+    patch?: Partial<WeworkWorkspaceSidebarState>
+  } | null
   badge?: (
-    ctx: DshBetterSidebarContext,
-    scope: DshBetterSidebarScope,
-    state: DshBetterSidebarState
+    ctx: WeworkExtensionContext,
+    scope: WeworkWorkspaceScope,
+    state: WeworkWorkspaceSidebarState
   ) => string | number | null | undefined
-  onOpen?: (tab: DshBetterSidebarTab, scope: DshBetterSidebarScope) => void
-  onActivate?: (tab: DshBetterSidebarTab, scope: DshBetterSidebarScope) => void
-  onClose?: (tab: DshBetterSidebarTab, scope: DshBetterSidebarScope) => void
-  component: (props: DshBetterSidebarTabComponentProps) => ReactNode
+  onOpen?: (tab: WeworkWorkspaceSidebarTab, scope: WeworkWorkspaceScope) => void
+  onActivate?: (tab: WeworkWorkspaceSidebarTab, scope: WeworkWorkspaceScope) => void
+  onClose?: (tab: WeworkWorkspaceSidebarTab, scope: WeworkWorkspaceScope) => void
+  component?: (props: WeworkWorkspaceSidebarTabComponentProps) => ReactNode
+  mount?: (
+    container: HTMLElement,
+    props: WeworkWorkspaceSidebarTabComponentProps
+  ) => {
+    update(props: WeworkWorkspaceSidebarTabComponentProps): void
+    dispose(): void
+  }
 }
 
-export interface DshBetterSidebarOpenTabSeed {
+export interface WeworkWorkspaceSidebarOpenTabSeed {
   type: string
   title?: string
   path?: string
@@ -70,9 +82,20 @@ export interface DshBetterSidebarOpenTabSeed {
   meta?: unknown
 }
 
-export interface DshBetterSidebarContext {
+export interface WeworkExtensionContext {
+  weworkExtensions: WeworkExtensionsService
   betterSidebar: DshBetterSidebarService
   [service: string]: unknown
+}
+
+export interface WeworkExtensionsService {
+  readonly protocol: 'wework.extensions.v1'
+  readonly version: string
+  readonly extensionPoints: readonly WeworkExtensionPoint[]
+  register(
+    extensionPoint: typeof WEWORK_WORKSPACE_SIDEBAR_TAB_EXTENSION_POINT,
+    descriptor: WeworkWorkspaceSidebarTabDescriptor
+  ): () => void
 }
 
 export type RightWorkspaceExtensionTab = `dsh:${string}`
@@ -83,31 +106,31 @@ export function isRightWorkspaceExtensionTab(tab: string): tab is RightWorkspace
 
 export interface RightWorkspaceExtensionTabState {
   internalId: RightWorkspaceExtensionTab
-  tab: DshBetterSidebarTab
+  tab: WeworkWorkspaceSidebarTab
 }
 
 interface RightWorkspaceSidebarController {
   active(): boolean
-  openTab(seed: DshBetterSidebarOpenTabSeed, scope?: DshBetterSidebarScope): void
-  closeTab(tabId: string, scope?: DshBetterSidebarScope): void
-  activateTab(tabId: string, scope?: DshBetterSidebarScope): void
+  openTab(seed: WeworkWorkspaceSidebarOpenTabSeed, scope?: WeworkWorkspaceScope): void
+  closeTab(tabId: string, scope?: WeworkWorkspaceScope): void
+  activateTab(tabId: string, scope?: WeworkWorkspaceScope): void
   updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void
-  snapshot(): DshBetterSidebarSnapshot
+  snapshot(): WeworkWorkspaceSidebarSnapshot
   subscribe(listener: () => void): () => void
 }
 
 export interface DshBetterSidebarService {
   readonly version: string
   readonly features: readonly string[]
-  registerTab(descriptor: DshBetterSidebarTabDescriptor): () => void
-  getTabs(): readonly DshBetterSidebarTabDescriptor[]
-  getTab(id: string): DshBetterSidebarTabDescriptor | undefined
+  registerTab(descriptor: WeworkWorkspaceSidebarTabDescriptor): () => void
+  getTabs(): readonly WeworkWorkspaceSidebarTabDescriptor[]
+  getTab(id: string): WeworkWorkspaceSidebarTabDescriptor | undefined
   isTabEnabled(id: string): boolean
-  openTab(seed: DshBetterSidebarOpenTabSeed, scope?: DshBetterSidebarScope): void
-  closeTab(tabId: string, scope?: DshBetterSidebarScope): void
-  activateTab(tabId: string, scope?: DshBetterSidebarScope): void
+  openTab(seed: WeworkWorkspaceSidebarOpenTabSeed, scope?: WeworkWorkspaceScope): void
+  closeTab(tabId: string, scope?: WeworkWorkspaceScope): void
+  activateTab(tabId: string, scope?: WeworkWorkspaceScope): void
   updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void
-  getSnapshot(): DshBetterSidebarSnapshot
+  getSnapshot(): WeworkWorkspaceSidebarSnapshot
   subscribe(listener: () => void): () => void
   subscribeState(listener: () => void): () => void
 }
@@ -122,18 +145,18 @@ const SERVICE_FEATURES = [
   'tabMeta',
 ] as const
 
-const descriptors = new Map<string, DshBetterSidebarTabDescriptor>()
+const descriptors = new Map<string, WeworkWorkspaceSidebarTabDescriptor>()
 const registryListeners = new Set<() => void>()
 const stateListeners = new Set<() => void>()
 const controllers = new Set<RightWorkspaceSidebarController>()
-let descriptorSnapshot: readonly DshBetterSidebarTabDescriptor[] = []
+let descriptorSnapshot: readonly WeworkWorkspaceSidebarTabDescriptor[] = []
 
 function notifyRegistry() {
   descriptorSnapshot = [...descriptors.values()]
   for (const listener of [...registryListeners]) listener()
 }
 
-function targetController(scope?: DshBetterSidebarScope) {
+function targetController(scope?: WeworkWorkspaceScope) {
   const available = [...controllers].reverse()
   if (scope) {
     const targeted = available.find(
@@ -152,7 +175,9 @@ function reportPluginError(stage: string, error: unknown) {
   console.error(`[Wework better-sidebar] ${stage} failed:`, error)
 }
 
-export function titleOfDshBetterSidebarTab(descriptor: DshBetterSidebarTabDescriptor): string {
+export function titleOfWeworkWorkspaceSidebarTab(
+  descriptor: WeworkWorkspaceSidebarTabDescriptor
+): string {
   try {
     return typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
   } catch (error) {
@@ -161,25 +186,25 @@ export function titleOfDshBetterSidebarTab(descriptor: DshBetterSidebarTabDescri
   }
 }
 
-export function isDshBetterSidebarTabAvailable(
-  descriptor: DshBetterSidebarTabDescriptor,
-  scope: DshBetterSidebarScope,
-  state: DshBetterSidebarState
+export function isWeworkWorkspaceSidebarTabAvailable(
+  descriptor: WeworkWorkspaceSidebarTabDescriptor,
+  scope: WeworkWorkspaceScope,
+  state: WeworkWorkspaceSidebarState
 ): boolean {
   if (!descriptor.available) return true
   try {
-    return descriptor.available(rightWorkspaceBetterSidebarContext, scope, state)
+    return descriptor.available(rightWorkspaceExtensionContext, scope, state)
   } catch (error) {
     reportPluginError(`available "${descriptor.id}"`, error)
     return false
   }
 }
 
-export function invokeDshBetterSidebarLifecycle(
-  descriptor: DshBetterSidebarTabDescriptor,
+export function invokeWeworkWorkspaceSidebarLifecycle(
+  descriptor: WeworkWorkspaceSidebarTabDescriptor,
   stage: 'onOpen' | 'onActivate' | 'onClose',
-  tab: DshBetterSidebarTab,
-  scope: DshBetterSidebarScope
+  tab: WeworkWorkspaceSidebarTab,
+  scope: WeworkWorkspaceScope
 ) {
   try {
     descriptor[stage]?.(tab, scope)
@@ -245,9 +270,29 @@ export const rightWorkspaceBetterSidebar: DshBetterSidebarService = {
   },
 }
 
-export const rightWorkspaceBetterSidebarContext: DshBetterSidebarContext = {
+const rightWorkspaceExtensionContextBase: WeworkExtensionContext = {
+  weworkExtensions: undefined as unknown as WeworkExtensionsService,
   betterSidebar: rightWorkspaceBetterSidebar,
 }
+
+export const rightWorkspaceExtensionContext: WeworkExtensionContext = new Proxy(
+  rightWorkspaceExtensionContextBase,
+  {
+    get(target, property, receiver) {
+      if (property === 'weworkExtensions') return window.__WEWORK_DSH_EXTENSIONS__
+      if (property === 'betterSidebar') return rightWorkspaceBetterSidebar
+      const dshContext =
+        typeof window === 'undefined'
+          ? undefined
+          : (window.__WEWORK_DSH_EXTENSIONS_BRIDGE__?.context ??
+            window.__WEWORK_DSH_BETTER_SIDEBAR_BRIDGE__?.context)
+      if (dshContext && property in dshContext) {
+        return Reflect.get(dshContext, property, dshContext)
+      }
+      return Reflect.get(target, property, receiver)
+    },
+  }
+)
 
 export function attachRightWorkspaceSidebarController(
   controller: RightWorkspaceSidebarController
@@ -268,16 +313,47 @@ export function encodeRightWorkspaceExtensionTabId(tabId: string): RightWorkspac
 
 export function resolveRightWorkspaceExtensionDescriptor(
   state: RightWorkspaceExtensionTabState | undefined
-): DshBetterSidebarTabDescriptor | undefined {
+): WeworkWorkspaceSidebarTabDescriptor | undefined {
   return state ? descriptors.get(state.tab.type) : undefined
 }
 
 declare global {
   interface Window {
+    __WEWORK_DSH_EXTENSIONS__?: WeworkExtensionsService
+    __WEWORK_DSH_EXTENSIONS_BRIDGE__?: {
+      context: WeworkExtensionContext
+      service: DshBetterSidebarService
+      weworkExtensions: WeworkExtensionsService
+      attachHost(extensionHost: WeworkExtensionsService, sidebarHost: DshBetterSidebarService): void
+    }
     __WEWORK_DSH_BETTER_SIDEBAR__?: DshBetterSidebarService
+    __WEWORK_DSH_BETTER_SIDEBAR_BRIDGE__?: {
+      context: WeworkExtensionContext
+      service: DshBetterSidebarService
+      weworkExtensions: WeworkExtensionsService
+      attachHost(extensionHost: WeworkExtensionsService, sidebarHost: DshBetterSidebarService): void
+    }
   }
 }
 
 if (typeof window !== 'undefined') {
+  const weworkExtensions: WeworkExtensionsService = {
+    protocol: 'wework.extensions.v1',
+    version: '1.0.0',
+    extensionPoints: [WEWORK_WORKSPACE_SIDEBAR_TAB_EXTENSION_POINT],
+    register(extensionPoint, descriptor) {
+      if (extensionPoint !== WEWORK_WORKSPACE_SIDEBAR_TAB_EXTENSION_POINT) {
+        throw new Error(`[Wework extensions] unsupported extension point "${extensionPoint}"`)
+      }
+      return rightWorkspaceBetterSidebar.registerTab(descriptor)
+    },
+  }
+  rightWorkspaceExtensionContextBase.weworkExtensions = weworkExtensions
+  window.__WEWORK_DSH_EXTENSIONS__ = weworkExtensions
   window.__WEWORK_DSH_BETTER_SIDEBAR__ = rightWorkspaceBetterSidebar
+  window.__WEWORK_DSH_EXTENSIONS_BRIDGE__?.attachHost(weworkExtensions, rightWorkspaceBetterSidebar)
+  window.__WEWORK_DSH_BETTER_SIDEBAR_BRIDGE__?.attachHost(
+    weworkExtensions,
+    rightWorkspaceBetterSidebar
+  )
 }

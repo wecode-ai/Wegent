@@ -80,12 +80,12 @@ import {
   attachRightWorkspaceSidebarController,
   encodeRightWorkspaceExtensionTabId,
   isRightWorkspaceExtensionTab,
-  invokeDshBetterSidebarLifecycle,
+  invokeWeworkWorkspaceSidebarLifecycle,
   rightWorkspaceBetterSidebar,
-  titleOfDshBetterSidebarTab,
-  type DshBetterSidebarOpenTabSeed,
-  type DshBetterSidebarScope,
-  type DshBetterSidebarSnapshot,
+  titleOfWeworkWorkspaceSidebarTab,
+  type WeworkWorkspaceSidebarOpenTabSeed,
+  type WeworkWorkspaceScope,
+  type WeworkWorkspaceSidebarSnapshot,
   type RightWorkspaceExtensionTab,
   type RightWorkspaceExtensionTabState,
 } from './workspace-panels/rightWorkspaceSidebarRegistry'
@@ -2743,7 +2743,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? `${currentRuntimeConversationSource.deviceId}:${currentRuntimeConversationSource.taskId}`
     : paneKey
   const rightWorkspaceExtensionCwd = workspacePanelTarget?.path
-  const rightWorkspaceExtensionScope = useMemo<DshBetterSidebarScope>(
+  const rightWorkspaceExtensionScope = useMemo<WeworkWorkspaceScope>(
     () => ({
       sessionId: rightWorkspaceExtensionSessionId,
       ...(rightWorkspaceExtensionCwd ? { cwd: rightWorkspaceExtensionCwd } : {}),
@@ -2751,7 +2751,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [rightWorkspaceExtensionCwd, rightWorkspaceExtensionSessionId]
   )
   const openRightWorkspaceExtensionTab = useCallback(
-    (seed: DshBetterSidebarOpenTabSeed, scope = rightWorkspaceExtensionScope) => {
+    (seed: WeworkWorkspaceSidebarOpenTabSeed, scope = rightWorkspaceExtensionScope) => {
       const descriptor = rightWorkspaceBetterSidebar.getTab(seed.type)
       if (!descriptor) return
 
@@ -2770,7 +2770,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const tab = created?.tab ?? {
         id: seed.id ?? descriptor.id,
         type: descriptor.id,
-        title: seed.title ?? titleOfDshBetterSidebarTab(descriptor),
+        title: seed.title ?? titleOfWeworkWorkspaceSidebarTab(descriptor),
         ...(seed.path || seed.url ? { path: seed.path ?? seed.url } : {}),
         ...(seed.diff !== undefined ? { diff: seed.diff } : {}),
         ...(seed.meta !== undefined ? { meta: seed.meta } : {}),
@@ -2784,7 +2784,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })
       if (existing) {
         openRightPanelTab(existing.internalId)
-        invokeDshBetterSidebarLifecycle(descriptor, 'onActivate', existing.tab, scope)
+        invokeWeworkWorkspaceSidebarLifecycle(descriptor, 'onActivate', existing.tab, scope)
         return
       }
 
@@ -2794,7 +2794,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         [internalId]: { internalId, tab },
       }))
       openRightPanelTab(internalId)
-      invokeDshBetterSidebarLifecycle(descriptor, 'onOpen', tab, scope)
+      invokeWeworkWorkspaceSidebarLifecycle(descriptor, 'onOpen', tab, scope)
     },
     [openRightPanelTab, rightPanelOpen, rightPanelView, rightWorkspaceExtensionScope]
   )
@@ -3127,7 +3127,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         return next
       })
       if (extensionDescriptor) {
-        invokeDshBetterSidebarLifecycle(
+        invokeWeworkWorkspaceSidebarLifecycle(
           extensionDescriptor,
           'onClose',
           extensionState.tab,
@@ -3176,7 +3176,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           openRightPanelTab(state.internalId)
           const descriptor = rightWorkspaceBetterSidebar.getTab(state.tab.type)
           if (descriptor) {
-            invokeDshBetterSidebarLifecycle(descriptor, 'onActivate', state.tab, scope)
+            invokeWeworkWorkspaceSidebarLifecycle(descriptor, 'onActivate', state.tab, scope)
           }
         },
         updateTab: (tabId, patch) => {
@@ -3192,7 +3192,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             }
           })
         },
-        snapshot: (): DshBetterSidebarSnapshot => ({
+        snapshot: (): WeworkWorkspaceSidebarSnapshot => ({
           sessionId: rightWorkspaceExtensionScope.sessionId,
           state: {
             panelOpen: rightPanelOpen,
@@ -3826,7 +3826,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <div
           data-testid="workbench-main-header-left-controls"
           className={cn(
-            'relative z-0 flex h-full shrink-0 items-center gap-1 pr-1',
+            'electron-titlebar-interactive-region relative z-0 flex h-full shrink-0 items-center gap-1 pr-1',
             MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS
           )}
         >
@@ -3853,7 +3853,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <div
         data-testid="titlebar-main-actions"
         className={cn(
-          'relative z-0 flex h-full shrink-0 items-center justify-end gap-1 pr-1',
+          'electron-titlebar-interactive-region relative z-0 flex h-full shrink-0 items-center justify-end gap-1 pr-1',
           rightPanelExpanded && 'invisible'
         )}
       >
@@ -3897,7 +3897,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         id={TITLEBAR_ACTIONS_PORTAL_ID}
         data-testid="titlebar-actions"
         className={cn(
-          'pointer-events-auto absolute top-0 z-chrome flex h-full min-w-[5rem] items-center justify-end gap-1 pr-2',
+          'electron-titlebar-interactive-region pointer-events-auto absolute top-0 z-chrome flex h-full min-w-[5rem] items-center justify-end gap-1 pr-2',
           rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{

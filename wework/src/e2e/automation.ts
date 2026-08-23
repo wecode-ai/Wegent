@@ -561,13 +561,18 @@ function quiesceElectronTerminalCaptureSurfaces(): () => void {
     const accessibilityTree = screen.parentElement?.querySelector<HTMLElement>(
       '.xterm-accessibility-tree'
     )
-    const rows = accessibilityTree
+    const accessibleRows = accessibilityTree
       ? Array.from(accessibilityTree.querySelectorAll<HTMLElement>('[role="listitem"]'))
           .map(row => row.textContent ?? '')
-          .join('\n')
-      : ''
+          .filter(row => row.trim().length > 0)
+      : []
+    const renderedRows = Array.from(screen.querySelectorAll<HTMLElement>('.xterm-rows > div')).map(
+      row => row.textContent ?? ''
+    )
+    const rows = (accessibleRows.length > 0 ? accessibleRows : renderedRows).join('\n')
     const mirror = document.createElement('pre')
-    const style = window.getComputedStyle(screen)
+    const rowContainer = screen.querySelector<HTMLElement>('.xterm-rows')
+    const style = window.getComputedStyle(rowContainer ?? screen)
     mirror.textContent = rows
     mirror.setAttribute('aria-hidden', 'true')
     Object.assign(mirror.style, {
@@ -583,7 +588,7 @@ function quiesceElectronTerminalCaptureSurfaces(): () => void {
       pointerEvents: 'none',
       position: 'absolute',
       whiteSpace: 'pre',
-      zIndex: '1',
+      zIndex: '2147483647',
     })
     screen.parentElement?.appendChild(mirror)
     const previousVisibility = screen.style.visibility
@@ -596,34 +601,15 @@ function quiesceElectronTerminalCaptureSurfaces(): () => void {
   return () => restores.toReversed().forEach(restore => restore())
 }
 
-async function captureElectronRendererDataUrl(): Promise<string> {
-  const { default: html2canvas } = await import('html2canvas')
-  const canvas = await html2canvas(document.body, {
-    backgroundColor: window.getComputedStyle(document.body).backgroundColor,
-    height: window.innerHeight,
-    logging: false,
-    scale: window.devicePixelRatio,
-    useCORS: true,
-    width: window.innerWidth,
-    windowHeight: window.innerHeight,
-    windowWidth: window.innerWidth,
-    x: 0,
-    y: 0,
-  })
-  return canvas.toDataURL('image/png')
-}
-
 async function captureDesktopControlScreenshot(selector: string): Promise<string> {
   if (isElectronRuntime()) {
     const resumeTerminalEvents = suspendDshTerminalEventDelivery()
     const restoreTerminalSurfaces = quiesceElectronTerminalCaptureSurfaces()
     try {
       await new Promise<void>(resolve => window.setTimeout(resolve, 100))
-      const snapshot = document.querySelector('.xterm-screen')
-        ? await captureElectronRendererDataUrl()
-        : await invokeDesktopHost<string>('e2e.capturePrimaryView', {
-            windowLabel: getDesktopWindowLabel(),
-          })
+      const snapshot = await invokeDesktopHost<string>('e2e.capturePrimaryView', {
+        windowLabel: getDesktopWindowLabel(),
+      })
       const element = findDesktopControlElements(selector)[0]
       if (!element) throw new Error(`Unable to find selector "${selector}"`)
       return element === document.body

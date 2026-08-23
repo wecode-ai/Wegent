@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { CORE_DSH_VERSION, prepareCoreDshLaunch, selectCoreDshRuntime } from './core-dsh-runtime.js'
@@ -106,6 +106,138 @@ describe('core DSH runtime', () => {
     await expect(
       readFile(join(profileModules, 'dsh-terminal-runtime', 'package.json'), 'utf8')
     ).resolves.toBe('{}')
+    await root.remove()
+  })
+
+  test('preserves manually installed plugins and their build permissions', async () => {
+    const root = await temporaryDirectory('core-dsh-user-plugin-')
+    const firstRuntime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const dataDirectory = join(root.path, 'data')
+    const launch = await prepareCoreDshLaunch({
+      runtimeRoot: firstRuntime.root,
+      dataDirectory,
+      environment: { WEWORK_NODE_PATH: '/managed/node' },
+      port: 3080,
+    })
+    const profileRoot = join(launch.dshHome, 'profiles', 'wework-core')
+    const manifestPath = join(profileRoot, 'package.json')
+    const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    manifest.dependencies['dsh-turn-review'] = '1.2.3'
+    manifest.dsh.profile.bundles.push('dsh-turn-review')
+    await writeFile(manifestPath, JSON.stringify(manifest))
+    await writeFile(
+      workspacePath,
+      [
+        'packages:',
+        '  - .',
+        '',
+        'allowBuilds:',
+        '  "dsh-turn-review@https://example.test/archive.tgz": true',
+        '  node-pty: set this to true or false',
+        '',
+        'nodeLinker: hoisted',
+        'autoInstallPeers: false',
+        '',
+      ].join('\n')
+    )
+    await rm(join(profileRoot, '.wework-runtime.json'))
+
+    const nextRuntime = await writeRuntime(root.path, CORE_DSH_VERSION, 'b')
+    await prepareCoreDshLaunch({
+      runtimeRoot: nextRuntime.root,
+      dataDirectory,
+      environment: { WEWORK_NODE_PATH: '/managed/node' },
+      port: 3081,
+    })
+
+    const nextManifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    expect(nextManifest.dependencies['dsh-turn-review']).toBe('1.2.3')
+    expect(nextManifest.dsh.profile.bundles).toContain('dsh-turn-review')
+    const workspace = await readFile(workspacePath, 'utf8')
+    expect(workspace).toContain('  "dsh-turn-review@https://example.test/archive.tgz": true')
+    expect(workspace).toContain('  node-pty: true')
+    await root.remove()
+  })
+
+  test('repairs node-pty spawn helper permissions even when the profile stamp is current', async () => {
+    const root = await temporaryDirectory('core-dsh-node-pty-helper-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const dataDirectory = join(root.path, 'data')
+    const launch = await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment: { WEWORK_NODE_PATH: '/managed/node' },
+      port: 3080,
+    })
+    const helperPath = join(
+      launch.dshHome,
+      'profiles',
+      'wework-core',
+      'node_modules',
+      'node-pty',
+      'prebuilds',
+      'darwin-arm64',
+      'spawn-helper'
+    )
+    await mkdir(join(helperPath, '..'), { recursive: true })
+    await writeFile(helperPath, 'helper')
+    await chmod(helperPath, 0o644)
+
+    await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment: { WEWORK_NODE_PATH: '/managed/node' },
+      port: 3081,
+    })
+
+    expect((await stat(helperPath)).mode & 0o777).toBe(0o755)
+    await root.remove()
+  })
+
+  test('repairs stale managed paths and removes obsolete managed sidebar plugins', async () => {
+    const root = await temporaryDirectory('core-dsh-stale-dependency-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const dataDirectory = join(root.path, 'data')
+    const launch = await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment: { WEWORK_NODE_PATH: '/managed/node' },
+      port: 3080,
+    })
+    const profileRoot = join(launch.dshHome, 'profiles', 'wework-core')
+    const manifestPath = join(profileRoot, 'package.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    manifest.dependencies['@wegent/dsh-app-wework'] = 'file:/deleted/runtime/wework-app'
+    manifest.dependencies['@wegent/dsh-sidebar-example'] = 'file:/obsolete'
+    manifest.dependencies['dsh-turn-review'] = '1.2.3'
+    manifest.dsh.profile.bundles.push('@wegent/dsh-sidebar-example', 'dsh-turn-review')
+    await writeFile(manifestPath, JSON.stringify(manifest))
+    const lockfilePaths = [
+      join(profileRoot, 'pnpm-lock.yaml'),
+      join(profileRoot, 'node_modules', '.pnpm', 'lock.yaml'),
+      join(profileRoot, 'node_modules', '.modules.yaml'),
+    ]
+    await mkdir(join(profileRoot, 'node_modules', '.pnpm'), { recursive: true })
+    await Promise.all(lockfilePaths.map(path => writeFile(path, 'stale install state')))
+
+    await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment: { WEWORK_NODE_PATH: '/managed/node' },
+      port: 3081,
+    })
+
+    const repaired = JSON.parse(await readFile(manifestPath, 'utf8'))
+    expect(repaired.dependencies['@wegent/dsh-app-wework']).toBe(`file:${runtime.appPluginRoot}`)
+    expect(repaired.dependencies).not.toHaveProperty('@wegent/dsh-sidebar-example')
+    expect(repaired.dsh.profile.bundles).not.toContain('@wegent/dsh-sidebar-example')
+    expect(repaired.dependencies['dsh-turn-review']).toBe('1.2.3')
+    await Promise.all(
+      lockfilePaths.map(path =>
+        expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      )
+    )
     await root.remove()
   })
 })

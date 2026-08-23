@@ -51,6 +51,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       'paste-paths': 'pastePaths',
       'pointer-move': 'pointerMove',
       press: 'press',
+      submit: 'submit',
       'scroll-into-view': 'scrollIntoView',
       'select-text': 'selectText',
       'show-popout': 'showPopoutWindow',

@@ -20,7 +20,12 @@ import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
-import { EmbeddedBrowserManager } from './host/embedded-browser-manager.js'
+import {
+  EMBEDDED_BROWSER_PARTITION,
+  EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR,
+  EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX,
+  EmbeddedBrowserManager,
+} from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import {
@@ -28,11 +33,7 @@ import {
   type WorkbenchTabView,
   type WorkbenchViewBounds,
 } from './host/workbench-tab-controller.js'
-import {
-  desktopWindowFrameOptions,
-  primaryDshBounds,
-  workbenchDshBounds,
-} from './host/window-layout.js'
+import { desktopWindowFrameOptions, workbenchDshBounds } from './host/window-layout.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -45,9 +46,9 @@ app.setPath('userData', resolve(userDataPath))
 let mainWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
 const dshWindowLabels = new Map<number, string>()
-let primaryDshView: WebContentsView | null = null
 let attachedDshView: WebContentsView | null = null
-let primaryDshViewAttached = false
+let primaryDshLoaded = false
+let primaryDshSecurityInstalled = false
 let desktopRuntime: DesktopRuntime | null = null
 let workbenchTabs: WorkbenchTabController<ElectronWorkbenchView> | null = null
 let smartApps: SmartAppManager | null = null
@@ -66,6 +67,10 @@ let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
 let quitting = false
 let mainWindowCloseRequestRevision = 0
+const pendingEmbeddedBrowserAttachments = new Map<
+  number,
+  Array<{ label: string; partition: string }>
+>()
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -96,6 +101,115 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     event.preventDefault()
     void shell.openExternal(url)
   })
+  contents.on('will-attach-webview', (event, webPreferences, params) => {
+    const route = embeddedBrowserRouteFromParams(params as Record<string, unknown>)
+    console.log('[embedded-browser] webview attachment requested', {
+      ownerId: contents.id,
+      partition: params.partition ?? null,
+      routeLabel: route?.label ?? null,
+      src: params.src ?? null,
+    })
+    if (!route) {
+      console.warn('[embedded-browser] rejected unknown webview attachment', {
+        ownerId: contents.id,
+        partition: params.partition ?? null,
+        src: params.src ?? null,
+      })
+      event.preventDefault()
+      return
+    }
+    const queue = pendingEmbeddedBrowserAttachments.get(contents.id) ?? []
+    queue.push({ label: route.label, partition: route.routePartition })
+    pendingEmbeddedBrowserAttachments.set(contents.id, queue)
+    params.partition = EMBEDDED_BROWSER_PARTITION
+    webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
+    delete webPreferences.preload
+    delete params.allowpopups
+    delete params.disablewebsecurity
+    delete params.webpreferences
+    webPreferences.nodeIntegration = false
+    webPreferences.nodeIntegrationInSubFrames = false
+    webPreferences.nodeIntegrationInWorker = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    webPreferences.webSecurity = true
+    webPreferences.allowRunningInsecureContent = false
+    webPreferences.webviewTag = false
+    webPreferences.plugins = false
+  })
+  contents.on('did-attach-webview', (_event, guestContents) => {
+    const queue = pendingEmbeddedBrowserAttachments.get(contents.id)
+    const pending = queue?.shift()
+    if (queue?.length === 0) pendingEmbeddedBrowserAttachments.delete(contents.id)
+    if (
+      !pending ||
+      !embeddedBrowser ||
+      guestContents.session !== session.fromPartition(EMBEDDED_BROWSER_PARTITION)
+    ) {
+      console.warn('[embedded-browser] rejected attached webview', {
+        guestId: guestContents.id,
+        hasBrowserManager: Boolean(embeddedBrowser),
+        ownerId: contents.id,
+        pendingLabel: pending?.label ?? null,
+        sessionMatches: guestContents.session === session.fromPartition(EMBEDDED_BROWSER_PARTITION),
+      })
+      guestContents.close()
+      return
+    }
+    console.log('[embedded-browser] webview attached', {
+      guestId: guestContents.id,
+      label: pending.label,
+      ownerId: contents.id,
+    })
+    embeddedBrowser.attach(pending.label, guestContents)
+  })
+  contents.once('destroyed', () => pendingEmbeddedBrowserAttachments.delete(contents.id))
+}
+
+function embeddedBrowserRouteFromParams(
+  params: Record<string, unknown>
+): { label: string; routePartition: string } | null {
+  const customLabel = params['data-wework-browser-label']
+  const partition = typeof params.partition === 'string' ? params.partition : null
+  const routePartition = embeddedBrowserRoutePartition(partition)
+  if (!routePartition?.startsWith(EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX)) return null
+  if (
+    typeof customLabel === 'string' &&
+    customLabel.trim() &&
+    routePartition ===
+      `${EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX}${encodeURIComponent(
+        `wework\0${customLabel.trim()}`
+      )}`
+  ) {
+    return { label: customLabel.trim(), routePartition }
+  }
+  try {
+    const identity = decodeURIComponent(
+      routePartition.slice(EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX.length)
+    )
+    const [scope, label] = identity.split('\0')
+    if (scope !== 'wework' || !label?.trim()) return null
+    return { label: label.trim(), routePartition }
+  } catch {
+    return null
+  }
+}
+
+function embeddedBrowserRoutePartition(partition: string | null): string | null {
+  if (!partition) return null
+  const hostSeparatorIndex = partition.lastIndexOf(EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR)
+  if (hostSeparatorIndex === -1) return partition
+  const hostIdentity = partition.slice(
+    hostSeparatorIndex + EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR.length
+  )
+  const generationSeparatorIndex = hostIdentity.lastIndexOf(':')
+  if (generationSeparatorIndex === -1) return null
+  const rendererInstanceId = hostIdentity.slice(0, generationSeparatorIndex)
+  const hostGeneration = Number(hostIdentity.slice(generationSeparatorIndex + 1))
+  if (!rendererInstanceId || !Number.isInteger(hostGeneration) || hostGeneration <= 0) {
+    return null
+  }
+  return partition.slice(0, hostSeparatorIndex)
 }
 
 function registerDshWindowLabel(contents: WebContents, label: string): void {
@@ -122,27 +236,13 @@ function secureDshView(view: WebContentsView, dshUrl: string): void {
 }
 
 function layoutPrimaryView(): void {
-  if (!mainWindow) return
-  primaryDshView?.setBounds(primaryDshViewBounds())
   workbenchTabs?.layout()
   embeddedBrowser?.layoutAll()
-}
-
-function primaryDshViewBounds(): WorkbenchViewBounds {
-  const [width, height] = mainWindow?.getContentSize() ?? [0, 0]
-  return primaryDshBounds({ width, height })
 }
 
 function workbenchViewBounds(): WorkbenchViewBounds {
   const [width, height] = mainWindow?.getContentSize() ?? [0, 0]
   return workbenchDshBounds({ width, height })
-}
-
-function attachPrimaryDshView(): void {
-  if (!mainWindow || !primaryDshView || primaryDshViewAttached) return
-  mainWindow.contentView.addChildView(primaryDshView)
-  primaryDshViewAttached = true
-  primaryDshView.setBounds(primaryDshViewBounds())
 }
 
 function showWorkbenchView(view: WebContentsView | null): void {
@@ -210,37 +310,25 @@ class ElectronWorkbenchView implements WorkbenchTabView {
 
 async function loadPrimaryDshView(): Promise<void> {
   if (!mainWindow || !desktopRuntime) return
-  if (primaryDshView) return
+  if (primaryDshLoaded) return
   rendererHealth.loading()
   const dshUrl = desktopRuntime.coreDshUrl()
-  const view = new WebContentsView({
-    webPreferences: {
-      backgroundThrottling: false,
-      preload: dshPreloadPath,
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
-    },
-  })
-  secureDshView(view, dshUrl)
-  registerDshWindowLabel(view.webContents, 'main')
-  primaryDshView = view
-  attachPrimaryDshView()
-  layoutPrimaryView()
-  view.webContents.once('did-finish-load', () => {
+  const contents = mainWindow.webContents
+  if (!primaryDshSecurityInstalled) {
+    secureDshContents(contents, dshUrl)
+    registerDshWindowLabel(contents, 'main')
+    primaryDshSecurityInstalled = true
+  }
+  contents.once('did-finish-load', () => {
+    primaryDshLoaded = true
     runtimeError = null
     rendererHealth.ready()
+    mainWindow?.show()
   })
-  view.webContents.on('unresponsive', () => rendererHealth.unresponsive())
-  view.webContents.on('responsive', () => rendererHealth.responsive())
-  view.webContents.once('render-process-gone', (_event, details) => {
-    if (primaryDshView !== view) return
-    if (primaryDshViewAttached && mainWindow) {
-      mainWindow.contentView.removeChildView(view)
-      primaryDshViewAttached = false
-    }
-    primaryDshView = null
-    view.webContents.close()
+  contents.on('unresponsive', () => rendererHealth.unresponsive())
+  contents.on('responsive', () => rendererHealth.responsive())
+  contents.once('render-process-gone', (_event, details) => {
+    primaryDshLoaded = false
     if (quitting) return
     if (!rendererHealth.crashed(details.reason)) {
       runtimeError = 'DSH renderer repeatedly crashed'
@@ -253,21 +341,50 @@ async function loadPrimaryDshView(): Promise<void> {
     })
   })
   try {
-    await view.webContents.loadURL(dshUrl, {
+    await contents.loadURL(dshUrl, {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
   } catch (error) {
-    if (primaryDshView === view) {
-      if (primaryDshViewAttached && mainWindow) {
-        mainWindow.contentView.removeChildView(view)
-        primaryDshViewAttached = false
-      }
-      primaryDshView = null
-    }
-    view.webContents.close()
+    primaryDshLoaded = false
     rendererHealth.failed('renderer_load_failed')
     throw error
   }
+}
+
+function disposeCoreDshViews(): void {
+  for (const workspaceWindow of workspaceWindows.values()) {
+    if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
+  }
+  workspaceWindows.clear()
+  systemDragWindow?.destroy()
+  systemDragWindow = null
+  popoutWindow?.destroy()
+  popoutWindow = null
+  primaryDshLoaded = false
+}
+
+function scheduleCoreDshRestart(): void {
+  setTimeout(() => {
+    void (async () => {
+      if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
+      runtimePhase = 'initializing'
+      runtimeError = null
+      rendererHealth.loading()
+      notifyRuntimeChanged()
+      disposeCoreDshViews()
+      await mainWindow?.webContents.loadURL('about:blank')
+      await desktopRuntime.restartCoreDsh()
+      await loadPrimaryDshView()
+      runtimePhase = 'ready'
+      notifyRuntimeChanged()
+    })().catch(error => {
+      runtimePhase = 'failed'
+      runtimeError = error instanceof Error ? error.message : String(error)
+      rendererHealth.failed('core_dsh_restart_failed')
+      notifyRuntimeChanged()
+      console.error('[runtime] Core DSH restart failed', error)
+    })
+  }, 100)
 }
 
 async function openWorkspaceWindow(input: {
@@ -306,6 +423,7 @@ async function openWorkspaceWindow(input: {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      webviewTag: true,
     },
   })
   workspaceWindows.set(input.label, workspaceWindow)
@@ -401,14 +519,13 @@ async function createWindow(): Promise<void> {
     show: false,
     webPreferences: {
       backgroundThrottling: false,
-      preload: resolve(packageRoot, 'dist/preload.cjs'),
+      preload: dshPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      webviewTag: true,
     },
   })
-  await mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'))
-  mainWindow.show()
   mainWindow.on('resize', layoutPrimaryView)
   mainWindow.on('close', event => {
     if (quitting) return
@@ -417,9 +534,8 @@ async function createWindow(): Promise<void> {
   })
   mainWindow.on('closed', () => {
     attachedDshView = null
-    primaryDshViewAttached = false
-    primaryDshView?.webContents.close()
-    primaryDshView = null
+    primaryDshLoaded = false
+    primaryDshSecurityInstalled = false
     mainWindow = null
   })
 }
@@ -428,14 +544,6 @@ async function closeMainWindowToTray(): Promise<void> {
   const target = mainWindow
   if (!target || target.isDestroyed()) return
   console.log(`windowWillClose: electron close-to-tray revision=${mainWindowCloseRequestRevision}`)
-  if (primaryDshView) {
-    if (primaryDshViewAttached) {
-      target.contentView.removeChildView(primaryDshView)
-      primaryDshViewAttached = false
-    }
-    primaryDshView.webContents.close()
-    primaryDshView = null
-  }
   target.hide()
   if (process.platform === 'darwin') app.hide()
 }
@@ -464,8 +572,8 @@ function installIpc(): void {
     rendererHealth: rendererHealth.snapshot(),
   }))
   ipcMain.handle('runtime:reload-dsh', async () => {
-    if (runtimePhase === 'ready' && primaryDshView) {
-      primaryDshView.webContents.reload()
+    if (runtimePhase === 'ready' && primaryDshLoaded && mainWindow) {
+      mainWindow.webContents.reload()
       return
     }
     await startDesktopRuntime()
@@ -505,10 +613,7 @@ async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   const environment = await desktopEnvironment()
   const preferences = new PreferencesStore(app.getPath('userData'))
-  embeddedBrowser = new EmbeddedBrowserManager(
-    () => mainWindow,
-    () => ({ x: 0, y: 0 })
-  )
+  embeddedBrowser = new EmbeddedBrowserManager()
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
     process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
@@ -540,7 +645,7 @@ async function configureDesktopRuntime(): Promise<void> {
         {
           captureTarget: windowLabel =>
             windowLabel === 'main'
-              ? (primaryDshView?.webContents ?? null)
+              ? (mainWindow?.webContents ?? null)
               : windowLabel === 'popout-window'
                 ? (popoutWindow?.webContents ?? null)
                 : windowLabel === 'system-drag-panel'
@@ -594,6 +699,7 @@ async function configureDesktopRuntime(): Promise<void> {
               executorPid: null,
               workbenchRuntimes: [],
             },
+          scheduleCoreDshRestart,
           setSystemDragContext: context => {
             systemDragContext = context
           },

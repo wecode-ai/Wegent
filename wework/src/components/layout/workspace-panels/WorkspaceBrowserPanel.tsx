@@ -108,6 +108,8 @@ import type {
   PageAnnotationDto,
 } from '@/types/browser-annotation'
 import { browserSnapshotToContexts } from '@/lib/browser-annotation-context'
+import { isElectronRuntime } from '@/lib/runtime-environment'
+import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
 
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
 const BROWSER_ANNOTATION_STATE_INTERVAL_MS = 100
@@ -345,6 +347,7 @@ export function WorkspaceBrowserTabPanel({
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
   const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
+  const electronRuntime = isElectronRuntime()
   const browserHostRef = useRef<HTMLDivElement | null>(null)
   const nativeBrowserOpenRef = useRef(false)
   const nativeBrowserOpeningRef = useRef(false)
@@ -798,7 +801,9 @@ export function WorkspaceBrowserTabPanel({
       const nativeVisible =
         visible &&
         !navigationError &&
-        (!embeddedBrowserOccludedRef.current || !occlusionSnapshotReadyRef.current)
+        (electronRuntime ||
+          !embeddedBrowserOccludedRef.current ||
+          !occlusionSnapshotReadyRef.current)
       const deviceState = deviceToolbarRef.current
       const placement = deviceState.isEnabled
         ? computeDeviceViewportPlacement(bounds, deviceState, zoomPercentRef.current)
@@ -845,7 +850,7 @@ export function WorkspaceBrowserTabPanel({
         console.error('Failed to apply embedded browser zoom:', error)
       })
     },
-    [active, embeddedBrowserAvailable, label, navigationError]
+    [active, electronRuntime, embeddedBrowserAvailable, label, navigationError]
   )
 
   const hideEmbeddedBrowser = useCallback(async () => {
@@ -1793,12 +1798,16 @@ export function WorkspaceBrowserTabPanel({
   useLayoutEffect(() => {
     embeddedBrowserOccludedRef.current = embeddedBrowserOccluded
     occlusionSnapshotGenerationRef.current = browserOcclusion.generation
-    occlusionSnapshotReadyRef.current = !embeddedBrowserOccluded
-  }, [browserOcclusion.generation, embeddedBrowserOccluded])
+    occlusionSnapshotReadyRef.current = electronRuntime || !embeddedBrowserOccluded
+  }, [browserOcclusion.generation, electronRuntime, embeddedBrowserOccluded])
 
   const syncOcclusionState = useCallback(
     async (generation: number) => {
       if (!mountedRef.current) return
+      if (electronRuntime) {
+        await syncEmbeddedBrowserBounds(active)
+        return
+      }
       if (!activeRef.current || !embeddedBrowserOccludedRef.current) {
         await syncEmbeddedBrowserBounds(active)
         return
@@ -1856,7 +1865,7 @@ export function WorkspaceBrowserTabPanel({
         }
       }
     },
-    [active, label, syncEmbeddedBrowserBounds]
+    [active, electronRuntime, label, syncEmbeddedBrowserBounds]
   )
 
   useEffect(() => {
@@ -2883,9 +2892,16 @@ export function WorkspaceBrowserTabPanel({
             )}
             aria-label={t('workbench.browser')}
           >
-            {active &&
-            embeddedBrowserOccluded &&
-            occlusionSnapshot?.generation === browserOcclusion.generation ? (
+            {electronRuntime ? (
+              <ElectronEmbeddedBrowserView
+                active={active}
+                interactionBlocked={embeddedBrowserOccluded || Boolean(navigationError)}
+                label={label}
+                visualRect={deviceVisualRect}
+              />
+            ) : active &&
+              embeddedBrowserOccluded &&
+              occlusionSnapshot?.generation === browserOcclusion.generation ? (
               <img
                 data-testid="workspace-browser-occlusion-snapshot"
                 src={occlusionSnapshot.url}

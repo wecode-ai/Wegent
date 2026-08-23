@@ -38,6 +38,9 @@ export function createWeworkDesktopService(client) {
     rendererHealth: Object.freeze({
       getState: () => invoke('rendererHealth.getState'),
     }),
+    runtime: Object.freeze({
+      restartCoreDsh: () => invoke('runtime.restartCoreDsh'),
+    }),
     shell: Object.freeze({
       openExternal: url => invoke('shell.openExternal', { url }),
     }),

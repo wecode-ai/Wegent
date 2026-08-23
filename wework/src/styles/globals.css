@@ -6,6 +6,10 @@
   -webkit-app-region: drag;
 }
 
+.electron-titlebar-interactive-region {
+  -webkit-app-region: no-drag;
+}
+
 :root {
   color-scheme: light;
   --color-bg-base: 255 255 255;

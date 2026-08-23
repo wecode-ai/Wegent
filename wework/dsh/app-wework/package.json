@@ -25,6 +25,7 @@
     "client.js",
     "cordis.patch.yml",
     "index.js",
+    "plugin-manager.js",
     "web"
   ],
   "peerDependencies": {

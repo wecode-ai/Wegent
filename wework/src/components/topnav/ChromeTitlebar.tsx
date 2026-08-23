@@ -67,14 +67,20 @@ export function ChromeTitlebar({
       )}
 
       {beforeTabs && (
-        <div data-testid="chrome-titlebar-before-tabs" className="mr-1 flex shrink-0 items-center">
+        <div
+          data-testid="chrome-titlebar-before-tabs"
+          className="electron-titlebar-interactive-region mr-1 flex shrink-0 items-center"
+        >
           {beforeTabs}
         </div>
       )}
 
       <WorkspaceTabStrip availableKinds={availableWorkspaceTabKinds} />
       {afterTabs && (
-        <div data-testid="chrome-titlebar-after-tabs" className="ml-3 flex shrink-0 items-center">
+        <div
+          data-testid="chrome-titlebar-after-tabs"
+          className="electron-titlebar-interactive-region ml-3 flex shrink-0 items-center"
+        >
           {afterTabs}
         </div>
       )}
@@ -117,14 +123,14 @@ export function ChromeTitlebar({
             <div
               id={TITLEBAR_ACTIONS_PORTAL_ID}
               data-testid="titlebar-actions"
-              className="pointer-events-auto flex h-full w-[5rem] shrink-0 items-center justify-end gap-1"
+              className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-[5rem] shrink-0 items-center justify-end gap-1"
             />
           )}
           {feedbackSlotVisible && (
             <div
               id={TITLEBAR_FEEDBACK_PORTAL_ID}
               data-testid="titlebar-feedback"
-              className="pointer-events-auto flex h-full w-7 shrink-0 items-center justify-center"
+              className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-7 shrink-0 items-center justify-center"
             >
               {showFeedback && <TopnavFeedbackButton />}
             </div>
