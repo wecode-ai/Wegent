@@ -70,17 +70,35 @@ wegent_wework_cache_entry_ready() {
     wegent_wework_cache_entry_matches_fingerprint "$cache_entry" "$fingerprint"
 }
 
-wegent_wait_for_wework_cache_writer() {
+wegent_acquire_wework_cache_lock() {
   local cache_lock="$1"
   local timeout_seconds="${WEGENT_WEWORK_NODE_MODULES_CACHE_LOCK_TIMEOUT_SECONDS:-600}"
   local deadline=$((SECONDS + timeout_seconds))
 
-  while [ -d "$cache_lock" ]; do
+  while ! mkdir "$cache_lock" 2>/dev/null; do
     if [ "$SECONDS" -ge "$deadline" ]; then
       return 1
     fi
     sleep 0.1
   done
+}
+
+wegent_validate_wework_cache_entry_under_lock() {
+  local cache_entry="$1"
+  local fingerprint="$2"
+  local cache_lock="${cache_entry}.lock"
+  local status
+
+  if (
+    trap 'rmdir "$cache_lock" 2>/dev/null || true' EXIT
+    wegent_acquire_wework_cache_lock "$cache_lock" || exit 2
+    wegent_wework_cache_entry_ready "$cache_entry" "$fingerprint" || exit 3
+  ); then
+    return 0
+  else
+    status=$?
+  fi
+  return "$status"
 }
 
 wegent_wework_node_modules_view_ready() {
@@ -247,14 +265,18 @@ ensure_wework_worktree_node_modules() {
   fingerprint="$(wegent_wework_dependency_fingerprint "$project_dir")"
   cache_entry="$cache_root/$fingerprint"
   cached_virtual_store="$cache_entry/pnpm-virtual-store"
-  cache_lock="${cache_entry}.lock"
-  if [ -d "$cache_lock" ] && ! wegent_wait_for_wework_cache_writer "$cache_lock"; then
-    echo "Error: timed out waiting for another worktree to publish the Wework dependency cache." >&2
-    return 1
-  fi
-  if ! wegent_wework_cache_entry_ready "$cache_entry" "$fingerprint"; then
-    echo "Error: Wework dependencies are not installed and no matching worktree cache exists." >&2
-    echo "Run 'pnpm install --frozen-lockfile' once in any worktree with these dependencies." >&2
+  if wegent_validate_wework_cache_entry_under_lock "$cache_entry" "$fingerprint"; then
+    :
+  else
+    case "$?" in
+      2)
+        echo "Error: timed out waiting for another worktree to publish the Wework dependency cache." >&2
+        ;;
+      *)
+        echo "Error: Wework dependencies are not installed and no matching worktree cache exists." >&2
+        echo "Run 'pnpm install --frozen-lockfile' once in any worktree with these dependencies." >&2
+        ;;
+    esac
     return 1
   fi
 
