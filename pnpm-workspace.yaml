@@ -3,7 +3,6 @@ packages:
   - wework
   - packages/*
 confirmModulesPurge: false
-enableGlobalVirtualStore: true
 allowBuilds:
   core-js: true
   dingtalk-workspace-cli: false

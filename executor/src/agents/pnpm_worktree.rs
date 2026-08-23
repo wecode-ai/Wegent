@@ -2,33 +2,44 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::env;
-
 use crate::{process::CommandSpec, protocol::ExecutionRequest};
 
 const PNPM_IGNORE_SCRIPTS_ENV: &str = "PNPM_CONFIG_IGNORE_SCRIPTS";
+const PNPM_GLOBAL_VIRTUAL_STORE_ENV: &str = "PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE";
+const WORKTREE_PNPM_ENV: [(&str, &str); 2] = [
+    (PNPM_IGNORE_SCRIPTS_ENV, "true"),
+    (PNPM_GLOBAL_VIRTUAL_STORE_ENV, "true"),
+];
 
-pub(super) fn configure_command(request: &ExecutionRequest, spec: CommandSpec) -> CommandSpec {
-    if should_skip_install_scripts(request, spec.envs().contains_key(PNPM_IGNORE_SCRIPTS_ENV)) {
-        spec.env(PNPM_IGNORE_SCRIPTS_ENV, "true")
-    } else {
-        spec
+pub(super) fn configure_command(request: &ExecutionRequest, mut spec: CommandSpec) -> CommandSpec {
+    if !is_git_worktree(request) {
+        return spec;
     }
+    for (key, value) in WORKTREE_PNPM_ENV {
+        if !spec.envs().contains_key(key) {
+            spec = spec.env(key, value);
+        }
+    }
+    spec
 }
 
-pub(super) fn codex_config_override(request: &ExecutionRequest) -> Option<String> {
-    should_skip_install_scripts(request, false).then(|| {
-        format!(
-            "shell_environment_policy.set.{PNPM_IGNORE_SCRIPTS_ENV}={}",
-            serde_json::to_string("true").expect("static string should serialize")
-        )
-    })
+pub(super) fn codex_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    if !is_git_worktree(request) {
+        return Vec::new();
+    }
+    WORKTREE_PNPM_ENV
+        .into_iter()
+        .map(|(key, value)| {
+            format!(
+                "shell_environment_policy.set.{key}={}",
+                serde_json::to_string(value).expect("static string should serialize")
+            )
+        })
+        .collect()
 }
 
-fn should_skip_install_scripts(request: &ExecutionRequest, command_overrides: bool) -> bool {
+fn is_git_worktree(request: &ExecutionRequest) -> bool {
     request.workspace_source.as_deref() == Some("git_worktree")
-        && !command_overrides
-        && env::var_os(PNPM_IGNORE_SCRIPTS_ENV).is_none_or(|value| value.is_empty())
 }
 
 #[cfg(test)]
@@ -36,7 +47,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn configures_git_worktrees_to_skip_implicit_pnpm_install_scripts() {
+    fn configures_git_worktree_pnpm_environment() {
         let request = ExecutionRequest {
             workspace_source: Some("git_worktree".to_owned()),
             ..ExecutionRequest::default()
@@ -49,8 +60,16 @@ mod tests {
             Some(&"true".to_owned())
         );
         assert_eq!(
-            codex_config_override(&request),
-            Some("shell_environment_policy.set.PNPM_CONFIG_IGNORE_SCRIPTS=\"true\"".to_owned())
+            configured.envs().get(PNPM_GLOBAL_VIRTUAL_STORE_ENV),
+            Some(&"true".to_owned())
+        );
+        assert_eq!(
+            codex_config_overrides(&request),
+            vec![
+                "shell_environment_policy.set.PNPM_CONFIG_IGNORE_SCRIPTS=\"true\"".to_owned(),
+                "shell_environment_policy.set.PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=\"true\""
+                    .to_owned(),
+            ]
         );
     }
 
@@ -59,6 +78,10 @@ mod tests {
         let configured = configure_command(&ExecutionRequest::default(), CommandSpec::new("codex"));
 
         assert!(!configured.envs().contains_key(PNPM_IGNORE_SCRIPTS_ENV));
+        assert!(!configured
+            .envs()
+            .contains_key(PNPM_GLOBAL_VIRTUAL_STORE_ENV));
+        assert!(codex_config_overrides(&ExecutionRequest::default()).is_empty());
     }
 
     #[test]
@@ -75,6 +98,10 @@ mod tests {
         assert_eq!(
             configured.envs().get(PNPM_IGNORE_SCRIPTS_ENV),
             Some(&"false".to_owned())
+        );
+        assert_eq!(
+            configured.envs().get(PNPM_GLOBAL_VIRTUAL_STORE_ENV),
+            Some(&"true".to_owned())
         );
     }
 }

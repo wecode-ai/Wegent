@@ -1461,7 +1461,7 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
 }
 
 #[test]
-fn codex_worktree_launch_config_skips_pnpm_install_scripts() {
+fn codex_worktree_launch_config_sets_pnpm_environment() {
     let request = ExecutionRequest {
         workspace_source: Some("git_worktree".to_owned()),
         ..ExecutionRequest::default()
@@ -1473,6 +1473,10 @@ fn codex_worktree_launch_config_skips_pnpm_install_scripts() {
 
     assert_eq!(
         params["config"]["shell_environment_policy.set.PNPM_CONFIG_IGNORE_SCRIPTS"],
+        "true"
+    );
+    assert_eq!(
+        params["config"]["shell_environment_policy.set.PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE"],
         "true"
     );
 }
