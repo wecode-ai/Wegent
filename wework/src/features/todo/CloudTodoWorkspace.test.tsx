@@ -105,6 +105,39 @@ vi.mock('./AiChatModal', () => ({
   ),
 }))
 
+vi.mock('./BackgroundTaskStarter', () => ({
+  BackgroundTaskStarter: ({
+    onAddressChange,
+    onTaskCreated,
+    prepareTask,
+  }: {
+    onAddressChange: (address: { deviceId: string; taskId: string }) => void
+    onTaskCreated?: (
+      address: { deviceId: string; taskId: string },
+      localProject: { id: number; name: string; tasks: [] } | null
+    ) => void | Promise<void>
+    prepareTask?: (
+      address: { deviceId: string; taskId: string },
+      localProject: { id: number; name: string; tasks: [] } | null
+    ) => void | Promise<void | (() => void | Promise<void>)>
+  }) => (
+    <button
+      type="button"
+      data-testid="mock-start-background-task"
+      onClick={() => {
+        const address = { deviceId: 'local-device', taskId: 'runtime-created' }
+        const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
+        void Promise.resolve(prepareTask?.(address, localProject)).then(() => {
+          onAddressChange(address)
+          return onTaskCreated?.(address, localProject)
+        })
+      }}
+    >
+      后台创建 Runtime 任务
+    </button>
+  ),
+}))
+
 const project = {
   id: 11,
   public_id: 'cloud-public-id',
@@ -1261,7 +1294,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'yes')
   })
 
-  it('continues a task in the background after sending it from pending', async () => {
+  it('starts a pending task in the background without mounting any panel', async () => {
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
       items: [{ ...item, status: 'pending' as const }],
@@ -1278,12 +1311,18 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
     await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
-    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'yes')
 
-    await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
-
-    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'no')
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-panel-stack')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-detail-dismiss-layer')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('mock-start-background-task'))
+
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-panel-stack')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-detail-dismiss-layer')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
 
@@ -3065,7 +3104,7 @@ describe('CloudTodoWorkspace', () => {
     })
   })
 
-  it('creates a queued task and opens its task composer', async () => {
+  it('creates a queued task and starts it without opening a task composer', async () => {
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [item] }))
     workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_projectId, values) => ({
@@ -3099,7 +3138,10 @@ describe('CloudTodoWorkspace', () => {
         parent_id: null,
       })
     )
-    expect(screen.getByTestId('ai-chat-modal')).toBeInTheDocument()
+    expect(screen.getByTestId('mock-start-background-task')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-panel-stack')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-detail-dismiss-layer')).not.toBeInTheDocument()
   })
 
   it('binds a human workflow task without inventing an automation queue state', async () => {
