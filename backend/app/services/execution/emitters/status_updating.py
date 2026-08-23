@@ -26,6 +26,7 @@ from app.services.chat.storage.session import StreamContentType
 from app.services.chat.trigger.lifecycle import (
     collect_completed_result,
     persist_completed_result,
+    persist_result_without_status,
 )
 from app.services.execution.interactive_form_render import (
     build_interactive_form_render_payload,
@@ -56,6 +57,14 @@ STREAM_TERMINAL_EVENT_TYPES = {
     EventType.ERROR.value,
     EventType.CANCELLED.value,
 }
+
+
+def _workflow_video_job_owns_status(result: Optional[Dict[str, Any]]) -> bool:
+    """Return whether an external workflow owns the subtask terminal status."""
+    if not isinstance(result, dict):
+        return False
+    video_job = result.get("video_job")
+    return isinstance(video_job, dict) and bool(video_job.get("workflow_type"))
 
 
 @dataclass
@@ -102,6 +111,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         self._executor_name = executor_name
         self._executor_namespace = executor_namespace
         self._status_updated = False
+        self._terminal_event_deferred = False
         self._stream_storage_buffer: list[_BufferedStreamContent] = []
         self._stream_storage_lock = asyncio.Lock()
         self._stream_storage_flush_task: Optional[asyncio.Task[None]] = None
@@ -369,6 +379,9 @@ class StatusUpdatingEmitter(ResultEmitter):
                 if final_result is not None:
                     event.result = final_result
 
+            if self._terminal_event_deferred:
+                return
+
         # Forward event to wrapped emitter
         await self._wrapped.emit(event)
 
@@ -410,6 +423,8 @@ class StatusUpdatingEmitter(ResultEmitter):
         await self._cancel_pending_storage_flush_task()
         if not self._status_updated:
             await self._update_status_completed(result)
+        if self._terminal_event_deferred:
+            return
         await self._wrapped.emit_done(task_id, subtask_id, result, **kwargs)
 
     async def emit_error(
@@ -425,6 +440,8 @@ class StatusUpdatingEmitter(ResultEmitter):
         if not self._status_updated:
             error_code = kwargs.get("error_code")
             await self._update_status_failed(error, error_code=error_code)
+        if self._terminal_event_deferred:
+            return
         await self._wrapped.emit_error(task_id, subtask_id, error, **kwargs)
 
     async def emit_cancelled(
@@ -504,6 +521,17 @@ class StatusUpdatingEmitter(ResultEmitter):
                 status="COMPLETED",
                 result=result,
             )
+            if _workflow_video_job_owns_status(final_result):
+                await persist_result_without_status(self._subtask_id, final_result)
+                self._status_updated = True
+                self._terminal_event_deferred = True
+                logger.info(
+                    "[StatusUpdatingEmitter] Deferred terminal status to external "
+                    "video workflow: task_id=%s subtask_id=%s",
+                    self._task_id,
+                    self._subtask_id,
+                )
+                return final_result
             await persist_completed_result(
                 subtask_id=self._subtask_id,
                 task_id=self._task_id,
@@ -549,6 +577,17 @@ class StatusUpdatingEmitter(ResultEmitter):
                 error_message=error_message,
                 error_code=error_code,
             )
+            if _workflow_video_job_owns_status(result):
+                await persist_result_without_status(self._subtask_id, result)
+                self._status_updated = True
+                self._terminal_event_deferred = True
+                logger.info(
+                    "[StatusUpdatingEmitter] Deferred failed status to external "
+                    "video workflow: task_id=%s subtask_id=%s",
+                    self._task_id,
+                    self._subtask_id,
+                )
+                return result
             await persist_completed_result(
                 subtask_id=self._subtask_id,
                 task_id=self._task_id,

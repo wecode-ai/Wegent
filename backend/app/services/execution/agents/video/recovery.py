@@ -138,15 +138,24 @@ async def _do_recover_video_jobs() -> int:
             # Extract recovery data
             job_id = video_job.get("job_id")
             provider = video_job.get("provider")
+            workflow_type = video_job.get("workflow_type")
+            query_url = video_job.get("query_url")
             video_block_id = video_job.get("video_block_id")
             poll_count = video_job.get("poll_count", 0)
             progress = video_job.get("progress", 0)
             intent_result = video_job.get("intent_result")
 
-            if not job_id or not provider or not video_block_id:
+            has_provider_context = bool(provider)
+            has_workflow_context = bool(workflow_type and query_url)
+            if (
+                not job_id
+                or not video_block_id
+                or not (has_provider_context or has_workflow_context)
+            ):
                 logger.warning(
                     f"[video_recovery] Missing required fields for subtask {subtask.id}: "
-                    f"job_id={job_id}, provider={provider}, video_block_id={video_block_id}"
+                    f"job_id={job_id}, provider={provider}, "
+                    f"workflow_type={workflow_type}, video_block_id={video_block_id}"
                 )
                 continue
 
@@ -158,7 +167,8 @@ async def _do_recover_video_jobs() -> int:
             logger.info(
                 f"[video_recovery] Recovering video job: "
                 f"subtask_id={subtask.id}, task_id={task_id}, job_id={job_id}, "
-                f"provider={provider}, poll_count={poll_count}"
+                f"provider={provider}, workflow_type={workflow_type}, "
+                f"poll_count={poll_count}"
             )
 
             # Re-queue Celery task with fixed task_id to prevent duplicates
@@ -169,13 +179,15 @@ async def _do_recover_video_jobs() -> int:
                 task_id=task_id,
                 user_id=user_id,
                 job_id=job_id,
-                provider_protocol=provider,
+                provider_protocol=provider or "",
                 video_block_id=video_block_id,
                 model_config=model_config,
                 message_id=subtask.message_id,
                 intent_result=intent_result,
                 poll_count=poll_count,
                 last_progress=progress,
+                workflow_type=workflow_type,
+                workflow_context=({"query_url": query_url} if workflow_type else None),
             )
 
             recovered_count += 1

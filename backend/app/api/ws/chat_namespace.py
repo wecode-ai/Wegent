@@ -105,6 +105,8 @@ def _get_retry_generate_params(user_subtask: Subtask) -> Optional[GenerateParams
     video_config = result.get("video_config")
     if isinstance(video_config, dict):
         return GenerateParams(
+            model=video_config.get("model"),
+            model_display_name=video_config.get("model_display_name"),
             resolution=video_config.get("resolution"),
             ratio=video_config.get("ratio"),
             duration=video_config.get("duration"),
@@ -880,6 +882,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "resolution": payload.generate_params.resolution,
                     "ratio": payload.generate_params.ratio,
                     "duration": payload.generate_params.duration,
+                    "model": payload.generate_params.model,
+                    "model_display_name": payload.generate_params.model_display_name,
                     "generation_mode_id": payload.generate_params.generation_mode_id,
                     "size": payload.generate_params.size,
                 }

@@ -93,6 +93,7 @@ export interface Message {
     /** Video generation config (stored in user message subtask for display) */
     video_config?: {
       model?: string
+      model_display_name?: string
       resolution?: string
       ratio?: string
       duration?: number

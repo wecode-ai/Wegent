@@ -114,6 +114,7 @@ export interface MobileChatInputControlsProps {
   selectedVideoModel?: Model | null
   onVideoModelChange?: (model: Model) => void
   isVideoModelsLoading?: boolean
+  showVideoControlsInChat?: boolean
 
   // State flags
   isStreaming: boolean
@@ -200,6 +201,7 @@ export function MobileChatInputControls({
   selectedVideoModel,
   onVideoModelChange,
   isVideoModelsLoading = false,
+  showVideoControlsInChat = false,
   isStreaming,
   isStopping,
   hasMessages,
@@ -232,7 +234,8 @@ export function MobileChatInputControls({
   const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
   const [moreMenuStyle, setMoreMenuStyle] = useState<React.CSSProperties>({})
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
-  const isGenerationMode = taskType === 'image' || taskType === 'video'
+  const isVideoMode = taskType === 'video' || showVideoControlsInChat
+  const isGenerationMode = taskType === 'image' || isVideoMode
   const showAttachmentAction = isGenerationMode
     ? selectedVideoGenerationMode !== 'first_last_frame'
     : supportsAttachments(selectedTeam)
@@ -557,7 +560,7 @@ export function MobileChatInputControls({
             disabled={isStreaming}
           />
         )}
-        {!isVoiceMode && taskType === 'video' && onVideoModelChange && (
+        {!isVoiceMode && isVideoMode && onVideoModelChange && (
           <div className="flex-1 min-w-0 overflow-hidden">
             <ModelSelector
               selectedModel={selectedVideoModel ?? null}

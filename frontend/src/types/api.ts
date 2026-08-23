@@ -197,6 +197,10 @@ export interface Team {
   is_mix_team?: boolean // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
   bind_mode?: TaskType[] // Allowed modes for this team
+  mode_spec?: {
+    allowedModelCategories: string[]
+    workflowManagedVideo?: boolean
+  } | null
   icon?: string // Icon ID from preset icon library
   display_config?: TeamDisplayConfig
   quick_phrases?: string[] // Launcher phrases that prefill the chat input

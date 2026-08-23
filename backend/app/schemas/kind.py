@@ -534,12 +534,29 @@ class TeamInputPlaceholder(LocalizedInputPlaceholder):
     desktop: Optional[LocalizedInputPlaceholder] = None
 
 
+class ModeSpec(BaseModel):
+    """Media model selectors exposed without replacing the Bot runtime model."""
+
+    allowedModelCategories: List[ModelCategoryType] = Field(
+        default_factory=list,
+        description="Model categories available for user selection.",
+    )
+    workflowManagedVideo: bool = Field(
+        default=False,
+        description="Whether a Skill workflow owns video generation parameters.",
+    )
+
+
 class TeamSpec(QuickPhraseMixin):
     """Team specification"""
 
     members: List[TeamMember]
     collaborationModel: str  # solo、pipeline、route、coordinate、collaborate
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    modeSpec: Optional[ModeSpec] = Field(
+        default=None,
+        description="Optional media selectors exposed while retaining chat execution.",
+    )
     description: Optional[str] = None  # Team description
     icon: Optional[str] = None  # Icon ID from preset icon library
     displayConfig: TeamDisplayConfig = Field(default_factory=TeamDisplayConfig)

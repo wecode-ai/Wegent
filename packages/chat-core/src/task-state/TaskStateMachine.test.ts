@@ -20,6 +20,44 @@ function createRuntimeActions(overrides: Partial<TaskStateMachineDeps> = {}): Ta
 }
 
 describe('TaskStateMachine', () => {
+  it('applies card progress updates after the text stream is done', () => {
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+    machine.handleChatStart(7, 'Chat', 1)
+    machine.handleChatChunk(7, '', {
+      blocks: [
+        {
+          id: 'card-1',
+          type: 'card',
+          status: 'pending',
+          card_id: 'card-1',
+          card_type: 'video_director_generation',
+          card_status: 'pending',
+          card_data: {},
+          card_preview_data: { progress: 10 },
+          card_error: null,
+        },
+      ],
+    })
+    machine.handleChatDone(7, '')
+
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      status: 'streaming',
+      card_status: 'partial_ready',
+      card_preview_data: { progress: 65 },
+    })
+
+    const message = machine.getState().messages.get('ai-7')
+    const card = message?.result?.blocks?.[0]
+    expect(message?.status).toBe('completed')
+    expect(card).toMatchObject({
+      id: 'card-1',
+      type: 'card',
+      card_status: 'partial_ready',
+      card_preview_data: { progress: 65 },
+    })
+  })
+
   it('stores reasoning chunks as chronological thinking blocks', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: vi.fn(),

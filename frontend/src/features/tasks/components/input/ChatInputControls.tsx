@@ -167,6 +167,7 @@ export interface ChatInputControlsProps {
   selectedVideoGenerationMode?: string
   onVideoGenerationModeChange?: (modeId: string) => void
   materialAccept?: string
+  showVideoControlsInChat?: boolean
 
   // Image mode props (only used when taskType === 'image')
   selectedImageModel?: Model | null
@@ -288,6 +289,7 @@ export function ChatInputControls({
   selectedVideoGenerationMode,
   onVideoGenerationModeChange,
   materialAccept,
+  showVideoControlsInChat = false,
   // Image mode props
   selectedImageModel,
   onImageModelChange,
@@ -304,7 +306,7 @@ export function ChatInputControls({
 }: ChatInputControlsProps) {
   const { t } = useTranslation('chat')
   // Check if we're in video or image mode
-  const isVideoMode = taskType === 'video'
+  const isVideoMode = taskType === 'video' || showVideoControlsInChat
   const isImageMode = taskType === 'image'
   // Check if we're in generation mode (video or image)
   const isGenerationMode = isVideoMode || isImageMode
@@ -479,6 +481,7 @@ export function ChatInputControls({
         selectedVideoModel={selectedVideoModel}
         onVideoModelChange={onVideoModelChange}
         isVideoModelsLoading={isVideoModelsLoading}
+        showVideoControlsInChat={showVideoControlsInChat}
       />
     )
   }
@@ -521,7 +524,7 @@ export function ChatInputControls({
         {/* Video Mode Controls - show when taskType is 'video' */}
         {isVideoMode && (
           <>
-            {onVideoGenerationModeChange && (
+            {taskType === 'video' && onVideoGenerationModeChange && (
               <VideoGenerationModeSelector
                 modes={videoGenerationModes}
                 value={selectedVideoGenerationMode}
@@ -544,7 +547,7 @@ export function ChatInputControls({
             )}
 
             {/* Unified Video Settings Popover (ratio + duration + resolution) */}
-            {onResolutionChange && onRatioChange && onDurationChange && (
+            {taskType === 'video' && onResolutionChange && onRatioChange && onDurationChange && (
               <VideoSettingsPopover
                 selectedRatio={selectedRatio}
                 onRatioChange={onRatioChange}

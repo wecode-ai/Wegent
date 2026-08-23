@@ -1947,6 +1947,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Get bind_mode from spec (directly, not from workflow)
         bind_mode = team_crd.spec.bind_mode
+        mode_spec = (
+            team_crd.spec.modeSpec.model_dump(mode="json", exclude_none=True)
+            if team_crd.spec.modeSpec
+            else None
+        )
 
         # Derive recommended_mode from bind_mode
         # 'both' if both modes, 'code' if only code, 'chat' otherwise
@@ -1995,6 +2000,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "bots": bots,
             "workflow": workflow,
             "bind_mode": bind_mode,
+            "mode_spec": mode_spec,
             "recommended_mode": recommended_mode,  # Add recommended_mode field
             "is_mix_team": is_mix_team,
             "is_active": team.is_active,
@@ -2162,6 +2168,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Get bind_mode from spec (directly, not from workflow)
         bind_mode = team_crd.spec.bind_mode
+        mode_spec = (
+            team_crd.spec.modeSpec.model_dump(mode="json", exclude_none=True)
+            if team_crd.spec.modeSpec
+            else None
+        )
 
         # Derive recommended_mode from bind_mode
         # 'both' if both modes, 'code' if only code, 'chat' otherwise
@@ -2204,6 +2215,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "bots": bots,
             "workflow": workflow,
             "bind_mode": bind_mode,
+            "mode_spec": mode_spec,
             "recommended_mode": recommended_mode,  # Add recommended_mode field
             "is_mix_team": is_mix_team,
             "is_active": team.is_active,

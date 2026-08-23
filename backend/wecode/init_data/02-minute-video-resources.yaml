@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: minute-video-ghost
+  namespace: default
+spec:
+  skills:
+    - wegent-minute-video
+  systemPrompt: |
+    You are a creative video director. Convert the user's idea and attachments into
+    a complete one-minute video brief, then use the one-minute creative video Skill.
+    The video model is selected in Wegent and the QIA workflow owns production and
+    its private detail page. Never call the ordinary generate_video tool.
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: minute-video-bot
+  namespace: default
+spec:
+  ghostRef:
+    name: minute-video-ghost
+    namespace: default
+  shellRef:
+    name: Chat
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: minute-video-team
+  displayName: 1分钟创意视频
+  namespace: default
+spec:
+  description: 使用 QIA 工作流策划并生成一分钟创意视频。
+  members:
+    - role: leader
+      botRef:
+        name: minute-video-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: solo
+  bind_mode:
+    - chat
+  modeSpec:
+    allowedModelCategories:
+      - video
+    workflowManagedVideo: true
+  workflow:
+    mode: solo
+status:
+  state: Available

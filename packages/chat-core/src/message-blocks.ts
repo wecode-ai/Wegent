@@ -149,6 +149,16 @@ export interface SubscriptionPreviewBlockType extends BaseBlock {
   created_at: string;
 }
 
+export interface CardBlock extends BaseBlock {
+  type: "card";
+  card_id: string;
+  card_type: string;
+  card_status: "pending" | "partial_ready" | "populated" | "error" | "expired";
+  card_data: Record<string, unknown>;
+  card_preview_data: Record<string, unknown>;
+  card_error: string | null;
+}
+
 export type MessageBlock =
   | TextBlock
   | ToolBlock
@@ -159,7 +169,8 @@ export type MessageBlock =
   | VideoBlock
   | ImageBlock
   | PromptOptimizationBlock
-  | SubscriptionPreviewBlockType;
+  | SubscriptionPreviewBlockType
+  | CardBlock;
 
 /** Build the display tree encoded by parent_tool_use_id. */
 export function nestMessageBlocks(blocks: MessageBlock[]): MessageBlock[] {

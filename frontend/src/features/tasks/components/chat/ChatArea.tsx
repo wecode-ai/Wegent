@@ -109,6 +109,11 @@ import {
   isVideoExtension,
 } from '@/apis/attachments'
 import type { AttachmentTypeLimits } from '@/hooks/useMultiAttachment'
+import {
+  resolveBotRuntimeModel,
+  teamUsesModeSpecCategory,
+  teamUsesWorkflowManagedVideo,
+} from '@/features/tasks/utils/teamModeSpec'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -366,14 +371,32 @@ function ChatAreaContent({
     maxAttachmentsByType: mediaAttachmentLimits.maxByType,
     validateAttachmentFile: validateAttachmentFileProxy,
   })
+  const isModeSpecVideo =
+    taskType === 'chat' && teamUsesModeSpecCategory(chatState.selectedTeam, 'video')
+  const isWorkflowManagedVideo =
+    isModeSpecVideo && teamUsesWorkflowManagedVideo(chatState.selectedTeam)
+  const usesVideoModel = taskType === 'video' || isModeSpecVideo
+  const taskVideoModelId = useMemo(() => {
+    const messages = taskState?.messages
+    if (!messages) return null
+    const userMessages = Array.from(messages.values()).filter(message => message.type === 'user')
+    for (let index = userMessages.length - 1; index >= 0; index -= 1) {
+      const result = userMessages[index].result as { video_config?: { model?: string } } | undefined
+      if (result?.video_config?.model) {
+        return result.video_config.model
+      }
+    }
+    return null
+  }, [taskState?.messages])
 
-  // Video model selection state - only enabled for video mode
+  // A modeSpec chat team selects a video model without replacing its Bot LLM.
   // Uses unified useModelSelection hook with modelCategoryType='video'
   const videoModelSelection = useModelSelection({
     teamId: chatState.selectedTeam?.id ?? null,
     taskId: effectiveTaskId ?? null,
+    taskModelId: taskVideoModelId,
     selectedTeam: chatState.selectedTeam,
-    disabled: taskType !== 'video',
+    disabled: !usesVideoModel,
     modelCategoryType: 'video',
   })
 
@@ -1300,9 +1323,10 @@ function ChatAreaContent({
   const effectiveSelectedModel = useMemo(() => {
     if (effectiveTaskType === 'video') return videoModelSelection.selectedModel
     if (effectiveTaskType === 'image') return imageModelSelection.selectedModel
-    return chatState.selectedModel
+    return resolveBotRuntimeModel(chatState.selectedTeam, chatState.selectedModel)
   }, [
     effectiveTaskType,
+    chatState.selectedTeam,
     videoModelSelection.selectedModel,
     imageModelSelection.selectedModel,
     chatState.selectedModel,
@@ -1311,12 +1335,19 @@ function ChatAreaContent({
   // Build generate params for video/image generation tasks
   // Include model name for display in user message bubble
   const generateParams = useMemo(() => {
+    if (isModeSpecVideo) {
+      return {
+        model: videoModelSelection.selectedModel?.name,
+        model_display_name: videoModelSelection.selectedModel?.displayName,
+      }
+    }
     if (effectiveTaskType === 'video') {
       return {
         resolution: selectedResolution,
         ratio: selectedRatio,
         duration: selectedDuration,
         model: videoModelSelection.selectedModel?.name,
+        model_display_name: videoModelSelection.selectedModel?.displayName,
         generation_mode_id: selectedVideoGenerationMode,
       }
     }
@@ -1329,12 +1360,14 @@ function ChatAreaContent({
     return undefined
   }, [
     effectiveTaskType,
+    isModeSpecVideo,
     selectedResolution,
     selectedRatio,
     selectedDuration,
     selectedVideoGenerationMode,
     selectedImageSize,
     videoModelSelection.selectedModel?.name,
+    videoModelSelection.selectedModel?.displayName,
     imageModelSelection.selectedModel?.name,
   ])
 
@@ -1462,7 +1495,7 @@ function ChatAreaContent({
     // OpenClaw devices handle model on device side, no model selection required
     if (hideSelectors) return false
     // Video mode uses video model selection, not regular model selection
-    if (effectiveTaskType === 'video') {
+    if (effectiveTaskType === 'video' || isModeSpecVideo) {
       // In video mode, we need a video model selected
       return !videoModelSelection.selectedModel
     }
@@ -1479,6 +1512,7 @@ function ChatAreaContent({
     chatState.selectedTeam,
     chatState.selectedModel,
     effectiveTaskType,
+    isModeSpecVideo,
     hideSelectors,
     videoModelSelection.selectedModel,
     imageModelSelection.selectedModel,
@@ -1505,6 +1539,7 @@ function ChatAreaContent({
     if (!chatState.isAttachmentReadyToSend) {
       return t('generate.material_errors.attachment_uploading')
     }
+    if (isWorkflowManagedVideo) return null
     if (effectiveTaskType !== 'video') return null
 
     if (
@@ -1534,6 +1569,7 @@ function ChatAreaContent({
     chatState.isAttachmentReadyToSend,
     disabledReason,
     effectiveTaskType,
+    isWorkflowManagedVideo,
     generationAttachmentCounts.image,
     generationAttachmentCounts.material,
     isModelSelectionRequired,
@@ -2508,6 +2544,7 @@ function ChatAreaContent({
     selectedVideoModel: videoModelSelection.selectedModel,
     onVideoModelChange: handleVideoModelChange,
     isVideoModelsLoading: videoModelSelection.isLoading,
+    showVideoControlsInChat: isModeSpecVideo,
     selectedResolution,
     onResolutionChange: setSelectedResolution,
     availableResolutions,
@@ -2521,7 +2558,7 @@ function ChatAreaContent({
     availableDurations,
     videoGenerationModes,
     selectedVideoGenerationMode,
-    onVideoGenerationModeChange: handleVideoGenerationModeChange,
+    onVideoGenerationModeChange: isModeSpecVideo ? undefined : handleVideoGenerationModeChange,
     materialAccept,
     // Image mode props - only passed when taskType is 'image'
     // Note: imageModels is no longer passed - ModelSelector fetches models internally via useModelSelection
@@ -2616,7 +2653,9 @@ function ChatAreaContent({
               onSendMessageWithModel={handleSendMessageWithModelFromChild}
               isGroupChat={selectedTaskDetail?.is_group_chat || false}
               onRetry={handleRetryFromMessagesArea}
-              onRetryWithModel={handleRetryWithModelFromMessagesArea}
+              onRetryWithModel={
+                isWorkflowManagedVideo ? undefined : handleRetryWithModelFromMessagesArea
+              }
               enableCorrectionMode={chatState.enableCorrectionMode}
               correctionModelId={chatState.correctionModelId}
               enableCorrectionWebSearch={chatState.enableCorrectionWebSearch}

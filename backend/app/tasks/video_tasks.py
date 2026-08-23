@@ -72,6 +72,8 @@ def dispatch_video_polling_task(
     intent_result: Optional[Dict[str, Any]] = None,
     poll_count: int = 0,
     last_progress: int = 0,
+    workflow_type: Optional[str] = None,
+    workflow_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Dispatch a video polling Celery task with a fixed task_id.
@@ -119,6 +121,8 @@ def dispatch_video_polling_task(
             "intent_result": intent_result,
             "poll_count": poll_count,
             "last_progress": last_progress,
+            "workflow_type": workflow_type,
+            "workflow_context": workflow_context,
             "request_id": request_id,
         },
         task_id=celery_task_id,
@@ -165,6 +169,7 @@ def _check_cancellation_sync(subtask_id: int) -> bool:
 def _update_subtask_video_job_sync(
     subtask_id: int,
     video_job_data: Dict[str, Any],
+    block: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Update subtask.result.video_job in database.
@@ -181,7 +186,7 @@ def _update_subtask_video_job_sync(
         if not subtask:
             raise ValueError(f"Subtask {subtask_id} not found")
 
-        result = _merge_video_job_result(subtask.result, video_job_data)
+        result = _merge_video_job_result(subtask.result, video_job_data, block)
         subtask_store.update_result(db, subtask=subtask, result=result)
         db.commit()
 
@@ -197,6 +202,7 @@ def _update_subtask_video_job_sync(
 def _merge_video_job_result(
     current_result: Optional[Dict[str, Any]],
     video_job_data: Dict[str, Any],
+    block: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Persist recovery metadata and a refresh-safe video placeholder block."""
     result = dict(current_result or {})
@@ -221,6 +227,14 @@ def _merge_video_job_result(
         ),
         None,
     )
+    if block is not None:
+        if existing_block is None:
+            blocks.append(block)
+        else:
+            blocks[blocks.index(existing_block)] = block
+        result["blocks"] = blocks
+        return result
+
     placeholder = {
         "id": block_id,
         "type": "video",
@@ -249,9 +263,10 @@ def _merge_video_job_result(
 def update_subtask_video_job(
     subtask_id: int,
     video_job_data: Dict[str, Any],
+    block: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Persist video polling context for recovery."""
-    _update_subtask_video_job_sync(subtask_id, video_job_data)
+    _update_subtask_video_job_sync(subtask_id, video_job_data, block)
 
 
 def fail_video_generation_start(subtask_id: int, error: str) -> None:
@@ -347,6 +362,8 @@ def poll_video_job(
     intent_result: Optional[Dict[str, Any]] = None,
     poll_count: int = 0,
     last_progress: int = 0,
+    workflow_type: Optional[str] = None,
+    workflow_context: Optional[Dict[str, Any]] = None,
     request_id: Optional[str] = None,
 ):
     """
@@ -394,6 +411,25 @@ def poll_video_job(
         f"[video_tasks] Polling job: job_id={job_id}, subtask_id={subtask_id}, "
         f"poll_count={poll_count}/{MAX_POLL_COUNT}"
     )
+
+    if workflow_type:
+        return _poll_video_workflow(
+            celery_task=self,
+            subtask_id=subtask_id,
+            task_id=task_id,
+            user_id=user_id,
+            job_id=job_id,
+            provider_protocol=provider_protocol,
+            video_block_id=video_block_id,
+            model_config=model_config,
+            message_id=message_id,
+            intent_result=intent_result,
+            poll_count=poll_count,
+            last_progress=last_progress,
+            workflow_type=workflow_type,
+            workflow_context=workflow_context or {},
+            request_id=request_id,
+        )
 
     # Check cancellation
     if _check_cancellation_sync(subtask_id):
@@ -524,6 +560,8 @@ def poll_video_job(
                 "intent_result": intent_result,
                 "poll_count": poll_count,
                 "last_progress": current_progress,
+                "workflow_type": workflow_type,
+                "workflow_context": workflow_context,
                 "request_id": request_id,
             },
         )
@@ -567,6 +605,182 @@ def poll_video_job(
         _update_subtask_status_sync(subtask_id, "FAILED", error=error_message)
         _update_task_status_after_subtask(task_id)
 
+        raise Ignore()
+
+
+def _poll_video_workflow(
+    *,
+    celery_task,
+    subtask_id: int,
+    task_id: int,
+    user_id: int,
+    job_id: str,
+    provider_protocol: str,
+    video_block_id: str,
+    model_config: Dict[str, Any],
+    message_id: Optional[int],
+    intent_result: Optional[Dict[str, Any]],
+    poll_count: int,
+    last_progress: int,
+    workflow_type: str,
+    workflow_context: Dict[str, Any],
+    request_id: str,
+):
+    """Poll an external workflow through the shared durable video task."""
+    from app.services.execution.agents.video.workflow_service import (
+        build_video_director_card_block,
+    )
+    from app.services.execution.agents.video.workflows import (
+        get_video_workflow_client,
+    )
+    from app.services.execution.agents.video.workflows.base import (
+        VideoWorkflowSnapshot,
+    )
+    from app.tasks.video_websocket import (
+        emit_card_cancelled,
+        emit_card_done,
+        emit_card_error,
+        emit_card_updated,
+    )
+    from shared.utils.error_classifier import format_error_message
+
+    query_url = workflow_context.get("query_url")
+
+    def persist_snapshot(
+        snapshot: VideoWorkflowSnapshot,
+        job_status: str = "polling",
+    ) -> Dict[str, Any]:
+        block = build_video_director_card_block(
+            block_id=video_block_id,
+            snapshot=snapshot,
+        )
+        video_job_data = {
+            "job_id": job_id,
+            "workflow_type": workflow_type,
+            "query_url": query_url,
+            "status": job_status,
+            "progress": snapshot.progress,
+            "video_block_id": video_block_id,
+            "started_at": None,
+            "last_poll_at": datetime.now(timezone.utc).isoformat(),
+            "poll_count": poll_count,
+        }
+        _update_subtask_video_job_sync(subtask_id, video_job_data, block)
+        return block
+
+    def fail(error_message: str, progress: int) -> None:
+        snapshot = VideoWorkflowSnapshot(
+            status="failed",
+            progress=progress,
+            error=error_message,
+        )
+        block = persist_snapshot(snapshot, "failed")
+        emit_card_error(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            message_id=message_id,
+            block=block,
+        )
+        _update_subtask_status_sync(subtask_id, "FAILED", error=error_message)
+        _update_task_status_after_subtask(task_id)
+
+    if _check_cancellation_sync(subtask_id):
+        snapshot = VideoWorkflowSnapshot(
+            status="failed",
+            progress=last_progress,
+            error="Video generation cancelled",
+        )
+        block = persist_snapshot(snapshot, "cancelled")
+        emit_card_cancelled(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            message_id=message_id,
+            block=block,
+        )
+        _update_subtask_status_sync(subtask_id, "CANCELLED")
+        _update_task_status_after_subtask(task_id)
+        raise Ignore()
+
+    try:
+        workflow = get_video_workflow_client(workflow_type)
+        snapshot = _run_async(workflow.get_status(query_url))
+        block = persist_snapshot(
+            snapshot,
+            "completed" if snapshot.is_completed else "polling",
+        )
+
+        if snapshot.is_completed:
+            emit_card_done(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                block=block,
+            )
+            _update_subtask_status_sync(subtask_id, "COMPLETED")
+            _update_task_status_after_subtask(task_id)
+            return {"status": "completed", "job_id": job_id}
+
+        if snapshot.is_failed:
+            fail(snapshot.error or "Video generation failed", snapshot.progress)
+            raise Ignore()
+
+        emit_card_updated(task_id=task_id, subtask_id=subtask_id, block=block)
+        if poll_count >= MAX_POLL_COUNT:
+            fail("Video generation timed out", snapshot.progress)
+            raise Ignore()
+
+        raise celery_task.retry(
+            countdown=POLL_INTERVAL_SECONDS,
+            kwargs={
+                "subtask_id": subtask_id,
+                "task_id": task_id,
+                "user_id": user_id,
+                "job_id": job_id,
+                "provider_protocol": provider_protocol,
+                "video_block_id": video_block_id,
+                "model_config": model_config,
+                "message_id": message_id,
+                "intent_result": intent_result,
+                "poll_count": poll_count,
+                "last_progress": snapshot.progress,
+                "workflow_type": workflow_type,
+                "workflow_context": workflow_context,
+                "request_id": request_id,
+            },
+        )
+    except Ignore:
+        raise
+    except Retry:
+        raise
+    except celery_task.MaxRetriesExceededError:
+        fail(
+            "Video generation timed out after maximum retries",
+            last_progress,
+        )
+        raise Ignore()
+    except Exception as exc:
+        error_message = format_error_message(exc)
+        if poll_count < MAX_POLL_COUNT:
+            raise celery_task.retry(
+                countdown=POLL_INTERVAL_SECONDS,
+                kwargs={
+                    "subtask_id": subtask_id,
+                    "task_id": task_id,
+                    "user_id": user_id,
+                    "job_id": job_id,
+                    "provider_protocol": provider_protocol,
+                    "video_block_id": video_block_id,
+                    "model_config": model_config,
+                    "message_id": message_id,
+                    "intent_result": intent_result,
+                    "poll_count": poll_count,
+                    "last_progress": last_progress,
+                    "workflow_type": workflow_type,
+                    "workflow_context": workflow_context,
+                    "request_id": request_id,
+                },
+            )
+        fail(error_message, last_progress)
         raise Ignore()
 
 

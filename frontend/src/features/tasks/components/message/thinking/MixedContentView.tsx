@@ -34,6 +34,7 @@ import {
 } from '../../subscription/SubscriptionPreviewCard'
 import { blockToToolPair } from './utils/blockToToolPair'
 import { resolveGeneratedImageDisplayLayout } from '@/features/tasks/utils/imageDisplaySize'
+import { CardRenderer } from '@/features/cards/CardRenderer'
 // Import to register prompt optimization block renderer
 import '@/features/prompt-optimization/block-renderer'
 
@@ -315,6 +316,12 @@ const MixedContentView = memo(function MixedContentView({
               data: block as unknown as SubscriptionPreviewBlock,
               blockId: block.id,
               status: block.status,
+            }
+          } else if (block.type === 'card') {
+            return {
+              type: 'card' as const,
+              data: block,
+              blockId: block.id,
             }
           } else if (block.type === 'guidance') {
             return {
@@ -723,6 +730,8 @@ const MixedContentView = memo(function MixedContentView({
               <SubscriptionPreviewCard data={item.data} />
             </div>
           )
+        } else if (item.type === 'card') {
+          return <CardRenderer key={item.blockId} block={item.data} />
         } else if (item.type === 'guidance') {
           return <GuidanceBlock key={item.blockId} block={item.data} />
         } else if (item.type === 'subagent') {

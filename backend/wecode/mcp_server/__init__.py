@@ -10,3 +10,5 @@ Imported as a side effect during app startup via ``wecode/api/__init__.py``.
 from wecode.mcp_server.installer import install
 
 install()
+
+import wecode.mcp_server.minute_video  # noqa: E402,F401

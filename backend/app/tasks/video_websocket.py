@@ -45,6 +45,110 @@ def emit_chat_event_from_celery(
         )
 
 
+def emit_card_created(
+    task_id: int,
+    subtask_id: int,
+    block: dict[str, Any],
+) -> None:
+    """Emit a public card block created by a workflow."""
+    emit_chat_event_from_celery(
+        "chat:block_created",
+        {
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "block": block,
+        },
+        task_id,
+    )
+
+
+def emit_card_updated(
+    task_id: int,
+    subtask_id: int,
+    block: dict[str, Any],
+) -> None:
+    """Emit a complete card update through the generic block protocol."""
+    emit_chat_event_from_celery(
+        "chat:block_updated",
+        {
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "block_id": block["id"],
+            "status": block["status"],
+            "card_id": block["card_id"],
+            "card_type": block["card_type"],
+            "card_status": block["card_status"],
+            "card_data": block["card_data"],
+            "card_preview_data": block["card_preview_data"],
+            "card_error": block["card_error"],
+        },
+        task_id,
+    )
+
+
+def emit_card_done(
+    task_id: int,
+    subtask_id: int,
+    message_id: Optional[int],
+    block: dict[str, Any],
+) -> None:
+    """Emit a terminal card result."""
+    emit_card_updated(task_id=task_id, subtask_id=subtask_id, block=block)
+    emit_chat_event_from_celery(
+        "chat:done",
+        {
+            "type": "done",
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "message_id": message_id,
+            "offset": 0,
+            "result": {"value": "", "blocks": [block]},
+        },
+        task_id,
+    )
+
+
+def emit_card_error(
+    task_id: int,
+    subtask_id: int,
+    message_id: Optional[int],
+    block: dict[str, Any],
+) -> None:
+    """Emit a terminal card error."""
+    emit_card_updated(task_id=task_id, subtask_id=subtask_id, block=block)
+    emit_chat_event_from_celery(
+        "chat:error",
+        {
+            "type": "error",
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "message_id": message_id,
+            "error": block.get("card_error") or "Video workflow failed",
+        },
+        task_id,
+    )
+
+
+def emit_card_cancelled(
+    task_id: int,
+    subtask_id: int,
+    message_id: Optional[int],
+    block: dict[str, Any],
+) -> None:
+    """Emit a terminal card cancellation."""
+    emit_card_updated(task_id=task_id, subtask_id=subtask_id, block=block)
+    emit_chat_event_from_celery(
+        "chat:cancelled",
+        {
+            "type": "cancelled",
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "message_id": message_id,
+        },
+        task_id,
+    )
+
+
 def emit_video_chunk(
     task_id: int,
     subtask_id: int,

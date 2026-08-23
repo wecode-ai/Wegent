@@ -195,6 +195,44 @@ export function reduceChatChunkEvent({
   }
 }
 
+export function reduceChatBlockUpdatedEvent({
+  state,
+  event,
+}: ChatEventReducerParams<
+  Extract<Event, { type: 'CHAT_BLOCK_UPDATED' }>
+>): TaskMachineInternalState {
+  const aiMessageId = generateMessageId('ai', event.subtaskId)
+  const existingMessage = state.messages.get(aiMessageId)
+  if (!existingMessage) return state
+
+  const existingBlocks = existingMessage.result?.blocks || []
+  const existingIndex = existingBlocks.findIndex(block => block.id === event.block.id)
+  if (existingIndex < 0 && !event.block.type) return state
+
+  const blocks = [...existingBlocks]
+  if (existingIndex >= 0) {
+    blocks[existingIndex] = {
+      ...blocks[existingIndex],
+      ...event.block,
+    } as MessageBlock
+  } else {
+    blocks.push(event.block as MessageBlock)
+  }
+
+  const messages = new Map(state.messages)
+  messages.set(aiMessageId, {
+    ...existingMessage,
+    result: {
+      ...existingMessage.result,
+      blocks,
+    },
+  })
+  return {
+    ...state,
+    messages,
+  }
+}
+
 export function reduceChatDoneEvent({
   state,
   event,

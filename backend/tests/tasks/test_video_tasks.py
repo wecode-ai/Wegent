@@ -4,13 +4,18 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from celery.exceptions import Ignore, Retry
+
 from app.services.execution.agents.video.extensions import PreparedVideoArtifact
 from app.services.execution.agents.video.providers.base import VideoJobResult
+from app.services.execution.agents.video.workflows.base import VideoWorkflowSnapshot
 from app.tasks.video_tasks import (
     POLL_INTERVAL_SECONDS,
     _estimate_polling_progress,
     _handle_completion,
     _merge_video_job_result,
+    _poll_video_workflow,
     dispatch_video_polling_task,
 )
 from app.tasks.video_websocket import emit_video_chunk, emit_video_error
@@ -243,3 +248,206 @@ def test_merge_video_job_result_persists_refresh_placeholder() -> None:
             "timestamp": result["blocks"][0]["timestamp"],
         }
     ]
+
+
+def test_merge_video_job_result_persists_card_block() -> None:
+    block = {
+        "id": "card-1",
+        "type": "card",
+        "status": "streaming",
+        "card_id": "card-1",
+        "card_type": "video_director_generation",
+        "card_status": "partial_ready",
+        "card_data": {"link": "https://workflow.example.com/task/1"},
+        "card_preview_data": {"progress": 50},
+        "card_error": None,
+    }
+
+    result = _merge_video_job_result(
+        {},
+        {
+            "job_id": "workflow-1",
+            "status": "polling",
+            "video_block_id": "card-1",
+        },
+        block,
+    )
+
+    assert result["blocks"] == [block]
+    assert result["video_job"]["job_id"] == "workflow-1"
+
+
+def test_workflow_poll_completion_persists_populated_card() -> None:
+    snapshot = VideoWorkflowSnapshot(
+        status="completed",
+        progress=100,
+        progress_text="",
+        card={"video_url": "https://cdn.example.com/video.mp4"},
+        error=None,
+    )
+    workflow = MagicMock()
+    workflow.get_status = AsyncMock(return_value=snapshot)
+
+    with (
+        patch(
+            "app.services.execution.agents.video.workflows."
+            "get_video_workflow_client",
+            return_value=workflow,
+        ),
+        patch("app.tasks.video_tasks._check_cancellation_sync", return_value=False),
+        patch("app.tasks.video_tasks._update_subtask_video_job_sync") as persist,
+        patch("app.tasks.video_tasks._update_subtask_status_sync") as update_status,
+        patch("app.tasks.video_tasks._update_task_status_after_subtask"),
+        patch("app.tasks.video_websocket.emit_card_done") as emit_done,
+    ):
+        result = _poll_video_workflow(
+            celery_task=MagicMock(),
+            subtask_id=2,
+            task_id=1,
+            user_id=3,
+            job_id="workflow-1",
+            provider_protocol="",
+            video_block_id="card-1",
+            model_config={},
+            message_id=None,
+            intent_result=None,
+            poll_count=1,
+            last_progress=0,
+            workflow_type="example_workflow",
+            workflow_context={"query_url": "https://workflow.example.com/task/1"},
+            request_id="request-1",
+        )
+
+    assert result["status"] == "completed"
+    assert persist.call_args.args[1]["status"] == "completed"
+    assert persist.call_args.args[2]["card_status"] == "populated"
+    assert update_status.call_args.args[1] == "COMPLETED"
+    emit_done.assert_called_once()
+
+
+def test_workflow_poll_partial_ready_persists_progress_before_retry() -> None:
+    workflow = MagicMock()
+    workflow.get_status = AsyncMock(
+        return_value=VideoWorkflowSnapshot(
+            status="partial_ready",
+            progress=62,
+            progress_text="分镜已完成",
+            card={"link": "https://workflow.example.com/task/1"},
+        )
+    )
+    celery_task = MagicMock()
+    celery_task.retry.side_effect = Retry()
+
+    with (
+        patch(
+            "app.services.execution.agents.video.workflows."
+            "get_video_workflow_client",
+            return_value=workflow,
+        ),
+        patch("app.tasks.video_tasks._check_cancellation_sync", return_value=False),
+        patch("app.tasks.video_tasks._update_subtask_video_job_sync") as persist,
+        patch("app.tasks.video_websocket.emit_card_updated") as emit,
+    ):
+        with pytest.raises(Retry):
+            _poll_video_workflow(
+                celery_task=celery_task,
+                subtask_id=2,
+                task_id=1,
+                user_id=3,
+                job_id="workflow-1",
+                provider_protocol="",
+                video_block_id="card-1",
+                model_config={},
+                message_id=None,
+                intent_result=None,
+                poll_count=1,
+                last_progress=0,
+                workflow_type="example_workflow",
+                workflow_context={"query_url": "https://workflow.example.com/task/1"},
+                request_id="request-1",
+            )
+
+    assert persist.call_args.args[2]["card_status"] == "partial_ready"
+    assert persist.call_args.args[2]["card_preview_data"]["progress"] == 62
+    emit.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("cancelled", "snapshot", "max_polls", "expected_status", "expected_error"),
+    [
+        (
+            False,
+            VideoWorkflowSnapshot(
+                status="failed",
+                progress=30,
+                error="Workflow failed",
+            ),
+            100,
+            "FAILED",
+            "Workflow failed",
+        ),
+        (
+            True,
+            VideoWorkflowSnapshot(status="processing", progress=30),
+            100,
+            "CANCELLED",
+            "Video generation cancelled",
+        ),
+        (
+            False,
+            VideoWorkflowSnapshot(status="processing", progress=30),
+            1,
+            "FAILED",
+            "Video generation timed out",
+        ),
+    ],
+)
+def test_workflow_poll_terminal_states(
+    cancelled,
+    snapshot,
+    max_polls,
+    expected_status,
+    expected_error,
+) -> None:
+    workflow = MagicMock()
+    workflow.get_status = AsyncMock(return_value=snapshot)
+
+    with (
+        patch(
+            "app.services.execution.agents.video.workflows."
+            "get_video_workflow_client",
+            return_value=workflow,
+        ),
+        patch(
+            "app.tasks.video_tasks._check_cancellation_sync",
+            return_value=cancelled,
+        ),
+        patch("app.tasks.video_tasks.MAX_POLL_COUNT", max_polls),
+        patch("app.tasks.video_tasks._update_subtask_video_job_sync") as persist,
+        patch("app.tasks.video_tasks._update_subtask_status_sync") as update_status,
+        patch("app.tasks.video_tasks._update_task_status_after_subtask"),
+        patch("app.tasks.video_websocket.emit_card_error"),
+        patch("app.tasks.video_websocket.emit_card_cancelled"),
+        patch("app.tasks.video_websocket.emit_card_updated"),
+    ):
+        with pytest.raises(Ignore):
+            _poll_video_workflow(
+                celery_task=MagicMock(),
+                subtask_id=2,
+                task_id=1,
+                user_id=3,
+                job_id="workflow-1",
+                provider_protocol="",
+                video_block_id="card-1",
+                model_config={},
+                message_id=None,
+                intent_result=None,
+                poll_count=1,
+                last_progress=30,
+                workflow_type="example_workflow",
+                workflow_context={"query_url": "https://workflow.example.com/task/1"},
+                request_id="request-1",
+            )
+
+    assert persist.call_args.args[2]["card_error"] == expected_error
+    assert update_status.call_args.args[1] == expected_status

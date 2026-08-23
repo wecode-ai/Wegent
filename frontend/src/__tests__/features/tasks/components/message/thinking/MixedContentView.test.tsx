@@ -85,6 +85,39 @@ const createSuccessfulFormOutput = (form: Record<string, unknown>) =>
   })
 
 describe('MixedContentView', () => {
+  it('recognizes and renders a CardBlock in the message list', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="COMPLETED"
+        theme="light"
+        blocks={[
+          {
+            id: 'card-1',
+            type: 'card',
+            status: 'done',
+            card_id: 'card-1',
+            card_type: 'video_director_generation',
+            card_status: 'populated',
+            card_preview_data: { progress: 100 },
+            card_data: {
+              title: 'Generated campaign video',
+              link: 'https://workflow.example.com/video/123',
+              preview_content: { text: '三幕式创意短片' },
+            },
+            card_error: null,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('card-video-director-generation')).toHaveTextContent(
+      'Generated campaign video'
+    )
+    expect(screen.getByText('三幕式创意短片')).toBeInTheDocument()
+  })
+
   it('renders the image generation placeholder while the task is running', () => {
     render(
       <MixedContentView
