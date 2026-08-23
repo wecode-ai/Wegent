@@ -1758,7 +1758,33 @@ WP-150 退出证据：
 - 安全边界：只启动当前用户 shell；限制 session ID、cwd、尺寸、环境项、输入、
   session 数、快照和事件历史；Cordis generation 销毁时清理全部 PTY。
 
+### ADR-012：Wework 右侧栏采用 better-sidebar 兼容注册表
+
+- 状态：实施中。
+- 原因：现有右侧栏已经覆盖审查、文件、终端、浏览器、临时聊天、Harness 和 Issue
+  详情，并且拥有完整的尺寸、标题栏、持久化和 E2E 契约。直接挂载上游
+  `dsh-better-sidebar` 的整套面板会产生第二套壳和重复运行时，无法保持原
+  Wework 效果。
+- 结果：保留原 `RightWorkspacePanel` 的 DOM、样式和 Electron 原生浏览器边界，
+  把扩展能力抽成 `rightWorkspaceBetterSidebar` 注册表。注册表对齐
+  `registerTab/getTabs/getTab/openTab/closeTab/activateTab/updateTab`、状态订阅、
+  targeted scope、single/dedupe、badge 和 lifecycle 的 better-sidebar 词汇；
+  插件 Tab 进入原启动器、原“新建标签页”菜单和原标签栏。
+- 接入边界：同页面插件通过
+  `window.__WEWORK_DSH_BETTER_SIDEBAR__` 或 TypeScript 模块注册 React
+  descriptor。React component 函数不能跨 WebContents/页面序列化，因此运行在
+  独立 Workbench DSH 页面中的第三方插件不能直接向 Core Wework 页面传组件；
+  它们仍由各自的 `dsh-better-sidebar` 承载。后续若把 Core Wework UI 编译成
+  DSH client module，可将该注册表直接作为 `ctx.betterSidebar` provider，接口
+  不再重写。
+- 当前支持范围：Tab 注册、排序、隐藏、可用性、单例/去重、自定义创建、图标、
+  metadata、打开/激活/关闭/更新、按 session scope 路由和状态订阅。文件 viewer、
+  split tree、插件设置页和 URL claim 仍由上游 Workbench sidebar 负责，不伪装
+  为已兼容。
+
 ## 25. 中断恢复记录
+
+最后更新：2026-08-23。
 
 WP-140 已完成，WP-150 图形证据待补，WP-210 功能对照并行进行。已删除 Electron
 产品级多 View/Tab 管理，完成
@@ -1770,6 +1796,9 @@ Workbench 资产不携带它们。`WorkbenchRuntimeManager` 已实现每 Tab 独
 `terminal.*` 已删除。最终 macOS 包只含 rc.2/rc.8；包内 Node、executor、
 Host、App、terminal 的真实联合 verifier 已通过。Electron 本地工作区文件、
 附件分块写入、窗口控制、标题栏拖拽、通知和快捷键已迁入 desktop-neutral 主路径。
+右侧工作区新增 better-sidebar 兼容注册表和每 pane controller；扩展 Tab 使用原
+Wework launcher、标签栏、面板尺寸和持久化状态，并通过聚焦单测验证注册、定向
+路由、打开、渲染和关闭。
 最后成功验证为 Electron 40 项测试、DSH/metadata 26 项测试、前端终端相关
 33 项测试、本地工作区相关 90 项测试，以及包含最新功能迁移后的稳定 Core
 fingerprint `41702384…`。下一位执行者继续清理剩余 Tauri-only 功能，并在可用的真实 Electron

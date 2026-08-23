@@ -58,6 +58,7 @@ import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 import { FileWorkspacePanel } from './workspace-panels/FileWorkspacePanel'
+import { rightWorkspaceBetterSidebar } from './workspace-panels/rightWorkspaceSidebarRegistry'
 
 const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
@@ -6607,6 +6608,47 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton).not.toHaveClass('border', 'bg-muted')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+  })
+
+  test('right workspace hosts a DSH better-sidebar tab in the existing Wework panel shell', async () => {
+    const onOpen = vi.fn()
+    const onClose = vi.fn()
+    const dispose = rightWorkspaceBetterSidebar.registerTab({
+      id: 'test:inspector',
+      title: 'DSH Inspector',
+      order: 5,
+      single: true,
+      onOpen,
+      onClose,
+      component: ({ tab, visible }) => (
+        <section data-testid="dsh-inspector-panel" data-visible={String(visible)}>
+          {tab.title}
+        </section>
+      ),
+    })
+
+    try {
+      renderWorkspacePanelLayout()
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-extension-option-test:inspector'))
+
+      const extensionTab = screen.getByTestId('right-workspace-extension-tab-test%3Ainspector')
+      expect(extensionTab).toHaveAttribute('aria-selected', 'true')
+      expect(extensionTab).toHaveTextContent('DSH Inspector')
+      expect(screen.getByTestId('dsh-inspector-panel')).toHaveAttribute('data-visible', 'true')
+      expect(screen.getByTestId('right-workspace-panel-shell')).toContainElement(extensionTab)
+      expect(onOpen).toHaveBeenCalledTimes(1)
+
+      await userEvent.click(
+        within(extensionTab).getByTestId(
+          'right-workspace-extension-tab-test%3Ainspector-close-button'
+        )
+      )
+      expect(screen.queryByTestId('dsh-inspector-panel')).not.toBeInTheDocument()
+      expect(onClose).toHaveBeenCalledTimes(1)
+    } finally {
+      dispose()
+    }
   })
 
   test('right workspace launcher keyboard shortcut opens the file tab', async () => {

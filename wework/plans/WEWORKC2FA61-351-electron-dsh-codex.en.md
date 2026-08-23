@@ -199,9 +199,30 @@ The multi-View tab model and localhost bridge are not final architecture.
 - Make Electron the default desktop.
 - Delete remaining Tauri commands, configuration, builds, release paths, compatibility code, and flags.
 
+## ADR-012 — The Wework right sidebar uses a better-sidebar-compatible registry
+
+- Status: in progress.
+- Keep the existing `RightWorkspacePanel` DOM, visual shell, sizing,
+  persistence, E2E selectors, and Electron-native browser boundary. Mounting
+  the full upstream `dsh-better-sidebar` panel beside it would create a second
+  shell and would not preserve Wework behavior.
+- Expose `rightWorkspaceBetterSidebar` with the better-sidebar tab vocabulary:
+  registration, discovery, open/close/activate/update, state subscription,
+  targeted session scope, single/dedupe behavior, metadata, icons, badges, and
+  lifecycle callbacks. Contributed tabs appear in the existing launcher,
+  new-tab menu, and tab strip.
+- Same-page plugins can register through the TypeScript module or
+  `window.__WEWORK_DSH_BETTER_SIDEBAR__`. React component functions cannot be
+  serialized across WebContents or pages, so plugins inside an isolated
+  Workbench DSH page remain hosted by that page's upstream better-sidebar.
+- File viewers, split trees, plugin settings, and URL claims are not presented
+  as compatible yet. If the Core Wework UI later becomes a DSH client module,
+  this registry can become the `ctx.betterSidebar` provider without replacing
+  plugin descriptors.
+
 ## Current status
 
-Last updated: August 22, 2026.
+Last updated: August 23, 2026.
 
 - Branch: `feature/electron-dsh-codex-poc`.
 - The P0 spike exists in `wework/electron/`.
@@ -221,6 +242,9 @@ Last updated: August 22, 2026.
 - A real managed-runtime verifier passes through `wegent-executor`, the local endpoint, DSH, and the Electron Host pipe.
 - Typecheck, 23 focused tests across 8 files, and build pass for the Electron app.
 - Electron 43.4.1 loaded a mock DSH page and remained alive for a five-second smoke run.
+- The right workspace now has a better-sidebar-compatible registry and one
+  controller per Wework pane. Extension tabs reuse the existing launcher, tab
+  strip, sizing, persisted pane state, and close lifecycle.
 - The single-DSH tab model, the modular-monolith Wework app, and real product UI E2E remain incomplete. Windows named-pipe verification still requires Windows CI because the local cross-check stopped in the third-party `ring` build before compiling Wegent code.
 
 The active work package is `WP-150 single Core DSH and Workbench process

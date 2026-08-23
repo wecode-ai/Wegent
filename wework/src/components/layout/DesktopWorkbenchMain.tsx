@@ -76,6 +76,19 @@ import {
   type RightWorkspacePanelView,
   type RightWorkspaceTerminalTab,
 } from './workspace-panels/RightWorkspacePanel'
+import {
+  attachRightWorkspaceSidebarController,
+  encodeRightWorkspaceExtensionTabId,
+  isRightWorkspaceExtensionTab,
+  invokeDshBetterSidebarLifecycle,
+  rightWorkspaceBetterSidebar,
+  titleOfDshBetterSidebarTab,
+  type DshBetterSidebarOpenTabSeed,
+  type DshBetterSidebarScope,
+  type DshBetterSidebarSnapshot,
+  type RightWorkspaceExtensionTab,
+  type RightWorkspaceExtensionTabState,
+} from './workspace-panels/rightWorkspaceSidebarRegistry'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
@@ -257,6 +270,9 @@ interface WorkbenchPaneWorkspaceState {
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
+  rightPanelExtensionTabs?: Partial<
+    Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>
+  >
   temporaryChatAddresses?: Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
   browserStates?: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   reviewState: DesktopReviewState
@@ -1296,6 +1312,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       []) as Array<RightWorkspacePanelTab | 'browser' | 'terminal'>
     return restoredTabs.map(normalizeRightWorkspacePanelTab)
   })
+  const [rightPanelExtensionTabs, setRightPanelExtensionTabs] = useState<
+    Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
+  >(() => initialWorkspaceState?.rightPanelExtensionTabs ?? {})
+  const rightPanelExtensionTabsRef = useRef(rightPanelExtensionTabs)
+  useEffect(() => {
+    rightPanelExtensionTabsRef.current = rightPanelExtensionTabs
+  }, [rightPanelExtensionTabs])
   const terminalTabSequence = useRef(
     Math.max(
       0,
@@ -1408,6 +1431,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       rightPanelExpanded,
       rightPanelTabs,
       rightPanelView,
+      rightPanelExtensionTabs,
       temporaryChatAddresses,
       browserStates,
       reviewState,
@@ -1421,6 +1445,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
+    rightPanelExtensionTabs,
     temporaryChatAddresses,
     browserStates,
     reviewState,
@@ -2714,6 +2739,65 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
+  const rightWorkspaceExtensionSessionId = currentRuntimeConversationSource
+    ? `${currentRuntimeConversationSource.deviceId}:${currentRuntimeConversationSource.taskId}`
+    : paneKey
+  const rightWorkspaceExtensionCwd = workspacePanelTarget?.path
+  const rightWorkspaceExtensionScope = useMemo<DshBetterSidebarScope>(
+    () => ({
+      sessionId: rightWorkspaceExtensionSessionId,
+      ...(rightWorkspaceExtensionCwd ? { cwd: rightWorkspaceExtensionCwd } : {}),
+    }),
+    [rightWorkspaceExtensionCwd, rightWorkspaceExtensionSessionId]
+  )
+  const openRightWorkspaceExtensionTab = useCallback(
+    (seed: DshBetterSidebarOpenTabSeed, scope = rightWorkspaceExtensionScope) => {
+      const descriptor = rightWorkspaceBetterSidebar.getTab(seed.type)
+      if (!descriptor) return
+
+      const currentTabs = Object.values(rightPanelExtensionTabsRef.current).filter(
+        (state): state is RightWorkspaceExtensionTabState => Boolean(state)
+      )
+      const sidebarState = {
+        panelOpen: rightPanelOpen,
+        tabs: currentTabs.map(state => state.tab),
+        activeTabId: isRightWorkspaceExtensionTab(rightPanelView)
+          ? (rightPanelExtensionTabsRef.current[rightPanelView]?.tab.id ?? null)
+          : null,
+      }
+      const created = descriptor.createTab?.(sidebarState)
+      if (descriptor.createTab && !created) return
+      const tab = created?.tab ?? {
+        id: seed.id ?? descriptor.id,
+        type: descriptor.id,
+        title: seed.title ?? titleOfDshBetterSidebarTab(descriptor),
+        ...(seed.path || seed.url ? { path: seed.path ?? seed.url } : {}),
+        ...(seed.diff !== undefined ? { diff: seed.diff } : {}),
+        ...(seed.meta !== undefined ? { meta: seed.meta } : {}),
+      }
+      const dedupeKey = descriptor.dedupeKey ?? (descriptor.single ? item => item.type : undefined)
+      const existing = currentTabs.find(candidate => {
+        if (candidate.tab.id === tab.id) return true
+        if (!dedupeKey) return false
+        const nextKey = dedupeKey(tab)
+        return nextKey !== undefined && dedupeKey(candidate.tab) === nextKey
+      })
+      if (existing) {
+        openRightPanelTab(existing.internalId)
+        invokeDshBetterSidebarLifecycle(descriptor, 'onActivate', existing.tab, scope)
+        return
+      }
+
+      const internalId = encodeRightWorkspaceExtensionTabId(tab.id)
+      setRightPanelExtensionTabs(current => ({
+        ...current,
+        [internalId]: { internalId, tab },
+      }))
+      openRightPanelTab(internalId)
+      invokeDshBetterSidebarLifecycle(descriptor, 'onOpen', tab, scope)
+    },
+    [openRightPanelTab, rightPanelOpen, rightPanelView, rightWorkspaceExtensionScope]
+  )
   const currentWorkItemGuideProject =
     boundCloudProject ?? pendingCloudProject ?? defaultProject ?? defaultWorkItemPreviewProject
   const availableWorkItemProjects =
@@ -2993,6 +3077,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [openRightPanelTab, setSelectedAssistantPlan]
   )
   const closeRightPanelTab = (tab: RightWorkspacePanelTab) => {
+    const extensionState = isRightWorkspaceExtensionTab(tab)
+      ? rightPanelExtensionTabsRef.current[tab]
+      : undefined
+    const extensionDescriptor = extensionState
+      ? rightWorkspaceBetterSidebar.getTab(extensionState.tab.type)
+      : undefined
     const browserState = isRightWorkspaceBrowserTab(tab) ? browserStates[tab] : null
     if (
       browserState?.hasActiveDownload &&
@@ -3029,6 +3119,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         return next
       })
     }
+    if (extensionState) {
+      setRightPanelExtensionTabs(current => {
+        if (!current[tab as RightWorkspaceExtensionTab]) return current
+        const next = { ...current }
+        delete next[tab as RightWorkspaceExtensionTab]
+        return next
+      })
+      if (extensionDescriptor) {
+        invokeDshBetterSidebarLifecycle(
+          extensionDescriptor,
+          'onClose',
+          extensionState.tab,
+          rightWorkspaceExtensionScope
+        )
+      }
+    }
     setRightPanelTabs(current => {
       const currentTabs = current.includes(tab) ? current : [...current, tab]
       const next = currentTabs.filter(openTab => openTab !== tab)
@@ -3044,6 +3150,76 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       return next
     })
   }
+  const closeRightPanelTabFromExtension = useEffectEvent((tab: RightWorkspacePanelTab) => {
+    closeRightPanelTab(tab)
+  })
+  const extensionStateListenersRef = useRef(new Set<() => void>())
+  useEffect(() => {
+    for (const listener of [...extensionStateListenersRef.current]) listener()
+  }, [rightPanelExtensionTabs, rightPanelOpen, rightPanelView])
+  useEffect(
+    () =>
+      attachRightWorkspaceSidebarController({
+        active: () => paneActive && paneVisible && workbenchVisible,
+        openTab: openRightWorkspaceExtensionTab,
+        closeTab: tabId => {
+          const state = Object.values(rightPanelExtensionTabsRef.current).find(
+            candidate => candidate?.tab.id === tabId
+          )
+          if (state) closeRightPanelTabFromExtension(state.internalId)
+        },
+        activateTab: (tabId, scope = rightWorkspaceExtensionScope) => {
+          const state = Object.values(rightPanelExtensionTabsRef.current).find(
+            candidate => candidate?.tab.id === tabId
+          )
+          if (!state) return
+          openRightPanelTab(state.internalId)
+          const descriptor = rightWorkspaceBetterSidebar.getTab(state.tab.type)
+          if (descriptor) {
+            invokeDshBetterSidebarLifecycle(descriptor, 'onActivate', state.tab, scope)
+          }
+        },
+        updateTab: (tabId, patch) => {
+          setRightPanelExtensionTabs(current => {
+            const state = Object.values(current).find(candidate => candidate?.tab.id === tabId)
+            if (!state) return current
+            return {
+              ...current,
+              [state.internalId]: {
+                ...state,
+                tab: { ...state.tab, ...patch },
+              },
+            }
+          })
+        },
+        snapshot: (): DshBetterSidebarSnapshot => ({
+          sessionId: rightWorkspaceExtensionScope.sessionId,
+          state: {
+            panelOpen: rightPanelOpen,
+            tabs: Object.values(rightPanelExtensionTabsRef.current)
+              .filter((state): state is RightWorkspaceExtensionTabState => Boolean(state))
+              .map(state => state.tab),
+            activeTabId: isRightWorkspaceExtensionTab(rightPanelView)
+              ? (rightPanelExtensionTabsRef.current[rightPanelView]?.tab.id ?? null)
+              : null,
+          },
+        }),
+        subscribe: listener => {
+          extensionStateListenersRef.current.add(listener)
+          return () => extensionStateListenersRef.current.delete(listener)
+        },
+      }),
+    [
+      openRightPanelTab,
+      openRightWorkspaceExtensionTab,
+      paneActive,
+      paneVisible,
+      rightPanelOpen,
+      rightPanelView,
+      rightWorkspaceExtensionScope,
+      workbenchVisible,
+    ]
+  )
 
   const openReviewFromDiffLoader = useCallback(
     async (loadDiff: () => Promise<string>, metadata: DesktopReviewMetadata = {}) => {
@@ -4441,6 +4617,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               workspaceTargetError={openFileRequest?.target ? null : workspaceTargetError}
               review={reviewState}
               planContent={rightPanelPlanContent}
+              extensionTabs={rightPanelExtensionTabs}
+              extensionScope={rightWorkspaceExtensionScope}
               workItemPanel={
                 workItemContextAvailable &&
                 currentProjectSpaceRuntimeTask &&

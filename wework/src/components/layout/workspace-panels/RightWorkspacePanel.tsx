@@ -6,12 +6,13 @@ import {
   ListChecks,
   Loader2,
   MessageCircle,
+  PanelRight,
   Plus,
   SquareTerminal,
   X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { memo, useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import {
   FileChangesReviewPanel,
@@ -42,6 +43,18 @@ import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import {
+  resolveRightWorkspaceExtensionDescriptor,
+  rightWorkspaceBetterSidebar,
+  rightWorkspaceBetterSidebarContext,
+  isRightWorkspaceExtensionTab,
+  isDshBetterSidebarTabAvailable,
+  titleOfDshBetterSidebarTab,
+  type DshBetterSidebarScope,
+  type DshBetterSidebarTabDescriptor,
+  type RightWorkspaceExtensionTab,
+  type RightWorkspaceExtensionTabState,
+} from './rightWorkspaceSidebarRegistry'
 
 function getRightWorkspaceShortcuts(platform: ReturnType<typeof getPlatform>) {
   if (platform === 'win') {
@@ -73,6 +86,7 @@ export type RightWorkspacePanelTab =
   | RightWorkspaceBrowserTab
   | RightWorkspaceHarnessTab
   | RightWorkspaceTerminalTab
+  | RightWorkspaceExtensionTab
 export type RightWorkspacePanelView = 'launcher' | RightWorkspacePanelTab
 
 function isRightWorkspaceChatTab(tab: RightWorkspacePanelView): tab is RightWorkspaceChatTab {
@@ -158,6 +172,8 @@ interface RightWorkspacePanelProps {
   review: RightWorkspaceReviewState
   planContent?: string | null
   workItemPanel?: ReactNode
+  extensionTabs?: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
+  extensionScope: DshBetterSidebarScope
   browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   onBrowserStateChange: (
     tab: RightWorkspaceBrowserTab,
@@ -294,6 +310,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   review,
   planContent,
   workItemPanel,
+  extensionTabs = {},
+  extensionScope,
   browserStates,
   onBrowserStateChange,
   codeCommentCount = 0,
@@ -323,6 +341,11 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onChatAddressChange,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
+  const registeredExtensionTabs = useSyncExternalStore(
+    rightWorkspaceBetterSidebar.subscribe,
+    rightWorkspaceBetterSidebar.getTabs,
+    rightWorkspaceBetterSidebar.getTabs
+  )
   const availableTabs = allowTemporaryChat
     ? openTabs
     : openTabs.filter(tab => !isRightWorkspaceChatTab(tab))
@@ -390,6 +413,27 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
 
   const getNewTabOptions = (): WorkspaceAddMenuItem[] => [
     ...workspaceActions,
+    ...registeredExtensionTabs
+      .filter(descriptor => !descriptor.hidden)
+      .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
+      .map(
+        (descriptor): WorkspaceAddMenuItem => ({
+          id: `dsh-better-sidebar:${descriptor.id}`,
+          testId: `right-workspace-extension-option-${descriptor.id}`,
+          icon: PanelRight,
+          label: titleOfDshBetterSidebarTab(descriptor),
+          disabled: !isDshBetterSidebarTabAvailable(
+            descriptor,
+            extensionScope,
+            rightWorkspaceBetterSidebar.getSnapshot().state ?? {
+              panelOpen: visible,
+              tabs: [],
+              activeTabId: null,
+            }
+          ),
+          onSelect: () => rightWorkspaceBetterSidebar.openTab({ type: descriptor.id }),
+        })
+      ),
     {
       id: 'review',
       testId: 'right-workspace-review-option',
@@ -460,8 +504,15 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           key={tab}
           tab={tab}
           active={activeView === tab}
-          label={getRightWorkspaceTabLabel(tab, t, browserStates, harnessSessionsById)}
+          label={getRightWorkspaceTabLabel(
+            tab,
+            t,
+            browserStates,
+            harnessSessionsById,
+            extensionTabs
+          )}
           icon={getRightWorkspaceTabIcon(tab)}
+          extensionState={isRightWorkspaceExtensionTab(tab) ? extensionTabs[tab] : undefined}
           iconSrc={isRightWorkspaceBrowserTab(tab) ? browserStates[tab]?.faviconUrl : null}
           loading={isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.isLoading}
           onSelect={getTabSelectHandler(tab)}
@@ -518,6 +569,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             canBrowseFiles={canBrowseFiles}
             allowTemporaryChat={allowTemporaryChat}
             workspaceActions={workspaceActions}
+            extensionTabs={registeredExtensionTabs}
+            extensionScope={extensionScope}
             onSelectReview={onSelectReview}
             onSelectTerminal={onSelectTerminal}
             onSelectBrowser={onSelectBrowser}
@@ -656,6 +709,26 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             </div>
           )
         })}
+        {openTabs.filter(isRightWorkspaceExtensionTab).map(tab => {
+          const extensionState = extensionTabs[tab]
+          const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionState)
+          if (!extensionState || !descriptor) return null
+          return (
+            <div
+              key={tab}
+              data-testid={`right-workspace-extension-panel-${descriptor.id}`}
+              className={cn('min-h-0 flex-1 flex-col', activeView === tab ? 'flex' : 'hidden')}
+            >
+              {descriptor.component({
+                ctx: rightWorkspaceBetterSidebarContext,
+                store: rightWorkspaceBetterSidebar,
+                scope: extensionScope,
+                tab: extensionState.tab,
+                visible: visible && activeView === tab,
+              })}
+            </div>
+          )
+        })}
       </div>
     </section>
   )
@@ -666,6 +739,7 @@ function RightWorkspaceTitleTab({
   active,
   label,
   icon: Icon,
+  extensionState,
   iconSrc,
   loading = false,
   onSelect,
@@ -675,6 +749,7 @@ function RightWorkspaceTitleTab({
   active: boolean
   label: string
   icon: LucideIcon
+  extensionState?: RightWorkspaceExtensionTabState
   iconSrc?: string | null
   loading?: boolean
   onSelect: () => void
@@ -714,6 +789,7 @@ function RightWorkspaceTitleTab({
       >
         <RightWorkspaceTabIcon
           icon={Icon}
+          extensionState={extensionState}
           iconSrc={iconSrc}
           loading={loading}
           testId={getRightWorkspaceTabTestId(tab)}
@@ -740,11 +816,13 @@ function RightWorkspaceTitleTab({
 
 function RightWorkspaceTabIcon({
   icon: Icon,
+  extensionState,
   iconSrc,
   loading,
   testId,
 }: {
   icon: ComponentType<{ className?: string }>
+  extensionState?: RightWorkspaceExtensionTabState
   iconSrc?: string | null
   loading: boolean
   testId: string
@@ -758,6 +836,18 @@ function RightWorkspaceTabIcon({
         data-testid={`${testId}-loading-icon`}
         className="h-3.5 w-3.5 shrink-0 animate-spin text-text-secondary"
       />
+    )
+  }
+
+  const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionState)
+  if (descriptor?.icon) {
+    return (
+      <span
+        data-testid={`${testId}-icon`}
+        className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary"
+      >
+        {typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon}
+      </span>
     )
   }
 
@@ -804,6 +894,8 @@ function RightWorkspaceLauncher({
   canBrowseFiles,
   allowTemporaryChat,
   workspaceActions,
+  extensionTabs,
+  extensionScope,
   onSelectReview,
   onSelectTerminal,
   onSelectBrowser,
@@ -814,6 +906,8 @@ function RightWorkspaceLauncher({
   canBrowseFiles: boolean
   allowTemporaryChat: boolean
   workspaceActions: WorkspaceAddMenuItem[]
+  extensionTabs: readonly DshBetterSidebarTabDescriptor[]
+  extensionScope: DshBetterSidebarScope
   onSelectReview: () => void
   onSelectTerminal: () => void
   onSelectBrowser: () => void
@@ -829,6 +923,29 @@ function RightWorkspaceLauncher({
       className="flex min-h-0 flex-1 items-center justify-center px-8"
     >
       <div className="flex w-full max-w-xl flex-col gap-1.5">
+        {extensionTabs
+          .filter(descriptor => !descriptor.hidden)
+          .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
+          .map(descriptor => (
+            <RightWorkspaceLauncherItem
+              key={descriptor.id}
+              data-testid={`right-workspace-extension-option-${descriptor.id}`}
+              icon={PanelRight}
+              label={titleOfDshBetterSidebarTab(descriptor)}
+              onClick={() => rightWorkspaceBetterSidebar.openTab({ type: descriptor.id })}
+              disabled={
+                !isDshBetterSidebarTabAvailable(
+                  descriptor,
+                  extensionScope,
+                  rightWorkspaceBetterSidebar.getSnapshot().state ?? {
+                    panelOpen: true,
+                    tabs: [],
+                    activeTabId: null,
+                  }
+                )
+              }
+            />
+          ))}
         {workspaceActions.map(action => (
           <RightWorkspaceLauncherItem
             key={action.id}
@@ -922,8 +1039,14 @@ function getRightWorkspaceTabLabel(
   tab: RightWorkspacePanelTab,
   t: ReturnType<typeof useTranslation>['t'],
   browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>,
-  harnessSessionsById: Map<string, LocalHarnessWorkbenchSession>
+  harnessSessionsById: Map<string, LocalHarnessWorkbenchSession>,
+  extensionTabs: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
 ) {
+  if (isRightWorkspaceExtensionTab(tab)) {
+    const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionTabs[tab])
+    if (!descriptor) return t('workbench.workspace_tab_plugin', '插件')
+    return titleOfDshBetterSidebarTab(descriptor)
+  }
   if (tab === 'review') return t('workbench.workspace_tab_review', '审查')
   if (isRightWorkspaceTerminalTab(tab)) {
     const suffix = getRightWorkspaceTerminalTabSuffix(tab)
@@ -947,6 +1070,9 @@ function getRightWorkspaceTabLabel(
 }
 
 function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
+  if (isRightWorkspaceExtensionTab(tab)) {
+    return `right-workspace-extension-tab-${tab.slice('dsh:'.length)}`
+  }
   if (isRightWorkspaceTerminalTab(tab)) {
     const suffix = getRightWorkspaceTerminalTabSuffix(tab)
     return suffix === '1'
@@ -967,6 +1093,7 @@ function getRightWorkspaceTabTestId(tab: RightWorkspacePanelTab) {
 }
 
 function getRightWorkspaceTabIcon(tab: RightWorkspacePanelTab) {
+  if (isRightWorkspaceExtensionTab(tab)) return PanelRight
   if (tab === 'review') return FileDiff
   if (isRightWorkspaceTerminalTab(tab)) return SquareTerminal
   if (isRightWorkspaceBrowserTab(tab)) return Globe2
