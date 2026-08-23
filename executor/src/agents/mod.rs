@@ -18,6 +18,7 @@ pub(crate) mod git_auth;
 mod git_workspace;
 mod image_validator;
 pub mod interactive_mcp;
+mod pnpm_worktree;
 pub(crate) mod runtime_capabilities;
 mod skill_download;
 mod task_identity;
@@ -99,7 +100,10 @@ impl AgentCommandPlanner {
             AgentKind::CodeX => build_codex_app_server_command(&self.codex_binary),
             agent_kind => return Err(format!("unsupported agent kind: {agent_kind:?}")),
         };
-        Ok(cargo_cache::configure_command(request, spec))
+        Ok(pnpm_worktree::configure_command(
+            request,
+            cargo_cache::configure_command(request, spec),
+        ))
     }
 }
 

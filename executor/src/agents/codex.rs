@@ -2838,6 +2838,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     if let Some(cargo_target_override) = super::cargo_cache::codex_config_override(request) {
         launch_config.config_overrides.push(cargo_target_override);
     }
+    if let Some(pnpm_override) = super::pnpm_worktree::codex_config_override(request) {
+        launch_config.config_overrides.push(pnpm_override);
+    }
     launch_config
         .config_overrides
         .extend(codex_runtime_default_config_overrides());
