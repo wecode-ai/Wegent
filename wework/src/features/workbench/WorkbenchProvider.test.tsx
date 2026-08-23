@@ -30,6 +30,10 @@ import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
 import {
+  WorkspaceTabsContext,
+  type WorkspaceTabsContextValue,
+} from '@/features/workspace-tabs/workspaceTabsContextValue'
+import {
   RuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -5645,7 +5649,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
   })
 
-  test('does not reopen a newly created task after the user switches tasks', async () => {
+  test('does not navigate away from the board when a background task starts', async () => {
     const createResponse = deferred<RuntimeTaskCreateResponse>()
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
@@ -5661,19 +5665,12 @@ describe('WorkbenchProvider runtime tasks', () => {
                   workspacePath: '/workspace/project-alpha',
                   mapped: true,
                   available: true,
-                  tasks: [
-                    {
-                      taskId: 'runtime-b',
-                      workspacePath: '/workspace/project-alpha',
-                      title: 'Runtime B',
-                      runtime: 'codex',
-                    },
-                  ],
+                  tasks: [],
                 },
               ],
             },
           ],
-          totalTasks: 1,
+          totalTasks: 0,
         })
       ),
       createRuntimeTask: vi.fn(() => createResponse.promise),
@@ -5682,7 +5679,45 @@ describe('WorkbenchProvider runtime tasks', () => {
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
     })
 
-    renderWorkbench(<ProjectSendProbe />, services)
+    const taskTab = {
+      id: 'task-tab',
+      kind: 'task' as const,
+      title: '任务',
+      contentRoute: '/',
+      fixed: false,
+    }
+    const boardTab = {
+      id: 'board-tab',
+      kind: 'board' as const,
+      title: '项目空间',
+      contentRoute: '/todo',
+      fixed: false,
+    }
+    let workspaceTabs: WorkspaceTabsContextValue = {
+      tabs: [taskTab, boardTab],
+      activeTabId: taskTab.id,
+      activeTab: taskTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    }
+    const view = render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <WorkbenchProvider
+          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+          services={services}
+          workspaceTabId={taskTab.id}
+        >
+          <WorkbenchProbeSessionProvider>
+            <ProjectSendProbe />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </WorkspaceTabsContext.Provider>
+    )
 
     await userEvent.click(await screen.findByText('select project'))
     await userEvent.click(screen.getByText('set input'))
@@ -5690,18 +5725,32 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     const optimisticRequest = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
 
-    await userEvent.click(screen.getByText('open runtime b'))
-    await waitFor(() =>
-      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-        'device-1:runtime-b'
-      )
+    workspaceTabs = {
+      ...workspaceTabs,
+      activeTabId: boardTab.id,
+      activeTab: boardTab,
+    }
+    window.history.pushState({}, '', '/todo')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    view.rerender(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <WorkbenchProvider
+          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+          services={services}
+          workspaceTabId={taskTab.id}
+        >
+          <WorkbenchProbeSessionProvider>
+            <ProjectSendProbe />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </WorkspaceTabsContext.Provider>
     )
 
     await act(async () => {
       createResponse.resolve({
         accepted: true,
         deviceId: 'device-1',
-        taskId: optimisticRequest.taskId,
+        taskId: 'runtime-started',
         workspacePath: '/workspace/project-alpha',
         runtime: 'codex',
       })
@@ -5709,12 +5758,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-      'device-1:runtime-b'
+      'device-1:runtime-started'
     )
-    expect(parseRuntimeTaskRoute(window.location.pathname, window.location.search)).toEqual({
-      deviceId: 'device-1',
-      taskId: 'runtime-b',
-    })
+    expect(optimisticRequest.taskId).not.toBe('runtime-started')
+    expect(window.location.pathname).toBe('/todo')
   })
 
   test('keeps a newly created task running across a stale accepted-task refresh', async () => {
