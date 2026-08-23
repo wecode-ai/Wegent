@@ -1865,7 +1865,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
   const currentWindow = getCurrentWindow()
   await currentWindow.show()
   await currentWindow.unminimize()
-  void currentWindow.setFocus().catch(error => {
+  await currentWindow.setFocus().catch(error => {
     console.warn('[Wework] Failed to focus the desktop E2E window:', error)
   })
   let commandRequest = pollForCommand()
