@@ -1080,6 +1080,20 @@ async function main() {
           }
         : {}),
     }
+    const electronLaunchArguments =
+      DESKTOP_RUNTIME === 'electron' &&
+      process.platform === 'linux' &&
+      typeof process.getuid === 'function' &&
+      process.getuid() === 0
+        ? (() => {
+            assert.equal(
+              process.env.WEWORK_E2E_ISOLATED_XVFB,
+              'true',
+              'Root Electron E2E may disable the Chromium sandbox only inside isolated Xvfb'
+            )
+            return ['--no-sandbox']
+          })()
+        : []
     const startDesktopAppProcess = async () => {
       if (process.platform === 'darwin' && DESKTOP_RUNTIME === 'tauri') {
         assert.ok(appBundlePath, 'The macOS desktop E2E application bundle is missing')
@@ -1097,7 +1111,7 @@ async function main() {
         return child
       }
 
-      const child = spawn(appBinary, [], {
+      const child = spawn(appBinary, electronLaunchArguments, {
         cwd: weworkDir,
         env: appEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
