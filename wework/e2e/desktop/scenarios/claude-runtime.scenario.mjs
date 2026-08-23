@@ -243,14 +243,15 @@ async function createRemoteProject(control, workspacePath, timeoutMs, captureScr
   let remoteProjectRow = null
   await waitFor(
     async () => {
-      const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+      const snapshot = JSON.parse(await control.command('snapshot', 'body', { visible: true }))
       for (const testId of snapshot.testIds.filter(testId => testId.startsWith('project-row-'))) {
         const selector = `[data-testid="${testId}"]`
-        const text = await control.command('getText', selector)
+        const text = await control.command('getText', selector, { visible: true })
         const remoteStatusCount = Number(
           await control.command(
             'getElementCount',
-            `${selector} [data-testid^="project-device-status-"]`
+            `${selector} [data-testid^="project-device-status-"]`,
+            { visible: true }
           )
         )
         if (text.includes('claude-remote-workspace') && remoteStatusCount > 0) {

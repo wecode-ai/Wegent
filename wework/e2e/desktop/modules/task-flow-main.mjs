@@ -1956,6 +1956,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       '[data-testid="confirm-local-project-create-button"]',
       {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        visible: true,
       }
     )
 

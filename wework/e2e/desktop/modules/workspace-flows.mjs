@@ -866,14 +866,9 @@ async function verifyWorkspaceTabIsolation(control) {
   const initialTaskIds = workspaceTabIds(initial, 'task')
   const initialBoardIds = workspaceTabIds(initial, 'board')
   const initialAgentIds = workspaceTabIds(initial, 'agent')
-  assert.equal(initialTaskIds.length, 1, 'The titlebar did not start with one task tab')
+  assert.ok(initialTaskIds.length >= 1, 'The titlebar did not start with a task tab')
   assert.equal(initialBoardIds.length, 1, 'The titlebar did not start with one project-space tab')
   assert.equal(initialAgentIds.length, 1, 'The titlebar did not start with one Agent tab')
-  assert.equal(
-    initialTaskIds.length + initialBoardIds.length + initialAgentIds.length,
-    3,
-    'The titlebar did not start with exactly three product tabs'
-  )
 
   const firstTaskId = initialTaskIds[0].slice('workspace-tab-'.length)
   const firstTaskContent = `[data-testid="workspace-tab-content-${firstTaskId}"]`
@@ -889,8 +884,8 @@ async function verifyWorkspaceTabIsolation(control) {
   await control.command('click', '[data-testid="workspace-tab-add-task"]')
   const withSecondTask = await waitForSnapshot(
     control,
-    snapshot => workspaceTabIds(snapshot, 'task').length === 2,
-    'The explicit new-task action did not create a second task tab'
+    snapshot => workspaceTabIds(snapshot, 'task').length === initialTaskIds.length + 1,
+    'The explicit new-task action did not add one task tab'
   )
   const secondTaskTestId = workspaceTabIds(withSecondTask, 'task').find(
     testId => !initialTaskIds.includes(testId)

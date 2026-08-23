@@ -83,16 +83,18 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     await control.command('click', '[data-testid="runtime-priority-filter-button"]')
     await control.command('waitFor', '[data-testid="runtime-priority-section"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      visible: true,
     })
     await control.command(
       'waitFor',
       `[data-testid="runtime-priority-section"] [data-testid="${requestInputTaskRowTestId}"]`,
       {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        visible: true,
       }
     )
     const filteredSidebarSnapshot = JSON.parse(
-      await control.command('snapshot', '[data-testid="desktop-sidebar"]')
+      await control.command('snapshot', '[data-testid="desktop-sidebar"]', { visible: true })
     )
     assert.equal(
       filteredSidebarSnapshot.testIds.includes('new-chat-button'),
@@ -150,6 +152,7 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     await control.command('press', 'body', { key: 'Meta+Alt+U' })
     await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      visible: true,
     })
     await control.command('press', 'body', { key: 'Meta+Alt+U' })
     await control.command(
@@ -157,10 +160,13 @@ async function verifyPriorityFilter({ composerSelector, control }) {
       `[data-testid^="runtime-priority-recent-list-"] [data-testid="${requestInputTaskRowTestId}"]`,
       {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        visible: true,
       }
     )
     const reopenedPrioritySnapshot = JSON.parse(
-      await control.command('snapshot', '[data-testid="runtime-priority-section"]')
+      await control.command('snapshot', '[data-testid="runtime-priority-section"]', {
+        visible: true,
+      })
     )
     assert.equal(
       reopenedPrioritySnapshot.testIds.includes('runtime-priority-empty'),
@@ -172,9 +178,10 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     await control.command('press', 'body', { key: 'Meta+Alt+U' })
     await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      visible: true,
     })
     const restoredSidebarSnapshot = JSON.parse(
-      await control.command('snapshot', '[data-testid="desktop-sidebar"]')
+      await control.command('snapshot', '[data-testid="desktop-sidebar"]', { visible: true })
     )
     assert.equal(
       restoredSidebarSnapshot.testIds.includes('runtime-priority-section'),

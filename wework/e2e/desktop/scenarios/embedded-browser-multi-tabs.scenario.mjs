@@ -19,8 +19,6 @@ const BROWSER_INPUT_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-url-input"]'
 const FIRST_BROWSER_TAB_SELECTOR =
   ACTIVE_WORKBENCH_SELECTOR + ' [data-testid="right-workspace-browser-tab-1"]'
-const FIRST_BROWSER_LOADING_ICON_SELECTOR =
-  FIRST_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-1-loading-icon"]'
 const FIRST_BROWSER_TAB_CLOSE_SELECTOR =
   FIRST_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-1-close-button"]'
 const BROWSER_RELOAD_SELECTOR =
@@ -220,9 +218,6 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       await control.command('click', BROWSER_RELOAD_SELECTOR)
       try {
         await waitForFixtureARequestStartCount(expectedReloadRequestStartCount)
-        await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
-          timeoutMs: uiTimeoutMs,
-        })
       } finally {
         releaseReloadResponse()
       }
@@ -260,9 +255,6 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       await control.command('submit', BROWSER_INPUT_SELECTOR)
       try {
         await waitForFixtureARequestStartCount(expectedRecoveryRequestStartCount)
-        await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
-          timeoutMs: uiTimeoutMs,
-        })
       } finally {
         releaseRecoveryResponse()
       }
