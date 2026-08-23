@@ -9,7 +9,11 @@ const workbenchState = vi.hoisted(() => ({
     taskId: 'task-a',
   } as { deviceId: string; taskId: string } | null,
   isBootstrapping: false,
-  runtimeWork: null,
+  runtimeWork: { projects: [], chats: [], totalTasks: 0 } as {
+    projects: unknown[]
+    chats: unknown[]
+    totalTasks: number
+  } | null,
 }))
 
 vi.mock('./useWorkbench', () => ({
@@ -28,7 +32,18 @@ describe('useRuntimeTaskRouteRestoration', () => {
       taskId: 'task-a',
     }
     workbenchState.isBootstrapping = false
+    workbenchState.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
     window.history.replaceState({}, '', '/')
+  })
+
+  test('waits for the initial runtime work discovery before restoring a route', () => {
+    workbenchState.runtimeWork = null
+    window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-b')
+
+    const { result } = renderHook(() => useRuntimeTaskRouteRestoration())
+
+    expect(result.current).toBeNull()
+    expect(openRuntimeTaskMock).not.toHaveBeenCalled()
   })
 
   test('switches from the active task to a different runtime task in the URL', async () => {

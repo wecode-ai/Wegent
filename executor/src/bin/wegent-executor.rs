@@ -124,7 +124,14 @@ fn main() {
 }
 
 fn should_hydrate_shell_environment(args: &CliArgs) -> bool {
-    !args.help && !args.version && !args.upgrade
+    should_hydrate_shell_environment_with_skip(
+        args,
+        env::var_os("WEGENT_SKIP_LOGIN_SHELL_ENV").is_some(),
+    )
+}
+
+fn should_hydrate_shell_environment_with_skip(args: &CliArgs, skip: bool) -> bool {
+    !skip && !args.help && !args.version && !args.upgrade
 }
 
 fn runtime() -> tokio::runtime::Runtime {
@@ -233,5 +240,13 @@ mod tests {
             open_files_soft_limit_target(libc::RLIM_INFINITY, Some(24_576)),
             24_576
         );
+    }
+
+    #[test]
+    fn shell_environment_hydration_can_be_skipped_for_managed_launches() {
+        let args = CliArgs::parse_from(["wegent-executor"]).expect("arguments should parse");
+
+        assert!(should_hydrate_shell_environment_with_skip(&args, false));
+        assert!(!should_hydrate_shell_environment_with_skip(&args, true));
     }
 }

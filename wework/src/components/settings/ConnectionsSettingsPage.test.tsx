@@ -1714,6 +1714,7 @@ describe('ConnectionsSettingsPage', () => {
   })
 
   test('refreshes the device list and closes the dialog when the generated remote device connects', async () => {
+    window.history.pushState({}, '', '/settings/connections?addDevice=1')
     api.getAllDevices
       .mockResolvedValueOnce([cloudDevice()])
       .mockResolvedValue([cloudDevice(), remoteDevice()])
@@ -1731,7 +1732,7 @@ describe('ConnectionsSettingsPage', () => {
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    await userEvent.click(await screen.findByTestId('connection-add-device-button'))
+    expect(await screen.findByTestId('add-cloud-device-dialog')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('add-remote-docker-button'))
 
     await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(2))
@@ -1740,6 +1741,7 @@ describe('ConnectionsSettingsPage', () => {
     })
     expect(screen.getByTestId('connection-device-remote-device')).toHaveTextContent('10.201.3.201')
     expect(screen.getByText('远程设备')).toBeInTheDocument()
+    expect(window.location.search).toBe('')
   })
 
   test('disables cloud device creation when the user already has one cloud device', async () => {

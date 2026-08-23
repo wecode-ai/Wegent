@@ -1092,6 +1092,49 @@ describe('DesktopSidebar', () => {
     ).not.toBeNull()
   })
 
+  test('uses second-based completion timestamps for recently completed priority tasks', async () => {
+    const completedAt = Math.floor(Date.now() / 1000)
+    const runtimeWork = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          available: true,
+          workspacePath: '/workspace/chats/priority-seconds',
+          workspaceKind: 'chat' as const,
+          tasks: [
+            {
+              taskId: 'seconds-completed',
+              workspacePath: '/workspace/chats/priority-seconds',
+              workspaceKind: 'chat' as const,
+              title: 'Seconds completed',
+              runtime: 'codex' as const,
+              running: false,
+              completedAt,
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    }
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-priority-seconds-test')
+    lifecycleStore.syncRuntimeWork(runtimeWork)
+
+    render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...createSidebarProps({ runtimeWork })} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+
+    expect(
+      screen
+        .getByTestId(/^runtime-priority-recent-list-/)
+        .querySelector('[data-testid="runtime-local-task-row-seconds-completed"]')
+    ).not.toBeNull()
+  })
+
   test('keeps existing recent placement stable and appends newly urgent tasks', async () => {
     const updatedAt = new Date().toISOString()
     const initialRuntimeWork = {

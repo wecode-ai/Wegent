@@ -276,6 +276,9 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn route_codex_notification(&self, message: Value) {
+        if codex_notification(&message).method == "app/list/updated" {
+            return;
+        }
         let thread_id =
             codex_notification_thread_id(&message).or_else(|| self.unscoped_route_thread_id());
         let Some(thread_id) = thread_id else {

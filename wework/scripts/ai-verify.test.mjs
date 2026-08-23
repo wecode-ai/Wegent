@@ -11,6 +11,7 @@ import {
   resolveCommandTimeout,
   resolveStartupTimeout,
   startupFailureMessage,
+  visibleWorkbenchProbe,
 } from './ai-verify.mjs'
 
 describe('acknowledgeStartedCommand', () => {
@@ -84,6 +85,45 @@ describe('startupFailureMessage', () => {
     expect(startupFailureMessage({ pid: 42 }, 120000)).toContain(
       'the Tauri launcher was still waiting for its WebView'
     )
+  })
+
+  test('reports a connected WebView whose workbench is still loading', () => {
+    expect(startupFailureMessage({ ready: true, pid: 42 }, 120000)).toContain(
+      'WebView was connected but its main workbench was not fully visible'
+    )
+  })
+})
+
+describe('visibleWorkbenchProbe', () => {
+  const visibleProbe = {
+    location: 'tauri://localhost/',
+    windowLabel: 'main',
+    shellVisible: true,
+    contentVisible: true,
+    loadingVisible: false,
+    startupVisible: false,
+    startupError: false,
+  }
+
+  test('requires both the control client and a fully visible main workbench', () => {
+    expect(visibleWorkbenchProbe({ ready: false, probes: [visibleProbe] })).toBeNull()
+    expect(visibleWorkbenchProbe({ ready: true, probes: [visibleProbe] })).toEqual(visibleProbe)
+  })
+
+  test.each([
+    ['loading placeholder', { loadingVisible: true }],
+    ['startup screen', { startupVisible: true }],
+    ['startup error', { startupError: true }],
+    ['hidden shell', { shellVisible: false }],
+    ['hidden content', { contentVisible: false }],
+    ['auxiliary window', { windowLabel: 'workspace-task-1' }],
+  ])('rejects a %s', (_name, override) => {
+    expect(
+      visibleWorkbenchProbe({
+        ready: true,
+        probes: [{ ...visibleProbe, ...override }],
+      })
+    ).toBeNull()
   })
 })
 

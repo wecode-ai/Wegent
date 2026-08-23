@@ -32,10 +32,16 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.WEGENT_CODEX_HOME).toBe('/tmp/session/executor-home/codex')
     expect(environment.WEWORK_E2E_NATIVE_CODEX_HOME).toBe('/tmp/session/native-codex')
     expect(environment.VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION).toBe('true')
+    expect(environment.WEWORK_E2E_CONTROL_URL).toBe('http://127.0.0.1:9999')
+    expect(environment.WEWORK_E2E_CONTROL_TOKEN).toBe('control-token')
     expect(environment.WEWORK_APP_IDENTIFIER).toBe('io.wecode.wework.ai-verify.test')
+    expect(environment.WEWORK_WEBVIEW_DATA_STORE_ID).toBe(
+      '00000000-0000-4000-8000-000000000001'
+    )
     expect(environment.DEVICE_SESSION_GATEWAY_HOST).toBe('127.0.0.1')
     expect(environment.DEVICE_SESSION_GATEWAY_PORT).toBe('0')
     expect(environment.WEGENT_EXECUTOR_HOME).toBe('/tmp/session/executor-home')
+    expect(environment.WEGENT_SKIP_LOGIN_SHELL_ENV).toBe('1')
     expect(environment.WEGENT_EXECUTOR_PROJECTS_DIR).toBe(
       path.join('/tmp/session/executor-home', 'workspace', 'projects')
     )

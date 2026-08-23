@@ -118,7 +118,9 @@ function desktopControlUrl(): string | null {
 }
 
 function desktopControlHeaders(): HeadersInit | undefined {
-  const token = import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN?.trim()
+  const token =
+    getDesktopE2ERuntimeConfig().controlToken ??
+    import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN?.trim()
   return token ? { Authorization: `Bearer ${token}` } : undefined
 }
 
@@ -460,6 +462,11 @@ function findDesktopControlElements(selector: string): HTMLElement[] {
   return elements
 }
 
+function findDesktopControlElement(selector: string, visible = false): HTMLElement | undefined {
+  const elements = findDesktopControlElements(selector)
+  return visible ? elements.find(desktopControlElementVisible) : elements[0]
+}
+
 function desktopControlElementText(selector: string, visible = false): string {
   const elements = findDesktopControlElements(selector)
   return (visible ? elements.filter(desktopControlElementVisible) : elements)
@@ -468,8 +475,10 @@ function desktopControlElementText(selector: string, visible = false): string {
     .join('\n')
 }
 
-function desktopControlElementMetrics(selector: string): string {
-  const elements = findDesktopControlElements(selector)
+function desktopControlElementMetrics(selector: string, visible = false): string {
+  const elements = findDesktopControlElements(selector).filter(
+    element => !visible || desktopControlElementVisible(element)
+  )
   if (elements.length === 0) throw new Error(`Unable to find selector "${selector}"`)
 
   return JSON.stringify(
@@ -493,13 +502,16 @@ function desktopControlElementMetrics(selector: string): string {
   )
 }
 
-function desktopControlSnapshot(selector = 'body'): string {
-  const root = findDesktopControlElements(selector)[0]
+function desktopControlSnapshot(selector = 'body', visible = false): string {
+  const root =
+    selector === 'body'
+      ? findDesktopControlElements(selector)[0]
+      : findDesktopControlElement(selector, visible)
   if (!root) throw new Error(`Unable to find selector "${selector}"`)
   const testIdElements = [
     ...(root.dataset.testid ? [root] : []),
     ...Array.from(root.querySelectorAll<HTMLElement>('[data-testid]')),
-  ]
+  ].filter(element => !visible || desktopControlElementVisible(element))
   const testIds = testIdElements
     .map(element => element.dataset.testid)
     .filter((testId): testId is string => Boolean(testId))
@@ -740,8 +752,12 @@ function pressDesktopControlPointer(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
-async function pressDesktopControlKey(selector: string, key: string): Promise<string> {
-  const element = findDesktopControlElements(selector)[0]
+async function pressDesktopControlKey(
+  selector: string,
+  key: string,
+  visible = false
+): Promise<string> {
+  const element = findDesktopControlElement(selector, visible)
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
   element.focus()
   const keyboardEvent = parseDesktopControlKey(key)
@@ -792,10 +808,10 @@ let activeDesktopControlDrag: {
 
 async function startDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
   if (activeDesktopControlDrag) throw new Error('A desktop control drag is already active')
-  const element = findDesktopControlElements(command.selector)[0]
+  const element = findDesktopControlElement(command.selector, command.visible)
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   if (!command.target) throw new Error('Drag requires a target selector')
-  const target = findDesktopControlElements(command.target)[0]
+  const target = findDesktopControlElement(command.target, command.visible)
   if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
 
   const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
@@ -818,7 +834,7 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
   const activeDrag = activeDesktopControlDrag
   if (!activeDrag) throw new Error('No desktop control drag is active')
   const targetSelector = command.target ?? activeDrag.targetSelector
-  const target = findDesktopControlElements(targetSelector)[0]
+  const target = findDesktopControlElement(targetSelector, command.visible)
   if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
   const endOptions =
     targetSelector === activeDrag.targetSelector
@@ -1339,7 +1355,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify({ observed: maxCount > 0, maxCount, samples })
     }
     case 'getElementMetrics':
-      return desktopControlElementMetrics(command.selector)
+      return desktopControlElementMetrics(command.selector, command.visible)
     case 'startScrollStabilitySampling': {
       const options = JSON.parse(command.value ?? '{}') as {
         anchorText?: string
@@ -1455,7 +1471,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return element.style.getPropertyValue(property)
     }
     case 'getValue': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const element = findDesktopControlElement(command.selector, command.visible)
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       if (
         element instanceof HTMLInputElement ||
@@ -1477,7 +1493,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(range.toString().length)
     }
     case 'snapshot':
-      return desktopControlSnapshot(command.selector)
+      return desktopControlSnapshot(command.selector, command.visible)
     case 'getClipboardText':
       return getDesktopE2EClipboardText()
     case 'scrollIntoView': {
@@ -1618,7 +1634,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'clickWhenEnabled': {
       await waitForDesktopControlElement({ ...command, enabled: true })
       const element = findDesktopControlElements(command.selector).find(
-        desktopControlElementEnabled
+        candidate =>
+          (!command.visible || desktopControlElementVisible(candidate)) &&
+          desktopControlElementEnabled(candidate)
       )
       if (!element) {
         throw new Error(`Selector "${command.selector}" became disabled before click`)
@@ -1689,7 +1707,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     }
     case 'fill': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const element = findDesktopControlElement(command.selector, command.visible)
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
@@ -1802,10 +1820,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'pointerMove':
       return moveDesktopControlPointer(command)
     case 'press': {
-      return pressDesktopControlKey(command.selector, command.key ?? '')
+      return pressDesktopControlKey(command.selector, command.key ?? '', command.visible)
     }
     case 'select': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const element = findDesktopControlElement(command.selector, command.visible)
       if (!(element instanceof HTMLSelectElement)) {
         throw new Error(`Selector "${command.selector}" is not a select element`)
       }
@@ -1860,9 +1878,12 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}`, {
       headers: desktopControlHeaders(),
     })
-  await getCurrentWindow().show()
-  await getCurrentWindow().unminimize()
-  await getCurrentWindow().setFocus()
+  const currentWindow = getCurrentWindow()
+  await currentWindow.show()
+  await currentWindow.unminimize()
+  await currentWindow.setFocus().catch(error => {
+    console.warn('[Wework] Failed to focus the desktop E2E window:', error)
+  })
   let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {

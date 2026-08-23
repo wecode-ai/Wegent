@@ -29,7 +29,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { openExternalUrl } from '@/lib/external-links'
 import { isImeEnterEvent } from '@/lib/ime'
-import { navigateTo } from '@/lib/navigation'
+import { navigateTo, replaceTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
@@ -72,6 +72,7 @@ const keepConnectionsSettingsOpen = () => undefined
 interface ConnectionsSettingsPageProps {
   onBack: () => void
   autoOpenAddCloudDeviceDialog?: boolean
+  onAddCloudDeviceDialogAutoOpenHandled?: () => void
   services?: WorkbenchServices
   devices?: RuntimeDeviceInfo[]
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
@@ -1032,8 +1033,10 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
 
 function ConnectionsDeviceSettingsPage({
   autoOpenAddCloudDeviceDialog = false,
+  onAddCloudDeviceDialogClosed,
 }: {
   autoOpenAddCloudDeviceDialog?: boolean
+  onAddCloudDeviceDialogClosed?: () => void
 }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -1042,6 +1045,10 @@ function ConnectionsDeviceSettingsPage({
   const [connectDialogOpen, setConnectDialogOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(autoOpenAddCloudDeviceDialog)
   const [creating, setCreating] = useState(false)
+  const closeAddDialog = useCallback(() => {
+    setAddDialogOpen(false)
+    onAddCloudDeviceDialogClosed?.()
+  }, [onAddCloudDeviceDialogClosed])
 
   const applyDevices = useCallback((allDevices: DeviceInfo[]) => {
     const claudeCodeDevices = allDevices.filter(isClaudeCodeDevice)
@@ -1267,7 +1274,7 @@ function ConnectionsDeviceSettingsPage({
         open={addDialogOpen}
         hasCloudDevice={cloudDevices.length > 0 || creating}
         cloudConnection={cloudConnection}
-        onClose={() => setAddDialogOpen(false)}
+        onClose={closeAddDialog}
         onCreated={handleDeviceCreated}
         onCreatingChange={setCreating}
       />
@@ -1278,6 +1285,7 @@ function ConnectionsDeviceSettingsPage({
 export function ConnectionsSettingsPage({
   onBack,
   autoOpenAddCloudDeviceDialog = false,
+  onAddCloudDeviceDialogAutoOpenHandled,
   services,
   devices = [],
   onOpenRuntimeTask,
@@ -1300,6 +1308,12 @@ export function ConnectionsSettingsPage({
   const shouldAutoOpenAddCloudDeviceDialog =
     autoOpenAddCloudDeviceDialog ||
     new URLSearchParams(window.location.search).get('addDevice') === '1'
+  const handleAddCloudDeviceDialogClosed = useCallback(() => {
+    onAddCloudDeviceDialogAutoOpenHandled?.()
+    if (new URLSearchParams(window.location.search).get('addDevice') === '1') {
+      replaceTo('/settings/connections')
+    }
+  }, [onAddCloudDeviceDialogAutoOpenHandled])
   const [activeNav, setActiveNav] = useState(() =>
     getSettingsNavFromPath(window.location.pathname, settingsContributions)
   )
@@ -1437,6 +1451,7 @@ export function ConnectionsSettingsPage({
           <ConnectionsDeviceSettingsPage
             key={shouldAutoOpenAddCloudDeviceDialog ? 'add-device' : 'connections'}
             autoOpenAddCloudDeviceDialog={shouldAutoOpenAddCloudDeviceDialog}
+            onAddCloudDeviceDialogClosed={handleAddCloudDeviceDialogClosed}
           />
         )}
       </main>

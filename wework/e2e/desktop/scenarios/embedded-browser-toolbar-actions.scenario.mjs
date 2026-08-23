@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const ACTIVE_WORKBENCH_SELECTOR =
-  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+  '[data-workspace-tab-content][aria-hidden="false"] [data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const RIGHT_PANEL_TOGGLE_SELECTOR =
   '[data-workspace-tab-portal-owner]:not([hidden]) [data-testid="toggle-right-workspace-panel-button"]'
 const RIGHT_PANEL_EXPAND_SELECTOR = '[data-testid="toggle-right-workspace-panel-expanded-button"]'
@@ -139,7 +139,7 @@ async function waitForValue(control, selector, expected, timeoutMs, message) {
   const startedAt = Date.now()
   let lastValue = null
   while (Date.now() - startedAt < timeoutMs) {
-    lastValue = await control.command('getValue', selector)
+    lastValue = await control.command('getValue', selector, { visible: true })
     if (lastValue === expected) return
     await new Promise(resolve => setTimeout(resolve, 100))
   }
@@ -149,7 +149,7 @@ async function waitForValue(control, selector, expected, timeoutMs, message) {
 async function waitForElementGone(control, selector, timeoutMs, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    const count = await control.command('getElementCount', selector)
+    const count = await control.command('getElementCount', selector, { visible: true })
     if (count === '0') return
     await new Promise(resolve => setTimeout(resolve, 100))
   }
@@ -180,10 +180,16 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const fixtureUrl = control.url + FIXTURE_PATH
 
-      await control.command('waitFor', RIGHT_PANEL_TOGGLE_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('click', RIGHT_PANEL_TOGGLE_SELECTOR)
-      await control.command('click', RIGHT_BROWSER_OPTION_SELECTOR)
-      await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', RIGHT_PANEL_TOGGLE_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', RIGHT_PANEL_TOGGLE_SELECTOR, { visible: true })
+      await control.command('click', RIGHT_BROWSER_OPTION_SELECTOR, { visible: true })
+      await control.command('waitFor', BROWSER_INPUT_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
 
       await callBridge(bridgeIdentity, { action: 'open', url: fixtureUrl, timeoutMs: 8_000 })
       await waitForValue(
@@ -220,20 +226,24 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       }
 
       // --- Find in page ---
-      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
+      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR, { visible: true })
       await control.command('waitFor', FIND_ITEM_SELECTOR, {
         enabled: true,
         timeoutMs: uiTimeoutMs,
+        visible: true,
       })
-      await control.command('click', FIND_ITEM_SELECTOR)
-      await control.command('waitFor', FIND_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('fill', FIND_INPUT_SELECTOR, { value: FIXTURE_WORD })
+      await control.command('click', FIND_ITEM_SELECTOR, { visible: true })
+      await control.command('waitFor', FIND_INPUT_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('fill', FIND_INPUT_SELECTOR, { value: FIXTURE_WORD, visible: true })
       // The fixture contains three visible occurrences of the word.
       {
         const startedAt = Date.now()
         let lastCount = null
         while (Date.now() - startedAt < uiTimeoutMs) {
-          lastCount = await control.command('getValue', FIND_COUNT_SELECTOR)
+          lastCount = await control.command('getValue', FIND_COUNT_SELECTOR, { visible: true })
           if (lastCount.includes('1 / 3')) break
           await new Promise(resolve => setTimeout(resolve, 100))
         }
@@ -248,10 +258,10 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         { query: FIXTURE_WORD, matches: 3, active: 1 },
         'The in-page find runtime did not highlight all fixture matches'
       )
-      await control.command('press', FIND_INPUT_SELECTOR, { key: 'Enter' })
+      await control.command('press', FIND_INPUT_SELECTOR, { key: 'Enter', visible: true })
       const nextFindState = await evaluateFindState(bridgeIdentity)
       assert.equal(nextFindState.active, 2, 'Enter did not move to the next find match')
-      await control.command('click', FIND_CLOSE_SELECTOR)
+      await control.command('click', FIND_CLOSE_SELECTOR, { visible: true })
       await waitForFindMatches(
         bridgeIdentity,
         0,
@@ -260,33 +270,71 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       )
 
       // --- Device toolbar ---
-      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
+      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR, { visible: true })
       await control.command('waitFor', DEVICE_TOOLBAR_ITEM_SELECTOR, {
         enabled: true,
         timeoutMs: uiTimeoutMs,
+        visible: true,
       })
-      await control.command('click', DEVICE_TOOLBAR_ITEM_SELECTOR)
-      await control.command('waitFor', DEVICE_TOOLBAR_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await waitForPageNumber(
-        bridgeIdentity,
-        'window.innerWidth',
-        390,
-        4,
+      await control.command('click', DEVICE_TOOLBAR_ITEM_SELECTOR, { visible: true })
+      await control.command('waitFor', DEVICE_TOOLBAR_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await waitForValue(
+        control,
+        DEVICE_WIDTH_SELECTOR,
+        '390',
         uiTimeoutMs,
-        'The responsive preset did not emulate a 390px viewport'
+        'The responsive preset width did not initialize'
       )
-      await control.command('click', DEVICE_ROTATE_SELECTOR)
-      await waitForPageNumber(
-        bridgeIdentity,
-        'window.innerWidth',
-        844,
-        4,
+      await waitForValue(
+        control,
+        DEVICE_HEIGHT_SELECTOR,
+        '844',
         uiTimeoutMs,
-        'Rotating the device viewport did not emulate an 844px width'
+        'The responsive preset height did not initialize'
       )
-      await control.command('click', RIGHT_PANEL_EXPAND_SELECTOR)
-      await control.command('fill', DEVICE_WIDTH_SELECTOR, { value: '800' })
-      await control.command('fill', DEVICE_HEIGHT_SELECTOR, { value: '600' })
+      // WebKitGTK's zoom API scales rendering without changing window.innerWidth.
+      // WKWebView and WebView2 expose the emulated CSS viewport through innerWidth.
+      if (process.platform !== 'linux') {
+        await waitForPageNumber(
+          bridgeIdentity,
+          'window.innerWidth',
+          390,
+          4,
+          uiTimeoutMs,
+          'The responsive preset did not emulate a 390px viewport'
+        )
+      }
+      await control.command('click', DEVICE_ROTATE_SELECTOR, { visible: true })
+      await waitForValue(
+        control,
+        DEVICE_WIDTH_SELECTOR,
+        '844',
+        uiTimeoutMs,
+        'Rotating the device viewport did not update its width'
+      )
+      await waitForValue(
+        control,
+        DEVICE_HEIGHT_SELECTOR,
+        '390',
+        uiTimeoutMs,
+        'Rotating the device viewport did not update its height'
+      )
+      if (process.platform !== 'linux') {
+        await waitForPageNumber(
+          bridgeIdentity,
+          'window.innerWidth',
+          844,
+          4,
+          uiTimeoutMs,
+          'Rotating the device viewport did not emulate an 844px width'
+        )
+      }
+      await control.command('click', RIGHT_PANEL_EXPAND_SELECTOR, { visible: true })
+      await control.command('fill', DEVICE_WIDTH_SELECTOR, { value: '800', visible: true })
+      await control.command('fill', DEVICE_HEIGHT_SELECTOR, { value: '600', visible: true })
       await waitForValue(
         control,
         DEVICE_WIDTH_SELECTOR,
@@ -294,8 +342,8 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'The responsive device width did not update'
       )
-      await control.command('click', DEVICE_ZOOM_SELECTOR)
-      await control.command('click', DEVICE_ZOOM_200_SELECTOR)
+      await control.command('click', DEVICE_ZOOM_SELECTOR, { visible: true })
+      await control.command('click', DEVICE_ZOOM_200_SELECTOR, { visible: true })
       await control.command('waitFor', DEVICE_RESIZE_LEFT_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('waitFor', DEVICE_RESIZE_RIGHT_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('drag', DEVICE_RESIZE_RIGHT_SELECTOR, {
@@ -308,7 +356,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'Device resizing incorrectly included the 200% page zoom in pointer scaling'
       )
-      await control.command('click', DEVICE_CLOSE_SELECTOR)
+      await control.command('click', DEVICE_CLOSE_SELECTOR, { visible: true })
       await waitForElementGone(
         control,
         DEVICE_TOOLBAR_SELECTOR,
@@ -317,13 +365,17 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       )
 
       // --- Browser settings navigation ---
-      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
+      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR, { visible: true })
       await control.command('waitFor', SETTINGS_ITEM_SELECTOR, {
         enabled: true,
         timeoutMs: uiTimeoutMs,
+        visible: true,
       })
-      await control.command('click', SETTINGS_ITEM_SELECTOR)
-      await control.command('waitFor', BROWSER_SETTINGS_PAGE_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('click', SETTINGS_ITEM_SELECTOR, { visible: true })
+      await control.command('waitFor', BROWSER_SETTINGS_PAGE_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await control.command('navigate', 'body', { value: '/' })
     },
   }

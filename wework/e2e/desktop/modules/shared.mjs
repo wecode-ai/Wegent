@@ -454,7 +454,8 @@ const CLOUD_FOLLOW_UP_PROMPT =
 const CLOUD_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP_COMPLETE'
 const CLOUD_ARTIFACT_NAME = 'wework-cloud-e2e-result.txt'
 const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
-const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
+const ACTIVE_WORKBENCH_SELECTOR =
+  '[data-workspace-tab-content][aria-hidden="false"] [data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
 const ACTIVE_SWITCH_MODEL_RETRY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-switch-model-retry"]`
@@ -1295,52 +1296,66 @@ async function ensureModelOptionVisible(
 async function confirmLocalProjectName(control, name) {
   await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
   })
   await control.command('fill', '[data-testid="local-project-create-name-input"]', {
     value: name,
+    visible: true,
   })
   await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
   })
   await waitForSnapshot(
     control,
-    snapshot => !snapshot.testIds.includes('local-project-create-dialog'),
-    'The local project create dialog did not close after confirmation'
+    snapshot =>
+      !snapshot.testIds.includes('local-project-create-dialog') &&
+      !snapshot.testIds.includes('standalone-folder-project-dialog'),
+    'The local project creation flow did not close after confirmation'
   )
 }
 
 async function createSingleRootLocalProject(control, workspacePath, name) {
-  const sidebarSnapshot = await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('projects-empty-create-button') ||
-      snapshot.testIds.includes('runtime-project-sortable-list'),
-    'The project section did not settle into an empty or populated state'
+  await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  const emptyCreateButtonCount = Number(
+    await control.command('getElementCount', '[data-testid="projects-empty-create-button"]', {
+      visible: true,
+    })
   )
-  const createButtonSelector = sidebarSnapshot.testIds.includes('projects-empty-create-button')
-    ? '[data-testid="projects-empty-create-button"]'
-    : '[data-testid="projects-create-button"]'
+  const createButtonSelector =
+    emptyCreateButtonCount > 0
+      ? '[data-testid="projects-empty-create-button"]'
+      : '[data-testid="projects-create-button"]'
   if (createButtonSelector.includes('projects-empty-create-button')) {
     assert.match(
-      await control.command('getText', createButtonSelector),
+      await control.command('getText', createButtonSelector, { visible: true }),
       /New project|新建项目/,
       'The empty project section did not expose a localized creation action'
     )
   }
-  await control.command('click', createButtonSelector)
-  await control.command('click', '[data-testid="project-create-local-option"]')
+  await control.command('click', createButtonSelector, { visible: true })
+  await control.command('click', '[data-testid="project-create-local-option"]', { visible: true })
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
   })
   await waitForFolderPickerInitialized(control)
   await control.command('fill', '[data-testid="device-folder-path-input"]', {
     value: workspacePath,
+    visible: true,
   })
-  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await control.command('press', '[data-testid="device-folder-path-input"]', {
+    key: 'Enter',
+    visible: true,
+  })
   await waitForFolderPathReady(control, workspacePath)
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
   })
   await confirmLocalProjectName(control, name)
 }

@@ -2,6 +2,7 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
@@ -262,6 +263,22 @@ enum LocalExecutorOutputStream {
     Stderr,
 }
 
+const LOCAL_EXECUTOR_DIAGNOSTIC_MAX_CHARS: usize = 4096;
+
+fn truncate_local_executor_diagnostic(line: &str) -> Cow<'_, str> {
+    let mut characters = line.chars();
+    let prefix = characters
+        .by_ref()
+        .take(LOCAL_EXECUTOR_DIAGNOSTIC_MAX_CHARS)
+        .collect::<String>();
+    let omitted = characters.count();
+    if omitted == 0 {
+        Cow::Borrowed(line)
+    } else {
+        Cow::Owned(format!("{prefix}… [truncated {omitted} chars]"))
+    }
+}
+
 impl LocalExecutorOutputStream {
     fn log_label(self) -> &'static str {
         match self {
@@ -270,7 +287,11 @@ impl LocalExecutorOutputStream {
     }
 
     fn log_line(self, line: &str) {
-        log::info!("{}: {}", self.log_label(), line);
+        log::info!(
+            "{}: {}",
+            self.log_label(),
+            truncate_local_executor_diagnostic(line)
+        );
     }
 }
 
@@ -6696,6 +6717,15 @@ mod tests {
 
         assert_eq!(label, "Local executor diagnostic");
         assert!(!label.contains("stderr"));
+    }
+
+    #[test]
+    fn local_executor_diagnostics_are_bounded() {
+        let long_line = "测".repeat(LOCAL_EXECUTOR_DIAGNOSTIC_MAX_CHARS + 3);
+        let truncated = truncate_local_executor_diagnostic(&long_line);
+
+        assert!(truncated.starts_with(&"测".repeat(LOCAL_EXECUTOR_DIAGNOSTIC_MAX_CHARS)));
+        assert!(truncated.ends_with("… [truncated 3 chars]"));
     }
 
     #[test]

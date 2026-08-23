@@ -21,7 +21,8 @@ const pluginsDirectory = path.join(source, 'plugins')
 const targetDirectory = path.join(root, 'src-tauri', 'bundled-harness-runtime')
 const catalogPath = path.join(targetDirectory, 'runtimes.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
-const cacheDirectory = path.join(root, 'node_modules', '.cache')
+const cacheDirectory =
+  process.env.WEWORK_RUNTIME_CACHE_DIR?.trim() || path.join(root, 'node_modules', '.cache')
 const assetDirectory = path.join(cacheDirectory, 'harness-runtime-assets')
 const materializedRoot = path.join(cacheDirectory, 'harness-runtime-dev')
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']

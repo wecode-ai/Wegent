@@ -897,11 +897,12 @@ async function codexAppServerRequest<T>(
     return result
   } catch (error) {
     const elapsedMs = Date.now() - startedAt
+    const errorText = error instanceof Error ? error.message : String(error)
     console.warn('[Wework] codex.app_server_request failed', {
       method,
       elapsedMs,
       marketplaceKinds: params.marketplaceKinds ?? null,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorText.length > 1_000 ? `${errorText.slice(0, 1_000)}…` : errorText,
     })
     throw error
   }

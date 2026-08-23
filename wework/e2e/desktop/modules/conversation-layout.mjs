@@ -313,12 +313,13 @@ async function waitForSnapshot(
   predicate,
   message,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
-  selector = 'body'
+  selector = 'body',
+  visible = false
 ) {
   const startedAt = Date.now()
   let lastSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
-    const snapshot = JSON.parse(await control.command('snapshot', selector))
+    const snapshot = JSON.parse(await control.command('snapshot', selector, { visible }))
     lastSnapshot = snapshot
     if (predicate(snapshot)) return snapshot
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
@@ -451,12 +452,12 @@ async function assertMentionRenderedAsToken(
   assert.equal(userMessageText.includes(plainTextMention), false, errorLabel)
 }
 
-async function getElementMetrics(control, selector) {
-  return JSON.parse(await control.command('getElementMetrics', selector))
+async function getElementMetrics(control, selector, { visible = true } = {}) {
+  return JSON.parse(await control.command('getElementMetrics', selector, { visible }))
 }
 
-async function getSingleElementMetrics(control, selector, description) {
-  const metrics = await getElementMetrics(control, selector)
+async function getSingleElementMetrics(control, selector, description, options) {
+  const metrics = await getElementMetrics(control, selector, options)
   assert.equal(metrics.length, 1, `${description} rendered ${metrics.length} matching elements`)
   return metrics[0]
 }
@@ -536,11 +537,18 @@ async function waitForTopMetrics(control, selector, description, timeoutMs = 3_0
   )
 }
 
-async function waitForElementWidth(control, selector, predicate, description, timeoutMs = 1_500) {
+async function waitForElementWidth(
+  control,
+  selector,
+  predicate,
+  description,
+  timeoutMs = 1_500,
+  options
+) {
   const startedAt = Date.now()
   let metrics
   while (Date.now() - startedAt < timeoutMs) {
-    metrics = await getSingleElementMetrics(control, selector, description)
+    metrics = await getSingleElementMetrics(control, selector, description, options)
     if (predicate(metrics.width)) return metrics
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }

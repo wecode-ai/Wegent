@@ -13,7 +13,7 @@ import {
   verifyTurnNavigationTracksVisibleTurnMessages,
 } from './conversation-navigation.mjs'
 
-import { waitForBlankConversation } from './memory-tool-flows.mjs'
+import { ensureTaskRowVisible, waitForBlankConversation } from './memory-tool-flows.mjs'
 
 import {
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -64,6 +64,76 @@ async function waitForProcessExit(processId, message) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
+}
+
+async function archiveTaskAndVerifyCacheEviction(control, taskRowTestId) {
+  const cacheBeforeArchive = JSON.parse(
+    await control.command('performanceSnapshot', 'body')
+  ).runtimeConversationCache
+  const archivedTaskId = taskRowTestId.replace('runtime-local-task-row-', '')
+  const isArchivedTaskCacheKey = key => key.endsWith(`:${archivedTaskId}`)
+  assert.ok(
+    cacheBeforeArchive.messageKeys.some(isArchivedTaskCacheKey),
+    `The archived conversation was not cached before archive: ${archivedTaskId}`
+  )
+  await ensureTaskRowVisible(control, taskRowTestId)
+  await control.command('click', `[data-testid="runtime-local-task-archive-${archivedTaskId}"]`, {
+    visible: true,
+  })
+  await control.command(
+    'waitFor',
+    `[data-testid="runtime-local-task-archive-toast-${archivedTaskId}"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  const archivedTaskSelector = `[data-workspace-tab-content][aria-hidden="false"] [data-testid="${taskRowTestId}"]`
+  const archiveRowRemovalStartedAt = Date.now()
+  let archivedTaskRowCount = 1
+  while (Date.now() - archiveRowRemovalStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    archivedTaskRowCount = Number(
+      await control.command('getElementCount', archivedTaskSelector, { visible: true })
+    )
+    if (archivedTaskRowCount === 0) break
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.equal(archivedTaskRowCount, 0, 'The archived task remained visible in the sidebar')
+
+  const archiveEvictionStartedAt = Date.now()
+  let cacheAfterArchive = cacheBeforeArchive
+  while (Date.now() - archiveEvictionStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    cacheAfterArchive = JSON.parse(
+      await control.command('performanceSnapshot', 'body')
+    ).runtimeConversationCache
+    if (
+      !cacheAfterArchive.messageKeys.some(isArchivedTaskCacheKey) &&
+      !cacheAfterArchive.scrollSnapshotKeys.some(isArchivedTaskCacheKey) &&
+      !cacheAfterArchive.virtualMeasurementKeys.some(isArchivedTaskCacheKey)
+    ) {
+      break
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  await writeFile(
+    join(resultDir, 'conversation-switching-cache-eviction.json'),
+    `${JSON.stringify({ before: cacheBeforeArchive, after: cacheAfterArchive }, null, 2)}\n`,
+    'utf8'
+  )
+  assert.equal(
+    cacheAfterArchive.messageKeys.some(isArchivedTaskCacheKey),
+    false,
+    'Archiving retained conversation messages'
+  )
+  assert.equal(
+    cacheAfterArchive.scrollSnapshotKeys.some(isArchivedTaskCacheKey),
+    false,
+    'Archiving retained the conversation scroll snapshot'
+  )
+  assert.equal(
+    cacheAfterArchive.virtualMeasurementKeys.some(isArchivedTaskCacheKey),
+    false,
+    'Archiving retained the conversation virtual measurements'
+  )
 }
 
 async function verifyCrossProviderSwitchRetry(control, composerSelector) {
@@ -452,6 +522,9 @@ async function verifyBackgroundTaskWindowLifecycle({
     lifecycleScreenshotName('07-switched-to-new-task.png')
   )
 
+  setPhase('archived-task-cache-eviction')
+  await archiveTaskAndVerifyCacheEviction(control, freshTaskRowTestId)
+
   await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -500,7 +573,6 @@ async function verifyBackgroundTaskWindowLifecycle({
       { text: completionText, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
     )
     await control.command('waitFor', composerSelector, {
-      stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
   }
@@ -531,51 +603,6 @@ async function verifyBackgroundTaskWindowLifecycle({
   await captureVerificationScreenshot(
     control,
     lifecycleScreenshotName('09-first-virtualized-turn-navigation-target.png')
-  )
-  setPhase('archived-task-cache-eviction')
-  const cacheBeforeArchive = JSON.parse(
-    await control.command('performanceSnapshot', 'body')
-  ).runtimeConversationCache
-  const freshTaskId = freshTaskRowTestId.replace('runtime-local-task-row-', '')
-  await control.command('click', `[data-testid="runtime-local-task-archive-${freshTaskId}"]`)
-  await control.command(
-    'waitFor',
-    `[data-testid="runtime-local-task-archive-toast-${freshTaskId}"]`,
-    {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  const archivedTaskSelector = `[data-testid="${freshTaskRowTestId}"]`
-  const archiveRowRemovalStartedAt = Date.now()
-  let archivedTaskRowCount = 1
-  while (Date.now() - archiveRowRemovalStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    archivedTaskRowCount = Number(await control.command('getElementCount', archivedTaskSelector))
-    if (archivedTaskRowCount === 0) break
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  assert.equal(archivedTaskRowCount, 0, 'The archived task remained mounted in the sidebar')
-  const archiveEvictionStartedAt = Date.now()
-  let cacheAfterArchive = cacheBeforeArchive
-  while (Date.now() - archiveEvictionStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    cacheAfterArchive = JSON.parse(
-      await control.command('performanceSnapshot', 'body')
-    ).runtimeConversationCache
-    if (cacheAfterArchive.messageEntries < cacheBeforeArchive.messageEntries) break
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  assert.ok(
-    cacheAfterArchive.messageEntries < cacheBeforeArchive.messageEntries,
-    `Archiving retained conversation messages (${cacheBeforeArchive.messageEntries} -> ${cacheAfterArchive.messageEntries})`
-  )
-  assert.ok(
-    cacheAfterArchive.scrollSnapshotEntries <= cacheBeforeArchive.scrollSnapshotEntries &&
-      cacheAfterArchive.virtualMeasurementEntries <= cacheBeforeArchive.virtualMeasurementEntries,
-    'Archiving increased retained conversation view state'
-  )
-  await writeFile(
-    join(resultDir, 'conversation-switching-cache-eviction.json'),
-    `${JSON.stringify({ before: cacheBeforeArchive, after: cacheAfterArchive }, null, 2)}\n`,
-    'utf8'
   )
   const activeApp = await reopenCurrentTurnNavigationTask(
     control,

@@ -44,6 +44,7 @@ logger.warn = (message, options) => {
 
 export default defineConfig({
   base: appBasePath,
+  cacheDir: process.env.WEWORK_VITE_CACHE_DIR || undefined,
   customLogger: logger,
   plugins: [
     react(),

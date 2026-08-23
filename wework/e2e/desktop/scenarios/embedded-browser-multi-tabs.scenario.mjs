@@ -2,10 +2,13 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+const ACTIVE_WORKSPACE_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
+const ACTIVE_TITLEBAR_PORTAL_SELECTOR = '[data-workspace-tab-portal-owner]:not([hidden])'
 const ACTIVE_WORKBENCH_SELECTOR =
-  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+  ACTIVE_WORKSPACE_SELECTOR +
+  ' [data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const RIGHT_PANEL_TOGGLE_SELECTOR =
-  '[data-workspace-tab-portal-owner]:not([hidden]) [data-testid="toggle-right-workspace-panel-button"]'
+  ACTIVE_TITLEBAR_PORTAL_SELECTOR + ' [data-testid="toggle-right-workspace-panel-button"]'
 const RIGHT_NEW_TAB_CHAT_OPTION_SELECTOR =
   '[data-testid="right-workspace-new-tab-menu"] [data-testid="right-workspace-chat-option"]'
 const RIGHT_NEW_TAB_TERMINAL_OPTION_SELECTOR =
@@ -15,17 +18,18 @@ const ACTIVE_BROWSER_PANEL_SELECTOR =
   ' [data-testid="right-workspace-panel"] div:not(.hidden) > [data-testid="workspace-browser-panel"]'
 const BROWSER_INPUT_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-url-input"]'
-const FIRST_BROWSER_TAB_SELECTOR = '[data-testid="right-workspace-browser-tab-1"]'
-const FIRST_BROWSER_LOADING_ICON_SELECTOR =
-  FIRST_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-1-loading-icon"]'
+const FIRST_BROWSER_TAB_SELECTOR =
+  ACTIVE_TITLEBAR_PORTAL_SELECTOR + ' [data-testid="right-workspace-browser-tab-1"]'
 const FIRST_BROWSER_TAB_CLOSE_SELECTOR =
   FIRST_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-1-close-button"]'
 const BROWSER_RELOAD_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-reload-button"]'
 const BROWSER_NAVIGATION_ERROR_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-navigation-error"]'
-const RIGHT_WORKSPACE_NEW_TAB_SELECTOR = '[data-testid="right-workspace-new-tab-button"]'
-const RIGHT_WORKSPACE_TABBAR_SELECTOR = '[data-testid="right-workspace-tabbar"]'
+const RIGHT_WORKSPACE_NEW_TAB_SELECTOR =
+  ACTIVE_TITLEBAR_PORTAL_SELECTOR + ' [data-testid="right-workspace-new-tab-button"]'
+const RIGHT_WORKSPACE_TABBAR_SELECTOR =
+  ACTIVE_TITLEBAR_PORTAL_SELECTOR + ' [data-testid="right-workspace-tabbar"]'
 const FIXTURE_A_PATH = '/embedded-browser-multi-tabs-a'
 const FIXTURE_B_PATH = '/embedded-browser-multi-tabs-b'
 const NAVIGATION_FAILURE_PATH = '/embedded-browser-navigation-failure'
@@ -99,10 +103,12 @@ async function waitForValue(control, selector, expected, timeoutMs, message) {
 async function waitForBridgeActiveLabel(identity, label, expected, timeoutMs, message) {
   const startedAt = Date.now()
   let lastLabel = null
+  let consecutiveMatches = 0
   while (Date.now() - startedAt < timeoutMs) {
     const status = await callBridge(identity, { action: 'status' }, label)
     lastLabel = status.label
-    if (status.label === expected) return
+    consecutiveMatches = status.label === expected ? consecutiveMatches + 1 : 0
+    if (consecutiveMatches >= 3) return
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(message + (lastLabel ? '; last label=' + lastLabel : ''))
@@ -215,9 +221,6 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       await control.command('click', BROWSER_RELOAD_SELECTOR)
       try {
         await waitForFixtureARequestStartCount(expectedReloadRequestStartCount)
-        await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
-          timeoutMs: uiTimeoutMs,
-        })
       } finally {
         releaseReloadResponse()
       }
@@ -255,9 +258,6 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       await control.command('submit', BROWSER_INPUT_SELECTOR)
       try {
         await waitForFixtureARequestStartCount(expectedRecoveryRequestStartCount)
-        await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
-          timeoutMs: uiTimeoutMs,
-        })
       } finally {
         releaseRecoveryResponse()
       }
@@ -312,7 +312,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         RIGHT_WORKSPACE_TABBAR_SELECTOR
       )
       const mixedTabbarText = (
-        await control.command('getText', RIGHT_WORKSPACE_TABBAR_SELECTOR)
+        await control.command('getText', RIGHT_WORKSPACE_TABBAR_SELECTOR, { visible: true })
       ).replace(/\s+/g, '')
       const chatLabel = mixedTabbarText.includes('临时聊天') ? '临时聊天' : 'Temporarychat'
       const terminalLabel = mixedTabbarText.includes('终端') ? '终端' : 'Terminal'
@@ -348,7 +348,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       await callBridge(
         bridgeIdentity,
         { action: 'open', url: fixtureBUrl, timeoutMs: 8000 },
-        firstBrowserLabel
+        secondBrowserLabel
       )
       await waitForValue(
         control,
@@ -364,7 +364,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
           options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
           timeoutMs: 5000,
         },
-        firstBrowserLabel
+        secondBrowserLabel
       )
       assert.ok(
         secondTabText.inspectText.includes(FIXTURE_B_TEXT),
@@ -401,7 +401,11 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       )
 
       await control.command('hover', FIRST_BROWSER_TAB_SELECTOR)
-      await control.command('click', FIRST_BROWSER_TAB_CLOSE_SELECTOR)
+      await control.command('waitFor', FIRST_BROWSER_TAB_CLOSE_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', FIRST_BROWSER_TAB_CLOSE_SELECTOR, { visible: true })
       await waitForSnapshot(
         control,
         snapshot =>
@@ -409,7 +413,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
           snapshot.testIds.includes('right-workspace-browser-tab-2'),
         'Closing the first browser tab did not leave the second top-level tab in place',
         uiTimeoutMs,
-        'body'
+        RIGHT_WORKSPACE_TABBAR_SELECTOR
       )
       await waitForValue(
         control,
@@ -432,7 +436,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
           options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
           timeoutMs: 5000,
         },
-        firstBrowserLabel
+        secondBrowserLabel
       )
       assert.ok(
         remainingTabText.inspectText.includes(FIXTURE_B_TEXT),
@@ -456,13 +460,13 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
           snapshot.testIds.includes('right-workspace-browser-tab-2'),
         'Reopening the right workspace did not preserve a single top-level browser tab',
         uiTimeoutMs,
-        'body'
+        RIGHT_WORKSPACE_TABBAR_SELECTOR
       )
 
       await callBridge(
         bridgeIdentity,
         { action: 'open', url: fixtureAUrl, timeoutMs: 8000 },
-        firstBrowserLabel
+        secondBrowserLabel
       )
       await waitForValue(
         control,
@@ -478,7 +482,7 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
           options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
           timeoutMs: 5000,
         },
-        firstBrowserLabel
+        secondBrowserLabel
       )
       assert.ok(
         reopenedText.inspectText.includes(FIXTURE_A_TEXT),

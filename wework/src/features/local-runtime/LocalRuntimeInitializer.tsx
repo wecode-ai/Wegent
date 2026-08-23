@@ -289,16 +289,18 @@ export function LocalRuntimeInitializer({
   const { t } = useTranslation('localRuntime')
   const enabled = useMemo(() => shouldInitializeLocalRuntime(), [])
   const fallbackError = t('fallback_error')
+  const runtimeNotRunningError = t('error_not_running')
+  const runtimeNotReadyError = t('error_not_ready')
   const initialCloudConnectionRef = useRef(initialCloudConnection)
   const [slowStartupTimedOut, setSlowStartupTimedOut] = useState(false)
   const [startupAttempt, setStartupAttempt] = useState(0)
   const [copyDebugState, setCopyDebugState] = useState<CopyDebugState>('idle')
   const runtimeErrorText = useMemo(
     () => ({
-      notRunning: t('error_not_running'),
-      notReady: t('error_not_ready'),
+      notRunning: runtimeNotRunningError,
+      notReady: runtimeNotReadyError,
     }),
-    [t]
+    [runtimeNotReadyError, runtimeNotRunningError]
   )
   const [state, setState] = useState<LocalRuntimeState>(() => ({
     phase: enabled ? 'starting' : 'ready',
@@ -381,8 +383,8 @@ export function LocalRuntimeInitializer({
     }
   }, [startupReady, state.error, state.phase, t])
 
-  const canMountChildren = state.phase === 'ready'
-  const canRevealChildren = canMountChildren
+  const canMountChildren = true
+  const canRevealChildren = state.phase === 'ready'
   const shouldShowStartupScreen = !canRevealChildren
   const failed = state.phase === 'failed'
 

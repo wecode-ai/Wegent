@@ -10,6 +10,8 @@ INITIAL_WEWORK_PORT="${WEWORK_PORT:-}"
 
 # shellcheck source=../../scripts/lib/cargo-cache.sh
 source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
+# shellcheck source=lib/worktree-node-modules-cache.sh
+source "$SCRIPT_DIR/lib/worktree-node-modules-cache.sh"
 # shellcheck source=lib/wework-mac-env.sh
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
 
@@ -291,6 +293,7 @@ export VITE_WEWORK_PARENT_WORKSPACE="${WEWORK_PARENT_WORKSPACE:-}"
 
 export SKIP_FONT_DOWNLOAD="${SKIP_FONT_DOWNLOAD:-1}"
 export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$BACKEND_BASE_URL}"
+export WEWORK_RUNTIME_CACHE_DIR="${WEWORK_RUNTIME_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/wegent/wework-runtime}"
 if [ -z "${WEWORK_EXECUTOR_SIDECAR:-}" ]; then
   WEWORK_EXECUTOR_SIDECAR="$WEWORK_DIR/scripts/dev-executor-sidecar.sh"
 fi
@@ -393,27 +396,62 @@ if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
 fi
 
 cd "$WEWORK_DIR"
+ensure_wework_worktree_node_modules "$PROJECT_DIR" "$WEWORK_DIR"
+WEWORK_DEPENDENCY_FINGERPRINT="$(wegent_wework_dependency_fingerprint "$PROJECT_DIR")"
+export WEWORK_VITE_CACHE_DIR="${WEWORK_VITE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/wegent/wework-vite/$WEWORK_DEPENDENCY_FINGERPRINT}"
+
+PREPARATION_LOG_DIR="$(mktemp -d -t wework-dev-preparations)"
+PREPARATION_PIDS=()
+PREPARATION_NAMES=()
+
+start_preparation() {
+  local name="$1"
+  shift
+  "$@" >"$PREPARATION_LOG_DIR/$name.log" 2>&1 &
+  PREPARATION_PIDS+=("$!")
+  PREPARATION_NAMES+=("$name")
+}
+
 if [ "$MANAGED_DEV_CODEX" = "true" ]; then
-  WEWORK_CODEX_TARGET="$DEV_CODEX_TARGET" pnpm run prepare:codex
+  start_preparation codex env WEWORK_CODEX_TARGET="$DEV_CODEX_TARGET" pnpm run prepare:codex
+fi
+start_preparation dws env \
+  WEWORK_DWS_SHARED_CACHE=1 \
+  WEWORK_DWS_TARGET="$(resolve_dev_codex_target)" \
+  pnpm run prepare:dws
+if [ -z "${WEWORK_HARNESS_RUNTIME_ROOT:-}" ] && [ -z "${WEWORK_DEEPSEEK_HARNESS_ROOT:-}" ]; then
+  start_preparation harness pnpm run prepare:harness-runtime -- --materialize
+  export WEWORK_HARNESS_RUNTIME_ROOT="$WEWORK_RUNTIME_CACHE_DIR/harness-runtime-dev"
+else
+  start_preparation harness pnpm run prepare:harness-runtime
+fi
+
+if [ -z "${WEWORK_NODE_RUNTIME_ROOT:-}" ]; then
+  start_preparation execution pnpm run prepare:execution-runtime -- --materialize
+  export WEWORK_NODE_RUNTIME_ROOT="$WEWORK_RUNTIME_CACHE_DIR/execution-runtime-node-dev"
+fi
+
+PREPARATION_FAILED=0
+for index in "${!PREPARATION_PIDS[@]}"; do
+  if ! wait "${PREPARATION_PIDS[$index]}"; then
+    PREPARATION_FAILED=1
+  fi
+  cat "$PREPARATION_LOG_DIR/${PREPARATION_NAMES[$index]}.log"
+done
+rm -rf "$PREPARATION_LOG_DIR"
+if [ "$PREPARATION_FAILED" -ne 0 ]; then
+  echo "Error: one or more Wework development prerequisites failed." >&2
+  exit 1
+fi
+
+if [ "$MANAGED_DEV_CODEX" = "true" ]; then
   if [ ! -x "$DEV_CODEX_BINARY" ]; then
     echo "Error: prepared Codex binary is not executable: $DEV_CODEX_BINARY" >&2
     exit 1
   fi
   echo "Using repository Codex: $("$DEV_CODEX_BINARY" --version)"
 fi
-WEWORK_DWS_TARGET="$(resolve_dev_codex_target)" pnpm run prepare:dws
-if [ -z "${WEWORK_HARNESS_RUNTIME_ROOT:-}" ] && [ -z "${WEWORK_DEEPSEEK_HARNESS_ROOT:-}" ]; then
-  pnpm run prepare:harness-runtime -- --materialize
-  export WEWORK_HARNESS_RUNTIME_ROOT="$WEWORK_DIR/node_modules/.cache/harness-runtime-dev"
-else
-  pnpm run prepare:harness-runtime
-fi
 echo "Using Harness runtime root: ${WEWORK_HARNESS_RUNTIME_ROOT:-${WEWORK_DEEPSEEK_HARNESS_ROOT}}"
-
-if [ -z "${WEWORK_NODE_RUNTIME_ROOT:-}" ]; then
-  pnpm run prepare:execution-runtime -- --materialize
-  export WEWORK_NODE_RUNTIME_ROOT="$WEWORK_DIR/node_modules/.cache/execution-runtime-node-dev"
-fi
 echo "Using Node runtime root: $WEWORK_NODE_RUNTIME_ROOT"
 
 if ! is_port_available "$WEWORK_PORT"; then
@@ -430,6 +468,58 @@ if ! is_port_available "$WEWORK_PORT"; then
 fi
 
 print_startup_configuration
+if [ "${VITE_WEWORK_E2E:-}" = "true" ] && [ "$WEWORK_RELEASE_UI" != "true" ]; then
+  echo "Using shared native development binaries."
+  export WEWORK_DEV_SERVER_URL="http://127.0.0.1:$WEWORK_PORT"
+  CACHE_RESULT_DIR="$(mktemp -d -t wework-dev-cache-results)"
+  node scripts/dev-binary-cache.mjs executor >"$CACHE_RESULT_DIR/executor" &
+  EXECUTOR_CACHE_PID="$!"
+  node scripts/dev-binary-cache.mjs app >"$CACHE_RESULT_DIR/app" &
+  APP_CACHE_PID="$!"
+  node scripts/dev-frontend-cache.mjs >"$CACHE_RESULT_DIR/frontend" &
+  FRONTEND_CACHE_PID="$!"
+  CACHE_FAILED=0
+  wait "$EXECUTOR_CACHE_PID" || CACHE_FAILED=1
+  wait "$APP_CACHE_PID" || CACHE_FAILED=1
+  wait "$FRONTEND_CACHE_PID" || CACHE_FAILED=1
+  if [ "$CACHE_FAILED" -ne 0 ]; then
+    rm -rf "$CACHE_RESULT_DIR"
+    echo "Error: failed to prepare one or more Wework development caches." >&2
+    exit 1
+  fi
+  export WEGENT_EXECUTOR_BINARY
+  WEGENT_EXECUTOR_BINARY="$(cat "$CACHE_RESULT_DIR/executor")"
+  DEV_APP_BINARY="$(cat "$CACHE_RESULT_DIR/app")"
+  DEV_FRONTEND_DIST="$(cat "$CACHE_RESULT_DIR/frontend")"
+  rm -rf "$CACHE_RESULT_DIR"
+  node scripts/serve-dev-frontend.mjs "$DEV_FRONTEND_DIST" "$WEWORK_PORT" &
+  VITE_PROCESS="$!"
+  node -e '
+    const url = process.argv[1]
+    const deadline = performance.now() + 5_000
+    while (performance.now() < deadline) {
+      try {
+        const response = await fetch(url)
+        if (response.ok) process.exit(0)
+      } catch {}
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
+    console.error(`Timed out waiting for development frontend: ${url}`)
+    process.exit(1)
+  ' "http://127.0.0.1:$WEWORK_PORT/"
+  cleanup_fast_dev_processes() {
+    kill -TERM "$VITE_PROCESS" 2>/dev/null || true
+    rm -f "$TAURI_DEV_CONFIG"
+    release_wework_port_lock
+  }
+  trap cleanup_fast_dev_processes EXIT
+  cd "$WEWORK_DIR/src-tauri"
+  "$DEV_APP_BINARY" &
+  DEV_APP_PROCESS="$!"
+  wait "$DEV_APP_PROCESS"
+  exit "$?"
+fi
+
 TAURI_ARGS=(dev --config "$TAURI_DEV_CONFIG")
 if [ "$WEWORK_RELEASE_UI" = "true" ]; then
   TAURI_ARGS+=(--release)

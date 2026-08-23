@@ -414,7 +414,9 @@ function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000
 }
 
 async function getSingleElementMetrics(control, selector, description) {
-  const metrics = JSON.parse(await control.command('getElementMetrics', selector))
+  const metrics = JSON.parse(
+    await control.command('getElementMetrics', selector, { visible: true })
+  )
   assert.equal(metrics.length, 1, `${description} matched ${metrics.length} elements`)
   return metrics[0]
 }

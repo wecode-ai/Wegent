@@ -14,6 +14,9 @@ const outputRoot = join(weworkDir, 'src-tauri', 'binaries', 'codex')
 const legacyCacheRoot = join(weworkDir, 'node_modules', '.cache', 'wework-codex')
 const DOWNLOAD_ATTEMPTS = 3
 const DOWNLOAD_RETRY_DELAY_MS = 1_000
+const LOCK_RETRY_DELAY_MS = 50
+const LOCK_TIMEOUT_MS = 120_000
+const STALE_LOCK_MS = 10 * 60_000
 
 const hostTargetByPlatform = {
   'darwin:arm64': 'aarch64-apple-darwin',
@@ -126,6 +129,40 @@ async function download(url, destination, fetchImpl) {
 
 function sleep(delayMs) {
   return new Promise(resolvePromise => setTimeout(resolvePromise, delayMs))
+}
+
+async function withDirectoryLock(lockDirectory, callback) {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS
+  while (true) {
+    try {
+      await mkdir(lockDirectory)
+      break
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error
+
+      let lockAgeMs
+      try {
+        lockAgeMs = Date.now() - (await stat(lockDirectory)).mtimeMs
+      } catch (statError) {
+        if (statError?.code === 'ENOENT') continue
+        throw statError
+      }
+      if (lockAgeMs >= STALE_LOCK_MS) {
+        await rm(lockDirectory, { recursive: true, force: true })
+        continue
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for Codex preparation lock: ${lockDirectory}`)
+      }
+      await sleep(LOCK_RETRY_DELAY_MS)
+    }
+  }
+
+  try {
+    return await callback()
+  } finally {
+    await rm(lockDirectory, { recursive: true, force: true })
+  }
 }
 
 export async function downloadWithRetry(
@@ -256,38 +293,43 @@ async function prepareTarget(target, entry) {
     target === 'x86_64-pc-windows-msvc' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'
   )
 
-  if (!(await pathExists(tarballPath))) {
-    const legacyTarballPath = await findLegacyTarball(legacyTarballPaths)
-    if (legacyTarballPath) {
-      await mkdir(sharedCacheRoot, { recursive: true })
-      await cp(legacyTarballPath, tarballPath)
-      console.log(`Reused legacy Codex cache for ${target}`)
+  await mkdir(sharedCacheRoot, { recursive: true })
+  await withDirectoryLock(`${tarballPath}.prepare-lock`, async () => {
+    if (!(await pathExists(tarballPath))) {
+      const legacyTarballPath = await findLegacyTarball(legacyTarballPaths)
+      if (legacyTarballPath) {
+        await cp(legacyTarballPath, tarballPath)
+        console.log(`Reused legacy Codex cache for ${target}`)
+      }
     }
-  }
 
-  if (!(await pathExists(tarballPath))) {
-    console.log(`Downloading Codex ${entry.version} for ${target}`)
-    await downloadToCache(entry.tarball, tarballPath)
-  }
+    if (!(await pathExists(tarballPath))) {
+      console.log(`Downloading Codex ${entry.version} for ${target}`)
+      await downloadToCache(entry.tarball, tarballPath)
+    }
 
-  await ensureTarballIntegrity(tarballPath, entry, target)
+    await ensureTarballIntegrity(tarballPath, entry, target)
+    await ensureExtractedTarget(tarballPath, targetRoot, binaryPath, codeModeHostPath)
+  })
 
-  await ensureExtractedTarget(tarballPath, targetRoot, binaryPath, codeModeHostPath)
-  await exposeTarget(targetRoot, outputTargetRoot)
-  await writeFile(
-    join(outputTargetRoot, 'WEGENT_CODEX_BINARY.json'),
-    `${JSON.stringify(
-      {
-        target,
-        codexVersion: entry.version,
-        binaryPath: entry.binaryPath,
-        tarball: entry.tarball,
-        integrity: entry.integrity,
-      },
-      null,
-      2
-    )}\n`
-  )
+  await mkdir(outputRoot, { recursive: true })
+  await withDirectoryLock(`${outputTargetRoot}.prepare-lock`, async () => {
+    await exposeTarget(targetRoot, outputTargetRoot)
+    await writeFile(
+      join(outputTargetRoot, 'WEGENT_CODEX_BINARY.json'),
+      `${JSON.stringify(
+        {
+          target,
+          codexVersion: entry.version,
+          binaryPath: entry.binaryPath,
+          tarball: entry.tarball,
+          integrity: entry.integrity,
+        },
+        null,
+        2
+      )}\n`
+    )
+  })
   console.log(`Prepared Codex ${entry.version} for ${target}`)
 }
 

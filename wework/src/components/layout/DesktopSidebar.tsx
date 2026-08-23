@@ -874,11 +874,16 @@ function getRuntimeTaskSplitGroup(
 }
 
 function getRuntimeTaskPriorityTime(task: RuntimeTaskSummary): number {
-  const value = getRuntimeTaskTime(task)
-  if (value === undefined) return 0
-  const numeric = typeof value === 'number' ? value : Number(value)
-  const timestamp = Number.isFinite(numeric) ? numeric : new Date(value).getTime()
-  return Number.isNaN(timestamp) ? 0 : timestamp
+  const timestamps = [task.updatedAt, task.completedAt, task.createdAt].map(value => {
+    if (value == null) return 0
+    const numeric = typeof value === 'number' ? value : Number(value)
+    if (Number.isFinite(numeric)) {
+      return numeric > 0 && numeric < 100_000_000_000 ? numeric * 1000 : numeric
+    }
+    const timestamp = new Date(value).getTime()
+    return Number.isNaN(timestamp) ? 0 : timestamp
+  })
+  return Math.max(...timestamps)
 }
 
 function getRuntimePriorityTaskKey(

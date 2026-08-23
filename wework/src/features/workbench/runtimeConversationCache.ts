@@ -49,6 +49,7 @@ const queuedMessagesPausedByConversation = new Map<string, boolean>()
 const interruptedGuidanceIdsByConversation = new Map<string, Set<string>>()
 const scrollSnapshotsByConversation = new Map<string, ConversationScrollSnapshot>()
 const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
+const evictedConversationViewKeys = new Map<string, true>()
 
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
@@ -214,6 +215,7 @@ export function subscribeRuntimeTransportReplaced(
 
 export function beginRuntimeConversationHydration(address: RuntimeTaskAddress): symbol {
   const key = runtimeConversationKey(address)
+  evictedConversationViewKeys.delete(key)
   const existing = hydrationByConversation.get(key)
   if (existing) return existing.token
   const token = Symbol(key)
@@ -712,6 +714,7 @@ export function hasConversationScrollSnapshot(key: string): boolean {
 }
 
 export function cacheConversationScrollSnapshot(key: string, snapshot: ConversationScrollSnapshot) {
+  if (evictedConversationViewKeys.has(key)) return
   cacheBoundedEntry(scrollSnapshotsByConversation, key, snapshot)
 }
 
@@ -720,6 +723,7 @@ export function getConversationVirtualMeasurements(key: string): VirtualItem[] |
 }
 
 export function cacheConversationVirtualMeasurements(key: string, measurements: VirtualItem[]) {
+  if (evictedConversationViewKeys.has(key)) return
   virtualMeasurementsByConversation.delete(key)
   if (measurements.length > 0) {
     cacheBoundedEntry(virtualMeasurementsByConversation, key, measurements)
@@ -820,6 +824,7 @@ function shortRuntimeAgentId(agentId: string): string {
 
 export function evictRuntimeConversation(address: RuntimeTaskAddress) {
   const key = runtimeConversationKey(address)
+  cacheBoundedEntry(evictedConversationViewKeys, key, true)
   turnsByConversation.delete(key)
   metadataByConversation.delete(key)
   hydrationByConversation.delete(key)
@@ -833,8 +838,11 @@ export function evictRuntimeConversation(address: RuntimeTaskAddress) {
 export function getRuntimeConversationCacheStats() {
   return {
     messageEntries: turnsByConversation.size,
+    messageKeys: [...turnsByConversation.keys()],
     scrollSnapshotEntries: scrollSnapshotsByConversation.size,
+    scrollSnapshotKeys: [...scrollSnapshotsByConversation.keys()],
     virtualMeasurementEntries: virtualMeasurementsByConversation.size,
+    virtualMeasurementKeys: [...virtualMeasurementsByConversation.keys()],
   }
 }
 
@@ -849,6 +857,7 @@ export function clearRuntimeConversationCacheForTests() {
   interruptedGuidanceIdsByConversation.clear()
   scrollSnapshotsByConversation.clear()
   virtualMeasurementsByConversation.clear()
+  evictedConversationViewKeys.clear()
 }
 
 function notifyRuntimeConversation(key: string, action?: RuntimePaneMessageAction) {
