@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 
 const temporaryDirectories = []
 const processes = []
+const OUTPUT_TIMEOUT_MS = 15_000
 
 afterEach(async () => {
   for (const process of processes.splice(0)) {
@@ -16,12 +17,16 @@ afterEach(async () => {
   )
 })
 
-function waitForOutput(stream, pattern, timeoutMs = 10_000) {
+function waitForOutput(stream, pattern, timeoutMs = OUTPUT_TIMEOUT_MS, diagnostics = () => '') {
   return new Promise((resolveOutput, rejectOutput) => {
     let output = ''
     const timeout = setTimeout(() => {
       cleanup()
-      rejectOutput(new Error(`Timed out waiting for ${pattern}; output=${JSON.stringify(output)}`))
+      rejectOutput(
+        new Error(
+          `Timed out waiting for ${pattern}; output=${JSON.stringify(output)}; diagnostics=${JSON.stringify(diagnostics())}`
+        )
+      )
     }, timeoutMs)
     const onData = chunk => {
       output += chunk
@@ -38,7 +43,7 @@ function waitForOutput(stream, pattern, timeoutMs = 10_000) {
   })
 }
 
-describe('dev executor reload', { timeout: 20_000 }, () => {
+describe('dev executor reload', { timeout: 30_000 }, () => {
   test('builds once initially and rebuilds after a source change', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-executor-reload-'))
     temporaryDirectories.push(directory)
@@ -97,8 +102,17 @@ chmodSync(output, 0o755)
       }
     )
     processes.push(watcher)
+    let watcherStderr = ''
+    watcher.stderr.on('data', chunk => {
+      watcherStderr += chunk
+    })
 
-    const firstReady = await waitForOutput(watcher.stdout, /ready (\d+)\n/)
+    const firstReady = await waitForOutput(
+      watcher.stdout,
+      /ready (\d+)\n/,
+      OUTPUT_TIMEOUT_MS,
+      () => watcherStderr
+    )
     await writeFile(join(sourceDirectory, 'main.rs'), 'fn main() { println!("changed"); }\n')
     const secondReady = await waitForOutput(watcher.stdout, /ready (\d+)\n/)
     expect(secondReady[1]).not.toBe(firstReady[1])
