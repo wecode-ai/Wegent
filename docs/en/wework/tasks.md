@@ -18,6 +18,12 @@ After enabling Experimental features, open the composer's **+** menu and select 
 
 For an existing task, open the right-side **Environment** panel and select **Link project space**. You can link the current project or task to a local or cloud project space, or quickly create a task in that space. Local-space operations remain on the current device; cloud-space operations use shared cloud data.
 
+### Review board-task progress
+
+Board cards show the task title only, so task text is not repeated. A running task keeps three lines for its latest progress below the card content: Wework shows an AI response summary when text is being generated, otherwise it shows thinking or the most recent tool activity.
+
+Hover anywhere on a card to open its progress preview. When one board task has several tasks running, the preview initially lists a summary for each one. Hovering an individual task narrows the preview to that task's progress.
+
 ## Manage project-space automation
 
 Project spaces provide an **Automation** entry that manages robot members and their execution queue in one place. A robot can be assigned as the owner of a project task: it claims the task, executes it on the local or a selected device, and writes the result or failure back into the task comment thread for human acceptance.
