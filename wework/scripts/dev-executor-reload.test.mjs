@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { afterEach, describe, expect, test } from 'vitest'
 
 const temporaryDirectories = []
@@ -49,6 +50,7 @@ describe('dev executor reload', { timeout: 30_000 }, () => {
     temporaryDirectories.push(directory)
     const executorDirectory = join(directory, 'executor')
     const sourceDirectory = join(executorDirectory, 'src')
+    const sourcePath = join(sourceDirectory, 'main.rs')
     const targetDirectory = join(directory, 'target')
     const binDirectory = join(directory, 'bin')
     const buildLog = join(directory, 'build.log')
@@ -58,7 +60,7 @@ describe('dev executor reload', { timeout: 30_000 }, () => {
     await mkdir(binDirectory, { recursive: true })
     await writeFile(join(executorDirectory, 'Cargo.toml'), '[package]\nname = "fake"\n')
     await writeFile(join(executorDirectory, 'Cargo.lock'), '')
-    await writeFile(join(sourceDirectory, 'main.rs'), 'fn main() {}\n')
+    await writeFile(sourcePath, 'fn main() {}\n')
     await writeFile(
       executorTemplate,
       `#!/usr/bin/env node
@@ -113,9 +115,14 @@ chmodSync(output, 0o755)
       OUTPUT_TIMEOUT_MS,
       () => watcherStderr
     )
-    await writeFile(join(sourceDirectory, 'main.rs'), 'fn main() { println!("changed"); }\n')
+    await writeFile(sourcePath, 'fn main() { println!("changed"); }\n')
     const secondReady = await waitForOutput(watcher.stdout, /ready (\d+)\n/)
     expect(secondReady[1]).not.toBe(firstReady[1])
+    expect((await readFile(buildLog, 'utf8')).trim().split('\n')).toHaveLength(2)
+
+    const now = new Date()
+    await utimes(sourcePath, now, now)
+    await delay(700)
     expect((await readFile(buildLog, 'utf8')).trim().split('\n')).toHaveLength(2)
 
     watcher.stdin.write('ping\n')
