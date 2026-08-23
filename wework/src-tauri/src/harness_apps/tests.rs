@@ -300,15 +300,8 @@ fn linked_directory_rejects_symlinked_required_files() {
     fs::remove_file(app.join("PLUGIN.md")).unwrap();
     symlink(&outside, app.join("PLUGIN.md")).unwrap();
 
-    assert!(matches!(
-        validate_package_directory(&app),
-        Err(error) if error.contains("symbolic links")
-    ));
-    assert!(
-        export_package_directory(&app, &directory.path().join("app.zip"))
-            .unwrap_err()
-            .contains("symbolic links")
-    );
+    assert!(validate_package_directory(&app).is_err());
+    assert!(export_package_directory(&app, &directory.path().join("app.zip")).is_err());
 }
 
 #[cfg(unix)]
@@ -331,15 +324,8 @@ fn linked_directory_rejects_symlinked_declared_package_directories() {
     fs::rename(&bundle, &outside).unwrap();
     symlink(&outside, &bundle).unwrap();
 
-    assert!(matches!(
-        validate_package_directory(&app),
-        Err(error) if error.contains("symbolic links")
-    ));
-    assert!(
-        export_package_directory(&app, &directory.path().join("app.zip"))
-            .unwrap_err()
-            .contains("symbolic links")
-    );
+    assert!(validate_package_directory(&app).is_err());
+    assert!(export_package_directory(&app, &directory.path().join("app.zip")).is_err());
 }
 
 #[cfg(unix)]
@@ -364,7 +350,32 @@ fn editable_file_reads_reject_symlinks_created_after_validation() {
     fs::remove_file(app.join("PLUGIN.md")).unwrap();
     symlink(&outside, app.join("PLUGIN.md")).unwrap();
 
-    assert!(read_editable_file_no_follow(&app.join("PLUGIN.md")).is_err());
+    let root = EditablePackageRoot::open(&app).unwrap();
+    assert!(root.read_file(Path::new("PLUGIN.md")).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn editable_package_collection_rejects_replaced_intermediate_directories() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let (root, manifest, _) = open_validated_package_directory(&app).unwrap();
+    let bundle = app.join("packages/bundle");
+    let outside = directory.path().join("outside-bundle");
+    fs::rename(&bundle, &outside).unwrap();
+    symlink(&outside, &bundle).unwrap();
+
+    assert!(collect_editable_package_files(&root, &manifest).is_err());
 }
 
 #[test]

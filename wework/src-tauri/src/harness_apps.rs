@@ -1,9 +1,12 @@
+use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::fs::{Dir as CapDir, OpenOptions as CapOpenOptions};
 use flate2::read::GzDecoder;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -373,40 +376,35 @@ fn validate_manifest(manifest: &HarnessAppManifest) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_package_directory(path: &Path) -> Result<(HarnessAppManifest, String), String> {
-    let root = fs::canonicalize(path)
-        .map_err(|error| format!("Failed to resolve Harness app directory: {error}"))?;
-    if !root.is_dir() {
-        return Err("Harness app path must be a directory".to_string());
-    }
-    let manifest_path = root.join("plugin-manifest.json");
-    reject_editable_path_symlinks(&root, Path::new("plugin-manifest.json"))?;
+fn open_validated_package_directory(
+    path: &Path,
+) -> Result<(EditablePackageRoot, HarnessAppManifest, String), String> {
+    let root = EditablePackageRoot::open(path)?;
     let manifest: HarnessAppManifest =
-        serde_json::from_slice(&read_editable_file_no_follow(&manifest_path)?)
+        serde_json::from_slice(&root.read_file(Path::new("plugin-manifest.json"))?)
             .map_err(|error| format!("plugin-manifest.json is invalid: {error}"))?;
     validate_manifest(&manifest)?;
     for required in ["PLUGIN.md", "INSTALL.zh-CN.md"] {
-        reject_editable_path_symlinks(&root, Path::new(required))?;
-        if !root.join(required).is_file() {
-            return Err(format!("Harness app directory is missing {required}"));
-        }
+        root.ensure_file(Path::new(required))
+            .map_err(|_| format!("Harness app directory is missing {required}"))?;
     }
-    reject_editable_path_symlinks(&root, Path::new(&manifest.entry.install_package))?;
-    let install_package = root.join(&manifest.entry.install_package);
-    if !install_package.is_dir()
-        || !install_package.join("package.json").is_file()
-        || !install_package.join("cordis.patch.yml").is_file()
+    if root
+        .open_dir(Path::new(&manifest.entry.install_package))
+        .is_err()
+        || root
+            .ensure_file(&Path::new(&manifest.entry.install_package).join("package.json"))
+            .is_err()
+        || root
+            .ensure_file(&Path::new(&manifest.entry.install_package).join("cordis.patch.yml"))
+            .is_err()
     {
         return Err("Harness app profile bundle is incomplete".to_string());
     }
     let files = collect_editable_package_files(&root, &manifest)?;
     let mut hash = Sha256::new();
     let mut total = 0_u64;
-    for file in files {
-        let relative = file
-            .strip_prefix(&root)
-            .map_err(|_| "Harness app package path escaped its root".to_string())?;
-        let bytes = read_editable_file_no_follow(&file)?;
+    for relative in files {
+        let bytes = root.read_file(&relative)?;
         total = total.saturating_add(bytes.len() as u64);
         if total > MAX_EXTRACTED_BYTES {
             return Err("Harness app directory exceeds 250 MB".to_string());
@@ -415,7 +413,12 @@ fn validate_package_directory(path: &Path) -> Result<(HarnessAppManifest, String
         hash.update([0]);
         hash.update(&bytes);
     }
-    Ok((manifest, format!("{:x}", hash.finalize())))
+    Ok((root, manifest, format!("{:x}", hash.finalize())))
+}
+
+fn validate_package_directory(path: &Path) -> Result<(HarnessAppManifest, String), String> {
+    let (_, manifest, sha256) = open_validated_package_directory(path)?;
+    Ok((manifest, sha256))
 }
 
 fn write_json(path: &Path, value: &Value) -> Result<(), String> {
@@ -759,107 +762,162 @@ fn write_verified_download<R: Read>(
     Ok(())
 }
 
+struct EditablePackageRoot {
+    directory: CapDir,
+}
+
+impl EditablePackageRoot {
+    fn open(path: &Path) -> Result<Self, String> {
+        let root = fs::canonicalize(path)
+            .map_err(|error| format!("Failed to resolve Harness app directory: {error}"))?;
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+            options.custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        }
+        let file = options
+            .open(&root)
+            .map_err(|error| format!("Failed to open Harness app directory: {error}"))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("Failed to inspect Harness app directory: {error}"))?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return Err("Harness app source paths cannot contain symbolic links".to_string());
+            }
+        }
+        if !metadata.is_dir() {
+            return Err("Harness app path must be a directory".to_string());
+        }
+        Ok(Self {
+            directory: CapDir::from_std_file(file),
+        })
+    }
+
+    fn open_parent(&self, relative: &Path) -> Result<(CapDir, OsString), String> {
+        let components = editable_path_components(relative)?;
+        let (name, parents) = components
+            .split_last()
+            .ok_or_else(|| "Harness app package path is empty".to_string())?;
+        let mut directory = self
+            .directory
+            .try_clone()
+            .map_err(|error| format!("Failed to clone Harness app directory handle: {error}"))?;
+        for parent in parents {
+            directory = directory
+                .open_dir_nofollow(parent)
+                .map_err(|error| format!("Failed to open Harness app source directory: {error}"))?;
+        }
+        Ok((directory, name.clone()))
+    }
+
+    fn open_dir(&self, relative: &Path) -> Result<CapDir, String> {
+        let mut directory = self
+            .directory
+            .try_clone()
+            .map_err(|error| format!("Failed to clone Harness app directory handle: {error}"))?;
+        for component in editable_path_components(relative)? {
+            directory = directory
+                .open_dir_nofollow(&component)
+                .map_err(|error| format!("Failed to open Harness app source directory: {error}"))?;
+        }
+        Ok(directory)
+    }
+
+    fn open_file(&self, relative: &Path) -> Result<cap_std::fs::File, String> {
+        let (directory, name) = self.open_parent(relative)?;
+        let mut options = CapOpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        let file = directory
+            .open_with(name, &options)
+            .map_err(|error| format!("Failed to open Harness app package file: {error}"))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("Failed to inspect Harness app package file: {error}"))?;
+        if !metadata.is_file() {
+            return Err("Harness app package path must be a regular file".to_string());
+        }
+        Ok(file)
+    }
+
+    fn ensure_file(&self, relative: &Path) -> Result<(), String> {
+        self.open_file(relative).map(|_| ())
+    }
+
+    fn read_file(&self, relative: &Path) -> Result<Vec<u8>, String> {
+        let mut file = self.open_file(relative)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|error| format!("Failed to read Harness app package file: {error}"))?;
+        Ok(bytes)
+    }
+}
+
+fn editable_path_components(path: &Path) -> Result<Vec<OsString>, String> {
+    path.components()
+        .map(|component| match component {
+            Component::Normal(value) => Ok(value.to_os_string()),
+            _ => Err("Harness app package path must stay relative".to_string()),
+        })
+        .collect()
+}
+
 fn collect_editable_directory_files(
-    root: &Path,
-    directory: &Path,
+    directory: &CapDir,
+    relative: &Path,
     files: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
-    let entries = fs::read_dir(directory)
+    let entries = directory
+        .entries()
         .map_err(|error| format!("Failed to read Harness app source package: {error}"))?;
     for entry in entries {
         let entry =
             entry.map_err(|error| format!("Failed to read Harness app source package: {error}"))?;
-        let path = entry.path();
-        if entry
-            .file_name()
+        let name = entry.file_name();
+        if name
             .to_str()
             .is_some_and(|name| IGNORED_EDITABLE_DIRECTORIES.contains(&name))
         {
             continue;
         }
-        let metadata = fs::symlink_metadata(&path)
+        let file_type = entry
+            .file_type()
             .map_err(|error| format!("Failed to inspect Harness app source package: {error}"))?;
-        if metadata.file_type().is_symlink() {
+        if file_type.is_symlink() {
             return Err("Harness app source packages cannot contain symbolic links".to_string());
         }
-        if metadata.is_dir() {
-            collect_editable_directory_files(root, &path, files)?;
-        } else if metadata.is_file() {
-            path.strip_prefix(root)
-                .map_err(|_| "Harness app package path escaped its root".to_string())?;
+        let path = relative.join(&name);
+        if file_type.is_dir() {
+            let child = directory
+                .open_dir_nofollow(&name)
+                .map_err(|error| format!("Failed to open Harness app source directory: {error}"))?;
+            collect_editable_directory_files(&child, &path, files)?;
+        } else if file_type.is_file() {
             files.push(path);
         }
     }
     Ok(())
 }
 
-fn reject_editable_path_symlinks(root: &Path, relative: &Path) -> Result<(), String> {
-    let mut current = root.to_path_buf();
-    for component in relative.components() {
-        let Component::Normal(component) = component else {
-            continue;
-        };
-        current.push(component);
-        let metadata = match fs::symlink_metadata(&current) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => {
-                return Err(format!(
-                    "Failed to inspect Harness app source path: {error}"
-                ));
-            }
-        };
-        if metadata.file_type().is_symlink() {
-            return Err("Harness app source paths cannot contain symbolic links".to_string());
-        }
-    }
-    Ok(())
-}
-
-fn read_editable_file_no_follow(path: &Path) -> Result<Vec<u8>, String> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-    }
-    let mut file = options
-        .open(path)
-        .map_err(|error| format!("Failed to open Harness app package file: {error}"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| format!("Failed to inspect Harness app package file: {error}"))?;
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err("Harness app source paths cannot contain symbolic links".to_string());
-        }
-    }
-    if !metadata.is_file() {
-        return Err("Harness app package path must be a regular file".to_string());
-    }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .map_err(|error| format!("Failed to read Harness app package file: {error}"))?;
-    Ok(bytes)
-}
-
 fn collect_editable_package_files(
-    root: &Path,
+    root: &EditablePackageRoot,
     manifest: &HarnessAppManifest,
 ) -> Result<Vec<PathBuf>, String> {
     let mut files = ["plugin-manifest.json", "PLUGIN.md", "INSTALL.zh-CN.md"]
         .into_iter()
-        .map(|path| root.join(path))
+        .map(PathBuf::from)
         .collect::<Vec<_>>();
     let package_paths = if manifest.packages.is_empty() {
         vec![manifest.entry.install_package.as_str()]
@@ -871,12 +929,15 @@ fn collect_editable_package_files(
             .collect()
     };
     for relative in package_paths {
-        reject_editable_path_symlinks(root, Path::new(relative))?;
-        let package = root.join(relative);
-        if package.is_dir() {
-            collect_editable_directory_files(root, &package, &mut files)?;
-        } else if package.is_file() {
-            files.push(package);
+        let relative = Path::new(relative);
+        match root.open_dir(relative) {
+            Ok(directory) => {
+                collect_editable_directory_files(&directory, relative, &mut files)?;
+            }
+            Err(_) => {
+                root.ensure_file(relative)?;
+                files.push(relative.to_path_buf());
+            }
         }
     }
     files.sort();
@@ -894,18 +955,15 @@ fn export_package_directory(
         fs::create_dir_all(parent)
             .map_err(|error| format!("Failed to create Harness app export directory: {error}"))?;
     }
-    let (manifest, _) = validate_package_directory(package_root)?;
-    let files = collect_editable_package_files(package_root, &manifest)?;
+    let (root, manifest, _) = open_validated_package_directory(package_root)?;
+    let files = collect_editable_package_files(&root, &manifest)?;
     let output = fs::File::create(&temporary)
         .map_err(|error| format!("Failed to create Harness app export: {error}"))?;
     let mut archive = zip::ZipWriter::new(output);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .last_modified_time(zip::DateTime::default());
-    for path in files {
-        let relative = path
-            .strip_prefix(package_root)
-            .map_err(|_| "Harness app package path escaped its root".to_string())?;
+    for relative in files {
         let name = relative
             .components()
             .map(|component| component.as_os_str().to_string_lossy())
@@ -914,7 +972,7 @@ fn export_package_directory(
         archive
             .start_file(name, options)
             .map_err(|error| format!("Failed to write Harness app export: {error}"))?;
-        let value = read_editable_file_no_follow(&path)?;
+        let value = root.read_file(&relative)?;
         archive
             .write_all(&value)
             .map_err(|error| format!("Failed to write Harness app export: {error}"))?;
