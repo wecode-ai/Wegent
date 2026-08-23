@@ -1864,16 +1864,14 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}`, {
       headers: desktopControlHeaders(),
     })
+  const currentWindow = getCurrentWindow()
+  await currentWindow.show()
+  await currentWindow.unminimize()
+  void currentWindow.setFocus().catch(error => {
+    console.warn('[Wework] Failed to focus the desktop E2E window:', error)
+  })
   let commandRequest = pollForCommand()
   await waitForVisibleWorkbench()
-  const currentWindow = getCurrentWindow()
-  void Promise.all([
-    currentWindow.show(),
-    currentWindow.unminimize(),
-    currentWindow.setFocus(),
-  ]).catch(error => {
-    console.warn('[Wework] Failed to foreground the desktop E2E window:', error)
-  })
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
