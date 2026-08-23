@@ -10,6 +10,10 @@ Wework is the Wegent desktop workbench for local-first AI coding and workplace w
 - Connect to a Wegent Backend when cloud models, cloud devices, remote runtime work, or encrypted Codex auth sync are needed.
 - Package macOS builds as DMG releases with bundled Codex binaries and Tauri updater metadata.
 - Build iOS simulator, device, and App Store Connect packages from the same Tauri app.
+- Let smart app (harness plugin) pages capture their own webview through a
+  native screenshot bridge (`plugin:wegent-capture|capture_webview_snapshot`),
+  so in-browser features such as monitor-card screenshots work inside the
+  embedded browser without the standard `getDisplayMedia` API.
 
 ## Development
 
