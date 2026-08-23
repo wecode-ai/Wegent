@@ -724,16 +724,16 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('cloud-todo-card-thinking-WEG-1')).toHaveTextContent(
       '正在思考 · Investigating board data flow'
     )
-    expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).toHaveClass(
+    expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).toHaveClass('text-xs')
+    expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).not.toHaveClass(
       'h-[60px]',
       'overflow-y-auto',
       'scrollbar-none',
-      'text-xs',
-      'border-l'
-    )
-    expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).not.toHaveClass(
-      'h-5',
-      'group-hover:h-20'
+      'group-hover:h-20',
+      'ml-5',
+      'mt-1.5',
+      'border-l',
+      'pl-2'
     )
 
     act(() => {
@@ -764,16 +764,17 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-card-tool-WEG-1-tool-1')).toHaveTextContent(
       '运行命令 · pnpm test'
     )
+    expect(screen.getByTestId('cloud-todo-card-tool-line-WEG-1')).toHaveClass(
+      'ml-2',
+      'border-l',
+      'pl-3'
+    )
     expect(
       screen
         .getByTestId('cloud-todo-card-thinking-WEG-1')
         .compareDocumentPosition(screen.getByTestId('cloud-todo-card-tool-WEG-1-tool-1')) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).not.toBe(0)
-    expect(screen.getByTestId('cloud-todo-card-activity-WEG-1')).toHaveClass(
-      'h-[60px]',
-      'overflow-y-auto'
-    )
     expect(screen.getByTestId('cloud-todo-card-thinking-WEG-1')).toHaveClass('text-xs', 'leading-5')
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
@@ -846,8 +847,9 @@ describe('CloudTodoWorkspace', () => {
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     const progressResponse = screen.getByTestId('cloud-todo-card-progress-response-WEG-1-2')
     expect(progressPopup).toHaveTextContent('当前任务进展')
+    expect(progressResponse).toHaveTextContent('第一行')
     expect(progressResponse).toHaveTextContent('第四行')
-    expect(progressResponse).not.toHaveTextContent('第一行')
+    expect(progressResponse).toHaveClass('max-h-60', 'overflow-y-auto', 'whitespace-pre-wrap')
   })
 
   it('reports the concrete project name for the active document tab', async () => {
