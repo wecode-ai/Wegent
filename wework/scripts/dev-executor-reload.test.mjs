@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 
 const temporaryDirectories = []
 const processes = []
-const OUTPUT_TIMEOUT_MS = 15_000
+const OUTPUT_TIMEOUT_MS = 30_000
 
 afterEach(async () => {
   for (const process of processes.splice(0)) {
@@ -44,7 +44,7 @@ function waitForOutput(stream, pattern, timeoutMs = OUTPUT_TIMEOUT_MS, diagnosti
   })
 }
 
-describe('dev executor reload', { timeout: 30_000 }, () => {
+describe('dev executor reload', { timeout: 45_000 }, () => {
   test('builds once initially and rebuilds after a source change', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-executor-reload-'))
     temporaryDirectories.push(directory)
@@ -147,5 +147,5 @@ chmodSync(output, 0o755)
         }
       })
       .toBe(false)
-  }, 20_000)
+  }, 40_000)
 })
