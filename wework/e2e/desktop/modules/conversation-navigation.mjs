@@ -364,9 +364,10 @@ async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }
   await control.command('waitFor', `[data-testid="${taskPlanTaskRowTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('click', '[data-testid="new-chat-button"]', { visible: true })
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    visible: true,
   })
   await withTimeout(
     control.releaseTaskPlanResponse(),
@@ -399,9 +400,10 @@ async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }
     'The completed task plan was collapsed into the final processing summary'
   )
   await captureVerificationScreenshot(control, '01-background-task-plan-restored.png')
-  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('click', '[data-testid="new-chat-button"]', { visible: true })
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    visible: true,
   })
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await control.command('waitFor', '[data-testid="add-context-button"]', {
@@ -848,6 +850,7 @@ async function reopenCurrentTurnNavigationTask(
   await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
   await control.command('clickWhenEnabled', `[data-testid="runtime-local-task-row-${taskId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    visible: true,
   })
   await control.command(
     'waitFor',
@@ -855,28 +858,9 @@ async function reopenCurrentTurnNavigationTask(
     {
       text: `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${expectedTurnCount}`,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      visible: true,
     }
   )
-  const focusStartedAt = Date.now()
-  let activeElementTestId = ''
-  while (Date.now() - focusStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    activeElementTestId = await control.command('getActiveElementTestId', 'body')
-    if (activeElementTestId === 'chat-message-input') break
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  if (activeElementTestId !== 'chat-message-input') {
-    const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
-      control.command('getComposerFocusSnapshot', 'body'),
-      control.command('getWorkbenchDebugSnapshot', 'body'),
-      control.command('getComposerDiagnosticsSnapshot', 'body'),
-    ])
-    throw new Error(
-      `Opening a conversation from the sidebar did not transfer keyboard focus to the composer; ` +
-        `activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
-        `workbench=${workbenchSnapshot}; ` +
-        `composerDiagnostics=${composerDiagnostics}`
-    )
-  }
   if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
     await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

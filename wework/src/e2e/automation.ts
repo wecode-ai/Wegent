@@ -475,8 +475,10 @@ function desktopControlElementText(selector: string, visible = false): string {
     .join('\n')
 }
 
-function desktopControlElementMetrics(selector: string): string {
-  const elements = findDesktopControlElements(selector)
+function desktopControlElementMetrics(selector: string, visible = false): string {
+  const elements = findDesktopControlElements(selector).filter(
+    element => !visible || desktopControlElementVisible(element)
+  )
   if (elements.length === 0) throw new Error(`Unable to find selector "${selector}"`)
 
   return JSON.stringify(
@@ -803,10 +805,10 @@ let activeDesktopControlDrag: {
 
 async function startDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
   if (activeDesktopControlDrag) throw new Error('A desktop control drag is already active')
-  const element = findDesktopControlElements(command.selector)[0]
+  const element = findDesktopControlElement(command.selector, command.visible)
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
   if (!command.target) throw new Error('Drag requires a target selector')
-  const target = findDesktopControlElements(command.target)[0]
+  const target = findDesktopControlElement(command.target, command.visible)
   if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
 
   const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
@@ -829,7 +831,7 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
   const activeDrag = activeDesktopControlDrag
   if (!activeDrag) throw new Error('No desktop control drag is active')
   const targetSelector = command.target ?? activeDrag.targetSelector
-  const target = findDesktopControlElements(targetSelector)[0]
+  const target = findDesktopControlElement(targetSelector, command.visible)
   if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
   const endOptions =
     targetSelector === activeDrag.targetSelector
@@ -1350,7 +1352,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify({ observed: maxCount > 0, maxCount, samples })
     }
     case 'getElementMetrics':
-      return desktopControlElementMetrics(command.selector)
+      return desktopControlElementMetrics(command.selector, command.visible)
     case 'startScrollStabilitySampling': {
       const options = JSON.parse(command.value ?? '{}') as {
         anchorText?: string

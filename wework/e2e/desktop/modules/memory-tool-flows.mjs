@@ -44,6 +44,12 @@ import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 async function ensureTaskRowVisible(control, taskRowTestId) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
+    const taskRowSelector = `[data-testid="${taskRowTestId}"]`
+    const visibleTaskRows = Number(
+      await control.command('getElementCount', taskRowSelector, { visible: true })
+    )
+    if (visibleTaskRows > 0) return
+
     const snapshot = await waitForSnapshot(
       control,
       value =>
@@ -52,15 +58,27 @@ async function ensureTaskRowVisible(control, taskRowTestId) {
       `Unable to find task row ${taskRowTestId} or a project task expansion control`,
       WORKBENCH_READY_TIMEOUT_MS
     )
-    if (snapshot.testIds.includes(taskRowTestId)) return
-    const expandTasksButton = snapshot.testIds.find(testId =>
+    let expandTasksButton = null
+    for (const testId of snapshot.testIds.filter(testId =>
       testId.startsWith('project-runtime-tasks-expand-')
-    )
-    assert.ok(expandTasksButton)
-    await control.command('click', `[data-testid="${expandTasksButton}"]`)
+    )) {
+      const visibleCount = Number(
+        await control.command('getElementCount', `[data-testid="${testId}"]`, { visible: true })
+      )
+      if (visibleCount > 0) {
+        expandTasksButton = testId
+        break
+      }
+    }
+    if (expandTasksButton) {
+      await control.command('click', `[data-testid="${expandTasksButton}"]`, { visible: true })
+    } else {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
   }
   await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
   })
 }
 
