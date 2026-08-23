@@ -381,11 +381,9 @@ fn validate_package_directory(path: &Path) -> Result<(HarnessAppManifest, String
     }
     let manifest_path = root.join("plugin-manifest.json");
     reject_editable_path_symlinks(&root, Path::new("plugin-manifest.json"))?;
-    let manifest: HarnessAppManifest = serde_json::from_slice(
-        &fs::read(&manifest_path)
-            .map_err(|error| format!("Failed to read plugin-manifest.json: {error}"))?,
-    )
-    .map_err(|error| format!("plugin-manifest.json is invalid: {error}"))?;
+    let manifest: HarnessAppManifest =
+        serde_json::from_slice(&read_editable_file_no_follow(&manifest_path)?)
+            .map_err(|error| format!("plugin-manifest.json is invalid: {error}"))?;
     validate_manifest(&manifest)?;
     for required in ["PLUGIN.md", "INSTALL.zh-CN.md"] {
         reject_editable_path_symlinks(&root, Path::new(required))?;
@@ -408,8 +406,7 @@ fn validate_package_directory(path: &Path) -> Result<(HarnessAppManifest, String
         let relative = file
             .strip_prefix(&root)
             .map_err(|_| "Harness app package path escaped its root".to_string())?;
-        let bytes = fs::read(&file)
-            .map_err(|error| format!("Failed to read Harness app package file: {error}"))?;
+        let bytes = read_editable_file_no_follow(&file)?;
         total = total.saturating_add(bytes.len() as u64);
         if total > MAX_EXTRACTED_BYTES {
             return Err("Harness app directory exceeds 250 MB".to_string());
@@ -819,6 +816,43 @@ fn reject_editable_path_symlinks(root: &Path, relative: &Path) -> Result<(), Str
     Ok(())
 }
 
+fn read_editable_file_no_follow(path: &Path) -> Result<Vec<u8>, String> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|error| format!("Failed to open Harness app package file: {error}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Failed to inspect Harness app package file: {error}"))?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err("Harness app source paths cannot contain symbolic links".to_string());
+        }
+    }
+    if !metadata.is_file() {
+        return Err("Harness app package path must be a regular file".to_string());
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| format!("Failed to read Harness app package file: {error}"))?;
+    Ok(bytes)
+}
+
 fn collect_editable_package_files(
     root: &Path,
     manifest: &HarnessAppManifest,
@@ -880,8 +914,7 @@ fn export_package_directory(
         archive
             .start_file(name, options)
             .map_err(|error| format!("Failed to write Harness app export: {error}"))?;
-        let value = fs::read(&path)
-            .map_err(|error| format!("Failed to read Harness app package file: {error}"))?;
+        let value = read_editable_file_no_follow(&path)?;
         archive
             .write_all(&value)
             .map_err(|error| format!("Failed to write Harness app export: {error}"))?;

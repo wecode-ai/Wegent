@@ -342,6 +342,31 @@ fn linked_directory_rejects_symlinked_declared_package_directories() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn editable_file_reads_reject_symlinks_created_after_validation() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    assert!(validate_package_directory(&app).is_ok());
+
+    let outside = directory.path().join("outside-plugin.md");
+    fs::write(&outside, "# Outside\n").unwrap();
+    fs::remove_file(app.join("PLUGIN.md")).unwrap();
+    symlink(&outside, app.join("PLUGIN.md")).unwrap();
+
+    assert!(read_editable_file_no_follow(&app.join("PLUGIN.md")).is_err());
+}
+
 #[test]
 fn linked_installation_refreshes_edits_and_recovers_after_invalid_content() {
     let directory = tempdir().unwrap();
