@@ -6,6 +6,7 @@ import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
 
 const navigateTo = vi.fn()
 const queuePluginReferenceTrial = vi.fn()
+const queueSmartAppDevelopmentPreview = vi.fn()
 const ensureBundledPluginInstalled = vi.fn()
 const listInstalled = vi.fn()
 const downloadPackage = vi.fn()
@@ -13,6 +14,7 @@ const deleteInstalled = vi.fn()
 const stopInstalled = vi.fn()
 const updateInstalled = vi.fn()
 const exportToDownloads = vi.fn()
+const addPlugin = vi.fn()
 const createDirectory = vi.fn()
 const linkDirectory = vi.fn()
 const copyToDirectory = vi.fn()
@@ -28,6 +30,9 @@ vi.mock('@/lib/local-terminal', () => ({
 }))
 vi.mock('@/features/plugins/pluginTrial', () => ({
   queuePluginReferenceTrial: (options: unknown) => queuePluginReferenceTrial(options),
+}))
+vi.mock('@/features/harness-apps/smartAppDevelopmentPreview', () => ({
+  queueSmartAppDevelopmentPreview: (options: unknown) => queueSmartAppDevelopmentPreview(options),
 }))
 vi.mock('@/tauri/localExecutor', () => ({
   ensureBundledPluginInstalled: (name: string) => ensureBundledPluginInstalled(name),
@@ -45,6 +50,14 @@ vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
     closeTab: vi.fn(),
   }),
 }))
+vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
+  harnessAppRoute: (id: string) => `/app/harness-${id}`,
+  openHarnessAppTab: vi.fn(),
+  registerHarnessAppTab: vi.fn(),
+  takeHarnessAppContextToken: vi.fn().mockResolvedValue(null),
+  takeHarnessAppProxyToken: vi.fn().mockResolvedValue(null),
+  unregisterHarnessAppTab: vi.fn(),
+}))
 vi.mock('@/api/local/harnessApps', () => ({
   harnessAppsApi: {
     list: () => listInstalled(),
@@ -54,6 +67,7 @@ vi.mock('@/api/local/harnessApps', () => ({
     stop: (id: string) => stopInstalled(id),
     update: (id: string, updates: unknown) => updateInstalled(id, updates),
     exportToDownloads: (id: string) => exportToDownloads(id),
+    addPlugin: (id: string, spec: string) => addPlugin(id, spec),
     createDirectory: (input: unknown) => createDirectory(input),
     linkDirectory: (path: string) => linkDirectory(path),
     copyToDirectory: (id: string, input: unknown) => copyToDirectory(id, input),
@@ -144,6 +158,7 @@ describe('SmartAppsMarketplacePage', () => {
     window.history.replaceState({}, '', '/')
     navigateTo.mockReset()
     queuePluginReferenceTrial.mockReset().mockReturnValue(true)
+    queueSmartAppDevelopmentPreview.mockReset()
     ensureBundledPluginInstalled.mockReset().mockResolvedValue(undefined)
     listInstalled.mockReset().mockResolvedValue([])
     deleteInstalled.mockReset().mockResolvedValue(undefined)
@@ -156,6 +171,7 @@ describe('SmartAppsMarketplacePage', () => {
       sizeBytes: 1024,
       manifest: importedInstallation.manifest,
     })
+    addPlugin.mockReset().mockResolvedValue(importedInstallation)
     downloadPackage.mockReset().mockResolvedValue({
       valid: true,
       archivePath: '/tmp/research.zip',
@@ -168,6 +184,11 @@ describe('SmartAppsMarketplacePage', () => {
       id: 'blank-workbench',
       packagePath: '/tmp/blank-workbench',
       source: 'linked',
+      manifest: {
+        ...importedInstallation.manifest,
+        name: 'blank-workbench',
+        displayName: '空白工作台',
+      },
     })
     linkDirectory.mockReset()
     copyToDirectory.mockReset()
@@ -337,6 +358,36 @@ describe('SmartAppsMarketplacePage', () => {
     expect(await screen.findByTestId('harness-app-open-research-desk')).toBeInTheDocument()
   })
 
+  test('allows plugin and source development while a linked workbench is running', async () => {
+    listInstalled.mockResolvedValue([
+      {
+        ...importedInstallation,
+        source: 'linked',
+        state: 'running',
+        webUrl: 'http://127.0.0.1:3080',
+      },
+    ])
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId(`smart-app-actions-${importedInstallation.id}`))
+
+    expect(screen.getByTestId(`smart-app-change-model-${importedInstallation.id}`)).toBeDisabled()
+    expect(screen.getByTestId(`smart-app-add-plugins-${importedInstallation.id}`)).toBeEnabled()
+    expect(screen.getByTestId(`smart-app-develop-${importedInstallation.id}`)).toBeEnabled()
+
+    fireEvent.pointerDown(screen.getByTestId(`smart-app-add-plugins-${importedInstallation.id}`))
+    expect(screen.getByTestId('smart-app-plugin-dialog')).toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('smart-app-plugin-spec-input'), {
+      target: { value: '@scope/dsh-plugin' },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-plugin-confirm'))
+
+    await waitFor(() =>
+      expect(addPlugin).toHaveBeenCalledWith(importedInstallation.id, '@scope/dsh-plugin')
+    )
+    expect(stopInstalled).toHaveBeenCalledWith(importedInstallation.id)
+  })
+
   test('fully removes an imported app card while preserving its published cloud version', async () => {
     const publishedImport = {
       ...importedInstallation,
@@ -463,6 +514,31 @@ describe('SmartAppsMarketplacePage', () => {
     expect(await screen.findByText('文件存储服务暂不可用，请稍后重试')).toBeInTheDocument()
   })
 
+  test('queues the development preview after creating a blank workbench', async () => {
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+
+    fireEvent.click(screen.getByTestId('smart-apps-created-create'))
+    fireEvent.change(screen.getByTestId('smart-app-development-display-name'), {
+      target: { value: '空白工作台' },
+    })
+    fireEvent.change(screen.getByTestId('smart-app-development-name'), {
+      target: { value: 'blank-workbench' },
+    })
+    fireEvent.change(screen.getByTestId('smart-app-development-parent-path'), {
+      target: { value: '/tmp' },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-development-confirm'))
+
+    await waitFor(() =>
+      expect(queueSmartAppDevelopmentPreview).toHaveBeenCalledWith({
+        installationId: 'blank-workbench',
+        displayName: '空白工作台',
+      })
+    )
+    expect(queuePluginReferenceTrial).toHaveBeenCalled()
+    expect(navigateTo).toHaveBeenCalledWith('/')
+  })
+
   test('stays on my creations when the builder cannot install', async () => {
     ensureBundledPluginInstalled.mockRejectedValue(new Error('install failed'))
     render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
@@ -488,6 +564,7 @@ describe('SmartAppsMarketplacePage', () => {
       })
     )
     expect(queuePluginReferenceTrial).not.toHaveBeenCalled()
+    expect(queueSmartAppDevelopmentPreview).not.toHaveBeenCalled()
     expect(navigateTo).not.toHaveBeenCalled()
   })
 

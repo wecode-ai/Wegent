@@ -5306,6 +5306,7 @@ pub fn run() {
             execution_environments::install_execution_environment,
             execution_environments::list_execution_environments,
             execution_environments::remove_execution_environment,
+            harness_apps::add_harness_app_plugin,
             harness_apps::copy_harness_app_to_directory,
             harness_apps::create_harness_app_directory,
             harness_apps::delete_harness_app,

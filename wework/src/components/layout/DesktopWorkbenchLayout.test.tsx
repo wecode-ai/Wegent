@@ -45,6 +45,7 @@ import {
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import { setActiveKeybindings } from '@/lib/keybindings'
+import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
@@ -74,6 +75,18 @@ const deliveryApiMock = vi.hoisted(() => ({
 }))
 const embeddedBrowserMocks = vi.hoisted(() => ({
   setEmbeddedBrowserActiveTab: vi.fn().mockResolvedValue(undefined),
+}))
+const harnessAppMocks = vi.hoisted(() => ({
+  addPlugin: vi.fn(),
+  list: vi.fn(),
+  start: vi.fn(),
+  stop: vi.fn(),
+}))
+const harnessAppTabMocks = vi.hoisted(() => ({
+  register: vi.fn(),
+  unregister: vi.fn(),
+  takeProxyToken: vi.fn(),
+  takeContextToken: vi.fn(),
 }))
 const cloudDesktopExtensionMock = vi.hoisted(() => {
   const launch = vi.fn()
@@ -115,6 +128,31 @@ vi.mock('@/lib/embedded-browser', async importOriginal => {
   return {
     ...actual,
     setEmbeddedBrowserActiveTab: embeddedBrowserMocks.setEmbeddedBrowserActiveTab,
+  }
+})
+
+vi.mock('@/api/local/harnessApps', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/api/local/harnessApps')>()
+  return {
+    ...actual,
+    harnessAppsApi: {
+      ...actual.harnessAppsApi,
+      addPlugin: harnessAppMocks.addPlugin,
+      list: harnessAppMocks.list,
+      start: harnessAppMocks.start,
+      stop: harnessAppMocks.stop,
+    },
+  }
+})
+
+vi.mock('@/features/harness-apps/harnessAppTabs', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/features/harness-apps/harnessAppTabs')>()
+  return {
+    ...actual,
+    registerHarnessAppTab: harnessAppTabMocks.register,
+    unregisterHarnessAppTab: harnessAppTabMocks.unregister,
+    takeHarnessAppProxyToken: harnessAppTabMocks.takeProxyToken,
+    takeHarnessAppContextToken: harnessAppTabMocks.takeContextToken,
   }
 })
 
@@ -672,6 +710,7 @@ describe('DesktopWorkbenchLayout', () => {
     screen.queryByTestId('titlebar-right-workspace-zone')?.remove()
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
+    sessionStorage.clear()
     window.history.pushState({}, '', '/')
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -714,6 +753,12 @@ describe('DesktopWorkbenchLayout', () => {
               }
             : { OPENCODE_CONFIG_CONTENT: '{"provider":{}}' },
     }))
+    harnessAppMocks.list.mockResolvedValue([])
+    harnessAppMocks.addPlugin.mockReset()
+    harnessAppMocks.start.mockReset()
+    harnessAppMocks.stop.mockReset().mockResolvedValue(undefined)
+    harnessAppTabMocks.takeProxyToken.mockResolvedValue(null)
+    harnessAppTabMocks.takeContextToken.mockResolvedValue(null)
     unregisterHarnessProxyMock.mockResolvedValue(undefined)
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
     automationMocks.useNativeDirectoryPicker = true
@@ -10565,6 +10610,103 @@ describe('DesktopWorkbenchLayout', () => {
       'http://example.com/'
     )
   }, 10_000)
+
+  test('opens a dedicated Smart app development preview and reloads the DSH runtime', async () => {
+    const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+    const installed = {
+      id: 'blank-workbench',
+      manifest: {
+        name: 'blank-workbench',
+        displayName: '空白工作台',
+        version: '0.1.0',
+        type: 'deepseek-harness-plugin-bundle' as const,
+        description: 'Web preset',
+        entry: {
+          installPackage: 'packages/bundle/web-app',
+          profile: 'blank-workbench',
+        },
+        requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
+      },
+      packagePath: '/tmp/blank-workbench',
+      sha256: 'a'.repeat(64),
+      modelKey: null,
+      resident: false,
+      runtimeVersion: null,
+      state: 'installed' as const,
+      webUrl: null,
+      error: null,
+      source: 'linked' as const,
+    }
+    const running = {
+      ...installed,
+      state: 'running' as const,
+      webUrl: 'http://127.0.0.1:43123/',
+    }
+    harnessAppMocks.list
+      .mockResolvedValueOnce([installed])
+      .mockResolvedValueOnce([running])
+      .mockResolvedValueOnce([installed])
+      .mockResolvedValue([running])
+    harnessAppMocks.addPlugin.mockResolvedValue({
+      ...installed,
+      manifest: {
+        ...installed.manifest,
+        plugins: [{ spec: '@scope/dsh-plugin' }],
+      },
+    })
+    const initialStart = createDeferred<typeof running>()
+    harnessAppMocks.start
+      .mockImplementationOnce(() => initialStart.promise)
+      .mockResolvedValue(running)
+    queueSmartAppDevelopmentPreview({
+      installationId: installed.id,
+      displayName: installed.manifest.displayName,
+    })
+
+    render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    expect(await screen.findByTestId('smart-app-development-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(screen.getByTestId('right-workspace-browser-tab-1')).toHaveTextContent('空白工作台')
+    expect(screen.getByTestId('smart-app-development-preview-starting')).toHaveTextContent(
+      '正在准备运行环境和已配置插件，请稍候'
+    )
+    expect(screen.queryByTestId('workspace-browser-frame')).not.toBeInTheDocument()
+    expect(screen.queryByText('开始浏览')).not.toBeInTheDocument()
+
+    initialStart.resolve(running)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute('src', running.webUrl)
+    )
+    expect(screen.queryByTestId('workspace-browser-url-input')).not.toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-development-preview-add-plugins')).toBeEnabled()
+    expect(screen.getByTestId('smart-app-development-preview-refresh')).toBeEnabled()
+    expect(harnessAppMocks.start).toHaveBeenCalledWith(installed.id, null)
+
+    await userEvent.click(screen.getByTestId('smart-app-development-preview-add-plugins'))
+
+    expect(screen.getByTestId('smart-app-plugin-dialog')).toBeInTheDocument()
+    await userEvent.type(screen.getByTestId('smart-app-plugin-spec-input'), '@scope/dsh-plugin')
+    await userEvent.click(screen.getByTestId('smart-app-plugin-confirm'))
+
+    await waitFor(() =>
+      expect(harnessAppMocks.addPlugin).toHaveBeenCalledWith(installed.id, '@scope/dsh-plugin')
+    )
+    await waitFor(() =>
+      expect(screen.queryByTestId('smart-app-plugin-dialog')).not.toBeInTheDocument()
+    )
+    await waitFor(() => expect(harnessAppMocks.start).toHaveBeenCalledTimes(2))
+
+    await userEvent.click(screen.getByTestId('smart-app-development-preview-reload'))
+
+    await waitFor(() => expect(harnessAppMocks.stop).toHaveBeenCalledWith(installed.id))
+    await waitFor(() => expect(harnessAppMocks.start).toHaveBeenCalledTimes(3))
+    expect(screen.getByText('DSH 开发预览 · 文件改动后可重新加载')).toBeInTheDocument()
+  })
 
   test('exposes the task-scoped browser label before the browser panel mounts', () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()

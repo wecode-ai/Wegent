@@ -172,8 +172,30 @@ async function createOfficialSource(resultDir, packagePath) {
   return source
 }
 
+async function createLocalDshPlugin(resultDir) {
+  const pluginPath = join(resultDir, 'local-dsh-plugin')
+  await mkdir(pluginPath, { recursive: true })
+  await writeFile(
+    join(pluginPath, 'package.json'),
+    JSON.stringify(
+      {
+        name: '@wework-e2e/local-dsh-plugin',
+        version: '0.1.0',
+        type: 'module',
+        files: ['cordis.patch.yml'],
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      },
+      null,
+      2
+    )
+  )
+  await writeFile(join(pluginPath, 'cordis.patch.yml'), '[]\n')
+  return pluginPath
+}
+
 export async function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutMs }) {
   const packagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.1.0-rc.8')
+  const localDshPluginPath = await createLocalDshPlugin(resultDir)
   const rc7PackagePath = await createHarnessPackage(resultDir, RC7_INSTALLATION_ID, '0.1.0-rc.7')
   const sharedPackagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.1.0-rc.8', {
     archiveName: 'dsh-e2e-shared-0.0.9',
@@ -480,7 +502,39 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         text: '智能工作台开发助手',
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', '[data-testid="smart-app-development-preview"]', {
+        text: 'DSH 开发预览',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="smart-app-development-preview-starting"]', {
+        text: '正在准备运行环境和已配置插件',
+        timeoutMs: uiTimeoutMs,
+      })
+      const startingPreviewText = await control.command(
+        'getText',
+        '[data-testid="smart-app-development-preview"]'
+      )
+      assert.equal(startingPreviewText.includes('开始浏览'), false)
+      assert.equal(startingPreviewText.includes('输入 URL 以打开页面'), false)
+      await captureScreenshot(control, 'harness-apps-03b0-dsh-starting.png', 'body')
+      await control.command('waitFor', '[data-testid="smart-app-development-preview"]', {
+        text: '文件改动后可重新加载',
+        timeoutMs: 120_000,
+      })
       await captureScreenshot(control, 'harness-apps-03b-builder-chat.png', 'body')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="smart-app-development-preview-reload"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('waitFor', '[data-testid="smart-app-development-preview"]', {
+        text: '文件改动后可重新加载',
+        stableMs: 500,
+        timeoutMs: 120_000,
+      })
+      await captureScreenshot(control, 'harness-apps-03b2-dsh-reloaded.png', 'body')
       await control.command('navigate', 'body', {
         value: '/sites?app_type=smart_app&view=owned',
       })
@@ -510,14 +564,40 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         'click',
         `[data-testid="smart-app-add-plugins-${CREATED_INSTALLATION_ID}"]`
       )
-      await control.command('waitFor', '[data-testid="chat-message-input"]', {
-        text: '增量添加',
+      await control.command('waitFor', '[data-testid="smart-app-plugin-dialog"]', {
+        text: '添加 DSH 插件',
         timeoutMs: uiTimeoutMs,
       })
-      await captureScreenshot(control, 'harness-apps-03e-add-plugin-chat.png', 'body')
-      await control.command('navigate', 'body', {
-        value: '/sites?app_type=smart_app&view=owned',
+      await control.command('fill', '[data-testid="smart-app-plugin-spec-input"]', {
+        value: localDshPluginPath,
       })
+      await captureScreenshot(control, 'harness-apps-03e-add-plugin-dialog.png', 'body')
+      await control.command('clickWhenEnabled', '[data-testid="smart-app-plugin-confirm"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await waitForElementCount(
+        control,
+        '[data-testid="smart-app-plugin-dialog"]',
+        0,
+        120_000,
+        'Smart app plugin dialog did not close after installation'
+      )
+      const linkedManifest = JSON.parse(
+        await readFile(join(resultDir, CREATED_INSTALLATION_ID, 'plugin-manifest.json'), 'utf8')
+      )
+      assert.deepEqual(linkedManifest.plugins, [
+        {
+          spec: 'file:plugins/wework-e2e-local-dsh-plugin',
+          path: 'plugins/wework-e2e-local-dsh-plugin',
+        },
+      ])
+      await access(
+        join(
+          resultDir,
+          CREATED_INSTALLATION_ID,
+          'plugins/wework-e2e-local-dsh-plugin/cordis.patch.yml'
+        )
+      )
       await control.command(
         'waitFor',
         `[data-testid="smart-app-created-item-${CREATED_INSTALLATION_ID}"]`,

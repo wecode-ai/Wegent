@@ -79,6 +79,57 @@ fn archive_supports_one_wrapper_directory() {
 }
 
 #[test]
+fn local_plugin_metadata_requires_a_dsh_bundle_patch() {
+    let directory = tempdir().unwrap();
+    fs::write(
+        directory.path().join("package.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "name": "@example/local-plugin",
+            "version": "0.1.0",
+            "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(directory.path().join("cordis.patch.yml"), "[]\n").unwrap();
+
+    let (name, directory_name) = plugin_package_metadata(directory.path()).unwrap();
+
+    assert_eq!(name, "@example/local-plugin");
+    assert_eq!(directory_name, "example-local-plugin");
+}
+
+#[test]
+fn editable_package_files_include_vendored_local_plugins() {
+    let directory = tempdir().unwrap();
+    let bundle = directory.path().join("packages/bundle/test");
+    let plugin = directory.path().join("plugins/local-plugin");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::create_dir_all(&plugin).unwrap();
+    fs::write(directory.path().join("PLUGIN.md"), "# Plugin\n").unwrap();
+    fs::write(directory.path().join("INSTALL.zh-CN.md"), "# 安装\n").unwrap();
+    fs::write(bundle.join("package.json"), "{}").unwrap();
+    fs::write(bundle.join("cordis.patch.yml"), "[]\n").unwrap();
+    fs::write(plugin.join("package.json"), "{}").unwrap();
+    fs::write(plugin.join("cordis.patch.yml"), "[]\n").unwrap();
+    let manifest = manifest("0.1.0-rc.8").replace(
+        "\"requirements\":{\"dsh\":\"0.1.0-rc.8\",\"node\":\">=22\"}",
+        "\"requirements\":{\"dsh\":\"0.1.0-rc.8\",\"node\":\">=22\"},\
+         \"plugins\":[{\"spec\":\"file:plugins/local-plugin\",\"path\":\"plugins/local-plugin\"}]",
+    );
+    fs::write(directory.path().join("plugin-manifest.json"), manifest).unwrap();
+    let root = EditablePackageRoot::open(directory.path()).unwrap();
+    let parsed: HarnessAppManifest =
+        serde_json::from_slice(&fs::read(directory.path().join("plugin-manifest.json")).unwrap())
+            .unwrap();
+
+    let files = collect_editable_package_files(&root, &parsed).unwrap();
+
+    assert!(files.contains(&PathBuf::from("plugins/local-plugin/package.json")));
+    assert!(files.contains(&PathBuf::from("plugins/local-plugin/cordis.patch.yml")));
+}
+
+#[test]
 fn bare_dsh_version_is_an_exact_requirement() {
     let requirement = dsh_version_requirement("0.1.0-rc.8").unwrap();
 
@@ -626,6 +677,41 @@ fn instance_patch_adds_agent_default_model_when_the_bundle_has_no_model_fields()
 
     assert!(patch.contains("- id: scanner"));
     assert!(patch.contains("- id: agent-default-model"));
+    assert!(patch.contains("provider: wework-local"));
+    assert!(patch.contains("model: wework-selected"));
+}
+
+#[test]
+fn instance_patch_replaces_an_empty_patch_with_the_wework_model() {
+    let directory = tempdir().unwrap();
+    let package = directory.path().join("package");
+    let bundle = package.join("packages/bundle/test");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::write(bundle.join("cordis.patch.yml"), "[]\n").unwrap();
+    let installation = HarnessAppInstallation {
+        id: "test-capability".to_string(),
+        manifest: serde_json::from_str(&manifest("0.1.0-rc.8")).unwrap(),
+        package_path: package.display().to_string(),
+        sha256: "hash".to_string(),
+        model_key: Some("model".to_string()),
+        resident: false,
+        runtime_version: None,
+        state: "installed".to_string(),
+        web_url: None,
+        error: None,
+        smart_app_id: None,
+        release_id: None,
+        source: "managed".to_string(),
+    };
+
+    let output = prepare_instance_bundle(&installation, directory.path(), true)
+        .unwrap()
+        .pop()
+        .unwrap();
+    let patch = fs::read_to_string(output.join("cordis.patch.yml")).unwrap();
+
+    assert!(!patch.starts_with("[]"));
+    assert!(patch.starts_with("- id: agent-default-model"));
     assert!(patch.contains("provider: wework-local"));
     assert!(patch.contains("model: wework-selected"));
 }

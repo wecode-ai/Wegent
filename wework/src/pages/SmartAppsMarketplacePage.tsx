@@ -52,13 +52,17 @@ import {
   SmartAppDevelopmentDialog,
   type SmartAppDevelopmentInput,
 } from '@/features/harness-apps/SmartAppDevelopmentDialog'
+import { SmartAppPluginDialog } from '@/features/harness-apps/SmartAppPluginDialog'
+import {
+  queueSmartAppBuilder,
+  smartAppBuilderPrompt,
+} from '@/features/harness-apps/smartAppBuilder'
+import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { useHarnessAppManagement } from '@/features/harness-apps/useHarnessAppManagement'
-import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { revealLocalFile } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
-import { ensureBundledPluginInstalled } from '@/tauri/localExecutor'
 
 interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
@@ -246,6 +250,7 @@ export function SmartAppsMarketplacePage({
   const [copyInstallation, setCopyInstallation] = useState<HarnessAppInstallation | null>(null)
   const [importing, setImporting] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<HarnessAppInstallation | null>(null)
+  const [pluginInstallation, setPluginInstallation] = useState<HarnessAppInstallation | null>(null)
   const refreshRequestRef = useRef(0)
 
   const refresh = useCallback(async () => {
@@ -484,42 +489,35 @@ export function SmartAppsMarketplacePage({
     }
   }
 
-  async function openBuilder(
-    installation: HarnessAppInstallation,
-    intent: 'develop' | 'plugins' | 'created'
-  ) {
+  async function openBuilder(installation: HarnessAppInstallation, intent: 'develop' | 'created') {
     setCreateError(null)
     try {
-      await ensureBundledPluginInstalled('smart-app-builder')
       const intentPrompt =
-        intent === 'plugins'
+        intent === 'created'
           ? t(
-              'workbench.smart_apps_builder_intent_plugins',
-              '请检查现有配置，检索兼容的 DSH 插件并增量添加；保留已有功能。'
+              'workbench.smart_apps_builder_intent_created',
+              '这是刚从 Web 预设创建的空白工作台，请先检查脚手架，再根据我的需求继续开发。'
             )
-          : intent === 'created'
-            ? t(
-                'workbench.smart_apps_builder_intent_created',
-                '这是刚从 Web 预设创建的空白工作台，请先检查脚手架，再根据我的需求继续开发。'
-              )
-            : t(
-                'workbench.smart_apps_builder_intent_develop',
-                '请在现有工作台上继续增量开发；先读取已有 manifest、依赖和 cordis.patch.yml。'
-              )
-      const queued = queuePluginReferenceTrial({
-        pluginName: 'smart-app-builder',
-        marketplaceName: 'wework-personal',
+          : t(
+              'workbench.smart_apps_builder_intent_develop',
+              '请在现有工作台上继续增量开发；先读取已有 manifest、依赖和 cordis.patch.yml。'
+            )
+      await queueSmartAppBuilder({
         displayName: t('workbench.smart_apps_builder_name', '智能工作台开发助手'),
-        prompt: `${t(
-          'workbench.smart_apps_builder_directory_prefix',
-          '智能工作台目录：'
-        )}${installation.packagePath}\n${intentPrompt}\n${t(
-          'workbench.smart_apps_builder_completion',
-          '完成后运行验证；需要分发时导出 ZIP，日常开发继续直接使用此目录。'
-        )}`,
-        openInNewChat: true,
+        prompt: smartAppBuilderPrompt(
+          installation,
+          t('workbench.smart_apps_builder_directory_prefix', '智能工作台目录：'),
+          intentPrompt,
+          t(
+            'workbench.smart_apps_builder_completion',
+            '完成后运行验证；需要分发时导出 ZIP，日常开发继续直接使用此目录。'
+          )
+        ),
       })
-      if (!queued) throw new Error('Smart App Builder reference could not be queued')
+      queueSmartAppDevelopmentPreview({
+        installationId: installation.id,
+        displayName: installation.manifest.displayName,
+      })
       navigateTo('/')
     } catch (builderError) {
       console.error('[Wework Smart apps] failed to prepare Smart App Builder', builderError)
@@ -527,6 +525,16 @@ export function SmartAppsMarketplacePage({
         t('workbench.smart_apps_builder_install_failed', '智能工作台开发助手安装失败，请重试。')
       )
     }
+  }
+
+  async function addPluginToInstallation(pluginSpec: string) {
+    if (!pluginInstallation) return
+    if (pluginInstallation.state === 'running') {
+      const stopped = await stopInstalledApp(pluginInstallation, false)
+      if (!stopped) throw new Error(t('workbench.harness_apps_stop_failed', '停止智能工作台失败。'))
+    }
+    await harnessAppsApi.addPlugin(pluginInstallation.id, pluginSpec)
+    await refresh()
   }
 
   async function createSmartApp(input: SmartAppDevelopmentInput) {
@@ -702,14 +710,12 @@ export function SmartAppsMarketplacePage({
             label: t('workbench.smart_apps_add_plugins', '添加 DSH 插件'),
             icon: Wrench,
             testId: `smart-app-add-plugins-${installation.id}`,
-            disabled: installation.state === 'running',
-            onSelect: () => void openBuilder(installation, 'plugins'),
+            onSelect: () => setPluginInstallation(installation),
           },
           {
             label: t('workbench.smart_apps_continue_development', '开发工作台'),
             icon: Code2,
             testId: `smart-app-develop-${installation.id}`,
-            disabled: installation.state === 'running',
             onSelect: () => void openBuilder(installation, 'develop'),
           },
           {
@@ -1409,6 +1415,13 @@ export function SmartAppsMarketplacePage({
             if (developmentDialog === 'copy') setCopyInstallation(null)
           }}
           onSubmit={developmentDialog === 'copy' ? copySmartApp : createSmartApp}
+        />
+      ) : null}
+      {pluginInstallation ? (
+        <SmartAppPluginDialog
+          displayName={pluginInstallation.manifest.displayName}
+          onClose={() => setPluginInstallation(null)}
+          onInstall={addPluginToInstallation}
         />
       ) : null}
       <ConfirmDialog

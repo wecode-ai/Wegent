@@ -225,6 +225,14 @@ import {
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 import { titleModelForGeneration } from '@/features/workbench/useWorkbenchRuntimeMessaging'
+import {
+  restartHarnessAppDevelopmentRuntime,
+  startHarnessAppDevelopmentRuntime,
+  stopHarnessAppDevelopmentRuntime,
+} from '@/features/harness-apps/harnessAppDevelopmentRuntime'
+import { consumeSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
+import { harnessAppsApi } from '@/api/local/harnessApps'
+import { getErrorMessage } from '@/lib/error-message'
 
 let legacyEmbeddedBrowserOpenRequestSequence = 0
 
@@ -2754,7 +2762,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
   }, [rightPanelImmediateLayout, rightPanelOpen])
   const openBrowserTab = useCallback(
-    (request?: EmbeddedBrowserOpenRequest | null, targetTab?: RightWorkspaceBrowserTab) => {
+    (
+      request?: EmbeddedBrowserOpenRequest | null,
+      targetTab?: RightWorkspaceBrowserTab,
+      overrides: Partial<RightWorkspaceBrowserState> = {}
+    ) => {
       const tab = targetTab ?? allocateBrowserTab()
       logBrowserOpenDiagnostic('openBrowserTab', {
         tab,
@@ -2766,6 +2778,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })
       const existingState = browserStatesRef.current[tab]
       const stateLabel =
+        overrides.label ??
         existingState?.label ??
         request?.targetLabel ??
         browserLabelForRightWorkspaceTab(defaultEmbeddedBrowserLabel, tab)
@@ -2788,6 +2801,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           [tab]: currentState
             ? {
                 ...currentState,
+                ...overrides,
                 openRequest: normalizedRequest ?? currentState.openRequest,
               }
             : createBrowserTabState(tab, {
@@ -2795,6 +2809,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 browserSessionId:
                   request?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
                 openRequest: normalizedRequest,
+                ...overrides,
               }),
         }
       })
@@ -2813,6 +2828,142 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setRightPanelImmediateLayout,
     ]
   )
+  const loadSmartAppDevelopmentPreview = useCallback(
+    async (
+      tab: RightWorkspaceBrowserTab,
+      installationId: string,
+      reload: boolean,
+      initialDisplayName?: string
+    ): Promise<void> => {
+      updateBrowserState(tab, {
+        developmentPreview: {
+          installationId,
+          displayName:
+            initialDisplayName ??
+            browserStatesRef.current[tab]?.developmentPreview?.displayName ??
+            t('workbench.smart_apps_title', '智能工作台'),
+          status: reload ? 'reloading' : 'starting',
+        },
+      })
+      try {
+        const installations = await harnessAppsApi.list()
+        const installation = installations.find(item => item.id === installationId)
+        if (!installation) {
+          throw new Error(t('workbench.smart_app_preview_not_found', '找不到要预览的智能工作台'))
+        }
+        const modelOptions = getHarnessModelOptions('opencode')
+        const missingWebUrlMessage = t(
+          'workbench.smart_apps_missing_web_url',
+          '智能工作台没有返回可用地址'
+        )
+        const running = reload
+          ? await restartHarnessAppDevelopmentRuntime(
+              installation,
+              modelOptions,
+              services.localHarnessModelApi,
+              missingWebUrlMessage
+            )
+          : await startHarnessAppDevelopmentRuntime({
+              installation,
+              modelOptions,
+              localHarnessModelApi: services.localHarnessModelApi,
+              missingWebUrlMessage,
+            })
+        updateBrowserState(tab, {
+          openRequest: {
+            id: `smart-app-development-preview-${installationId}-${Date.now()}`,
+            url: running.webUrl!,
+            baseLabel: defaultEmbeddedBrowserLabel,
+            source: 'user',
+            disposition: 'current-tab',
+            label: browserStatesRef.current[tab]?.label,
+            targetLabel: browserStatesRef.current[tab]?.label,
+            browserSessionId: browserStatesRef.current[tab]?.browserSessionId,
+          },
+          developmentPreview: {
+            installationId,
+            displayName: running.manifest.displayName,
+            status: 'ready',
+          },
+        })
+      } catch (error) {
+        updateBrowserState(tab, {
+          developmentPreview: {
+            installationId,
+            displayName:
+              initialDisplayName ??
+              browserStatesRef.current[tab]?.developmentPreview?.displayName ??
+              t('workbench.smart_apps_title', '智能工作台'),
+            status: 'error',
+            error: getErrorMessage(
+              error,
+              t('workbench.smart_app_preview_failed', 'DSH 开发预览启动失败')
+            ),
+          },
+        })
+      }
+    },
+    [
+      defaultEmbeddedBrowserLabel,
+      getHarnessModelOptions,
+      services.localHarnessModelApi,
+      t,
+      updateBrowserState,
+    ]
+  )
+  const reloadSmartAppDevelopmentPreview = useCallback(
+    (tab: RightWorkspaceBrowserTab, installationId: string) => {
+      void loadSmartAppDevelopmentPreview(tab, installationId, true)
+    },
+    [loadSmartAppDevelopmentPreview]
+  )
+  const addSmartAppDevelopmentPlugin = useCallback(
+    async (tab: RightWorkspaceBrowserTab, installationId: string, pluginSpec: string) => {
+      const installations = await harnessAppsApi.list()
+      const installation = installations.find(item => item.id === installationId)
+      if (!installation) {
+        throw new Error(t('workbench.smart_app_preview_not_found', '找不到要预览的智能工作台'))
+      }
+      updateBrowserState(tab, {
+        developmentPreview: {
+          installationId,
+          displayName: installation.manifest.displayName,
+          status: 'reloading',
+        },
+      })
+      try {
+        if (installation.state === 'running') {
+          await stopHarnessAppDevelopmentRuntime(installationId, services.localHarnessModelApi)
+        }
+        await harnessAppsApi.addPlugin(installationId, pluginSpec)
+        await loadSmartAppDevelopmentPreview(tab, installationId, false)
+      } catch (error) {
+        updateBrowserState(tab, {
+          developmentPreview: {
+            installationId,
+            displayName: installation.manifest.displayName,
+            status: 'ready',
+          },
+        })
+        throw error
+      }
+    },
+    [loadSmartAppDevelopmentPreview, services.localHarnessModelApi, t, updateBrowserState]
+  )
+  useEffect(() => {
+    if (!paneActive || !paneVisible || !workbenchVisible) return
+    const preview = consumeSmartAppDevelopmentPreview()
+    if (!preview) return
+    const tab = openBrowserTab(null, undefined, {
+      label: preview.displayName,
+      developmentPreview: {
+        installationId: preview.installationId,
+        displayName: preview.displayName,
+        status: 'starting',
+      },
+    })
+    void loadSmartAppDevelopmentPreview(tab, preview.installationId, false, preview.displayName)
+  }, [loadSmartAppDevelopmentPreview, openBrowserTab, paneActive, paneVisible, workbenchVisible])
   const selectRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
       setRightPanelOpen(true)
@@ -4438,6 +4589,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               }
               browserStates={browserStates}
               onBrowserStateChange={updateBrowserState}
+              onReloadSmartAppDevelopmentPreview={reloadSmartAppDevelopmentPreview}
+              onAddSmartAppDevelopmentPlugin={addSmartAppDevelopmentPlugin}
               codeCommentCount={paneSession.codeCommentContexts.length}
               codeCommentContexts={paneSession.codeCommentContexts}
               browserAnnotationCommand={paneSession.browserAnnotationCommand}

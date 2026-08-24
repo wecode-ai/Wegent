@@ -24,6 +24,10 @@ export interface HarnessAppManifest {
     dsh: string
     node: string
   }
+  plugins?: Array<{
+    spec: string
+    path?: string
+  }>
   defaultModel?: Record<string, unknown>
 }
 
@@ -73,6 +77,12 @@ export const harnessAppsApi = {
   },
   linkDirectory(directoryPath: string) {
     return invoke<HarnessAppInstallation>('link_harness_app_directory', { directoryPath })
+  },
+  addPlugin(installationId: string, pluginSpec: string) {
+    return invoke<HarnessAppInstallation>('add_harness_app_plugin', {
+      installationId,
+      pluginSpec,
+    })
   },
   copyToDirectory(
     installationId: string,
