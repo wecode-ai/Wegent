@@ -47,7 +47,8 @@ fn prepare_local_executor_sidecar() {
     .expect("failed to create Tauri sidecar directory");
 
     if let Some(source) = configured_sidecar_source() {
-        copy_sidecar(&source, &sidecar_path);
+        let bundled_source = dev_reload_real_executor_sibling(&source).unwrap_or(source);
+        copy_sidecar(&bundled_source, &sidecar_path);
         remove_debug_marker(&marker_path);
         return;
     }
@@ -205,6 +206,19 @@ fn configured_sidecar_source() -> Option<PathBuf> {
     env::var_os(SIDECAR_ENV)
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
+}
+
+fn dev_reload_real_executor_sibling(source: &Path) -> Option<PathBuf> {
+    let name = source.file_name()?.to_str()?;
+    let real_name = if let Some(stem) = name.strip_suffix("-dev.exe") {
+        format!("{stem}.exe")
+    } else if let Some(stem) = name.strip_suffix("-dev") {
+        stem.to_string()
+    } else {
+        return None;
+    };
+    let real_path = source.with_file_name(real_name);
+    real_path.is_file().then_some(real_path)
 }
 
 fn default_executor_dist_path(manifest_dir: &Path, target: &str) -> PathBuf {
