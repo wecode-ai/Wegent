@@ -1,4 +1,9 @@
-import type { InstalledPlugin, LocalDeviceApp, PluginPathComponent } from '@/types/api'
+import type {
+  InstalledPlugin,
+  LocalDeviceApp,
+  PluginPathComponent,
+  ProjectWithTasks,
+} from '@/types/api'
 import {
   currentPluginLogoAppearanceMode,
   resolveInstalledPluginLogoUrl,
@@ -52,6 +57,7 @@ interface PendingPluginTrial {
   templates: PluginPathComponent[]
   app?: LocalDeviceApp
   openInNewChat?: boolean
+  targetProject?: ProjectWithTasks
 }
 
 interface PluginReferenceTrial {
@@ -61,6 +67,7 @@ interface PluginReferenceTrial {
   templates?: PluginPathComponent[]
   prompt?: string
   openInNewChat?: boolean
+  targetProject?: ProjectWithTasks
 }
 
 interface PluginTrialOptions {
@@ -355,6 +362,7 @@ export function queuePluginReferenceTrial({
   templates = [],
   prompt,
   openInNewChat = false,
+  targetProject,
 }: PluginReferenceTrial): boolean {
   const normalizedPluginName = pluginName.trim()
   const normalizedMarketplaceName = marketplaceName.trim()
@@ -368,6 +376,7 @@ export function queuePluginReferenceTrial({
     pluginName: normalizedDisplayName,
     templates,
     openInNewChat,
+    targetProject,
   })
 }
 
@@ -390,6 +399,13 @@ export function consumePluginTrial(): PendingPluginTrial | null {
           ? payload.app
           : undefined,
       openInNewChat: payload.openInNewChat === true,
+      targetProject:
+        payload.targetProject &&
+        typeof payload.targetProject === 'object' &&
+        typeof payload.targetProject.id === 'number' &&
+        typeof payload.targetProject.name === 'string'
+          ? (payload.targetProject as ProjectWithTasks)
+          : undefined,
     }
   } catch {
     return null

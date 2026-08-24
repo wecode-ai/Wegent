@@ -175,6 +175,7 @@ function browserOcclusionReducer(
 
 export interface WorkspaceBrowserPanelProps {
   active: boolean
+  hideToolbar?: boolean
   label?: string
   browserTabId?: string
   openRequest?: EmbeddedBrowserOpenRequest | null
@@ -330,6 +331,7 @@ function observeElementIfPresent(observer: ResizeObserver, element: Element | nu
 
 export function WorkspaceBrowserTabPanel({
   active,
+  hideToolbar = false,
   label = 'workspace-browser',
   browserTabId = label,
   openRequest,
@@ -2483,7 +2485,7 @@ export function WorkspaceBrowserTabPanel({
             </span>
           ) : null}
         </div>
-      ) : (
+      ) : hideToolbar ? null : (
         <div className="relative flex h-11 shrink-0 items-center gap-1.5 border-b border-border bg-background px-2">
           <BrowserToolbarButton
             testId="workspace-browser-back-button"

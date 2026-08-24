@@ -9,10 +9,10 @@
   "interface": {
     "displayName": "智能工作台开发助手",
     "shortDescription": "创建并验证 DeepSeek Harness 智能工作台。",
-    "longDescription": "准备 DSH 开发环境、检索 DSH 插件、拼装能力、在 Wework 内置浏览器中验证，并生成可导入本机智能工作台列表的安装包。",
+    "longDescription": "持续开发 Wework 关联的 DSH Web 工作台目录，检索并增量添加 DSH 插件、在 Wework 内置浏览器中验证，并按需导出 ZIP。",
     "developerName": "Wework",
     "category": "Productivity",
     "capabilities": ["Read", "Write"],
-    "defaultPrompt": "帮我创建一个智能工作台：先确认需求和工作目录，再准备 DSH 环境、检索并选择插件、完成拼装、在 Wework 内置浏览器验证，最后打包并引导我确认安装到本机智能工作台列表。"
+    "defaultPrompt": "帮我创建或继续开发一个智能工作台：先读取现有目录和配置，再准备 DSH 环境、增量添加所需插件或开发工作台代码，在 Wework 内置浏览器验证，并按需导出 ZIP。"
   }
 }

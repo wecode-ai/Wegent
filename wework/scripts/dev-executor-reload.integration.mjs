@@ -81,7 +81,7 @@ async function run() {
     await writeFile(
       executorTemplate,
       `#!/usr/bin/env node
-process.stdout.write(\`ready \${process.pid}\\n\`)
+console.log(\`ready \${process.pid}\`)
 process.stdin.on('data', chunk => {
   if (chunk.toString().trim() === 'crash') process.exit(1)
   process.stdout.write(\`echo:\${chunk}\`)

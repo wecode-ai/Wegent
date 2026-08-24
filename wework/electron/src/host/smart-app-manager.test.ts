@@ -135,6 +135,69 @@ describe('SmartAppManager', () => {
       })
     ).rejects.toThrow('Smart app download must use HTTPS')
   })
+
+  test('creates linked apps, adds local plugins and copies marketplace apps for editing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-editable-'))
+    roots.push(root)
+    const parent = join(root, 'projects')
+    await mkdir(parent)
+    const manager = createManager(root)
+
+    const created = await manager.createDirectory({
+      parentPath: parent,
+      name: 'created-app',
+      displayName: 'Created App',
+      description: 'Editable app',
+    })
+    expect(created).toMatchObject({
+      id: 'created-app',
+      source: 'linked',
+      state: 'installed',
+    })
+
+    const plugin = join(root, 'fixture-plugin')
+    await mkdir(plugin)
+    await writeFile(
+      join(plugin, 'package.json'),
+      `${JSON.stringify({
+        name: '@fixture/local-plugin',
+        version: '1.0.0',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      })}\n`
+    )
+    await writeFile(join(plugin, 'cordis.patch.yml'), '[]\n')
+    const updated = await manager.addPlugin(created.id, plugin)
+    expect(updated.manifest.plugins).toEqual([
+      {
+        spec: 'file:plugins/fixture-local-plugin',
+        path: 'plugins/fixture-local-plugin',
+      },
+    ])
+
+    const archivePath = await createSmartAppArchive(root, validManifest())
+    const preview = await manager.preview(archivePath)
+    const marketplace = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+      smartAppId: 42,
+      releaseId: 7,
+    })
+    expect(marketplace.source).toBe('market')
+
+    const copied = await manager.copyToDirectory(marketplace.id, {
+      parentPath: parent,
+      name: 'copied-app',
+      displayName: 'Copied App',
+    })
+    expect(copied).toMatchObject({
+      id: 'copied-app',
+      source: 'linked',
+      manifest: {
+        displayName: 'Copied App',
+        version: '0.1.0',
+      },
+    })
+  })
 })
 
 function createManager(root: string): SmartAppManager {

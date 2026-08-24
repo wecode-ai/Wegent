@@ -478,6 +478,30 @@ export function createElectronCapabilityRouter(
     shell.showItemInFolder(stringParam(params, 'path'))
   )
   router.register('smartApps.list', () => requiredSmartApps(smartApps).list())
+  router.register('smartApps.createDirectory', params =>
+    requiredSmartApps(smartApps).createDirectory({
+      parentPath: stringParam(params, 'parentPath'),
+      name: stringParam(params, 'name'),
+      displayName: stringParam(params, 'displayName'),
+      description: stringParam(params, 'description'),
+    })
+  )
+  router.register('smartApps.linkDirectory', params =>
+    requiredSmartApps(smartApps).linkDirectory(stringParam(params, 'directoryPath'))
+  )
+  router.register('smartApps.addPlugin', params =>
+    requiredSmartApps(smartApps).addPlugin(
+      stringParam(params, 'installationId'),
+      stringParam(params, 'pluginSpec')
+    )
+  )
+  router.register('smartApps.copyToDirectory', params =>
+    requiredSmartApps(smartApps).copyToDirectory(stringParam(params, 'installationId'), {
+      parentPath: stringParam(params, 'parentPath'),
+      name: stringParam(params, 'name'),
+      displayName: stringParam(params, 'displayName'),
+    })
+  )
   router.register('smartApps.preview', params =>
     requiredSmartApps(smartApps).preview(stringParam(params, 'archivePath'))
   )

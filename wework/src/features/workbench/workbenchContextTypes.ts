@@ -231,6 +231,7 @@ export interface WorkbenchContextValue {
     resetAttachmentsForScope: (scopeKey: string) => void
     listLocalSkills: () => Promise<LocalDeviceSkill[]>
     listLocalApps: () => Promise<LocalDeviceApp[]>
+    requestCatalogs?: () => void
   }
   upgradingDevices: Record<string, DeviceUpgradeState>
   projectExecutionMode: ProjectExecutionMode
@@ -458,6 +459,8 @@ export interface WorkbenchProviderProps {
   workspaceTabId?: string
   debugSnapshotEnabled?: boolean
   consumePluginTrials?: boolean
+  loadTaskComposerCatalogs?: boolean
+  prewarmComposerApps?: boolean
   publishDebugSnapshots?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean

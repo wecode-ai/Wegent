@@ -197,6 +197,8 @@ interface WorkspaceTabSurfaceProps {
   active: boolean
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
+  nativeWorkbenchKind?: 'task' | 'board'
+  prewarmComposerApps?: boolean
   smartAppsEnabled?: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
@@ -209,6 +211,8 @@ export function WorkspaceTabSurface({
   active,
   cloudWebUrl,
   lifecycleStore,
+  nativeWorkbenchKind,
+  prewarmComposerApps = false,
   smartAppsEnabled = false,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
@@ -257,9 +261,10 @@ export function WorkspaceTabSurface({
   const renderedIframe = iframe ?? surfaceHistory.iframe
   const renderProvider = surfaceHistory.hasMountedProvider || !iframe
   const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
-  // Task-scoped browser routing is owned by workbench effects and must remain
-  // available while another workspace tab is active.
-  const keepTaskRuntimeActive = tab.kind === 'task' && renderWorkbench
+  // Fixed native tabs behave like desktop tabs: mount once, preserve their
+  // effects and in-memory UI state, and only change visibility when inactive.
+  const keepNativeWorkbenchActive =
+    Boolean(nativeWorkbenchKind || tab.kind === 'task' || tab.kind === 'board') && renderWorkbench
   // App WebViews own in-memory page state that is lost when React Activity
   // disconnects their effects. Keep the current iframe route connected while
   // inactive; AppIframe hides the native WebView through its active prop.
@@ -273,15 +278,52 @@ export function WorkspaceTabSurface({
     setActiveWorkspaceTabPortalOwner(tab.id)
   }, [active, tab.id])
 
+  const workbenchContent = (
+    <>
+      {harnessAppInstallationId && smartAppsEnabled ? (
+        <HarnessAppAutoLauncher installationId={harnessAppInstallationId} />
+      ) : null}
+      {electronHarnessAppActive && !harnessAppLaunchActive ? (
+        <div
+          className="absolute inset-0"
+          data-testid={`app-iframe-harness-${harnessAppInstallationId}`}
+          data-embedded-browser-label={`smart-app:${harnessAppInstallationId}`}
+          data-workspace-tab-id={tab.id}
+        />
+      ) : null}
+      {onOpenWeworkForAppshot && active && !iframe ? (
+        <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
+      ) : null}
+      {renderWorkbench ? (
+        <div
+          data-testid="desktop-workbench-surface"
+          className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
+          aria-hidden={!nativeWorkbenchActive}
+        >
+          <WorkbenchPage
+            routeActive={active && nativeWorkbenchActive}
+            surfaceKind={nativeWorkbenchKind ?? (tab.kind === 'board' ? 'board' : 'task')}
+          />
+        </div>
+      ) : null}
+      {auxiliaryPage ? (
+        <div data-testid="desktop-auxiliary-surface" className="h-full">
+          {auxiliaryPage}
+        </div>
+      ) : null}
+    </>
+  )
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
-      <Activity mode={active || keepTaskRuntimeActive || keepIframeActive ? 'visible' : 'hidden'}>
+      <Activity
+        mode={active || keepNativeWorkbenchActive || keepIframeActive ? 'visible' : 'hidden'}
+      >
         <div
           className={cn(
             'min-h-0 min-w-0 overflow-hidden',
             active ? 'relative h-full' : 'absolute inset-0',
             !active &&
-              (keepTaskRuntimeActive || keepIframeActive) &&
+              (keepNativeWorkbenchActive || keepIframeActive) &&
               'pointer-events-none invisible'
           )}
           data-testid={`workspace-tab-content-${tab.id}`}
@@ -297,38 +339,13 @@ export function WorkspaceTabSurface({
               workspaceTabId={tab.id}
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
+              loadTaskComposerCatalogs={(nativeWorkbenchKind ?? tab.kind) !== 'board'}
+              prewarmComposerApps={prewarmComposerApps}
               publishDebugSnapshots={active && !iframe}
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
-              {harnessAppInstallationId && smartAppsEnabled ? (
-                <HarnessAppAutoLauncher installationId={harnessAppInstallationId} />
-              ) : null}
-              {electronHarnessAppActive && !harnessAppLaunchActive ? (
-                <div
-                  className="absolute inset-0"
-                  data-testid={`app-iframe-harness-${harnessAppInstallationId}`}
-                  data-embedded-browser-label={`smart-app:${harnessAppInstallationId}`}
-                  data-workspace-tab-id={tab.id}
-                />
-              ) : null}
-              {onOpenWeworkForAppshot && active && !iframe ? (
-                <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
-              ) : null}
-              {renderWorkbench ? (
-                <div
-                  data-testid="desktop-workbench-surface"
-                  className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
-                  aria-hidden={!nativeWorkbenchActive}
-                >
-                  <WorkbenchPage routeActive={active && nativeWorkbenchActive} />
-                </div>
-              ) : null}
-              {auxiliaryPage ? (
-                <div data-testid="desktop-auxiliary-surface" className="h-full">
-                  {auxiliaryPage}
-                </div>
-              ) : null}
+              {workbenchContent}
             </WorkbenchProvider>
           ) : null}
           {harnessAppLaunch ? <HarnessAppLaunchSurface launch={harnessAppLaunch} /> : null}
@@ -374,6 +391,11 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const [mountedTabs, setMountedTabs] = useState(() => ({
     activeTabId: workspaceTabs?.activeTabId ?? null,
     ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
+    nativeWorkbenchKinds: new Map(
+      workspaceTabs?.tabs.flatMap(tab =>
+        tab.kind === 'task' || tab.kind === 'board' ? [[tab.id, tab.kind] as const] : []
+      ) ?? []
+    ),
   }))
   const telemetryEnabled = useTelemetryEnabled()
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
@@ -440,10 +462,29 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       feature: isPopoutWindow ? 'popout' : telemetryFeatureForPath(path),
     })
   }, [isPopoutWindow, path, telemetryEnabled])
-  if (workspaceTabs && mountedTabs.activeTabId !== workspaceTabs.activeTabId) {
+  const nextNativeWorkbenchKinds = new Map(
+    [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
+      workspaceTabs?.tabs.some(tab => tab.id === id)
+    )
+  )
+  for (const tab of workspaceTabs?.tabs ?? []) {
+    if (tab.kind === 'task' || tab.kind === 'board') {
+      nextNativeWorkbenchKinds.set(tab.id, tab.kind)
+    }
+  }
+  const nativeWorkbenchKindsChanged =
+    nextNativeWorkbenchKinds.size !== mountedTabs.nativeWorkbenchKinds.size ||
+    [...nextNativeWorkbenchKinds].some(
+      ([id, kind]) => mountedTabs.nativeWorkbenchKinds.get(id) !== kind
+    )
+  if (
+    workspaceTabs &&
+    (mountedTabs.activeTabId !== workspaceTabs.activeTabId || nativeWorkbenchKindsChanged)
+  ) {
     setMountedTabs({
       activeTabId: workspaceTabs.activeTabId,
       ids: new Set([...mountedTabs.ids, workspaceTabs.activeTabId]),
+      nativeWorkbenchKinds: nextNativeWorkbenchKinds,
     })
   }
 
@@ -493,31 +534,35 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   }
 
   if (!workspaceTabs) return null
+  const mountedWorkspaceTabs = workspaceTabs.tabs.filter(
+    tab => tab.id === workspaceTabs.activeTabId || mountedTabs.ids.has(tab.id)
+  )
+  const composerPrewarmTabId = workspaceTabs.tabs.find(
+    tab => nextNativeWorkbenchKinds.get(tab.id) === 'task'
+  )?.id
+  const cloudWebUrl = cloudConnection.webUrl
+    ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
+    : cloudConnection.webUrl
   return (
     <>
       <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
       <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
-      {workspaceTabs.tabs.map(tab => {
-        if (tab.id !== workspaceTabs.activeTabId && !mountedTabs.ids.has(tab.id)) return null
-        return (
-          <WorkspaceTabSurface
-            key={tab.id}
-            active={tab.id === workspaceTabs.activeTabId}
-            lifecycleStore={lifecycleStore}
-            smartAppsEnabled={experimentalFeatures.enabled}
-            services={services}
-            cloudWebUrl={
-              cloudConnection.webUrl
-                ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
-                : cloudConnection.webUrl
-            }
-            onOpenWeworkForAppshot={onOpenWeworkForAppshot}
-            onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
-            tab={tab}
-            user={user}
-          />
-        )
-      })}
+      {mountedWorkspaceTabs.map(tab => (
+        <WorkspaceTabSurface
+          key={tab.id}
+          active={tab.id === workspaceTabs.activeTabId}
+          lifecycleStore={lifecycleStore}
+          nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
+          prewarmComposerApps={tab.id === composerPrewarmTabId}
+          smartAppsEnabled={experimentalFeatures.enabled}
+          services={services}
+          cloudWebUrl={cloudWebUrl}
+          onOpenWeworkForAppshot={onOpenWeworkForAppshot}
+          onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
+          tab={tab}
+          user={user}
+        />
+      ))}
     </>
   )
 }

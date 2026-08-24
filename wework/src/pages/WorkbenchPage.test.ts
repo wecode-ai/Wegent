@@ -19,4 +19,14 @@ describe('shouldUseMobileWorkbenchLayout', () => {
       })
     ).toBe(true)
   })
+
+  test('keeps a board surface on the board-capable desktop layout in a narrow browser viewport', () => {
+    expect(
+      shouldUseMobileWorkbenchLayout({
+        isMobileViewport: true,
+        isDesktop: false,
+        surfaceKind: 'board',
+      })
+    ).toBe(false)
+  })
 })

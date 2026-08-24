@@ -4,6 +4,7 @@ import { navigateTo, toBrowserPath } from '@/lib/navigation'
 import {
   closeWorkspaceTab,
   createWorkspaceTab,
+  dispatchWorkspaceTabsClosed,
   inferWorkspaceTabKind,
   moveWorkspaceTab,
   parseWorkspaceLocation,
@@ -386,10 +387,12 @@ export function WorkspaceTabsProvider({
 
   const closeTab = useCallback(
     (tabId: string) => {
-      if (state.tabs.find(tab => tab.id === tabId)?.fixed) return
+      const closingTab = state.tabs.find(tab => tab.id === tabId)
+      if (!closingTab || closingTab.fixed) return
       const fallback = createWorkspaceTab('task', labels)
       const next = closeWorkspaceTab(state.tabs, state.activeTabId, tabId, fallback)
       flushSync(() => dispatch({ type: 'close', tabId, fallback }))
+      dispatchWorkspaceTabsClosed([tabId])
       const nextActive = next.tabs.find(tab => tab.id === next.activeTabId) ?? next.tabs[0]
       navigateTo(workspaceTabRoute(nextActive))
     },
@@ -400,7 +403,11 @@ export function WorkspaceTabsProvider({
     (tabId: string) => {
       const tab = state.tabs.find(candidate => candidate.id === tabId)
       if (!tab) return
+      const closedTabIds = state.tabs
+        .filter(candidate => !candidate.fixed && candidate.id !== tabId)
+        .map(candidate => candidate.id)
       flushSync(() => dispatch({ type: 'closeOthers', tabId }))
+      dispatchWorkspaceTabsClosed(closedTabIds)
       navigateTo(workspaceTabRoute(tab))
     },
     [state.tabs]

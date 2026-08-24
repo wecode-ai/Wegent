@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, join, resolve } from 'node:path'
+import { basename, join, resolve, sep } from 'node:path'
 import semver from 'semver'
 import * as tar from 'tar'
 import {
@@ -26,6 +26,10 @@ export interface WorkbenchAppManifest {
     dsh: string
     node: string
   }
+  plugins?: Array<{
+    spec: string
+    path?: string
+  }>
 }
 
 export interface PrepareWorkbenchDshOptions {
@@ -79,6 +83,15 @@ export async function prepareWorkbenchDshLaunch(
     dshHome,
     options.manifest.entry.profile,
     packages,
+    nodeCommand,
+    environment,
+    run
+  )
+  await installPluginSpecs(
+    runtime,
+    dshHome,
+    options.manifest.entry.profile,
+    options.manifest.plugins ?? [],
     nodeCommand,
     environment,
     run
@@ -283,6 +296,35 @@ async function installPlugins(
       '--ignore-scripts',
       ...packages.map(path => `file:${path}`),
     ],
+    { cwd: runtime.root, env: environment }
+  )
+}
+
+async function installPluginSpecs(
+  runtime: BundledDshRuntime,
+  dshHome: string,
+  profile: string,
+  plugins: NonNullable<WorkbenchAppManifest['plugins']>,
+  nodeCommand: string,
+  environment: NodeJS.ProcessEnv,
+  run: CommandRunner
+): Promise<void> {
+  if (!plugins.length) return
+  const packageRoot = join(dshHome, 'wework-package')
+  const specs = plugins.map(plugin => {
+    if (!plugin.path) return plugin.spec
+    const path = resolve(packageRoot, plugin.path)
+    if (!path.startsWith(`${packageRoot}${sep}`)) {
+      throw new Error('Smart app plugin path escapes the package directory')
+    }
+    return `file:${path}`
+  })
+  await assertPluginDirectories(
+    plugins.flatMap(plugin => (plugin.path ? [resolve(packageRoot, plugin.path)] : []))
+  )
+  await run(
+    nodeCommand,
+    [runtime.entry, 'plugin', '--profile', profile, 'add', '--ignore-scripts', ...specs],
     { cwd: runtime.root, env: environment }
   )
 }

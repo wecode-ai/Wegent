@@ -107,9 +107,13 @@ function boardRouteProjectRef(contentRoute: string): RuntimeProjectSpaceRef | nu
 
 interface DesktopWorkbenchLayoutProps {
   routeActive?: boolean
+  surfaceKind?: 'task' | 'board'
 }
 
-export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchLayoutProps) {
+export function DesktopWorkbenchLayout({
+  routeActive = true,
+  surfaceKind,
+}: DesktopWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const { logout: onLogout } = useAuth()
   const runtimeTaskLifecycle = useRuntimeTaskLifecycleStoreSnapshot()
@@ -191,6 +195,9 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const { activatePane: activateSplitPane } = splitGroups
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
+  const routeWorkItemsOpen =
+    surfaceKind === 'board' || (surfaceKind === undefined && currentPath === '/todo')
+  const todoOpen = routeWorkItemsOpen
   const [localHarnessSessions, setLocalHarnessSessions] = useState<LocalHarnessWorkbenchSession[]>(
     []
   )
@@ -320,7 +327,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   }, [])
 
   useEffect(() => {
-    if (!isLocalHarnessAvailable()) return
+    if (todoOpen || !isLocalHarnessAvailable()) return
 
     let cancelled = false
     void loadLocalHarnessSessions()
@@ -352,9 +359,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       cancelled = true
       window.removeEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
     }
-  }, [loadLocalHarnessSessions])
-  const routeWorkItemsOpen = currentPath === '/todo'
-  const todoOpen = routeWorkItemsOpen
+  }, [loadLocalHarnessSessions, todoOpen])
   const activeItem = 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const startNewChatOutsideHarness = useCallback(() => {
@@ -748,8 +753,9 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   }, [onGetImNotificationSettings])
 
   useEffect(() => {
+    if (todoOpen) return
     void refreshImNotificationSettings().catch(() => undefined)
-  }, [refreshImNotificationSettings])
+  }, [refreshImNotificationSettings, todoOpen])
 
   const openImNotificationTargetDialog = useCallback(
     (mode: ImNotificationDialogMode) => {
@@ -1112,7 +1118,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 {t('workbench.cloud_board_loading', '正在加载云端看板…')}
               </div>
             ))}
-          <div style={{ display: todoOpen ? 'none' : 'contents' }} aria-hidden={todoOpen}>
+          {!todoOpen ? (
             <DesktopWorkbenchMain
               visible={routeActive && !settingsOpen && !todoOpen}
               sidebarCollapsed={effectiveSidebarCollapsed}
@@ -1127,7 +1133,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
               onLocalHarnessSessionClose={closeLocalHarnessSession}
               onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
             />
-          </div>
+          ) : null}
         </div>
       </div>
       <StandaloneBlankProjectDialog
