@@ -24,6 +24,20 @@ export interface WorkspaceTabLabels {
 const WORKSPACE_TAB_PARAM = 'workspaceTab'
 const WORKSPACE_TAB_TITLE_PARAM = 'workspaceTabTitle'
 const WORKSPACE_TABS_STORAGE_PREFIX = 'wework.workspaceTabs.v3:'
+export const WORKSPACE_TABS_CLOSED_EVENT = 'wework:workspace-tabs-closed'
+
+export interface WorkspaceTabsClosedEventDetail {
+  tabIds: string[]
+}
+
+export function dispatchWorkspaceTabsClosed(tabIds: string[]): void {
+  if (tabIds.length === 0) return
+  window.dispatchEvent(
+    new CustomEvent<WorkspaceTabsClosedEventDetail>(WORKSPACE_TABS_CLOSED_EVENT, {
+      detail: { tabIds },
+    })
+  )
+}
 
 function newTabId(kind: WorkspaceTabKind): string {
   return `${kind}-${crypto.randomUUID()}`

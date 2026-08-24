@@ -90,6 +90,7 @@ const installed: HarnessAppInstallation = {
   state: 'installed',
   webUrl: null,
   error: null,
+  source: 'managed',
 }
 
 const running: HarnessAppInstallation = {

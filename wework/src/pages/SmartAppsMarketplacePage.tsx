@@ -5,8 +5,11 @@ import {
   CalendarDays,
   CheckCircle2,
   CirclePlus,
+  Code2,
+  Copy,
   Download,
   ExternalLink,
+  FolderOpen,
   Globe2,
   Loader2,
   LockKeyhole,
@@ -22,6 +25,7 @@ import {
   Trash2,
   Upload,
   Users,
+  Wrench,
   X,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -44,16 +48,31 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { SmartAppsSectionNav } from '@/components/smart-apps/SmartAppsSectionNav'
 import { Button } from '@/components/ui/button'
 import { HarnessAppInstallDialog } from '@/features/harness-apps/HarnessAppInstallDialog'
+import {
+  SmartAppDevelopmentDialog,
+  type SmartAppDevelopmentInput,
+} from '@/features/harness-apps/SmartAppDevelopmentDialog'
+import { SmartAppPluginDialog } from '@/features/harness-apps/SmartAppPluginDialog'
+import {
+  queueSmartAppBuilder,
+  smartAppBuilderPrompt,
+} from '@/features/harness-apps/smartAppBuilder'
+import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { useHarnessAppManagement } from '@/features/harness-apps/useHarnessAppManagement'
-import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
+import { getLocalExecutorDeviceId, revealLocalFile } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
-import { ensureBundledPluginInstalled } from '@/tauri/localExecutor'
+import type { CreateProjectRequest, ProjectWithTasks } from '@/types/api'
+import type { ProjectMutationOptions } from '@/features/workbench/workbenchContextTypes'
 
 interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
   mode?: 'marketplace' | 'owned'
+  onCreateProject?: (
+    data: CreateProjectRequest,
+    options?: ProjectMutationOptions
+  ) => Promise<ProjectWithTasks>
 }
 
 interface PendingInstall {
@@ -206,6 +225,7 @@ async function readManifest(
 export function SmartAppsMarketplacePage({
   api,
   mode = 'marketplace',
+  onCreateProject,
 }: SmartAppsMarketplacePageProps) {
   const { t, i18n } = useTranslation('common')
   const [items, setItems] = useState<SmartAppMarketplaceItem[]>([])
@@ -233,8 +253,11 @@ export function SmartAppsMarketplacePage({
   const [shareItem, setShareItem] = useState<SmartAppMarketplaceItem | null>(null)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [developmentDialog, setDevelopmentDialog] = useState<'create' | 'copy' | null>(null)
+  const [copyInstallation, setCopyInstallation] = useState<HarnessAppInstallation | null>(null)
   const [importing, setImporting] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<HarnessAppInstallation | null>(null)
+  const [pluginInstallation, setPluginInstallation] = useState<HarnessAppInstallation | null>(null)
   const refreshRequestRef = useRef(0)
 
   const refresh = useCallback(async () => {
@@ -473,31 +496,131 @@ export function SmartAppsMarketplacePage({
     }
   }
 
-  async function createSmartApp() {
-    if (creating) return
-    setCreating(true)
+  async function openBuilder(
+    installation: HarnessAppInstallation,
+    intent: 'develop' | 'created',
+    targetProject?: ProjectWithTasks
+  ) {
     setCreateError(null)
     try {
-      await ensureBundledPluginInstalled('smart-app-builder')
-      const queued = queuePluginReferenceTrial({
-        pluginName: 'smart-app-builder',
-        marketplaceName: 'wework-personal',
+      const intentPrompt =
+        intent === 'created'
+          ? t(
+              'workbench.smart_apps_builder_intent_created',
+              '这是刚从 Web 预设创建的空白工作台，请先检查脚手架，再根据我的需求继续开发。'
+            )
+          : t(
+              'workbench.smart_apps_builder_intent_develop',
+              '请在现有工作台上继续增量开发；先读取已有 manifest、依赖和 cordis.patch.yml。'
+            )
+      await queueSmartAppBuilder({
         displayName: t('workbench.smart_apps_builder_name', '智能工作台开发助手'),
-        prompt: t(
-          'workbench.smart_apps_builder_prompt',
-          '帮我创建一个智能工作台，完成 DSH 环境准备、插件检索与拼装、内置浏览器测试、打包和本机安装。'
+        prompt: smartAppBuilderPrompt(
+          installation,
+          t('workbench.smart_apps_builder_directory_prefix', '智能工作台目录：'),
+          intentPrompt,
+          t(
+            'workbench.smart_apps_builder_completion',
+            '完成后运行验证；需要分发时导出 ZIP，日常开发继续直接使用此目录。'
+          )
         ),
-        openInNewChat: true,
+        targetProject,
       })
-      if (!queued) throw new Error('Smart App Builder reference could not be queued')
+      queueSmartAppDevelopmentPreview({
+        installationId: installation.id,
+        displayName: installation.manifest.displayName,
+      })
       navigateTo('/')
     } catch (builderError) {
       console.error('[Wework Smart apps] failed to prepare Smart App Builder', builderError)
       setCreateError(
         t('workbench.smart_apps_builder_install_failed', '智能工作台开发助手安装失败，请重试。')
       )
+    }
+  }
+
+  async function addPluginToInstallation(pluginSpec: string) {
+    if (!pluginInstallation) return
+    if (pluginInstallation.state === 'running') {
+      const stopped = await stopInstalledApp(pluginInstallation, false)
+      if (!stopped) throw new Error(t('workbench.harness_apps_stop_failed', '停止智能工作台失败。'))
+    }
+    await harnessAppsApi.addPlugin(pluginInstallation.id, pluginSpec)
+    await refresh()
+  }
+
+  async function createSmartApp(input: SmartAppDevelopmentInput) {
+    setCreating(true)
+    setCreateError(null)
+    try {
+      const localDeviceId = await getLocalExecutorDeviceId()
+      if (!localDeviceId) {
+        throw new Error(t('workbench.no_local_project_device', '暂无可用本地设备'))
+      }
+      const installation = await harnessAppsApi.createDirectory(input)
+      notifyHarnessAppInstallationsChanged({
+        type: 'installed',
+        installationId: installation.id,
+        installation,
+      })
+      const project = await onCreateProject?.(
+        {
+          name: installation.manifest.displayName,
+          description: installation.manifest.description,
+          config: {
+            mode: 'workspace',
+            execution: { targetType: 'local', deviceId: localDeviceId },
+            workspace: {
+              source: 'local_path',
+              localPath: installation.packagePath,
+            },
+          },
+        },
+        { refreshWorkLists: false }
+      )
+      await refresh()
+      await openBuilder(installation, 'created', project)
     } finally {
       setCreating(false)
+    }
+  }
+
+  async function copySmartApp(input: SmartAppDevelopmentInput) {
+    if (!copyInstallation) return
+    setCreating(true)
+    try {
+      const installation = await harnessAppsApi.copyToDirectory(copyInstallation.id, input)
+      notifyHarnessAppInstallationsChanged({
+        type: 'installed',
+        installationId: installation.id,
+        installation,
+      })
+      setCopyInstallation(null)
+      await refresh()
+      await openBuilder(installation, 'develop')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function linkSmartAppDirectory() {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const path = await open({ directory: true, multiple: false })
+    if (typeof path !== 'string') return
+    setImporting(true)
+    setError(null)
+    try {
+      const installation = await harnessAppsApi.linkDirectory(path)
+      notifyHarnessAppInstallationsChanged({
+        type: 'installed',
+        installationId: installation.id,
+        installation,
+      })
+      await refresh()
+    } catch (value) {
+      setError(getErrorMessage(value, t('workbench.smart_apps_link_failed', '关联工作台目录失败')))
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -601,6 +724,48 @@ export function SmartAppsMarketplacePage({
         disabled: installation.state === 'running',
         onSelect: () => focusModelSelector(installation),
       })
+      if (installation.source === 'market') {
+        actions.push({
+          label: t('workbench.smart_apps_copy_for_development', '复制为我的工作台'),
+          icon: Copy,
+          testId: `smart-app-copy-${installation.id}`,
+          disabled: installation.state === 'running',
+          onSelect: () => {
+            setCopyInstallation(installation)
+            setDevelopmentDialog('copy')
+          },
+        })
+      } else {
+        actions.push(
+          {
+            label: t('workbench.smart_apps_add_plugins', '添加 DSH 插件'),
+            icon: Wrench,
+            testId: `smart-app-add-plugins-${installation.id}`,
+            onSelect: () => setPluginInstallation(installation),
+          },
+          {
+            label: t('workbench.smart_apps_continue_development', '开发工作台'),
+            icon: Code2,
+            testId: `smart-app-develop-${installation.id}`,
+            onSelect: () => void openBuilder(installation, 'develop'),
+          },
+          {
+            label: t('workbench.smart_apps_open_directory', '在文件管理器中打开'),
+            icon: FolderOpen,
+            testId: `smart-app-open-directory-${installation.id}`,
+            onSelect: () => {
+              void revealLocalFile(installation.packagePath).catch(openError => {
+                setError(
+                  getErrorMessage(
+                    openError,
+                    t('workbench.smart_apps_open_directory_failed', '打开工作台文件夹失败。')
+                  )
+                )
+              })
+            },
+          }
+        )
+      }
     }
     if (mode === 'marketplace') {
       actions.push({
@@ -694,12 +859,22 @@ export function SmartAppsMarketplacePage({
               size="sm"
               variant="outline"
               data-testid="smart-apps-created-create"
-              onClick={() => void createSmartApp()}
+              onClick={() => setDevelopmentDialog('create')}
             >
               <CirclePlus className="h-4 w-4" />
               {creating
                 ? t('workbench.smart_apps_preparing', '正在准备…')
                 : t('workbench.smart_apps_create', '创建工作台')}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="smart-apps-link-directory"
+              disabled={importing}
+              onClick={() => void linkSmartAppDirectory()}
+            >
+              <FolderOpen className="h-4 w-4" />
+              {t('workbench.smart_apps_link_directory', '关联文件夹')}
             </Button>
             <Button
               size="sm"
@@ -931,9 +1106,11 @@ export function SmartAppsMarketplacePage({
                     title={title}
                     sourceLabel={
                       card.category === 'created'
-                        ? installation && !installation.smartAppId
-                          ? t('workbench.smart_apps_local_import', '本地导入')
-                          : t('workbench.smart_apps_created_by_me', '我创建')
+                        ? installation?.source === 'linked'
+                          ? t('workbench.smart_apps_linked_folder', '关联文件夹')
+                          : installation && !installation.smartAppId
+                            ? t('workbench.smart_apps_local_import', '本地导入')
+                            : t('workbench.smart_apps_created_by_me', '我创建')
                         : t('workbench.smart_apps_market_install', '市场安装')
                     }
                     description={description}
@@ -1258,13 +1435,40 @@ export function SmartAppsMarketplacePage({
           }}
         />
       ) : null}
+      {developmentDialog ? (
+        <SmartAppDevelopmentDialog
+          mode={developmentDialog}
+          initialDisplayName={
+            developmentDialog === 'copy' ? copyInstallation?.manifest.displayName : undefined
+          }
+          onClose={() => {
+            setDevelopmentDialog(null)
+            if (developmentDialog === 'copy') setCopyInstallation(null)
+          }}
+          onSubmit={developmentDialog === 'copy' ? copySmartApp : createSmartApp}
+        />
+      ) : null}
+      {pluginInstallation ? (
+        <SmartAppPluginDialog
+          displayName={pluginInstallation.manifest.displayName}
+          onClose={() => setPluginInstallation(null)}
+          onInstall={addPluginToInstallation}
+        />
+      ) : null}
       <ConfirmDialog
         open={Boolean(pendingDelete)}
         title={t('workbench.smart_apps_remove_local_title', '从本机移除工作台？')}
-        description={t(
-          'workbench.smart_apps_remove_local_description',
-          '将停止运行并删除本机文件。已发布版本和分享范围不会受到影响。'
-        )}
+        description={
+          pendingDelete?.source === 'linked'
+            ? t(
+                'workbench.smart_apps_unlink_local_description',
+                '将停止运行并从列表中移除，但不会删除工作台文件夹。'
+              )
+            : t(
+                'workbench.smart_apps_remove_local_description',
+                '将停止运行并删除本机文件。已发布版本和分享范围不会受到影响。'
+              )
+        }
         cancelLabel={t('common.cancel', '取消')}
         confirmLabel={t('workbench.smart_apps_remove_local_confirm', '移除')}
         confirmTestId="smart-app-remove-local-confirm"

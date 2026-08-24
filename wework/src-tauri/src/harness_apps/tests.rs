@@ -79,6 +79,57 @@ fn archive_supports_one_wrapper_directory() {
 }
 
 #[test]
+fn local_plugin_metadata_requires_a_dsh_bundle_patch() {
+    let directory = tempdir().unwrap();
+    fs::write(
+        directory.path().join("package.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "name": "@example/local-plugin",
+            "version": "0.1.0",
+            "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(directory.path().join("cordis.patch.yml"), "[]\n").unwrap();
+
+    let (name, directory_name) = plugin_package_metadata(directory.path()).unwrap();
+
+    assert_eq!(name, "@example/local-plugin");
+    assert_eq!(directory_name, "example-local-plugin");
+}
+
+#[test]
+fn editable_package_files_include_vendored_local_plugins() {
+    let directory = tempdir().unwrap();
+    let bundle = directory.path().join("packages/bundle/test");
+    let plugin = directory.path().join("plugins/local-plugin");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::create_dir_all(&plugin).unwrap();
+    fs::write(directory.path().join("PLUGIN.md"), "# Plugin\n").unwrap();
+    fs::write(directory.path().join("INSTALL.zh-CN.md"), "# 安装\n").unwrap();
+    fs::write(bundle.join("package.json"), "{}").unwrap();
+    fs::write(bundle.join("cordis.patch.yml"), "[]\n").unwrap();
+    fs::write(plugin.join("package.json"), "{}").unwrap();
+    fs::write(plugin.join("cordis.patch.yml"), "[]\n").unwrap();
+    let manifest = manifest("0.1.0-rc.8").replace(
+        "\"requirements\":{\"dsh\":\"0.1.0-rc.8\",\"node\":\">=22\"}",
+        "\"requirements\":{\"dsh\":\"0.1.0-rc.8\",\"node\":\">=22\"},\
+         \"plugins\":[{\"spec\":\"file:plugins/local-plugin\",\"path\":\"plugins/local-plugin\"}]",
+    );
+    fs::write(directory.path().join("plugin-manifest.json"), manifest).unwrap();
+    let root = EditablePackageRoot::open(directory.path()).unwrap();
+    let parsed: HarnessAppManifest =
+        serde_json::from_slice(&fs::read(directory.path().join("plugin-manifest.json")).unwrap())
+            .unwrap();
+
+    let files = collect_editable_package_files(&root, &parsed).unwrap();
+
+    assert!(files.contains(&PathBuf::from("plugins/local-plugin/package.json")));
+    assert!(files.contains(&PathBuf::from("plugins/local-plugin/cordis.patch.yml")));
+}
+
+#[test]
 fn bare_dsh_version_is_an_exact_requirement() {
     let requirement = dsh_version_requirement("0.1.0-rc.8").unwrap();
 
@@ -112,6 +163,7 @@ fn installation_registry_defaults_resident_for_existing_records() {
     assert!(!installation.resident);
     assert!(installation.smart_app_id.is_none());
     assert!(installation.release_id.is_none());
+    assert_eq!(installation.source, "managed");
 }
 
 #[test]
@@ -157,9 +209,14 @@ fn remote_download_rejects_hash_mismatch() {
 fn installed_package_export_is_deterministic_and_valid() {
     let directory = tempdir().unwrap();
     let package = directory.path().join("package");
-    fs::create_dir_all(package.join("bundle")).unwrap();
-    fs::write(package.join("plugin-manifest.json"), manifest("0.1.0-rc.7")).unwrap();
-    fs::write(package.join("bundle/app.js"), "export default {}\n").unwrap();
+    scaffold_web_smart_app(
+        &package,
+        "exportable-workbench",
+        "Exportable workbench",
+        "Export deterministically",
+        "0.1.0-rc.7",
+    )
+    .unwrap();
     let first = directory.path().join("first.zip");
     let second = directory.path().join("second.zip");
 
@@ -169,6 +226,337 @@ fn installed_package_export_is_deterministic_and_valid() {
     assert_eq!(first_result, second_result);
     assert_eq!(fs::read(&first).unwrap(), fs::read(&second).unwrap());
     assert!(inspect_archive(&first, None).is_ok());
+}
+
+#[test]
+fn web_smart_app_scaffold_is_a_valid_editable_directory() {
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("blank-workbench");
+
+    scaffold_web_smart_app(
+        &app,
+        "blank-workbench",
+        "Blank workbench",
+        "Start from the Web preset",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let (manifest, checksum) = validate_package_directory(&app).unwrap();
+
+    assert_eq!(manifest.name, "blank-workbench");
+    assert_eq!(manifest.entry.profile, "web");
+    assert_eq!(manifest.requirements.dsh, "0.1.0-rc.8");
+    assert_eq!(checksum.len(), 64);
+    assert!(app
+        .join("packages/bundle/blank-workbench/cordis.patch.yml")
+        .is_file());
+}
+
+#[test]
+fn editable_package_accepts_and_exports_leading_current_directory_paths() {
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let manifest_path = app.join("plugin-manifest.json");
+    let mut edited: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    edited["entry"]["installPackage"] =
+        Value::String("./packages/bundle/editable-workbench".to_string());
+    edited["packages"][0]["path"] =
+        Value::String("./packages/bundle/editable-workbench".to_string());
+    write_json(&manifest_path, &edited).unwrap();
+
+    assert!(validate_package_directory(&app).is_ok());
+
+    let archive_path = directory.path().join("editable-workbench.zip");
+    export_package_directory(&app, &archive_path).unwrap();
+    let archive_file = fs::File::open(&archive_path).unwrap();
+    let mut archive = zip::ZipArchive::new(archive_file).unwrap();
+    let names = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect::<Vec<_>>();
+
+    assert!(names
+        .iter()
+        .any(|name| name.ends_with("packages/bundle/editable-workbench/package.json")));
+    assert!(names
+        .iter()
+        .any(|name| name.ends_with("packages/bundle/editable-workbench/cordis.patch.yml")));
+}
+
+#[test]
+fn linked_directory_checksum_changes_with_source_edits() {
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let (_, first) = validate_package_directory(&app).unwrap();
+
+    fs::write(
+        app.join("packages/bundle/editable-workbench/src/index.ts"),
+        "export const smartApp = { edited: true }\n",
+    )
+    .unwrap();
+    let (_, second) = validate_package_directory(&app).unwrap();
+
+    assert_ne!(first, second);
+}
+
+#[test]
+fn linked_directory_ignores_dependency_and_build_directories() {
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let bundle = app.join("packages/bundle/editable-workbench");
+    fs::create_dir_all(bundle.join("node_modules/dependency")).unwrap();
+    fs::create_dir_all(bundle.join("dist")).unwrap();
+    fs::write(
+        bundle.join("node_modules/dependency/index.js"),
+        "dependency\n",
+    )
+    .unwrap();
+    fs::write(bundle.join("dist/index.js"), "build output\n").unwrap();
+    let (_, first) = validate_package_directory(&app).unwrap();
+
+    fs::write(bundle.join("node_modules/dependency/index.js"), "changed\n").unwrap();
+    fs::write(bundle.join("dist/index.js"), "changed\n").unwrap();
+    let (_, second) = validate_package_directory(&app).unwrap();
+
+    assert_eq!(first, second);
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_directory_ignores_pnpm_style_dependency_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let bundle = app.join("packages/bundle/editable-workbench");
+    let dependency = directory.path().join("dependency");
+    fs::create_dir_all(&dependency).unwrap();
+    fs::write(dependency.join("index.js"), "dependency\n").unwrap();
+    fs::create_dir_all(bundle.join("node_modules")).unwrap();
+    symlink(&dependency, bundle.join("node_modules/dependency")).unwrap();
+
+    assert!(validate_package_directory(&app).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_directory_rejects_symlinked_required_files() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let outside = directory.path().join("outside-plugin.md");
+    fs::write(&outside, "# Outside\n").unwrap();
+    fs::remove_file(app.join("PLUGIN.md")).unwrap();
+    symlink(&outside, app.join("PLUGIN.md")).unwrap();
+
+    assert!(validate_package_directory(&app).is_err());
+    assert!(export_package_directory(&app, &directory.path().join("app.zip")).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_directory_rejects_symlinked_declared_package_directories() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let bundle = app.join("packages/bundle/editable-workbench");
+    let outside = directory.path().join("outside-package");
+    fs::rename(&bundle, &outside).unwrap();
+    symlink(&outside, &bundle).unwrap();
+
+    assert!(validate_package_directory(&app).is_err());
+    assert!(export_package_directory(&app, &directory.path().join("app.zip")).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn editable_file_reads_reject_symlinks_created_after_validation() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    assert!(validate_package_directory(&app).is_ok());
+
+    let outside = directory.path().join("outside-plugin.md");
+    fs::write(&outside, "# Outside\n").unwrap();
+    fs::remove_file(app.join("PLUGIN.md")).unwrap();
+    symlink(&outside, app.join("PLUGIN.md")).unwrap();
+
+    let root = EditablePackageRoot::open(&app).unwrap();
+    assert!(root.read_file(Path::new("PLUGIN.md")).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn editable_package_collection_rejects_replaced_intermediate_directories() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let (root, manifest, _) = open_validated_package_directory(&app).unwrap();
+    let bundle = app.join("packages/bundle");
+    let outside = directory.path().join("outside-bundle");
+    fs::rename(&bundle, &outside).unwrap();
+    symlink(&outside, &bundle).unwrap();
+
+    assert!(collect_editable_package_files(&root, &manifest).is_err());
+}
+
+#[test]
+fn linked_installation_refreshes_edits_and_recovers_after_invalid_content() {
+    let directory = tempdir().unwrap();
+    let app = directory.path().join("editable-workbench");
+    scaffold_web_smart_app(
+        &app,
+        "editable-workbench",
+        "Editable workbench",
+        "Edit in place",
+        "0.1.0-rc.8",
+    )
+    .unwrap();
+    let (manifest, checksum) = validate_package_directory(&app).unwrap();
+    let mut installation = HarnessAppInstallation {
+        id: manifest.name.clone(),
+        manifest,
+        package_path: app.display().to_string(),
+        sha256: checksum.clone(),
+        model_key: None,
+        resident: false,
+        runtime_version: None,
+        state: "installed".to_string(),
+        web_url: None,
+        error: None,
+        smart_app_id: None,
+        release_id: None,
+        source: "linked".to_string(),
+    };
+    let manifest_path = app.join("plugin-manifest.json");
+    let mut edited: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    edited["version"] = Value::String("0.2.0".to_string());
+    write_json(&manifest_path, &edited).unwrap();
+
+    assert!(refresh_linked_installation(&mut installation));
+    assert_eq!(installation.manifest.version, "0.2.0");
+    assert_ne!(installation.sha256, checksum);
+
+    fs::remove_file(app.join("PLUGIN.md")).unwrap();
+    assert!(refresh_linked_installation(&mut installation));
+    assert_eq!(installation.state, "failed");
+    assert!(installation.error.is_some());
+
+    fs::write(app.join("PLUGIN.md"), "# Editable workbench\n").unwrap();
+    assert!(refresh_linked_installation(&mut installation));
+    assert_eq!(installation.state, "installed");
+    assert!(installation.error.is_none());
+}
+
+#[test]
+fn declared_plugins_use_the_standard_dsh_add_command() {
+    assert_eq!(
+        dsh_plugin_add_args("web", &["dsh-better-sidebar".to_string()], false),
+        vec![
+            "plugin".to_string(),
+            "--profile".to_string(),
+            "web".to_string(),
+            "add".to_string(),
+            "dsh-better-sidebar".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn web_profile_approves_the_reviewed_node_pty_build() {
+    let directory = tempdir().unwrap();
+
+    prepare_web_profile(directory.path(), "web").unwrap();
+
+    let workspace =
+        fs::read_to_string(directory.path().join("profiles/web/pnpm-workspace.yaml")).unwrap();
+    assert!(workspace.contains("allowBuilds:\n  node-pty: true\n"));
+}
+
+#[test]
+fn bundled_plugins_disable_install_scripts() {
+    assert_eq!(
+        dsh_plugin_add_args(
+            "web",
+            &["file:/runtime/plugins/wework-model-context".to_string()],
+            true,
+        ),
+        vec![
+            "plugin".to_string(),
+            "--profile".to_string(),
+            "web".to_string(),
+            "add".to_string(),
+            "--ignore-scripts".to_string(),
+            "file:/runtime/plugins/wework-model-context".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -208,6 +596,7 @@ fn instance_patch_binds_provider_and_model() {
         error: None,
         smart_app_id: None,
         release_id: None,
+        source: "managed".to_string(),
     };
 
     let output = prepare_instance_bundle(&installation, directory.path(), true)
@@ -284,6 +673,7 @@ fn standard_dsh_release_materializes_and_installs_all_declared_packages() {
         error: None,
         smart_app_id: None,
         release_id: None,
+        source: "managed".to_string(),
     };
 
     let packages = prepare_instance_bundle(&installation, directory.path(), true).unwrap();
@@ -320,6 +710,7 @@ fn instance_patch_adds_agent_default_model_when_the_bundle_has_no_model_fields()
         error: None,
         smart_app_id: None,
         release_id: None,
+        source: "managed".to_string(),
     };
 
     let output = prepare_instance_bundle(&installation, directory.path(), true)
@@ -330,6 +721,41 @@ fn instance_patch_adds_agent_default_model_when_the_bundle_has_no_model_fields()
 
     assert!(patch.contains("- id: scanner"));
     assert!(patch.contains("- id: agent-default-model"));
+    assert!(patch.contains("provider: wework-local"));
+    assert!(patch.contains("model: wework-selected"));
+}
+
+#[test]
+fn instance_patch_replaces_an_empty_patch_with_the_wework_model() {
+    let directory = tempdir().unwrap();
+    let package = directory.path().join("package");
+    let bundle = package.join("packages/bundle/test");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::write(bundle.join("cordis.patch.yml"), "[]\n").unwrap();
+    let installation = HarnessAppInstallation {
+        id: "test-capability".to_string(),
+        manifest: serde_json::from_str(&manifest("0.1.0-rc.8")).unwrap(),
+        package_path: package.display().to_string(),
+        sha256: "hash".to_string(),
+        model_key: Some("model".to_string()),
+        resident: false,
+        runtime_version: None,
+        state: "installed".to_string(),
+        web_url: None,
+        error: None,
+        smart_app_id: None,
+        release_id: None,
+        source: "managed".to_string(),
+    };
+
+    let output = prepare_instance_bundle(&installation, directory.path(), true)
+        .unwrap()
+        .pop()
+        .unwrap();
+    let patch = fs::read_to_string(output.join("cordis.patch.yml")).unwrap();
+
+    assert!(!patch.starts_with("[]"));
+    assert!(patch.starts_with("- id: agent-default-model"));
     assert!(patch.contains("provider: wework-local"));
     assert!(patch.contains("model: wework-selected"));
 }
@@ -358,6 +784,7 @@ fn instance_patch_rejects_an_incomplete_model_pair() {
         error: None,
         smart_app_id: None,
         release_id: None,
+        source: "managed".to_string(),
     };
 
     let error = prepare_instance_bundle(&installation, directory.path(), true).unwrap_err();
