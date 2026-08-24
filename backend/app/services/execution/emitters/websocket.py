@@ -311,6 +311,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
             tool_input=event.tool_input or {},
             display_name=display_name,
             tool_protocol=(event.data.get("tool_protocol") if event.data else None),
+            server_label=(event.data.get("server_label") if event.data else None),
         )
         if event.data and event.data.get("argument_status") == "streaming":
             block["status"] = "generating_arguments"

@@ -167,8 +167,8 @@ class TestWebSocketResultEmitter:
             }
 
     @pytest.mark.asyncio
-    async def test_tool_start_preserves_mcp_protocol_in_created_block(self):
-        """MCP tool starts should retain their protocol in the live block."""
+    async def test_tool_start_preserves_mcp_metadata_in_created_block(self):
+        """MCP tool starts should retain their metadata in the live block."""
         from app.services.execution.emitters import WebSocketResultEmitter
 
         with patch(
@@ -184,7 +184,10 @@ class TestWebSocketResultEmitter:
                 subtask_id=2,
                 tool_name="list_resources",
                 tool_use_id="tool-list-resources",
-                data={"tool_protocol": "mcp_call"},
+                data={
+                    "tool_protocol": "mcp_call",
+                    "server_label": "wegent-knowledge",
+                },
             )
 
             await emitter.emit(event)
@@ -192,6 +195,7 @@ class TestWebSocketResultEmitter:
             block = mock_ws.emit_block_created.await_args.kwargs["block"]
             assert block["tool_name"] == "list_resources"
             assert block["tool_protocol"] == "mcp_call"
+            assert block["server_label"] == "wegent-knowledge"
 
     @pytest.mark.asyncio
     async def test_tool_result_emits_interactive_form_render_payload(self):
