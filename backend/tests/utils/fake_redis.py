@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import threading
+
 from redis.exceptions import WatchError
 
 
@@ -13,6 +15,10 @@ class FakeRedis:
 
     def __init__(self) -> None:
         self.store: dict[bytes, bytes] = {}
+        # Real Redis EXEC is atomic: the WATCH check and the queued writes must
+        # commit as one step or a concurrent transaction can be silently lost
+        # between the check and the write. The lock mirrors that atomicity.
+        self._transaction_lock = threading.Lock()
 
     def get(self, key: bytes | str) -> bytes | None:
         return self.store.get(key if isinstance(key, bytes) else key.encode())
@@ -90,13 +96,14 @@ class FakePipeline:
         return self
 
     def execute(self) -> list[object]:
-        for key, snapshot in self._watched.items():
-            if self.redis.store.get(key) != snapshot:
-                raise WatchError("Watched key changed during transaction")
-        results = []
-        for command in self._buffered:
-            if command[0] == "set":
-                results.append(self.redis.set(command[1], command[2], command[3]))
-            elif command[0] == "delete":
-                results.append(self.redis.delete(*command[1]))
-        return results
+        with self.redis._transaction_lock:
+            for key, snapshot in self._watched.items():
+                if self.redis.store.get(key) != snapshot:
+                    raise WatchError("Watched key changed during transaction")
+            results = []
+            for command in self._buffered:
+                if command[0] == "set":
+                    results.append(self.redis.set(command[1], command[2], command[3]))
+                elif command[0] == "delete":
+                    results.append(self.redis.delete(*command[1]))
+            return results
