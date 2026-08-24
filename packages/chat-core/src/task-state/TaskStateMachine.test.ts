@@ -1933,7 +1933,7 @@ describe('TaskStateMachine', () => {
       }),
       joinTask: vi.fn().mockImplementation((_taskId, options) =>
         Promise.resolve({
-          subtasks: options.afterMessageId === 1 ? [finalAssistantSubtask] : [],
+          subtasks: options.afterMessageId === undefined ? [finalAssistantSubtask] : [],
         })
       ),
     })
@@ -1977,7 +1977,7 @@ describe('TaskStateMachine', () => {
 
     expect(actions.joinTask).toHaveBeenCalledWith(42, {
       forceRefresh: true,
-      afterMessageId: 1,
+      afterMessageId: undefined,
     })
     expect(machine.getState().messages.get('ai-77')?.result?.blocks?.[0]).toMatchObject({
       video_url: 'https://example.com/final.mp4',
