@@ -3082,6 +3082,7 @@ export function CloudTodoWorkspace({
                   type: 'board_task',
                   cloudProjectId: String(targetProject.id),
                   loopItemId: String(locatedItem.id),
+                  projectStore: targetProject.project_store,
                 },
               }
             : undefined,

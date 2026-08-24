@@ -2818,6 +2818,9 @@ struct CodexLocalImage {
 
 fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
+    let configured_base_url = non_empty_config(&request.model_config, "base_url")
+        .or_else(|| non_empty_config(&request.model_config, "baseUrl"));
+    let configured_auth_present = api_key(&request.model_config).is_some();
     let reasoning = normalize_reasoning(request.model_config.get("reasoning"));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
@@ -2865,6 +2868,20 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
             &inference_provider,
             runtime_proxy_url(&request.model_config),
         ) {
+            log_executor_event(
+                "codex model route selected",
+                &[
+                    ("task_id", request.task_id.clone()),
+                    ("route", "local_proxy_user_provider".to_owned()),
+                    ("provider", inference_provider.clone()),
+                    ("model", model.clone().unwrap_or_default()),
+                    (
+                        "payload_base_url_present",
+                        configured_base_url.is_some().to_string(),
+                    ),
+                    ("payload_auth_present", configured_auth_present.to_string()),
+                ],
+            );
             configure_codex_router(
                 &mut launch_config,
                 &request.task_id,
@@ -2874,6 +2891,20 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                 vision_sidecar_upstream(&request.model_config)?,
             );
         } else {
+            log_executor_event(
+                "codex model route selected",
+                &[
+                    ("task_id", request.task_id.clone()),
+                    ("route", "direct_user_provider".to_owned()),
+                    ("provider", inference_provider.clone()),
+                    ("model", model.clone().unwrap_or_default()),
+                    (
+                        "payload_base_url_present",
+                        configured_base_url.is_some().to_string(),
+                    ),
+                    ("payload_auth_present", configured_auth_present.to_string()),
+                ],
+            );
             launch_config.model_provider = Some(inference_provider.clone());
             launch_config.config_overrides.extend(header_overrides(
                 &inference_provider,
@@ -2884,6 +2915,20 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     } else if let Some(upstream) =
         local_model_proxy::upstream_from_model_config(&request.model_config)
     {
+        log_executor_event(
+            "codex model route selected",
+            &[
+                ("task_id", request.task_id.clone()),
+                ("route", "local_proxy_payload".to_owned()),
+                ("provider", inference_model_provider(&request.model_config)),
+                ("model", model.clone().unwrap_or_default()),
+                (
+                    "payload_base_url_present",
+                    configured_base_url.is_some().to_string(),
+                ),
+                ("payload_auth_present", configured_auth_present.to_string()),
+            ],
+        );
         configure_codex_router(
             &mut launch_config,
             &request.task_id,
@@ -2893,7 +2938,22 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
             vision_sidecar_upstream(&request.model_config)?,
         );
     } else {
-        launch_config.model_provider = Some(inference_model_provider(&request.model_config));
+        let inference_provider = inference_model_provider(&request.model_config);
+        log_executor_event(
+            "codex model route selected",
+            &[
+                ("task_id", request.task_id.clone()),
+                ("route", "direct_payload_provider".to_owned()),
+                ("provider", inference_provider.clone()),
+                ("model", model.clone().unwrap_or_default()),
+                (
+                    "payload_base_url_present",
+                    configured_base_url.is_some().to_string(),
+                ),
+                ("payload_auth_present", configured_auth_present.to_string()),
+            ],
+        );
+        launch_config.model_provider = Some(inference_provider);
     }
 
     launch_config
@@ -2940,6 +3000,22 @@ fn configure_codex_router(
     vision_sidecar: Option<VisionSidecarUpstream>,
 ) {
     upstream.routing_model_id = routing_model_id;
+    log_executor_event(
+        "codex local model router configuring",
+        &[
+            ("task_id", task_id.to_owned()),
+            (
+                "model",
+                upstream.routing_model_id.clone().unwrap_or_default(),
+            ),
+            (
+                "upstream_model",
+                upstream.model_id.clone().unwrap_or_default(),
+            ),
+            ("api_format", upstream.api_format.clone()),
+            ("auth_present", (!upstream.api_key.is_empty()).to_string()),
+        ],
+    );
     let local_token =
         local_model_proxy::register_with_vision_sidecar(task_id, upstream, vision_sidecar);
     if model_switched {

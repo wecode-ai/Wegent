@@ -774,6 +774,53 @@ def test_runtime_completion_finishes_project_automation(
     assert run.description == "Run succeeded."
 
 
+def test_trusted_terminal_snapshot_completes_without_event_sequence(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    assert claimed is not None
+
+    rejected = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="runtime.task.completed",
+        payload={"status": "done", "data": {"value": "finished"}},
+    )
+
+    assert rejected is None
+    test_db.refresh(execution)
+    assert execution.status == "claimed"
+
+    completed = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="runtime.task.completed",
+        payload={"status": "done", "data": {"value": "finished"}},
+        allow_unsequenced_terminal=True,
+    )
+
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.last_event_seq == 0
+
+
 def test_complete_wins_concurrent_cancel_across_independent_sessions(
     independent_session_database,
 ) -> None:

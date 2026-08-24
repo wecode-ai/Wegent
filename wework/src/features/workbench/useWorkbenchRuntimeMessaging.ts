@@ -88,6 +88,18 @@ import {
   selectedModelExecutionFields,
 } from './runtimeModelSelection'
 
+export function buildRuntimeTaskCreateHandle(
+  modelSelection: ModelSelectionConfig | null,
+  request: Pick<RuntimeTaskCreateRequest, 'cloudProjectId' | 'origin'>
+): Record<string, unknown> | undefined {
+  if (!modelSelection && !request.cloudProjectId && !request.origin) return undefined
+  return {
+    ...(modelSelection ? { modelSelection } : {}),
+    ...(request.cloudProjectId ? { cloudProjectId: request.cloudProjectId } : {}),
+    ...(request.origin ? { origin: request.origin } : {}),
+  }
+}
+
 interface PreparedRuntimeTaskIntent {
   projectId: number | null
   message: string
@@ -1124,9 +1136,7 @@ export function useWorkbenchRuntimeMessaging({
         modelOptions: summarizeModelOptions(createRequest.modelOptions),
       })
       const createModelSelection = modelSelectionFromCreateRequest(createRequest)
-      const createRuntimeHandle = createModelSelection
-        ? { modelSelection: createModelSelection }
-        : undefined
+      const createRuntimeHandle = buildRuntimeTaskCreateHandle(createModelSelection, createRequest)
       const sourceWorkspacePath =
         'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined
       const optimisticAddress: RuntimeTaskAddress = {

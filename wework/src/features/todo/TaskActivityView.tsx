@@ -121,6 +121,13 @@ export function TaskActivityView({
     projectLocation === 'local'
       ? (services.projectSpaceApis?.local ?? services.deliveryApi)
       : (services.projectSpaceApis?.cloud ?? services.deliveryApi)
+  const taskAiServices = useMemo(
+    () => ({
+      deliveryApi: projectDeliveryApi,
+      chatStream: services.chatStream,
+    }),
+    [projectDeliveryApi, services.chatStream]
+  )
   // The code project shown on the task page: the runtime code task bound to
   // this board task. Used as the default parent-comment execution project.
   const taskPageProject = useMemo(() => {
@@ -833,7 +840,7 @@ export function TaskActivityView({
           : null
       await startTaskAiRun({
         client,
-        services,
+        services: taskAiServices,
         runtime: { createProjectRuntimeTask, sendRuntimePaneMessage },
         project,
         task,
@@ -957,7 +964,7 @@ export function TaskActivityView({
           : null
         const started = await startTaskAiRun({
           client,
-          services,
+          services: taskAiServices,
           runtime: { createProjectRuntimeTask, sendRuntimePaneMessage },
           project,
           task,
@@ -1113,7 +1120,7 @@ export function TaskActivityView({
       if (assignedAgent && !selfManagedExecution) {
         await startTaskAiRun({
           client,
-          services,
+          services: taskAiServices,
           runtime: { createProjectRuntimeTask, sendRuntimePaneMessage },
           project,
           task,

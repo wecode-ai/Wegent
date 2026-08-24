@@ -905,6 +905,7 @@ def _project_chat_runtime_event_sync(
     device_id: str,
     event: dict[str, Any],
     user_id: int | None = None,
+    trusted_terminal_snapshot: bool = False,
 ) -> dict[str, Any] | None:
     event_name = event.get("event")
     payload = event.get("payload")
@@ -970,6 +971,7 @@ def _project_chat_runtime_event_sync(
             runtime_task_id=runtime_task_id,
             event_name=event_name,
             payload=payload,
+            allow_unsequenced_terminal=trusted_terminal_snapshot,
         )
         if execution is not None and matched_execution is None:
             logger.info(
@@ -2543,6 +2545,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     },
                 },
                 user_id,
+                True,
             )
             await _continue_projected_workflow(
                 projected.get("workflow_continuation") if projected else None

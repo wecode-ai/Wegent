@@ -31,17 +31,12 @@ import {
 } from '@/tauri/runtimeWorkSync'
 import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { createLocalCodexPluginApi, peekLocalCodexPluginsReadState } from '@/api/local/codexPlugins'
+import type { TaskExecutionStatus } from '@/api/deliveries'
 import { createHttpClient } from '@/api/http'
-import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { startLocalRobotQueueDispatcher } from '@/features/todo/localRobotQueueDispatcher'
-import { runtimeTaskBoardState } from '@/features/workbench/runtimeTaskLifecycle/projection'
-import {
-  publishProjectSpaceTaskBindingChanged,
-  publishProjectSpaceTaskContextChanged,
-  subscribeProjectSpaceTaskBindingChanged,
-} from '@/features/todo/projectSpaceSelection'
+import { publishProjectSpaceTaskContextChanged } from '@/features/todo/projectSpaceSelection'
 import {
   getComposerApps,
   publishComposerApps,
@@ -67,7 +62,6 @@ import type {
   ProjectExecutionMode,
   ProjectWithTasks,
   RuntimeContextUsage,
-  RuntimeTaskSummary,
   RuntimeWorkListResponse,
   RuntimeTaskAddress,
   RuntimeTaskQueueReorderRequest,
@@ -158,6 +152,7 @@ import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
 } from './workbenchServices'
+import { projectTaskTrackingApi } from './projectTaskTracking'
 import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
@@ -173,25 +168,6 @@ const LOCAL_SKILLS_CACHE_TTL_MS = 30_000
 const LOCAL_PLUGIN_SKILLS_REFRESH_DEBOUNCE_MS = 250
 const EMPTY_PLUGIN_TRIAL_TEMPLATES: PluginPathComponent[] = []
 const RUNTIME_TASK_SETTLE_SYNC_DELAYS_MS = [0, 250, 500, 1_000, 2_000, 3_000] as const
-
-function runtimeTaskHasWorkItem(task: RuntimeTaskSummary): boolean {
-  const handle = task.runtimeHandle
-  const origin =
-    handle?.origin && typeof handle.origin === 'object'
-      ? (handle.origin as Record<string, unknown>)
-      : null
-  return [handle?.loopItemId, handle?.loop_item_id, origin?.loopItemId, origin?.loop_item_id].some(
-    value => typeof value === 'string' && value.length > 0
-  )
-}
-
-function passiveTaskTrackingStatus(task: RuntimeTaskSummary): 'queued' | 'cancelled' | null {
-  if (task.optimistic === true || task.status?.trim().toLowerCase() === 'archived') return null
-  const state = runtimeTaskBoardState(task)
-  if (state === 'queued') return 'queued'
-  if (state === 'attention') return 'cancelled'
-  return null
-}
 
 function findFirstSelectableProject(
   projects: ProjectWithTasks[],
@@ -279,13 +255,10 @@ export function WorkbenchProvider({
   )
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(sharedLifecycleStore)
   const trackingStatusSignaturesRef = useRef(new Map<string, string>())
-  const [trackingBindingRevision, setTrackingBindingRevision] = useState(0)
   const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const runtimeTaskSettleSyncGenerationRef = useRef(new Map<string, number>())
   const runtimeTaskSettleSyncGenerationCounterRef = useRef(0)
   const runtimeTaskSettleSyncActiveRef = useRef(true)
-  const defaultTrackedTaskKeysRef = useRef(new Set<string>())
-  const defaultTrackingTaskKeysRef = useRef(new Set<string>())
   useEffect(() => {
     const settleSyncGenerations = runtimeTaskSettleSyncGenerationRef.current
     runtimeTaskSettleSyncActiveRef.current = true
@@ -344,144 +317,6 @@ export function WorkbenchProvider({
   useLayoutEffect(() => {
     lifecycleStore.setCurrentTask(state.currentRuntimeTask)
   }, [lifecycleStore, state.currentRuntimeTask, syncRuntimeTaskLifecycle])
-  useEffect(
-    () =>
-      subscribeProjectSpaceTaskBindingChanged(task => {
-        trackingStatusSignaturesRef.current.delete(runtimeConversationKey(task))
-        setTrackingBindingRevision(revision => revision + 1)
-      }),
-    []
-  )
-  useEffect(() => {
-    const api = resolvedServices.projectSpaceApis?.local
-    if (!api?.trackProjectTask || !state.runtimeWork) return
-    const workspaces = [
-      ...state.runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
-      ...state.runtimeWork.chats,
-    ]
-    for (const workspace of workspaces) {
-      for (const task of workspace.tasks) {
-        const address: RuntimeTaskAddress = {
-          deviceId: workspace.deviceId,
-          taskId: task.taskId,
-          runtime: task.runtime,
-          threadId: task.threadId,
-          workspacePath: task.workspacePath || workspace.workspacePath,
-          runtimeHandle: task.runtimeHandle,
-        }
-        const key = runtimeConversationKey(address)
-        if (runtimeTaskHasWorkItem(task)) {
-          defaultTrackedTaskKeysRef.current.add(key)
-          continue
-        }
-        if (
-          task.optimistic === true ||
-          task.status?.trim().toLowerCase() === 'archived' ||
-          defaultTrackedTaskKeysRef.current.has(key) ||
-          defaultTrackingTaskKeysRef.current.has(key)
-        ) {
-          continue
-        }
-        defaultTrackingTaskKeysRef.current.add(key)
-        void api
-          .trackProjectTask(
-            DEFAULT_WORK_ITEM_PROJECT_ID,
-            address,
-            task.title || t('workbench.untitled_task', '未命名任务'),
-            ''
-          )
-          .then(async () => {
-            defaultTrackedTaskKeysRef.current.add(key)
-            const executionStatus = passiveTaskTrackingStatus(task)
-            if (executionStatus) {
-              await api.updateTaskTrackingStatus(address, executionStatus)
-            }
-            publishProjectSpaceTaskBindingChanged(address)
-            publishProjectSpaceTaskContextChanged(address)
-          })
-          .catch(error => {
-            console.warn('[Wework my tasks] failed to bind runtime task to My Tasks', {
-              address: { deviceId: address.deviceId, taskId: address.taskId },
-              error,
-            })
-          })
-          .finally(() => {
-            defaultTrackingTaskKeysRef.current.delete(key)
-          })
-      }
-    }
-  }, [resolvedServices.projectSpaceApis?.local, state.runtimeWork, t])
-  useEffect(() => {
-    const trackingApi = resolvedServices.projectSpaceApis?.local
-    if (!trackingApi || !state.runtimeWork) return
-    const workspaces = [
-      ...state.runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
-      ...state.runtimeWork.chats,
-    ]
-    for (const workspace of workspaces) {
-      for (const task of workspace.tasks) {
-        if (!runtimeTaskHasWorkItem(task)) continue
-        const executionStatus = passiveTaskTrackingStatus(task)
-        if (!executionStatus) continue
-        const address: RuntimeTaskAddress = {
-          deviceId: workspace.deviceId,
-          taskId: task.taskId,
-          runtime: task.runtime,
-          threadId: task.threadId,
-          workspacePath: task.workspacePath || workspace.workspacePath,
-          runtimeHandle: task.runtimeHandle,
-        }
-        const key = runtimeConversationKey(address)
-        if (trackingStatusSignaturesRef.current.get(key) === executionStatus) continue
-        trackingStatusSignaturesRef.current.set(key, executionStatus)
-        void trackingApi
-          .updateTaskTrackingStatus(address, executionStatus)
-          .then(result => {
-            if (result === null) {
-              trackingStatusSignaturesRef.current.delete(key)
-              return
-            }
-            publishProjectSpaceTaskContextChanged(address)
-          })
-          .catch(error => {
-            trackingStatusSignaturesRef.current.delete(key)
-            console.warn('[Wework] Failed to synchronize passive project task status', {
-              address,
-              executionStatus,
-              error,
-            })
-          })
-      }
-    }
-  }, [resolvedServices.projectSpaceApis?.local, state.runtimeWork, trackingBindingRevision])
-  useEffect(() => {
-    const trackingApi = resolvedServices.projectSpaceApis?.local
-    if (!trackingApi) return
-    for (const [key, lifecycle] of lifecycleSnapshot.tasks) {
-      const executionStatus =
-        lifecycle.turn.outcome ?? (lifecycle.derived.isRunning ? 'running' : null)
-      if (!executionStatus) continue
-      if (trackingStatusSignaturesRef.current.get(key) === executionStatus) continue
-      trackingStatusSignaturesRef.current.set(key, executionStatus)
-      void trackingApi
-        .updateTaskTrackingStatus(lifecycle.address, executionStatus)
-        .then(result => {
-          if (result === null) {
-            trackingStatusSignaturesRef.current.delete(key)
-            return
-          }
-          publishProjectSpaceTaskContextChanged(lifecycle.address)
-        })
-        .catch(error => {
-          trackingStatusSignaturesRef.current.delete(key)
-          console.warn('[Wework] Failed to synchronize project board task status', {
-            address: lifecycle.address,
-            executionStatus,
-            error,
-          })
-        })
-    }
-  }, [lifecycleSnapshot, resolvedServices.projectSpaceApis?.local, trackingBindingRevision])
   const runtimeTaskReminders = useRuntimeTaskReminders({
     runtimeWork: state.runtimeWork,
     lifecycleStore,
@@ -2005,26 +1840,53 @@ export function WorkbenchProvider({
   const syncRuntimeTaskTitle = useStableEvent((address: RuntimeTaskAddress, title: string) => {
     const normalizedTitle = title.trim()
     if (!normalizedTitle) return
-    const trackingApis = [
-      resolvedServices.projectSpaceApis?.local,
-      resolvedServices.projectSpaceApis?.cloud ?? resolvedServices.deliveryApi,
-    ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
-    if (!trackingApis.length) return
+    const trackingApi = projectTaskTrackingApi(resolvedServices, address)
+    if (!trackingApi) return
     const key = `${address.deviceId}:${address.taskId}`
     if (trackingTitleSignaturesRef.current.get(key) === normalizedTitle) return
     trackingTitleSignaturesRef.current.set(key, normalizedTitle)
-    void Promise.allSettled(
-      trackingApis.map(api => api!.updateTaskTrackingTitle(address, normalizedTitle))
-    ).then(results => {
-      if (results.every(result => result.status === 'rejected')) {
+    void trackingApi
+      .updateTaskTrackingTitle(address, normalizedTitle)
+      .then(result => {
+        if (result === null) {
+          trackingTitleSignaturesRef.current.delete(key)
+        }
+      })
+      .catch(error => {
         trackingTitleSignaturesRef.current.delete(key)
         console.warn('[Wework] Failed to synchronize project task title', {
           address,
-          errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
+          error,
         })
-      }
-    })
+      })
   })
+  const syncProjectTaskExecutionStatus = useStableEvent(
+    (address: RuntimeTaskAddress, executionStatus: TaskExecutionStatus) => {
+      const trackedAddress = lifecycleStore.getTask(address)?.address ?? address
+      const trackingApi = projectTaskTrackingApi(resolvedServices, trackedAddress)
+      if (!trackingApi) return
+      const key = runtimeConversationKey(trackedAddress)
+      if (trackingStatusSignaturesRef.current.get(key) === executionStatus) return
+      trackingStatusSignaturesRef.current.set(key, executionStatus)
+      void trackingApi
+        .updateTaskTrackingStatus(trackedAddress, executionStatus)
+        .then(result => {
+          if (result === null) {
+            trackingStatusSignaturesRef.current.delete(key)
+            return
+          }
+          publishProjectSpaceTaskContextChanged(trackedAddress)
+        })
+        .catch(error => {
+          trackingStatusSignaturesRef.current.delete(key)
+          console.warn('[Wework] Failed to synchronize project task execution status', {
+            address: trackedAddress,
+            executionStatus,
+            error,
+          })
+        })
+    }
+  )
   const updateCanonicalRuntimeContextUsage = useStableEvent(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => {
       const currentAddress =
@@ -2050,6 +1912,7 @@ export function WorkbenchProvider({
             settleRuntimeConversationAcceptedMessage(address)
             markRuntimeConversationAssistantStarted(address)
             lifecycleStore.turnStarted(address, turnId)
+            syncProjectTaskExecutionStatus(address, 'running')
             aiGenerationTelemetry.onAssistantStart(address, turnId)
           },
           onAssistantFirstToken: (address, turnId) => {
@@ -2061,6 +1924,7 @@ export function WorkbenchProvider({
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
             lifecycleStore.turnSettled(address, turnId, outcome)
+            syncProjectTaskExecutionStatus(address, outcome)
             aiGenerationTelemetry.onAssistantSettled(
               address,
               turnId,
@@ -2108,6 +1972,7 @@ export function WorkbenchProvider({
       lifecycleStore,
       resolvedServices.chatStream,
       settleCanonicalRuntimeGuidance,
+      syncProjectTaskExecutionStatus,
       syncRuntimeGoalSnapshot,
       syncRuntimeTaskSnapshot,
       syncRuntimeTaskUntilExecutorSettles,

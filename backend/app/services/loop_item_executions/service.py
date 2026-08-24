@@ -16,6 +16,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, func, or_
@@ -47,6 +48,16 @@ from app.services.project_automation_domain import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_model_endpoint(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    parsed = urlsplit(value.strip())
+    if not parsed.scheme or not parsed.hostname:
+        return "<invalid-url>"
+    port = f":{parsed.port}" if parsed.port is not None else ""
+    return f"{parsed.scheme}://{parsed.hostname}{port}{parsed.path}"
 
 
 @dataclass
@@ -3045,6 +3056,7 @@ class LoopItemExecutionService:
         event_name: str,
         payload: dict,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
+        allow_unsequenced_terminal: bool = False,
     ) -> Optional[LoopItemExecution]:
         """Accept one ordered Runtime observation for the matching attempt."""
 
@@ -3055,14 +3067,18 @@ class LoopItemExecutionService:
         )
         if row is None:
             return None
+        terminal = self._terminal_status(event_name, payload)
         raw_event_seq = payload.get("eventSeq", payload.get("event_seq"))
         if isinstance(raw_event_seq, bool):
             raw_event_seq = None
         try:
-            event_seq = int(raw_event_seq)
+            parsed_event_seq = int(raw_event_seq)
         except (TypeError, ValueError):
-            event_seq = 0
-        if event_seq <= 0:
+            parsed_event_seq = 0
+        event_seq = parsed_event_seq if parsed_event_seq > 0 else None
+        if event_seq is None and not (
+            allow_unsequenced_terminal and terminal is not None
+        ):
             logger.warning(
                 "[LoopItemExecution] Rejected Runtime event without sequence "
                 "execution=%s task=%s event=%s",
@@ -3071,7 +3087,7 @@ class LoopItemExecutionService:
                 event_name,
             )
             return None
-        if event_seq <= row.last_event_seq:
+        if event_seq is not None and event_seq <= row.last_event_seq:
             logger.info(
                 "[LoopItemExecution] Ignored duplicate or reordered Runtime event "
                 "execution=%s current_seq=%s incoming_seq=%s event=%s",
@@ -3092,7 +3108,6 @@ class LoopItemExecutionService:
             )
             return None
         now = utcnow()
-        terminal = self._terminal_status(event_name, payload)
         if terminal is not None:
             self.open_execution_activity(
                 db,
@@ -3295,7 +3310,8 @@ class LoopItemExecutionService:
             logger.info(
                 "[RuntimeV2] Compiled execution payload: execution_id=%s task_id=%s "
                 "target_device_id=%s selected_model=%s selected_model_type=%s "
-                "upstream_model=%s upstream_protocol=%s",
+                "upstream_model=%s upstream_protocol=%s upstream_endpoint=%s "
+                "upstream_auth_present=%s upstream_default_headers=%s",
                 execution.id,
                 request.local_task_id,
                 compiled.target.device_id,
@@ -3310,6 +3326,30 @@ class LoopItemExecutionService:
                     model_config.get("protocol") or model_config.get("api_format")
                     if isinstance(model_config, dict)
                     else None
+                ),
+                (
+                    _safe_model_endpoint(
+                        model_config.get("request_url")
+                        or model_config.get("responses_url")
+                        or model_config.get("base_url")
+                    )
+                    if isinstance(model_config, dict)
+                    else ""
+                ),
+                (
+                    bool(
+                        model_config.get("api_key")
+                        or model_config.get("apiKey")
+                        or model_config.get("auth_token")
+                    )
+                    if isinstance(model_config, dict)
+                    else False
+                ),
+                (
+                    len(model_config.get("default_headers") or {})
+                    if isinstance(model_config, dict)
+                    and isinstance(model_config.get("default_headers"), dict)
+                    else 0
                 ),
             )
             return compiled.payload

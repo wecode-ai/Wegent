@@ -26,6 +26,7 @@ export interface TaskAiRuntimeBridge {
         cloudProjectId: string
         loopItemId: string
         rootCommentId?: string
+        projectStore: CloudProject['project_store']
       }
       executionModel?: {
         modelId?: string | null
@@ -364,6 +365,7 @@ export async function startTaskAiRun({
       type: 'board_comment',
       cloudProjectId: String(project.id),
       loopItemId: String(task.id),
+      projectStore: project.project_store,
       ...(threadRootId || trigger?.messageId
         ? { rootCommentId: threadRootId ?? trigger?.messageId }
         : {}),
