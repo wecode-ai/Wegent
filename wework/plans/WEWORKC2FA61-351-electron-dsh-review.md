@@ -86,10 +86,11 @@ OpenCode、Kimi Code、Claude Code、会话恢复、右侧工作区和底部 Ter
 未修改原 E2E 断言。
 
 Wework 内置浏览器工具栏场景通过，证据目录：
-`test-results/desktop-e2e/2026-08-24T00-51-25-179Z-68498`。场景完整覆盖
+`test-results/desktop-e2e/2026-08-24T11-03-47-620Z-95221`。场景完整覆盖
 响应式 390px viewport、旋转 844px、自定义尺寸、设备缩放、页面缩放、查找、
 下载和清理浏览数据；设备模式使用 CDP metrics 的 image scale，不再将宿主适配
-缩放叠加到 Electron page zoom。
+缩放叠加到 Electron page zoom。macOS detached Inspector 打开后，Host 等待
+child WebView frame 连续稳定再返回，原 frame 不变断言未修改。
 
 ## PR #2945 回归截图链
 
@@ -97,9 +98,10 @@ Wework 内置浏览器工具栏场景通过，证据目录：
 
 | 流程             | 关键截图顺序                                                                                                                                                                                                                                            | 证据目录                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| 核心任务与侧边栏 | `system-drag-panel.png` → `system-drag-popout-window.png` → `guidance-scroll-01-message-visible.png` → `02-background-request-user-input-visible.png` → `03-sidebar-manual-scroll-preserved.png` → `04-delayed-answer-completed.png`                    | `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T06-56-42-999Z-35780` |
+| 核心任务与侧边栏 | `system-drag-panel.png` → `system-drag-popout-window.png` → `guidance-scroll-01-message-visible.png` → `02-background-request-user-input-visible.png` → `03-sidebar-manual-scroll-preserved.png` → `04-delayed-answer-completed.png`                    | `test-results/desktop-e2e/2026-08-24T11-00-36-491Z-61150`                  |
 | Goal 生命周期    | `goal-idle-01-running.png` → `goal-idle-02-automatic-continuation.png` → `goal-idle-03-reloaded-continuation.png` → `goal-restart-01-working-before-restart.png` → `goal-restart-03-opened-waiting-for-user.png` → `goal-restart-06-completed-read.png` | `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-00-15-426Z-80509` |
 | 云项目创建       | `00-cloud-work-page.png` → `project-shared-root-both-visible.png`                                                                                                                                                                                       | `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-02-14-894Z-23119` |
+| 附件与托盘重开   | `01-attachment-only-first-submitted.png` → `02-attachment-only-first-completed.png` → `04-attachment-only-two-tasks-after-refresh.png` → `05-attachment-only-current-image-after-reopen.png` → `06-attachment-only-first-image-after-reopen.png`        | `test-results/desktop-e2e/2026-08-24T11-04-47-507Z-6156`                   |
 
 截图 review 结论：
 
@@ -111,10 +113,11 @@ Wework 内置浏览器工具栏场景通过，证据目录：
   `scrollTop`，证明 Electron 已恢复旧 Tauri 的窗口调整语义。
 - Goal 自动续跑、重载、整应用重启、等待用户恢复和最终已读状态均连续。
 - macOS Inspector 回归使用原 `browser-toolbar-actions` 场景复核：
-  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-30-15-002Z-75160`。
+  `test-results/desktop-e2e/2026-08-24T11-03-47-620Z-95221`。
   打开 detached Inspector 后，Wework 主 Renderer 与所有内置浏览器 child
-  WebView frame 均保持稳定；逻辑窗口聚焦同时覆盖 `BrowserWindow` 和
-  `webContents`，没有再出现浏览器内容位移。
+  WebView frame 均保持稳定；Host 不再采样 DevTools detach 的过渡帧。
+- 附件截图 review 确认关闭到托盘再按绝对 `.app` 路径重开后，当前与历史纯附件
+  任务图片都恢复，环境侧栏、标题栏和 composer 布局没有错位。
 - 云项目创建使用真实 Git 临时仓库完成，不存在 `spawn git ENOENT`。
 
 `git push` 会按仓库约定执行完整 pre-push 验证；不通过重试、跳过或修改旧 E2E

@@ -129,6 +129,7 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
 
 async function verifyBackgroundTaskWindowLifecycle({
   app,
+  appBundlePath,
   appIdentifier,
   composerSelector,
   control,
@@ -243,7 +244,7 @@ async function verifyBackgroundTaskWindowLifecycle({
       assertionIds: backgroundAssertionIds,
     })
 
-    await reactivateMacApplication(appIdentifier)
+    await reactivateMacApplication(appIdentifier, appBundlePath)
     await withTimeout(
       control.awaitReadyAfter(readyCountBeforeClose),
       WORKBENCH_READY_TIMEOUT_MS,
@@ -693,6 +694,7 @@ async function attachAndSendOnlyFile(control, composerSelector) {
 
 async function verifyAttachmentOnlySidebarLifecycle({
   app,
+  appBundlePath,
   appIdentifier,
   composerSelector,
   control,
@@ -767,7 +769,7 @@ async function verifyAttachmentOnlySidebarLifecycle({
     await waitForLogPattern(desktopLogPath, /windowWillClose:/, {
       fromOffset: desktopLogLengthBeforeClose,
     })
-    await reactivateMacApplication(appIdentifier)
+    await reactivateMacApplication(appIdentifier, appBundlePath)
     await withTimeout(
       control.awaitReadyAfter(readyCountBeforeClose),
       WORKBENCH_READY_TIMEOUT_MS,

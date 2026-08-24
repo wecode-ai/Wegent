@@ -298,6 +298,7 @@ async function verifyCloudWorkspacePathMentions({ composerSelector, control, wor
 
 async function verifyCloudCheckpoint({
   app,
+  appBundlePath,
   appIdentifier,
   cloudEnvironment,
   codexHome,
@@ -425,6 +426,7 @@ async function verifyCloudCheckpoint({
       setPhase('cloud-window-lifecycle')
       await verifyBackgroundTaskWindowLifecycle({
         app,
+        appBundlePath,
         appIdentifier,
         composerSelector,
         control,
@@ -491,6 +493,7 @@ async function verifyCloudCheckpoint({
       setPhase('cloud-attachment-sidebar')
       await verifyAttachmentOnlySidebarLifecycle({
         app,
+        appBundlePath,
         appIdentifier,
         composerSelector,
         control,

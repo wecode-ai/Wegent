@@ -84,7 +84,7 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | `project-ai-settings`             | 主流程                                          | PASSED | `2026-08-22T13-25-11-628Z-59608`，1m 34s |
 | `model-routing`                   | 主流程                                          | PASSED | `2026-08-22T14-02-30-164Z-76105`，3m 47s |
 | `permission-modes`                | 主流程                                          | PASSED | `2026-08-22T14-22-04-259Z-90942`，56s    |
-| `core-task-flow`                  | 主流程                                          | PASSED | `2026-08-24T06-56-42-999Z-35780`，3m 19s |
+| `core-task-flow`                  | 主流程                                          | PASSED | `2026-08-24T11-00-36-491Z-61150`，3m 1s  |
 | `task-attachments`                | `task-attachments.scenario.mjs`                 | PASSED | `2026-08-22T15-25-01-692Z-69786`，17s    |
 | `cloud-git-worktree`              | 组合 checkpoint                                 | PASSED | `2026-08-22T15-26-24-214Z-74740`，2m 12s |
 | `cloud-worktree-capability`       | 云工作树流程                                    | PASSED | `2026-08-22T15-28-58-932Z-86406`，50s    |
@@ -105,7 +105,7 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | `resilience`                      | 主流程                                          | PASSED | `2026-08-23T03-32-01-654Z-13565`，2m 32s |
 | `conversation-state`              | `conversation-mention.scenario.mjs`             | PASSED | `2026-08-23T03-34-55-836Z-43070`，3m 9s  |
 | `temporary-chat`                  | `temporary-chat.scenario.mjs`                   | PASSED | `2026-08-23T03-38-37-776Z-83873`，33s    |
-| `workspace-attachments`           | 主流程                                          | PASSED | `2026-08-24T06-02-31-669Z-23426`，1m 34s |
+| `workspace-attachments`           | 主流程                                          | PASSED | `2026-08-24T11-04-47-507Z-6156`，2m 4s   |
 | `rendering-extensions`            | `streaming-text.scenario.mjs`                   | PASSED | `2026-08-23T04-29-42-959Z-39829`，3m 46s |
 | `change-request-status`           | `change-request-status.scenario.mjs`            | PASSED | `2026-08-23T05-10-17-721Z-12207`，32s    |
 | `claude-runtime`                  | `claude-runtime.scenario.mjs`                   | PASSED | `2026-08-23T05-27-56-087Z-49057`，1m 35s |
@@ -114,7 +114,7 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | `harness-apps`                    | `harness-apps.scenario.mjs`                     | PASSED | `2026-08-23T13-40-39-648Z-29751`         |
 | `browser-multi-tabs`              | `embedded-browser-multi-tabs.scenario.mjs`      | PASSED | `2026-08-23T23-29-45-242Z-85991`，1m 13s |
 | `embedded-browser`                | `embedded-browser-agent.scenario.mjs`           | PASSED | `2026-08-23T10-11-23-405Z-45839`，55s    |
-| `browser-toolbar-actions`         | `embedded-browser-toolbar-actions.scenario.mjs` | PASSED | `2026-08-24T00-51-25-179Z-68498`         |
+| `browser-toolbar-actions`         | `embedded-browser-toolbar-actions.scenario.mjs` | PASSED | `2026-08-24T11-03-47-620Z-95221`         |
 
 ## 插件分段
 
@@ -358,3 +358,24 @@ Electron/Tauri 两份业务断言。
   修复后的原场景未改测试，完整通过，证据目录
   `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-30-15-002Z-75160`，
   58s，Inspector 打开前后所有 child WebView frame 保持一致。
+- PR #2945 GitHub Actions run `32716036005` 的 Linux 诊断产物证明，
+  Electron 启动完成后无条件预热 `popout-window`，第二个 Renderer 抢占了桌面
+  E2E 的当前控制客户端。失败的 `core-task-flow` 只执行
+  `runtime.keybindings.get`，没有执行 `runtime.codex.ensure_started`，因此主
+  Renderer 从未触发被测试刻意阻塞的 `/api/models/unified` 请求；同一预热窗口
+  又在 120 秒 readiness 超时后触发 Chromium GPU 进程退出。现已删除启动与 Core
+  DSH 重启后的 popout 预热，改为用户实际打开时创建并等待
+  `popout-workbench-page` 挂载。未修改原 E2E 断言，最新
+  `core-task-flow` 通过，证据目录
+  `test-results/desktop-e2e/2026-08-24T11-00-36-491Z-61150`。
+- 同一 CI run 的 macOS Inspector 产物证明，`isDevToolsOpened()` 返回时 detached
+  Inspector 的 child WebView frame 仍可能处于短暂过渡。Electron Host 现在等待
+  原 frame 连续 10 次、每次间隔 50 ms 保持稳定后再返回验证结果。原
+  `browser-toolbar-actions` 场景和 frame 不变断言未修改，最新通过证据目录为
+  `test-results/desktop-e2e/2026-08-24T11-03-47-620Z-95221`。
+- macOS 临时克隆的 Electron `.app` 使用随机 bundle identifier，LaunchServices
+  不保证能立即通过 `open -b` 找到它。`workspace-attachments` 的首次运行已经
+  完成所有业务断言，只在关闭到托盘后重开时报 bundle lookup 失败；runner 现用
+  已知的克隆 `.app` 绝对路径执行 `open -g`。原附件、托盘重开和图片恢复断言未
+  修改，最新通过证据目录为
+  `test-results/desktop-e2e/2026-08-24T11-04-47-507Z-6156`。

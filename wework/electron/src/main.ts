@@ -384,9 +384,6 @@ function scheduleCoreDshRestart(): void {
       await desktopRuntime.restartCoreDsh()
       await loadPrimaryDshView()
       runtimePhase = 'ready'
-      void prewarmPopoutWindow().catch(error => {
-        console.warn('[popout] renderer prewarm failed after Core DSH restart', error)
-      })
       notifyRuntimeChanged()
     })().catch(error => {
       runtimePhase = 'failed'
@@ -540,12 +537,6 @@ async function createAuxiliaryWindow(
   }
 }
 
-async function prewarmPopoutWindow(): Promise<void> {
-  await ensureAuxiliaryWindow('popout-window')
-  await popoutWindowReadyPromise
-  console.log('[popout] renderer prewarmed')
-}
-
 async function showSystemDragPanel(): Promise<void> {
   const target = await ensureAuxiliaryWindow('system-drag-panel')
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
@@ -556,6 +547,7 @@ async function showSystemDragPanel(): Promise<void> {
 
 async function showPopoutWindow(): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
+  await popoutWindowReadyPromise
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   target.setPosition(
     Math.round(display.workArea.x + (display.workArea.width - 470) / 2),
@@ -834,9 +826,6 @@ function startDesktopRuntime(): Promise<void> {
     await desktopRuntime?.start()
     await loadPrimaryDshView()
     runtimePhase = 'ready'
-    void prewarmPopoutWindow().catch(error => {
-      console.warn('[popout] renderer prewarm failed', error)
-    })
   })()
     .catch(error => {
       runtimePhase = 'failed'

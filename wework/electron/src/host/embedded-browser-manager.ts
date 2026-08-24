@@ -540,6 +540,7 @@ export class EmbeddedBrowserManager {
       5_000,
       'Timed out waiting for detached embedded browser Inspector'
     )
+    await waitForStableFrame(entry, beforeFrame, 5_000)
     const afterFrame = browserFrame(entry.bounds)
     const afterWindowCount = this.nativeWindowCount()
     contents.closeDevTools()
@@ -766,6 +767,26 @@ async function waitForState(
     await new Promise(resolve => setTimeout(resolve, 50))
   }
   throw new Error(message)
+}
+
+async function waitForStableFrame(
+  entry: BrowserEntry,
+  expectedFrame: number[],
+  timeoutMs: number
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  let stableSamples = 0
+  while (Date.now() <= deadline) {
+    const frame = browserFrame(entry.bounds)
+    if (frame.every((value, index) => value === expectedFrame[index])) {
+      stableSamples += 1
+      if (stableSamples >= 10) return
+    } else {
+      stableSamples = 0
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error('Detached embedded browser Inspector changed the browser frame')
 }
 
 function validBounds(bounds: BrowserBounds): BrowserBounds {

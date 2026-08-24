@@ -1275,6 +1275,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         phase = `cloud-${SELECTED_DESKTOP_SEGMENT}`
         await verifyCloudCheckpoint({
           app,
+          appBundlePath,
           appIdentifier,
           cloudEnvironment,
           codexHome,
@@ -1507,6 +1508,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       await verifyAttachmentOnlySidebarLifecycle({
         app,
+        appBundlePath,
         appIdentifier,
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
@@ -2785,6 +2787,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('window-lifecycle')) {
       taskRowTestId = await verifyBackgroundTaskWindowLifecycle({
         app,
+        appBundlePath,
         appIdentifier,
         composerSelector,
         control,
@@ -3608,6 +3611,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
       await verifyAttachmentOnlySidebarLifecycle({
         app,
+        appBundlePath,
         appIdentifier,
         composerSelector,
         control,

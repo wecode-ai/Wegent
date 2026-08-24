@@ -1182,7 +1182,11 @@ async function waitForLogPattern(
   throw new Error(`Timed out waiting for ${pattern} in ${logPath} after offset ${fromOffset}`)
 }
 
-async function reactivateMacApplication(appIdentifier) {
+async function reactivateMacApplication(appIdentifier, appBundlePath = null) {
+  if (appBundlePath) {
+    await runChecked('open', ['-g', appBundlePath])
+    return
+  }
   await runChecked('open', ['-g', '-b', appIdentifier])
 }
 
