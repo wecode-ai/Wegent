@@ -6,13 +6,25 @@ import { fileURLToPath } from 'node:url'
 const rawArgs = process.argv.slice(2)
 const requestedArgs = rawArgs[0] === '--' ? rawArgs.slice(1) : rawArgs
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
+const integrationTestFiles = ['scripts/dev-executor-reload.integration.mjs']
 const nodeTestFiles = discoverNodeTestFiles()
+const requestedIntegrationTests = requestedArgs.filter(argument =>
+  integrationTestFiles.includes(normalizeArgumentPath(argument))
+)
 const requestedNodeTests = requestedArgs.filter(argument =>
   nodeTestFiles.includes(normalizeArgumentPath(argument))
 )
 const vitestArgs = requestedArgs.filter(
-  argument => !nodeTestFiles.includes(normalizeArgumentPath(argument))
+  argument =>
+    !integrationTestFiles.includes(normalizeArgumentPath(argument)) &&
+    !nodeTestFiles.includes(normalizeArgumentPath(argument))
 )
+
+if (requestedArgs.length === 0) {
+  for (const path of integrationTestFiles) run(process.execPath, [path])
+} else {
+  for (const path of requestedIntegrationTests) run(process.execPath, [path])
+}
 
 if (requestedArgs.length === 0 || vitestArgs.length > 0) {
   run('vitest', ['run', ...vitestArgs])
