@@ -296,3 +296,15 @@ Electron/Tauri 两份业务断言。
 | 2026-08-23 | 打包 Electron Core DSH 运行时路径修复               | GitHub Actions run `32666207057` Core shard 日志；本地 DSH client、TypeScript 与 Electron runtime 聚焦测试            | PASS | CI 下载的是自包含 Electron 包，源码路径 `wework/node_modules/.cache/harness-runtime-dev` 不存在。E2E 启动器不再覆盖 `WEWORK_HARNESS_RUNTIME_ROOT`，由打包应用按生产路径从 `resources/harness-runtime` 校验并物化 Core/Workbench 运行时；显式配置运行时的开发场景仍保留路径存在性校验。正式插件 API 同时收敛为 `ctx.wework.extensions.register(...)`，避免以 sidebar 命名未来全部扩展能力。                     |
 | 2026-08-23 | Linux 容器 Electron 启动参数                        | GitHub Actions runs `32667395009`、`32668392986` 的 Core/Cloud/Plugins shard `app.log`                                | PASS | 包内运行时断言修复后，日志依次暴露 Chromium root sandbox FATAL 与容器 GPU 子进程 FATAL。启动器仅在 Linux、uid 0 且 `WEWORK_E2E_ISOLATED_XVFB=true` 的隔离 E2E 容器中传入 `--no-sandbox --disable-gpu`；Core/Cloud 已有该声明，Plugins workflow 补齐同一契约。产品启动和普通本地验证继续使用 Chromium sandbox 与 GPU。                                                                                          |
 | 2026-08-23 | 打包 Electron 首次冷启动预算                        | GitHub Actions run `32669349160` 的 Linux Core/Cloud/Plugins 与 macOS Inspector 日志、Core shard 6 诊断产物           | PASS | 所有失败均停在固定 60 秒桌面控制器等待：Linux 诊断中 Workbench 运行时已完成 20 MB 物化，92 MB Core 运行时仍处于校验解包后的 `.tmp` 原子替换前目录，`app.log` 无崩溃；macOS Inspector 的 Core 运行时也停在 `.tmp`。Electron 冷启动需要校验并物化两个内置运行时，因此启动预算改为 180 秒；Tauri 保持 60 秒，普通 UI 步骤保持 10 秒，业务 E2E 断言未修改。可通过 `WEWORK_E2E_DESKTOP_READY_TIMEOUT_MS` 显式覆盖。 |
+
+### 2026-08-24 最新验证
+
+- `rendering-extensions`：PASS，证据目录
+  `2026-08-24T01-24-18-782Z-7690`。`local-device` 逻辑地址现在只在 task ID
+  唯一时解析到 Executor 的真实 device ID，重复 ID 时拒绝猜测。
+- Electron 子窗口 readiness：Electron 75 个单测与类型检查通过；Popout 和
+  detached workspace 分别等待产品根节点挂载后再显示。
+- `goal-lifecycle`：PASS，证据目录
+  `2026-08-24T02-26-56-211Z-66125`。`SIGTERM`、`SIGINT`、`SIGHUP`
+  统一进入幂等 shutdown，完整重启后旧 Executor 已退出，验证结束后恢复 worktree
+  无 Executor 残留。

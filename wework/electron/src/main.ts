@@ -33,6 +33,7 @@ import {
   type WorkbenchTabView,
   type WorkbenchViewBounds,
 } from './host/workbench-tab-controller.js'
+import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions, workbenchDshBounds } from './host/window-layout.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 
@@ -66,6 +67,7 @@ let runtimeError: string | null = null
 let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
 let quitting = false
+let shutdownPromise: Promise<void> | null = null
 let mainWindowCloseRequestRevision = 0
 const pendingEmbeddedBrowserAttachments = new Map<
   number,
@@ -438,6 +440,10 @@ async function openWorkspaceWindow(input: {
     await workspaceWindow.loadURL(target.toString(), {
       extraHeaders: `X-Wework-Window-Label: ${input.label}`,
     })
+    await waitForRendererSelector(
+      workspaceWindow.webContents,
+      '[data-testid="workspace-tab-strip"]'
+    )
     workspaceWindow.show()
     workspaceWindow.focus()
   } catch (error) {
@@ -498,6 +504,7 @@ async function showSystemDragPanel(): Promise<void> {
 
 async function showPopoutWindow(): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
+  await waitForRendererSelector(target.webContents, '[data-testid="popout-workbench-page"]')
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   target.setPosition(
     Math.round(display.workArea.x + (display.workArea.width - 470) / 2),
@@ -595,6 +602,12 @@ async function shutdown(): Promise<void> {
   embeddedBrowserBridge = null
   await workbenchTabs?.stop()
   await desktopRuntime?.stop()
+}
+
+function requestApplicationShutdown(exit: () => void): void {
+  if (shutdownPromise) return
+  quitting = true
+  shutdownPromise = shutdown().finally(exit)
 }
 
 function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
@@ -859,6 +872,11 @@ app.on('did-become-active', () => {
 app.on('before-quit', event => {
   if (quitting) return
   event.preventDefault()
-  quitting = true
-  void shutdown().finally(() => app.quit())
+  requestApplicationShutdown(() => app.quit())
 })
+
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+  process.once(signal, () => {
+    requestApplicationShutdown(() => app.exit(0))
+  })
+}

@@ -34,7 +34,7 @@ import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
 import {
   getRuntimeConversationCacheStats,
-  getRuntimeConversationMessages,
+  getRuntimeConversationMessagesForLogicalAddress,
   reconcileRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -1294,7 +1294,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         content: string
         itemId: string
       }
-      const targetMessage = getRuntimeConversationMessages(payload.address)
+      const targetMessage = getRuntimeConversationMessagesForLogicalAddress(payload.address)
         .toReversed()
         .find(
           message =>

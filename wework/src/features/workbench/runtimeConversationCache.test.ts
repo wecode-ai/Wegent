@@ -19,6 +19,7 @@ import {
   getRuntimeConversationLiveActivitySnapshot,
   getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
+  getRuntimeConversationMessagesForLogicalAddress,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
   markRuntimeConversationGuidanceInterrupted,
@@ -60,6 +61,51 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
+  })
+
+  test('resolves the local-device alias to a unique executor conversation', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'assistant-1',
+      content: 'visible assistant message',
+    })
+
+    expect(
+      getRuntimeConversationMessagesForLogicalAddress({
+        ...address,
+        deviceId: 'local-device',
+      })
+    ).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        content: 'visible assistant message',
+        turnId: 'turn-1',
+      }),
+    ])
+  })
+
+  test('does not guess between duplicate local task ids', () => {
+    for (const deviceId of ['device-1', 'device-2']) {
+      const duplicateAddress = { ...address, deviceId }
+      applyRuntimeConversationAction(duplicateAddress, {
+        type: 'assistant_started',
+        taskId: address.taskId,
+        subtaskId: `turn-${deviceId}`,
+      })
+    }
+
+    expect(
+      getRuntimeConversationMessagesForLogicalAddress({
+        ...address,
+        deviceId: 'local-device',
+      })
+    ).toEqual([])
   })
 
   test('does not project an empty live-activity row before thinking or tools arrive', () => {
