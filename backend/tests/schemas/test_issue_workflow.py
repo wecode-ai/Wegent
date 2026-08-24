@@ -38,44 +38,38 @@ def test_workflow_definition_instantiates_ready_roots() -> None:
     assert [node.status for node in workflow.nodes] == ["ready", "blocked"]
 
 
-def test_workflow_definition_strips_legacy_start_and_end_nodes() -> None:
-    definition = ProjectWorkflowDefinition.model_validate(
-        {
-            "version": 1,
-            "stage_mode": "dag",
-            "advancement_policy": "manual",
-            "nodes": [
-                {
-                    "id": "start",
-                    "name": "开始",
-                    "node_type": "start",
-                    "depends_on": [],
-                    "workspace_policy": "none",
-                },
-                {
-                    "id": "develop",
-                    "name": "开发",
-                    "depends_on": ["start"],
-                    "workspace_policy": "composer",
-                },
-                {
-                    "id": "end",
-                    "name": "结束",
-                    "node_type": "end",
-                    "depends_on": ["develop"],
-                    "workspace_policy": "none",
-                },
-            ],
-        }
-    )
-
-    # Structural sentinels carry no semantics: the entry is any node without
-    # predecessors, so loading old data strips them and rewires dependencies.
-    assert [node.id for node in definition.nodes] == ["develop"]
-    assert definition.nodes[0].depends_on == []
-
-    workflow = instantiate_workflow(definition)
-    assert [node.status for node in workflow.nodes] == ["ready"]
+def test_workflow_definition_rejects_legacy_start_and_end_node_types() -> None:
+    # The DAG is bounded by derivation (entry has no predecessors), so
+    # structural start/end marker nodes are no longer part of the model.
+    with pytest.raises(ValidationError):
+        ProjectWorkflowDefinition.model_validate(
+            {
+                "version": 1,
+                "stage_mode": "dag",
+                "nodes": [
+                    {
+                        "id": "start",
+                        "name": "开始",
+                        "node_type": "start",
+                        "depends_on": [],
+                        "workspace_policy": "none",
+                    },
+                    {
+                        "id": "develop",
+                        "name": "开发",
+                        "depends_on": ["start"],
+                        "workspace_policy": "composer",
+                    },
+                    {
+                        "id": "end",
+                        "name": "结束",
+                        "node_type": "end",
+                        "depends_on": ["develop"],
+                        "workspace_policy": "none",
+                    },
+                ],
+            }
+        )
 
 
 def test_workflow_instantiation_activates_wait_node_before_upstream_completes() -> None:
@@ -526,67 +520,48 @@ def test_workflow_definition_rejects_config_on_stage_nodes() -> None:
         )
 
 
-def test_workflow_definition_strips_multiple_legacy_start_nodes() -> None:
-    definition = ProjectWorkflowDefinition.model_validate(
-        {
-            "version": 1,
-            "nodes": [
-                {"id": "s1", "name": "S1", "node_type": "start"},
-                {"id": "s2", "name": "S2", "node_type": "start"},
-                {"id": "stage", "name": "Stage", "depends_on": ["s1", "s2"]},
-            ],
-        }
-    )
-
-    assert [node.id for node in definition.nodes] == ["stage"]
-    assert definition.nodes[0].depends_on == []
+def test_workflow_definition_rejects_multiple_legacy_start_nodes() -> None:
+    with pytest.raises(ValidationError):
+        ProjectWorkflowDefinition.model_validate(
+            {
+                "version": 1,
+                "nodes": [
+                    {"id": "s1", "name": "S1", "node_type": "start"},
+                    {"id": "s2", "name": "S2", "node_type": "start"},
+                    {"id": "stage", "name": "Stage", "depends_on": ["s1", "s2"]},
+                ],
+            }
+        )
 
 
-def test_workflow_definition_strips_dependency_on_legacy_end_node() -> None:
-    definition = ProjectWorkflowDefinition.model_validate(
-        {
-            "version": 1,
-            "nodes": [
-                {"id": "end", "name": "End", "node_type": "end"},
-                {"id": "later", "name": "Later", "depends_on": ["end"]},
-            ],
-        }
-    )
-
-    assert [node.id for node in definition.nodes] == ["later"]
-    assert definition.nodes[0].depends_on == []
-
-
-def test_workflow_snapshot_strips_legacy_start_and_end_nodes() -> None:
-    instance = IssueWorkflowInstance.model_validate(
-        {
-            "version": 1,
-            "definition_version": 1,
-            "stage_mode": "dag",
-            "advancement_policy": "manual",
-            "nodes": [
-                {
-                    "id": "start",
-                    "name": "开始",
-                    "node_type": "start",
-                    "status": "completed",
-                },
-                {
-                    "id": "develop",
-                    "name": "开发",
-                    "depends_on": ["start"],
-                    "status": "ready",
-                },
-                {
-                    "id": "end",
-                    "name": "结束",
-                    "node_type": "end",
-                    "depends_on": ["develop"],
-                    "status": "blocked",
-                },
-            ],
-        }
-    )
-
-    assert [node.id for node in instance.nodes] == ["develop"]
-    assert instance.nodes[0].depends_on == []
+def test_workflow_snapshot_rejects_legacy_start_and_end_node_types() -> None:
+    with pytest.raises(ValidationError):
+        IssueWorkflowInstance.model_validate(
+            {
+                "version": 1,
+                "definition_version": 1,
+                "stage_mode": "dag",
+                "advancement_policy": "manual",
+                "nodes": [
+                    {
+                        "id": "start",
+                        "name": "开始",
+                        "node_type": "start",
+                        "status": "completed",
+                    },
+                    {
+                        "id": "develop",
+                        "name": "开发",
+                        "depends_on": ["start"],
+                        "status": "ready",
+                    },
+                    {
+                        "id": "end",
+                        "name": "结束",
+                        "node_type": "end",
+                        "depends_on": ["develop"],
+                        "status": "blocked",
+                    },
+                ],
+            }
+        )

@@ -27,7 +27,6 @@ import {
 } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import type { Delivery, WorkflowNodeInstance } from '@/api/deliveries'
-import { stripWorkflowEndpointNodes } from '@/api/issueWorkflow'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { layoutWorkflowGraph } from './workflowGraph'
@@ -326,7 +325,6 @@ export function IssueWorkflowDag({
   onDecide,
 }: IssueWorkflowDagProps) {
   const { t } = useTranslation('common')
-  const workflowNodes = useMemo(() => stripWorkflowEndpointNodes(nodes), [nodes])
   const [decisionDraft, setDecisionDraft] = useState<{
     stageId: string
     action: 'reject'
@@ -347,18 +345,18 @@ export function IssueWorkflowDag({
   } | null>(null)
   const graphContainerRef = useRef<HTMLDivElement | null>(null)
   const flowInstanceRef = useRef<ReactFlowInstance<RuntimeFlowNode, Edge> | null>(null)
-  const currentStageId = useMemo(() => getCurrentWorkflowNodeId(workflowNodes), [workflowNodes])
+  const currentStageId = useMemo(() => getCurrentWorkflowNodeId(nodes), [nodes])
   const effectiveSelectedStageId =
     stageSelection?.currentStageId === currentStageId &&
-    workflowNodes.some(stage => stage.id === stageSelection.stageId)
+    nodes.some(stage => stage.id === stageSelection.stageId)
       ? stageSelection.stageId
       : currentStageId
   const selectedStage = effectiveSelectedStageId
-    ? workflowNodes.find(stage => stage.id === effectiveSelectedStageId)
+    ? nodes.find(stage => stage.id === effectiveSelectedStageId)
     : undefined
   const graph = useMemo(() => {
-    const nodesById = new Map(workflowNodes.map(node => [node.id, node]))
-    const edges: Edge[] = workflowNodes.flatMap(node =>
+    const nodesById = new Map(nodes.map(node => [node.id, node]))
+    const edges: Edge[] = nodes.flatMap(node =>
       node.depends_on.map(dependency => {
         const completed = isWorkflowNodeCompleted(nodesById.get(dependency)?.status ?? 'blocked')
         const color = completed ? 'rgb(0 162 64 / 0.55)' : 'rgb(var(--color-text-muted) / 0.45)'
@@ -371,7 +369,7 @@ export function IssueWorkflowDag({
         }
       })
     )
-    const flowNodes: RuntimeFlowNode[] = workflowNodes.map(stage => {
+    const flowNodes: RuntimeFlowNode[] = nodes.map(stage => {
       const isWait = stage.node_type === 'wait'
       return {
         id: stage.id,
@@ -395,7 +393,7 @@ export function IssueWorkflowDag({
         nodeHeight: NODE_HEIGHT,
       }) as RuntimeFlowNode[],
     }
-  }, [currentStageId, effectiveSelectedStageId, onOpenTask, tasks, workflowNodes])
+  }, [currentStageId, effectiveSelectedStageId, nodes, onOpenTask, tasks])
   const focusCurrentStage = useCallback(
     (instance: ReactFlowInstance<RuntimeFlowNode, Edge>, duration = 0) => {
       void instance.fitView({
@@ -475,7 +473,7 @@ export function IssueWorkflowDag({
     }
   }
   const completionStage = completionDraft
-    ? workflowNodes.find(stage => stage.id === completionDraft.stageId)
+    ? nodes.find(stage => stage.id === completionDraft.stageId)
     : undefined
   const pendingCompletionRequirements = (completionStage?.required_deliverables ?? []).filter(
     requirement =>

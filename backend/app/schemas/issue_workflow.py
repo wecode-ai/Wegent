@@ -4,7 +4,7 @@
 """Validated project orchestration definitions and per-Issue snapshots."""
 
 from datetime import datetime
-from typing import Literal, Sequence
+from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 
@@ -172,58 +172,6 @@ class WorkflowNodeDefinition(BaseModel):
         return self
 
 
-def strip_structural_nodes(
-    nodes: Sequence[dict[str, object] | WorkflowNodeDefinition],
-) -> list[dict[str, object]]:
-    """Drop legacy start/end sentinels so stored data matches the current model.
-
-    Old definitions and snapshots may still carry ``start``/``end`` marker
-    nodes. They carry no semantics: the entry is any node without predecessors
-    and the end is derived from nodes without successors. Stripping also
-    rewires ``depends_on`` and the per-edge context so no dangling reference
-    survives. Returns plain dicts whenever anything was stripped so the parent
-    model re-validates the cleaned shape.
-    """
-
-    def node_type(node: object) -> object:
-        if isinstance(node, dict):
-            return node.get("node_type")
-        return getattr(node, "node_type", None)
-
-    def node_id(node: object) -> object:
-        if isinstance(node, dict):
-            return node.get("id")
-        return getattr(node, "id", None)
-
-    structural = {
-        node_id(node)
-        for node in nodes
-        if node_type(node) in {"start", "end"} and node_id(node)
-    }
-    if not structural:
-        return [node if isinstance(node, dict) else node.model_dump() for node in nodes]
-    cleaned = [
-        node if isinstance(node, dict) else node.model_dump()
-        for node in nodes
-        if node_type(node) not in {"start", "end"}
-    ]
-    for node in cleaned:
-        depends_on = [
-            dependency
-            for dependency in (node.get("depends_on") or [])
-            if dependency not in structural
-        ]
-        node["depends_on"] = depends_on
-        context = node.get("dependency_context")
-        if isinstance(context, dict):
-            node["dependency_context"] = {
-                dependency: sources
-                for dependency, sources in context.items()
-                if dependency not in structural
-            }
-    return cleaned
-
-
 def require_rerun_agent(definition: "ProjectWorkflowDefinition") -> None:
     """Reject definitions whose rerun wait rules have no execution robot.
 
@@ -260,8 +208,6 @@ class ProjectWorkflowDefinition(BaseModel):
             return value
         if "stage_mode" not in value and value.get("nodes"):
             value = {**value, "stage_mode": "dag"}
-        if isinstance(value.get("nodes"), list):
-            value = {**value, "nodes": strip_structural_nodes(value["nodes"])}
         return value
 
     @model_validator(mode="after")
@@ -352,13 +298,6 @@ class IssueWorkflowInstance(BaseModel):
     active_plan_version: int | None = Field(default=None, ge=1)
     current_stage_id: str | None = Field(default=None, max_length=64)
     nodes: list[WorkflowNodeInstance] = Field(default_factory=list, max_length=50)
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_snapshot(cls, value: object) -> object:
-        if isinstance(value, dict) and isinstance(value.get("nodes"), list):
-            return {**value, "nodes": strip_structural_nodes(value["nodes"])}
-        return value
 
     @model_validator(mode="after")
     def validate_snapshot(self) -> "IssueWorkflowInstance":

@@ -13,7 +13,6 @@ from app.models.delivery import (
     ProjectWorkflowRun,
     loop_datetime_is_unset,
 )
-from app.schemas.issue_workflow import strip_structural_nodes
 from app.services.loop_item_unread import advance_content_revision
 
 COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
@@ -79,7 +78,6 @@ def reconcile_workflow_task_nodes(
     bindings: list[LoopItemTaskBinding],
     workflow: dict | None = None,
 ) -> list[dict]:
-    nodes = strip_structural_nodes(nodes)
     task_ids_by_node: dict[str, list[str]] = {}
     for binding in bindings:
         node_id = binding.workflow_node_id
@@ -244,7 +242,6 @@ def apply_workflow_nodes(
     nodes: list[dict],
     actor_user_id: int | None = None,
 ) -> LoopItem:
-    nodes = strip_structural_nodes(nodes)
     completed = {
         str(node.get("id"))
         for node in nodes

@@ -8,11 +8,7 @@ import {
   updateIssueWorkflowForRuntime,
   workflowBoardStatus,
 } from '@/api/issueWorkflow'
-import type {
-  CloudLoopItem,
-  IssueWorkflowInstance,
-  ProjectWorkflowDefinition,
-} from '@/api/deliveries'
+import type { CloudLoopItem } from '@/api/deliveries'
 
 const definition = {
   version: 3,
@@ -169,75 +165,6 @@ describe('Issue workflow projection', () => {
 
     expect(workflow.nodes.map(node => node.status)).toEqual(['completed', 'completed', 'completed'])
     expect(workflowBoardStatus(workflow)).toBe('in_review')
-  })
-
-  it('strips legacy start and end sentinels when instantiating', () => {
-    const workflow = instantiateIssueWorkflow({
-      version: 1,
-      stage_mode: 'dag',
-      advancement_policy: 'manual',
-      nodes: [
-        {
-          id: 'start',
-          name: '开始',
-          node_type: 'start' as const,
-          depends_on: [],
-          required: false,
-          workspace_policy: 'none',
-        },
-        {
-          id: 'develop',
-          name: '开发',
-          depends_on: ['start'],
-          required: true,
-          workspace_policy: 'composer',
-        },
-        {
-          id: 'end',
-          name: '结束',
-          node_type: 'end' as const,
-          depends_on: ['develop'],
-          required: true,
-          workspace_policy: 'none',
-        },
-      ],
-    } as unknown as ProjectWorkflowDefinition)!
-
-    expect(workflow.nodes.map(node => [node.id, node.status])).toEqual([['develop', 'ready']])
-    expect(workflowBoardStatus(workflow)).toBe('pending')
-  })
-
-  it('strips legacy sentinels from snapshots during reconciliation', () => {
-    const workflow = {
-      version: 1,
-      definition_version: 1,
-      stage_mode: 'dag',
-      advancement_policy: 'manual',
-      nodes: [
-        {
-          id: 'start',
-          name: '开始',
-          node_type: 'start' as const,
-          status: 'completed',
-        },
-        {
-          id: 'develop',
-          name: '开发',
-          depends_on: ['start'],
-          status: 'ready',
-        },
-        {
-          id: 'end',
-          name: '结束',
-          node_type: 'end' as const,
-          depends_on: ['develop'],
-          status: 'blocked',
-        },
-      ],
-    } as unknown as IssueWorkflowInstance
-
-    const reconciled = reconcileIssueWorkflowForTaskBindings(workflow, [])
-    expect(reconciled.nodes.map(node => node.id)).toEqual(['develop'])
   })
 
   it('requires configured deliverables before approval', () => {

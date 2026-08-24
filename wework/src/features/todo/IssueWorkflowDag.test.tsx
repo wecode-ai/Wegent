@@ -362,27 +362,19 @@ describe('IssueWorkflowDag', () => {
     )
   })
 
-  test('ignores legacy start/end sentinels and renders only real stages', () => {
+  test('renders every stage as-is with no structural end marker', () => {
     render(
       <IssueWorkflowDag
-        nodes={[
-          stage('开始', { node_type: 'start', status: 'completed' }),
-          stage('编辑'),
-          stage('审阅', { depends_on: ['编辑'] }),
-          stage('结束', { node_type: 'end', status: 'blocked' }),
-        ]}
+        nodes={[stage('编辑'), stage('审阅', { depends_on: ['编辑'] })]}
         tasks={[]}
         onCreateTask={vi.fn()}
       />
     )
 
-    // Legacy start/end sentinels are stripped on render; the flow simply ends
-    // at the last stage with no end marker.
-    expect(screen.queryByTestId('cloud-todo-workflow-node-开始')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-workflow-node-结束')).not.toBeInTheDocument()
+    // The flow simply ends at the last stage with no end marker.
     expect(screen.queryByTestId('cloud-todo-workflow-end-marker-审阅')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-workflow-action-开始')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-workflow-action-结束')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-node-编辑')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-node-审阅')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toBeInTheDocument()
   })
 

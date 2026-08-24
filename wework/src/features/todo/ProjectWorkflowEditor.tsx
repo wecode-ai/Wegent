@@ -46,7 +46,6 @@ import type {
   WorkflowWorkspacePolicy,
 } from '@/api/deliveries'
 import type { ExternalEventType } from '@/api/externalEvents'
-import { stripWorkflowEndpointNodes } from '@/api/issueWorkflow'
 import type { ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import { Combobox, type ComboboxOption } from '@/components/common/Combobox'
@@ -1170,25 +1169,15 @@ export function ProjectWorkflowEditor({
   onRequestConfigureAiCoordinator,
 }: ProjectWorkflowEditorProps) {
   const { t } = useTranslation('common')
-  const normalized = useMemo(() => {
-    const nodes = stripWorkflowEndpointNodes(value.nodes)
-    return nodes === value.nodes ? value : { ...value, nodes }
-  }, [value])
-  useEffect(() => {
-    if (normalized !== value) onChange(normalized)
-  }, [normalized, onChange, value])
-
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
-    normalized.nodes[0]?.id ?? null
-  )
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(value.nodes[0]?.id ?? null)
   const [selectedEdge, setSelectedEdge] = useState<{ source: string; target: string } | null>(null)
   const [deliverableDialog, setDeliverableDialog] = useState<DeliverableDialogState | null>(null)
   const [stageRobotBusyId, setStageRobotBusyId] = useState<string | null>(null)
   const [robotModeNodeIds, setRobotModeNodeIds] = useState<Set<string>>(
-    () => new Set(normalized.nodes.filter(node => node.automation_rule_id).map(node => node.id))
+    () => new Set(value.nodes.filter(node => node.automation_rule_id).map(node => node.id))
   )
-  const currentStageMode = stageMode(normalized)
-  const currentAdvancementPolicy = normalized.advancement_policy ?? 'manual'
+  const currentStageMode = stageMode(value)
+  const currentAdvancementPolicy = value.advancement_policy ?? 'manual'
   const orchestrationMode: OrchestrationMode =
     currentAdvancementPolicy === 'ai' ? 'ai' : currentStageMode === 'dag' ? 'workflow' : 'manual'
   const aiRules = useMemo(
@@ -1208,14 +1197,14 @@ export function ProjectWorkflowEditor({
       ),
     [automationRules]
   )
-  const selectedNode = normalized.nodes.find(node => node.id === selectedNodeId) ?? null
+  const selectedNode = value.nodes.find(node => node.id === selectedNodeId) ?? null
   const selectedStageRule = stageRules.find(rule => rule.id === selectedNode?.automation_rule_id)
   const selectedStageRobotMode =
     Boolean(selectedStageRule) || Boolean(selectedNode && robotModeNodeIds.has(selectedNode.id))
   const nodesValid =
-    normalized.nodes.length > 0 &&
-    normalized.nodes.every(node => node.name.trim() && node.depends_on.every(Boolean)) &&
-    normalized.nodes
+    value.nodes.length > 0 &&
+    value.nodes.every(node => node.name.trim() && node.depends_on.every(Boolean)) &&
+    value.nodes
       .filter(node => node.node_type === 'wait')
       .every(node => {
         const rules = node.wait_config?.rules ?? []
@@ -1231,7 +1220,7 @@ export function ProjectWorkflowEditor({
       })
   const canSave =
     (currentStageMode === 'none' || nodesValid) &&
-    (currentAdvancementPolicy === 'manual' || Boolean(normalized.ai_automation_rule_id))
+    (currentAdvancementPolicy === 'manual' || Boolean(value.ai_automation_rule_id))
 
   const updateDefinition = useCallback(
     (patch: Partial<ProjectWorkflowDefinition>) => {
@@ -1417,7 +1406,7 @@ export function ProjectWorkflowEditor({
   }
 
   const graph = useMemo(() => {
-    const edges: WorkflowFlowEdge[] = normalized.nodes.flatMap(node =>
+    const edges: WorkflowFlowEdge[] = value.nodes.flatMap(node =>
       node.depends_on.map(dependency => ({
         id: `${dependency}-${node.id}`,
         type: 'workflow',
@@ -1435,7 +1424,7 @@ export function ProjectWorkflowEditor({
         },
       }))
     )
-    const nodes: EditorFlowNode[] = normalized.nodes.map((node, index) => {
+    const nodes: EditorFlowNode[] = value.nodes.map((node, index) => {
       const automationRule = stageRules.find(rule => rule.id === node.automation_rule_id)
       return {
         id: node.id,
@@ -1469,7 +1458,7 @@ export function ProjectWorkflowEditor({
         nodeHeight: STAGE_NODE_HEIGHT,
       }) as EditorFlowNode[],
     }
-  }, [insertNode, normalized.nodes, selectedEdge, selectedNodeId, stageRules, t])
+  }, [insertNode, selectedEdge, selectedNodeId, stageRules, t, value.nodes])
 
   const flowInstanceRef = useRef<ReactFlowInstance<EditorFlowNode, WorkflowFlowEdge> | null>(null)
   useEffect(() => {
@@ -1479,7 +1468,7 @@ export function ProjectWorkflowEditor({
       void instance.fitView({ padding: 0.25, maxZoom: 1 })
     })
     return () => cancelAnimationFrame(frame)
-  }, [normalized.nodes.length])
+  }, [value.nodes.length])
 
   const handleConnect = useCallback(
     (connection: Connection) => {
@@ -1620,7 +1609,7 @@ export function ProjectWorkflowEditor({
               <div className="mt-1.5 flex gap-2">
                 <select
                   data-testid="project-workflow-ai-rule"
-                  value={normalized.ai_automation_rule_id ?? ''}
+                  value={value.ai_automation_rule_id ?? ''}
                   onChange={event =>
                     updateDefinition({ ai_automation_rule_id: event.target.value || null })
                   }
@@ -1662,7 +1651,7 @@ export function ProjectWorkflowEditor({
             {t('todo.workflow_coordinator_prompt', '调度提示词')}
             <textarea
               data-testid="project-workflow-coordinator-prompt"
-              value={normalized.coordinator_prompt ?? ''}
+              value={value.coordinator_prompt ?? ''}
               onChange={event => updateDefinition({ coordinator_prompt: event.target.value })}
               placeholder={t(
                 'todo.workflow_coordinator_prompt_placeholder',
@@ -1735,7 +1724,7 @@ export function ProjectWorkflowEditor({
               </button>
             </div>
           </div>
-          {normalized.nodes.length === 0 ? (
+          {value.nodes.length === 0 ? (
             <button
               type="button"
               data-testid="project-workflow-empty-add"
@@ -1785,16 +1774,14 @@ export function ProjectWorkflowEditor({
               <aside className="border-t border-border bg-background p-4 lg:border-l lg:border-t-0">
                 {selectedEdge ? (
                   <DependencyContextInspector
-                    source={normalized.nodes.find(node => node.id === selectedEdge.source)}
-                    target={normalized.nodes.find(node => node.id === selectedEdge.target)}
+                    source={value.nodes.find(node => node.id === selectedEdge.source)}
+                    target={value.nodes.find(node => node.id === selectedEdge.target)}
                     contextSources={
-                      normalized.nodes.find(node => node.id === selectedEdge.target)
+                      value.nodes.find(node => node.id === selectedEdge.target)
                         ?.dependency_context?.[selectedEdge.source] ?? DEFAULT_DEPENDENCY_CONTEXT
                     }
                     onChange={sources => {
-                      const targetNode = normalized.nodes.find(
-                        node => node.id === selectedEdge.target
-                      )
+                      const targetNode = value.nodes.find(node => node.id === selectedEdge.target)
                       if (!targetNode) return
                       updateNode(targetNode.id, {
                         dependency_context: {
@@ -1822,7 +1809,7 @@ export function ProjectWorkflowEditor({
                       robotMode={selectedStageRobotMode}
                       robotBusy={stageRobotBusyId === selectedNode.id}
                       projectAgents={projectAgents}
-                      dependencies={normalized.nodes}
+                      dependencies={value.nodes}
                       onUpdate={patch => updateNode(selectedNode.id, patch)}
                       onRemove={() => removeNode(selectedNode.id)}
                       onRemoveDependency={dependencyId =>

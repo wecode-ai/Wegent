@@ -84,4 +84,4 @@ sequenceDiagram
 - 同一 wait 节点不得同时存在两轮修复执行：修复轮运行期间到达的事件一律先缓冲，绝不并发启动第二轮。
 - `complete` 动作完成 wait 节点并释放后继；`rerun` 动作递增 `wait_round`，并为该轮新建一个归属 wait 节点的 run（`workflow_node_id` 指向 wait 节点，stage input 的 `target_stage` 为 wait 节点且 prompt 为重跑指令）。wait 节点在整个修复轮期间保持 `waiting`，只更新 `repair_status` 与任务/交付归属，不得改写已完成的上游阶段。
 - 注册时若事件已发生，立即补偿评估，避免错过等待窗口。
-- 阶段 DAG 没有结构化的开始/结束节点，也没有结束标志：无前置节点的阶段是入口，流程在最后一个阶段自然结束。`complete` 完成 wait 节点后，由全部 required 阶段完成承担 Issue 进入待确认；旧数据中的 start/end 节点在加载与投影时一律剥离。
+- 阶段 DAG 没有结构化的开始/结束节点，也没有结束标志：无前置节点的阶段是入口，流程在最后一个阶段自然结束。`complete` 完成 wait 节点后，由全部 required 阶段完成承担 Issue 进入待确认。
