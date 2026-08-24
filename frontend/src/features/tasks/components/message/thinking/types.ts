@@ -130,7 +130,6 @@ export interface ToolBlock extends BaseBlock {
   tool_use_id: string // Tool call ID
   tool_name: string // Tool name
   tool_protocol?: string // Tool call protocol, such as mcp_call or function_call
-  server_label?: string // MCP server label
   display_name?: string // Display name for tool (optional)
   tool_input?: Record<string, unknown> // Tool input parameters
   tool_output?: unknown // Tool execution result

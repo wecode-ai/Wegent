@@ -99,7 +99,6 @@ describe('ToolBlock', () => {
       tool_use_id: 'tool-list-documents',
       tool_name: 'wegent_kb_list_documents',
       tool_protocol: 'mcp_call',
-      server_label: 'wegent-knowledge',
       status: 'done',
       tool_input: { knowledge_base_id: 1 },
       tool_output: JSON.stringify({ total: 5, returned_count: 5, items: [] }),
