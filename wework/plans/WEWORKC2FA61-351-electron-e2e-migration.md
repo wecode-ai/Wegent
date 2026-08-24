@@ -346,3 +346,15 @@ Electron/Tauri 两份业务断言。
   `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-02-14-894Z-23119`；
   临时 Git 仓库初始化、云项目创建和任务流完整通过，未再出现
   `spawn git ENOENT`。
+- `browser-toolbar-actions`：PR #2945 GitHub Actions run `32700696793`
+  的 macOS Inspector 作业首先暴露
+  `Opening the Inspector changed child WebView frame index 1: 156 -> 120`。
+  同一最新打包应用在本地目录
+  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-26-06-929Z-23498`
+  稳定复现。证据表明通用 `e2e.focusWindow` 迁移只聚焦了 Electron
+  `BrowserWindow`，遗漏旧 `e2e.focusMainWindow` 已执行的
+  `webContents.focus()`；打开 detached Inspector 后，首次 Renderer 聚焦
+  触发布局变化。逻辑窗口聚焦现同时恢复宿主窗口和对应 Renderer 焦点。
+  修复后的原场景未改测试，完整通过，证据目录
+  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-30-15-002Z-75160`，
+  58s，Inspector 打开前后所有 child WebView frame 保持一致。

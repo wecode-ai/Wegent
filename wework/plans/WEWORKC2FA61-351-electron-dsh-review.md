@@ -110,6 +110,11 @@ Wework 内置浏览器工具栏场景通过，证据目录：
 - 420px 高窗口中活动任务可被滚出视口，运行时状态刷新后侧边栏保持同一
   `scrollTop`，证明 Electron 已恢复旧 Tauri 的窗口调整语义。
 - Goal 自动续跑、重载、整应用重启、等待用户恢复和最终已读状态均连续。
+- macOS Inspector 回归使用原 `browser-toolbar-actions` 场景复核：
+  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-30-15-002Z-75160`。
+  打开 detached Inspector 后，Wework 主 Renderer 与所有内置浏览器 child
+  WebView frame 均保持稳定；逻辑窗口聚焦同时覆盖 `BrowserWindow` 和
+  `webContents`，没有再出现浏览器内容位移。
 - 云项目创建使用真实 Git 临时仓库完成，不存在 `spawn git ENOENT`。
 
 `git push` 会按仓库约定执行完整 pre-push 验证；不通过重试、跳过或修改旧 E2E

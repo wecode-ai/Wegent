@@ -698,6 +698,7 @@ async function configureDesktopRuntime(): Promise<void> {
             if (target.isMinimized()) target.restore()
             target.show()
             target.focus()
+            target.webContents.focus()
           },
           openWorkspace: openWorkspaceWindow,
           popoutWindowSnapshot: () => ({
