@@ -5,7 +5,6 @@ import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   enqueueIssueWorkflowMutation,
   enqueueTaskTrackingMutation,
-  isDefaultWorkItemProject,
   nextTaskTrackingStatus,
   type TaskExecutionStatus,
   type CloudLoopItemAttachment,
@@ -84,6 +83,7 @@ interface LocalTaskBindingRecord {
   task_title: string | null
   backend_task_id: number | null
   workflow_node_id?: string | null
+  binding_type: 'system' | 'user'
   linked_at: string
 }
 
@@ -837,16 +837,12 @@ export function createLocalDeliveryApi(
       })
       rememberTasks(projectId, records)
       const items = records.map(record => localTask(record))
-      const taskBindings = await Promise.all(
-        items.map(item =>
-          request<LocalTaskBindingRecord[]>('todos.bindings', {
-            task_id: item.id,
-          })
-        )
-      )
+      const taskBindings = await request<LocalTaskBindingRecord[]>('todos.bindings.batch', {
+        task_ids: items.map(item => item.id),
+      })
       return {
         items,
-        task_bindings: taskBindings.flat().map(record => ({
+        task_bindings: taskBindings.map(record => ({
           ...record,
           id: Number(record.id),
         })),
@@ -1118,10 +1114,15 @@ export function createLocalDeliveryApi(
     ) {
       return trackProjectTaskOnce(projectId, task, async () => {
         try {
-          const existing = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
-            device_id: task.deviceId,
-            task_id: task.taskId,
-          })
+          const existing = await request<LocalTaskBindingRecord>(
+            String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
+              ? 'runtime_tasks.system_context'
+              : 'runtime_tasks.user_context',
+            {
+              device_id: task.deviceId,
+              task_id: task.taskId,
+            }
+          )
           if (existing.loop_item_id) {
             return { item: await api.getLoopItem(existing.loop_item_id) }
           }
@@ -1141,7 +1142,21 @@ export function createLocalDeliveryApi(
       return enqueueTaskTrackingMutation(task, async () => {
         let context: CloudTaskContext
         try {
-          context = await api.findCloudContextForTask(task)
+          const binding = await request<LocalTaskBindingRecord>('runtime_tasks.system_context', {
+            device_id: task.deviceId,
+            task_id: task.taskId,
+          })
+          const projectRecords = await request<LocalLoopItemRecord[]>('projects.list')
+          const projectRecord = projectRecords.find(
+            record => record.id === binding.cloud_project_id
+          )
+          if (!projectRecord) return null
+          context = {
+            ...binding,
+            id: binding.id,
+            project: localProject(projectRecord),
+            loop_item: binding.loop_item_id ? await api.getLoopItem(binding.loop_item_id) : null,
+          }
         } catch {
           return null
         }
@@ -1173,9 +1188,7 @@ export function createLocalDeliveryApi(
           const bindings = await api.listTaskBindings(item.id)
           if (bindings.length > 1) return item
         }
-        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus, {
-          completeOnSuccess: isDefaultWorkItemProject(context.project),
-        })
+        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus)
         return nextStatus
           ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
           : item
@@ -1185,7 +1198,7 @@ export function createLocalDeliveryApi(
       return enqueueTaskTrackingMutation(task, async () => {
         let binding: LocalTaskBindingRecord
         try {
-          binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
+          binding = await request<LocalTaskBindingRecord>('runtime_tasks.system_context', {
             device_id: task.deviceId,
             task_id: task.taskId,
           })
@@ -1209,6 +1222,7 @@ export function createLocalDeliveryApi(
       await request('runtime_tasks.unbind', {
         device_id: task.deviceId,
         task_id: task.taskId,
+        item_id: _itemId,
       })
     },
     async findLoopItemForTask(task: RuntimeTaskAddress) {

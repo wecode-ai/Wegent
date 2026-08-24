@@ -406,6 +406,10 @@ Wework 允许用户在发送首条消息前配置任务监督。该配置作为 
 
 Wework 的任务运行态按 turn 身份结算，而不是仅按 task 粗粒度结算。流式开始事件使用的临时 subtask ID 可能在终态事件中被 provider 替换为 canonical turn ID；事件适配层必须把两者关联后，将原始开始 ID 传给生命周期状态机。executor 在 execution 所有权切换时同步内存运行态，旧 execution 完成时不得覆盖替代它的新 execution。App IPC、本地后端与监督调度器必须在启动后台任务前注入同一个 runtime handler；禁止先启动带调度器的默认 handler 再替换，否则孤儿调度器发起的自动纠正对任务列表不可见。重复或迟到的旧 turn 终态必须幂等忽略，不能清除已经开始的新 turn，否则侧栏会在监督自动纠正仍在运行时错误显示为空闲。
 
+Codex provider 的 turn 终态是执行事实，也是本地运行态收敛的权威依据。停止或“立即发送”发现 provider 已终态时，executor 必须先结算对应的本地 execution，再继续用户操作；本地停止确认超时只表示清理确认未及时返回，不能向用户返回失败或永久保留 `running`。executor 会强制把当前 execution 结算为已取消，并通过 `cleanupPending` 保留后台清理诊断。所有 Codex 通知、转录写入和终态事件都必须携带并校验 execution generation；旧 generation 的迟到结果不得写入任务、发送终态事件或触发队列继续执行。
+
+Worktree 的 `executionLease` 是多实例之间共享的执行证据，不是任务运行状态本身。另一个实例或启动重协调可能先清除同一 execution 的 lease，因此当前 generation 完成时发现 lease 已不存在必须视为幂等成功；只有 lease 明确属于不同 execution 时才是所有权冲突。内存中的 active execution、provider turn 事实和共享 lease 必须按上述规则共同收敛，不能因为共享文件中已经没有 lease 就让原实例永久保持运行中。
+
 Codex fork 会重建父线程的历史请求。`reasoning`、`compaction`、`compaction_summary`、`context_compaction` 和 `agent_message` 中的 `encrypted_content` 是绑定实际上游加密上下文的非便携状态；即使逻辑模型和路由名称不变，模型网关背后的凭据或项目上下文也可能无法验证父线程生成的密文。executor 通过 Codex 的 fork 元数据识别这类请求，仅在 fork 边界递归移除上述历史条目中的 `encrypted_content`，同时保留消息、工具调用、工具结果和 reasoning summary。普通继续对话不会执行该清理，也不会通过重试、fallback 或模型切换掩盖上游错误。
 
 云端模型执行会把 Model spec 中的 `modelConfig.env.model_id` 作为独立的 Codex catalog model id 传给 executor。若该 id 与 Codex 官方 catalog 中的模型匹配，Codex 会继承其完整能力元数据和基础指令；模型网关仍使用资源名定位云端 Model CRD，因此 catalog 映射不会改变上游路由。

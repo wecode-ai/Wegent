@@ -189,7 +189,11 @@ spec:
 
 ### 视觉委托模型引用
 
-纯文本模型可以在 `modelConfig.visionSidecarModel` 中显式引用一个声明 `supportsImage: true` 的模型。引用必须使用 Backend 授权模型列表返回的完整资源身份和 `apiFormat`；只有目标仍存在、已启用、可访问、支持图片且 API 格式一致时，Wework 才接受该引用，并且不会根据登录状态或模型名称自动选择默认视觉模型。引用缺失或被拒绝时，主模型保持纯文本，不会进行图片预处理或额外模型调用。
+纯文本模型可以在 `modelConfig.visionSidecarModel` 中显式引用另一个能读图的模型。引用必须使用 Backend 授权模型列表返回的完整资源身份和 `apiFormat`。该引用即权威来源：Wework 只校验引用本身的结构，目标模型的存在性与访问权限由 Backend 的 LLM 网关在调用时依据同一组身份 Header 解析和鉴权，因此引用一个未声明 `supportsImage` 或未分发到 wework 的模型同样生效。Wework 不会根据登录状态或模型名称自动选择默认视觉模型。引用结构非法时主模型保持纯文本，不做图片预处理；引用指向的模型不存在或无法读图时，该图片会被替换为明确的失败说明文本，原始图片不会泄漏给纯文本主模型。
+
+Wegent Web 的视觉模型下拉框只列出声明了 `modelCapabilities.supportsImage: true` 的候选模型，因此建议给能读图的模型补齐该字段。若已有引用的目标不在候选列表中，下拉框会保留该引用并标注为当前不可选，保存模型不会丢弃它。
+
+`apiFormat` 必须与被引用模型实际使用的上游协议一致，可取 `openai-responses`、`openai-chat-completions` 或 `anthropic-messages`。多数 Model CRD 只声明 `spec.modelConfig.env.model`，此时协议由该字段推断（`claude` 对应 Anthropic Messages，`openai` 对应 OpenAI Chat Completions）。
 
 ```yaml
 spec:

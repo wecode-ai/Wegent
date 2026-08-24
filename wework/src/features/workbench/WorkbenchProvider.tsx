@@ -162,6 +162,7 @@ import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
 } from '@/features/workspace-tabs/workspaceTabTransfer'
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
 import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
 import { normalizeAiModelId } from '@/telemetry/modelCatalog'
@@ -213,11 +214,16 @@ export function WorkbenchProvider({
   onStartupReadyChange,
   workspaceTabId,
   consumePluginTrials = true,
+  publishDebugSnapshots = true,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
 }: WorkbenchProviderProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  const workspaceTabs = useOptionalWorkspaceTabs()
+  const canNavigateWorkspaceTab = useStableEvent(
+    () => !workspaceTabId || !workspaceTabs || workspaceTabs.activeTabId === workspaceTabId
+  )
   // Preferences can change while a turn is running. Runtime transports only
   // need the account identity, so keep their service graph stable across those
   // updates and avoid an event-subscription gap during terminal delivery.
@@ -406,11 +412,8 @@ export function WorkbenchProvider({
     }
   }, [resolvedServices.projectSpaceApis?.local, state.runtimeWork, t])
   useEffect(() => {
-    const trackingApis = [
-      resolvedServices.projectSpaceApis?.local,
-      resolvedServices.projectSpaceApis?.cloud ?? resolvedServices.deliveryApi,
-    ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
-    if (!trackingApis.length || !state.runtimeWork) return
+    const trackingApi = resolvedServices.projectSpaceApis?.local
+    if (!trackingApi || !state.runtimeWork) return
     const workspaces = [
       ...state.runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
       ...state.runtimeWork.chats,
@@ -431,41 +434,29 @@ export function WorkbenchProvider({
         const key = runtimeConversationKey(address)
         if (trackingStatusSignaturesRef.current.get(key) === executionStatus) continue
         trackingStatusSignaturesRef.current.set(key, executionStatus)
-        void Promise.allSettled(
-          trackingApis.map(api => api!.updateTaskTrackingStatus(address, executionStatus))
-        ).then(results => {
-          const synchronized = results.some(
-            result => result.status === 'fulfilled' && result.value !== null
-          )
-          if (!synchronized) {
-            trackingStatusSignaturesRef.current.delete(key)
-            if (results.every(result => result.status === 'rejected')) {
-              console.warn('[Wework] Failed to synchronize passive project task status', {
-                address,
-                executionStatus,
-                errors: results.map(result =>
-                  result.status === 'rejected' ? result.reason : null
-                ),
-              })
+        void trackingApi
+          .updateTaskTrackingStatus(address, executionStatus)
+          .then(result => {
+            if (result === null) {
+              trackingStatusSignaturesRef.current.delete(key)
+              return
             }
-            return
-          }
-          publishProjectSpaceTaskContextChanged(address)
-        })
+            publishProjectSpaceTaskContextChanged(address)
+          })
+          .catch(error => {
+            trackingStatusSignaturesRef.current.delete(key)
+            console.warn('[Wework] Failed to synchronize passive project task status', {
+              address,
+              executionStatus,
+              error,
+            })
+          })
       }
     }
-  }, [
-    resolvedServices.deliveryApi,
-    resolvedServices.projectSpaceApis,
-    state.runtimeWork,
-    trackingBindingRevision,
-  ])
+  }, [resolvedServices.projectSpaceApis?.local, state.runtimeWork, trackingBindingRevision])
   useEffect(() => {
-    const trackingApis = [
-      resolvedServices.projectSpaceApis?.local,
-      resolvedServices.projectSpaceApis?.cloud ?? resolvedServices.deliveryApi,
-    ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
-    if (!trackingApis.length) return
+    const trackingApi = resolvedServices.projectSpaceApis?.local
+    if (!trackingApi) return
     for (const [key, lifecycle] of lifecycleSnapshot.tasks) {
       const executionStatus =
         lifecycle.turn.outcome ?? (lifecycle.derived.isRunning ? 'running' : null)
@@ -473,32 +464,25 @@ export function WorkbenchProvider({
       const signature = executionStatus
       if (trackingStatusSignaturesRef.current.get(key) === signature) continue
       trackingStatusSignaturesRef.current.set(key, signature)
-      void Promise.allSettled(
-        trackingApis.map(api => api!.updateTaskTrackingStatus(lifecycle.address, executionStatus))
-      ).then(results => {
-        const synchronized = results.some(
-          result => result.status === 'fulfilled' && result.value !== null
-        )
-        if (!synchronized) {
-          trackingStatusSignaturesRef.current.delete(key)
-          if (results.every(result => result.status === 'rejected')) {
-            console.warn('[Wework] Failed to synchronize project board task status', {
-              address: lifecycle.address,
-              executionStatus,
-              errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
-            })
+      void trackingApi
+        .updateTaskTrackingStatus(lifecycle.address, executionStatus)
+        .then(result => {
+          if (result === null) {
+            trackingStatusSignaturesRef.current.delete(key)
+            return
           }
-          return
-        }
-        publishProjectSpaceTaskContextChanged(lifecycle.address)
-      })
+          publishProjectSpaceTaskContextChanged(lifecycle.address)
+        })
+        .catch(error => {
+          trackingStatusSignaturesRef.current.delete(key)
+          console.warn('[Wework] Failed to synchronize project board task status', {
+            address: lifecycle.address,
+            executionStatus,
+            error,
+          })
+        })
     }
-  }, [
-    lifecycleSnapshot,
-    resolvedServices.deliveryApi,
-    resolvedServices.projectSpaceApis,
-    trackingBindingRevision,
-  ])
+  }, [lifecycleSnapshot, resolvedServices.projectSpaceApis?.local, trackingBindingRevision])
   const runtimeTaskReminders = useRuntimeTaskReminders({
     runtimeWork: state.runtimeWork,
     lifecycleStore,
@@ -1258,6 +1242,8 @@ export function WorkbenchProvider({
   ])
 
   useEffect(() => {
+    if (!publishDebugSnapshots) return
+
     let timeout: number | null = null
     const schedule = () => {
       if (timeout !== null) return
@@ -1298,6 +1284,7 @@ export function WorkbenchProvider({
     lifecycleSnapshot,
     draftInputByScope,
     modelSelection.models,
+    publishDebugSnapshots,
     projectChatScopeKey,
     runtimeTaskReminders,
     state,
@@ -1677,6 +1664,7 @@ export function WorkbenchProvider({
     lifecycleStore,
     markRuntimeTasksArchived,
     refreshWorkLists,
+    canNavigate: canNavigateWorkspaceTab,
   })
 
   const listImPrivateSessions = useCallback(

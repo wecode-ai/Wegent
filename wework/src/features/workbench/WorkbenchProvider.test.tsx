@@ -23,11 +23,16 @@ import { MessageList } from '@/components/chat/MessageList'
 import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
 import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
+import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
 import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
+import {
+  WorkspaceTabsContext,
+  type WorkspaceTabsContextValue,
+} from '@/features/workspace-tabs/workspaceTabsContextValue'
 import {
   RuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycle,
@@ -861,6 +866,15 @@ function PluginTrialInputProbe({ testId }: { testId: string }) {
   return <span data-testid={testId}>{paneSession.input}</span>
 }
 
+function DebugSnapshotInputProbe({ testId, value }: { testId: string; value: string }) {
+  const { paneSession } = useWorkbenchProbeSession()
+  return (
+    <button type="button" data-testid={testId} onClick={() => paneSession.setInput(value)}>
+      Set draft
+    </button>
+  )
+}
+
 function ProjectSendProbe({
   prepareRuntimeTask,
 }: {
@@ -1193,6 +1207,12 @@ function ProjectSendProbe({
             project,
             deviceWorkspaceId: 23,
             runtime: 'codex',
+            optimisticUserMessage: {
+              id: 'board-user-message-1',
+              role: 'user',
+              content: '修复 CI',
+              status: 'done',
+            },
             prepareRuntimeTask,
           })
         }}
@@ -1849,6 +1869,9 @@ function FollowUpProbe() {
       <span data-testid="queued-errors">
         {paneSession.queuedMessages.map(message => message.error ?? '').join('|')}
       </span>
+      <span data-testid="queued-messages-paused">
+        {paneSession.queuedMessagesPaused ? 'paused' : 'running'}
+      </span>
       <span data-testid="queued-notices">
         {paneSession.queuedMessages.map(message => message.notice ?? '').join('|')}
       </span>
@@ -2012,6 +2035,12 @@ function FollowUpProbe() {
       </button>
       <button type="button" onClick={() => void paneSession.send()}>
         send follow-up
+      </button>
+      <button
+        type="button"
+        onClick={() => void paneSession.resumeQueuedMessagesWithInput('手动消息')}
+      >
+        resume queue with manual input
       </button>
       <button
         type="button"
@@ -5266,13 +5295,21 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('send with explicit project workspace'))
 
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'device-1',
         workspacePath: '/workspace/project-beta',
         message: '修复 CI',
+        clientUserMessageId: 'board-user-message-1',
       })
     )
+    expect(
+      getRuntimeConversationMessages({
+        deviceId: 'device-1',
+        taskId: request.taskId,
+      }).map(message => `${message.role}:${message.content}`)
+    ).toEqual(['user:修复 CI'])
   })
 
   test('does not dispatch an embedded Runtime task before its context is prepared', async () => {
@@ -5612,7 +5649,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
   })
 
-  test('does not reopen a newly created task after the user switches tasks', async () => {
+  test('does not navigate away from the board when a background task starts', async () => {
     const createResponse = deferred<RuntimeTaskCreateResponse>()
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
@@ -5628,19 +5665,12 @@ describe('WorkbenchProvider runtime tasks', () => {
                   workspacePath: '/workspace/project-alpha',
                   mapped: true,
                   available: true,
-                  tasks: [
-                    {
-                      taskId: 'runtime-b',
-                      workspacePath: '/workspace/project-alpha',
-                      title: 'Runtime B',
-                      runtime: 'codex',
-                    },
-                  ],
+                  tasks: [],
                 },
               ],
             },
           ],
-          totalTasks: 1,
+          totalTasks: 0,
         })
       ),
       createRuntimeTask: vi.fn(() => createResponse.promise),
@@ -5649,7 +5679,45 @@ describe('WorkbenchProvider runtime tasks', () => {
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
     })
 
-    renderWorkbench(<ProjectSendProbe />, services)
+    const taskTab = {
+      id: 'task-tab',
+      kind: 'task' as const,
+      title: '任务',
+      contentRoute: '/',
+      fixed: false,
+    }
+    const boardTab = {
+      id: 'board-tab',
+      kind: 'board' as const,
+      title: '项目空间',
+      contentRoute: '/todo',
+      fixed: false,
+    }
+    let workspaceTabs: WorkspaceTabsContextValue = {
+      tabs: [taskTab, boardTab],
+      activeTabId: taskTab.id,
+      activeTab: taskTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    }
+    const view = render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <WorkbenchProvider
+          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+          services={services}
+          workspaceTabId={taskTab.id}
+        >
+          <WorkbenchProbeSessionProvider>
+            <ProjectSendProbe />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </WorkspaceTabsContext.Provider>
+    )
 
     await userEvent.click(await screen.findByText('select project'))
     await userEvent.click(screen.getByText('set input'))
@@ -5657,18 +5725,32 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     const optimisticRequest = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
 
-    await userEvent.click(screen.getByText('open runtime b'))
-    await waitFor(() =>
-      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-        'device-1:runtime-b'
-      )
+    workspaceTabs = {
+      ...workspaceTabs,
+      activeTabId: boardTab.id,
+      activeTab: boardTab,
+    }
+    window.history.pushState({}, '', '/todo')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    view.rerender(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <WorkbenchProvider
+          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+          services={services}
+          workspaceTabId={taskTab.id}
+        >
+          <WorkbenchProbeSessionProvider>
+            <ProjectSendProbe />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </WorkspaceTabsContext.Provider>
     )
 
     await act(async () => {
       createResponse.resolve({
         accepted: true,
         deviceId: 'device-1',
-        taskId: optimisticRequest.taskId,
+        taskId: 'runtime-started',
         workspacePath: '/workspace/project-alpha',
         runtime: 'codex',
       })
@@ -5676,12 +5758,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
-      'device-1:runtime-b'
+      'device-1:runtime-started'
     )
-    expect(parseRuntimeTaskRoute(window.location.pathname, window.location.search)).toEqual({
-      deviceId: 'device-1',
-      taskId: 'runtime-b',
-    })
+    expect(optimisticRequest.taskId).not.toBe('runtime-started')
+    expect(window.location.pathname).toBe('/todo')
   })
 
   test('keeps a newly created task running across a stale accepted-task refresh', async () => {
@@ -10732,6 +10812,53 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 
+  test('lets only the active workspace tab publish workbench diagnostics', async () => {
+    const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
+    const services = createWorkbenchServices()
+    render(
+      <>
+        <WorkbenchProvider
+          user={user}
+          services={services}
+          consumePluginTrials={false}
+          publishDebugSnapshots={false}
+          syncRemoteProjects={false}
+          syncRuntimeTaskLifecycle={false}
+        >
+          <WorkbenchProbeSessionProvider>
+            <DebugSnapshotInputProbe testId="set-inactive-draft" value="inactive draft" />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+        <WorkbenchProvider
+          user={user}
+          services={services}
+          consumePluginTrials
+          publishDebugSnapshots
+          syncRemoteProjects={false}
+          syncRuntimeTaskLifecycle={false}
+        >
+          <WorkbenchProbeSessionProvider>
+            <DebugSnapshotInputProbe testId="set-active-draft" value="active draft" />
+          </WorkbenchProbeSessionProvider>
+        </WorkbenchProvider>
+      </>
+    )
+
+    await userEvent.click(screen.getByTestId('set-active-draft'))
+    await waitFor(() =>
+      expect(getWorkbenchDebugSnapshot().workbench?.composer?.currentInputLength).toBe(
+        'active draft'.length
+      )
+    )
+
+    await userEvent.click(screen.getByTestId('set-inactive-draft'))
+    await new Promise(resolve => window.setTimeout(resolve, 200))
+
+    expect(getWorkbenchDebugSnapshot().workbench?.composer?.currentInputLength).toBe(
+      'active draft'.length
+    )
+  })
+
   test('preserves a queued plugin trial until the workspace tab becomes active', async () => {
     const user = { id: 1, user_name: 'alice', email: 'a@b.c' }
     const services = createWorkbenchServices()
@@ -13762,6 +13889,174 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
       expect.objectContaining({
         message: '执行ls',
+      })
+    )
+  })
+
+  test('drains the preserved queue when a manual turn settles before React commits', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const runningRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              available: true,
+              workspacePath: '/workspace/project-alpha',
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'claude_code',
+                  running: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    })
+    const idleRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              available: true,
+              workspacePath: '/workspace/project-alpha',
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'claude_code',
+                  running: false,
+                  status: 'cancelled',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    })
+    let runtimeRunning = true
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    const cancelRuntimeTask = vi.fn().mockImplementation(() => {
+      runtimeRunning = false
+      return Promise.resolve({
+        accepted: true,
+        taskId: 'runtime-a',
+      })
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi
+        .fn()
+        .mockImplementation(() =>
+          Promise.resolve(runtimeRunning ? runningRuntimeWork : idleRuntimeWork)
+        ),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+      cancelRuntimeTask,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: 'active-turn',
+        shellType: 'Chat',
+        deviceId: 'device-1',
+      })
+    })
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
+    )
+    await userEvent.click(screen.getByText('stop current response'))
+    await waitFor(() => expect(cancelRuntimeTask).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: 'active-turn',
+        deviceId: 'device-1',
+        result: { error: 'cancelled' },
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('queued-messages-paused')).toHaveTextContent('paused')
+    )
+    await waitFor(() => expect(screen.getByTestId('follow-up-pane-busy')).toHaveTextContent('idle'))
+
+    await userEvent.click(screen.getByText('resume queue with manual input'))
+
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+    expect(sendRuntimeMessage.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        message: '手动消息',
+      })
+    )
+    expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
+    expect(screen.getByTestId('queued-messages-paused')).toHaveTextContent('paused')
+
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: 'manual-turn',
+        shellType: 'Chat',
+        deviceId: 'device-1',
+      })
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: 'manual-turn',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('queued-messages-paused')).toHaveTextContent('running')
+    )
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
+    expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
+      expect.objectContaining({
+        message: '继续修',
       })
     )
   })

@@ -160,7 +160,10 @@ export const ComposerProseMirrorEditor = forwardRef<
                 if (
                   !state.selection.empty ||
                   !state.selection.$head.parent.isTextblock ||
-                  state.selection.$head.parent.content.size > 0
+                  state.selection.$head.parent.content.size > 0 ||
+                  // WKWebView needs the only empty text position to remain native
+                  // so programmatic focus can start a text input session.
+                  (state.doc.childCount === 1 && state.doc.firstChild?.content.size === 0)
                 ) {
                   return null
                 }

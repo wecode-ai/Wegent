@@ -102,6 +102,10 @@ import {
   takeInterruptedRuntimeConversationGuidance,
   updateRuntimeConversationBlocks,
 } from '@/features/workbench/runtimeConversationCache'
+import {
+  createRuntimeUserMessage,
+  type RuntimeUserMessageOptions,
+} from '@/features/workbench/runtimeUserMessage'
 
 interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
@@ -340,6 +344,7 @@ export function useWorkbenchPaneSession({
   const queuedMessageBusyBlockSnapshotsRef = useRef(
     new Map<string, RuntimeTaskLifecycleSnapshot | null>()
   )
+  const resumePausedQueueAfterTurnRef = useRef<string | null>(null)
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
@@ -466,6 +471,7 @@ export function useWorkbenchPaneSession({
   }, [currentRuntimeTask])
 
   useEffect(() => {
+    resumePausedQueueAfterTurnRef.current = null
     setQueuedMessagesState(
       queuedMessageScopeKey ? getRuntimeConversationQueuedMessagesByKey(queuedMessageScopeKey) : []
     )
@@ -473,6 +479,25 @@ export function useWorkbenchPaneSession({
       queuedMessageScopeKey ? getRuntimeConversationQueuePausedByKey(queuedMessageScopeKey) : false
     )
   }, [queuedMessageScopeKey])
+
+  useEffect(() => {
+    const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
+    if (
+      resumePausedQueueAfterTurnRef.current !== queuedMessageScopeKey ||
+      (lifecycle?.turn.phase !== 'streaming' && lifecycle?.turn.outcome === null)
+    ) {
+      return
+    }
+    resumePausedQueueAfterTurnRef.current = null
+    setQueuedMessagesPaused(false)
+  }, [
+    currentRuntimeTask,
+    lifecycleStore,
+    queuedMessageScopeKey,
+    setQueuedMessagesPaused,
+    taskLifecycle?.turn.outcome,
+    taskLifecycle?.turn.phase,
+  ])
 
   useEffect(() => {
     if (currentRuntimeTaskLoadTarget) {
@@ -986,10 +1011,10 @@ export function useWorkbenchPaneSession({
   )
 
   const appendLocalUserMessage = useCallback(
-    (content: string, attachments?: Attachment[], options?: CreateLocalUserMessageOptions) => {
+    (content: string, attachments?: Attachment[], options?: RuntimeUserMessageOptions) => {
       dispatchMessages({
         type: 'user_added',
-        message: createLocalUserMessage(content, attachments, options),
+        message: createRuntimeUserMessage(content, attachments, options),
       })
     },
     [dispatchMessages]
@@ -1021,7 +1046,7 @@ export function useWorkbenchPaneSession({
     ): Promise<boolean> => {
       if (!currentRuntimeTask) return false
 
-      const retryMessage = createLocalUserMessage(message.content, message.attachments, {
+      const retryMessage = createRuntimeUserMessage(message.content, message.attachments, {
         id: message.id,
         createdAt: message.createdAt,
         runtimeGoalRequest: message.runtimeGoalRequest,
@@ -1033,7 +1058,7 @@ export function useWorkbenchPaneSession({
         const visibleMessage =
           message.displayContent === undefined
             ? retryMessage
-            : createLocalUserMessage(message.displayContent, message.attachments, {
+            : createRuntimeUserMessage(message.displayContent, message.attachments, {
                 id: message.id,
                 createdAt: message.createdAt,
                 runtimeGoalRequest: message.runtimeGoalRequest,
@@ -1081,7 +1106,7 @@ export function useWorkbenchPaneSession({
           const visibleMessage =
             message.displayContent === undefined
               ? retryMessage
-              : createLocalUserMessage(message.displayContent, message.attachments, {
+              : createRuntimeUserMessage(message.displayContent, message.attachments, {
                   id: message.id,
                   createdAt: message.createdAt,
                   runtimeGoalRequest: message.runtimeGoalRequest,
@@ -1278,7 +1303,9 @@ export function useWorkbenchPaneSession({
       if (options.forceDefaultCollaborationMode) {
         projectChat.setSelectedModelOption('collaborationMode', 'default')
       }
-      const appendedUserMessage = options.appendUserMessage ? createLocalUserMessage(message) : null
+      const appendedUserMessage = options.appendUserMessage
+        ? createRuntimeUserMessage(message)
+        : null
       if (appendedUserMessage) {
         dispatchMessages({ type: 'user_added', message: appendedUserMessage })
       }
@@ -1349,7 +1376,7 @@ export function useWorkbenchPaneSession({
       const attachmentIds = remoteAttachmentIds(messageAttachments)
       const attachments = localRuntimeAttachments(messageAttachments)
       const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
-      const editedMessage = createLocalUserMessage(submittedContent, messageAttachments, {
+      const editedMessage = createRuntimeUserMessage(submittedContent, messageAttachments, {
         runtimeGoalRequest: message.runtimeGoalRequest === true,
       })
       const request: RuntimeRollbackRequest = {
@@ -1846,13 +1873,13 @@ export function useWorkbenchPaneSession({
           setInput('')
           setPendingGoalState({ goal: draftGoal, targetKey: null, targetIdentityKey: null })
           setGoalDraftActive(false)
-          const optimisticMessage = createLocalUserMessage(submittedInput, currentAttachments, {
+          const optimisticMessage = createRuntimeUserMessage(submittedInput, currentAttachments, {
             runtimeGoalRequest: true,
           })
           let seededGoalAddress: RuntimeTaskAddress | null = null
           let errorScopeKey = inputScopeKey
           const sent = await sendCurrentInput(submittedInput, {
-            clientUserMessageId: optimisticMessage.id,
+            optimisticUserMessage: optimisticMessage,
             initialGoal,
             additionalContext: options.additionalContext,
             cloudProjectId: options.cloudProjectId,
@@ -1882,19 +1909,12 @@ export function useWorkbenchPaneSession({
               )
               seedRuntimePaneGoal(address, draftGoal)
               seededGoalAddress = address
-              const seededMessages = [optimisticMessage]
               debugRuntimePaneMessageFlow('seed-goal-first-open', {
                 address: runtimeAddressDebug(address),
                 previousAddress: context?.previousAddress
                   ? runtimeAddressDebug(context.previousAddress)
                   : null,
-                previousCount: 0,
-                seededCount: seededMessages.length,
-                seededMessages: summarizeWorkbenchMessages(seededMessages),
-              })
-              applyRuntimeConversationAction(address, {
-                type: 'user_added',
-                message: optimisticMessage,
+                seededMessages: summarizeWorkbenchMessages([optimisticMessage]),
               })
             },
           })
@@ -1994,7 +2014,7 @@ export function useWorkbenchPaneSession({
         if (!currentRuntimeTask) {
           setInput('')
           let errorScopeKey = inputScopeKey
-          const optimisticMessage = createLocalUserMessage(
+          const optimisticMessage = createRuntimeUserMessage(
             visibleSubmittedInput,
             currentAttachments,
             {
@@ -2003,7 +2023,7 @@ export function useWorkbenchPaneSession({
             }
           )
           const sent = await sendCurrentInput(visibleSubmittedInput, {
-            clientUserMessageId: optimisticMessage.id,
+            optimisticUserMessage: optimisticMessage,
             codeCommentContexts,
             initialGoal: pendingInitialGoal,
             additionalContext: resolvedAdditionalContext,
@@ -2037,19 +2057,12 @@ export function useWorkbenchPaneSession({
               if (pendingInitialGoal && pendingGoalState) {
                 seedRuntimePaneGoal(address, pendingGoalState.goal)
               }
-              const seededMessages = [optimisticMessage]
               debugRuntimePaneMessageFlow('seed-optimistic-open', {
                 address: runtimeAddressDebug(address),
                 previousAddress: context?.previousAddress
                   ? runtimeAddressDebug(context.previousAddress)
                   : null,
-                previousCount: 0,
-                seededCount: seededMessages.length,
-                seededMessages: summarizeWorkbenchMessages(seededMessages),
-              })
-              applyRuntimeConversationAction(address, {
-                type: 'user_added',
-                message: optimisticMessage,
+                seededMessages: summarizeWorkbenchMessages([optimisticMessage]),
               })
             },
           })
@@ -2287,8 +2300,19 @@ export function useWorkbenchPaneSession({
     async (inputOverride?: string, options?: RuntimePaneSendOptions) => {
       const interruptedGuidance = queuedMessages.find(isInterruptedGuidance)
       if (!interruptedGuidance) {
-        await send(inputOverride, options)
-        setQueuedMessagesPaused(false)
+        const queuedMessage = queuedMessages.find(message => message.status === 'queued')
+        const sent = await send(inputOverride, options)
+        if (!sent) return
+        if (!queuedMessage) {
+          setQueuedMessagesPaused(false)
+          return
+        }
+        const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
+        if (lifecycle?.turn.phase === 'streaming' || lifecycle?.turn.outcome !== null) {
+          setQueuedMessagesPaused(false)
+          return
+        }
+        resumePausedQueueAfterTurnRef.current = queuedMessageScopeKey
         return
       }
 
@@ -2301,7 +2325,16 @@ export function useWorkbenchPaneSession({
       setQueuedMessagesPaused(false)
       await sendQueuedMessage(combinedMessage)
     },
-    [input, queuedMessages, send, sendQueuedMessage, setQueuedMessagesPaused]
+    [
+      currentRuntimeTask,
+      input,
+      lifecycleStore,
+      queuedMessageScopeKey,
+      queuedMessages,
+      send,
+      sendQueuedMessage,
+      setQueuedMessagesPaused,
+    ]
   )
 
   const clearQueuedMessages = useCallback(() => {
@@ -2840,32 +2873,6 @@ function isBatchableRuntimePaneMessageAction(action: RuntimePaneMessageAction): 
 
 function isRuntimeDebugEnabled(): boolean {
   return globalThis.localStorage?.getItem('wework:debug-runtime') === '1'
-}
-
-interface CreateLocalUserMessageOptions {
-  id?: string
-  createdAt?: string
-  runtimeGoalRequest?: boolean
-  runtimeGuidance?: boolean
-  codeComments?: CodeCommentContext[]
-}
-
-function createLocalUserMessage(
-  content: string,
-  attachments?: Attachment[],
-  options: CreateLocalUserMessageOptions = {}
-): WorkbenchMessage {
-  return {
-    id: options.id ?? `runtime-local-pane-${Date.now()}`,
-    role: 'user',
-    content,
-    attachments: attachments ? persistAttachmentReferences(attachments) : undefined,
-    status: 'done',
-    createdAt: options.createdAt ?? new Date().toISOString(),
-    runtimeGoalRequest: options.runtimeGoalRequest ? true : undefined,
-    runtimeGuidance: options.runtimeGuidance ? true : undefined,
-    codeComments: options.codeComments?.length ? options.codeComments : undefined,
-  }
 }
 
 function isEditableLastUserMessage(messages: WorkbenchMessage[], targetIndex: number): boolean {

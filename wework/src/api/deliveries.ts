@@ -548,6 +548,7 @@ export interface LoopItemTaskBinding {
   task_title: string | null
   backend_task_id: number | null
   workflow_node_id?: string | null
+  binding_type?: 'system' | 'user'
   linked_at: string
 }
 
@@ -602,8 +603,7 @@ export function isDefaultWorkItemProject(project: CloudProject | null | undefine
 
 export function nextTaskTrackingStatus(
   itemStatus: CloudLoopItem['status'],
-  executionStatus: TaskExecutionStatus,
-  options: { completeOnSuccess?: boolean } = {}
+  executionStatus: TaskExecutionStatus
 ): CloudLoopItem['status'] | null {
   if (executionStatus === 'queued' && itemStatus !== 'pending') {
     return 'pending'
@@ -612,7 +612,7 @@ export function nextTaskTrackingStatus(
     return 'in_progress'
   }
   if (executionStatus === 'succeeded' && itemStatus !== 'completed') {
-    return options.completeOnSuccess ? 'completed' : 'in_review'
+    return 'in_review'
   }
   if (
     (executionStatus === 'failed' || executionStatus === 'cancelled') &&
@@ -1133,9 +1133,7 @@ export function createDeliveryApi(client: HttpClient) {
           const bindings = await api.listTaskBindings(item.id)
           if (bindings.length > 1) return item
         }
-        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus, {
-          completeOnSuccess: isDefaultWorkItemProject(context.project),
-        })
+        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus)
         return nextStatus
           ? api.updateLoopItem(item.id, {
               version: item.version,

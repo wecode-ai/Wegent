@@ -1,5 +1,6 @@
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { removeToken, setToken } from '@/api/auth'
+import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import {
   testLocalModelConnection,
   type TestLocalModelConnectionInput,
@@ -25,6 +26,7 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
 import {
   getRuntimeConversationCacheStats,
   getRuntimeConversationMessages,
@@ -46,7 +48,6 @@ import { getDesktopE2EClipboardText, installDesktopE2EClipboard } from './clipbo
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
-const DESKTOP_CONTROL_RETRY_DELAY_MS = 250
 
 interface DesktopControlResult {
   id: string
@@ -784,8 +785,9 @@ function endDesktopControlPointer(): string {
 }
 
 let activeDesktopControlDrag: {
+  endOptions: MouseEventInit & PointerEventInit
   sourceText: string
-  target: HTMLElement
+  targetSelector: string
 } | null = null
 
 async function startDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
@@ -805,8 +807,9 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
   dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
   await waitForDesktopControlTick()
   activeDesktopControlDrag = {
+    endOptions,
     sourceText: element.textContent?.trim() ?? '',
-    target,
+    targetSelector: command.target,
   }
   return activeDesktopControlDrag.sourceText
 }
@@ -814,9 +817,13 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
 async function endDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
   const activeDrag = activeDesktopControlDrag
   if (!activeDrag) throw new Error('No desktop control drag is active')
-  const target = command.target ? findDesktopControlElements(command.target)[0] : activeDrag.target
-  if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
-  const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
+  const targetSelector = command.target ?? activeDrag.targetSelector
+  const target = findDesktopControlElements(targetSelector)[0]
+  if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
+  const endOptions =
+    targetSelector === activeDrag.targetSelector
+      ? activeDrag.endOptions
+      : { ...desktopControlEventOptions(target), buttons: 1 }
   try {
     dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
     dispatchDesktopControlPointerEvent(target, 'pointermove', endOptions)
@@ -882,10 +889,19 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
     await waitForDesktopControlTick()
   }
 
+  const diagnostics = findDesktopControlElements(command.selector).map(element => ({
+    className: element.className,
+    dataPresentation: element.dataset.presentation ?? null,
+    hidden: element.hidden,
+    ariaHidden: element.getAttribute('aria-hidden'),
+    rendered: desktopControlElementRendered(element),
+    visible: desktopControlElementVisible(element),
+    rect: element.getBoundingClientRect().toJSON(),
+  }))
   throw new Error(
     `Timed out waiting for selector "${command.selector}"${
       command.text ? ` containing "${command.text}"` : ''
-    }`
+    }; matches=${JSON.stringify(diagnostics)}`
   )
 }
 
@@ -1081,6 +1097,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return invoke<string>('capture_workspace_webview')
     case 'captureEmbeddedBrowser':
       return captureEmbeddedBrowserWhenReady(command)
+    case 'verifyEmbeddedBrowserDetachedInspector':
+      return JSON.stringify(
+        await invoke('embedded_browser_verify_detached_inspector_for_e2e', {
+          label: command.value || undefined,
+        })
+      )
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':
@@ -1686,6 +1708,30 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getComposerDiagnosticsSnapshot':
+      return JSON.stringify(getComposerDiagnosticsSnapshot())
+    case 'getComposerFocusSnapshot': {
+      const activeElement = document.activeElement
+      const inputs = findDesktopControlElements('[data-testid="chat-message-input"]').map(input => {
+        const rect = input.getBoundingClientRect()
+        return {
+          active: input === activeElement,
+          contentEditable: input.getAttribute('contenteditable'),
+          height: Math.round(rect.height),
+          width: Math.round(rect.width),
+          visible: desktopControlElementVisible(input),
+        }
+      })
+      return JSON.stringify({
+        activeElement: activeElement
+          ? {
+              tagName: activeElement.tagName.toLowerCase(),
+              testId: activeElement.getAttribute('data-testid'),
+            }
+          : null,
+        inputs,
+      })
+    }
     case 'getActiveElementTestId':
       return document.activeElement?.getAttribute('data-testid') ?? ''
     case 'getLocalExecutorStatus':
@@ -1706,6 +1752,36 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           marketplacePath: input.marketplacePath,
         })
       )
+    }
+    case 'importPluginPackage': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        preview?: LocalPluginImportPreview
+        overwrite?: boolean
+      }
+      if (!input.preview?.valid) {
+        throw new Error('importPluginPackage requires a valid import preview')
+      }
+      const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+      return JSON.stringify(
+        await createLocalCodexPluginApi().importPluginPackage(
+          input.preview,
+          input.overwrite === true
+        )
+      )
+    }
+    case 'deleteLocalPluginPackage': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        pluginId?: string
+        pluginName?: string
+      }
+      if (!input.pluginId || !input.pluginName) {
+        throw new Error('deleteLocalPluginPackage requires pluginId and pluginName')
+      }
+      const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+      const api = createLocalCodexPluginApi()
+      await api.uninstallInstalledPlugin(input.pluginId)
+      await api.deletePersonalPlugin(input.pluginName)
+      return ''
     }
     case 'hover':
       return hoverDesktopControlElement(command.selector)
@@ -1763,6 +1839,21 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
   }
 }
 
+async function postDesktopControlStarted(
+  url: string,
+  command: DesktopControlCommand,
+  clientId: string
+): Promise<void> {
+  const response = await fetch(`${url}/started`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
+    body: JSON.stringify({ id: command.id, clientId }),
+  })
+  if (!response.ok) {
+    throw new Error(`Desktop E2E control start acknowledgement failed with ${response.status}`)
+  }
+}
+
 async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
@@ -1787,7 +1878,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
     try {
       const response = await commandRequest
       if (response.status === 204) {
-        await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
+        await waitForDesktopControlTick()
         commandRequest = pollForCommand()
         continue
       }
@@ -1795,7 +1886,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }
       const command = (await response.json()) as DesktopControlCommand
-      commandRequest = pollForCommand()
+      await postDesktopControlStarted(url, command, clientId)
       try {
         const value = await executeDesktopControlCommand(command)
         await postDesktopControlResult(url, { id: command.id, clientId, ok: true, value })
@@ -1815,9 +1906,10 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
           error: error instanceof Error ? error.message : String(error),
         })
       }
+      commandRequest = pollForCommand()
     } catch (error) {
       console.error('[Wework] Desktop E2E control client failed:', error)
-      await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
+      await waitForDesktopControlTick()
       commandRequest = pollForCommand()
     }
   }

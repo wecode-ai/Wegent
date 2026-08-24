@@ -1,0 +1,112 @@
+name: Bug report / 缺陷报告
+description: Report a reproducible problem in Wegent or Wework / 反馈可复现的问题
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Wegent. Please search existing issues first and provide concrete reproduction evidence.
+
+        感谢帮助改进 Wegent。提交前请先搜索已有 Issue，并尽量提供完整的复现证据。
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checks / 提交前检查
+      options:
+        - label: I searched existing issues and did not find a duplicate. / 我已搜索已有 Issue，未发现重复问题。
+          required: true
+        - label: This is not a security vulnerability. / 这不是安全漏洞。
+          required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component / 影响模块
+      description: Select the primary component where the problem occurs. / 请选择问题主要发生的模块。
+      options:
+        - Wework desktop app
+        - Wegent web frontend
+        - Backend or API
+        - Executor or task runtime
+        - Chat shell
+        - Knowledge base or document conversion
+        - Deployment, installation, or CI
+        - Integrations or MCP
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Problem summary / 问题概述
+      description: Describe what went wrong and the user-visible impact. / 描述问题现象及其对用户的影响。
+      placeholder: A concise description of the problem...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      description: Provide the smallest reliable sequence that reproduces the problem. / 提供能够稳定复现问题的最短步骤。
+      placeholder: |
+        1. Open...
+        2. Configure...
+        3. Click...
+        4. Observe...
+    validations:
+      required: true
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior / 预期与实际行为
+      description: Explain what should have happened and what happened instead. / 说明预期结果与实际结果。
+      placeholder: |
+        Expected:
+
+        Actual:
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit / 版本或提交
+      description: Provide the Wegent/Wework version, image tag, or commit SHA. / 请填写版本号、镜像标签或提交 SHA。
+      placeholder: e.g. Wework 0.2.3, Wegent main@0abc79e
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment / 运行环境
+      description: Include the OS, architecture, browser, deployment mode, and other relevant versions. / 请填写操作系统、架构、浏览器、部署方式及相关依赖版本。
+      placeholder: |
+        - OS and architecture:
+        - Browser (if applicable):
+        - Deployment mode (standalone, Docker Compose, Kubernetes, source):
+        - Docker/Node.js/Python version (if relevant):
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs and supporting evidence / 日志与证据
+      description: Paste relevant logs, stack traces, screenshots, or recordings. Remove credentials and other sensitive data. / 请提供相关日志、堆栈、截图或录屏，并移除凭据等敏感信息。
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Regression / 是否为回归问题
+      description: Did this work in an earlier version? / 该功能是否曾在旧版本中正常工作？
+      options:
+        - "Unknown / 不确定"
+        - "Yes / 是"
+        - "No / 否"
+    validations:
+      required: true

@@ -932,10 +932,12 @@ async function main() {
       await desktopScenario?.prepareCloud?.({
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
+        publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
       })
     } else {
       executorBinary = await buildExecutor()
     }
+    desktopScenario?.setExecutorBinary?.(executorBinary)
     const desktopAppPromise = prebuiltDesktopApp
       ? Promise.resolve(prebuiltDesktopApp)
       : buildDesktopApp(
@@ -1089,6 +1091,7 @@ async function main() {
         WORKBENCH_READY_TIMEOUT_MS,
         'The restarted Wework application did not reconnect to the desktop controller'
       )
+      return app
     }
     desktopScenario?.setRestartDesktopApp?.(restartDesktopApp)
 
@@ -1230,8 +1233,10 @@ last_updated = "2026-07-30T00:00:00Z"`
           app,
           appIdentifier,
           cloudEnvironment,
+          codexHome,
           control,
           desktopScenario,
+          executorLogPath,
           restartDesktopApp,
           setPhase: value => {
             phase = value
@@ -1560,6 +1565,8 @@ last_updated = "2026-07-30T00:00:00Z"`
       if (shouldRunPluginSegment('plugin-lifecycle')) {
         phase = 'plugin-lifecycle'
         await verifyMarketplacePluginLifecycle({
+          blockingNetworkProxy,
+          codexHome,
           control,
           executorHome,
           marketplacePath: marketplacePluginPath,
@@ -3052,8 +3059,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         firstTaskWorkspacePath,
         'The first task did not expose a workspace path for review restoration'
       )
-      const activeWorkspaceTabSelector =
-        '[data-testid^="workspace-tab-select-task-"][aria-selected="true"]'
+      const activeWorkspaceTabSelector = '[data-tab-kind="task"][aria-selected="true"]'
       await control.command('waitFor', activeWorkspaceTabSelector, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -3064,7 +3070,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       const activeWorkspaceTabId = activeWorkspaceTabTestId.replace('workspace-tab-select-', '')
       assert.ok(
-        activeWorkspaceTabId.startsWith('task-'),
+        activeWorkspaceTabId === 'fixed-task' || activeWorkspaceTabId.startsWith('task-'),
         `Expected an active task workspace tab, received ${activeWorkspaceTabTestId}`
       )
       const activeTaskWorkbenchSelector =

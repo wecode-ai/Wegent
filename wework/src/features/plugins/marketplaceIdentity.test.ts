@@ -5,6 +5,7 @@ import {
   isOpenAiOfficialBundledMarketplaceId,
   isOpenAiOfficialMarketplaceId,
   isOpenAiOfficialRemoteMarketplaceId,
+  isWegentCloudMarketplaceId,
 } from './marketplaceIdentity'
 
 describe('marketplaceIdentity', () => {
@@ -39,7 +40,18 @@ describe('marketplaceIdentity', () => {
   test('recognizes the internal wegent marketplace and other built-ins', () => {
     expect(isInternalDeviceMarketplaceId('wegent')).toBe(true)
     expect(isBuiltInMarketplaceId('wegent')).toBe(true)
+    expect(isBuiltInMarketplaceId('wework')).toBe(true)
     expect(isBuiltInMarketplaceId('wework-personal')).toBe(true)
     expect(isBuiltInMarketplaceId('awesome-codex-plugins')).toBe(false)
+  })
+
+  test('treats all Wegent cloud aliases as the same built-in marketplace', () => {
+    for (const id of ['default', 'wework', 'wegent', 'wegent-market', 'wegent-marketplace']) {
+      expect(isWegentCloudMarketplaceId(id)).toBe(true)
+      expect(isBuiltInMarketplaceId(id)).toBe(true)
+    }
+
+    expect(isWegentCloudMarketplaceId('wegent-bundled')).toBe(false)
+    expect(isBuiltInMarketplaceId('wegent-bundled')).toBe(false)
   })
 })

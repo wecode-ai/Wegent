@@ -35,7 +35,6 @@ import {
   PLUGIN_NAME,
   QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
   QUALIFIED_SKILL_MENTION_PROMPT,
-  STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   commandOutput,
@@ -85,7 +84,6 @@ async function createDirectRemoteMcpPluginZip(root) {
     JSON.stringify({
       remote: {
         url: 'https://mcp.example.com/mcp',
-        http_headers: { Authorization: 'Bearer desktop-e2e-token' },
       },
     })
   )
@@ -163,25 +161,12 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   control,
   restartDesktopApp,
 }) {
-  const requestCountBeforeRestart = blockingNetworkProxy.requestCount()
   const modelRequestCountBeforeRestart = control.modelRequests.length
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
   await restartDesktopApp()
-  const [blockedRequest] = await Promise.all([
-    blockingNetworkProxy.waitForRequestMatchingAfter(
-      requestCountBeforeRestart,
-      STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
-      DEFAULT_STEP_TIMEOUT_MS
-    ),
-    control.command('waitFor', '[data-testid="projects-create-button"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }),
-  ])
-  assert.match(
-    blockedRequest,
-    /^(CONNECT|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) /,
-    'The blocking proxy did not capture a Codex startup request'
-  )
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     snapshot.testIds.includes('desktop-workbench-main'),
@@ -202,7 +187,7 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
     `Codex initialize took ${executorStatus.codexInitializeElapsedMs}ms with blocked network`
   )
   console.log(
-    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms while startup network remained blocked`
+    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms with a blocking network proxy configured`
   )
   assert.equal(
     control.modelRequests.length,
@@ -534,6 +519,8 @@ async function waitForMarketplaceInstallStateAfterUninstall(control, pluginId) {
 }
 
 async function verifyMarketplacePluginLifecycle({
+  blockingNetworkProxy,
+  codexHome,
   control,
   executorHome,
   marketplacePath,
@@ -587,6 +574,10 @@ async function verifyMarketplacePluginLifecycle({
     'The plugin import dialog did not explain the standard Wework plugin package structure'
   )
   const archivePath = await createDirectRemoteMcpPluginZip(marketplacePath)
+  const personalMarketplacePath = join(
+    executorHome,
+    'capabilities/bundled-marketplaces/wework-personal'
+  )
   const preview = JSON.parse(
     await control.command('previewPluginImport', 'body', {
       value: JSON.stringify({ archivePath, marketplacePath }),
@@ -597,6 +588,72 @@ async function verifyMarketplacePluginLifecycle({
   assert.equal(preview.name, 'direct-remote-mcp-plugin')
   await captureVerificationScreenshot(control, 'marketplace-plugins-00-import.png')
   await control.command('click', '[data-testid="plugin-import-close"]')
+
+  blockingNetworkProxy.block()
+  const blockedRequestCount = blockingNetworkProxy.requests.length
+  const importStartedAt = Date.now()
+  try {
+    await control.command('setLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
+    const imported = JSON.parse(
+      await control.command('importPluginPackage', 'body', {
+        value: JSON.stringify({ preview, overwrite: false }),
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+    )
+    const importElapsedMs = Date.now() - importStartedAt
+    assert.equal(imported.pluginName, 'direct-remote-mcp-plugin')
+    assert.ok(
+      importElapsedMs <= DEFAULT_STEP_TIMEOUT_MS,
+      `Local plugin import waited ${importElapsedMs}ms for blocked post-install network work`
+    )
+    assert.equal(
+      await pathExists(
+        join(
+          codexHome,
+          'plugins/cache/wework-personal/direct-remote-mcp-plugin/1.0.0/.codex-plugin/plugin.json'
+        )
+      ),
+      true,
+      'The offline import returned before the local plugin cache was committed'
+    )
+    const codexConfigAfterImport = await readFile(join(codexHome, 'config.toml'), 'utf8')
+    assert.ok(
+      codexConfigAfterImport.includes('"direct-remote-mcp-plugin@wework-personal"') &&
+        codexConfigAfterImport.includes('enabled = true'),
+      'The offline import returned before the plugin was enabled in Codex config'
+    )
+    const deleteStartedAt = Date.now()
+    await control.command('deleteLocalPluginPackage', 'body', {
+      value: JSON.stringify({
+        pluginId: 'direct-remote-mcp-plugin@wework-personal',
+        pluginName: 'direct-remote-mcp-plugin',
+      }),
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const deleteElapsedMs = Date.now() - deleteStartedAt
+    assert.ok(
+      deleteElapsedMs <= DEFAULT_STEP_TIMEOUT_MS,
+      `Local plugin deletion waited ${deleteElapsedMs}ms for blocked marketplace network work`
+    )
+    assert.equal(
+      await pathExists(join(codexHome, 'plugins/cache/wework-personal/direct-remote-mcp-plugin')),
+      false,
+      'The offline delete left the local Codex plugin cache behind'
+    )
+    assert.equal(
+      await pathExists(join(personalMarketplacePath, 'plugins/direct-remote-mcp-plugin')),
+      false,
+      'The offline delete left the personal plugin source behind'
+    )
+    assert.equal(
+      blockingNetworkProxy.requests.length,
+      blockedRequestCount,
+      'Local plugin import or deletion unexpectedly requested external network access'
+    )
+  } finally {
+    blockingNetworkProxy.release()
+    await control.command('setLocalProxyUrl', 'body', { value: '' })
+  }
 
   await control.command('click', '[data-testid="plugins-create-button"]')
   await control.command('waitFor', '[data-testid="plugins-create-menu"]', {

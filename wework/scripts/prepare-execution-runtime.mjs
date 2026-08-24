@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { access, cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 import { constants as zlibConstants, createGzip } from 'node:zlib'
@@ -111,17 +112,94 @@ const baseUrl =
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
 const downloadUrl =
   process.env.WEWORK_NODE_RUNTIME_URL?.trim() || `${baseUrl.replace(/\/+$/, '')}/${assetName}`
+const publishedDescriptorUrl = `${baseUrl.replace(/\/+$/, '')}/${assetName.replace(
+  /\.tar\.gz$/,
+  '.json'
+)}`
+
+async function reusePublishedRuntime() {
+  if (
+    process.env.WEWORK_NODE_RUNTIME_SKIP_REMOTE_REUSE === '1' ||
+    process.env.WEWORK_NODE_RUNTIME_URL?.trim()
+  ) {
+    return false
+  }
+  let response
+  try {
+    response = await fetch(publishedDescriptorUrl)
+  } catch {
+    return false
+  }
+  if (response.status === 404) return false
+  if (!response.ok) {
+    throw new Error(`Failed to fetch published Node runtime descriptor: ${response.status}`)
+  }
+  const descriptor = await response.json()
+  if (
+    descriptor.id !== 'node' ||
+    descriptor.version !== process.version.replace(/^v/, '') ||
+    descriptor.fingerprint !== fingerprint ||
+    descriptor.assetName !== assetName ||
+    descriptor.downloadUrl !== downloadUrl ||
+    typeof descriptor.archiveSha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/i.test(descriptor.archiveSha256) ||
+    typeof descriptor.archiveBytes !== 'number' ||
+    descriptor.archiveBytes <= 0
+  ) {
+    throw new Error(`Published Node runtime descriptor is invalid: ${publishedDescriptorUrl}`)
+  }
+
+  await mkdir(assetDirectory, { recursive: true })
+  let validAsset = false
+  try {
+    validAsset =
+      (await stat(assetPath)).size === descriptor.archiveBytes &&
+      (await sha256(assetPath)) === descriptor.archiveSha256
+  } catch {
+    // Download the published immutable asset below.
+  }
+  if (!validAsset) {
+    const assetResponse = await fetch(downloadUrl)
+    if (!assetResponse.ok || !assetResponse.body) {
+      throw new Error(`Failed to fetch published Node runtime asset: ${assetResponse.status}`)
+    }
+    await rm(temporaryArchive, { force: true })
+    await pipeline(Readable.fromWeb(assetResponse.body), createWriteStream(temporaryArchive))
+    if (
+      (await stat(temporaryArchive)).size !== descriptor.archiveBytes ||
+      (await sha256(temporaryArchive)) !== descriptor.archiveSha256
+    ) {
+      throw new Error('Published Node runtime asset failed integrity verification')
+    }
+    await rm(assetPath, { force: true })
+    await rename(temporaryArchive, assetPath)
+  }
+  await mkdir(resourceDirectory, { recursive: true })
+  await writeFile(descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`)
+  console.log(`Reused published Node execution runtime: ${assetName}`)
+  if (materializeRequested) await materialize(assetPath, fingerprint)
+  return true
+}
 
 try {
   const current = JSON.parse(await readFile(descriptorPath, 'utf8'))
-  await access(assetPath)
-  if (current.fingerprint === fingerprint && current.downloadUrl === downloadUrl) {
+  if (
+    current.fingerprint === fingerprint &&
+    current.downloadUrl === downloadUrl &&
+    current.assetName === assetName &&
+    (await stat(assetPath)).size === current.archiveBytes &&
+    (await sha256(assetPath)) === current.archiveSha256
+  ) {
     console.log('Node execution runtime is up to date')
     if (materializeRequested) await materialize(assetPath, fingerprint)
     process.exit(0)
   }
 } catch {
   // Prepare or repair the runtime below.
+}
+
+if (await reusePublishedRuntime()) {
+  process.exit(0)
 }
 
 try {
