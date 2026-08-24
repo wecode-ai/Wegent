@@ -42,6 +42,8 @@ tokio = { version = "1", features = ["time"] }
 reqwest = { version = "0.13", features = ["blocking", "multipart"] }
 sentry = { version = "0.49.0", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
 base64 = "0.22"
+cap-fs-ext = "4.0.3"
+cap-std = "4.0.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 encoding_rs = "0.8"
 getrandom = "0.2"

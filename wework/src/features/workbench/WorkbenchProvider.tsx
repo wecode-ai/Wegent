@@ -747,9 +747,11 @@ export function WorkbenchProvider({
         currentRuntimeTask: null,
         standaloneChatKey: nextStandaloneChatKey,
       })
-      const project = state.currentProject
-        ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
-        : null
+      const project =
+        trial.targetProject ??
+        (state.currentProject
+          ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
+          : null)
 
       if (project) {
         writeLastProjectId(user.id, project.id)
