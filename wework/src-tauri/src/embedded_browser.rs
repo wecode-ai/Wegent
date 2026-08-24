@@ -819,7 +819,28 @@ fn relabel_tab_routes(
 }
 
 fn should_disable_web_security(label: &str) -> bool {
+    is_harness_app_browser_label(label)
+}
+
+pub(crate) fn is_harness_app_browser_label(label: &str) -> bool {
     label.starts_with(HARNESS_APP_BROWSER_LABEL_PREFIX)
+}
+
+/// Map a Tauri webview label (e.g. `embedded-browser-native-1`) back to the
+/// logical embedded browser label (e.g. `app-harness-...` / `workspace-browser`).
+#[cfg(target_os = "macos")]
+pub(crate) fn logical_label_for_native_label(
+    state: &EmbeddedBrowserState,
+    native_label: &str,
+) -> Result<Option<String>, String> {
+    Ok(state
+        .webviews
+        .lock()
+        .map_err(|_| "Embedded browser state lock poisoned".to_string())?
+        .iter()
+        .find_map(|(logical_label, entry)| {
+            (entry.native_label == native_label).then(|| logical_label.clone())
+        }))
 }
 
 fn browser_data_directory(
