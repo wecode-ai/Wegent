@@ -7,15 +7,10 @@ import { WorkspaceTabStrip } from './WorkspaceTabStrip'
 import { createWorkspaceTab, workspaceTabsStorageKey, type WorkspaceTabKind } from './workspaceTabs'
 
 const openWorkspaceTabWindow = vi.fn().mockResolvedValue(true)
-const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 const listHarnessApps = vi.hoisted(() => vi.fn().mockResolvedValue([]))
 
 vi.mock('./workspaceWindow', () => ({
   openWorkspaceTabWindow: (tab: unknown) => openWorkspaceTabWindow(tab),
-}))
-
-vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
-  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
 
 vi.mock('@/api/local/harnessApps', () => ({
@@ -70,7 +65,6 @@ describe('WorkspaceTabStrip', () => {
   beforeEach(() => {
     localStorage.clear()
     openWorkspaceTabWindow.mockClear()
-    experimentalFeatures.enabled = true
     listHarnessApps.mockReset()
     listHarnessApps.mockResolvedValue([])
     window.history.replaceState({}, '', '/')
@@ -186,14 +180,16 @@ describe('WorkspaceTabStrip', () => {
     expect(screen.getByRole('tab', { name: '研究工作台' })).toHaveAttribute('aria-selected', 'true')
   })
 
-  test('hides Smart apps from the top tab add menu while experiments are disabled', async () => {
-    experimentalFeatures.enabled = false
+  test('keeps Smart apps in the top tab add menu with its experimental badge', async () => {
     const user = userEvent.setup()
     renderStrip()
 
     await user.click(screen.getByTestId('workspace-tab-add'))
 
-    expect(screen.queryByTestId('workspace-tab-add-smart-app')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tab-add-smart-app')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tab-add-smart-app-experimental-badge')).toHaveTextContent(
+      '实验性'
+    )
   })
 
   test('opens an allowed fallback tab in a board-only window when board is unavailable', async () => {

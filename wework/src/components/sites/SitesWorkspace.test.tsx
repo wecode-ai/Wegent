@@ -17,7 +17,7 @@ vi.mock('@/lib/external-links', () => ({
 }))
 
 afterEach(() => {
-  window.history.replaceState({}, '', '/sites')
+  window.history.replaceState({}, '', '/sites?app_type=web')
 })
 
 const unpublishedSite: Site = {
@@ -115,7 +115,7 @@ function createApi(items: SiteListItem[] = [unpublishedSite]): SitesApi {
 describe('SitesWorkspace', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    window.history.replaceState({}, '', '/sites')
+    window.history.replaceState({}, '', '/sites?app_type=web')
   })
 
   test('shows an unavailable product state when Backend reports Sites is not configured', async () => {
@@ -323,7 +323,6 @@ describe('SitesWorkspace', () => {
       <SitesWorkspace
         api={api}
         onCreate={vi.fn()}
-        smartAppsEnabled
         smartAppsContent={<div data-testid="smart-apps-content">智能工作台市场</div>}
       />
     )
@@ -350,28 +349,29 @@ describe('SitesWorkspace', () => {
     expect(window.location.search).toBe('?app_type=smart_app')
   })
 
-  test('selects Smart apps for the default Applications path without changing the path', async () => {
+  test('shows Smart apps on the default Applications path without changing the default selection', async () => {
+    window.history.replaceState({}, '', '/sites')
     const api = createApi()
 
     render(
       <SitesWorkspace
         api={api}
         onCreate={vi.fn()}
-        smartAppsEnabled
         smartAppsContent={<div data-testid="smart-apps-content">智能工作台市场</div>}
       />
     )
 
-    expect(await screen.findByTestId('smart-apps-content')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '智能工作台市场' })).toBeInTheDocument()
-    expect(screen.getByText('发现官方工作台，以及成员定向分享给你的工作台。')).toBeInTheDocument()
+    expect(await screen.findByText('产品发布页')).toBeInTheDocument()
     expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
       'aria-selected',
-      'true'
+      'false'
+    )
+    expect(screen.getByTestId('applications-smart-app-experimental-badge')).toHaveTextContent(
+      '实验性'
     )
     expect(window.location.pathname).toBe('/sites')
     expect(window.location.search).toBe('')
-    expect(api.listSites).not.toHaveBeenCalled()
+    expect(api.listSites).toHaveBeenCalled()
   })
 
   test('opens a requested Smart apps view without loading the Sites collection', async () => {
@@ -382,7 +382,6 @@ describe('SitesWorkspace', () => {
       <SitesWorkspace
         api={api}
         onCreate={vi.fn()}
-        smartAppsEnabled
         smartAppsContent={<div data-testid="smart-apps-content">智能工作台市场</div>}
       />
     )
@@ -398,7 +397,6 @@ describe('SitesWorkspace', () => {
       <SitesWorkspace
         api={createApi()}
         onCreate={vi.fn()}
-        smartAppsEnabled
         smartAppsMode="owned"
         smartAppsContent={<div data-testid="smart-apps-content">我的内容</div>}
       />
@@ -466,7 +464,7 @@ describe('SitesWorkspace', () => {
 
     await waitFor(() => {
       const tabs = screen.getAllByRole('tab')
-      expect(tabs.map(tab => tab.textContent)).toEqual(['小程序', '站点'])
+      expect(tabs.map(tab => tab.textContent)).toEqual(['智能工作台实验性', '小程序', '站点'])
     })
     expect(screen.queryByTestId('site-publish-site-1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('site-more-site-1')).not.toBeInTheDocument()

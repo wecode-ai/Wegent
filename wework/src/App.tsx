@@ -207,7 +207,6 @@ interface WorkspaceTabSurfaceProps {
   active: boolean
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
-  smartAppsEnabled?: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   services: WorkbenchServices
@@ -219,7 +218,6 @@ export function WorkspaceTabSurface({
   active,
   cloudWebUrl,
   lifecycleStore,
-  smartAppsEnabled = false,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
   services,
@@ -307,7 +305,7 @@ export function WorkspaceTabSurface({
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
-              {harnessAppInstallationId && smartAppsEnabled ? (
+              {harnessAppInstallationId ? (
                 <HarnessAppAutoLauncher installationId={harnessAppInstallationId} />
               ) : null}
               {onOpenWeworkForAppshot && active && !iframe ? (
@@ -500,7 +498,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
             key={tab.id}
             active={tab.id === workspaceTabs.activeTabId}
             lifecycleStore={lifecycleStore}
-            smartAppsEnabled={experimentalFeatures.enabled}
             services={services}
             cloudWebUrl={
               cloudConnection.webUrl
@@ -614,10 +611,7 @@ function AppShell() {
       isMainWindow && appPreferences?.loaded
         ? appPreferences.preferences.fixedWorkspaceTabs.flatMap(preference => {
             if (preference.kind === 'smart_app') {
-              if (
-                !appPreferences.preferences.experimentalFeaturesEnabled ||
-                !preference.installationId
-              ) {
+              if (!preference.installationId) {
                 return []
               }
               return [
