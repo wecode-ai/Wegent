@@ -4,7 +4,7 @@ import { getGitHostingCliStatus } from './gitHostingCli'
 const ensureLocalExecutorStarted = vi.hoisted(() => vi.fn())
 const requestLocalExecutor = vi.hoisted(() => vi.fn())
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted,
   requestLocalExecutor,
 }))

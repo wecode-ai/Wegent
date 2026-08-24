@@ -540,7 +540,6 @@ impl RuntimeWorkRpcHandler {
                     fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
                     fork_thread_path: side_source.and_then(|source| source.thread_path),
                     resume_thread_id: None,
-                    initial_thread_name: Some(title.clone()),
                     initial_thread_goal,
                 })
                 .await
@@ -893,7 +892,6 @@ impl RuntimeWorkRpcHandler {
             fork_thread_id: None,
             fork_thread_path: None,
             resume_thread_id,
-            initial_thread_name: None,
             initial_thread_goal,
         })
         .await?;
@@ -1137,7 +1135,6 @@ impl RuntimeWorkRpcHandler {
             fork_thread_id: None,
             fork_thread_path: None,
             resume_thread_id: Some(thread_id),
-            initial_thread_name: None,
             initial_thread_goal: None,
         })
         .await?;

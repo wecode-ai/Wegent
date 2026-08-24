@@ -199,6 +199,10 @@ async fn runtime_task_forwards_all_local_project_roots_to_codex() {
         .find(|call| call["method"] == "thread/start")
         .expect("thread/start should be recorded");
     assert_eq!(thread_start["params"]["historyMode"], "paginated");
+    assert!(
+        calls.iter().all(|call| call["method"] != "thread/name/set"),
+        "new paginated threads must not use the unsupported legacy name mutation"
+    );
 
     let listed = handler
         .handle_runtime_rpc(json!({

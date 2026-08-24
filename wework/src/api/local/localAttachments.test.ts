@@ -1,24 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createLocalAttachmentApi } from './localAttachments'
 
-const tauriMocks = vi.hoisted(() => ({
-  invoke: vi.fn(),
-}))
 const desktopMocks = vi.hoisted(() => ({
   invoke: vi.fn(),
-}))
-const runtimeMocks = vi.hoisted(() => ({
-  electron: false,
-  tauri: true,
-}))
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: tauriMocks.invoke,
-}))
-
-vi.mock('@/lib/runtime-environment', () => ({
-  isElectronRuntime: () => runtimeMocks.electron,
-  isTauriRuntime: () => runtimeMocks.tauri,
 }))
 
 vi.mock('@/api/dsh/desktopHost', () => ({
@@ -27,16 +11,14 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 
 describe('local attachment API', () => {
   beforeEach(() => {
-    tauriMocks.invoke.mockReset()
     desktopMocks.invoke.mockReset()
-    runtimeMocks.electron = false
-    runtimeMocks.tauri = true
   })
 
   test('stores uploaded files under executor home instead of the active project workspace', async () => {
-    tauriMocks.invoke.mockResolvedValue(
-      '/Users/me/.wework/workspace/attachments/draft/123/photo.png'
-    )
+    desktopMocks.invoke
+      .mockResolvedValueOnce({ uploadId: 'upload-1', chunkSize: 4 })
+      .mockResolvedValueOnce(3)
+      .mockResolvedValueOnce('/Users/me/.wework/workspace/attachments/draft/123/photo.png')
     const file = new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' })
     const progress = vi.fn()
 
@@ -51,10 +33,12 @@ describe('local attachment API', () => {
       workspacePath: '/Users/me/project',
     })
 
-    expect(tauriMocks.invoke).toHaveBeenCalledWith('save_local_attachment_file', {
-      workspacePath: null,
+    expect(desktopMocks.invoke).toHaveBeenNthCalledWith(1, 'attachment.begin', {
       filename: 'photo.png',
-      bytes: [1, 2, 3],
+      size: 3,
+    })
+    expect(desktopMocks.invoke).toHaveBeenNthCalledWith(3, 'attachment.finish', {
+      uploadId: 'upload-1',
     })
     expect(progress).toHaveBeenNthCalledWith(1, 0)
     expect(progress).toHaveBeenNthCalledWith(2, 100)
@@ -64,8 +48,6 @@ describe('local attachment API', () => {
   })
 
   test('streams uploaded files to Electron in bounded chunks', async () => {
-    runtimeMocks.electron = true
-    runtimeMocks.tauri = false
     desktopMocks.invoke.mockImplementation((capability: string) => {
       if (capability === 'attachment.begin') {
         return Promise.resolve({ uploadId: 'upload-1', chunkSize: 2 })
@@ -114,12 +96,9 @@ describe('local attachment API', () => {
     expect(attachment.local_path).toBe(
       '/Users/me/.wework/workspace/attachments/draft/456/photo.png'
     )
-    expect(tauriMocks.invoke).not.toHaveBeenCalled()
   })
 
   test('aborts an Electron upload after a chunk failure', async () => {
-    runtimeMocks.electron = true
-    runtimeMocks.tauri = false
     desktopMocks.invoke
       .mockResolvedValueOnce({ uploadId: 'upload-1', chunkSize: 2 })
       .mockRejectedValueOnce(new Error('disk full'))

@@ -1,7 +1,7 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { isElectronRuntime, isTauriRuntime } from './runtime-environment'
+import { isElectronRuntime } from './runtime-environment'
 import { requestEmbeddedBrowserOpen } from './embedded-browser'
-import { getAppPreferences, type BrowserLinkTarget } from '@/tauri/appPreferences'
+import { getAppPreferences, type BrowserLinkTarget } from '@/desktop/appPreferences'
 
 interface OpenExternalUrlOptions {
   target?: BrowserLinkTarget
@@ -40,12 +40,7 @@ async function preferredLinkTarget(value: string): Promise<BrowserLinkTarget> {
 }
 
 async function openWithSystemBrowser(value: string): Promise<void> {
-  if (isElectronRuntime()) {
-    await invokeDesktopHost<void>('shell.openExternal', { url: value })
-    return
-  }
-  const { openUrl } = await import('@tauri-apps/plugin-opener')
-  await openUrl(value)
+  await invokeDesktopHost<void>('shell.openExternal', { url: value })
 }
 
 export async function openExternalUrl(
@@ -56,7 +51,7 @@ export async function openExternalUrl(
     return false
   }
 
-  if (isTauriRuntime() || isElectronRuntime()) {
+  if (isElectronRuntime()) {
     const target = options.target ?? (await preferredLinkTarget(value))
     if (target === 'wework' && requestEmbeddedBrowserOpen(value)) {
       return true

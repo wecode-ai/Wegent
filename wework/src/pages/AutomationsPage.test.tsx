@@ -64,7 +64,7 @@ vi.mock('@/hooks/useIsMobile', () => ({
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: () => false,
+  isElectronRuntime: () => false,
 }))
 
 vi.mock('@/components/layout/useDesktopSidebarCollapsed', () => ({

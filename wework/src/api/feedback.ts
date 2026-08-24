@@ -1,5 +1,3 @@
-import { invoke } from '@tauri-apps/api/core'
-
 export interface FeedbackSubmitResult {
   report_id: string
   project_id: string
@@ -17,16 +15,9 @@ export interface FeedbackSubmitInput {
 export function createFeedbackApi(feedbackUrl: string) {
   return {
     async submit(input: FeedbackSubmitInput): Promise<FeedbackSubmitResult> {
-      const apiUrl = new URL(feedbackUrl, window.location.origin).toString()
-      return invoke<FeedbackSubmitResult>('submit_feedback_bundle', {
-        request: {
-          apiUrl,
-          stagingId: input.stagingId,
-          title: input.title,
-          description: input.description,
-          context: input.context,
-        },
-      })
+      void feedbackUrl
+      void input
+      throw new Error('Feedback bundle submission is not available in the Electron desktop host')
     },
   }
 }

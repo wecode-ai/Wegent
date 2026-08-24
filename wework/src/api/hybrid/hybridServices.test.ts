@@ -31,9 +31,7 @@ const mocks = vi.hoisted(() => {
   const cloudRuntimeIpcSubscribe = vi.fn(async () => vi.fn())
   const localChatStreamSubscribe = vi.fn(() => vi.fn())
   const cloudRuntimeChatStreamSubscribe = vi.fn(() => vi.fn())
-  const invoke = vi.fn()
   const readElectronLocalFile = vi.fn()
-  let electronRuntime = false
   const localUploadAttachment = vi.fn()
   const localDeleteAttachment = vi.fn()
   const cloudUploadAttachment = vi.fn()
@@ -181,14 +179,7 @@ const mocks = vi.hoisted(() => {
     cloudRuntimeIpcSubscribe,
     localChatStreamSubscribe,
     cloudRuntimeChatStreamSubscribe,
-    invoke,
     readElectronLocalFile,
-    get electronRuntime() {
-      return electronRuntime
-    },
-    set electronRuntime(value: boolean) {
-      electronRuntime = value
-    },
     localUploadAttachment,
     localDeleteAttachment,
     cloudUploadAttachment,
@@ -311,14 +302,6 @@ vi.mock('@/api/local/localServices', () => ({
 
 vi.mock('@/lib/electron-local-file', () => ({
   readElectronLocalFile: mocks.readElectronLocalFile,
-}))
-
-vi.mock('@/lib/runtime-environment', () => ({
-  isElectronRuntime: () => mocks.electronRuntime,
-}))
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: mocks.invoke,
 }))
 
 vi.mock('@/api/backend/backendServices', () => ({
@@ -542,9 +525,8 @@ describe('createHybridWorkbenchServices', () => {
         { kind: 'process', label: 'Process', command: 'wegent-executor' },
       ],
     })
-    mocks.invoke.mockResolvedValue([])
     mocks.readElectronLocalFile.mockReset()
-    mocks.electronRuntime = false
+    mocks.readElectronLocalFile.mockResolvedValue(Uint8Array.from([1, 2, 3, 4]))
     mocks.cloudUploadAttachment.mockResolvedValue({
       id: 42,
       filename: 'screenshot.png',
@@ -556,40 +538,7 @@ describe('createHybridWorkbenchServices', () => {
     })
   })
 
-  it('uploads a local attachment to the connected cloud backend on demand', async () => {
-    mocks.invoke.mockResolvedValue([
-      {
-        name: 'screenshot.png',
-        bytes: [1, 2, 3, 4],
-      },
-    ])
-    const services = createServices()
-
-    const uploaded = await services.attachmentApi?.uploadLocalAttachmentToCloud?.({
-      id: -1,
-      filename: 'screenshot.png',
-      file_size: 4,
-      mime_type: 'image/png',
-      status: 'ready',
-      file_extension: '.png',
-      created_at: '2026-08-11T00:00:00.000Z',
-      local_path: '/Users/me/.wework/workspace/attachments/draft/screenshot.png',
-    })
-
-    expect(mocks.invoke).toHaveBeenCalledWith('read_dropped_files', {
-      paths: ['/Users/me/.wework/workspace/attachments/draft/screenshot.png'],
-    })
-    expect(mocks.cloudUploadAttachment).toHaveBeenCalledWith(expect.any(File))
-    const file = mocks.cloudUploadAttachment.mock.calls[0][0] as File
-    expect(file.name).toBe('screenshot.png')
-    expect(file.type).toBe('image/png')
-    expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual([1, 2, 3, 4])
-    expect(uploaded?.id).toBe(42)
-  })
-
   it('reads a local attachment through the Electron host before uploading it to cloud', async () => {
-    mocks.electronRuntime = true
-    mocks.readElectronLocalFile.mockResolvedValue(Uint8Array.from([1, 2, 3, 4]))
     const services = createServices()
 
     const uploaded = await services.attachmentApi?.uploadLocalAttachmentToCloud?.({
@@ -606,7 +555,6 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.readElectronLocalFile).toHaveBeenCalledWith(
       '/Users/me/.wework/workspace/attachments/draft/screenshot.png'
     )
-    expect(mocks.invoke).not.toHaveBeenCalled()
     const file = mocks.cloudUploadAttachment.mock.calls[0][0] as File
     expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual([1, 2, 3, 4])
     expect(uploaded?.id).toBe(42)

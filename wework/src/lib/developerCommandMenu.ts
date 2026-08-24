@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core'
-import { requestLocalExecutor } from '@/tauri/localExecutor'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { requestLocalExecutor } from '@/desktop/localExecutor'
 import {
   isRuntimeChatStreamDebugEnabled,
   setRuntimeChatStreamDebugEnabled,
@@ -14,15 +14,15 @@ import {
   isPerformanceDiagnosticsShortcut,
   setPerformanceDiagnosticsEnabled,
 } from './performanceDiagnostics'
-import { isTauriRuntime } from './runtime-environment'
+import { isElectronRuntime } from './runtime-environment'
 import { setEmbeddedBrowserOcclusion } from './embedded-browser'
 import { APP_UPDATE_SIMULATE_EVENT } from '@/features/app-update/app-update-context'
 
 const MENU_ID = 'wework-developer-command-menu'
 const DEBUG_PANEL_ID = 'wework-debug-panel'
 const DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
-const INSPECTOR_COMMAND = 'open_main_webview_devtools'
-const OPEN_LOG_DIRECTORY_COMMAND = 'open_app_log_directory'
+const INSPECTOR_COMMAND = 'developer.openDevTools'
+const OPEN_LOG_DIRECTORY_COMMAND = 'developer.openLogDirectory'
 const CODEX_STREAM_DEBUG_GET_METHOD = 'runtime.codex.stream_debug.get'
 const CODEX_STREAM_DEBUG_SET_METHOD = 'runtime.codex.stream_debug.set'
 const DEVELOPER_COMMAND_MENU_OCCLUSION_ID = 'developer-command-menu'
@@ -205,13 +205,13 @@ function getDeveloperCommands(): DeveloperCommand[] {
     {
       id: 'open-log-directory',
       label: 'Open Log Directory',
-      description: 'Open the folder that contains Tauri and frontend logs.',
+      description: 'Open the folder that contains Electron and frontend logs.',
       run: async () => {
-        if (!isTauriRuntime()) {
-          console.warn('[Wework dev] Log directory is only available in the Tauri app.')
+        if (!isElectronRuntime()) {
+          console.warn('[Wework dev] Log directory is only available in the Electron app.')
           return
         }
-        await invoke(OPEN_LOG_DIRECTORY_COMMAND).catch(error => {
+        await invokeDesktopHost(OPEN_LOG_DIRECTORY_COMMAND).catch(error => {
           console.error('[Wework dev] Failed to open log directory', error)
         })
       },
@@ -221,11 +221,11 @@ function getDeveloperCommands(): DeveloperCommand[] {
       label: 'Open Web Inspector',
       description: 'Capture JavaScript heap snapshots and allocation profiles.',
       run: async () => {
-        if (!isTauriRuntime()) {
-          console.warn('[Wework dev] Web Inspector is only available in the Tauri app.')
+        if (!isElectronRuntime()) {
+          console.warn('[Wework dev] Web Inspector is only available in the Electron app.')
           return
         }
-        await invoke(INSPECTOR_COMMAND).catch(error => {
+        await invokeDesktopHost(INSPECTOR_COMMAND).catch(error => {
           console.error('[Wework dev] Failed to open Web Inspector', error)
         })
       },
@@ -234,7 +234,7 @@ function getDeveloperCommands(): DeveloperCommand[] {
 }
 
 async function refreshCodexStreamDebugStatus(onLoaded?: () => void) {
-  if (!isTauriRuntime()) return
+  if (!isElectronRuntime()) return
   if (!codexStreamDebugLoad) {
     codexStreamDebugLoad = requestLocalExecutor<CodexStreamDebugState>(
       CODEX_STREAM_DEBUG_GET_METHOD
@@ -255,7 +255,7 @@ async function refreshCodexStreamDebugStatus(onLoaded?: () => void) {
 }
 
 async function toggleCodexStreamDebug() {
-  if (!isTauriRuntime()) {
+  if (!isElectronRuntime()) {
     setRuntimeChatStreamDebugEnabled(!isRuntimeChatStreamDebugEnabled())
     console.info(
       `[Wework dev] Frontend stream logs ${isRuntimeChatStreamDebugEnabled() ? 'enabled' : 'disabled'}.`

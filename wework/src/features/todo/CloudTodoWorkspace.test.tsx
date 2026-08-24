@@ -2,6 +2,14 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
+
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
+    if (capability === 'preferences.get') return {}
+    if (capability === 'preferences.update') return params.patch ?? {}
+    return {}
+  }),
+}))
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   applyRuntimeConversationAction,
@@ -1961,7 +1969,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getAllByText('Wegent V4')[0])
     const projectHeader = screen.getByTestId('cloud-project-header')
     expect(projectHeader).toHaveClass('h-[52px]', 'shrink-0')
-    expect(projectHeader.querySelector('[data-tauri-drag-region]')).toBeInTheDocument()
+    expect(projectHeader.querySelector('.electron-titlebar-drag-region')).toBeInTheDocument()
     expect(screen.getAllByTestId('macos-titlebar-drag-region')).toHaveLength(1)
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
 
@@ -3979,7 +3987,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(screen.getByRole('button', { name: '文件' }))
     expect(
-      screen.getByTestId('cloud-project-header').querySelector('[data-tauri-drag-region]')
+      screen.getByTestId('cloud-project-header').querySelector('.electron-titlebar-drag-region')
     ).toBeInTheDocument()
     await userEvent.click(await screen.findByTestId('cloud-folder-add'))
     await userEvent.type(screen.getByTestId('cloud-folder-name'), 'docs')

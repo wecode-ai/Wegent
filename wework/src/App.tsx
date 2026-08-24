@@ -46,7 +46,6 @@ import {
   getDesktopWindowLabel,
   isDesktopRuntime,
   isElectronRuntime,
-  isTauriRuntime,
 } from '@/lib/runtime-environment'
 import { CoreDshExtensionRuntime } from '@/features/dsh-plugins/CoreDshExtensionRuntime'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
@@ -101,7 +100,6 @@ import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
 import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useTranslation } from '@/hooks/useTranslation'
 import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -121,24 +119,7 @@ const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
 
 function isPopoutWindowRuntime() {
-  if (isElectronRuntime()) return getDesktopWindowLabel() === POPOUT_WINDOW_LABEL
-  if (!isTauriRuntime()) return false
-  try {
-    return getCurrentWindow().label === POPOUT_WINDOW_LABEL
-  } catch {
-    return false
-  }
-}
-
-function hasTauriIpc() {
-  const internals = (
-    window as typeof window & {
-      __TAURI_INTERNALS__?: { invoke?: unknown; transformCallback?: unknown }
-    }
-  ).__TAURI_INTERNALS__
-  return (
-    typeof internals?.invoke === 'function' && typeof internals.transformCallback === 'function'
-  )
+  return isElectronRuntime() && getDesktopWindowLabel() === POPOUT_WINDOW_LABEL
 }
 
 function buildCloudAppUrl(url: string, token: string | null): string {
@@ -435,7 +416,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   )
 
   useEffect(() => {
-    if (!isTauriRuntime()) return
+    if (!isElectronRuntime()) return
     let disposed = false
     let unlisten: (() => void) | null = null
     void listenHarnessAppLaunchProgress(progress => {
@@ -504,7 +485,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           user={user}
           onStartupReadyChange={onWorkbenchStartupReadyChange}
         >
-          {(hasTauriIpc() || isElectronRuntime()) && <SystemDragBridge />}
+          {isElectronRuntime() && <SystemDragBridge />}
           <PopoutWorkbenchPage />
         </WorkbenchProvider>
       </>
@@ -604,29 +585,19 @@ function AppShell() {
     token: cloudConnection.token,
   }
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
-  const isTauri = isTauriRuntime()
   const isElectron = isElectronRuntime()
-  const isDesktop = isTauri || isElectron
+  const isDesktop = isDesktopRuntime()
   const isPopoutWindow = isPopoutWindowRuntime()
-  const currentWindowLabel = isTauri
-    ? getCurrentWindow().label
-    : isElectron
-      ? getDesktopWindowLabel()
-      : null
+  const currentWindowLabel = isElectron ? getDesktopWindowLabel() : null
   const isMainWindow = currentWindowLabel === 'main'
   const isWorkspaceWindow = currentWindowLabel?.startsWith('workspace-') === true
   const cloudApiBaseUrl = cloudConnection.apiBaseUrl
   const cloudToken = cloudConnection.token
   const titlebarOverlaysContent = false
-  const showChromeTitlebar = (isTauri || isElectron) && !isPopoutWindow
+  const showChromeTitlebar = (isDesktop || isElectron) && !isPopoutWindow
   const workspaceTabStorageScope = useMemo(
-    () =>
-      isTauri
-        ? getCurrentWindow().label
-        : isElectron
-          ? (currentWindowLabel ?? 'main')
-          : browserWorkspaceTabStorageScope(),
-    [currentWindowLabel, isElectron, isTauri]
+    () => (isElectron ? (currentWindowLabel ?? 'main') : browserWorkspaceTabStorageScope()),
+    [currentWindowLabel, isElectron]
   )
   const workspaceTabLabels = useMemo(
     () => ({
@@ -693,7 +664,7 @@ function AppShell() {
     ).updateImNotificationPresence
   }, [cloudApiBaseUrl, cloudToken])
   useAwayImNotificationPresence({
-    enabled: isMainWindow && hasTauriIpc() && cloudConnection.isConnected,
+    enabled: isMainWindow && isElectron && cloudConnection.isConnected,
     updatePresence: updateImNotificationPresence,
   })
   const openWeworkForAppshot = useCallback(() => {
@@ -928,7 +899,7 @@ function AppShell() {
         >
           <AppRoutes
             onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
-            onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}
+            onOpenWeworkForAppshot={isDesktop ? openWeworkForAppshot : undefined}
           />
         </div>
         {!isPopoutWindow && <WeworkDevInstanceBadge />}

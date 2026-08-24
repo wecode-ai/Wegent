@@ -1,9 +1,9 @@
 export function shouldUseMobileWorkbenchLayout({
   isMobileViewport,
-  isTauri,
+  isDesktop,
 }: {
   isMobileViewport: boolean
-  isTauri: boolean
+  isDesktop: boolean
 }): boolean {
-  return isMobileViewport && !isTauri
+  return isMobileViewport && !isDesktop
 }

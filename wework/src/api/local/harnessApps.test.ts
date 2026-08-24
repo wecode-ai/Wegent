@@ -3,24 +3,10 @@ import { harnessAppsApi, type HarnessAppExport } from './harnessApps'
 
 const mocks = vi.hoisted(() => ({
   desktopInvoke: vi.fn(),
-  electron: false,
-  invoke: vi.fn(),
-}))
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => mocks.invoke(...args),
-}))
-
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(),
 }))
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: (...args: unknown[]) => mocks.desktopInvoke(...args),
-}))
-
-vi.mock('@/lib/runtime-environment', () => ({
-  isElectronRuntime: () => mocks.electron,
 }))
 
 const exported: HarnessAppExport = {
@@ -44,30 +30,9 @@ const exported: HarnessAppExport = {
 describe('harnessAppsApi', () => {
   beforeEach(() => {
     mocks.desktopInvoke.mockReset()
-    mocks.electron = false
-    mocks.invoke.mockReset()
   })
 
   test('exports an installation and copies the archive to Downloads', async () => {
-    mocks.invoke
-      .mockResolvedValueOnce(exported)
-      .mockResolvedValueOnce('/Users/test/Downloads/research-desk-1.2.0.zip')
-
-    await expect(harnessAppsApi.exportToDownloads('research-desk')).resolves.toEqual({
-      ...exported,
-      destinationPath: '/Users/test/Downloads/research-desk-1.2.0.zip',
-    })
-    expect(mocks.invoke).toHaveBeenNthCalledWith(1, 'export_harness_app_package', {
-      installationId: 'research-desk',
-    })
-    expect(mocks.invoke).toHaveBeenNthCalledWith(2, 'download_local_file_to_downloads', {
-      sourcePath: exported.archivePath,
-      filename: 'research-desk-1.2.0.zip',
-    })
-  })
-
-  test('exports directly to Downloads through the Electron host', async () => {
-    mocks.electron = true
     const saved = {
       ...exported,
       destinationPath: '/Users/test/Downloads/research-desk-1.2.0.zip',
@@ -78,6 +43,5 @@ describe('harnessAppsApi', () => {
     expect(mocks.desktopInvoke).toHaveBeenCalledWith('smartApps.exportToDownloads', {
       installationId: 'research-desk',
     })
-    expect(mocks.invoke).not.toHaveBeenCalled()
   })
 })

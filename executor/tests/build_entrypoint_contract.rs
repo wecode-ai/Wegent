@@ -25,7 +25,6 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         "../docker/standalone/Dockerfile",
         "../frontend/e2e/fixtures/claudecode-executor/Dockerfile",
         "../wework/scripts/dev-executor-sidecar.sh",
-        "../wework/src-tauri/build.rs",
         "local.sh",
         "build.sh",
     ];
@@ -78,14 +77,6 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(dev_reload.contains("'--bin', 'wegent-executor'"));
     assert!(dev_reload.contains("watch(sourceDir, { recursive: true }"));
     assert!(!dev_reload.contains("wegent-executor-dev"));
-
-    let windows_dev = fs::read_to_string("../wework/scripts/dev-windows-app.mjs").unwrap();
-    assert!(windows_dev.contains("Building executor dev-reload binaries"));
-    assert!(
-        windows_dev.contains("'wegent-executor-dev',\n        '--bin',\n        'wegent-executor'")
-    );
-    assert!(windows_dev.contains("process.env.WEGENT_EXECUTOR_BUILD_TARGET = target"));
-    assert!(windows_dev.contains("process.env.WEGENT_EXECUTOR_PREBUILT = '1'"));
 
     let device_dockerfile = fs::read_to_string("../docker/device/Dockerfile").unwrap();
     assert!(device_dockerfile.contains("pkg-config"));

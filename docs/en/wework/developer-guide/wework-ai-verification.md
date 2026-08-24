@@ -4,7 +4,7 @@ sidebar_position: 39
 
 # AI Verification Sessions
 
-Wework can start an isolated development verification session so an AI can operate and assert against the real Tauri application. It reuses the desktop E2E WebView control channel, never drives an external Chrome window, and does not attach to a developer's everyday Wework window.
+Wework can start an isolated development verification session so an AI can operate and assert against the real Electron application. It reuses the desktop E2E WebView control channel, never drives an external Chrome window, and does not attach to a developer's everyday Wework window.
 
 ## Start a session
 
@@ -12,7 +12,7 @@ Wework can start an isolated development verification session so an AI can opera
 pnpm --filter wework ai:verify start
 ```
 
-The command prints a session file path and a local control URL. It creates a separate Executor Home, projects directory, device ID, IPC socket, Tauri identifier, and diagnostics directory, then starts the real `dev-mac-app.sh`. Tasks, projects, application data, and the single-instance lock are not shared with release or other verification sessions. Logs are stored in `wework/test-results/ai-verify/<run-id>/`.
+The command prints a session file path and a local control URL. It creates a separate Executor Home, projects directory, device ID, IPC socket, Electron app-data namespace, and diagnostics directory, then starts the real `dev-mac-app.sh`. Tasks, projects, application data, and the single-instance lock are not shared with release or other verification sessions. Logs are stored in `wework/test-results/ai-verify/<run-id>/`.
 
 ## Operate and assert
 

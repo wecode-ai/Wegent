@@ -176,13 +176,13 @@ flowchart LR
 
 创建任务应写入受管市场 `wework-personal`。若 Plugin Creator 仍落到 Codex 默认 `personal`（`~/plugins` + `~/.agents`），列表刷新与发布打包前会把插件原子迁入 `wework-personal`、同步市场清单并优先以该市场为准，避免重复条目。
 
-Wework 的“发布到市场”不要求用户手工选择 ZIP。Tauri 根据本地 Marketplace 和插件键定位目录，原生打包并校验 `.codex-plugin/plugin.json`、符号链接、越界路径、50 MB 压缩包上限和 200 MB 展开上限；单 Skill Plugin 自动以 `listing_type=skill` 投稿。
+Wework 的“发布到市场”不要求用户手工选择 ZIP。Electron 根据本地 Marketplace 和插件键定位目录，原生打包并校验 `.codex-plugin/plugin.json`、符号链接、越界路径、50 MB 压缩包上限和 200 MB 展开上限；单 Skill Plugin 自动以 `listing_type=skill` 投稿。
 
 ### 定向分享与个人副本
 
 所有者首次按「人」发布或后续管理可见成员时，以 `purpose=restricted_share` 复用投稿上传、对象存储和安全扫描。扫描通过后自动生成 `visibility=personal` 的云端 Plugin/Release，不进入公共市场人工审核；授权保存失败时保持仅所有者可见。人员与部门授权原子替换 `resource_members`，切回“仅自己”会清空授权并关闭复制。
 
-接收者只能发现、查看和安装获授权的个人插件。所有者撤权后，服务立即删除接收者对原插件的账号安装意图，在线设备卸载，离线设备等待重连同步。允许复制时，接收者通过短期下载地址取得包；Tauri 校验 SHA256、ZIP 路径和 Manifest 后，以唯一 slug、`0.1.0` 和“我的副本”名称原子导入 `wework-personal`。副本的来源映射只写本地注册表，不写入插件包，撤销原件权限不会删除已经复制的独立副本。
+接收者只能发现、查看和安装获授权的个人插件。所有者撤权后，服务立即删除接收者对原插件的账号安装意图，在线设备卸载，离线设备等待重连同步。允许复制时，接收者通过短期下载地址取得包；Electron 校验 SHA256、ZIP 路径和 Manifest 后，以唯一 slug、`0.1.0` 和“我的副本”名称原子导入 `wework-personal`。副本的来源映射只写本地注册表，不写入插件包，撤销原件权限不会删除已经复制的独立副本。
 
 ### 精选 Codex 镜像
 
@@ -286,7 +286,7 @@ CI 凭据只从 Secret 注入。发布身份需要 MySQL 中 Plugin/Release 的�
 ### 本轮收口范围
 
 - **后端控制面**：新增受限分享投稿目的、所有者授权读写、接收者可见性、复制许可和撤权卸载同步，并继续复用统一包扫描流程。
-- **Tauri**：新增个人副本 SHA256、重复路径、ZIP 穿越、符号链接和 Manifest 校验；唯一命名、原子导入、App Server 安装失败回滚和本地来源映射。
+- **Electron**：新增个人副本 SHA256、重复路径、ZIP 穿越、符号链接和 Manifest 校验；唯一命名、原子导入、App Server 安装失败回滚和本地来源映射。
 - **Wework**：市场按国内公开、企业内部、个人分享和 Codex 官方筛选；管理页使用单一已安装列表；详情统一展示最佳实践、授权和包含能力；创建、分享、复制及对话 Mention 复用真实插件状态。
 
 ### 自动化验证（本地，2026-07-25）
@@ -295,13 +295,13 @@ CI 凭据只从 Secret 注入。发布身份需要 MySQL 中 Plugin/Release 的�
 | ------------------------------------------------------ | ------------------------------------------------------- |
 | `backend/tests/services/test_plugin_marketplace_v2.py` | 40 passed                                               |
 | `wework` Vitest                                        | 224 files / 2217 passed                                 |
-| Tauri `plugin_copy`                                    | 5 passed                                                |
+| Electron `plugin_copy`                                 | 5 passed                                                |
 | Alembic upgrade → downgrade → upgrade                  | 通过（隔离数据库）                                      |
-| 隔离 `ai:verify` Tauri 会话                            | 市场、详情、管理、斜杠菜单、模板预填和品牌 Mention 通过 |
+| 隔离 `ai:verify` Electron 会话                         | 市场、详情、管理、斜杠菜单、模板预填和品牌 Mention 通过 |
 
 ### 环境阻塞项
 
-- 完整 `wework ai:verify`（云端目录、安装、失败重试、更新失败保留旧版、卸载重连、白名单发布）依赖在线 Backend、MySQL、S3/MinIO 与真实 Tauri 桌面，未在纯 CI 沙箱中执行。
+- 完整 `wework ai:verify`（云端目录、安装、失败重试、更新失败保留旧版、卸载重连、白名单发布）依赖在线 Backend、MySQL、S3/MinIO 与真实 Electron 桌面，未在纯 CI 沙箱中执行。
 - 插件图标/截图媒体链路（上传 API、UI、验收交互）按首期范围保留后续迭代。
 - 双真实账号的完整“分享 → 安装 → 复制 → 撤权”桌面 E2E 仍需要部署环境中的测试账号和对象存储。
 
@@ -322,4 +322,4 @@ CI 凭据只从 Secret 注入。发布身份需要 MySQL 中 Plugin/Release 的�
 - 审核前不可搜索，审核后可安装；Release 发布后不可修改。
 - 普通用户界面没有添加任意 Marketplace 的入口。
 - “我创建的”、Wegent 官方、Codex 镜像和社区来源稳定区分。
-- Backend 插件测试、Executor 合约测试、Wework 组件测试和真实 Tauri 验证通过。
+- Backend 插件测试、Executor 合约测试、Wework 组件测试和真实 Electron 验证通过。

@@ -2,10 +2,13 @@ import {
   app,
   BrowserWindow,
   ipcMain,
+  Menu,
   screen,
   session,
   shell,
+  Tray,
   WebContentsView,
+  type MenuItemConstructorOptions,
   type WebContents,
 } from 'electron'
 import { existsSync } from 'node:fs'
@@ -37,7 +40,13 @@ import {
 } from './host/workbench-tab-controller.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions, workbenchDshBounds } from './host/window-layout.js'
+import { presentWindow } from './host/window-presentation.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
+import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
+import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
+import { StartupSplash } from './host/startup-splash.js'
+import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
+import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
@@ -57,6 +66,7 @@ let workbenchTabs: WorkbenchTabController<ElectronWorkbenchView> | null = null
 let smartApps: SmartAppManager | null = null
 let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
+let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
 let popoutWindow: BrowserWindow | null = null
 let popoutWindowCreationPromise: Promise<BrowserWindow> | null = null
@@ -73,6 +83,12 @@ let runtimeStartPromise: Promise<void> | null = null
 let quitting = false
 let shutdownPromise: Promise<void> | null = null
 let mainWindowCloseRequestRevision = 0
+let dockVisible = true
+let preferences: PreferencesStore | null = null
+let windowClosePolicy: WindowClosePolicy | null = null
+let startupSplash: StartupSplash | null = null
+let trayManager: ElectronTrayManager<Electron.Menu | null> | null = null
+let pendingTrayActions: TrayAction[] = []
 const pendingEmbeddedBrowserAttachments = new Map<
   number,
   Array<{ label: string; partition: string }>
@@ -330,6 +346,11 @@ async function loadPrimaryDshView(): Promise<void> {
     runtimeError = null
     rendererHealth.ready()
     mainWindow?.show()
+    void startupSplash
+      ?.close({ capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim() })
+      .catch(error => {
+        console.error('[startup-splash] failed to close startup window', error)
+      })
   })
   contents.on('unresponsive', () => rendererHealth.unresponsive())
   contents.on('responsive', () => rendererHealth.responsive())
@@ -406,9 +427,7 @@ async function openWorkspaceWindow(input: {
   }
   const existing = workspaceWindows.get(input.label)
   if (existing && !existing.isDestroyed()) {
-    if (existing.isMinimized()) existing.restore()
-    existing.show()
-    existing.focus()
+    presentWindow(existing)
     return
   }
   const dshUrl = desktopRuntime.coreDshUrl()
@@ -444,12 +463,7 @@ async function openWorkspaceWindow(input: {
     await workspaceWindow.loadURL(target.toString(), {
       extraHeaders: `X-Wework-Window-Label: ${input.label}`,
     })
-    await waitForRendererSelector(
-      workspaceWindow.webContents,
-      '[data-testid="workspace-tab-strip"]'
-    )
-    workspaceWindow.show()
-    workspaceWindow.focus()
+    presentWindow(workspaceWindow)
   } catch (error) {
     workspaceWindows.delete(input.label)
     workspaceWindow.destroy()
@@ -547,15 +561,12 @@ async function showSystemDragPanel(): Promise<void> {
 
 async function showPopoutWindow(): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
-  await popoutWindowReadyPromise
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   target.setPosition(
     Math.round(display.workArea.x + (display.workArea.width - 470) / 2),
     Math.round(display.workArea.y + (display.workArea.height - 112) / 2)
   )
-  target.show()
-  target.focus()
-  target.webContents.focus()
+  presentWindow(target)
 }
 
 async function createWindow(): Promise<void> {
@@ -579,7 +590,7 @@ async function createWindow(): Promise<void> {
   mainWindow.on('close', event => {
     if (quitting) return
     event.preventDefault()
-    mainWindowCloseRequestRevision += 1
+    void handleMainWindowCloseRequest()
   })
   mainWindow.on('closed', () => {
     attachedDshView = null
@@ -589,23 +600,92 @@ async function createWindow(): Promise<void> {
   })
 }
 
-async function closeMainWindowToTray(): Promise<void> {
+async function setDockVisible(visible: boolean): Promise<void> {
+  if (process.platform !== 'darwin' || !app.dock) {
+    dockVisible = true
+    return
+  }
+  if (dockVisible === visible) return
+  if (visible) await app.dock.show()
+  else await app.dock.hide()
+  dockVisible = visible
+}
+
+async function applyWindowCloseDecision(decision: WindowCloseDecision): Promise<void> {
+  switch (decision.type) {
+    case 'allow-close':
+    case 'no-action':
+      return
+    case 'request-quit':
+      requestApplicationShutdown(() => app.quit())
+      return
+    case 'show-close-to-tray-confirmation':
+      mainWindowCloseRequestRevision += 1
+      return
+    case 'hide-to-background':
+      await hideMainWindowToBackground()
+  }
+}
+
+async function handleMainWindowCloseRequest(): Promise<void> {
+  try {
+    const decision = await windowClosePolicy?.requestClose(false)
+    if (decision) await applyWindowCloseDecision(decision)
+  } catch (error) {
+    console.error('[window] failed to process close request', error)
+  }
+}
+
+async function hideMainWindowToBackground(): Promise<void> {
   const target = mainWindow
   if (!target || target.isDestroyed()) return
   console.log(`windowWillClose: electron close-to-tray revision=${mainWindowCloseRequestRevision}`)
   target.hide()
-  if (process.platform === 'darwin') app.hide()
+  if (process.platform === 'darwin') {
+    app.hide()
+    await setDockVisible(false)
+  }
   primaryDshLoaded = false
-  await target.webContents.loadURL('about:blank')
+}
+
+async function closeMainWindowToTray(): Promise<void> {
+  const decision = await windowClosePolicy?.confirmCloseToTray()
+  if (decision) await applyWindowCloseDecision(decision)
+}
+
+async function cancelMainWindowClose(): Promise<void> {
+  const decision = await windowClosePolicy?.cancelCloseToTray()
+  if (decision) await applyWindowCloseDecision(decision)
 }
 
 async function reactivateMainWindow(): Promise<void> {
   const target = mainWindow
   if (!target || target.isDestroyed()) return
+  await setDockVisible(true)
   await loadPrimaryDshView()
   if (target.isMinimized()) target.restore()
   target.show()
   target.focus()
+}
+
+function dispatchTrayAction(action: TrayAction): void {
+  if (action.type === 'quit-app') {
+    requestApplicationShutdown(() => app.quit())
+    return
+  }
+  void reactivateMainWindow()
+  if (action.type === 'open-settings' || action.type === 'open-task') {
+    pendingTrayActions.push(action)
+  }
+}
+
+function createTrayManager(): ElectronTrayManager<Electron.Menu | null> {
+  const resourcesRoot = app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'resources')
+  return new ElectronTrayManager({
+    createTray: () => new Tray(join(resourcesRoot, 'icons', '32x32.png')),
+    buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
+    dispatchAction: dispatchTrayAction,
+  })
 }
 
 function installIpc(): void {
@@ -633,6 +713,8 @@ function installIpc(): void {
 
 async function shutdown(): Promise<void> {
   systemSleep.stop()
+  trayManager?.destroy()
+  trayManager = null
   for (const workspaceWindow of workspaceWindows.values()) {
     if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
   }
@@ -644,9 +726,16 @@ async function shutdown(): Promise<void> {
   popoutWindowCreationPromise = null
   popoutWindowReadyPromise = null
   embeddedBrowser?.stop()
+  const plugins = workbenchPlugins
+  workbenchPlugins = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
-  await Promise.allSettled([browserBridge?.stop(), workbenchTabs?.stop(), desktopRuntime?.stop()])
+  await Promise.allSettled([
+    browserBridge?.stop(),
+    plugins?.shutdown(),
+    workbenchTabs?.stop(),
+    desktopRuntime?.stop(),
+  ])
 }
 
 function requestApplicationShutdown(exit: () => void): void {
@@ -670,8 +759,15 @@ function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   const environment = await desktopEnvironment()
-  const preferences = new PreferencesStore(app.getPath('userData'))
-  embeddedBrowser = new EmbeddedBrowserManager()
+  if (!preferences) throw new Error('Desktop preferences are unavailable')
+  workbenchPlugins = new WorkbenchPluginManager()
+  const feedback = new FeedbackBundleManager({
+    appVersion: () => app.getVersion(),
+    cacheDirectory: join(app.getPath('userData'), 'cache'),
+    downloadsDirectory: app.getPath('downloads'),
+    logDirectories: [app.getPath('logs')],
+  })
+  embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'))
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
     process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
@@ -708,6 +804,10 @@ async function configureDesktopRuntime(): Promise<void> {
         preferences,
         embeddedBrowser,
         {
+          feedback,
+          plugins: workbenchPlugins,
+        },
+        {
           captureTarget: windowLabel =>
             windowLabel === 'main'
               ? (mainWindow?.webContents ?? null)
@@ -720,15 +820,23 @@ async function configureDesktopRuntime(): Promise<void> {
             requested: mainWindowCloseRequestRevision > after,
             revision: mainWindowCloseRequestRevision,
           }),
+          cancelCloseToTray: cancelMainWindowClose,
           closeToTray: closeMainWindowToTray,
           focusWindow: windowLabel => {
             const target =
               windowLabel === 'main' ? mainWindow : (workspaceWindows.get(windowLabel) ?? null)
-            if (!target || target.isDestroyed()) return
-            if (target.isMinimized()) target.restore()
-            target.show()
-            target.focus()
-            target.webContents.focus()
+            if (target) presentWindow(target)
+          },
+          hideMainWindow: hideMainWindowToBackground,
+          dockVisible: () => dockVisible,
+          startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
+          trayActivate: activation => trayManager?.activate(activation) ?? false,
+          traySetState: state => trayManager?.setState(state),
+          traySnapshot: () => trayManager?.snapshot() ?? null,
+          takePendingTrayActions: () => {
+            const actions = pendingTrayActions
+            pendingTrayActions = []
+            return actions
           },
           openWorkspace: openWorkspaceWindow,
           popoutWindowSnapshot: () => ({
@@ -843,6 +951,46 @@ if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
     installDshWindowLabelHeaders()
     installIpc()
+    preferences = new PreferencesStore(app.getPath('userData'))
+    windowClosePolicy = new WindowClosePolicy({
+      read: async () => {
+        const current = await preferences?.read()
+        return {
+          closeToTrayEnabled:
+            typeof current?.closeToTrayEnabled === 'boolean' ? current.closeToTrayEnabled : true,
+          closeToTrayHintSeen:
+            typeof current?.closeToTrayHintSeen === 'boolean' ? current.closeToTrayHintSeen : false,
+        }
+      },
+      markCloseToTrayHintSeen: async () => {
+        await preferences?.update({ closeToTrayHintSeen: true })
+      },
+    })
+    trayManager = createTrayManager()
+    trayManager.create()
+    startupSplash = new StartupSplash({
+      createWindow: options => {
+        const target = new BrowserWindow(options)
+        return {
+          close: () => target.close(),
+          isDestroyed: () => target.isDestroyed(),
+          isVisible: () => target.isVisible(),
+          loadFile: path => target.loadFile(path),
+          once: (event, listener) => {
+            if (event === 'closed') target.once('closed', listener)
+            else target.once('ready-to-show', listener)
+          },
+          show: () => target.show(),
+          webContents: {
+            capturePage: () => target.webContents.capturePage(),
+            executeJavaScript: code => target.webContents.executeJavaScript(code),
+            isDestroyed: () => target.webContents.isDestroyed(),
+          },
+        }
+      },
+      htmlPath: resolve(packageRoot, 'dist/shell/startup-splash/index.html'),
+    })
+    await startupSplash.show()
     await createWindow()
     void startDesktopRuntime()
   })

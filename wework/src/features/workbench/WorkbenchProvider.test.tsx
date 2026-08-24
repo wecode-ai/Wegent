@@ -101,7 +101,7 @@ vi.mock('@/api/plugins', () => ({
   }),
 }))
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   connectLocalExecutorToBackend: localExecutorMocks.connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend: localExecutorMocks.disconnectLocalExecutorFromBackend,
   ensureBundledPluginMarketplaceRegistered:
@@ -112,17 +112,17 @@ vi.mock('@/tauri/localExecutor', () => ({
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
 }))
 
-vi.mock('@/tauri/runtimeWorkSync', () => runtimeWorkSyncMocks)
+vi.mock('@/desktop/runtimeWorkSync', () => runtimeWorkSyncMocks)
 
-function setTauriRuntime() {
-  Object.defineProperty(window, '__TAURI_INTERNALS__', {
-    value: {},
-    configurable: true,
-  })
+function setElectronRuntime() {
+  window.__WEWORK_RUNTIME_CONFIG__ = {
+    ...window.__WEWORK_RUNTIME_CONFIG__,
+    desktopHost: 'electron',
+  }
 }
 
-function clearTauriRuntime() {
-  delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+function clearElectronRuntime() {
+  delete window.__WEWORK_RUNTIME_CONFIG__
 }
 
 function deferred<T>() {
@@ -2174,7 +2174,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await i18n.changeLanguage('zh-CN')
     vi.useRealTimers()
     delete window.__WEWORK_RUNTIME_CONFIG__
-    clearTauriRuntime()
+    clearElectronRuntime()
     window.history.pushState({}, '', '/')
     localStorage.clear()
     sessionStorage.clear()
@@ -2197,8 +2197,9 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('bootstraps with local app services in local-first runtime mode', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     window.__WEWORK_RUNTIME_CONFIG__ = {
+      desktopHost: 'electron',
       runtimeMode: 'local-first',
     }
 
@@ -2540,8 +2541,9 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('keeps the runtime event subscription across connected user preference updates', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     window.__WEWORK_RUNTIME_CONFIG__ = {
+      desktopHost: 'electron',
       runtimeMode: 'local-first',
     }
     const user = {
@@ -2627,7 +2629,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('clears composer plugin apps after plugin state refresh returns no current-device installs', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') {
@@ -2695,7 +2697,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('coalesces repeated local plugin change events into one composer refresh', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') {
@@ -2865,7 +2867,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<ProjectWorkPreferenceProbe />, services)
 
     await screen.findByText('select project 7 workspace 22')
-    setTauriRuntime()
+    setElectronRuntime()
     await userEvent.click(screen.getByText('select project 7 workspace 22'))
     await waitFor(() =>
       expect(
@@ -3101,7 +3103,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('starts a fresh blank chat with a requested local skill mentioned', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') {
@@ -3158,7 +3160,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('does not resolve local skills for a Backend-only skill chat', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') {
@@ -15806,7 +15808,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('loads local skills and apps from Codex app-server', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') {

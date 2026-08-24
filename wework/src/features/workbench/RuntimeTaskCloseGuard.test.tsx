@@ -17,7 +17,7 @@ vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
 }))
 
-vi.mock('@/tauri/runtimeTaskCloseGuard', () => ({
+vi.mock('@/desktop/runtimeTaskCloseGuard', () => ({
   closeMainWindowToTray: mocks.closeMainWindowToTray,
   installRuntimeTaskCloseGuard: mocks.installRuntimeTaskCloseGuard,
 }))

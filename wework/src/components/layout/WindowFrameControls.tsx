@@ -1,9 +1,7 @@
 import { Minus, Square, Copy, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isElectronRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 
 const FRAME_CONTROL_BUTTON_CLASS =
@@ -15,47 +13,26 @@ export function WindowFrameControls({ className }: { className?: string }) {
 
   const updateMaximized = useCallback(async () => {
     try {
-      if (isElectronRuntime()) {
-        const state = await invokeDesktopHost<{ maximized: boolean }>('window.getState')
-        setIsMaximized(state.maximized)
-      } else {
-        setIsMaximized(await getCurrentWindow().isMaximized())
-      }
+      const state = await invokeDesktopHost<{ maximized: boolean }>('window.getState')
+      setIsMaximized(state.maximized)
     } catch {
       // Ignore if the window API is unavailable
     }
   }, [])
 
   useEffect(() => {
-    if (isElectronRuntime()) {
-      const handleResize = () => void updateMaximized()
-      const initialUpdateFrame = requestAnimationFrame(() => void updateMaximized())
-      window.addEventListener('resize', handleResize)
-      return () => {
-        cancelAnimationFrame(initialUpdateFrame)
-        window.removeEventListener('resize', handleResize)
-      }
-    }
-    let unlisten: (() => void) | undefined
-    const targetWindow = getCurrentWindow()
-    const listenPromise = targetWindow
-      .onResized(() => {
-        void updateMaximized()
-      })
-      .then(unlistenFn => {
-        unlisten = unlistenFn
-        void updateMaximized()
-      })
-
+    const handleResize = () => void updateMaximized()
+    const initialUpdateFrame = requestAnimationFrame(() => void updateMaximized())
+    window.addEventListener('resize', handleResize)
     return () => {
-      void listenPromise.then(() => unlisten?.())
+      cancelAnimationFrame(initialUpdateFrame)
+      window.removeEventListener('resize', handleResize)
     }
   }, [updateMaximized])
 
   const handleMinimize = useCallback(async () => {
     try {
-      if (isElectronRuntime()) await invokeDesktopHost<void>('window.minimize')
-      else await getCurrentWindow().minimize()
+      await invokeDesktopHost<void>('window.minimize')
     } catch {
       // Ignore
     }
@@ -63,23 +40,16 @@ export function WindowFrameControls({ className }: { className?: string }) {
 
   const handleMaximize = useCallback(async () => {
     try {
-      if (isElectronRuntime()) {
-        await invokeDesktopHost<void>('window.toggleMaximize')
-        await updateMaximized()
-      } else if (isMaximized) {
-        await getCurrentWindow().unmaximize()
-      } else {
-        await getCurrentWindow().maximize()
-      }
+      await invokeDesktopHost<void>('window.toggleMaximize')
+      await updateMaximized()
     } catch {
       // Ignore
     }
-  }, [isMaximized, updateMaximized])
+  }, [updateMaximized])
 
   const handleClose = useCallback(async () => {
     try {
-      if (isElectronRuntime()) await invokeDesktopHost<void>('window.close')
-      else await getCurrentWindow().close()
+      await invokeDesktopHost<void>('window.close')
     } catch {
       // Ignore
     }
@@ -88,8 +58,10 @@ export function WindowFrameControls({ className }: { className?: string }) {
   return (
     <div
       data-testid="window-frame-controls"
-      data-tauri-drag-region={false}
-      className={cn('flex h-full shrink-0 items-center', className)}
+      className={cn(
+        'electron-titlebar-interactive-region flex h-full shrink-0 items-center',
+        className
+      )}
     >
       <button
         type="button"

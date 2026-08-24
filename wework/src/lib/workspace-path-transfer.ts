@@ -1,8 +1,7 @@
-import { invoke } from '@tauri-apps/api/core'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { isDesktopRuntime, isElectronRuntime, isTauriRuntime } from './runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from './runtime-environment'
 import type { NativeWorkspacePath } from './native-workspace-path-picker'
-import { readDroppedFiles } from '@/tauri/droppedFiles'
+import { readDroppedFiles } from '@/desktop/droppedFiles'
 
 const FILE_URI_CLIPBOARD_TYPES = ['text/uri-list', 'public.file-url'] as const
 const IMAGE_EXTENSIONS = new Set([
@@ -85,14 +84,7 @@ export async function readNativeClipboardWorkspacePaths(
   clipboardData: DataTransfer
 ): Promise<NativeWorkspacePath[]> {
   const fallbackPaths = dataTransferFallbackPaths(clipboardData)
-  if (isElectronRuntime()) {
-    return invokeDesktopHost<NativeWorkspacePath[]>('clipboard.readWorkspacePaths', {
-      fallbackPaths,
-    })
-  }
-  if (!isTauriRuntime()) return []
-
-  return invoke<NativeWorkspacePath[]>('read_clipboard_workspace_paths', {
+  return invokeDesktopHost<NativeWorkspacePath[]>('clipboard.readWorkspacePaths', {
     fallbackPaths,
   })
 }
@@ -101,25 +93,14 @@ export async function readNativeDroppedWorkspacePaths(
   dataTransfer: DataTransfer
 ): Promise<NativeWorkspacePath[]> {
   const fallbackPaths = dataTransferFallbackPaths(dataTransfer)
-  if (isElectronRuntime()) {
-    return invokeDesktopHost<NativeWorkspacePath[]>('filesystem.inspectPaths', {
-      paths: fallbackPaths,
-    })
-  }
-  if (!isTauriRuntime()) return []
-
-  return invoke<NativeWorkspacePath[]>('read_dropped_workspace_paths', {
-    fallbackPaths,
+  return invokeDesktopHost<NativeWorkspacePath[]>('filesystem.inspectPaths', {
+    paths: fallbackPaths,
   })
 }
 
 export async function inspectNativeWorkspacePaths(paths: string[]): Promise<NativeWorkspacePath[]> {
   if (paths.length === 0) return []
-  if (isElectronRuntime()) {
-    return invokeDesktopHost<NativeWorkspacePath[]>('filesystem.inspectPaths', { paths })
-  }
-  if (!isTauriRuntime()) return []
-  return invoke<NativeWorkspacePath[]>('inspect_workspace_paths', { paths })
+  return invokeDesktopHost<NativeWorkspacePath[]>('filesystem.inspectPaths', { paths })
 }
 
 export function isWorkspaceImagePath(path: string): boolean {

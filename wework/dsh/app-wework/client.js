@@ -847,7 +847,7 @@ window.__ModuleLoader__.load({
               'div',
               { className: 'wework-placeholder' },
               activeTab.fixed
-                ? '功能将在后续迁移工作包中从现有 Tauri 前端逐步迁入此模块。'
+                ? '功能将在后续工作包中逐步迁入此模块。'
                 : `已恢复绑定：${activeTab.binding.route}`
             )
           )

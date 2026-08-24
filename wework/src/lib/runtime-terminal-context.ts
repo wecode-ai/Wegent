@@ -4,7 +4,7 @@ import {
   defaultAppPreferences,
   getAppPreferences,
   type AppPreferences,
-} from '@/tauri/appPreferences'
+} from '@/desktop/appPreferences'
 export type {
   RuntimeAdditionalContext,
   RuntimeAdditionalContextEntry,

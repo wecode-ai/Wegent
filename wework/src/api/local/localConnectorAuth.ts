@@ -1,4 +1,4 @@
-import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
+import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 import type { PluginLocalAuthDefinition } from '@/types/api'
 
 export type LocalConnectorAuthStatus =

@@ -9,7 +9,7 @@ Wegent is an AI-native operating system for defining, organizing, and running ag
 | --- | --- | --- |
 | `backend/` | FastAPI, SQLAlchemy, MySQL | REST API and business logic |
 | `frontend/` | Next.js, React, TypeScript | Main web product |
-| `wework/` | Tauri, Vite, React, TypeScript | Desktop workbench and local coding experience |
+| `wework/` | Electron, Vite, React, TypeScript | Desktop workbench and local coding experience |
 | `executor/`, `executor_manager/` | Python, Docker | Agent execution and orchestration |
 | `chat_shell/` | FastAPI, LangGraph | Lightweight chat runtime |
 | `knowledge_runtime/`, `knowledge_doc_converter/` | FastAPI, Celery | RAG and document conversion |
@@ -19,7 +19,7 @@ Use `docs/en/` and `docs/zh/` for detailed architecture and guides. Keep this fi
 
 ## Scoped instructions
 
-- Before modifying `wework/**`, read and follow [`wework/AGENTS.md`](wework/AGENTS.md). It contains the desktop UI, local runtime, i18n, and Tauri verification rules.
+- Before modifying `wework/**`, read and follow [`wework/AGENTS.md`](wework/AGENTS.md). It contains the desktop UI, local runtime, i18n, and Electron verification rules.
 - Before modifying `frontend/**`, read and follow [`frontend/AGENTS.md`](frontend/AGENTS.md). It contains web-frontend state, responsive UI, and i18n rules.
 - Add module-specific instructions beside a module only when they cannot be expressed as a repository-wide rule.
 

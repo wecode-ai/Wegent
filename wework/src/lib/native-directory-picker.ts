@@ -1,34 +1,15 @@
 import { openNativeWorkspacePathPicker } from './native-workspace-path-picker'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { isElectronRuntime, isTauriRuntime } from './runtime-environment'
 
 export async function openNativeDirectoryPicker(defaultPath?: string): Promise<string | null> {
-  if (isElectronRuntime()) {
-    const selected = await invokeDesktopHost<{
-      canceled: boolean
-      filePaths: string[]
-    }>('dialog.open', {
-      defaultPath,
-      properties: ['openDirectory', 'createDirectory'],
-    })
-    return selected.canceled ? null : selected.filePaths[0]?.trim() || null
-  }
-  if (!isTauriRuntime()) return null
-
-  const { open } = await import('@tauri-apps/plugin-dialog')
-  const selected = await open({
-    directory: true,
-    multiple: false,
-    canCreateDirectories: true,
+  const selected = await invokeDesktopHost<{
+    canceled: boolean
+    filePaths: string[]
+  }>('dialog.open', {
     defaultPath,
+    properties: ['openDirectory', 'createDirectory'],
   })
-
-  if (typeof selected === 'string') {
-    const trimmed = selected.trim()
-    return trimmed || null
-  }
-
-  return null
+  return selected.canceled ? null : selected.filePaths[0]?.trim() || null
 }
 
 export async function openNativeProjectDirectoryPicker(

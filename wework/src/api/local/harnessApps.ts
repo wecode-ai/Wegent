@@ -1,7 +1,5 @@
-import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { isElectronRuntime } from '@/lib/runtime-environment'
+import type { UnlistenFn } from '@/desktop/disposeDesktopListener'
 
 export const HARNESS_APP_LAUNCH_PROGRESS_EVENT = 'harness-app-launch-progress'
 
@@ -65,10 +63,7 @@ export interface HarnessAppSavedExport extends HarnessAppExport {
 
 export const harnessAppsApi = {
   preview(archivePath: string) {
-    if (isElectronRuntime()) {
-      return invokeDesktopHost<HarnessAppPreview>('smartApps.preview', { archivePath })
-    }
-    return invoke<HarnessAppPreview>('preview_harness_app', { archivePath })
+    return invokeDesktopHost<HarnessAppPreview>('smartApps.preview', { archivePath })
   },
   download(input: {
     downloadUrl: string
@@ -77,65 +72,28 @@ export const harnessAppsApi = {
     smartAppId: number
     releaseId: number
   }) {
-    if (isElectronRuntime()) {
-      return invokeDesktopHost<HarnessAppPreview>('smartApps.download', input)
-    }
-    return invoke<HarnessAppPreview>('download_harness_app_package', {
-      downloadUrl: input.downloadUrl,
-      expectedSha256: input.sha256,
-      expectedSize: input.sizeBytes,
-      smartAppId: input.smartAppId,
-      releaseId: input.releaseId,
-    })
+    return invokeDesktopHost<HarnessAppPreview>('smartApps.download', input)
   },
   export(installationId: string) {
-    if (isElectronRuntime()) {
-      return invokeDesktopHost<HarnessAppExport>('smartApps.export', { installationId })
-    }
-    return invoke<HarnessAppExport>('export_harness_app_package', { installationId })
+    return invokeDesktopHost<HarnessAppExport>('smartApps.export', { installationId })
   },
   async exportToDownloads(installationId: string): Promise<HarnessAppSavedExport> {
-    if (isElectronRuntime()) {
-      return invokeDesktopHost<HarnessAppSavedExport>('smartApps.exportToDownloads', {
-        installationId,
-      })
-    }
-    const exported = await invoke<HarnessAppExport>('export_harness_app_package', {
+    return invokeDesktopHost<HarnessAppSavedExport>('smartApps.exportToDownloads', {
       installationId,
     })
-    const destinationPath = await invoke<string>('download_local_file_to_downloads', {
-      sourcePath: exported.archivePath,
-      filename: `${exported.manifest.name}-${exported.manifest.version}.zip`,
-    })
-    return { ...exported, destinationPath }
   },
   upload(archivePath: string, uploadUrl: string) {
-    if (isElectronRuntime()) {
-      return invokeDesktopHost<void>('smartApps.upload', { archivePath, uploadUrl })
-    }
-    return invoke<void>('upload_harness_app_package', { archivePath, uploadUrl })
+    return invokeDesktopHost<void>('smartApps.upload', { archivePath, uploadUrl })
   },
   list() {
-    if (isElectronRuntime()) {
-      return invokeDesktopHost<HarnessAppInstallation[]>('smartApps.list')
-    }
-    return invoke<HarnessAppInstallation[]>('list_harness_apps')
+    return invokeDesktopHost<HarnessAppInstallation[]>('smartApps.list')
   },
   install(
     preview: HarnessAppPreview,
     modelKey: string | null,
     source: { smartAppId: number; releaseId: number } | null = null
   ) {
-    if (isElectronRuntime()) {
-      return invokeDesktopHost<HarnessAppInstallation>('smartApps.install', {
-        archivePath: preview.archivePath,
-        expectedSha256: preview.sha256,
-        modelKey,
-        smartAppId: source?.smartAppId ?? null,
-        releaseId: source?.releaseId ?? null,
-      })
-    }
-    return invoke<HarnessAppInstallation>('install_harness_app', {
+    return invokeDesktopHost<HarnessAppInstallation>('smartApps.install', {
       archivePath: preview.archivePath,
       expectedSha256: preview.sha256,
       modelKey,
@@ -149,15 +107,7 @@ export const harnessAppsApi = {
     contextBaseUrl: string | null = null,
     contextToken: string | null = null
   ) {
-    if (isElectronRuntime()) {
-      return invokeDesktopHost<HarnessAppInstallation>('smartApps.start', {
-        installationId,
-        modelBaseUrl,
-        contextBaseUrl,
-        contextToken,
-      })
-    }
-    return invoke<HarnessAppInstallation>('start_harness_app', {
+    return invokeDesktopHost<HarnessAppInstallation>('smartApps.start', {
       installationId,
       modelBaseUrl,
       contextBaseUrl,
@@ -165,38 +115,22 @@ export const harnessAppsApi = {
     })
   },
   stop(installationId: string) {
-    if (isElectronRuntime()) {
-      return invokeDesktopHost<void>('smartApps.stop', { installationId })
-    }
-    return invoke<void>('stop_harness_app', { installationId })
+    return invokeDesktopHost<void>('smartApps.stop', { installationId })
   },
   update(installationId: string, updates: { modelKey?: string; resident?: boolean }) {
-    if (isElectronRuntime()) {
-      return invokeDesktopHost<HarnessAppInstallation>('smartApps.update', {
-        installationId,
-        ...updates,
-      })
-    }
-    return invoke<HarnessAppInstallation>('update_harness_app', {
+    return invokeDesktopHost<HarnessAppInstallation>('smartApps.update', {
       installationId,
       ...updates,
     })
   },
   delete(installationId: string, deleteData = false) {
-    if (isElectronRuntime()) {
-      return invokeDesktopHost<void>('smartApps.delete', { installationId, deleteData })
-    }
-    return invoke<void>('delete_harness_app', { installationId, deleteData })
+    return invokeDesktopHost<void>('smartApps.delete', { installationId, deleteData })
   },
 }
 
 export function listenHarnessAppLaunchProgress(
   callback: (progress: HarnessAppLaunchProgress) => void
 ): Promise<UnlistenFn> {
-  if (isElectronRuntime()) {
-    return Promise.resolve(() => {})
-  }
-  return listen<HarnessAppLaunchProgress>(HARNESS_APP_LAUNCH_PROGRESS_EVENT, event => {
-    callback(event.payload)
-  })
+  void callback
+  return Promise.resolve(() => undefined)
 }

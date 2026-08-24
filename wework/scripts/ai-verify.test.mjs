@@ -11,10 +11,10 @@ import {
   parseArgs,
   readSessionForCleanup,
   resolveCommandTimeout,
-  resolveDesktopRuntime,
   resolveOptionalBoolean,
   resolveStartupTimeout,
   startupFailureMessage,
+  validateStartOptions,
 } from './ai-verify.mjs'
 
 describe('AI_VERIFY_ACTIONS', () => {
@@ -151,20 +151,6 @@ describe('startupFailureMessage', () => {
   })
 })
 
-describe('resolveDesktopRuntime', () => {
-  test('defaults verification to Electron', () => {
-    expect(resolveDesktopRuntime(undefined)).toBe('electron')
-  })
-
-  test('keeps Tauri available while checkpoint migration is in progress', () => {
-    expect(resolveDesktopRuntime('tauri')).toBe('tauri')
-  })
-
-  test('rejects unknown desktop runtimes', () => {
-    expect(() => resolveDesktopRuntime('webkit')).toThrow('--runtime must be "electron" or "tauri"')
-  })
-})
-
 describe('readSessionForCleanup', () => {
   test('waits for the controller to publish its launcher pid', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-ai-verify-cleanup-'))
@@ -249,6 +235,23 @@ describe('resolveOptionalBoolean', () => {
   test('rejects ambiguous values', () => {
     expect(() => resolveOptionalBoolean('yes', 'visible')).toThrow(
       '--visible must be "true" or "false"'
+    )
+  })
+})
+
+describe('validateStartOptions', () => {
+  test('accepts the Electron start options', () => {
+    expect(() =>
+      validateStartOptions({
+        'codex-home-initialization': 'true',
+        timeout: '180000',
+      })
+    ).not.toThrow()
+  })
+
+  test('rejects the removed desktop runtime option', () => {
+    expect(() => validateStartOptions({ runtime: 'electron' })).toThrow(
+      'Unexpected option for start: --runtime'
     )
   })
 })

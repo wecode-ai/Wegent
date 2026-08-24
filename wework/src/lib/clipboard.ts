@@ -1,6 +1,6 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { isElectronRuntime, isTauriRuntime } from '@/lib/runtime-environment'
-import { copyLocalExecutorDebugInfo } from '@/tauri/localExecutor'
+import { isElectronRuntime } from '@/lib/runtime-environment'
+import { copyLocalExecutorDebugInfo } from '@/desktop/localExecutor'
 
 export async function copyTextToClipboard(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
@@ -8,7 +8,7 @@ export async function copyTextToClipboard(text: string): Promise<void> {
     return
   }
 
-  if (isTauriRuntime()) {
+  if (isElectronRuntime()) {
     await copyLocalExecutorDebugInfo(text)
     return
   }

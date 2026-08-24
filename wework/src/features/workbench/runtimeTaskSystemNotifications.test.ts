@@ -4,7 +4,6 @@ import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 
 const runtime = vi.hoisted(() => ({
   electron: false,
-  tauri: false,
 }))
 
 vi.mock('@/api/dsh/desktopHost', () => ({
@@ -13,7 +12,6 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 
 vi.mock('@/lib/runtime-environment', () => ({
   isElectronRuntime: () => runtime.electron,
-  isTauriRuntime: () => runtime.tauri,
 }))
 
 const invokeDesktopHostMock = vi.mocked(invokeDesktopHost)
@@ -21,7 +19,6 @@ const invokeDesktopHostMock = vi.mocked(invokeDesktopHost)
 describe('runtime task system notifications', () => {
   beforeEach(() => {
     runtime.electron = false
-    runtime.tauri = false
     invokeDesktopHostMock.mockReset()
   })
 

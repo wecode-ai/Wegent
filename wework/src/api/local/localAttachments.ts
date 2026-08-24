@@ -1,7 +1,5 @@
-import { invoke } from '@tauri-apps/api/core'
 import { isValidFileSize, MAX_FILE_SIZE } from '@/api/attachments'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { isElectronRuntime, isTauriRuntime } from '@/lib/runtime-environment'
 import type { Attachment } from '@/types/api'
 
 export interface LocalAttachmentApi {
@@ -94,18 +92,8 @@ export function createLocalAttachmentApi(): LocalAttachmentApi {
       if (!isValidFileSize(file.size)) {
         throw new Error(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)} MB`)
       }
-      if (!isTauriRuntime() && !isElectronRuntime()) {
-        throw new Error('Local attachment storage requires the desktop app')
-      }
-
       onProgress?.(0)
-      const localPath = isElectronRuntime()
-        ? await saveElectronAttachment(file, onProgress)
-        : await invoke<string>('save_local_attachment_file', {
-            workspacePath: null,
-            filename: file.name,
-            bytes: Array.from(new Uint8Array(await file.arrayBuffer())),
-          })
+      const localPath = await saveElectronAttachment(file, onProgress)
       onProgress?.(100)
 
       const textLength = await maybeTextLength(file)

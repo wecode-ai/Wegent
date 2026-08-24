@@ -8,6 +8,7 @@ const weworkRoot = resolve(electronRoot, '..')
 const repositoryRoot = resolve(weworkRoot, '..')
 const executorRoot = join(repositoryRoot, 'executor')
 const resourcesRoot = join(electronRoot, 'resources')
+const sharedResourcesRoot = join(weworkRoot, 'resources')
 
 await run('pnpm', ['prepare:harness-runtime', '--materialize'], weworkRoot)
 await run('pnpm', ['prepare:execution-runtime', '--materialize'], weworkRoot)
@@ -17,7 +18,7 @@ const executorPath = process.env.WEWORK_EXECUTOR_PATH?.trim() || (await buildExe
 await rm(resourcesRoot, { recursive: true, force: true })
 await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
 const runtimeCatalog = JSON.parse(
-  await readFile(join(weworkRoot, 'src-tauri', 'bundled-harness-runtime', 'runtimes.json'), 'utf8')
+  await readFile(join(sharedResourcesRoot, 'bundled-harness-runtime', 'runtimes.json'), 'utf8')
 )
 const packagedRuntimes = runtimeCatalog.runtimes.filter(runtime =>
   ['core', 'workbench'].includes(runtime.role)
@@ -41,7 +42,7 @@ await cp(
   { recursive: true }
 )
 await cp(
-  join(weworkRoot, 'src-tauri', 'bundled-plugins', 'wework-personal'),
+  join(sharedResourcesRoot, 'bundled-plugins', 'wework-personal'),
   join(resourcesRoot, 'bundled-plugins', 'wework-personal'),
   { recursive: true }
 )

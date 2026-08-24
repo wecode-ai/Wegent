@@ -7,7 +7,6 @@ declare -A changed=(
   [executor_rust]=false
   [node]=false
   [python]=false
-  [wework_rust]=false
   [wework_target]=false
 )
 
@@ -30,18 +29,15 @@ classify_path() {
       changed[executor_rust]=true
       changed[node]=true
       changed[python]=true
-      changed[wework_rust]=true
       ;;
     .github/workflows/e2e-tests.yml)
       changed[docker]=true
       changed[node]=true
       changed[python]=true
       ;;
-    .github/workflows/wework-e2e.yml | \
-      .github/scripts/install-wework-tauri-system-dependencies.sh)
+    .github/workflows/wework-e2e.yml)
       changed[node]=true
       changed[python]=true
-      changed[wework_rust]=true
       changed[wework_target]=true
       ;;
     .github/scripts/install-executor-rust-system-dependencies.sh)
@@ -78,13 +74,6 @@ classify_path() {
     frontend/e2e/fixtures/claudecode-executor/* | shared/assets/*)
       changed[docker]=true
       ;;
-    wework/src-tauri/Cargo.lock)
-      changed[wework_rust]=true
-      changed[wework_target]=true
-      ;;
-    wework/src-tauri/*)
-      changed[wework_rust]=true
-      ;;
   esac
 }
 
@@ -101,6 +90,6 @@ else
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-for key in docker executor_rust node python wework_rust wework_target; do
+for key in docker executor_rust node python wework_target; do
   printf '%s=%s\n' "$key" "${changed[$key]}" >> "$output_file"
 done

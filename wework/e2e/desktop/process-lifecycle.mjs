@@ -16,7 +16,14 @@ function withTimeout(promise, timeoutMs, message) {
 function waitForProcessExit(child, timeoutMs) {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
   return withTimeout(
-    new Promise(resolvePromise => child.once('exit', resolvePromise)),
+    new Promise(resolvePromise => {
+      const onExit = () => resolvePromise()
+      child.once('exit', onExit)
+      if (child.exitCode !== null || child.signalCode !== null) {
+        child.off('exit', onExit)
+        resolvePromise()
+      }
+    }),
     timeoutMs,
     `Timed out waiting for process ${child.pid ?? 'unknown'} to exit`
   )

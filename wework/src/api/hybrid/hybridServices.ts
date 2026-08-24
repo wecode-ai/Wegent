@@ -1,6 +1,4 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
-import { invoke } from '@tauri-apps/api/core'
-import { info as writeInfoLog } from '@tauri-apps/plugin-log'
 import {
   createCloudRuntimeIpcClient,
   RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS,
@@ -25,7 +23,6 @@ import { requestCloudModelCatalogSync } from '@/features/model-settings/cloudMod
 import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-registration'
 import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
-import { isElectronRuntime } from '@/lib/runtime-environment'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   EMPTY_RUNTIME_WORK,
@@ -72,11 +69,6 @@ import type { DeviceInfo } from '@/types/devices'
 const LOCAL_DEVICE_ID = 'local-device'
 const CLOUD_BACKGROUND_CACHE_TTL_MS = 30_000
 
-interface LocalFilePayload {
-  name: string
-  bytes: number[]
-}
-
 async function uploadLocalAttachmentToCloud(
   attachment: Attachment,
   uploadAttachment: (file: File) => Promise<Attachment>
@@ -86,16 +78,10 @@ async function uploadLocalAttachmentToCloud(
     throw new Error(`Attachment ${attachment.filename} has no local file path`)
   }
 
-  const payload = isElectronRuntime()
-    ? {
-        name: attachment.filename,
-        bytes: Array.from(await readElectronLocalFile(localPath)),
-      }
-    : (
-        await invoke<LocalFilePayload[]>('read_dropped_files', {
-          paths: [localPath],
-        })
-      )[0]
+  const payload = {
+    name: attachment.filename,
+    bytes: Array.from(await readElectronLocalFile(localPath)),
+  }
   if (!payload) {
     throw new Error(`Attachment file is unavailable: ${attachment.filename}`)
   }
@@ -394,9 +380,6 @@ export function createHybridWorkbenchServices(
           models: response.data.map(modelIdentityForLog),
         }
         console.info('[Wework] Cloud model catalog loaded', modelCatalogLog)
-        void writeInfoLog(
-          `[Wework] Cloud model catalog loaded ${JSON.stringify(modelCatalogLog)}`
-        ).catch(() => undefined)
         rememberedCloudModels = cloudExecutableModels(response.data)
         cloudModelsLoaded = true
         notifyWorkbenchModelsChanged()

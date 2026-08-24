@@ -15,7 +15,7 @@ assert_invalid_desktop_shards_rejected() {
   temp_dir="$(mktemp -d)"
   local broken_classifier="$temp_dir/classify-wework-desktop-e2e.sh"
   sed \
-    's/,local-file-preview$//' \
+    's/,local-file-preview,context-compaction$/,context-compaction/' \
     "$desktop_classifier" > "$broken_classifier"
   chmod +x "$broken_classifier"
 
@@ -212,7 +212,6 @@ shared=false
 knowledge_engine=false
 frontend=false
 wework=false
-wework_rust=false
 wegent_cli=false
 platform_e2e=false
 wework_e2e=false
@@ -225,10 +224,6 @@ wework_expected="${all_false/wework=false/wework=true}"
 wework_expected="${wework_expected/wework_e2e=false/wework_e2e=true}"
 assert_case "wework only" "$wework_expected" "wework/src/App.tsx"
 
-wework_rust_expected="${wework_expected/wework_rust=false/wework_rust=true}"
-assert_case "wework Rust only" "$wework_rust_expected" \
-  "wework/src-tauri/src/lib.rs"
-
 shared_expected=$(
   cat <<'EOF'
 backend=true
@@ -238,7 +233,6 @@ shared=true
 knowledge_engine=true
 frontend=false
 wework=false
-wework_rust=false
 wegent_cli=true
 platform_e2e=true
 wework_e2e=false
@@ -290,9 +284,6 @@ assert_case "Wework workflow changes run Wework E2E" "$wework_e2e_expected" \
 
 assert_case "Wework artifact scripts run Wework E2E" "$wework_e2e_expected" \
   ".github/scripts/archive-wework-core-e2e-build.sh"
-
-assert_case "Wework dependency setup runs Wework E2E" "$wework_e2e_expected" \
-  ".github/scripts/install-wework-tauri-system-dependencies.sh"
 
 assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
   "docker/wework-e2e/desktop.Dockerfile"
@@ -373,7 +364,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"rendering-extensions,runtime-task-queue,local-file-preview"},{"id":"core-2","name":"Core / shard 2","segments":"project-ai-settings,window-lifecycle,permission-modes,cloud-space-mention"},{"id":"core-3","name":"Core / shard 3","segments":"core-task-flow,temporary-chat,codex-notification-isolation"},{"id":"core-4","name":"Core / shard 4","segments":"claude-runtime,workspace-attachments,local-harness"},{"id":"core-5","name":"Core / shard 5","segments":"conversation-state,goal-lifecycle,workspace-tabs"},{"id":"core-6","name":"Core / shard 6","segments":"resilience,supervisor-lifecycle"},{"id":"core-7","name":"Core / shard 7","segments":"model-routing,project-automation,automation-lifecycle"},{"id":"core-8","name":"Core / shard 8","segments":"embedded-browser,browser-toolbar-actions,priority-filter"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"rendering-extensions,runtime-task-queue,local-file-preview,context-compaction"},{"id":"core-2","name":"Core / shard 2","segments":"project-ai-settings,window-lifecycle,permission-modes,cloud-space-mention,project-assignment-notification"},{"id":"core-3","name":"Core / shard 3","segments":"core-task-flow,temporary-chat,codex-notification-isolation,task-attachments"},{"id":"core-4","name":"Core / shard 4","segments":"claude-runtime,workspace-attachments,local-harness,harness-apps"},{"id":"core-5","name":"Core / shard 5","segments":"conversation-state,goal-lifecycle,workspace-tabs,running-conversation-history"},{"id":"core-6","name":"Core / shard 6","segments":"resilience,supervisor-lifecycle,runtime-terminal-convergence"},{"id":"core-7","name":"Core / shard 7","segments":"model-routing,project-automation,automation-lifecycle,offline-local-project-space"},{"id":"core-8","name":"Core / shard 8","segments":"embedded-browser,browser-toolbar-actions,priority-filter,remote-device-onboarding,split-workbench,native-window-startup,native-window-chrome,tray-lifecycle,change-request-status"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"goal-lifecycle,telemetry-consent,cloud-worktree-capability"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"model-routing,plugin-auto-update,priority-filter"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"embedded-browser,cloud-worktree-device-restart,cloud-project-creation"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"resilience,cloud-worktree-queued-cancel,browser-multi-tabs"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"core-task-flow,supervisor-lifecycle,automation-lifecycle"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle,cloud-worktree-tools,cloud-worktree-archive-restore"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"project-automation,workspace-attachments,cloud-worktree-create"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"conversation-state,rendering-extensions,workspace-tabs"}]}
 wework_desktop_other_e2e=true
@@ -682,12 +673,9 @@ if ! grep -q "name: Wework E2E Summary" "$wework_workflow"; then
   exit 1
 fi
 
-if ! grep -Fq "process.env.WEWORK_E2E_SKIP_TYPECHECK !== 'true'" \
-  "$desktop_build_flows" ||
-  ! grep -Fq 'WEWORK_E2E_SKIP_TYPECHECK: "true"' "$wework_workflow" ||
-  ! grep -Fq 'run: pnpm --filter wework typecheck' \
-    "$script_dir/../workflows/lint.yml"; then
-  printf 'Wework desktop E2E may skip duplicate typechecking only while Lint owns the gate\n' >&2
+if grep -Fq 'WEWORK_E2E_SKIP_TYPECHECK' "$desktop_build_flows" ||
+  grep -Fq 'WEWORK_E2E_SKIP_TYPECHECK' "$wework_workflow"; then
+  printf 'Prebuilt Electron E2E must not retain the obsolete typecheck bypass\n' >&2
   exit 1
 fi
 

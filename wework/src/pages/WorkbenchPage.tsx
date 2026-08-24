@@ -13,12 +13,12 @@ import { DesktopWorkbenchLayout } from '@/components/layout/DesktopWorkbenchLayo
 import { MobileWorkbenchLayout } from '@/components/layout/MobileWorkbenchLayout'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { shouldUseMobileWorkbenchLayout } from '@/lib/workbench-layout-mode'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
-import { buildTrayMenuTaskGroups } from '@/tauri/trayMenuState'
-import { syncTrayMenuState } from '@/tauri/trayNavigation'
-import { buildTrayUsageTitle } from '@/tauri/trayUsageTitle'
+import { buildTrayMenuTaskGroups } from '@/desktop/trayMenuState'
+import { syncTrayMenuState } from '@/desktop/trayNavigation'
+import { buildTrayUsageTitle } from '@/desktop/trayUsageTitle'
 import { useRuntimeTaskRouteRestoration } from '@/features/workbench/useRuntimeTaskRouteRestoration'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -29,7 +29,7 @@ interface WorkbenchPageProps {
 
 export function WorkbenchPage({ routeActive = true }: WorkbenchPageProps) {
   const isMobileViewport = useIsMobile()
-  const isTauri = isTauriRuntime()
+  const isDesktop = isElectronRuntime()
   const cloudConnection = useOptionalCloudConnection()
   const { state, runtimeTaskReminders } = useWorkbench()
   const lifecycle = useRuntimeTaskLifecycleStoreSnapshot()
@@ -88,7 +88,7 @@ export function WorkbenchPage({ routeActive = true }: WorkbenchPageProps) {
   }, [trayMenuTaskGroups, trayTooltip, trayUsageTitle])
 
   useEffect(() => {
-    if (!isTauri) {
+    if (!isDesktop) {
       return
     }
 
@@ -113,10 +113,10 @@ export function WorkbenchPage({ routeActive = true }: WorkbenchPageProps) {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [isTauri])
+  }, [isDesktop])
 
   useEffect(() => {
-    if (!isTauri || !cloudConnection.isConnected) {
+    if (!isDesktop || !cloudConnection.isConnected) {
       return
     }
 
@@ -150,10 +150,10 @@ export function WorkbenchPage({ routeActive = true }: WorkbenchPageProps) {
     cloudConnection.isConnected,
     cloudConnection.serviceKey,
     cloudConnection.token,
-    isTauri,
+    isDesktop,
   ])
 
-  return shouldUseMobileWorkbenchLayout({ isMobileViewport, isTauri }) ? (
+  return shouldUseMobileWorkbenchLayout({ isMobileViewport, isDesktop }) ? (
     <MobileWorkbenchLayout />
   ) : (
     <DesktopWorkbenchLayout routeActive={routeActive} />

@@ -10,13 +10,13 @@ Wework 内置一个默认关闭的前端性能诊断开关，用于定位 releas
 
 使用 `pnpm --filter wework dev:mac` 启动日常 debug 应用时，默认直接使用正式版的 Executor Home，因此项目和任务会与本机正式版 Wework 共享；每个 Wework 进程仍通过自己子进程的 stdio 与 executor 通信，不会发生端点覆盖或误连其他 executor。需要临时隔离项目和任务时，使用 `pnpm --filter wework dev:mac -- --executor-isolation`。
 
-`ai:verify` 和桌面 E2E 不使用上述共享默认值。它们会显式创建临时 Executor Home、项目目录、设备 ID 和唯一 Tauri identifier，使任务、项目、应用数据以及单实例锁都与正式版和其他验证会话隔离。
+`ai:verify` 和桌面 E2E 不使用上述共享默认值。它们会显式创建临时 Executor Home、项目目录、设备 ID 和唯一 Electron app-data namespace，使任务、项目、应用数据以及单实例锁都与正式版和其他验证会话隔离。
 
 开发环境默认让这些实例复用同一个 Cargo target 目录，以便 executor 源码变化后继续使用增量编译产物。需要排查共享构建缓存问题时，可以设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1`，让当前启动过程使用项目内的默认 target 目录。
 
 ## 启动耗时诊断
 
-桌面端的启动页只等待本地 executor 通过 stdout 报告 ready；debug 构建不会为了播放完整动画而延迟工作台。冷启动时，Tauri 直接启动新的 sidecar，不发现或附着已有 executor。
+桌面端的启动页只等待本地 executor 通过 stdout 报告 ready；debug 构建不会为了播放完整动画而延迟工作台。冷启动时， Electron 直接启动新的 sidecar，不发现或附着已有 executor。
 
 排查启动页长时间不消失时，对齐前端日志的 `Frontend logging initialized` 与 executor 日志的 `app IPC stdio ready`。两者之间的时间主要反映本地 executor 冷启动；`runtime work list finished` 等后续记录用于判断工作台数据加载耗时。不要把后台云端同步的超时误判为本地启动门控。
 
@@ -76,7 +76,7 @@ Debug 面板的快照会附带当前 runtime pane 的轻量内存摘要，用于
 - 队列消息、guidance 消息、代码评论上下文和 transcript 范围状态。
 - 当前 runtime task 在 work list 中的 `running` 原始值，以及由 pane 推导出的运行状态。
 
-快照只记录摘要，不会把完整命令输出、原始 Codex 事件或完整 transcript 内容复制到 Debug 面板。需要排查原始内容时应查看 executor 日志或 Web Inspector 采样，而不是通过前端快照搬运大文本。
+快照只记录摘要，不会把完整命令输出、原始 Codex 事件或完整 transcript 内容复制到 Debug 面板。需要排查原始内容时应查看 executor 日志或 DevTools 采样，而不是通过前端快照搬运大文本。
 
 ## Runtime transcript 与列表载荷
 
@@ -92,7 +92,7 @@ Codex 会从历史 API 中过滤 `<codex_internal_context>`，因此 Wework 发�
 
 桌面工作台最多缓存 10 个普通 pane，并按最近使用顺序淘汰。非活跃且已停止运行的 pane 会释放 transcript 消息、历史 DOM、分页范围、导航索引和 processing 展开状态；再次切回时从 runtime transcript 原始数据重新加载。
 
-Tauri 对话统一使用 `@tanstack/react-virtual` 的消息行虚拟列表，不再根据消息数量切换实现。用户停留在底部时，虚拟列表使用 `anchorTo: 'end'` 维持末端跟随；用户主动向上滚动后必须切换为 `anchorTo: 'start'`，避免流式消息行增长时 TanStack Virtual 继续改写滚动位置。滚动快照统一表示为“视口底部到列表底部的距离”。库内共享 `ResizeObserver` 测量已挂载消息的真实高度。活动中的流式消息即使位于可见范围和 overscan 之外，也必须保留在虚拟 range 中，使其高度增长持续进入 TanStack Virtual 的测量；否则消息重新挂载时从估算高度切换到真实高度，会破坏历史阅读位置。用户停留在底部时，高度变化继续按末端距离补偿；用户主动向上滚动后，则记录视口内首个文本滚动锚点及其视口偏移，并在流式消息重新测量时恢复该文本锚点。这样既能保持底部自动跟随，也能避免正在阅读的文本随流式输出持续向上漂移。渲染范围在可见区前后各保留 2 条消息。消息行不再使用 `IntersectionObserver` 做第二层窗口化；单条超长 Markdown 仍保留独立的块级窗口化，以限制一个可见消息内部的 DOM 数量。其余 `IntersectionObserver` 用途包括跟随底部状态和附件预览等独立功能。
+Electron 对话统一使用 `@tanstack/react-virtual` 的消息行虚拟列表，不再根据消息数量切换实现。用户停留在底部时，虚拟列表使用 `anchorTo: 'end'` 维持末端跟随；用户主动向上滚动后必须切换为 `anchorTo: 'start'`，避免流式消息行增长时 TanStack Virtual 继续改写滚动位置。滚动快照统一表示为“视口底部到列表底部的距离”。库内共享 `ResizeObserver` 测量已挂载消息的真实高度。活动中的流式消息即使位于可见范围和 overscan 之外，也必须保留在虚拟 range 中，使其高度增长持续进入 TanStack Virtual 的测量；否则消息重新挂载时从估算高度切换到真实高度，会破坏历史阅读位置。用户停留在底部时，高度变化继续按末端距离补偿；用户主动向上滚动后，则记录视口内首个文本滚动锚点及其视口偏移，并在流式消息重新测量时恢复该文本锚点。这样既能保持底部自动跟随，也能避免正在阅读的文本随流式输出持续向上漂移。渲染范围在可见区前后各保留 2 条消息。消息行不再使用 `IntersectionObserver` 做第二层窗口化；单条超长 Markdown 仍保留独立的块级窗口化，以限制一个可见消息内部的 DOM 数量。其余 `IntersectionObserver` 用途包括跟随底部状态和附件预览等独立功能。
 
 单条 assistant 消息可能包含大量工具块，并被拆成多个 `ToolBlocksDisplay` 段。依赖完整消息上下文的派生数据（例如文件编辑耗时）必须在消息级别只计算一次，再映射到各显示段；不得让每个显示段重复扫描整条消息。没有对应展示块时应直接走空结果快路径，工具名称匹配也应避免为每个 block 创建拆分数组或集合。
 
@@ -128,7 +128,7 @@ Wework 将 executor 高频到达的文本增量与 Markdown 展示节奏分离�
 
 - 帧率稳定但输出一阵快、一阵慢：检查 stream `message` 事件间隔，通常是 executor 增量批量到达或存在网络/IPC 空档。
 - 存在长帧、密集样式重算或 Markdown 解析：检查是否绕过了文本缓冲、破坏了 Streamdown 组件引用稳定性，或重新引入了逐字符 DOM 动画。
-- GC 时间异常高：确认 Web Inspector 是否开启 **Heap Allocations**。该采集项会显著放大长时间录制中的 GC；只排查交互流畅度时应关闭它。
+- GC 时间异常高：确认 DevTools 是否开启 **Heap Allocations**。该采集项会显著放大长时间录制中的 GC；只排查交互流畅度时应关闭它。
 
 流式文本缓冲的单元测试位于 `wework/src/components/chat/useBufferedStreamingText.test.ts`。修改缓冲水位或推进速率时，应同时验证 Unicode 字符边界、非追加更新和流结束立即对齐行为。
 
@@ -146,19 +146,19 @@ Wework 将 executor 高频到达的文本增量与 Markdown 展示节奏分离�
 
 ## 现场取证
 
-release 包默认编译 Tauri Web Inspector 能力，但主 WebView 默认保持不可检查状态，因此其 WebKit 原生右键菜单不包含 Inspect Element。按隐藏快捷键打开 **Developer Commands** 并选择 **Open Web Inspector** 时，原生侧才会动态设置 `WKWebView.isInspectable` 并打开 Inspector；该入口与 Performance Diagnostics 开关相互独立，要求 macOS 13.3 或更高版本。内置浏览器子 WebView 只在 debug 构建中启用 Inspector；macOS 会在 Inspector frontend 首次显示前强制 detach，因此 F12 打开独立窗口，不会停靠、重置子视图尺寸或覆盖工作台。release 构建通过显式 build cfg 禁用子 WebView Inspector。需要构建不含主 WebView Inspector 能力的发行包时，设置 `WEWORK_RELEASE_DEVTOOLS=0`。如需在本地诊断启动时自动打开主 WebView Inspector，可以用环境变量：
+release 包默认编译 Electron DevTools 能力，但主 WebView 默认保持不可检查状态，因此其 Chromium 原生右键菜单不包含 Inspect Element。按隐藏快捷键打开 **Developer Commands** 并选择 **Open DevTools** 时，原生侧才会动态设置 `webContents.openDevTools()` 并打开 Inspector；该入口与 Performance Diagnostics 开关相互独立，要求 macOS 13.3 或更高版本。内置浏览器子 WebView 只在 debug 构建中启用 Inspector；macOS 会在 Inspector frontend 首次显示前强制 detach，因此 F12 打开独立窗口，不会停靠、重置子视图尺寸或覆盖工作台。release 构建通过显式 build cfg 禁用子 WebView Inspector。需要构建不含主 WebView Inspector 能力的发行包时，设置 `WEWORK_RELEASE_DEVTOOLS=0`。如需在本地诊断启动时自动打开主 WebView Inspector，可以用环境变量：
 
 ```bash
 WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork
 ```
 
-Web Inspector 打开后，在卡顿后执行：
+DevTools 打开后，在卡顿后执行：
 
 ```js
 window.__WEWORK_PERF__.snapshot();
 ```
 
-返回值包含当前 URL、页面可见性、DOM 节点数、内存快照、导航时序、resource 数量、最近事件，以及 Wework 进程组快照。macOS 上 WebKit XPC 进程会被系统改挂到 PID 1；诊断会通过 LaunchServices 将当前 Wework 实例对应的 Web Content、GPU 和 Networking 进程重新关联进来。
+返回值包含当前 URL、页面可见性、DOM 节点数、内存快照、导航时序、resource 数量、最近事件，以及 Wework 进程组快照。macOS 上 Chromium XPC 进程会被系统改挂到 PID 1；诊断会通过 LaunchServices 将当前 Wework 实例对应的 Web Content、GPU 和 Networking 进程重新关联进来。
 
 进程组同时提供 `rss_kib` 和 `physical_footprint_kib`：RSS 包含共享映射和可回收驻留页，通常明显高于真实内存压力；判断泄漏或系统资源占用时应优先比较 `physical_footprint_kib`，RSS 只作为地址空间驻留的辅助指标。需要持续观察时可以多次执行，重点比较：
 
@@ -169,7 +169,7 @@ window.__WEWORK_PERF__.snapshot();
 - 是否存在密集 `longtask` 或 `event-loop-lag`。
 - 是否存在重复的 `slow-react-commit`。
 
-主工作台的全高侧栏和横跨内容区的顶部栏应使用普通语义背景，避免在大面积常驻表面应用 `backdrop-filter`。这类滤镜可能让 WebKit 为整个区域保留额外图形 backing store；排查 Web Content 内存时，应在相同窗口尺寸和页面状态下比较启用前后的 `physical_footprint_kib`，并把 Web Inspector 堆快照产生的短期可回收内存高水位排除在稳定基线之外。
+主工作台的全高侧栏和横跨内容区的顶部栏应使用普通语义背景，避免在大面积常驻表面应用 `backdrop-filter`。这类滤镜可能让 Chromium 为整个区域保留额外图形 backing store；排查 Web Content 内存时，应在相同窗口尺寸和页面状态下比较启用前后的 `physical_footprint_kib`，并把 DevTools 堆快照产生的短期可回收内存高水位排除在稳定基线之外。
 
 也可以手动打点：
 

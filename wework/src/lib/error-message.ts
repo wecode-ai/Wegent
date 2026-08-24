@@ -1,4 +1,4 @@
-/** Extract a human-readable message from Error, Tauri string rejects, or plain objects. */
+/** Extract a human-readable message from Error, string rejects, or plain objects. */
 export function getErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === 'string' && error.trim()) return error
   if (error instanceof Error && error.message.trim()) return error.message

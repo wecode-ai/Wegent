@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import { isDesktopRuntime, isElectronRuntime, isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
@@ -34,7 +34,6 @@ export function ChromeTitlebar({
   showFeedback = true,
   availableWorkspaceTabKinds,
 }: ChromeTitlebarProps) {
-  const isTauri = isTauriRuntime()
   const isElectron = isElectronRuntime()
   const isDesktop = isDesktopRuntime()
   const platform = getPlatform()
@@ -57,11 +56,7 @@ export function ChromeTitlebar({
     >
       {/* macOS: traffic light spacer (left) */}
       {isDesktop && platform === 'mac' && (
-        <div
-          className="w-[92px] shrink-0 self-stretch"
-          data-testid="macos-traffic-light-spacer"
-          data-tauri-drag-region
-        >
+        <div className="w-[92px] shrink-0 self-stretch" data-testid="macos-traffic-light-spacer">
           <MacOSTitleBarDragRegion />
         </div>
       )}
@@ -139,19 +134,16 @@ export function ChromeTitlebar({
       )}
 
       {/* Linux: right spacer for native window controls */}
-      {isTauri && platform === 'linux' && (
-        <div className="w-[138px] shrink-0 self-stretch" data-tauri-drag-region>
+      {isDesktop && platform === 'linux' && (
+        <div className="electron-titlebar-drag-region w-[138px] shrink-0 self-stretch">
           <MacOSTitleBarDragRegion />
         </div>
       )}
 
       {/* Windows: custom window frame controls */}
-      {((isTauri && platform === 'win') ||
+      {((isDesktop && platform === 'win') ||
         (isElectron && (platform === 'win' || platform === 'linux'))) && (
-        <div
-          className="relative z-chrome w-[138px] shrink-0 self-stretch"
-          data-tauri-drag-region={false}
-        >
+        <div className="electron-titlebar-interactive-region relative z-chrome w-[138px] shrink-0 self-stretch">
           <WindowFrameControls className="h-full justify-end" />
         </div>
       )}

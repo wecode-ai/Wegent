@@ -9,7 +9,7 @@ codex_target="x86_64-unknown-linux-gnu"
 electron_package="${WEWORK_E2E_ELECTRON_PACKAGE_DIR:-wework/electron/release/WeWork-linux-x64}"
 app_binary="$electron_package/WeWork"
 executor_binary="$electron_package/resources/bin/wegent-executor"
-codex_root="wework/src-tauri/binaries/codex/$codex_target"
+codex_root="wework/resources/binaries/codex/$codex_target"
 
 test -d "$electron_package"
 test -x "$app_binary"

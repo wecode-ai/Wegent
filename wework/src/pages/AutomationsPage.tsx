@@ -34,7 +34,7 @@ import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSideba
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCloudDevice } from '@/lib/device-capabilities'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
@@ -56,7 +56,7 @@ export function AutomationsPage() {
   const { t, i18n } = useTranslation('common')
   const { logout } = useAuth()
   const isMobile = useIsMobile()
-  const isTauri = isTauriRuntime()
+  const isDesktop = isElectronRuntime()
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const {
     state,
@@ -569,7 +569,7 @@ export function AutomationsPage() {
       )}
 
       <main className="relative flex min-w-0 flex-1 overflow-hidden">
-        {!isMobile && isTauri && (
+        {!isMobile && isDesktop && (
           <DesktopCollapsedSidebarToggle
             collapsed={sidebarCollapsed}
             onToggle={() => setSidebarCollapsed(false)}

@@ -40,7 +40,7 @@ const dshPlugins = [
   },
 ]
 const dshAppOutput = path.join(root, 'dsh', 'app-wework', 'web')
-const targetDirectory = path.join(root, 'src-tauri', 'bundled-harness-runtime')
+const targetDirectory = path.join(root, 'resources', 'bundled-harness-runtime')
 const catalogPath = path.join(targetDirectory, 'runtimes.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
 const cacheDirectory = path.join(root, 'node_modules', '.cache')

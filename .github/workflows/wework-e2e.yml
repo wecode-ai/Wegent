@@ -197,7 +197,6 @@ jobs:
     timeout-minutes: 20
     env:
       HOME: /root
-      WEWORK_E2E_SKIP_TYPECHECK: "true"
     container:
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
@@ -461,7 +460,6 @@ jobs:
     timeout-minutes: 25
     env:
       HOME: /root
-      WEWORK_E2E_SKIP_TYPECHECK: "true"
     container:
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
@@ -605,7 +603,6 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 45
     env:
-      WEWORK_E2E_SKIP_TYPECHECK: "true"
 
     steps:
       - name: Checkout code
@@ -668,7 +665,7 @@ jobs:
         run: |
           pnpm run prepare:codex --materialize
           pnpm run prepare:dws
-          codex_bin="$(find -L "$PWD/src-tauri/binaries/codex" -type f -path '*/bin/codex' -perm -u+x -print -quit)"
+          codex_bin="$(find -L "$PWD/resources/binaries/codex" -type f -path '*/bin/codex' -perm -u+x -print -quit)"
           test -n "$codex_bin"
           echo "CODEX_BIN=$codex_bin" >> "$GITHUB_ENV"
           echo "WEWORK_E2E_CODEX_BIN=$codex_bin" >> "$GITHUB_ENV"

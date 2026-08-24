@@ -12,7 +12,7 @@ import { ModelSelector } from './ModelSelector'
 import { PluginPickerMenu } from './PluginPickerMenu'
 import { PopoutWorkspaceMenu } from './PopoutWorkspaceMenu'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
-import type { QuickPhrase } from '@/tauri/appPreferences'
+import type { QuickPhrase } from '@/desktop/appPreferences'
 import { PermissionModeSelector } from './PermissionModeSelector'
 import {
   RUNTIME_PERMISSION_MODE_OPTION,

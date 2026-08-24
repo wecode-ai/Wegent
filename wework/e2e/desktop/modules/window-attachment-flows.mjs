@@ -22,7 +22,6 @@ import {
   ATTACHMENT_ONLY_FILENAME,
   COMPOSER_READY_STABILITY_MS,
   DEFAULT_STEP_TIMEOUT_MS,
-  DESKTOP_RUNTIME,
   FRESH_CHAT_COMPLETION_TEXT,
   FRESH_CHAT_PROMPT,
   IMAGE_ARTIFACT_BASE64,
@@ -67,10 +66,8 @@ async function waitForProcessExit(processId, message) {
   throw new Error(message)
 }
 
-function desktopWindowLogPath(appProcessId) {
-  return DESKTOP_RUNTIME === 'electron'
-    ? join(resultDir, 'app.log')
-    : join(resultDir, `wework-tauri-${appProcessId}.log`)
+function desktopWindowLogPath() {
+  return join(resultDir, 'app.log')
 }
 
 async function verifyCrossProviderSwitchRetry(control, composerSelector) {

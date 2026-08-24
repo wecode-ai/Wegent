@@ -34,7 +34,6 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
             fork_thread_id: None,
             fork_thread_path: None,
             resume_thread_id: None,
-            initial_thread_name: None,
             initial_thread_goal: None,
         }]);
     }
@@ -67,7 +66,6 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
         fork_thread_id: None,
         fork_thread_path: None,
         resume_thread_id: None,
-        initial_thread_name: None,
         initial_thread_goal: None,
     };
     turn.request.extra.insert(
@@ -101,7 +99,6 @@ async fn archive_stop_waits_for_worktree_preparation_ack() {
         fork_thread_id: None,
         fork_thread_path: None,
         resume_thread_id: None,
-        initial_thread_name: None,
         initial_thread_goal: None,
     };
     turn.request.extra.insert(
@@ -168,7 +165,6 @@ async fn cancelled_deferred_worktree_is_removed_before_runtime_start() {
         fork_thread_id: None,
         fork_thread_path: None,
         resume_thread_id: None,
-        initial_thread_name: None,
         initial_thread_goal: None,
     };
     handler.upsert_local_task(RuntimeTaskLink::new_pending(
@@ -1091,7 +1087,6 @@ async fn restart_reconciliation_leaves_queued_worktree_idle_without_failure() {
         fork_thread_id: None,
         fork_thread_path: None,
         resume_thread_id: None,
-        initial_thread_name: None,
         initial_thread_goal: None,
     }]);
     write_runtime_turn_queue(&queue_path, &interrupted).unwrap();

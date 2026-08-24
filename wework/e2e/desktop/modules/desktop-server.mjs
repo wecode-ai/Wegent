@@ -223,7 +223,6 @@ import {
   MULTIMODAL_VISION_PROMPT,
   WINDOW_LIFECYCLE_COMPLETION_RESPONSE,
   WINDOW_LIFECYCLE_PROMPT,
-  DESKTOP_RUNTIME,
   assert,
   createServer,
   join,
@@ -873,8 +872,7 @@ class DesktopE2EServer {
   }
 
   async commandForClient(clientId, action, selector, options = {}) {
-    const observesElectronState =
-      DESKTOP_RUNTIME === 'electron' && ELECTRON_OBSERVATION_ACTIONS.has(action)
+    const observesElectronState = ELECTRON_OBSERVATION_ACTIONS.has(action)
     const availableAt = observesElectronState
       ? 0
       : (this.controlCommandAvailableAt.get(clientId) ?? 0)

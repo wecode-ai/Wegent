@@ -1,7 +1,14 @@
 import { BrowserWindow, session, shell, type DownloadItem, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import {
+  BrowserHistoryStore,
+  type BrowserHistoryEntry,
+  type BrowserHistorySearch,
+} from './browser-history-store.js'
 import { prepareLocalFileNavigation } from './local-file-preview.js'
+import { captureWebContentsDataUrl } from './web-contents-capture.js'
 
 export interface BrowserBounds {
   x: number
@@ -29,12 +36,13 @@ interface BrowserEntry {
   contents: WebContents
   bounds: BrowserBounds
   visible: boolean
-  ready: boolean
   requestedUrl: string | null
   previewDisplayUrl: string | null
   previewSourceUrl: string | null
   ownsDeviceMetricsDebugger: boolean
   navigationError: BrowserPageState['navigationError']
+  historyId: string | null
+  historyGeneration: number
 }
 
 export interface BrowserHostEvent {
@@ -93,9 +101,12 @@ export class EmbeddedBrowserManager {
   private readonly agentControlPaused = new Set<string>()
   private readonly agentApprovals = new Map<string, BrowserAgentApproval>()
   private readonly events: BrowserHostEvent[] = []
+  private readonly history: BrowserHistoryStore
   private eventSequence = 0
+  private historyGeneration = 0
 
-  constructor() {
+  constructor(dataDirectory: string) {
+    this.history = new BrowserHistoryStore(join(dataDirectory, 'browser-history.json'))
     session
       .fromPartition(EMBEDDED_BROWSER_PARTITION)
       .on('will-download', (_event, item, webContents) => {
@@ -154,12 +165,13 @@ export class EmbeddedBrowserManager {
       contents,
       bounds: validBounds(input.bounds),
       visible: input.visible,
-      ready: false,
       requestedUrl: validBrowserUrl(input.url),
       previewDisplayUrl: null,
       previewSourceUrl: null,
       ownsDeviceMetricsDebugger: false,
       navigationError: null,
+      historyId: null,
+      historyGeneration: this.historyGeneration,
     }
     contents.setWindowOpenHandler(({ url }) => {
       if (isBrowserUrl(url)) {
@@ -184,6 +196,9 @@ export class EmbeddedBrowserManager {
     contents.on('did-start-loading', emitPageState)
     contents.on('did-stop-loading', emitPageState)
     contents.on('page-title-updated', emitPageState)
+    contents.on('page-title-updated', (_event, title) => {
+      if (entry.historyId) void this.history.backfillTitle(entry.historyId, title)
+    })
     contents.on('did-navigate', (_event, url) => {
       if (url !== entry.previewDisplayUrl) {
         entry.requestedUrl = url
@@ -205,11 +220,19 @@ export class EmbeddedBrowserManager {
       this.recordNavigationFailure(entry, code, message, validatedURL || entry.requestedUrl)
     })
     contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
-      if (isMainFrame) entry.navigationError = null
+      if (isMainFrame) {
+        entry.navigationError = null
+        entry.historyId = null
+        entry.historyGeneration = this.historyGeneration
+      }
+    })
+    contents.on('did-finish-load', () => {
+      void this.recordHistoryVisit(entry)
     })
     this.entries.set(label, entry)
+    // Registration, not navigation completion, is the browser host readiness boundary.
+    // The requested URL is already authoritative in state() while Chromium finishes loading.
     await this.load(entry, entry.requestedUrl as string)
-    entry.ready = true
     return this.state(label)
   }
 
@@ -344,7 +367,7 @@ export class EmbeddedBrowserManager {
   }
 
   has(label: string): boolean {
-    return this.entries.get(requiredLabel(label))?.ready === true
+    return this.entries.has(requiredLabel(label))
   }
 
   isAgentControlPaused(label: string): boolean {
@@ -485,6 +508,11 @@ export class EmbeddedBrowserManager {
   }
 
   async clearData(kinds: string[] | null): Promise<number> {
+    const clearAll = !kinds || kinds.length === 0
+    if (clearAll || kinds.includes('history')) {
+      this.historyGeneration += 1
+      await this.history.clear()
+    }
     const storages = kinds?.flatMap(kind => {
       if (kind === 'cookies') return ['cookies'] as const
       if (kind === 'cache') return ['serviceworkers', 'cachestorage', 'shadercache'] as const
@@ -494,32 +522,26 @@ export class EmbeddedBrowserManager {
       return []
     })
     const browserSession = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
-    await browserSession.clearStorageData({
-      ...(storages?.length ? { storages: [...new Set(storages)] } : {}),
-    })
-    if (!kinds || kinds.includes('cache')) await browserSession.clearCache()
+    if (clearAll || storages?.length) {
+      await browserSession.clearStorageData({
+        ...(storages?.length ? { storages: [...new Set(storages)] } : {}),
+      })
+    }
+    if (clearAll || kinds.includes('cache')) await browserSession.clearCache()
     return this.entries.size
+  }
+
+  searchHistory(input: BrowserHistorySearch): Promise<BrowserHistoryEntry[]> {
+    return this.history.search(input)
+  }
+
+  removeHistory(ids: string[]): Promise<number> {
+    return this.history.remove(ids)
   }
 
   async capture(label: string): Promise<string> {
     const entry = this.required(label)
-    const target = entry.contents.debugger
-    const ownsAttachment = !target.isAttached()
-    if (ownsAttachment) target.attach('1.3')
-    try {
-      await target.sendCommand('Page.bringToFront')
-      const result = (await target.sendCommand('Page.captureScreenshot', {
-        captureBeyondViewport: false,
-        format: 'png',
-        fromSurface: true,
-      })) as { data?: unknown }
-      if (typeof result.data !== 'string' || result.data.length === 0) {
-        throw new Error('Embedded browser screenshot returned no image data')
-      }
-      return `data:image/png;base64,${result.data}`
-    } finally {
-      if (ownsAttachment && target.isAttached()) target.detach()
-    }
+    return captureWebContentsDataUrl(entry.contents)
   }
 
   async verifyDetachedInspector(label: string): Promise<{
@@ -712,6 +734,19 @@ export class EmbeddedBrowserManager {
     return currentUrl || null
   }
 
+  private async recordHistoryVisit(entry: BrowserEntry): Promise<void> {
+    const url = this.currentVisibleUrl(entry)
+    if (
+      !url ||
+      !isHistoryRecordableUrl(url) ||
+      entry.historyGeneration !== this.historyGeneration
+    ) {
+      return
+    }
+    const historyId = await this.history.recordVisit(url, Date.now(), entry.contents.getTitle())
+    if (entry.historyGeneration === this.historyGeneration) entry.historyId = historyId
+  }
+
   private recordNavigationFailure(
     entry: BrowserEntry,
     code: number,
@@ -818,6 +853,14 @@ function validBrowserUrl(value: string): string {
 function isBrowserUrl(value: string): boolean {
   try {
     return ['http:', 'https:', 'file:', 'about:'].includes(new URL(value).protocol)
+  } catch {
+    return false
+  }
+}
+
+function isHistoryRecordableUrl(value: string): boolean {
+  try {
+    return ['http:', 'https:', 'file:'].includes(new URL(value).protocol)
   } catch {
     return false
   }

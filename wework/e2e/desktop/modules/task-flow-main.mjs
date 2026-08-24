@@ -133,7 +133,6 @@ import {
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
   DESKTOP_CONTROL_SERVER_PORT,
-  DESKTOP_RUNTIME,
   DESKTOP_MODEL_SERVER_PORT,
   DESKTOP_READY_TIMEOUT_MS,
   DESKTOP_SCENARIO_ONLY,
@@ -222,7 +221,6 @@ import {
   ensureModelOptionVisible,
   join,
   loadDesktopScenario,
-  macosFrontmostProcessId,
   mkdir,
   pathExists,
   readFile,
@@ -241,7 +239,6 @@ import {
   triggerModelReloadUntilCloudFailure,
   validateDesktopSegmentOptions,
   waitForE2EModelLabel,
-  waitForMacosApplicationProcessId,
   weworkDir,
   withTimeout,
   writeFile,
@@ -904,14 +901,7 @@ async function main() {
     if (BUILD_ONLY) {
       const builds = await Promise.all([
         buildExecutor(),
-        buildDesktopApp(
-          control.controlUrl,
-          control.url,
-          'wework-desktop-e2e-cloud-token',
-          appIdentifier,
-          control.url,
-          codexBinary
-        ),
+        buildDesktopApp(appIdentifier, codexBinary),
       ])
       executorBinary = builds[0]
       prebuiltDesktopApp = builds[1]
@@ -943,16 +933,7 @@ async function main() {
     desktopScenario?.setExecutorBinary?.(executorBinary)
     const desktopAppPromise = prebuiltDesktopApp
       ? Promise.resolve(prebuiltDesktopApp)
-      : buildDesktopApp(
-          control.controlUrl,
-          cloudEnvironment?.backendUrl ?? control.url,
-          cloudEnvironment?.authToken ??
-            desktopScenario?.authToken ??
-            'wework-desktop-e2e-cloud-token',
-          appIdentifier,
-          control.url,
-          codexBinary
-        )
+      : buildDesktopApp(appIdentifier, codexBinary)
     const desktopApp = cloudEnvironment
       ? (
           await Promise.all([
@@ -1008,10 +989,7 @@ async function main() {
 
     const harnessRuntimes =
       SELECTED_DESKTOP_SEGMENT === 'harness-apps' ? await prepareHarnessRuntimeRoots() : null
-    const electronCoreRuntimeRoot =
-      DESKTOP_RUNTIME === 'electron'
-        ? process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || null
-        : null
+    const electronCoreRuntimeRoot = process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || null
     if (electronCoreRuntimeRoot) {
       assert.equal(
         await pathExists(electronCoreRuntimeRoot),
@@ -1052,19 +1030,14 @@ async function main() {
       WEWORK_E2E_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
       WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
       WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
+      WEWORK_E2E_STARTUP_SPLASH_CAPTURE: join(resultDir, 'startup-splash.png'),
       WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
-      ...(DESKTOP_RUNTIME === 'electron'
-        ? {
-            WEWORK_DESKTOP_RUNTIME: 'electron',
-            WEWORK_EXECUTOR_PATH: executorBinary,
-            WEWORK_USER_DATA_DIR: join(resultDir, 'electron-user-data'),
-            ...(electronCoreRuntimeRoot
-              ? { WEWORK_HARNESS_RUNTIME_ROOT: electronCoreRuntimeRoot }
-              : {}),
-          }
-        : {}),
+      WEWORK_DESKTOP_RUNTIME: 'electron',
+      WEWORK_EXECUTOR_PATH: executorBinary,
+      WEWORK_USER_DATA_DIR: join(resultDir, 'electron-user-data'),
+      ...(electronCoreRuntimeRoot ? { WEWORK_HARNESS_RUNTIME_ROOT: electronCoreRuntimeRoot } : {}),
       ...(harnessRuntimes
         ? {
             WEWORK_HARNESS_RUNTIME_ROOT: harnessRuntimes.harnessRuntimeRoot,
@@ -1081,10 +1054,7 @@ async function main() {
         : {}),
     }
     const electronLaunchArguments =
-      DESKTOP_RUNTIME === 'electron' &&
-      process.platform === 'linux' &&
-      typeof process.getuid === 'function' &&
-      process.getuid() === 0
+      process.platform === 'linux' && typeof process.getuid === 'function' && process.getuid() === 0
         ? (() => {
             assert.equal(
               process.env.WEWORK_E2E_ISOLATED_XVFB,
@@ -1095,22 +1065,6 @@ async function main() {
           })()
         : []
     const startDesktopAppProcess = async () => {
-      if (process.platform === 'darwin' && DESKTOP_RUNTIME === 'tauri') {
-        assert.ok(appBundlePath, 'The macOS desktop E2E application bundle is missing')
-        const child = spawn(appBinary, [], {
-          cwd: weworkDir,
-          env: appEnvironment,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          detached: true,
-        })
-        await Promise.all([
-          appendProcessOutput(child.stdout, appLogPath),
-          appendProcessOutput(child.stderr, appLogPath),
-        ])
-        await waitForMacosApplicationProcessId(appIdentifier, child)
-        return child
-      }
-
       const child = spawn(appBinary, electronLaunchArguments, {
         cwd: weworkDir,
         env: appEnvironment,
@@ -1142,12 +1096,12 @@ async function main() {
     const ready = await withTimeout(
       control.awaitReady(),
       DESKTOP_READY_TIMEOUT_MS,
-      `Timed out waiting for the real ${DESKTOP_RUNTIME} application to connect to the Desktop E2E controller`
+      'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
     )
     assert.match(
       String(ready.location ?? ''),
-      /^(tauri|http):/,
-      'The desktop controller did not connect from a webview'
+      /^https?:/,
+      'The Electron desktop controller did not connect from its local renderer origin'
     )
     if (VERIFIES_INITIAL_TELEMETRY_CONSENT) {
       await verifyInitialTelemetryConsent(control, [
@@ -1160,13 +1114,6 @@ async function main() {
       ])
     } else {
       await declineInitialTelemetryConsent(control)
-    }
-    if (process.platform === 'darwin' && DESKTOP_RUNTIME === 'tauri') {
-      assert.notEqual(
-        macosFrontmostProcessId(),
-        app.pid,
-        'The desktop E2E application stole macOS foreground focus'
-      )
     }
     if (RUNS_PLUGIN_E2E) {
       phase = 'blank-codex-home-initialization'

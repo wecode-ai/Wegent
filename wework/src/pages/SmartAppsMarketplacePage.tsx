@@ -33,6 +33,7 @@ import type {
   SmartAppsApi,
 } from '@/api/smartApps'
 import { ApiError } from '@/api/http'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import {
   harnessAppsApi,
   type HarnessAppInstallation,
@@ -49,7 +50,7 @@ import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
-import { ensureBundledPluginInstalled } from '@/tauri/localExecutor'
+import { ensureBundledPluginInstalled } from '@/desktop/localExecutor'
 
 interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
@@ -529,15 +530,17 @@ export function SmartAppsMarketplacePage({
   }
 
   async function chooseCreatedPackage() {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const path = await open({
-      multiple: false,
-      directory: false,
-      filters: [
-        { name: t('workbench.smart_apps_package', '智能工作台安装包'), extensions: ['zip'] },
-      ],
-    })
-    if (typeof path === 'string') await importCreatedPackage(path)
+    const selected = await invokeDesktopHost<{ canceled: boolean; filePaths: string[] }>(
+      'dialog.open',
+      {
+        properties: ['openFile'],
+        filters: [
+          { name: t('workbench.smart_apps_package', '智能工作台安装包'), extensions: ['zip'] },
+        ],
+      }
+    )
+    const path = selected.filePaths[0]
+    if (!selected.canceled && path) await importCreatedPackage(path)
   }
 
   async function dropCreatedPackage(event: DragEvent<HTMLElement>) {

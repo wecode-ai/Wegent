@@ -24,12 +24,12 @@ import {
   getRuntimeRemoteProjectRegistrations,
 } from '@/lib/runtime-project-state'
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
-import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
+import { installLocalWorkspaceOpenListener } from '@/desktop/localWorkspaceOpen'
 import {
   installMainRuntimeWorkChangedListener,
   notifyMainRuntimeWorkChanged,
-} from '@/tauri/runtimeWorkSync'
-import { disposeTauriListener } from '@/tauri/disposeTauriListener'
+} from '@/desktop/runtimeWorkSync'
+import { disposeDesktopListener } from '@/desktop/disposeDesktopListener'
 import { createLocalCodexPluginApi, peekLocalCodexPluginsReadState } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
 import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
@@ -56,7 +56,7 @@ import {
   pluginMarketplaceCacheKey,
   subscribePluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
-import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
+import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 import type {
   InstalledPlugin,
   LocalDeviceApp,
@@ -1868,7 +1868,7 @@ export function WorkbenchProvider({
 
     return () => {
       void listener
-        ?.then(unlisten => disposeTauriListener(unlisten, 'local workspace open'))
+        ?.then(unlisten => disposeDesktopListener(unlisten, 'local workspace open'))
         .catch(error => {
           console.debug('[Wework] Local workspace listener was unavailable during cleanup', error)
         })
@@ -2128,7 +2128,7 @@ export function WorkbenchProvider({
 
     return () => {
       void listener
-        ?.then(unlisten => disposeTauriListener(unlisten, 'runtime work changed'))
+        ?.then(unlisten => disposeDesktopListener(unlisten, 'runtime work changed'))
         .catch(error => {
           console.debug('[Wework] Runtime work listener was unavailable during cleanup', error)
         })

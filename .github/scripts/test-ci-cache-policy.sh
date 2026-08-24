@@ -62,7 +62,6 @@ docker=false
 executor_rust=false
 node=false
 python=false
-wework_rust=false
 wework_target=false
 EOF
 )
@@ -94,11 +93,6 @@ desktop_image="${warmup_all_false/docker=false/docker=true}"
 desktop_image="${desktop_image/wework_target=false/wework_target=true}"
 assert_warmup_case "Wework desktop image" "$desktop_image" \
   "docker/wework-e2e/desktop.Dockerfile"
-
-wework_lock="${warmup_all_false/wework_rust=false/wework_rust=true}"
-wework_lock="${wework_lock/wework_target=false/wework_target=true}"
-assert_warmup_case "Wework lock" "$wework_lock" \
-  "wework/src-tauri/Cargo.lock"
 
 pr_workflows=(
   lint.yml
@@ -185,7 +179,7 @@ fi
 
 macos_warmup_section="$(
   sed -n \
-    '/^  warm-wework-macos-rust:/,/^  prepare-wework-desktop-image:/p' \
+    '/^  warm-wework-macos-electron:/,/^  prepare-wework-desktop-image:/p' \
     "$warmup_workflow"
 )"
 if [[ "$macos_warmup_section" != *'name: Warm Wework macOS Electron Build Cache'* ]] ||
@@ -344,7 +338,7 @@ wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
 if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
   ! grep -Fq 'file: docker/wework-e2e/desktop.Dockerfile' "$wework_workflow" ||
   [[ "$(grep -c 'push: true' "$wework_workflow")" -ne 2 ]] ||
-  grep -Eq 'playwright (install|install-deps)|install-wework-tauri-system-dependencies' \
+  grep -Eq 'playwright (install|install-deps)' \
     "$wework_workflow"; then
   fail "Wework E2E must consume its immutable dependency image without runtime installs"
 fi
@@ -383,7 +377,7 @@ if [[ "$desktop_warmup_section" != *'image: ${{ needs.prepare-wework-desktop-ima
   [[ "$desktop_warmup_section" != *'executor/target'* ]] ||
   [[ "$desktop_warmup_section" != *'~/.cache/electron'* ]] ||
   [[ "$desktop_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]] ||
-  [[ "$desktop_warmup_section" =~ install-wework-tauri-system-dependencies|dtolnay/rust-toolchain ]]; then
+  [[ "$desktop_warmup_section" =~ dtolnay/rust-toolchain ]]; then
   fail "Wework desktop Electron warmup must use shared build caches inside the E2E container"
 fi
 

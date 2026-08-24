@@ -56,7 +56,7 @@ import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginT
 import type { ComposerTextareaHandle } from './composer/ComposerTextarea'
 import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
-import type { QuickPhrase } from '@/tauri/appPreferences'
+import type { QuickPhrase } from '@/desktop/appPreferences'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 

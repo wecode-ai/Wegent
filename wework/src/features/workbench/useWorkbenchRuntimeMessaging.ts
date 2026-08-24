@@ -18,8 +18,8 @@ import {
   probeProjectWorktreeAvailability,
   worktreeWorkspaceDeviceId,
 } from '@/lib/worktree-availability'
-import { notifyMainRuntimeWorkChanged } from '@/tauri/runtimeWorkSync'
-import type { AppPreferences } from '@/tauri/appPreferences'
+import { notifyMainRuntimeWorkChanged } from '@/desktop/runtimeWorkSync'
+import type { AppPreferences } from '@/desktop/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import {
   findWorkbenchDevice,

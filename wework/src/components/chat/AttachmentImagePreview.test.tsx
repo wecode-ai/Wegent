@@ -5,22 +5,13 @@ import { AttachmentImagePreview } from './AttachmentImagePreview'
 
 const runtimeMock = vi.hoisted(() => ({
   electron: false,
-  tauri: false,
 }))
 const desktopHostMock = vi.hoisted(() => ({
   invokeDesktopHost: vi.fn(),
 }))
-const tauriCoreMock = vi.hoisted(() => ({
-  convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
-  invoke: vi.fn(),
-  isTauri: vi.fn(() => false),
-}))
-
-vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
 vi.mock('@/api/dsh/desktopHost', () => desktopHostMock)
 vi.mock('@/lib/runtime-environment', () => ({
   isElectronRuntime: () => runtimeMock.electron,
-  isTauriRuntime: () => runtimeMock.tauri,
 }))
 
 interface PendingFetch {
@@ -73,7 +64,6 @@ describe('AttachmentImagePreview', () => {
 
   beforeEach(() => {
     runtimeMock.electron = false
-    runtimeMock.tauri = false
     desktopHostMock.invokeDesktopHost.mockReset()
     pendingFetches = []
     fetchMock = vi.fn(() => {
@@ -148,6 +138,13 @@ describe('AttachmentImagePreview', () => {
   })
 
   test('lightbox loads the selected attachment when equal ids differ by local_path', async () => {
+    runtimeMock.electron = true
+    desktopHostMock.invokeDesktopHost.mockResolvedValue({
+      chunkBase64: Buffer.from('preview').toString('base64'),
+      bytesRead: 7,
+      eof: true,
+      size: 7,
+    })
     const first = localPathAttachment(1, '/a.png')
     const second = localPathAttachment(1, '/b.png')
     render(
@@ -174,7 +171,7 @@ describe('AttachmentImagePreview', () => {
     await waitFor(() => {
       expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
         'src',
-        'asset://localhost/a.png'
+        'blob:attachment-preview'
       )
     })
 
@@ -184,7 +181,7 @@ describe('AttachmentImagePreview', () => {
     await waitFor(() => {
       expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
         'src',
-        'asset://localhost/b.png'
+        'blob:attachment-preview'
       )
     })
   })

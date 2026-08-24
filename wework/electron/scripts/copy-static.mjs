@@ -9,14 +9,14 @@ await cp(resolve(root, 'src/shell'), resolve(root, 'dist/shell'), {
 })
 await mkdir(resolve(root, 'dist/host/browser-runtime'), { recursive: true })
 await cp(
-  resolve(root, '../src-tauri/src/embedded_browser_inspect.js'),
+  resolve(root, 'src/host/browser-runtime/embedded_browser_inspect.js'),
   resolve(root, 'dist/host/browser-runtime/embedded_browser_inspect.js')
 )
 await cp(
-  resolve(root, '../src-tauri/src/embedded_browser_action.js'),
+  resolve(root, 'src/host/browser-runtime/embedded_browser_action.js'),
   resolve(root, 'dist/host/browser-runtime/embedded_browser_action.js')
 )
 await cp(
-  resolve(root, '../src-tauri/src/embedded_browser_wait.js'),
+  resolve(root, 'src/host/browser-runtime/embedded_browser_wait.js'),
   resolve(root, 'dist/host/browser-runtime/embedded_browser_wait.js')
 )

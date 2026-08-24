@@ -1,5 +1,3 @@
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
-import { shouldUseTauriFetch } from '@/api/http'
 import {
   buildLocalModelRequestUrl,
   defaultLocalModelToolProfile,
@@ -292,7 +290,7 @@ function summarizeProbeFailure(body: unknown): string {
 }
 
 function defaultFetcher(): typeof fetch {
-  return shouldUseTauriFetch() ? (tauriFetch as typeof fetch) : globalThis.fetch.bind(globalThis)
+  return globalThis.fetch.bind(globalThis)
 }
 
 async function readErrorMessage(response: Response): Promise<string> {

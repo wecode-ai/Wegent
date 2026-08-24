@@ -22,7 +22,7 @@ vi.mock('@/lib/navigation', () => ({ navigateTo: (path: string) => navigateTo(pa
 vi.mock('@/features/plugins/pluginTrial', () => ({
   queuePluginReferenceTrial: (options: unknown) => queuePluginReferenceTrial(options),
 }))
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   ensureBundledPluginInstalled: (name: string) => ensureBundledPluginInstalled(name),
 }))
 vi.mock('@/features/workbench/useWorkbench', () => ({

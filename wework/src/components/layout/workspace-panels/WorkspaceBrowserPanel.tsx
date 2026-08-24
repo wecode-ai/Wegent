@@ -1960,7 +1960,7 @@ export function WorkspaceBrowserTabPanel({
 
   const openBrowserUrl = useCallback(
     (rawUrl: string) => {
-      const nextUrl = normalizeBrowserUrl(rawUrl, window.location.href)
+      const nextUrl = normalizeBrowserUrl(rawUrl)
       if (!nextUrl) {
         setStatus('error')
         setError(t('workbench.browser_invalid_url'))

@@ -4,7 +4,7 @@ import {
   listWegentInstalledConnectorApps,
 } from '@/api/cloud/connectorApps'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
-import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
+import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 import {
   applyLocalExecutorCloudConnection,
   type LocalExecutorCloudConnection,

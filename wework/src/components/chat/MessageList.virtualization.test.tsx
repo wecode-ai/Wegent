@@ -19,7 +19,7 @@ const { measureElementMock, resizeItemMock, useVirtualizerMock, virtualizerInsta
 
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
-  isTauriRuntime: () => true,
+  isElectronRuntime: () => true,
 }))
 
 vi.mock('@tanstack/react-virtual', () => ({

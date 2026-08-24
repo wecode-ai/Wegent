@@ -29,32 +29,19 @@ import {
   extractFilePathsFromNativePayloads,
   inspectWorkspacePaths,
 } from './workspace-path-inspector.js'
+import { FeedbackBundleManager, type FeedbackExportRequest } from './feedback-bundle-manager.js'
+import { WorkbenchPluginManager } from './workbench-plugin-manager.js'
+import { captureWebContentsDataUrl } from './web-contents-capture.js'
+import type { TrayActivation, TrayAction, TrayMenuState, TraySnapshot } from './tray-manager.js'
+import type { StartupSplashSnapshot } from './startup-splash.js'
+
+export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
 export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
 
-export async function captureWebContentsDataUrl(contents: WebContents): Promise<string> {
-  const image = await contents.capturePage()
-  if (!image.isEmpty()) {
-    const dataUrl = image.toDataURL()
-    if (dataUrl.length > 'data:image/png;base64,'.length) return dataUrl
-  }
-
-  const debugSession = contents.debugger
-  const alreadyAttached = debugSession.isAttached()
-  if (!alreadyAttached) debugSession.attach()
-  try {
-    const result = (await debugSession.sendCommand('Page.captureScreenshot', {
-      captureBeyondViewport: false,
-      format: 'png',
-      fromSurface: true,
-    })) as { data?: unknown }
-    if (typeof result.data !== 'string' || result.data.length === 0) {
-      throw new HostCapabilityError('e2e_capture_failed', 'Electron returned an empty screenshot')
-    }
-    return `data:image/png;base64,${result.data}`
-  } finally {
-    if (!alreadyAttached && debugSession.isAttached()) debugSession.detach()
-  }
+export interface ElectronDesktopServices {
+  feedback: FeedbackBundleManager
+  plugins: WorkbenchPluginManager
 }
 
 export interface ElectronE2EHost {
@@ -65,6 +52,7 @@ export interface ElectronE2EHost {
     requested: boolean
     revision: number
   }
+  cancelCloseToTray: () => Promise<void>
   closeToTray: () => Promise<void>
   completeSystemDragDrop: (payload: {
     action: 'new-chat' | 'follow-up' | 'stash'
@@ -75,12 +63,19 @@ export interface ElectronE2EHost {
   dismissSystemDragPanel: () => void
   evaluateWorkbench: (tabId: string, expression: string) => Promise<unknown>
   focusWindow: (windowLabel: string) => void
+  hideMainWindow: () => Promise<void>
+  dockVisible: () => boolean
   getSystemDragContext: () => { conversationTitle: string | null }
   runtimeDiagnostics: () => {
     coreDshPid: number | null
     executorPid: number | null
     workbenchRuntimes: unknown[]
   }
+  startupSplashSnapshot: () => StartupSplashSnapshot | null
+  trayActivate: (activation: TrayActivation) => boolean
+  traySetState: (state: TrayMenuState) => void
+  traySnapshot: () => TraySnapshot | null
+  takePendingTrayActions: () => TrayAction[]
   scheduleCoreDshRestart: () => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
   popoutWindowSnapshot: () => {
@@ -112,23 +107,32 @@ export function createElectronCapabilityRouter(
   smartApps: () => SmartAppManager | null,
   preferences: PreferencesStore,
   browser: EmbeddedBrowserManager,
+  desktopServices: ElectronDesktopServices,
   e2eHost: ElectronE2EHost = {
     capturePopout: () => Promise.reject(new Error('Popout Window is unavailable')),
     captureWorkbench: () => Promise.reject(new Error('Workbench tabs are unavailable')),
     captureTarget: () => null,
     closeRequestState: after => ({ requested: false, revision: after }),
+    cancelCloseToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
     closeToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
     completeSystemDragDrop: () => Promise.reject(new Error('System drag is unavailable')),
     dismissPopout: () => undefined,
     dismissSystemDragPanel: () => undefined,
     evaluateWorkbench: () => Promise.reject(new Error('Workbench tabs are unavailable')),
     focusWindow: () => undefined,
+    hideMainWindow: () => Promise.reject(new Error('Main window backgrounding is unavailable')),
+    dockVisible: () => true,
     getSystemDragContext: () => ({ conversationTitle: null }),
     runtimeDiagnostics: () => ({
       coreDshPid: null,
       executorPid: null,
       workbenchRuntimes: [],
     }),
+    startupSplashSnapshot: () => null,
+    trayActivate: () => false,
+    traySetState: () => undefined,
+    traySnapshot: () => null,
+    takePendingTrayActions: () => [],
     scheduleCoreDshRestart: () => undefined,
     openWorkspace: () => Promise.reject(new Error('Workspace windows are unavailable')),
     popoutWindowSnapshot: () => ({ exists: false, focused: false, visible: false }),
@@ -198,6 +202,7 @@ export function createElectronCapabilityRouter(
   router.register('browser.reload', params => browser.reload(stringParam(params, 'label')))
   router.register('browser.goBack', params => browser.goBack(stringParam(params, 'label')))
   router.register('browser.goForward', params => browser.goForward(stringParam(params, 'label')))
+  registerBrowserHistoryCapabilities(router, browser)
   router.register('browser.setZoom', params =>
     browser.setZoom(stringParam(params, 'label'), numberParam(params, 'scaleFactor'))
   )
@@ -279,6 +284,21 @@ export function createElectronCapabilityRouter(
     ])
   })
   router.register('clipboard.writeText', params => clipboard.writeText(stringParam(params, 'text')))
+  registerDesktopServiceCapabilities(router, desktopServices, {
+    openLogDirectory: async () => {
+      const logDirectory = app.getPath('logs')
+      await mkdirDirectory(logDirectory)
+      const error = await shell.openPath(logDirectory)
+      if (error) throw new HostCapabilityError('open_log_directory_failed', error)
+    },
+    openDevTools: () => {
+      const contents = requiredWindow(window).webContents
+      if (contents.isDestroyed()) {
+        throw new HostCapabilityError('window_unavailable', 'Desktop web contents are unavailable')
+      }
+      contents.openDevTools({ mode: 'detach', activate: true })
+    },
+  })
   router.register('e2e.capturePopoutWindow', () => e2eHost.capturePopout())
   router.register('e2e.capturePrimaryView', async params => {
     const contents = e2eHost.captureTarget(optionalStringParam(params, 'windowLabel') ?? 'main')
@@ -345,16 +365,28 @@ export function createElectronCapabilityRouter(
   router.register('window.getState', () => {
     const target = requiredWindow(window)
     return {
+      platform: process.platform,
+      visible: target.isVisible(),
       minimized: target.isMinimized(),
       maximized: target.isMaximized(),
       fullScreen: target.isFullScreen(),
       focused: target.isFocused(),
+      bounds: target.getBounds(),
+      normalBounds: target.getNormalBounds(),
+      dockVisible: e2eHost.dockVisible(),
     }
   })
   router.register('window.closeRequestState', params =>
     e2eHost.closeRequestState(integerParam(params, 'after') ?? 0)
   )
   router.register('window.closeToTray', () => e2eHost.closeToTray())
+  router.register('window.cancelCloseToTray', () => e2eHost.cancelCloseToTray())
+  router.register('tray.setState', params => e2eHost.traySetState(trayMenuStateParam(params)))
+  router.register('tray.takePendingActions', () => e2eHost.takePendingTrayActions())
+  router.register('e2e.getStartupSplashSnapshot', () => e2eHost.startupSplashSnapshot())
+  router.register('e2e.getTraySnapshot', () => e2eHost.traySnapshot())
+  router.register('e2e.hideMainWindow', () => e2eHost.hideMainWindow())
+  router.register('e2e.activateTray', params => e2eHost.trayActivate(trayActivationParam(params)))
   router.register('window.openWorkspace', params =>
     e2eHost.openWorkspace({
       label: stringParam(params, 'label'),
@@ -548,6 +580,127 @@ export function createElectronCapabilityRouter(
   return router
 }
 
+export function registerDesktopServiceCapabilities(
+  router: HostCapabilityRouter,
+  services: ElectronDesktopServices,
+  developer: {
+    openLogDirectory: () => void | Promise<void>
+    openDevTools: () => void | Promise<void>
+  }
+): void {
+  router.register('developer.openLogDirectory', () => developer.openLogDirectory())
+  router.register('developer.openDevTools', () => developer.openDevTools())
+  router.register('feedback.previewBundle', params =>
+    services.feedback.preview(feedbackRequestParam(params))
+  )
+  router.register('feedback.confirmBundle', params =>
+    services.feedback.confirm(feedbackDecisionParam(params))
+  )
+  router.register('feedback.discardBundle', params =>
+    services.feedback.discard(feedbackDecisionParam(params))
+  )
+  router.register('plugins.list', () => services.plugins.list())
+  router.register('plugins.authorizeCapability', params =>
+    services.plugins.authorizeCapability(
+      stringParam(params, 'pluginRoot'),
+      stringParam(params, 'capability')
+    )
+  )
+  router.register('plugins.start', params =>
+    services.plugins.start(stringParam(params, 'pluginId'), stringParam(params, 'pluginRoot'))
+  )
+  router.register('plugins.stop', params => services.plugins.stop(stringParam(params, 'pluginId')))
+  router.register('plugins.request', params =>
+    services.plugins.request(
+      stringParam(params, 'pluginId'),
+      stringParam(params, 'capability'),
+      stringParam(params, 'method'),
+      params.params ?? {}
+    )
+  )
+}
+
+async function mkdirDirectory(path: string): Promise<void> {
+  const { mkdir } = await import('node:fs/promises')
+  await mkdir(path, { recursive: true })
+}
+
+function feedbackRequestParam(params: Record<string, unknown>): FeedbackExportRequest {
+  const request = recordParam(params, 'request')
+  const attachments = request.attachments
+  if (!Array.isArray(attachments)) invalidParam('request.attachments')
+  return {
+    includeRuntimeLogs: requiredBooleanValue(
+      request.includeRuntimeLogs,
+      'request.includeRuntimeLogs'
+    ),
+    includeTaskInfo: requiredBooleanValue(request.includeTaskInfo, 'request.includeTaskInfo'),
+    includeScreenshot: requiredBooleanValue(request.includeScreenshot, 'request.includeScreenshot'),
+    includeSystemInfo: requiredBooleanValue(request.includeSystemInfo, 'request.includeSystemInfo'),
+    note: typeof request.note === 'string' ? request.note : invalidParam('request.note'),
+    taskContext: request.taskContext ?? null,
+    screenshotDataUrl: nullableStringValue(request.screenshotDataUrl, 'request.screenshotDataUrl'),
+    composerDiagnostics: request.composerDiagnostics ?? null,
+    attachments: attachments.map((attachment, index) => {
+      const record = objectValue(attachment, `request.attachments[${index}]`)
+      return {
+        name: requiredStringValue(record.name, `request.attachments[${index}].name`),
+        mimeType: requiredStringValue(record.mimeType, `request.attachments[${index}].mimeType`),
+        dataBase64: requiredStringValue(
+          record.dataBase64,
+          `request.attachments[${index}].dataBase64`
+        ),
+      }
+    }),
+  }
+}
+
+function feedbackDecisionParam(params: Record<string, unknown>): string {
+  return requiredStringValue(recordParam(params, 'decision').stagingId, 'decision.stagingId')
+}
+
+function recordParam(params: Record<string, unknown>, key: string): Record<string, unknown> {
+  return objectValue(params[key], key)
+}
+
+function objectValue(value: unknown, key: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidParam(key)
+  return value as Record<string, unknown>
+}
+
+function requiredStringValue(value: unknown, key: string): string {
+  if (typeof value !== 'string' || !value.trim()) invalidParam(key)
+  return value.trim()
+}
+
+function nullableStringValue(value: unknown, key: string): string | null {
+  if (value == null) return null
+  if (typeof value !== 'string') invalidParam(key)
+  return value
+}
+
+function requiredBooleanValue(value: unknown, key: string): boolean {
+  if (typeof value !== 'boolean') invalidParam(key)
+  return value
+}
+
+export function registerBrowserHistoryCapabilities(
+  router: HostCapabilityRouter,
+  browser: EmbeddedBrowserManager
+): void {
+  router.register('browser.historySearch', params =>
+    browser.searchHistory({
+      text: optionalStringParam(params, 'text') ?? '',
+      endTimeMs: nullableIntegerParam(params, 'endTimeMs') ?? null,
+      offset: integerParam(params, 'offset') ?? 0,
+      maxResults: integerParam(params, 'maxResults') ?? 100,
+    })
+  )
+  router.register('browser.historyRemove', params =>
+    browser.removeHistory(stringArrayParam(params, 'ids') ?? [])
+  )
+}
+
 function localAttachmentRoot(): string {
   const executorHome = process.env.WEGENT_EXECUTOR_HOME?.trim()
   return join(
@@ -736,8 +889,71 @@ function systemDragPayload(params: Record<string, unknown>): {
   return { action, text, paths }
 }
 
+function trayMenuStateParam(params: Record<string, unknown>): TrayMenuState {
+  const state = objectParam(params, 'state')
+  return {
+    language: stringParam(state, 'language'),
+    usageTitle: nullableStringParam(state, 'usageTitle') ?? null,
+    usageTooltip: nullableStringParam(state, 'usageTooltip') ?? null,
+    running: trayTaskItemsParam(state, 'running'),
+    runningMore: trayTaskItemsParam(state, 'runningMore'),
+    unread: trayTaskItemsParam(state, 'unread'),
+    unreadMore: trayTaskItemsParam(state, 'unreadMore'),
+    pinned: trayTaskItemsParam(state, 'pinned'),
+    pinnedMore: trayTaskItemsParam(state, 'pinnedMore'),
+    recent: trayTaskItemsParam(state, 'recent'),
+    recentMore: trayTaskItemsParam(state, 'recentMore'),
+    hasRunningTasks: requiredBooleanParam(state, 'hasRunningTasks'),
+    showRunningStatus: requiredBooleanParam(state, 'showRunningStatus'),
+    runningCount: requiredIntegerParam(state, 'runningCount'),
+    activeTaskIds: nullableStringArrayParam(state, 'activeTaskIds') ?? null,
+    unreadCount: requiredIntegerParam(state, 'unreadCount'),
+  }
+}
+
+function trayTaskItemsParam(
+  params: Record<string, unknown>,
+  key: string
+): TrayMenuState['running'] {
+  const value = params[key]
+  if (!Array.isArray(value)) invalidParam(key)
+  return value.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      invalidParam(`${key}[${index}]`)
+    }
+    const record = item as Record<string, unknown>
+    return {
+      id: stringParam(record, 'id'),
+      title: optionalStringParam(record, 'title') ?? '',
+      projectName: optionalStringParam(record, 'projectName') ?? '',
+    }
+  })
+}
+
+function trayActivationParam(params: Record<string, unknown>): TrayActivation {
+  const activation = objectParam(params, 'activation')
+  const type = enumParam(activation, 'type', ['click', 'double-click', 'menu-item'])
+  if (type === 'click' || type === 'double-click') return { type }
+  if (type === 'menu-item') {
+    return { type, menuItemId: stringParam(activation, 'menuItemId') }
+  }
+  invalidParam('activation.type')
+}
+
+function objectParam(params: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = params[key]
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidParam(key)
+  return value as Record<string, unknown>
+}
+
 function requiredIntegerParam(params: Record<string, unknown>, key: string): number {
   const value = integerParam(params, key)
+  if (value === undefined) invalidParam(key)
+  return value
+}
+
+function requiredBooleanParam(params: Record<string, unknown>, key: string): boolean {
+  const value = booleanParam(params, key)
   if (value === undefined) invalidParam(key)
   return value
 }

@@ -58,7 +58,12 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
   attachStreams(input: Readable, output: Writable): void {
     this.detach()
     const lines = createInterface({ input })
-    const session: HostPipeSession = { input, output, lines, principal: null }
+    const session: HostPipeSession = {
+      input,
+      output,
+      lines,
+      principal: null,
+    }
     this.session = session
     lines.on('line', line => void this.handleLine(session, line))
     input.once('close', () => {

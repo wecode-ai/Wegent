@@ -13,10 +13,6 @@ The bundled Core Runtime is `0.1.1-rc.2`. The first Workbench Runtime is
 process. Every `runtimes/<version>` directory owns an exact manifest and
 lockfile.
 
-`0.1.0-rc.7` remains only as a legacy test asset for the old Tauri path. The
-Electron runtime selector explicitly rejects it, and it will be deleted with
-the Tauri removal phase. No new-architecture compatibility fixes target rc.7.
-
 The Core asset is marked `role: core` and bundles
 `@wegent/dsh-app-wework`, `@wegent/dsh-electron-host`, and
 `@wegent/dsh-executor-runtime`. It must pass the complete real Executor,

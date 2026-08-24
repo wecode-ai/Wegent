@@ -14,7 +14,7 @@ import { installPageZoomGuard } from './lib/pageZoomGuard'
 import { installPerformanceDiagnostics, recordReactCommit } from './lib/performanceDiagnostics'
 import { installWeworkAutomationBridge } from './e2e/automation'
 import { installDesktopExtensions } from '@extensions/desktop'
-import { isDesktopRuntime, isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
 import { initializeWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 
@@ -24,7 +24,7 @@ if (!isSystemDragPanel) {
   installAppLogging()
   installFrontendRecoveryBridge()
   installDesktopExtensions()
-  if (isTauriRuntime()) {
+  if (isElectronRuntime()) {
     installExternalDropGuard()
   }
   installExternalLinkHandler()

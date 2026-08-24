@@ -8,11 +8,12 @@ const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = join(electronRoot, 'release')
 const staging = join(electronRoot, '.package-staging')
 const electronZipDir = process.env.WEWORK_ELECTRON_ZIP_DIR?.trim() || undefined
+const sharedResourcesRoot = join(electronRoot, '..', 'resources')
 const icon =
   process.platform === 'darwin'
-    ? join(electronRoot, '..', 'src-tauri', 'icons', 'icon.icns')
+    ? join(sharedResourcesRoot, 'icons', 'icon.icns')
     : process.platform === 'win32'
-      ? join(electronRoot, '..', 'src-tauri', 'icons', 'icon.ico')
+      ? join(sharedResourcesRoot, 'icons', 'icon.ico')
       : undefined
 
 await Promise.all([
@@ -48,8 +49,8 @@ const applications = await packager({
   electronVersion: '43.4.1',
   electronZipDir,
   appBundleId: 'io.wecode.wework',
-  appVersion: '0.2.2',
-  buildVersion: '0.2.2',
+  appVersion: sourcePackage.version,
+  buildVersion: sourcePackage.version,
   executableName: 'WeWork',
   out: output,
   overwrite: true,
@@ -61,6 +62,7 @@ const applications = await packager({
     join(electronRoot, 'resources', 'node-runtime'),
     join(electronRoot, 'resources', 'bin'),
     join(electronRoot, 'resources', 'bundled-plugins'),
+    join(sharedResourcesRoot, 'icons'),
   ],
   icon,
   prune: false,

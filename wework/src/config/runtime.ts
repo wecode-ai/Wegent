@@ -2,7 +2,7 @@ export type RuntimeMode = 'local-first' | 'backend'
 
 export interface RuntimeConfig {
   appBasePath: string
-  desktopHost: 'browser' | 'electron' | 'tauri'
+  desktopHost: 'browser' | 'electron'
   desktopWindowLabel: string
   apiBaseUrl: string
   feedbackUrl: string

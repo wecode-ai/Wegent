@@ -115,12 +115,12 @@ import {
   subscribeLocalExecutorEvents,
   type LocalExecutorEvent,
   type LocalExecutorStatus,
-} from '@/tauri/localExecutor'
+} from '@/desktop/localExecutor'
 import {
   listLocalWorkspaceEntries,
   readLocalWorkspaceFileChunk,
   readLocalWorkspaceTextFile,
-} from '@/tauri/localWorkspaceFiles'
+} from '@/desktop/localWorkspaceFiles'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'

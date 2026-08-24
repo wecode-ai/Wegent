@@ -15,9 +15,6 @@ sidebar_position: 13
 - 每个版本在 `runtimes/<version>` 中拥有独立的精确依赖和锁文件。
 - `wework/scripts/prepare-harness-runtime.mjs` 为每个版本生成独立、不可变的运行时资产。
 
-`0.1.0-rc.7` 只作为旧 Tauri 路径的遗留测试资产保留，Electron 运行时选择器
-明确拒绝它；随 Tauri 删除阶段一起移除，不再为其修复新架构兼容问题。
-
 Core 资产的 `runtime.json` 标记 `role: core`，并自带
 `@wegent/dsh-app-wework`、`@wegent/dsh-electron-host` 和
 `@wegent/dsh-executor-runtime`。它必须通过真实 executor、本地/云 transport、

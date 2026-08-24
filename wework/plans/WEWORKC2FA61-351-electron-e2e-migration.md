@@ -1,381 +1,215 @@
-# Electron `ai:verify` 与桌面 E2E 迁移台账
+# Desktop E2E 与 `ai:verify` Electron 迁移清单
 
 更新日期：2026-08-24
 
-## 目标
+## 审计基线与结论
 
-将旧 Tauri 桌面应用的 `ai:verify` 和桌面 E2E 完整迁移到
-Electron + Core DSH + Executor 架构。测试断言、场景夹具和 checkpoint
-顺序保持共享；仅桌面构建、进程启动、窗口控制、截图和原生能力使用运行时适配器。
+- `origin/main`：`9dc36dc02b137c827bb836a38c0bb64963a38a02`
+- PR 基线 HEAD：`14f04e765b13eae2276096d26c18d8e1b83e9ea1`
+- `origin/main` 定义 44 个 desktop checkpoint、4 个 plugin segment，并包含
+  22 个独立 scenario 文件。
+- 当前分支定义 48 个 desktop checkpoint、4 个 plugin segment；新增的
+  `cloud-space-mention` 将 main 已存在但未注册的
+  `cloud-space-mention.scenario.mjs` 纳入 checkpoint runner，并新增
+  `native-window-startup`、`native-window-chrome`、`tray-lifecycle` 三项真实
+  Electron 原生窗口覆盖。
+- 当前 25 个独立 scenario 均由 `run-checkpoints.mjs` 显式映射到 checkpoint，
+  不存在仅能本地单独运行、但不进入统一 runner 的 scenario。
+- Desktop E2E 与 `ai:verify` 只启动真实 Electron app。运行时选择器、旧宿主
+  build/launch/wrap/config/log/origin 分支已从
+  `wework/e2e/**` 与 `wework/scripts/ai-verify*.mjs` 删除。
+- Desktop E2E 必须提供 `WEWORK_E2E_APP_BIN`，该文件必须是预构建 Electron
+  可执行文件；runner 不再现场构建其他桌面宿主。
 
-## 完成标准
+## 代码事实来源
 
-- `PASSED` 只表示对应 Electron 命令在真实 Electron、真实 Core DSH 和真实
-  Executor 进程上退出码为 0。
-- 每个 checkpoint 必须能单独运行，并自行建立最小前置条件。
-- 新增或迁移后的场景必须由 GitHub CI 调用。
-- 不通过重试、跳过或修改旧断言掩盖产品缺陷。
-- 失败证据保存在 `test-results/desktop-e2e/` 或
-  `test-results/ai-verify/`。
+| 事实                                    | 代码来源                                             |
+| --------------------------------------- | ---------------------------------------------------- |
+| checkpoint 与 plugin segment 总表       | `wework/e2e/desktop/checkpoints.mjs`                 |
+| checkpoint 到 scenario 的映射           | `wework/e2e/desktop/run-checkpoints.mjs`             |
+| 真实 Electron app 启动与控制            | `wework/e2e/desktop/modules/task-flow-main.mjs`      |
+| Electron app 产物约束                   | `wework/e2e/desktop/modules/desktop-build-flows.mjs` |
+| Core、Cloud、Plugins CI 分片            | `.github/scripts/classify-wework-desktop-e2e.sh`     |
+| CI 中 Electron 二进制注入与 runner 调用 | `.github/workflows/wework-e2e.yml`                   |
+| Playwright Web E2E 收集目录             | `wework/playwright.config.ts`                        |
 
-状态：`NOT_STARTED`、`IN_PROGRESS`、`IMPLEMENTED`、`PASSED`、`BLOCKED`。
+CI 对应关系说明：
 
-## 当前结论
+- `Core`：Linux Electron 预构建包，
+  `wework-desktop-core-e2e` 调用 `run-checkpoints.mjs --parallel-segments`。
+- `Cloud`：同一个 Linux Electron 预构建包，
+  `wework-desktop-cloud-e2e` 以 cloud scope 调用同一 runner。
+- `Plugins`：`wework-desktop-e2e` 调用 `e2e:desktop:plugins`。
+- `macOS Inspector`：macOS Electron 真实包单独执行
+  `browser-toolbar-actions`，是该 checkpoint 的额外平台覆盖。
+- `组合入口`：`cloud-git-worktree` 本身不直接进入 CI 矩阵；runner 将它展开为
+  6 个 `cloud-worktree-*` checkpoint，这 6 项均进入 Cloud CI。
 
-- 45 个桌面 checkpoint 已全部迁移到共享 Electron runner，并逐个实机验证通过。
-- 4 个插件分段已全部迁移并逐个实机验证通过。
-- 22 个独立桌面场景均已由 checkpoint 显式映射，进入统一 runner 和 CI。
-- 3 个 Playwright Web E2E 文件均已验证通过。
-- 默认桌面运行时为 Electron；Tauri 仅保留显式回归入口，不再承载默认验证。
-- Core DSH 不维护 Renderer 静态方法白名单，调用面由
-  `executor.protocol.describe.renderer_methods` 动态声明和校验。
+## Desktop checkpoint 全量对照
 
-## 基础设施
+“main”列表示该 checkpoint 是否存在于上述 `origin/main` 基线；“当前 CI”列
+表示当前代码中的 CI 分片归属。
 
-| 项目                                | 状态        | Electron 命令或证据                                                                                  |
-| ----------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------- |
-| 启动 shell 可观察初始化、失败和重试 | PASSED      | `pnpm --dir electron test`，`shell.test.ts`                                                          |
-| Electron 单实例与首次启动竞态       | PASSED      | 真实 Electron clean-home 启动成功                                                                    |
-| Electron `ai:verify` 启动器         | PASSED      | `pnpm ai:verify start --runtime electron --timeout 180000`                                           |
-| 页面自动化客户端 Electron 适配      | PASSED      | 真实 Electron `status`、`snapshot`、`wait-for`                                                       |
-| Electron 窗口、截图和原生命令适配   | PASSED      | 主窗口、工作区窗口、弹出窗口、浏览器视图、托盘关闭、macOS 重开、Inspector 与系统拖拽均已真实验证     |
-| Electron 桌面 E2E 构建产物          | PASSED      | `pnpm ai:verify:electron:build`                                                                      |
-| 共享 checkpoint runner 运行时选择   | PASSED      | 默认运行时已切换为 Electron；可显式传 `WEWORK_E2E_DESKTOP_RUNTIME=tauri` 回归旧宿主                  |
-| GitHub CI Electron E2E 构建和矩阵   | IMPLEMENTED | 共享 Electron 应用目录归档、core/cloud/plugin 矩阵和 macOS memory/Inspector 均已接线；分类器测试通过 |
+|   # | Checkpoint                        | main                        | 当前执行入口                                    | 当前 CI                |
+| --: | --------------------------------- | --------------------------- | ----------------------------------------------- | ---------------------- |
+|   1 | `remote-device-onboarding`        | 是                          | 主流程                                          | Core                   |
+|   2 | `workspace-tabs`                  | 是                          | 主流程                                          | Core + Cloud           |
+|   3 | `cloud-project-creation`          | 是                          | 主流程                                          | Cloud                  |
+|   4 | `cloud-space-mention`             | 否；main 仅有 scenario 文件 | `cloud-space-mention.scenario.mjs`              | Core                   |
+|   5 | `priority-filter`                 | 是                          | 主流程                                          | Core + Cloud           |
+|   6 | `telemetry-consent`               | 是                          | 主流程                                          | Cloud                  |
+|   7 | `automation-lifecycle`            | 是                          | 主流程                                          | Core + Cloud           |
+|   8 | `project-automation`              | 是                          | `project-automation.scenario.mjs`               | Core + Cloud           |
+|   9 | `project-assignment-notification` | 是                          | `project-assignment-notification.scenario.mjs`  | Core                   |
+|  10 | `offline-local-project-space`     | 是                          | `offline-local-project-space.scenario.mjs`      | Core                   |
+|  11 | `plugin-auto-update`              | 是                          | 主流程                                          | Cloud                  |
+|  12 | `project-ai-settings`             | 是                          | 主流程                                          | Core                   |
+|  13 | `model-routing`                   | 是                          | 主流程                                          | Core + Cloud           |
+|  14 | `permission-modes`                | 是                          | 主流程                                          | Core                   |
+|  15 | `core-task-flow`                  | 是                          | 主流程                                          | Core + Cloud           |
+|  16 | `task-attachments`                | 是                          | `task-attachments.scenario.mjs`                 | Core                   |
+|  17 | `cloud-git-worktree`              | 是                          | 组合入口，展开后执行 6 个子 checkpoint          | Cloud（通过展开项）    |
+|  18 | `cloud-worktree-capability`       | 是                          | 云工作树流程                                    | Cloud                  |
+|  19 | `cloud-worktree-create`           | 是                          | 云工作树流程                                    | Cloud                  |
+|  20 | `cloud-worktree-queued-cancel`    | 是                          | 云工作树流程                                    | Cloud                  |
+|  21 | `cloud-worktree-tools`            | 是                          | 云工作树流程                                    | Cloud                  |
+|  22 | `cloud-worktree-archive-restore`  | 是                          | 云工作树流程                                    | Cloud                  |
+|  23 | `cloud-worktree-device-restart`   | 是                          | 云工作树流程                                    | Cloud                  |
+|  24 | `context-compaction`              | 是                          | `context-compaction.scenario.mjs`               | Core                   |
+|  25 | `runtime-task-queue`              | 是                          | `runtime-task-queue.scenario.mjs`               | Core                   |
+|  26 | `runtime-terminal-convergence`    | 是                          | `runtime-terminal-convergence.scenario.mjs`     | Core                   |
+|  27 | `running-conversation-history`    | 是                          | `running-conversation-history.scenario.mjs`     | Core                   |
+|  28 | `codex-notification-isolation`    | 是                          | `codex-notification-isolation.scenario.mjs`     | Core                   |
+|  29 | `split-workbench`                 | 是                          | `split-workbench.scenario.mjs`                  | Core                   |
+|  30 | `native-window-startup`           | 否                          | `native-window-startup.scenario.mjs`            | Core                   |
+|  31 | `native-window-chrome`            | 否                          | `native-window-chrome.scenario.mjs`             | Core                   |
+|  32 | `tray-lifecycle`                  | 否                          | `tray-lifecycle.scenario.mjs`                   | Core                   |
+|  33 | `window-lifecycle`                | 是                          | 主流程                                          | Core + Cloud           |
+|  34 | `goal-lifecycle`                  | 是                          | 主流程                                          | Core + Cloud           |
+|  35 | `supervisor-lifecycle`            | 是                          | 主流程                                          | Core + Cloud           |
+|  36 | `resilience`                      | 是                          | 主流程                                          | Core + Cloud           |
+|  37 | `conversation-state`              | 是                          | `conversation-mention.scenario.mjs`             | Core + Cloud           |
+|  38 | `temporary-chat`                  | 是                          | `temporary-chat.scenario.mjs`                   | Core                   |
+|  39 | `workspace-attachments`           | 是                          | 主流程                                          | Core + Cloud           |
+|  40 | `rendering-extensions`            | 是                          | `streaming-text.scenario.mjs`                   | Core + Cloud           |
+|  41 | `change-request-status`           | 是                          | `change-request-status.scenario.mjs`            | Core                   |
+|  42 | `claude-runtime`                  | 是                          | `claude-runtime.scenario.mjs`                   | Core                   |
+|  43 | `local-file-preview`              | 是                          | `local-file-preview.scenario.mjs`               | Core                   |
+|  44 | `local-harness`                   | 是                          | `local-terminal.scenario.mjs`                   | Core                   |
+|  45 | `harness-apps`                    | 是                          | `harness-apps.scenario.mjs`                     | Core                   |
+|  46 | `browser-multi-tabs`              | 是                          | `embedded-browser-multi-tabs.scenario.mjs`      | Cloud                  |
+|  47 | `embedded-browser`                | 是                          | `embedded-browser-agent.scenario.mjs`           | Core + Cloud           |
+|  48 | `browser-toolbar-actions`         | 是                          | `embedded-browser-toolbar-actions.scenario.mjs` | Core + macOS Inspector |
 
-## `ai:verify` 命令
+## 独立 scenario 全量对照
 
-以下命令必须通过同一个 CLI 在 Electron 上可用：
+`origin/main` 中的 22 个 scenario 文件当前全部映射到统一 Electron checkpoint
+runner；当前分支新增 3 个原生窗口 scenario，25 个 scenario 均进入 Core 或
+Cloud CI。
 
-| 命令组     | 命令                                                                                                                                               | 状态   |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| 生命周期   | `start`、`status`、`stop`、`reload`                                                                                                                | PASSED |
-| DOM        | `snapshot`、`debug`、`text`、`wait-for`、`metrics`、`get-attribute`、`active-element`                                                              | PASSED |
-| 输入       | `click`、`click-at`、`click-then-macrotask`、`context-menu`、`fill`、`submit`、`press`、`hover`、`pointer-move`、`select-text`、`scroll-into-view` | PASSED |
-| 附件       | `drop-file`、`drop-paths`、`paste-paths`、`system-drag-drop`                                                                                       | PASSED |
-| 截图       | `capture`、`capture-browser`、`capture-popout`、`capture-workspace`                                                                                | PASSED |
-| 窗口       | `close-to-tray`、`request-close`、`show-popout`、`dismiss-popout`、`window-focus-snapshot`                                                         | PASSED |
-| 浏览器     | `verify-browser-inspector`                                                                                                                         | PASSED |
-| 本地运行时 | `seed-local-project`、`preview-plugin-import`、`import-plugin-package`、`set-local-proxy-url`、`terminal-snapshot`                                 | PASSED |
+|   # | Scenario                                        | 当前 checkpoint                   | 当前 CI                |
+| --: | ----------------------------------------------- | --------------------------------- | ---------------------- |
+|   1 | `change-request-status.scenario.mjs`            | `change-request-status`           | Core                   |
+|   2 | `claude-runtime.scenario.mjs`                   | `claude-runtime`                  | Core                   |
+|   3 | `cloud-space-mention.scenario.mjs`              | `cloud-space-mention`             | Core                   |
+|   4 | `codex-notification-isolation.scenario.mjs`     | `codex-notification-isolation`    | Core                   |
+|   5 | `context-compaction.scenario.mjs`               | `context-compaction`              | Core                   |
+|   6 | `conversation-mention.scenario.mjs`             | `conversation-state`              | Core + Cloud           |
+|   7 | `embedded-browser-agent.scenario.mjs`           | `embedded-browser`                | Core + Cloud           |
+|   8 | `embedded-browser-multi-tabs.scenario.mjs`      | `browser-multi-tabs`              | Cloud                  |
+|   9 | `embedded-browser-toolbar-actions.scenario.mjs` | `browser-toolbar-actions`         | Core + macOS Inspector |
+|  10 | `harness-apps.scenario.mjs`                     | `harness-apps`                    | Core                   |
+|  11 | `local-file-preview.scenario.mjs`               | `local-file-preview`              | Core                   |
+|  12 | `local-terminal.scenario.mjs`                   | `local-harness`                   | Core                   |
+|  13 | `offline-local-project-space.scenario.mjs`      | `offline-local-project-space`     | Core                   |
+|  14 | `project-assignment-notification.scenario.mjs`  | `project-assignment-notification` | Core                   |
+|  15 | `project-automation.scenario.mjs`               | `project-automation`              | Core + Cloud           |
+|  16 | `running-conversation-history.scenario.mjs`     | `running-conversation-history`    | Core                   |
+|  17 | `runtime-task-queue.scenario.mjs`               | `runtime-task-queue`              | Core                   |
+|  18 | `runtime-terminal-convergence.scenario.mjs`     | `runtime-terminal-convergence`    | Core                   |
+|  19 | `split-workbench.scenario.mjs`                  | `split-workbench`                 | Core                   |
+|  20 | `native-window-startup.scenario.mjs`            | `native-window-startup`           | Core                   |
+|  21 | `native-window-chrome.scenario.mjs`             | `native-window-chrome`            | Core                   |
+|  22 | `tray-lifecycle.scenario.mjs`                   | `tray-lifecycle`                  | Core                   |
+|  23 | `streaming-text.scenario.mjs`                   | `rendering-extensions`            | Core + Cloud           |
+|  24 | `task-attachments.scenario.mjs`                 | `task-attachments`                | Core                   |
+|  25 | `temporary-chat.scenario.mjs`                   | `temporary-chat`                  | Core                   |
 
-## 桌面 checkpoint
+## 原生窗口职责迁移对照
 
-使用预构建 Electron 包的运行格式：
+| 原生职责     | Electron 实现                                                        | E2E checkpoint                            | 强断言                                                    |
+| ------------ | -------------------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------- |
+| 启动 loading | `StartupSplash` + 独立安全 `BrowserWindow`                           | `native-window-startup`                   | created → shown → animation-ready → closed；真实 PNG 证据 |
+| Tray 托盘    | `ElectronTrayManager` + `Tray` + `Menu.buildFromTemplate`            | `tray-lifecycle`                          | Tray 创建、菜单、设置跳转、隐藏主窗、Tray 点击恢复        |
+| macOS Dock   | `app.dock.hide()` / `app.dock.show()`                                | `tray-lifecycle`                          | close-to-tray 后 Dock 隐藏；Tray 恢复后 Dock 显示         |
+| titlebar     | Electron frame 参数、macOS drag region、Windows/Linux 自定义窗口按钮 | `native-window-chrome`                    | drag/no-drag、最小化、最大化/恢复、关闭确认与原生窗口状态 |
+| 窗口关闭偏好 | `WindowClosePolicy` + `PreferencesStore`                             | `tray-lifecycle`、既有 `window-lifecycle` | 首次确认、取消、确认持久化、后台运行、重新激活            |
 
-```bash
-WEWORK_E2E_APP_BIN=/absolute/path/to/WeWork \
-WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
-  pnpm --filter wework e2e:desktop -- --segment <checkpoint>
-```
+## Plugin segment 全量对照
 
-| Checkpoint                        | 旧实现入口                                      | 状态   | 最近一次 Electron 验证                   |
-| --------------------------------- | ----------------------------------------------- | ------ | ---------------------------------------- |
-| `remote-device-onboarding`        | 主流程                                          | PASSED | `2026-08-23T11-01-42-989Z-43550`         |
-| `cloud-space-mention`             | `cloud-space-mention.scenario.mjs`              | PASSED | `2026-08-23T12-37-09-540Z-33570`         |
-| `workspace-tabs`                  | 主流程                                          | PASSED | `2026-08-24T05-54-52-665Z-37983`，1m 7s  |
-| `cloud-project-creation`          | 主流程                                          | PASSED | `2026-08-24T07-02-14-894Z-23119`，1m 20s |
-| `priority-filter`                 | 主流程                                          | PASSED | `2026-08-22T09-57-05-022Z-81057`，1m 45s |
-| `telemetry-consent`               | 主流程                                          | PASSED | `2026-08-22T10-02-13-752Z-3705`，1m 4s   |
-| `automation-lifecycle`            | 主流程                                          | PASSED | `2026-08-24T05-53-44-302Z-25784`，59s    |
-| `project-automation`              | `project-automation.scenario.mjs`               | PASSED | `2026-08-24T06-01-00-714Z-7059`，1m 15s  |
-| `project-assignment-notification` | `project-assignment-notification.scenario.mjs`  | PASSED | `2026-08-22T12-14-53-781Z-97297`，2m 3s  |
-| `offline-local-project-space`     | `offline-local-project-space.scenario.mjs`      | PASSED | `2026-08-22T12-17-27-648Z-10112`，33s    |
-| `plugin-auto-update`              | 主流程                                          | PASSED | `2026-08-24T06-04-17-385Z-43368`，50s    |
-| `project-ai-settings`             | 主流程                                          | PASSED | `2026-08-22T13-25-11-628Z-59608`，1m 34s |
-| `model-routing`                   | 主流程                                          | PASSED | `2026-08-22T14-02-30-164Z-76105`，3m 47s |
-| `permission-modes`                | 主流程                                          | PASSED | `2026-08-22T14-22-04-259Z-90942`，56s    |
-| `core-task-flow`                  | 主流程                                          | PASSED | `2026-08-24T11-00-36-491Z-61150`，3m 1s  |
-| `task-attachments`                | `task-attachments.scenario.mjs`                 | PASSED | `2026-08-22T15-25-01-692Z-69786`，17s    |
-| `cloud-git-worktree`              | 组合 checkpoint                                 | PASSED | `2026-08-22T15-26-24-214Z-74740`，2m 12s |
-| `cloud-worktree-capability`       | 云工作树流程                                    | PASSED | `2026-08-22T15-28-58-932Z-86406`，50s    |
-| `cloud-worktree-create`           | 云工作树流程                                    | PASSED | `2026-08-22T15-30-04-689Z-90832`，1m 12s |
-| `cloud-worktree-queued-cancel`    | 云工作树流程                                    | PASSED | `2026-08-22T15-31-32-769Z-97234`，1m 8s  |
-| `cloud-worktree-tools`            | 云工作树流程                                    | PASSED | `2026-08-22T15-34-08-834Z-7078`，1m 4s   |
-| `cloud-worktree-archive-restore`  | 云工作树流程                                    | PASSED | `2026-08-22T15-35-30-243Z-12833`，1m 1s  |
-| `cloud-worktree-device-restart`   | 云工作树流程                                    | PASSED | `2026-08-22T15-36-46-744Z-18305`，55s    |
-| `context-compaction`              | `context-compaction.scenario.mjs`               | PASSED | `2026-08-22T15-38-02-150Z-23521`，18s    |
-| `runtime-task-queue`              | `runtime-task-queue.scenario.mjs`               | PASSED | `2026-08-22T15-40-54-282Z-34930`，50s    |
-| `runtime-terminal-convergence`    | `runtime-terminal-convergence.scenario.mjs`     | PASSED | `2026-08-22T15-42-01-936Z-39999`，27s    |
-| `running-conversation-history`    | `running-conversation-history.scenario.mjs`     | PASSED | `2026-08-22T15-42-52-258Z-43524`，39s    |
-| `codex-notification-isolation`    | `codex-notification-isolation.scenario.mjs`     | PASSED | `2026-08-22T15-54-13-855Z-89489`，36s    |
-| `split-workbench`                 | `split-workbench.scenario.mjs`                  | PASSED | `2026-08-22T16-13-52-957Z-16497`，1m 28s |
-| `window-lifecycle`                | 主流程                                          | PASSED | `2026-08-24T05-56-15-868Z-53061`，2m 30s |
-| `goal-lifecycle`                  | 主流程                                          | PASSED | `2026-08-24T07-00-15-426Z-80509`，1m 52s |
-| `supervisor-lifecycle`            | 主流程                                          | PASSED | `2026-08-23T03-30-10-625Z-98006`，1m 32s |
-| `resilience`                      | 主流程                                          | PASSED | `2026-08-23T03-32-01-654Z-13565`，2m 32s |
-| `conversation-state`              | `conversation-mention.scenario.mjs`             | PASSED | `2026-08-23T03-34-55-836Z-43070`，3m 9s  |
-| `temporary-chat`                  | `temporary-chat.scenario.mjs`                   | PASSED | `2026-08-23T03-38-37-776Z-83873`，33s    |
-| `workspace-attachments`           | 主流程                                          | PASSED | `2026-08-24T11-04-47-507Z-6156`，2m 4s   |
-| `rendering-extensions`            | `streaming-text.scenario.mjs`                   | PASSED | `2026-08-23T04-29-42-959Z-39829`，3m 46s |
-| `change-request-status`           | `change-request-status.scenario.mjs`            | PASSED | `2026-08-23T05-10-17-721Z-12207`，32s    |
-| `claude-runtime`                  | `claude-runtime.scenario.mjs`                   | PASSED | `2026-08-23T05-27-56-087Z-49057`，1m 35s |
-| `local-file-preview`              | `local-file-preview.scenario.mjs`               | PASSED | `2026-08-23T06-23-06-401Z-96018`，24s    |
-| `local-harness`                   | `local-terminal.scenario.mjs`                   | PASSED | `2026-08-24T00-00-46-823Z-96548`         |
-| `harness-apps`                    | `harness-apps.scenario.mjs`                     | PASSED | `2026-08-23T13-40-39-648Z-29751`         |
-| `browser-multi-tabs`              | `embedded-browser-multi-tabs.scenario.mjs`      | PASSED | `2026-08-23T23-29-45-242Z-85991`，1m 13s |
-| `embedded-browser`                | `embedded-browser-agent.scenario.mjs`           | PASSED | `2026-08-23T10-11-23-405Z-45839`，55s    |
-| `browser-toolbar-actions`         | `embedded-browser-toolbar-actions.scenario.mjs` | PASSED | `2026-08-24T11-03-47-620Z-95221`         |
-
-## 插件分段
-
-| 分段                           | 状态   | 最近一次 Electron 验证           |
-| ------------------------------ | ------ | -------------------------------- |
-| `plugin-marketplace-lifecycle` | PASSED | `2026-08-23T14-13-21-281Z-62260` |
-| `plugin-lifecycle`             | PASSED | `2026-08-23T14-11-03-745Z-41421` |
-| `skill-mention-rendering`      | PASSED | `2026-08-23T12-29-47-542Z-798`   |
-| `sites-plugin-auto-install`    | PASSED | `2026-08-24T05-59-40-476Z-92487` |
-
-## 独立桌面场景
-
-所有场景均由 `run-checkpoints.mjs` 显式映射到 checkpoint；场景本身不维护
-Electron/Tauri 两份业务断言。
-
-| 场景                                            | 状态   | 归属                              |
-| ----------------------------------------------- | ------ | --------------------------------- |
-| `change-request-status.scenario.mjs`            | PASSED | `change-request-status`           |
-| `claude-runtime.scenario.mjs`                   | PASSED | `claude-runtime`                  |
-| `cloud-space-mention.scenario.mjs`              | PASSED | `cloud-space-mention`             |
-| `codex-notification-isolation.scenario.mjs`     | PASSED | `codex-notification-isolation`    |
-| `context-compaction.scenario.mjs`               | PASSED | `context-compaction`              |
-| `conversation-mention.scenario.mjs`             | PASSED | `conversation-state`              |
-| `embedded-browser-agent.scenario.mjs`           | PASSED | `embedded-browser`                |
-| `embedded-browser-multi-tabs.scenario.mjs`      | PASSED | `browser-multi-tabs`              |
-| `embedded-browser-toolbar-actions.scenario.mjs` | PASSED | `browser-toolbar-actions`         |
-| `harness-apps.scenario.mjs`                     | PASSED | `harness-apps`                    |
-| `local-file-preview.scenario.mjs`               | PASSED | `local-file-preview`              |
-| `local-terminal.scenario.mjs`                   | PASSED | `local-harness`                   |
-| `offline-local-project-space.scenario.mjs`      | PASSED | `offline-local-project-space`     |
-| `project-assignment-notification.scenario.mjs`  | PASSED | `project-assignment-notification` |
-| `project-automation.scenario.mjs`               | PASSED | `project-automation`              |
-| `running-conversation-history.scenario.mjs`     | PASSED | `running-conversation-history`    |
-| `runtime-task-queue.scenario.mjs`               | PASSED | `runtime-task-queue`              |
-| `runtime-terminal-convergence.scenario.mjs`     | PASSED | `runtime-terminal-convergence`    |
-| `split-workbench.scenario.mjs`                  | PASSED | `split-workbench`                 |
-| `streaming-text.scenario.mjs`                   | PASSED | `rendering-extensions`            |
-| `task-attachments.scenario.mjs`                 | PASSED | `task-attachments`                |
-| `temporary-chat.scenario.mjs`                   | PASSED | `temporary-chat`                  |
+| Segment                        | main | Electron runner                                              | 当前 CI                                        |
+| ------------------------------ | ---- | ------------------------------------------------------------ | ---------------------------------------------- |
+| `plugin-marketplace-lifecycle` | 是   | `e2e:desktop:plugins --segment plugin-marketplace-lifecycle` | `plugins:all` 全量任务覆盖；分类器无独立定向项 |
+| `plugin-lifecycle`             | 是   | `e2e:desktop:plugins --segment plugin-lifecycle`             | Plugins，可定向                                |
+| `skill-mention-rendering`      | 是   | `e2e:desktop:plugins --segment skill-mention-rendering`      | Plugins，可定向                                |
+| `sites-plugin-auto-install`    | 是   | `e2e:desktop:plugins --segment sites-plugin-auto-install`    | Plugins，可定向                                |
 
 ## Playwright Web E2E
 
-这些测试不是 Tauri 原生进程测试，但属于当前 E2E 总清单。迁移期间保持共享，
-不得因 Electron 改造而失效。
+这些文件由 `playwright.config.ts` 的 `testDir: './e2e/tests'` 收集，并由
+`wework-e2e` CI job 执行。它们不启动桌面进程，但属于 Wework E2E 总覆盖。
 
-| 测试文件                              | 状态   |
-| ------------------------------------- | ------ |
-| `e2e/tests/app-shell.spec.ts`         | PASSED |
-| `e2e/tests/response-api-mock.spec.ts` | PASSED |
-| `e2e/tests/upstream-mocks.spec.ts`    | PASSED |
+| 文件                                  | CI           |
+| ------------------------------------- | ------------ |
+| `e2e/tests/app-shell.spec.ts`         | `wework-e2e` |
+| `e2e/tests/response-api-mock.spec.ts` | `wework-e2e` |
+| `e2e/tests/upstream-mocks.spec.ts`    | `wework-e2e` |
 
-## 验证日志
+## Electron-only 门禁
 
-| 日期       | 对象                                                | 命令                                                                                                                  | 结果 | 证据                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ---------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-08-22 | Electron shell 启动状态                             | `pnpm --dir electron test`                                                                                            | PASS | 16 files / 41 tests                                                                                                                                                                                                                                                                                                                                                                                            |
-| 2026-08-22 | Electron `ai:verify` 基础链路                       | `start`、`status`、`snapshot`、`capture`、`wait-for`、`stop`                                                          | PASS | `test-results/ai-verify/2026-08-22T09-21-22-485Z-27241/`                                                                                                                                                                                                                                                                                                                                                       |
-| 2026-08-22 | `workspace-tabs` 首次 Electron 验证                 | `pnpm e2e:desktop -- --segment workspace-tabs`                                                                        | FAIL | `2026-08-22T09-23-41-860Z-37667`：非 stable 构建不显示遥测确认                                                                                                                                                                                                                                                                                                                                                 |
-| 2026-08-22 | `workspace-tabs` stable Electron 验证               | 同上                                                                                                                  | FAIL | `2026-08-22T09-29-25-284Z-62750`：偏好延迟加载生成重复启动标签，产品逻辑已修复并补单测                                                                                                                                                                                                                                                                                                                         |
-| 2026-08-22 | `workspace-tabs` 原生 Agent 验证                    | 同上                                                                                                                  | FAIL | `2026-08-22T09-37-59-935Z-98331`：`AppIframe` 仅启用 Tauri 原生浏览器，已统一到桌面运行时                                                                                                                                                                                                                                                                                                                      |
-| 2026-08-22 | `workspace-tabs` Electron 独立窗口验证              | 同上                                                                                                                  | FAIL | `2026-08-22T09-42-43-081Z-19443`：`window.open` 没有独立 Electron 窗口身份，已迁移为共享 Core DSH 的 `BrowserWindow`                                                                                                                                                                                                                                                                                           |
-| 2026-08-22 | `workspace-tabs` 完整 Electron 验证                 | 同上                                                                                                                  | PASS | `2026-08-22T09-53-04-695Z-63358`，2m 9s，无断言错误                                                                                                                                                                                                                                                                                                                                                            |
-| 2026-08-22 | `cloud-project-creation`                            | `pnpm e2e:desktop -- --segment cloud-project-creation`                                                                | PASS | `2026-08-22T09-55-33-062Z-74493`，1m 24s                                                                                                                                                                                                                                                                                                                                                                       |
-| 2026-08-22 | `priority-filter`                                   | `pnpm e2e:desktop -- --segment priority-filter`                                                                       | PASS | `2026-08-22T09-57-05-022Z-81057`，1m 45s                                                                                                                                                                                                                                                                                                                                                                       |
-| 2026-08-22 | `telemetry-consent` 首次 Electron 验证              | `pnpm e2e:desktop -- --segment telemetry-consent`                                                                     | FAIL | `2026-08-22T09-59-05-335Z-89876`：仅覆盖 PostHog host，仍使用生产 key；已补运行时 key 注入                                                                                                                                                                                                                                                                                                                     |
-| 2026-08-22 | `telemetry-consent` 完整 Electron 验证              | 同上                                                                                                                  | PASS | `2026-08-22T10-02-13-752Z-3705`，1m 4s                                                                                                                                                                                                                                                                                                                                                                         |
-| 2026-08-22 | `automation-lifecycle`                              | `pnpm e2e:desktop -- --segment automation-lifecycle`                                                                  | PASS | `2026-08-22T10-03-40-790Z-9867`，1m 40s                                                                                                                                                                                                                                                                                                                                                                        |
-| 2026-08-22 | `project-automation` 首次 Electron 验证             | `pnpm e2e:desktop -- --segment project-automation`                                                                    | FAIL | `2026-08-22T10-05-38-510Z-18360`：每个 checkpoint 重复解包 Core DSH 超过启动时限；runner 已改用同版本预备运行时                                                                                                                                                                                                                                                                                                |
-| 2026-08-22 | `project-automation` Electron API 验证              | 同上                                                                                                                  | FAIL | `2026-08-22T12-09-13-763Z-73834`：Chromium CORS 预检拒绝 `PATCH`；共享 mock server 已声明完整 API 方法集合并补协议测试                                                                                                                                                                                                                                                                                         |
-| 2026-08-22 | `project-automation` 完整 Electron 验证             | 同上                                                                                                                  | PASS | `2026-08-22T12-11-44-865Z-83917`，1m 37s，无断言错误                                                                                                                                                                                                                                                                                                                                                           |
-| 2026-08-22 | `project-assignment-notification`                   | `pnpm e2e:desktop -- --segment project-assignment-notification`                                                       | PASS | `2026-08-22T12-14-53-781Z-97297`，2m 3s                                                                                                                                                                                                                                                                                                                                                                        |
-| 2026-08-22 | `offline-local-project-space`                       | `pnpm e2e:desktop -- --segment offline-local-project-space`                                                           | PASS | `2026-08-22T12-17-27-648Z-10112`，33s                                                                                                                                                                                                                                                                                                                                                                          |
-| 2026-08-22 | `plugin-auto-update`                                | `pnpm e2e:desktop -- --segment plugin-auto-update`                                                                    | PASS | `2026-08-22T12-18-31-195Z-16808`，47s                                                                                                                                                                                                                                                                                                                                                                          |
-| 2026-08-22 | `project-ai-settings` 首次 Electron 验证            | `pnpm e2e:desktop -- --segment project-ai-settings`                                                                   | FAIL | `2026-08-22T12-19-40-352Z-22013`：Core DSH 的静态 Renderer 方法白名单拒绝插件市场请求                                                                                                                                                                                                                                                                                                                          |
-| 2026-08-22 | `project-ai-settings` capability 协商验证           | 同上                                                                                                                  | FAIL | `2026-08-22T12-31-52-350Z-81514`：已改由 `executor.protocol.describe.renderer_methods` 动态声明，仍需继续定位插件市场可见性                                                                                                                                                                                                                                                                                    |
-| 2026-08-22 | `project-ai-settings` 插件状态读取验证              | 同上                                                                                                                  | FAIL | `2026-08-22T12-59-26-679Z-50420`：Electron 已完成插件安装，但本地插件状态读取仍被 Tauri 运行时判断拦截；已统一为桌面运行时                                                                                                                                                                                                                                                                                     |
-| 2026-08-22 | `project-ai-settings` 单包运行时配置验证            | 同上                                                                                                                  | FAIL | `2026-08-22T13-16-42-444Z-27533`：预构建 Electron 包未按 checkpoint 注入本地模型夹具，导致项目模型路由到目录 slug；已将可变 E2E 配置迁移到 Core DSH 运行时注入                                                                                                                                                                                                                                                 |
-| 2026-08-22 | `project-ai-settings` 完整 Electron 验证            | 同上                                                                                                                  | PASS | `2026-08-22T13-25-11-628Z-59608`，1m 34s；动态 capability、插件市场、项目插件、快捷短语和项目模型路由均通过                                                                                                                                                                                                                                                                                                    |
-| 2026-08-22 | Electron 与 Tauri 顶栏结构等价                      | `window-layout.test.ts`、`ChromeTitlebar.test.tsx`、真实 Electron checkpoint 截图                                     | PASS | 删除 48px 宿主白条；Core DSH 从 `(0, 0)` 铺满，macOS 红绿灯覆盖 38px DSH 顶栏                                                                                                                                                                                                                                                                                                                                  |
-| 2026-08-22 | `workspace-tabs` Electron 输入法焦点回归            | `pnpm e2e:desktop -- --segment workspace-tabs`                                                                        | FAIL | `2026-08-22T12-47-40-135Z-94267`：分离窗口时 macOS IME 残留输入追加 `i`，产品层结束源编辑会话后迁移                                                                                                                                                                                                                                                                                                            |
-| 2026-08-22 | `workspace-tabs` 最新 Electron 完整验证             | 同上                                                                                                                  | PASS | `2026-08-22T12-57-04-048Z-38785`，1m 44s，无断言错误                                                                                                                                                                                                                                                                                                                                                           |
-| 2026-08-22 | `model-routing` 快速视觉完成验证                    | `pnpm e2e:desktop -- --segment model-routing`                                                                         | FAIL | `2026-08-22T13-28-41-646Z-73001`：Executor 已生成视觉侧车最终文本，但无增量内容的快速完成没有触发前端 canonical transcript 刷新；生命周期协调器已在空 terminal completion 后刷新 transcript 并补单测                                                                                                                                                                                                           |
-| 2026-08-22 | `model-routing` Electron 控制桥验证                 | 同上                                                                                                                  | FAIL | `2026-08-22T13-52-54-758Z-19028`：错误卡片已显示且点击最终生效，但 Electron 控制桥的嵌套 `/control-tick` 网络等待超过命令时限；Electron 改用本地 macrotask，Tauri 路径保持不变                                                                                                                                                                                                                                 |
-| 2026-08-22 | `model-routing` 完整 Electron 验证                  | 同上                                                                                                                  | PASS | `2026-08-22T14-02-30-164Z-76105`，3m 47s；视觉侧车、失败后切换模型重试及 Responses/Chat/Anthropic 协议矩阵均通过                                                                                                                                                                                                                                                                                               |
-| 2026-08-22 | `permission-modes` 首次 Electron 验证               | `pnpm e2e:desktop -- --segment permission-modes`                                                                      | FAIL | `2026-08-22T14-07-07-350Z-97399`：Core DSH Renderer 控制轮询在模型目录预检期间被暂停，无法投递后续 UI 命令                                                                                                                                                                                                                                                                                                     |
-| 2026-08-22 | `permission-modes` 幂等 hover 验证                  | 同上                                                                                                                  | FAIL | `2026-08-22T14-14-43-766Z-49021`：模型选择器重复 enter 更新已收敛，但 Renderer 与 Executor IPC 仍同步停顿，证明根因不在菜单状态更新                                                                                                                                                                                                                                                                            |
-| 2026-08-22 | `permission-modes` 完整 Electron 验证               | 同上                                                                                                                  | PASS | `2026-08-22T14-22-04-259Z-90942`，56s；Electron Core DSH、工作台和独立工作区 WebContents 已禁用后台节流，三种权限模式及 Executor 通信断言通过                                                                                                                                                                                                                                                                  |
-| 2026-08-22 | `core-task-flow` Electron 弹出窗口身份验证          | `pnpm e2e:desktop -- --segment core-task-flow`                                                                        | FAIL | `2026-08-22T14-31-47-703Z-42588`：Core DSH 只接受 `main`/`workspace-*` 窗口标签，Electron `popout-window` 被错误注册为主窗口；已扩展桌面窗口身份协议并补 DSH 单测                                                                                                                                                                                                                                              |
-| 2026-08-22 | `core-task-flow` Electron 控制投递验证              | 同上                                                                                                                  | FAIL | `2026-08-22T14-35-59-799Z-7608`、`2026-08-22T14-42-01-851Z-68606`：Renderer 空闲后依赖页面定时器的短轮询被 Chromium 挂起；Electron 控制通道已迁移为服务端 25 秒长轮询，命令入队时立即唤醒                                                                                                                                                                                                                      |
-| 2026-08-22 | `core-task-flow` Electron 原生截图验证              | 同上                                                                                                                  | FAIL | `2026-08-22T14-51-01-078Z-24510`：隐藏弹出窗口调用 `capturePage` 报 `Current display surface not available for capture`；已改用 DevTools Protocol `Page.captureScreenshot`                                                                                                                                                                                                                                     |
-| 2026-08-22 | `core-task-flow` 保活 pane 可见性验证               | 同上                                                                                                                  | FAIL | `2026-08-22T14-54-29-178Z-38451`：后台保活任务 pane 仍暴露活动 `desktop-workbench-content` 标记；已将活动标记限定到可见 pane 并补单测                                                                                                                                                                                                                                                                          |
-| 2026-08-22 | `core-task-flow` 活动调试快照验证                   | 同上                                                                                                                  | FAIL | `2026-08-22T15-01-00-976Z-74104`：后台保活 Provider 覆盖顶层 `workbench.currentRuntimeTask`；已由活动 tab 显式控制调试快照发布                                                                                                                                                                                                                                                                                 |
-| 2026-08-22 | `core-task-flow` 活动侧栏唯一性验证                 | 同上                                                                                                                  | FAIL | `2026-08-22T15-10-22-707Z-11038`：后台保活 tab 仍渲染不可见侧栏，导致 `sidebar-worklists-scroll` 出现两份；已删除非活动 tab 的侧栏 UI 并补单测                                                                                                                                                                                                                                                                 |
-| 2026-08-22 | `core-task-flow` 完整 Electron 验证                 | 同上                                                                                                                  | PASS | `2026-08-22T15-18-00-563Z-41341`，3m 58s；系统拖拽、弹出窗口、任务创建/续聊/分叉、后台引导、请求用户输入、任务计划、侧栏滚动、工作区标签和执行状态均通过                                                                                                                                                                                                                                                       |
-| 2026-08-22 | `task-attachments` 当前看板 API 验证                | `pnpm e2e:desktop -- --segment task-attachments`                                                                      | FAIL | `2026-08-22T15-22-32-369Z-60116`：场景只模拟旧 `/loop-items` 读取，当前产品主路径请求 `/board-snapshot`；页面错误和请求日志形成完整证据链，场景夹具已补当前 API 契约，业务断言保持不变                                                                                                                                                                                                                         |
-| 2026-08-22 | `task-attachments` 项目空间截图取证验证             | 同上                                                                                                                  | FAIL | `2026-08-22T15-24-11-154Z-66460`：文件树、交付文件和预览断言均已通过，最终截图仍裁剪旧任务工作台 selector；三张阶段截图与最终 UI 快照证明场景处于活动项目空间，已仅修正取证目标                                                                                                                                                                                                                                |
-| 2026-08-22 | `task-attachments` 完整 Electron 验证               | 同上                                                                                                                  | PASS | `2026-08-22T15-25-01-692Z-69786`，17s；当前看板快照、项目文件树、Issue 交付目录、PDF 预览和远程附件隔离断言均通过                                                                                                                                                                                                                                                                                              |
-| 2026-08-22 | `cloud-git-worktree` 完整 Electron 验证             | `pnpm e2e:desktop -- --segment cloud-git-worktree`                                                                    | PASS | `2026-08-22T15-26-24-214Z-74740`，2m 12s；临时后端数据库、Git 起始引用与云工作树组合流程均通过                                                                                                                                                                                                                                                                                                                 |
-| 2026-08-22 | `cloud-worktree-capability` 完整 Electron 验证      | `pnpm e2e:desktop -- --segment cloud-worktree-capability`                                                             | PASS | `2026-08-22T15-28-58-932Z-86406`，50s；云工作树能力探测与不可用边界通过                                                                                                                                                                                                                                                                                                                                        |
-| 2026-08-22 | `cloud-worktree-create` 完整 Electron 验证          | `pnpm e2e:desktop -- --segment cloud-worktree-create`                                                                 | PASS | `2026-08-22T15-30-04-689Z-90832`，1m 12s；指定 Git 起始引用的云工作树创建写路径通过                                                                                                                                                                                                                                                                                                                            |
-| 2026-08-22 | `cloud-worktree-queued-cancel` 完整 Electron 验证   | `pnpm e2e:desktop -- --segment cloud-worktree-queued-cancel`                                                          | PASS | `2026-08-22T15-31-32-769Z-97234`，1m 8s；排队工作树任务的取消与最终状态收敛通过                                                                                                                                                                                                                                                                                                                                |
-| 2026-08-22 | `cloud-worktree-tools` 完整 Electron 验证           | `pnpm e2e:desktop -- --segment cloud-worktree-tools`                                                                  | PASS | `2026-08-22T15-34-08-834Z-7078`，1m 4s；云工作树工具调用链通过                                                                                                                                                                                                                                                                                                                                                 |
-| 2026-08-22 | `cloud-worktree-archive-restore` 完整 Electron 验证 | `pnpm e2e:desktop -- --segment cloud-worktree-archive-restore`                                                        | PASS | `2026-08-22T15-35-30-243Z-12833`，1m 1s；云工作树归档与恢复状态通过                                                                                                                                                                                                                                                                                                                                            |
-| 2026-08-22 | `cloud-worktree-device-restart` 完整 Electron 验证  | `pnpm e2e:desktop -- --segment cloud-worktree-device-restart`                                                         | PASS | `2026-08-22T15-36-46-744Z-18305`，55s；Executor 设备重启后的云工作树状态恢复通过                                                                                                                                                                                                                                                                                                                               |
-| 2026-08-22 | `context-compaction` 完整 Electron 验证             | `pnpm e2e:desktop -- --segment context-compaction`                                                                    | PASS | `2026-08-22T15-38-02-150Z-23521`，18s；上下文压缩场景通过                                                                                                                                                                                                                                                                                                                                                      |
-| 2026-08-22 | `runtime-task-queue` 项目按钮定位验证               | `pnpm e2e:desktop -- --segment runtime-task-queue`                                                                    | FAIL | `2026-08-22T15-38-43-178Z-26552`：当前新建项目已绑定在线本地 Executor，但场景的全局重复 selector 命中更靠前的离线项目按钮；UI、调试快照和 Executor 日志形成完整证据链，动作已限定到当前项目行                                                                                                                                                                                                                  |
-| 2026-08-22 | `runtime-task-queue` 完整 Electron 验证             | 同上                                                                                                                  | PASS | `2026-08-22T15-40-54-282Z-34930`，50s；队列顺序、强制启动、并发上限动态提升与 Git worktree 延迟创建均通过                                                                                                                                                                                                                                                                                                      |
-| 2026-08-22 | `runtime-terminal-convergence` 完整 Electron 验证   | `pnpm e2e:desktop -- --segment runtime-terminal-convergence`                                                          | PASS | `2026-08-22T15-42-01-936Z-39999`，27s；运行时终态与终端消息收敛通过                                                                                                                                                                                                                                                                                                                                            |
-| 2026-08-22 | `running-conversation-history` 完整 Electron 验证   | `pnpm e2e:desktop -- --segment running-conversation-history`                                                          | PASS | `2026-08-22T15-42-52-258Z-43524`，39s；运行中会话切换与历史恢复通过                                                                                                                                                                                                                                                                                                                                            |
-| 2026-08-22 | `codex-notification-isolation` 项目按钮定位验证     | `pnpm e2e:desktop -- --segment codex-notification-isolation`                                                          | FAIL | `2026-08-22T15-44-00-719Z-48108`：当前隔离项目已绑定在线本地 Executor，但全局重复 selector 命中离线项目按钮；已按当前项目 ID 限定动作目标                                                                                                                                                                                                                                                                      |
-| 2026-08-22 | `codex-notification-isolation` 高频事件终态验证     | `pnpm e2e:desktop -- --segment codex-notification-isolation`                                                          | FAIL | `2026-08-22T15-45-30-003Z-53673`：Executor 日志确认 noisy/quiet 两任务均已完成并广播终态，但 Renderer 在 2,200 条增量后仍停留在 streaming；定位为 App IPC 普通事件队列拥塞时 `executor.event_lagged` 也排在旧增量之后                                                                                                                                                                                          |
-| 2026-08-22 | App IPC 拥塞恢复契约                                | `cargo test --test local_app_ipc_contract app_ipc_prioritizes_lag_recovery_over_queued_runtime_deltas -- --nocapture` | PASS | 2,500+ 增量压满广播与写队列后，`executor.event_lagged` 通过独立高优先级队列在前 10 帧内送达                                                                                                                                                                                                                                                                                                                    |
-| 2026-08-22 | `codex-notification-isolation` 完整 Electron 验证   | `pnpm e2e:desktop -- --segment codex-notification-isolation`                                                          | PASS | `2026-08-22T15-54-13-855Z-89489`，36s；noisy/quiet 并发任务、通知隔离与高频事件后的终态收敛均通过                                                                                                                                                                                                                                                                                                              |
-| 2026-08-22 | `split-workbench` 空编辑器 caret 验证               | `pnpm e2e:desktop -- --segment split-workbench`                                                                       | FAIL | `2026-08-22T15-55-13-951Z-93742`：Electron 中编辑器与焦点存在，但空编辑器缺少原测试要求的 `.composer-empty-caret`；主分支 Tauri 同测试通过，因此保留原断言，按 Electron 迁移差异继续修复                                                                                                                                                                                                                       |
-| 2026-08-22 | `split-workbench` 单任务桌面标题栏验证              | `pnpm e2e:desktop -- --segment split-workbench`                                                                       | FAIL | `2026-08-22T15-56-44-549Z-371`：任务创建、消息与 caret 验证均通过，但 Electron 被 `isTauriRuntime()` 分支误判为 Web 布局，缺少 `workbench-main-header` 并渲染卡片式内嵌顶栏；已改为 Tauri/Electron 共用 `isDesktopRuntime()` 原生桌面布局                                                                                                                                                                      |
-| 2026-08-22 | `split-workbench` 重载恢复验证                      | `pnpm e2e:desktop -- --segment split-workbench`                                                                       | FAIL | `2026-08-22T16-02-02-484Z-51710`：分屏创建、双 pane 会话/标题栏/附件/面板/缩放均通过；重载后临时 task tab 未被延迟加载的 `fixed-task` 接管，导致分屏从 `fixed-task` 存储键切换到随机 tab 键。已修正固定 task/board/agent tab 按类型接管启动 tab并保留当前路由                                                                                                                                                  |
-| 2026-08-22 | `split-workbench` 完整 Electron 验证                | `pnpm e2e:desktop -- --segment split-workbench`                                                                       | PASS | `2026-08-22T16-13-52-957Z-16497`，1m 28s；未修改原 E2E，空编辑器 caret、双 pane、桌面标题栏、附件/面板/缩放以及重载后的分屏恢复全部通过                                                                                                                                                                                                                                                                        |
-| 2026-08-23 | `window-lifecycle` macOS 应用重开验证               | `pnpm e2e:desktop -- --segment window-lifecycle`                                                                      | FAIL | `2026-08-23T03-06-01-933Z-2600`：唯一 Bundle ID 已使 LaunchServices 精确重开当前 Electron E2E 应用，关闭到托盘后 Executor PID 与睡眠抑制均连续；后续缓存快照仍误调用 Tauri `invoke`                                                                                                                                                                                                                            |
-| 2026-08-23 | Electron 进程诊断契约                               | Electron 测试、TypeScript 编译                                                                                        | PASS | 新增 `e2e.getProcessSnapshot`，通过 Electron 主进程树提供与旧测试一致的进程分组；Electron 19 files / 52 tests，前后端 TypeScript 编译通过                                                                                                                                                                                                                                                                      |
-| 2026-08-23 | `window-lifecycle` Electron 虚拟化验证              | `pnpm e2e:desktop -- --segment window-lifecycle`                                                                      | FAIL | `2026-08-23T03-13-40-010Z-64570`：进程快照和缓存淘汰已通过；重启后消息虚拟化仍被 `isTauriRuntime()` 禁用，原断言准确捕获全部历史消息保持挂载                                                                                                                                                                                                                                                                   |
-| 2026-08-23 | `window-lifecycle` 完整 Electron 验证               | 同上                                                                                                                  | PASS | `2026-08-23T03-19-41-297Z-3042`，3m 6s；关闭到托盘、唯一 Bundle ID 重开、Executor PID 连续、睡眠抑制、滚动恢复、消息虚拟化、缓存淘汰、整应用重启和 macOS 退出均通过                                                                                                                                                                                                                                            |
-| 2026-08-23 | `goal-lifecycle` Executor 重启证据迁移              | `pnpm e2e:desktop -- --segment goal-lifecycle`                                                                        | FAIL | `2026-08-23T03-23-55-473Z-47175`：Goal 业务流程已运行到整应用重启，仍直接等待 Tauri `executor.log` 的 stdio-ready 行；已统一复用 Electron Core DSH 运行时诊断                                                                                                                                                                                                                                                  |
-| 2026-08-23 | `goal-lifecycle` 完整 Electron 验证                 | 同上                                                                                                                  | PASS | `2026-08-23T03-26-55-017Z-73575`，2m 32s；Goal 忙碌交接、自动续跑、后台未读、页面重载以及整应用重启后的 Executor 更换和中断恢复均通过                                                                                                                                                                                                                                                                          |
-| 2026-08-23 | `supervisor-lifecycle` 完整 Electron 验证           | `pnpm e2e:desktop -- --segment supervisor-lifecycle`                                                                  | PASS | `2026-08-23T03-30-10-625Z-98006`，1m 32s；Supervisor 原则配置、独立模型路由、自动纠偏与最终完成状态均通过                                                                                                                                                                                                                                                                                                      |
-| 2026-08-23 | `resilience` 完整 Electron 验证                     | `pnpm e2e:desktop -- --segment resilience`                                                                            | PASS | `2026-08-23T03-32-01-654Z-13565`，2m 32s；模型流短暂断连、重连状态、页面重载、同一运行任务恢复以及最终输出收敛均通过                                                                                                                                                                                                                                                                                           |
-| 2026-08-23 | `conversation-state` 完整 Electron 验证             | `pnpm e2e:desktop -- --segment conversation-state`                                                                    | PASS | `2026-08-23T03-34-55-836Z-43070`，3m 9s；会话 mention、持久化状态、切换与重载恢复均通过                                                                                                                                                                                                                                                                                                                        |
-| 2026-08-23 | `temporary-chat` 完整 Electron 验证                 | `pnpm e2e:desktop -- --segment temporary-chat`                                                                        | PASS | `2026-08-23T03-38-37-776Z-83873`，33s；临时会话场景及其扩展状态边界通过                                                                                                                                                                                                                                                                                                                                        |
-| 2026-08-23 | `workspace-attachments` Electron 本地图片验证       | `pnpm e2e:desktop -- --segment workspace-attachments`                                                                 | FAIL | `2026-08-23T03-39-30-782Z-92481`：消息附件已持久化且真实模型请求包含图片，但 Electron 无法通过 Tauri `convertFileSrc` 读取本地路径；新增声明式 `filesystem.readFileChunk` capability，以 512 KiB 有界分块读取并生成 Renderer Blob URL                                                                                                                                                                          |
-| 2026-08-23 | `workspace-attachments` Electron 路径粘贴验证       | 同上                                                                                                                  | FAIL | `2026-08-23T03-50-36-631Z-80965`：图片发送与恢复已通过，粘贴的文件/目录缺少上下文 chip；新增安全 preload 文件路径提取、`clipboard.readWorkspacePaths` 与 `filesystem.inspectPaths`，路径能力继续由 Core DSH 按 Executor 声明校验                                                                                                                                                                               |
-| 2026-08-23 | `workspace-attachments` 关闭重开图片验证            | 同上                                                                                                                  | FAIL | `2026-08-23T04-05-03-621Z-49185`：关闭重开后附件组件停留在 loading；请求级日志证明其它 DSH capability 正常，但未发出 `filesystem.readFileChunk`，定位为隐藏/历史任务切换后 `IntersectionObserver` 不再回调                                                                                                                                                                                                     |
-| 2026-08-23 | `workspace-attachments` 完整 Electron 验证          | 同上                                                                                                                  | PASS | `2026-08-23T04-14-58-155Z-89089`，2m 15s；侧聊附件隔离、纯附件任务、关闭到托盘后恢复、粘贴文件/目录、拖拽与本地图片预览全部通过；Electron 挂载的虚拟化消息直接读取本地预览，不依赖失活的可见性观察器                                                                                                                                                                                                           |
-| 2026-08-23 | `rendering-extensions` Electron `view_image` 验证   | `pnpm e2e:desktop -- --segment rendering-extensions`                                                                  | FAIL | `2026-08-23T04-18-01-035Z-407`：工具块已渲染，但展开后没有本地图片预览；根因是绝对路径仍只通过 Tauri `convertFileSrc` 解析，现改为 Electron 通过声明式 `filesystem.readFileChunk` capability 读取并生成 Blob URL                                                                                                                                                                                               |
-| 2026-08-23 | `rendering-extensions` Electron 内联可视化验证      | 同上                                                                                                                  | FAIL | `2026-08-23T04-23-51-618Z-20289`：`view_image` 已通过，内联 HTML 可视化仍缺失；根因是 iframe URL 与 HTML 读取仍依赖 Tauri，现迁移为 Electron `file://` 基准地址和 capability 分块读取                                                                                                                                                                                                                          |
-| 2026-08-23 | `rendering-extensions` 完整 Electron 验证           | 同上                                                                                                                  | PASS | `2026-08-23T04-29-42-959Z-39829`，3m 46s；流式文本、`view_image` 本地预览与内联 HTML 可视化全部通过                                                                                                                                                                                                                                                                                                            |
-| 2026-08-23 | `change-request-status` Electron 环境面板验证       | `pnpm e2e:desktop -- --segment change-request-status`                                                                 | FAIL | `2026-08-23T04-34-02-248Z-60278`：活动工作台 DOM 已有 1200px，但 Electron WebContentsView 显示前的宽度测量停在 0，环境摘要误判为浮层并默认关闭；改为活动 pane 非零宽度探测并由 ResizeObserver 接续                                                                                                                                                                                                             |
-| 2026-08-23 | `change-request-status` 状态刷新验证                | 同上                                                                                                                  | FAIL | `2026-08-23T04-52-26-348Z-34055`：初始 pending 通过，手动刷新未收敛到 success；修复 Executor 登录 shell 合并覆盖显式 `HOME`，并让环境手动刷新同步刷新共享 PR 快照                                                                                                                                                                                                                                              |
-| 2026-08-23 | `change-request-status` CLI 恢复验证                | 同上                                                                                                                  | FAIL | `2026-08-23T05-00-59-194Z-67413`：success 已通过，CLI 不可用结果被共享监控器保留的 stale 快照覆盖；环境面板遇到 stale/error 快照时改用本次直接刷新结果                                                                                                                                                                                                                                                         |
-| 2026-08-23 | `change-request-status` 合并态检查结论验证          | 同上                                                                                                                  | FAIL | `2026-08-23T05-03-48-269Z-78669`：最终已显示“已合并”，但 merged PR 未查询 GraphQL 详情且 UI 未保留独立 checks 结论；批量详情查询扩展到所有 PR，并同时渲染 merged 状态与 checks 辅助信息                                                                                                                                                                                                                        |
-| 2026-08-23 | `change-request-status` 完整 Electron 验证          | 同上                                                                                                                  | PASS | `2026-08-23T05-10-17-721Z-12207`，32s；pending、检查通过、CLI 不可用、设置开关持久化、恢复后已合并及检查结论全部通过                                                                                                                                                                                                                                                                                           |
-| 2026-08-23 | `claude-runtime` 本地依赖准备                       | `pnpm e2e:desktop -- --segment claude-runtime`                                                                        | FAIL | `2026-08-23T05-11-45-677Z-23575`：场景启动前校验发现仓库固定的 `.github/claude-code-cli/node_modules/.bin/claude` 尚未安装；执行该目录的 `npm ci` 后继续，未修改测试或产品断言                                                                                                                                                                                                                                 |
-| 2026-08-23 | `claude-runtime` Electron Harness 探测验证          | 同上                                                                                                                  | FAIL | `2026-08-23T05-12-23-916Z-27405`：E2E 已注入绝对 Claude 可执行文件路径，但设置卡仍显示“未检测到”；根因是 `listLocalHarnesses()` 被硬编码为仅 Tauri 可用，Electron 从未发出版本探测请求                                                                                                                                                                                                                         |
-| 2026-08-23 | `claude-runtime` 完整 Electron 验证                 | 同上                                                                                                                  | PASS | `2026-08-23T05-27-56-087Z-49057`，1m 35s；Executor 新增并通过 `executor.protocol.describe.renderer_methods` 声明 `executor.harnesses.list`，Core DSH 动态校验后完成 Claude 版本探测，本地/云设备运行、取消和续聊全链路通过                                                                                                                                                                                     |
-| 2026-08-23 | `local-file-preview` Electron 加载态验证            | `pnpm e2e:desktop -- --segment local-file-preview`                                                                    | FAIL | `2026-08-23T06-21-16-237Z-88575`：完整重建并打入最新 Core DSH 资源后，文件内容与切换均正确，但 Executor 响应足够快，React 将加载态与完成态批处理为同一次提交，原场景无法观察“保留旧预览并显示加载指示器”的过渡状态；确认不是旧测试或陈旧包问题                                                                                                                                                                 |
-| 2026-08-23 | `local-file-preview` 完整 Electron 验证             | 同上                                                                                                                  | PASS | `2026-08-23T06-23-06-401Z-96018`，24s；未修改原 E2E。Electron E2E 构建中显式提交并短暂保留文件切换加载态，生产构建不增加延迟；旧预览保留、加载指示器、文本/图片切换全部通过。Electron 包必须经 `build:package` 重建 bundled Core DSH runtime，快速仅重打 asar 会携带旧资源                                                                                                                                     |
-| 2026-08-23 | `local-harness` Core DSH 终端事件稳定性验证         | `pnpm e2e:desktop -- --segment local-harness`                                                                         | FAIL | `2026-08-23T06-30-47-502Z-29408` 至 `2026-08-23T07-06-39-362Z-72495`：截图和真实 OpenCode/Kimi 启动已逐步迁移，但 Renderer 截图期间 SSE 断开触发 `ERR_STREAM_WRITE_AFTER_END`；Core DSH 改为独立管理 SSE 生命周期，不再把 HTTP backpressure 当作断开，运行时测试覆盖断开后禁止继续写入                                                                                                                         |
-| 2026-08-23 | `local-harness` Kimi 初始输入时序验证               | 同上                                                                                                                  | FAIL | `2026-08-23T07-17-55-277Z-14691`：Core DSH 已稳定且终端截图全部完成，UI 快照证明 Kimi 停在 `Trust this folder?`，未出现 `No session yet`，因此初始 prompt 按契约保持待发送；主分支 Tauri 的 `prepare_harness_plugin_adapter` 会预写 Kimi workspace trust，Electron 当时遗漏该运行准备                                                                                                                          |
-| 2026-08-23 | `local-harness` 完整 Electron 验证                  | 同上                                                                                                                  | PASS | `2026-08-23T07-27-58-073Z-72292`，42s；未修改原 E2E。Core DSH 等待首段 PTY 输出并按 Kimi readiness marker 单次发送初始输入；Executor 通过 `executor.protocol.describe.renderer_methods` 声明 `executor.harnesses.prepare_launch`，完成隔离 Harness home、Claude onboarding/trust 与 Kimi workspace trust。真实 OpenCode、Kimi、Claude 模型请求、并行工具结果、恢复、归档、取消归档和删除全链路通过             |
-| 2026-08-23 | `harness-apps` 内置开发助手验证                     | `pnpm e2e:desktop -- --segment harness-apps`                                                                          | FAIL | `2026-08-23T07-59-36-702Z-3050`：市场应用安装、启动和原生视图均通过；“创建智能工作台”因 Electron 未初始化 Tauri 原先复制的 `wework-personal` 内置插件市场而失败。Executor 新增并声明 `executor.plugins.initialize_bundled_marketplace`，Electron 包携带市场资源，Renderer 通过动态协议完成注册与默认插件安装                                                                                                   |
-| 2026-08-23 | `harness-apps` RC7 产品契约验证                     | 同上                                                                                                                  | FAIL | `2026-08-23T08-11-34-698Z-48716`：页面明确拒绝要求 DSH `0.1.0-rc.7` 的应用，符合“不再兼容 RC7”的产品决定；旧场景据此迁为验证错误提示与不写入 installation，保留当前 RC8 应用的完整运行覆盖                                                                                                                                                                                                                     |
-| 2026-08-23 | `harness-apps` Electron 原生截图验证                | 同上                                                                                                                  | FAIL | `2026-08-23T08-14-29-508Z-59537`：应用已启动且原生视图可求值，但 E2E 截图动作仍直接调用 Tauri `invoke`；改为复用 `captureEmbeddedBrowserSnapshot`，由桌面运行时分别路由到 Tauri 或 Electron `browser.capture`                                                                                                                                                                                                  |
-| 2026-08-23 | `harness-apps` 完整 Electron 验证                   | 同上                                                                                                                  | PASS | `2026-08-23T08-17-24-636Z-70583`，1m 51s；内置开发助手、官方市场安装、RC7 拒绝、模型切换、独立工作台进程、原生视图截图、tab 内存状态保持、关闭/重开/停止和实验功能开关全部通过                                                                                                                                                                                                                                 |
-| 2026-08-23 | `browser-multi-tabs` Electron Bridge 首次验证       | `pnpm e2e:desktop -- --segment browser-multi-tabs`                                                                    | FAIL | `2026-08-23T08-27-39-178Z-7253` 至 `2026-08-23T08-32-23-856Z-27969`：补齐带随机令牌的本地浏览器 Bridge、运行时身份文件、页面状态与失败导航；修复 Electron `WebContentsView` 初次 `about:blank` 与 Bridge 导航并发竞态                                                                                                                                                                                          |
-| 2026-08-23 | `browser-multi-tabs` 多页签事件路由验证             | 同上                                                                                                                  | FAIL | `2026-08-23T08-42-00-739Z-67884`：第二个浏览器页签已创建，但当前页签变化会重建 Renderer 监听器，每个 Electron 轮询器从序号 0 重放历史 `open-request`，旧请求重新选中第一个页签；改为所有浏览器事件共用单一递增游标                                                                                                                                                                                             |
-| 2026-08-23 | `browser-multi-tabs` 地址提交竞态验证               | 同上                                                                                                                  | FAIL | `2026-08-23T08-47-08-577Z-92306`：共享事件流已消除历史重放，但地址表单先失焦再读取 React 状态会被旧页面 URL 回填；提交改为先读取真实 input 值并发起导航，再失焦                                                                                                                                                                                                                                                |
-| 2026-08-23 | `browser-multi-tabs` 完整 Electron 验证             | 同上                                                                                                                  | PASS | `2026-08-23T08-50-53-603Z-10432`，34s；未修改原 E2E。失败导航与恢复、刷新 loading、浏览器/聊天/终端混排、独立地址与历史、关闭页签、重开面板和 Bridge 活动页签路由全部通过                                                                                                                                                                                                                                      |
-| 2026-08-23 | `embedded-browser` Electron 原生交互迁移            | `pnpm e2e:desktop -- --segment embedded-browser`                                                                      | FAIL | `2026-08-23T10-01-18-745Z-4750`：地址输入、暂停/恢复、数据清理、标注和 CDP 截图均已通过；HTTP 302 后页面 inspect 成功，但 Bridge 错误要求最终 URL 等于跳转前 URL，导致 `browser_open_and_inspect` 超时，已删除与 `loadURL` 冲突的重复终态判定                                                                                                                                                                  |
-| 2026-08-23 | `embedded-browser` 本地目录预览迁移                 | 同上                                                                                                                  | FAIL | `2026-08-23T10-05-10-766Z-21239`：HTML、Markdown 和纯文本均通过，Electron 日志明确显示 Chromium 对 `file://目录` 返回 `ERR_FILE_NOT_FOUND`；迁移宿主目录索引生成、源 URL 保留、二进制文件拦截事件及 Renderer toast                                                                                                                                                                                             |
-| 2026-08-23 | `embedded-browser` 完整 Electron 验证               | 同上                                                                                                                  | PASS | `2026-08-23T10-11-23-405Z-45839`，55s；未修改原 E2E。Bridge/MCP 导航与重定向、结构化 inspect、动作与审批、截图、标注、Cookie/缓存清理、本地 HTML/Markdown/纯文本/目录及 zip 拦截全部通过                                                                                                                                                                                                                       |
-| 2026-08-23 | `browser-toolbar-actions` Electron Inspector 迁移   | `pnpm e2e:desktop -- --segment browser-toolbar-actions`                                                               | FAIL | `2026-08-23T10-13-03-865Z-52957` 至 `2026-08-23T10-18-02-546Z-72064`：控制入口由 Tauri invoke 迁到 Electron capability；使用 detached DevTools、`devToolsWebContents` 生命周期和覆盖 600ms post-open 同步的稳定 frame 采样，原两次独立窗口/关闭/frame 不变断言通过                                                                                                                                             |
-| 2026-08-23 | `browser-toolbar-actions` Electron 设备视口迁移     | 同上                                                                                                                  | FAIL | `2026-08-23T10-23-10-003Z-90927` 至 `2026-08-23T10-34-13-128Z-33956`：CDP `Emulation.setDeviceMetricsOverride` 由设备模式持有 debugger 会话后，390px 预设与旋转 844px 均通过；当前唯一失败为 200% 页面缩放下右侧 handle 拖到左侧后宽度仍为 800，待继续定位 React pointerdown/resize state 事件链                                                                                                               |
-| 2026-08-23 | `browser-toolbar-actions` 完整 Electron 验证        | 同上                                                                                                                  | PASS | `2026-08-23T10-59-55-871Z-36223`，22s；未修改原 E2E。Electron 自动化拖拽补齐 Shadow DOM 深层焦点处理，尺寸输入组件在外部拖拽状态变化时丢弃旧 draft；Inspector、页内查找、390/844 设备模拟、200% 缩放下拖拽至 240px、关闭工具栏及浏览器设置导航全部通过                                                                                                                                                         |
-| 2026-08-23 | `remote-device-onboarding` 完整 Electron 验证       | `pnpm e2e:desktop -- --segment remote-device-onboarding`                                                              | PASS | `2026-08-23T11-01-42-989Z-43550`                                                                                                                                                                                                                                                                                                                                                                               |
-| 2026-08-23 | 四个插件分段完整 Electron 验证                      | `plugin-marketplace-lifecycle`、`plugin-lifecycle`、`skill-mention-rendering`、`sites-plugin-auto-install`            | PASS | `2026-08-23T11-28-24-266Z-51802`、`2026-08-23T12-18-40-765Z-51071`、`2026-08-23T12-29-47-542Z-798`、`2026-08-23T12-31-52-898Z-10302`                                                                                                                                                                                                                                                                           |
-| 2026-08-23 | `cloud-space-mention` runner 与 Electron 验证       | `pnpm e2e:desktop -- --segment cloud-space-mention`                                                                   | PASS | `2026-08-23T12-37-09-540Z-33570`；场景已进入 `DESKTOP_CHECKPOINTS`、统一 runner 和 CI 分类器                                                                                                                                                                                                                                                                                                                   |
-| 2026-08-23 | `ai:verify` 完整命令面契约                          | `node --test scripts/ai-verify.test.mjs`                                                                              | PASS | 28 tests；CLI 精确覆盖旧命令面，并补回 `import-plugin-package`、`set-local-proxy-url`、`capture-workspace` 与 `terminal-snapshot`                                                                                                                                                                                                                                                                              |
-| 2026-08-23 | Electron 插件包预览与导入                           | `preview-plugin-import`、`import-plugin-package`                                                                      | PASS | `2026-08-23T13-00-47-247Z-30366`；修复 Executor 重复初始化内置市场会删除刚导入插件的问题，真实安装返回 `ai-verify-import-plugin`                                                                                                                                                                                                                                                                               |
-| 2026-08-23 | Electron 本地终端快照                               | `terminal-snapshot`                                                                                                   | PASS | `test-results/ai-verify/2026-08-23T13-16-49-227Z-7620/terminal-snapshot.json`；真实 Executor PTY 返回 sequence 4 和工作区 shell 提示符                                                                                                                                                                                                                                                                         |
-| 2026-08-23 | Playwright 输出目录隔离                             | `playwright.config.ts`                                                                                                | PASS | 原 `outputDir: test-results` 会在启动测试前递归清理 Electron `ai:verify` 的完整运行时；迁为 `test-results/playwright` 后场景正常进入执行，且不再破坏桌面验证会话                                                                                                                                                                                                                                               |
-| 2026-08-23 | Web E2E：应用壳                                     | `pnpm e2e -- e2e/tests/app-shell.spec.ts`                                                                             | PASS | 1 passed，9.0s                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 2026-08-23 | Web E2E：Responses API mock                         | `pnpm e2e -- e2e/tests/response-api-mock.spec.ts`                                                                     | PASS | 7 passed，12.2s                                                                                                                                                                                                                                                                                                                                                                                                |
-| 2026-08-23 | Web E2E：上游 mock                                  | `pnpm e2e -- e2e/tests/upstream-mocks.spec.ts`                                                                        | PASS | 2 passed，3.6s                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 2026-08-23 | Electron CI 接线静态验证                            | `bash .github/scripts/test-classify-ci-changes.sh`、`bash -n`、YAML 解析                                              | PASS | 共享构建产物改为完整 Electron 应用目录；core/cloud/plugin 与 macOS memory/Inspector 作业均使用同一 Electron 包                                                                                                                                                                                                                                                                                                 |
-| 2026-08-23 | `harness-apps` 合并主分支后的完整验证               | `pnpm e2e:desktop -- --segment harness-apps`                                                                          | PASS | `2026-08-23T13-40-39-648Z-29751`；最新版 DSH 工作台应用安装、导出和独立进程生命周期通过，RC7 继续按产品契约拒绝                                                                                                                                                                                                                                                                                                |
-| 2026-08-23 | Executor Renderer 动态 capability                   | Executor 合约测试、Electron 类型检查和真实插件流程                                                                    | PASS | `executor.protocol.describe.renderer_methods` 声明插件导入、链接解除和个人插件删除方法；Core DSH 仅按运行时声明校验，没有第二份静态白名单                                                                                                                                                                                                                                                                      |
-| 2026-08-23 | Electron Executor Codex Home 隔离                   | `managed-executor-runtime.test.ts`、真实 `plugin-lifecycle`                                                           | PASS | `2026-08-23T14-11-03-745Z-41421`；Electron 显式覆盖 `CODEX_HOME`/`WEGENT_CODEX_HOME`，隔离目录中 `auth.json` 不存在，离线导入与删除期间没有外部请求                                                                                                                                                                                                                                                            |
-| 2026-08-23 | `plugin-lifecycle` 合并主分支后的完整验证           | `pnpm e2e:desktop -- --segment plugin-lifecycle`                                                                      | PASS | `2026-08-23T14-11-03-745Z-41421`，1m 59s；本地导入、Codex 配置提交、缓存与个人市场删除、断网约束、市场安装/聊天使用/卸载全部通过                                                                                                                                                                                                                                                                               |
-| 2026-08-23 | `plugin-marketplace-lifecycle` 合并主分支后的验证   | `pnpm e2e:desktop -- --segment plugin-marketplace-lifecycle`                                                          | PASS | `2026-08-23T14-13-21-281Z-62260`，58s；独立市场插件生命周期全部通过                                                                                                                                                                                                                                                                                                                                            |
-| 2026-08-23 | Wework 通用扩展宿主、终端与内置浏览器实机复核       | Electron `ai:verify` 会话 `2026-08-23T20-27-15-096Z-75951`                                                            | PASS | 手工安装并激活真实 `github:ChenRuoT/dsh-sidebar-qa`；Core DSH 重启后插件通过主协议 `wework.extensions.v1` 的 `wework.workspace.sidebar.tab` 暴露“追问/追问记录”，两个 surface 均完成真实 React mount；`betterSidebar` 仅作为兼容适配器。底部终端显示真实 PTY prompt；Wework 内置浏览器成功加载 Example Domain，原生页面未遮挡菜单。完整截图链见 `WEWORKC2FA61-351-electron-dsh-review.md`                      |
-| 2026-08-23 | 打包 Electron Core DSH 运行时路径修复               | GitHub Actions run `32666207057` Core shard 日志；本地 DSH client、TypeScript 与 Electron runtime 聚焦测试            | PASS | CI 下载的是自包含 Electron 包，源码路径 `wework/node_modules/.cache/harness-runtime-dev` 不存在。E2E 启动器不再覆盖 `WEWORK_HARNESS_RUNTIME_ROOT`，由打包应用按生产路径从 `resources/harness-runtime` 校验并物化 Core/Workbench 运行时；显式配置运行时的开发场景仍保留路径存在性校验。正式插件 API 同时收敛为 `ctx.wework.extensions.register(...)`，避免以 sidebar 命名未来全部扩展能力。                     |
-| 2026-08-23 | Linux 容器 Electron 启动参数                        | GitHub Actions runs `32667395009`、`32668392986` 的 Core/Cloud/Plugins shard `app.log`                                | PASS | 包内运行时断言修复后，日志依次暴露 Chromium root sandbox FATAL 与容器 GPU 子进程 FATAL。启动器仅在 Linux、uid 0 且 `WEWORK_E2E_ISOLATED_XVFB=true` 的隔离 E2E 容器中传入 `--no-sandbox --disable-gpu`；Core/Cloud 已有该声明，Plugins workflow 补齐同一契约。产品启动和普通本地验证继续使用 Chromium sandbox 与 GPU。                                                                                          |
-| 2026-08-23 | 打包 Electron 首次冷启动预算                        | GitHub Actions run `32669349160` 的 Linux Core/Cloud/Plugins 与 macOS Inspector 日志、Core shard 6 诊断产物           | PASS | 所有失败均停在固定 60 秒桌面控制器等待：Linux 诊断中 Workbench 运行时已完成 20 MB 物化，92 MB Core 运行时仍处于校验解包后的 `.tmp` 原子替换前目录，`app.log` 无崩溃；macOS Inspector 的 Core 运行时也停在 `.tmp`。Electron 冷启动需要校验并物化两个内置运行时，因此启动预算改为 180 秒；Tauri 保持 60 秒，普通 UI 步骤保持 10 秒，业务 E2E 断言未修改。可通过 `WEWORK_E2E_DESKTOP_READY_TIMEOUT_MS` 显式覆盖。 |
+以下扫描在代码与测试范围内应无旧宿主命中：
 
-### 2026-08-24 最新验证
+```bash
+rg -n -i \
+  'tauri|WEWORK_E2E_DESKTOP_RUNTIME|desktopRuntime[[:space:]]*[:=]|data-tauri' \
+  wework/e2e wework/scripts/ai-verify*.mjs
+```
 
-- `rendering-extensions`：PASS，证据目录
-  `2026-08-24T01-24-18-782Z-7690`。`local-device` 逻辑地址现在只在 task ID
-  唯一时解析到 Executor 的真实 device ID，重复 ID 时拒绝猜测。
-- Electron 子窗口 readiness：Electron 75 个单测与类型检查通过；Popout 和
-  detached workspace 分别等待产品根节点挂载后再显示。
-- `goal-lifecycle`：PASS，证据目录
-  `2026-08-24T02-26-56-211Z-66125`。`SIGTERM`、`SIGINT`、`SIGHUP`
-  统一进入幂等 shutdown，完整重启后旧 Executor 已退出，验证结束后恢复 worktree
-  无 Executor 残留。
-- `window-lifecycle`：PASS，证据目录
-  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T04-16-35-293Z-45720`。
-  冷启动辅助 Renderer 使用有界 120 秒真实界面挂载预算；关闭到托盘时卸载主
-  Renderer，重开后控制客户端从 1 增至 2，旧客户端失效且 Executor PID
-  `65428` 保持不变。Popout 冷/热启动、后台任务、滚动与虚拟化恢复、整应用退出和
-  重启全部通过，共生成 10 张 `window-lifecycle-*.png` 核心流程截图。
-- macOS 26.0–26.4 Electron 退出：Electron 43.4.1 最小探针和真实 Wework
-  都复现所有 `before-quit`/`will-quit`/`quit` 事件完成后主进程仍驻留；与
-  `electron/electron#52582` 的原生 teardown 缺陷一致。Wework 先并行停止
-  Browser Bridge、Workbench、Core DSH 和 Executor，仅在 Darwin 25.0–25.4
-  的 `quit` 事件后终止已完成清理的宿主；Darwin 25.5+ 和其他平台保持标准
-  Electron 退出路径。对应 Electron 测试为 26 files / 77 tests。
-- PR #2945 CI 失败项逐项复核：
-  `automation-lifecycle`、`workspace-tabs`、`window-lifecycle`、
-  `sites-plugin-auto-install`、`project-automation`、
-  `workspace-attachments`、`plugin-auto-update` 均使用同一最新打包应用逐个通过。
-- `core-task-flow`：PASS，证据目录
-  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T06-56-42-999Z-35780`。
-  迁移时 Electron 自行增加的 600px 最小窗口高度与旧 Tauri 行为不一致，
-  导致 420px 窗口下侧边栏无法构造非边缘滚动位置；删除额外最小尺寸后，
-  原侧边栏滚动保持断言通过。弹出窗口现在等待 Electron `focus` 事件后才完成
-  `systemDrag.complete`，避免主窗口焦点竞态。该目录包含系统拖拽、引导消息、
-  请求输入、侧边栏滚动、任务分叉、工作区状态等完整截图。
-- 前台 guidance 顺序：Executor 日志、模型请求、Workbench debug snapshot 与
-  UI snapshot 共同证明“引导前已产生但延迟送达”的 process block 被错误追加到
-  guidance 之后。运行时合并现在按时间将该 block 插回 guidance 前；引导后的
-  tool block 仍留在 continuation。原渲染契约要求 pre-tool 文本位于
-  `process-text-block`，E2E 据此统计 assistant 内容和 process block 的总出现
-  次数为 1。聚焦验证目录
-  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T06-36-20-921Z-51091`
-  与完整 `core-task-flow` 均通过。
-- `goal-lifecycle`：PASS，证据目录
-  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-00-15-426Z-80509`；
-  忙碌交接、自动续跑、后台未读、重载及整应用重启恢复共生成 11 张阶段截图。
-- `cloud-project-creation`：PASS，证据目录
-  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-02-14-894Z-23119`；
-  临时 Git 仓库初始化、云项目创建和任务流完整通过，未再出现
-  `spawn git ENOENT`。
-- `browser-toolbar-actions`：PR #2945 GitHub Actions run `32700696793`
-  的 macOS Inspector 作业首先暴露
-  `Opening the Inspector changed child WebView frame index 1: 156 -> 120`。
-  同一最新打包应用在本地目录
-  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-26-06-929Z-23498`
-  稳定复现。证据表明通用 `e2e.focusWindow` 迁移只聚焦了 Electron
-  `BrowserWindow`，遗漏旧 `e2e.focusMainWindow` 已执行的
-  `webContents.focus()`；打开 detached Inspector 后，首次 Renderer 聚焦
-  触发布局变化。逻辑窗口聚焦现同时恢复宿主窗口和对应 Renderer 焦点。
-  修复后的原场景未改测试，完整通过，证据目录
-  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-30-15-002Z-75160`，
-  58s，Inspector 打开前后所有 child WebView frame 保持一致。
-- PR #2945 GitHub Actions run `32716036005` 的 Linux 诊断产物证明，
-  Electron 启动完成后无条件预热 `popout-window`，第二个 Renderer 抢占了桌面
-  E2E 的当前控制客户端。失败的 `core-task-flow` 只执行
-  `runtime.keybindings.get`，没有执行 `runtime.codex.ensure_started`，因此主
-  Renderer 从未触发被测试刻意阻塞的 `/api/models/unified` 请求；同一预热窗口
-  又在 120 秒 readiness 超时后触发 Chromium GPU 进程退出。现已删除启动与 Core
-  DSH 重启后的 popout 预热，改为用户实际打开时创建并等待
-  `popout-workbench-page` 挂载。未修改原 E2E 断言，最新
-  `core-task-flow` 通过，证据目录
-  `test-results/desktop-e2e/2026-08-24T11-00-36-491Z-61150`。
-- 同一 CI run 的 macOS Inspector 产物证明，`isDevToolsOpened()` 返回时 detached
-  Inspector 的 child WebView frame 仍可能处于短暂过渡。Electron Host 现在等待
-  原 frame 连续 10 次、每次间隔 50 ms 保持稳定后再返回验证结果。原
-  `browser-toolbar-actions` 场景和 frame 不变断言未修改，最新通过证据目录为
-  `test-results/desktop-e2e/2026-08-24T11-03-47-620Z-95221`。
-- macOS 临时克隆的 Electron `.app` 使用随机 bundle identifier，LaunchServices
-  不保证能立即通过 `open -b` 找到它。`workspace-attachments` 的首次运行已经
-  完成所有业务断言，只在关闭到托盘后重开时报 bundle lookup 失败；runner 现用
-  已知的克隆 `.app` 绝对路径执行 `open -g`。原附件、托盘重开和图片恢复断言未
-  修改，最新通过证据目录为
-  `test-results/desktop-e2e/2026-08-24T11-04-47-507Z-6156`。
+允许的桌面运行时环境值只有显式的：
+
+```text
+WEWORK_DESKTOP_RUNTIME=electron
+```
+
+`ai:verify start` 不接受 runtime 参数；Desktop E2E 不接受 runtime 环境选择器。
+
+## 2026-08-24 最终验证结果
+
+- 覆盖审计：48 个清单项全部有 Electron runner 与 CI 入口；其中
+  `cloud-git-worktree` 是组合入口，展开后实际执行 47 个唯一 checkpoint。
+  `origin/main` 的 22 个独立 scenario 全部迁移，另新增 3 个 Electron 原生职责
+  scenario，共 25 个；4 个插件 segment 和 3 个 Playwright Web E2E 仍由 CI
+  调用。
+- 全量 Desktop E2E：Core 37 项和 Cloud 24 项均完成真实打包 Electron 应用验证。
+  并行资源竞争导致 `context-compaction`、`embedded-browser`、
+  `conversation-state`、`project-automation` 出现一次超时，串行复验全部通过；
+  对应证据分别为 `2026-08-24T17-07-20-140Z-3131`、
+  `2026-08-24T17-09-28-077Z-6008`、
+  `2026-08-24T17-10-39-430Z-7732`、
+  `2026-08-24T17-11-52-498Z-9885`，未为获得通过而加入重试或放宽断言。
+- `cloud-project-creation` 的 `spawn git ENOENT` 串行稳定复现。失败证据
+  `2026-08-24T17-08-40-023Z-4874` 同时显示目标目录尚不存在、UI 仍为“克隆中”、
+  后端仍在执行 `git clone`，证明 Node 报错来自缺失 `cwd`，而不是 Git
+  可执行文件丢失。E2E 改为等待克隆 operation 消失、目标目录出现且新项目进入
+  sidebar 后再执行原 Git 强断言；修复后证据
+  `2026-08-24T17-14-49-653Z-13762` 中两次
+  `git rev-parse --is-inside-work-tree` 均返回 `true`。
+- 新增原生职责 E2E 均通过：启动 loading
+  `2026-08-24T16-59-36-435Z-77306`、titlebar/原生窗口
+  `2026-08-24T17-00-53-675Z-80388`、Tray/Dock/close-to-tray
+  `2026-08-24T17-00-55-126Z-80687`。
+- Electron 单测：34 files / 115 tests；Frontend 原生职责聚焦测试：
+  3 files / 11 tests；Electron 与 Wework TypeScript 类型检查均通过。
+- Tauri 删除门禁：排除本迁移记录与锁文件后，对源码、脚本、配置、文档和 CI
+  扫描 `tauri`、`src-tauri`、`isTauri`、`data-tauri`、
+  `@tauri-apps`、`WEWORK_E2E_DESKTOP_RUNTIME`，命中数为 0。

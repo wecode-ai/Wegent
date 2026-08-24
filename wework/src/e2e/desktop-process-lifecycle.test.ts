@@ -107,6 +107,35 @@ describe('desktop process lifecycle', () => {
     }
   })
 
+  test('observes a process that exits while the exit listener is being installed', async () => {
+    const { stopProcessGroup } = await loadProcessLifecycle()
+    const child = {
+      pid: 42,
+      exitCode: null,
+      signalCode: null,
+      once: vi.fn(function (this: { exitCode: number | null }) {
+        this.exitCode = 0
+        return this
+      }),
+      off: vi.fn(),
+    } as unknown as ChildProcess
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === -42 && signal === 0) {
+        const error = Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
+        throw error
+      }
+      return true
+    })
+
+    try {
+      await expect(stopProcessGroup(child)).resolves.toBeUndefined()
+      expect(child.once).toHaveBeenCalledWith('exit', expect.any(Function))
+      expect(child.off).toHaveBeenCalledWith('exit', expect.any(Function))
+    } finally {
+      kill.mockRestore()
+    }
+  })
+
   test('stops descendants that inherit an owned process group', async () => {
     const { stopProcessGroup } = await loadProcessLifecycle()
     const parent = spawn(

@@ -570,7 +570,6 @@ impl RuntimeWorkRpcHandler {
             fork_thread_id,
             fork_thread_path,
             resume_thread_id,
-            initial_thread_name,
             initial_thread_goal,
         } = turn;
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
@@ -808,7 +807,6 @@ impl RuntimeWorkRpcHandler {
                         fork_thread_id,
                         fork_thread_path,
                         resume_thread_id,
-                        initial_thread_name,
                         initial_thread_goal,
                         notifications: Some(notification_tx),
                         cancellation: Some(cancel_rx),
@@ -1306,7 +1304,6 @@ mod tests {
             fork_thread_id: None,
             fork_thread_path: None,
             resume_thread_id: None,
-            initial_thread_name: None,
             initial_thread_goal: None,
         }
     }

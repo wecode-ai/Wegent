@@ -6,6 +6,7 @@ import type {
   LocalPluginImportIssue,
   LocalPluginImportPreview,
 } from '@/api/local/codexPlugins'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { useTranslation } from '@/hooks/useTranslation'
 
 function issueGuidance(
@@ -169,18 +170,20 @@ export function PluginImportDialog({
   }, [])
 
   async function choosePackage() {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const selected = await open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: 'Wework plugin ZIP', extensions: ['zip'] }],
-    })
-    if (typeof selected !== 'string') return
+    const selected = await invokeDesktopHost<{ canceled: boolean; filePaths: string[] }>(
+      'dialog.open',
+      {
+        properties: ['openFile'],
+        filters: [{ name: 'Wework plugin ZIP', extensions: ['zip'] }],
+      }
+    )
+    const packagePath = selected.filePaths[0]
+    if (selected.canceled || !packagePath) return
     setAnalyzing(true)
     setError(null)
     setRiskConfirmed(false)
     try {
-      setPreview(await pluginApi.previewPluginImport(selected))
+      setPreview(await pluginApi.previewPluginImport(packagePath))
     } catch (previewError) {
       setPreview(null)
       setError(previewErrorGuidance(previewError, t))
@@ -190,17 +193,19 @@ export function PluginImportDialog({
   }
 
   async function downloadExample() {
-    const { save } = await import('@tauri-apps/plugin-dialog')
-    const destination = await save({
-      defaultPath: 'wework-plugin-example.zip',
-      filters: [{ name: 'ZIP', extensions: ['zip'] }],
-    })
-    if (!destination) return
+    const selected = await invokeDesktopHost<{ canceled: boolean; filePath: string | null }>(
+      'dialog.save',
+      {
+        defaultPath: 'wework-plugin-example.zip',
+        filters: [{ name: 'ZIP', extensions: ['zip'] }],
+      }
+    )
+    if (selected.canceled || !selected.filePath) return
     setSavingExample(true)
     setError(null)
     setSavedExamplePath('')
     try {
-      setSavedExamplePath(await pluginApi.savePluginExample(destination))
+      setSavedExamplePath(await pluginApi.savePluginExample(selected.filePath))
     } catch (saveError) {
       console.warn('[Wework] failed to save plugin example', saveError)
       setError(

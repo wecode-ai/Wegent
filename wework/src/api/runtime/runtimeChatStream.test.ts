@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { LocalExecutorEvent } from '@/tauri/localExecutor'
+import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import { createRuntimeChatStream, setRuntimeChatStreamDebugEnabled } from './runtimeChatStream'
 
 describe('createRuntimeChatStream', () => {

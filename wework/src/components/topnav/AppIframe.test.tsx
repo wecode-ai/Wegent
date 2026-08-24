@@ -113,7 +113,7 @@ describe('AppIframe', () => {
     )
   })
 
-  test('uses a persistent native webview in Tauri', async () => {
+  test('uses a persistent native webview in the desktop app', async () => {
     runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,

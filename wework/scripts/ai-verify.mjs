@@ -98,13 +98,12 @@ const SELECTOR_OPTIONAL_COMMANDS = new Set([
 
 function usage() {
   console.error(`Usage:
-  pnpm --filter wework ai:verify start [--runtime electron|tauri]
+  pnpm --filter wework ai:verify start
   pnpm --filter wework ai:verify <${Object.keys(AI_VERIFY_ACTIONS).join('|')}|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
                             Seed and verify isolated first-run Codex migration
-  --runtime RUNTIME         Desktop runtime used by start (default: electron)
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT_OR_JSON      Replacement value for fill; JSON for click-at,
                             seed-local-project, paste-paths, or drop-paths
@@ -157,6 +156,14 @@ export function resolveOptionalBoolean(value, optionName) {
   if (value === 'true') return true
   if (value === 'false') return false
   throw new Error(`--${optionName} must be "true" or "false"`)
+}
+
+export function validateStartOptions(options) {
+  const allowedOptions = new Set(['codex-home-initialization', 'timeout'])
+  const unexpectedOption = Object.keys(options).find(option => !allowedOptions.has(option))
+  if (unexpectedOption) {
+    throw new Error(`Unexpected option for start: --${unexpectedOption}`)
+  }
 }
 
 function json(response, status, value) {
@@ -275,14 +282,6 @@ export function startupFailureMessage(status, timeoutMs) {
     ? 'the desktop launcher was still waiting for its renderer'
     : 'the desktop launcher had not started'
   return `Timed out after ${timeoutMs}ms while ${phase}`
-}
-
-export function resolveDesktopRuntime(value) {
-  const runtime = value?.trim() || process.env.WEWORK_DESKTOP_RUNTIME?.trim() || 'electron'
-  if (runtime !== 'electron' && runtime !== 'tauri') {
-    throw new Error('--runtime must be "electron" or "tauri"')
-  }
-  return runtime
 }
 
 export function resolveElectronAppBinary(platform = process.platform, arch = process.arch) {
@@ -447,7 +446,6 @@ async function runServer(sessionPath, token) {
     await writeFile(join(nativeCodexHome, 'auth.json'), '{"test":"isolated-auth"}\n')
     await writeFile(join(nativeCodexHome, 'config.toml'), 'model = "gpt-5"\n')
   }
-  const desktopRuntime = session.desktopRuntime ?? 'electron'
   const environment = buildAiVerifyEnvironment(process.env, {
     controlUrl,
     token,
@@ -459,14 +457,12 @@ async function runServer(sessionPath, token) {
     executorHome,
     sessionDirectory: session.directory,
   })
-  const command = desktopRuntime === 'electron' ? resolveElectronAppBinary() : 'bash'
-  const args = desktopRuntime === 'electron' ? [] : ['scripts/dev-mac-app.sh']
-  app = spawn(command, args, {
+  app = spawn(resolveElectronAppBinary(), [], {
     cwd: weworkDir,
     detached: true,
     env: {
       ...environment,
-      WEWORK_DESKTOP_RUNTIME: desktopRuntime,
+      WEWORK_DESKTOP_RUNTIME: 'electron',
       WEWORK_E2E_CONTROL_TOKEN: token,
       WEWORK_USER_DATA_DIR: join(session.directory, 'user-data'),
     },
@@ -513,6 +509,7 @@ async function main() {
   const { command, options } = parseArgs(process.argv.slice(2))
   if (command === 'serve') return runServer(options.session, options.token)
   if (command === 'start') {
+    validateStartOptions(options)
     const directory = join(
       weworkDir,
       'test-results',
@@ -521,10 +518,7 @@ async function main() {
     )
     await mkdir(directory, { recursive: true })
     const token = randomBytes(32).toString('hex')
-    const desktopRuntime = resolveDesktopRuntime(options.runtime)
-    if (desktopRuntime === 'electron') {
-      await readFile(resolveElectronAppBinary())
-    }
+    await readFile(resolveElectronAppBinary())
     const sessionPath = join(directory, 'session.json')
     await writeFile(
       sessionPath,
@@ -532,7 +526,6 @@ async function main() {
         {
           version: 1,
           deviceId: `ai-verify-${randomUUID()}`,
-          desktopRuntime,
           directory,
           token,
           status: 'starting',
