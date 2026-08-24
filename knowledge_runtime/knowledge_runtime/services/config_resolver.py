@@ -14,9 +14,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from sqlalchemy.orm import Session
 
-from knowledge_runtime.models.knowledge_document import KnowledgeDocument
+from shared.db.capability_reference import resolve_model_kind
 from shared.models import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
@@ -314,6 +315,9 @@ class ConfigResolver:
 
         embedding_config = spec.get("embeddingConfig", {})
         dimensions = embedding_config.get("dimensions") if embedding_config else None
+        encoding_format = (
+            embedding_config.get("encoding_format") if embedding_config else None
+        )
 
         return RuntimeEmbeddingModelConfig(
             model_name=model_name,
@@ -327,6 +331,7 @@ class ConfigResolver:
                     custom_headers if isinstance(custom_headers, dict) else {}
                 ),
                 "dimensions": dimensions,
+                "encoding_format": encoding_format,
             },
         )
 
@@ -386,29 +391,12 @@ class ConfigResolver:
         model_name: str,
         model_namespace: str,
     ) -> Kind | None:
-        """Get Model Kind with priority: user's own > public (user_id=0)."""
-        if model_namespace == "default":
-            return (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Model",
-                    Kind.name == model_name,
-                    Kind.namespace == model_namespace,
-                    Kind.is_active.is_(True),
-                )
-                .filter((Kind.user_id == user_id) | (Kind.user_id == 0))
-                .order_by(Kind.user_id.desc())
-                .first()
-            )
-        return (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Model",
-                Kind.name == model_name,
-                Kind.namespace == model_namespace,
-                Kind.is_active.is_(True),
-            )
-            .first()
+        """Resolve a Model Kind from its caller-visible reference."""
+        return resolve_model_kind(
+            db,
+            name=model_name,
+            namespace=model_namespace,
+            user_id=user_id,
         )
 
     def _get_splitter_config(self, db: Session, document_id: int) -> dict[str, Any]:

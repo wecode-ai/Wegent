@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { CloudProject } from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import {
   dingtalkAITableRuntimeContext,
   parseDingTalkAITableLink,
@@ -38,7 +38,7 @@ describe('parseDingTalkAITableLink', () => {
 })
 
 describe('dingtalkAITableRuntimeContext', () => {
-  it('routes AI Table work to dws with stable project identifiers and no credentials', () => {
+  it('routes AI Table work through project-space tools with stable identifiers', () => {
     const context = dingtalkAITableRuntimeContext({
       id: 'space-1',
       name: 'DingTalk tasks',
@@ -65,10 +65,10 @@ describe('dingtalkAITableRuntimeContext', () => {
       '"named_space_reference": "list_spaces_then_use_that_space_binding"'
     )
     expect(context?.dingtalkAITableProject.value).toContain(
-      '"explicit_dingtalk_search": "allow_dws_search"'
+      '"explicit_dingtalk_search": "allow_provider_search"'
     )
     expect(context?.dingtalkAITableProject.value).toContain('"title_field_id": "field-title"')
-    expect(context?.dingtalkAITableProject.value).toContain('the dws skill')
+    expect(context?.dingtalkAITableProject.value).toContain('use the wework_space tools')
     expect(context?.dingtalkAITableProject.value).toContain(
       'do not silently switch to another table'
     )
@@ -82,6 +82,36 @@ describe('dingtalkAITableRuntimeContext', () => {
         provider_config: {},
       } as CloudProject)
     ).toBeUndefined()
+  })
+
+  it('binds the current record and requires a full native DWS read', () => {
+    const context = dingtalkAITableRuntimeContext(
+      {
+        id: 'space-1',
+        name: 'DingTalk tasks',
+        project_key: 'DING',
+        task_provider: 'dingtalk_aitable',
+        provider_config: {
+          base_id: 'base-1',
+          table_id: 'table-1',
+        },
+      } as CloudProject,
+      {
+        id: 'aitable:DING:record-1',
+        source_record_id: 'record-1',
+        title: '新模型接入',
+        description: '',
+        source_cells: { title: '新模型接入', owner: '刘亚飞' },
+      } as CloudLoopItem
+    )
+
+    const value = context?.dingtalkAITableProject.value ?? ''
+    expect(value).toContain('"record_id": "record-1"')
+    expect(value).toContain('"cached_cells"')
+    expect(value).toContain('call wework_space get_current_context first')
+    expect(value).toContain('bundled_dws_fallback')
+    expect(value).toContain('Never invoke a bare dws command')
+    expect(value).not.toContain('$DWS_BINARY_PATH')
   })
 })
 

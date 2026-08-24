@@ -136,7 +136,8 @@ for (const protocol of [
     expect(request.postData()).toContain(protocol.expectedToolName)
     expect(body.tool_choice).toBeUndefined()
     if (protocol.apiFormat === 'openai-responses') {
-      expect(body.max_output_tokens).toBe(protocol.toolProfile === 'custom' ? 256 : 64)
+      expect(body.max_output_tokens).toBeUndefined()
+      expect(body.stream).toBe(true)
     }
     expect(probeTool).toBeTruthy()
     if (protocol.expectedToolType) {

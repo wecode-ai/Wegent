@@ -855,6 +855,7 @@ describe('cloud runtime sync state', () => {
           project: {
             key: 'remote-project-id',
             sidebarStateKey: 'remote-project-id',
+            id: 101,
             name: 'Remote',
             kind: 'remote',
             source: 'remote_project',
@@ -876,7 +877,7 @@ describe('cloud runtime sync state', () => {
     const remoteWork: RuntimeWorkListResponse = {
       projects: [
         {
-          project: { key: '/srv/repo', name: 'Remote executor project' },
+          project: { key: '/srv/repo', id: 202, name: 'Remote executor project' },
           deviceWorkspaces: [
             {
               ...remoteWorkspace,
@@ -902,6 +903,7 @@ describe('cloud runtime sync state', () => {
       'Local B',
     ])
     expect(merged.projects[1].project).toMatchObject({
+      id: 101,
       key: '/srv/repo',
       sidebarStateKey: 'remote-project-id',
       stateDeviceId: 'local-device',

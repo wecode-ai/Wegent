@@ -2049,6 +2049,50 @@ def test_background_scan_lists_merge_legacy_and_all_new_shards(test_db):
     }
 
 
+def test_list_running_since_merges_legacy_and_all_new_shards(test_db):
+    store = ShardedSubtaskStore()
+    created_after = datetime.now() - timedelta(minutes=5)
+    legacy = legacy_subtask(
+        subtask_id=7811,
+        task_id_value=781,
+        user_id=78,
+        message_id=1,
+        status=SubtaskStatus.RUNNING,
+    )
+    recent = shard_subtask(
+        task_id_value=new_task_id(79, 1),
+        user_id=79,
+        sequence=1,
+        message_id=1,
+        status=SubtaskStatus.RUNNING,
+    )
+    old = shard_subtask(
+        task_id_value=new_task_id(80, 1),
+        user_id=80,
+        sequence=1,
+        message_id=1,
+        status=SubtaskStatus.RUNNING,
+    )
+    old.created_at = created_after - timedelta(seconds=1)
+    completed = shard_subtask(
+        task_id_value=new_task_id(81, 1),
+        user_id=81,
+        sequence=1,
+        message_id=1,
+        status=SubtaskStatus.COMPLETED,
+    )
+    test_db.add_all([legacy, recent, old, completed])
+    test_db.flush()
+
+    assert {
+        subtask.id
+        for subtask in store.list_running_since(
+            test_db,
+            created_after=created_after,
+        )
+    } == {legacy.id, recent.id}
+
+
 def test_cleanup_cursor_references_merge_legacy_and_all_new_shards(test_db):
     store = ShardedSubtaskStore()
     threshold = datetime.now() - timedelta(days=7)

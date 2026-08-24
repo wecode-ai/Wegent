@@ -93,6 +93,8 @@ POST /api/runtime-work/transcript
 
 Backend 将 `deviceId + localTaskId` 转发给对应设备的 `runtime.tasks.transcript`。原生 Codex 任务通过 Codex session path 或 session 文件发现定位；非 Codex/导入类任务可以使用 `workspacePath` 作为本地索引查找提示，或者通过本机 LocalTask 索引按 `localTaskId` 定位。executor 读取原生运行时 transcript，并返回标准化消息。
 
+云端和远程设备通过两段 Socket.IO ACK 返回 runtime RPC 结果：executor → Backend，以及 Backend → Wework。executor 对超过 512 KiB 的第一段 ACK 使用 `gzip+base64+json` envelope 压缩，Backend 解压并完成设备 ID 投影等服务处理；如果浏览器侧结果仍超过 512 KiB，Backend 会用同一 envelope 再压缩第二段 ACK，Wework 在交给调用方前解压。本地 App IPC 始终返回原始 JSON。每段压缩 envelope 都必须保留在 Socket.IO 1 MB 限制以内，无法满足时返回小型 `runtime_rpc_response_too_large` 错误，不能发送超限数据导致设备连接和心跳一起断开。executor 的耗时能力同步回调在独立任务中运行，避免阻塞 Socket.IO 收包循环和连接保活。
+
 ### Codex 会话读取路径与性能
 
 Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打开、刷新各自实现一套 transcript 逻辑：
@@ -135,6 +137,8 @@ Wework 对同一个 `deviceId + taskId` 只维护一份共享的 runtime task li
 - task address 只使用 `deviceId + taskId`；workspace 路径、tab id 和隐藏布局实例不能形成第二个生命周期身份。
 
 因此任务完成后的唯一数据流是：executor/Backend task snapshot 或终止 stream 事件进入共享 lifecycle store，投影收敛到 idle，所有 UI 消费者在同一次 store 更新后移除 running 状态。
+
+Wework 不得为了检测终止事件是否丢失而周期读取运行中任务的 transcript。正常生命周期只消费 stream；常驻协调器按终态事件携带的 `deviceId + taskId` 直接收敛共享 lifecycle store，因此不依赖任务 pane 是否挂载，也不会被事件到达后立即读取、但仍处于同一轮收尾竞态中的 task list 重新标记为 running。`executor.event_lagged`、runtime transport replacement 等明确表示本地投影可能过期的信号才触发一次 `runtime.tasks.list` 对账。并发异常信号共享同一个在途请求，在途期间的新信号最多合并成一次串行尾随对账。对账直接使用 executor 已持久化的 `running`、`status`、`completedAt`、`threadStatus` 和 `turnStatus`，不能通过 transcript、turn items 或 rollout JSONL 推导任务是否结束。
 
 每一次继续 LocalTask 的请求都必须携带当前模型选择。Wework 的模型选择器是本轮发送的事实来源：用户本轮选择哪个模型，`runtime.tasks.send` 就传哪个 `modelId`、`modelType` 和模型选项。executor 不从上一次请求恢复模型，也不缓存模型选择；如果请求没有完整 `executionRequest` 且没有 `modelId`，executor 必须返回 `bad_request`，而不是回退到默认模型。本地 IPC 和远程 WebSocket 都只负责传输同一份 canonical 模型选择；本地设备调用远程模型、远程设备调用远程模型，都进入 executor backend 的同一套执行逻辑。新建任务和继续任务都必须复用同一套模型选择路径。
 
@@ -198,13 +202,13 @@ executor 对原生 Codex 会话通过 app-server `thread/archive`、`thread/unar
 
 `cleanup-preview` 和 `cleanup` 只面向已归档 LocalTask 的残留文件，包括 executor 管理的 Git worktree 目录、LocalTask 记录、会话日志、运行时 handle 中记录的本地附件，以及本机附件草稿路径。清理目标必须从归档项的 `deviceId + workspacePath + localTaskId + threadId/runtimeHandle` 推导并做路径安全校验，只能删除 executor 管理目录、standalone chat 目录或本地附件草稿目录下的文件；普通 Project 根目录、未归档会话、运行中任务和未被前端提交的归档项不能被清理。
 
-如果被归档的 LocalTask 使用 Executor 管理的 Git worktree，归档成功后 Wework 会使用 LocalTask 自己的 `workspacePath` 调用设备级 `runtime.worktrees.delete`；即使侧栏把任务分组在 Project 主目录下，也不能把分组目录作为删除目标。Executor 先把 tracked、staged、unstaged 和未被 ignore 的 untracked 文件写入隐藏引用 `refs/wegent/worktree-snapshots/*`，快照成功后才通过 Git 删除 worktree，并删除已经为空的 `<worktreeId>` 外层目录。快照失败时必须保留目录并返回错误，不能丢弃未提交变更。取消归档或继续发送消息时，如果原目录已经被清理，Executor 会从快照引用恢复到原路径。这个生命周期只针对 runtime LocalTask 的 worktree，不改变 Project 主工作区。
+如果被归档的 LocalTask 使用 Executor 管理的 Git worktree，归档成功后 Wework 会使用 LocalTask 自己的 `workspacePath` 调用设备级 `runtime.worktrees.delete`；即使侧栏把任务分组在 Project 主目录下，也不能把分组目录作为删除目标。Executor 先把 tracked、staged、unstaged 和未被 ignore 的 untracked 文件写入隐藏引用 `refs/wegent/worktree-snapshots/*`，快照成功后才通过 Git 删除 worktree，并删除已经为空的 `<worktreeId>` 外层目录。快照失败时必须保留目录并返回错误，不能丢弃未提交变更。取消归档或继续发送消息时，如果原目录已经被清理，Executor 会从快照引用恢复到原路径。这个生命周期只针对 runtime LocalTask 的 worktree，不改变 Project 主工作区。通过消息 fork 出来的 LocalTask 可以共享源任务的托管 worktree；删除其中一个归档任务时，若仍有其他 LocalTask 引用该路径，只清理该任务自己的附件，不能删除共享 worktree。
 
 ### Worktree 设置与生命周期
 
 Worktree 设置是设备级状态，持久化在 `$WEGENT_EXECUTOR_HOME/runtime-work/worktrees.json`，不能写入浏览器偏好或 Backend 用户设置。默认根目录为空值，解析到当前 Executor workspace 下的 `worktrees`；自动清理默认开启，默认保留 15 个。修改根目录只影响后续创建，旧根目录会保留在 `knownRoots` 中，以便继续列出、恢复和安全清理已有 worktree。
 
-Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.worktrees.prepare/list/delete/restore/prune` 管理工作树。创建目标固定为 `<resolvedRoot>/<worktreeId>/<repositoryName>`；列表按仓库分组并附带关联 LocalTask。删除前先归档关联任务并保存快照。归档残留清理使用 Worktree Manager 的当前根目录和 `knownRoots` 做路径安全校验，不依赖固定的历史目录名；扫描已知根目录时会顺带删除旧版本遗留的空 `<worktreeId>` 目录。自动清理在创建和设置更新后触发，只会清理明确关联到已归档任务且超过保留数量的最久未使用工作树；没有当前 Executor 任务记录的工作树不会被自动清理。后续继续任务时会按需恢复。隔离运行的 Executor 会从自己的 `WEGENT_EXECUTOR_HOME` 派生默认工作树目录，避免测试或开发实例管理正式实例的工作树。
+Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.worktrees.prepare/list/delete/restore/prune` 管理工作树。创建目标固定为 `<resolvedRoot>/<worktreeId>/<repositoryName>`；列表按仓库分组并附带关联 LocalTask。Worktree 的创建 ID 只用于路径、快照和生命周期归属；执行 lease 记录实际运行的 LocalTask ID，因此 fork 任务能在源 worktree 空闲时继续，而两个任务不能同时写同一个 worktree。Executor 重启时依据 lease 中的实际任务 ID 标记中断任务失败。删除前先归档关联任务并保存快照。归档残留清理使用 Worktree Manager 的当前根目录和 `knownRoots` 做路径安全校验，不依赖固定的历史目录名；扫描已知根目录时会顺带删除旧版本遗留的空 `<worktreeId>` 目录。自动清理在创建和设置更新后触发，只会清理明确关联到已归档任务且超过保留数量的最久未使用工作树；没有当前 Executor 任务记录的工作树不会被自动清理。后续继续任务时会按需恢复。隔离运行的 Executor 会从自己的 `WEGENT_EXECUTOR_HOME` 派生默认工作树目录，避免测试或开发实例管理正式实例的工作树。
 
 项目操作菜单可以从项目当前 Git 工作区的 `HEAD` 创建永久工作树，并把新目录立即注册为独立项目。此类请求通过 `runtime.worktrees.prepare` 传递 `permanent: true`；Executor 把该标记持久化到 `worktrees.json`，自动清理候选计算必须排除永久工作树。永久只表示不会因关联任务归档或保留数量限制而被自动删除，用户仍可通过项目移除或工作树管理操作显式删除它。
 
@@ -305,8 +309,8 @@ Wework 不再显示“未映射工作区”。executor 返回的线程必须能�
 - 在 IM 中使用 `/notify on`、`/通知 开` 开启当前用户的全局运行时任务通知目标。
 - 使用 `/notify off` 关闭全局通知，使用 `/notify status` 查看当前状态。
 - 单个 IM 会话订阅某个运行时任务后，只接收该任务的更新。
-- executor 发现原生 Codex 任务更新时间变化时，只在最后一条 assistant 消息进入终态且有回复内容后，通过设备 WebSocket 发送不含 `workspacePath`、但包含 `status` 和 `content` 的 `runtime.tasks.updated`。Backend 会忽略运行中/流式更新，并按订阅和全局通知设置把终态回复投递到 IM。
-- Wegent 发起的 runtime send 与原生 Codex watcher 使用同一个 `deviceId + localTaskId` 去重，避免 Codex 和 Wework 对同一次任务更新重复通知。
+- executor 通过设备 WebSocket 发送 `runtime:event`；Backend 只把 `response.completed`、`response.failed`、`response.incomplete` 和 `error` 终态按任务绑定、任务订阅和全局通知设置投递到 IM。成功终态没有回复正文时不发送。
+- 通知身份使用 `deviceId + localTaskId`，不包含 `workspacePath`；IM 发起的回合不会再向同一 IM 回声通知。旧 executor 的 `runtime.tasks.updated` 接收端仅作为兼容路径保留。
 
 ## URL
 

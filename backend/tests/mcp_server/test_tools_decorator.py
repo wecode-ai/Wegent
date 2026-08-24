@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 from pydantic import BaseModel
 
+from app.mcp_server.tool_registry import _param_def_to_python_type
 from app.mcp_server.tools.decorator import (
     _extract_first_docstring_line,
     _extract_parameters_from_signature,
@@ -113,7 +114,19 @@ class TestPythonTypeToJsonSchema:
 
         schema = _python_type_to_json_schema(List[MyModel])
         assert schema["type"] == "array"
-        assert schema["items"] == {"type": "object"}
+        assert schema["items"]["type"] == "object"
+        assert schema["items"]["python_type"] is MyModel
+
+    def test_pydantic_model_preserves_python_type_for_fastmcp_schema(self) -> None:
+        """Nested model fields must remain visible in the published MCP schema."""
+
+        class SearchHints(BaseModel):
+            keywords: list[str]
+
+        schema = _python_type_to_json_schema(Optional[SearchHints])
+
+        assert schema["type"] == "object"
+        assert schema["python_type"] is SearchHints
 
     def test_bare_list_has_no_items(self):
         """Bare list has no items — upstream behaviour remains unchanged."""
@@ -215,7 +228,8 @@ class TestExtractParametersFromSignature:
         param = params[0]
         assert param["type"] == "array"
         assert "items" in param, "items must be present for array parameters"
-        assert param["items"] == {"type": "object"}
+        assert param["items"]["type"] == "object"
+        assert param["items"]["python_type"] is QuestionItem
 
     def test_typed_list_of_str_param_preserves_items(self):
         """List[str] parameter must include items with string type."""
@@ -251,6 +265,25 @@ class TestExtractParametersFromSignature:
             assert (
                 "items" not in param
             ), f"items must not appear on {param['type']} param"
+
+    def test_pydantic_model_param_preserves_python_type(self) -> None:
+        """FastMCP needs the original annotation to publish nested fields."""
+
+        class SearchHints(BaseModel):
+            keywords: list[str]
+
+        def func(search_hints: Optional[SearchHints] = None):
+            pass
+
+        params = _extract_parameters_from_signature(
+            func=func,
+            exclude_params=[],
+            param_descriptions={},
+            param_renames={},
+        )
+
+        assert params[0]["python_type"] is SearchHints
+        assert _param_def_to_python_type(params[0]) is SearchHints
 
 
 class TestMcpToolDecorator:

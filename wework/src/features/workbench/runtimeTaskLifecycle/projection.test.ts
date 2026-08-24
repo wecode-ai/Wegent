@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'vitest'
 import type { RuntimeTaskSummary } from '@/types/api'
-import { normalizeRuntimeTaskSummary, shouldReplaceRuntimeTaskProjection } from './projection'
+import {
+  isRuntimeTaskExecutionRunning,
+  normalizeRuntimeTaskSummary,
+  runtimeTaskReconciliationSnapshot,
+  shouldReplaceRuntimeTaskProjection,
+} from './projection'
 
 function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
   return {
@@ -13,6 +18,35 @@ function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
 }
 
 describe('runtimeTaskProjection', () => {
+  test('derives reconciliation truth through the lifecycle vocabulary', () => {
+    expect(
+      runtimeTaskReconciliationSnapshot(
+        task({ status: 'active', running: false, turnStatus: 'completed' })
+      )
+    ).toEqual({
+      runtimeStatus: 'active',
+      running: false,
+      turnStatus: 'completed',
+    })
+    expect(
+      runtimeTaskReconciliationSnapshot(
+        task({ status: 'running', running: true, turnStatus: 'inProgress' })
+      )
+    ).toEqual({
+      runtimeStatus: 'running',
+      running: true,
+      turnStatus: 'inProgress',
+    })
+  })
+
+  test('recognizes executor-reported running tasks before turn status catches up', () => {
+    expect(isRuntimeTaskExecutionRunning(task({ running: true }))).toBe(true)
+    expect(isRuntimeTaskExecutionRunning(task({ running: true, optimistic: true }))).toBe(false)
+    expect(
+      isRuntimeTaskExecutionRunning(task({ running: true, completedAt: 1_786_676_400_000 }))
+    ).toBe(false)
+  })
+
   test('normalizes completed executor state into one terminal projection', () => {
     expect(
       normalizeRuntimeTaskSummary(

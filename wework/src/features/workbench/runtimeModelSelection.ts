@@ -4,6 +4,7 @@ import {
   supportsCloudExecution,
 } from '@/features/cloud-connection/modelExecution'
 import { getDefaultModelOptions, normalizeModelOptionAliases } from '@/lib/model-ui'
+import { codexCatalogModelIdForUpstream } from '@/features/model-settings/codexCatalog'
 import type {
   ModelOptions,
   ModelSelectionConfig,
@@ -22,10 +23,9 @@ export const CLOUD_MODEL_VISION_SIDECAR_OPTION = 'weworkCloudVisionSidecar'
 export const CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION = 'weworkCloudModelNativeToolSearch'
 export const CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION = 'weworkCloudModelNativeNamespaceTools'
 
-const KIMI_K3_CODEX_CATALOG_MODEL_ID = 'wework-kimi-k3'
 const CLOUD_VISION_SIDECAR_CONFIG_KEY = 'visionSidecarModel'
 
-interface CloudVisionSidecarReference {
+export interface CloudVisionSidecarReference {
   modelName: string
   modelType: ModelType
   namespace: string
@@ -33,13 +33,26 @@ interface CloudVisionSidecarReference {
   apiFormat: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages'
 }
 
-function parseCloudVisionSidecarReference(value: unknown): CloudVisionSidecarReference | null {
+/**
+ * Validate the shape of a cloud vision sidecar reference stored on a Model CRD.
+ *
+ * The reference is authoritative: the backend LLM gateway resolves it against the
+ * `kinds` table and enforces access with the same identity headers, so there is no
+ * client-side catalog lookup here. A reference that points at a missing or
+ * non-visual model fails per image inside the executor's vision sidecar with an
+ * inline diagnostic, instead of leaking the image to a text-only primary model.
+ */
+export function parseCloudVisionSidecarReference(
+  value: unknown
+): CloudVisionSidecarReference | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
   if (
     typeof record.modelName !== 'string' ||
+    !record.modelName.trim() ||
     !['public', 'user', 'group'].includes(String(record.modelType)) ||
     typeof record.namespace !== 'string' ||
+    !record.namespace.trim() ||
     typeof record.resourceUserId !== 'number' ||
     !Number.isInteger(record.resourceUserId) ||
     record.resourceUserId < 0 ||
@@ -49,7 +62,13 @@ function parseCloudVisionSidecarReference(value: unknown): CloudVisionSidecarRef
   ) {
     return null
   }
-  return record as unknown as CloudVisionSidecarReference
+  return {
+    modelName: record.modelName.trim(),
+    modelType: record.modelType as ModelType,
+    namespace: record.namespace.trim(),
+    resourceUserId: record.resourceUserId,
+    apiFormat: record.apiFormat as CloudVisionSidecarReference['apiFormat'],
+  }
 }
 
 function getStringConfigValue(
@@ -127,22 +146,22 @@ function modelKind(model: UnifiedModel): string {
   )
 }
 
-function cloudCodexCatalogModelId(model: UnifiedModel): string {
+function cloudCodexCatalogModelId(model: UnifiedModel, upstreamApiFormat: string): string {
   const configured =
     getRawStringConfigValue(model.config, 'codex_catalog_model_id') ||
     getRawStringConfigValue(model.config, 'codexCatalogModelId')
   if (configured) return configured
 
-  const candidates = [
-    model.name,
+  const upstreamCandidates = [
     model.modelId,
     getRawStringConfigValue(model.config, 'model_id'),
     getRawStringConfigValue(model.config, 'modelId'),
     getRawStringConfigValue(model.config, 'model'),
   ]
-  return candidates.some(value => value?.trim().toLowerCase().includes('kimi-k3'))
-    ? KIMI_K3_CODEX_CATALOG_MODEL_ID
-    : ''
+  const catalogCandidates = upstreamCandidates.some(candidate => candidate?.trim())
+    ? upstreamCandidates
+    : [model.name]
+  return codexCatalogModelIdForUpstream(catalogCandidates, upstreamApiFormat) ?? ''
 }
 
 function isLocalModel(model: UnifiedModel): boolean {
@@ -157,8 +176,26 @@ function selectionForModel(model: UnifiedModel): ModelSelectionConfig {
   return {
     modelName: model.name,
     modelType: model.type,
-    options: getDefaultModelOptions(model),
+    options: {
+      ...getDefaultModelOptions(model),
+      ...modelSelectionIdentityOptions(model),
+    },
   }
+}
+
+export function modelSelectionIdentityOptions(model: UnifiedModel): ModelOptions {
+  const options: ModelOptions = {}
+  const codexProviderId = getRawStringConfigValue(model.config, 'codexProviderId')
+  if (codexProviderId) {
+    options.codexProviderId = codexProviderId
+  }
+  if (model.namespace) {
+    options[CLOUD_MODEL_NAMESPACE_OPTION] = model.namespace
+  }
+  if (typeof model.resourceUserId === 'number') {
+    options[CLOUD_MODEL_RESOURCE_USER_ID_OPTION] = String(model.resourceUserId)
+  }
+  return options
 }
 
 function isCodexCompatibleModel(model: UnifiedModel): boolean {
@@ -231,7 +268,7 @@ export function selectedModelExecutionFields(
         modelOptions[CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION] = 'true'
       }
     }
-    const codexCatalogModelId = cloudCodexCatalogModelId(selectedModel)
+    const codexCatalogModelId = cloudCodexCatalogModelId(selectedModel, upstreamApiFormat ?? '')
     if (codexCatalogModelId) {
       modelOptions[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] = codexCatalogModelId
     }

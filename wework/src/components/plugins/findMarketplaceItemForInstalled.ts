@@ -1,6 +1,7 @@
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import type { InstalledPluginItem } from './PluginManagementRows'
+import { storeDirMatchesPluginKey } from './installedPluginMerge'
 import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
 
 function normalizedMarketplaceId(value: string | null | undefined): string {
@@ -47,18 +48,27 @@ export function findMarketplaceItemForInstalledPlugin(
 
   const key = installedPluginKey(plugin)
   const marketplace = normalizedMarketplaceId(installedPluginMarketplaceId(plugin))
-  if (!key || !marketplace) return null
-
-  return (
-    items.find(item => {
+  if (key && marketplace) {
+    const byIdentity = items.find(item => {
       const itemKey = item.name.trim().toLowerCase()
       if (itemKey !== key) return false
       const itemMarketplace =
         normalizedMarketplaceId(marketplaceItemMarketplaceId(item)) ||
         (item.latestReleaseId != null ? 'wegent' : '')
       return itemMarketplace === marketplace
-    }) ?? null
-  )
+    })
+    if (byIdentity) return byIdentity
+  }
+
+  const storeDirCandidates = items.filter(item => {
+    return (
+      storeDirMatchesPluginKey(String(installedId ?? ''), item.name) ||
+      storeDirMatchesPluginKey(String(plugin.metadata.name || ''), item.name) ||
+      storeDirMatchesPluginKey(key, item.name)
+    )
+  })
+  storeDirCandidates.sort((left, right) => right.name.length - left.name.length)
+  return storeDirCandidates[0] ?? null
 }
 
 export function findMarketplaceItemForInstalled(

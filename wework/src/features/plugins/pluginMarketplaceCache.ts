@@ -1,5 +1,6 @@
-import type { InstalledPluginComponents, PluginInterface, PluginMarketplaceItem } from '@/types/api'
+import type { PluginInterface, PluginMarketplaceItem } from '@/types/api'
 import type { InstalledPluginItem } from '@/components/plugins/PluginManagementRows'
+import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
 import { compressToUTF16, decompressFromUTF16 } from 'lz-string'
 
 export interface PluginMarketplaceCacheSnapshot {
@@ -41,6 +42,11 @@ interface PersistedMarketplaceCacheStore {
 let snapshot: PluginMarketplaceCacheSnapshot | null = null
 type MarketplaceCacheListener = (next: PluginMarketplaceCacheSnapshot | null) => void
 const listeners = new Set<MarketplaceCacheListener>()
+const PERSIST_DEBOUNCE_MS = 300
+let pendingPersist: PluginMarketplaceCacheSnapshot | null = null
+let persistTimeoutId: number | null = null
+let lastPersistedSignature = ''
+let persistFlushBound = false
 
 export function pluginMarketplaceCacheKey(
   cloudApiBaseUrl?: string | null,
@@ -75,24 +81,14 @@ function slimInterface(interfaceData?: PluginInterface | null): PluginInterface 
     shortDescription: interfaceData.shortDescription ?? null,
     developerName: interfaceData.developerName ?? null,
     category: interfaceData.category ?? null,
+    capabilities: interfaceData.capabilities,
+    websiteUrl: interfaceData.websiteUrl ?? null,
+    privacyPolicyUrl: interfaceData.privacyPolicyUrl ?? null,
+    termsOfServiceUrl: interfaceData.termsOfServiceUrl ?? null,
     logo: slimLogoField(interfaceData.logo),
     logoDark: slimLogoField(interfaceData.logoDark),
     composerIcon: slimLogoField(interfaceData.composerIcon),
     brandColor: interfaceData.brandColor ?? null,
-  }
-}
-
-function emptyComponents(): InstalledPluginComponents {
-  return {
-    skills: [],
-    commands: [],
-    agents: [],
-    hooks: [],
-    mcps: [],
-    lsps: [],
-    monitors: [],
-    bins: [],
-    connectors: [],
   }
 }
 
@@ -135,7 +131,7 @@ function toPersistedSnapshot(next: PluginMarketplaceCacheSnapshot): PluginMarket
     marketplaceItems: next.marketplaceItems.map(item => ({
       ...item,
       interface: slimInterface(item.interface),
-      components: emptyComponents(),
+      components: slimPluginComponentsForCache(item.components),
       manifest: slimManifest(item.manifest),
     })),
     installedPlugins: next.installedPlugins.map(plugin => ({
@@ -145,6 +141,7 @@ function toPersistedSnapshot(next: PluginMarketplaceCacheSnapshot): PluginMarket
         spec: {
           ...plugin.raw.spec,
           interface: slimInterface(plugin.raw.spec.interface),
+          components: slimPluginComponentsForCache(plugin.raw.spec.components),
         },
       },
     })),
@@ -255,6 +252,19 @@ function trimPersistedEntries(store: PersistedMarketplaceCacheStore): void {
   }
 }
 
+function snapshotPersistSignature(next: PluginMarketplaceCacheSnapshot): string {
+  return [
+    next.cacheKey,
+    next.deviceId,
+    next.selectedMarketplaceKey,
+    next.canPublish ? '1' : '0',
+    next.canSharePersonalPlugins ? '1' : '0',
+    next.marketplaces.map(entry => `${entry.key}:${entry.id}:${entry.path ?? ''}`).join(','),
+    marketplaceItemsSignature(next.marketplaceItems),
+    installedPluginsSignature(next.installedPlugins),
+  ].join('|')
+}
+
 function persistSnapshot(next: PluginMarketplaceCacheSnapshot): void {
   if (typeof window === 'undefined') return
   const previousRaw = window.localStorage.getItem(STORAGE_KEY)
@@ -302,6 +312,50 @@ function persistSnapshot(next: PluginMarketplaceCacheSnapshot): void {
   }
 }
 
+function clearPersistTimer(): void {
+  if (persistTimeoutId === null) return
+  window.clearTimeout(persistTimeoutId)
+  persistTimeoutId = null
+}
+
+function persistIfChanged(next: PluginMarketplaceCacheSnapshot): void {
+  const signature = snapshotPersistSignature(next)
+  if (signature === lastPersistedSignature) return
+  persistSnapshot(next)
+  lastPersistedSignature = signature
+}
+
+function schedulePersistSnapshot(next: PluginMarketplaceCacheSnapshot): void {
+  pendingPersist = next
+  if (typeof window === 'undefined') {
+    persistIfChanged(next)
+    pendingPersist = null
+    return
+  }
+  bindPersistFlush()
+  clearPersistTimer()
+  persistTimeoutId = window.setTimeout(() => {
+    persistTimeoutId = null
+    if (!pendingPersist) return
+    persistIfChanged(pendingPersist)
+    pendingPersist = null
+  }, PERSIST_DEBOUNCE_MS)
+}
+
+function bindPersistFlush(): void {
+  if (persistFlushBound || typeof window === 'undefined') return
+  persistFlushBound = true
+  window.addEventListener('pagehide', flushPluginMarketplaceCachePersist)
+  window.addEventListener('beforeunload', flushPluginMarketplaceCachePersist)
+}
+
+export function flushPluginMarketplaceCachePersist(): void {
+  clearPersistTimer()
+  if (!pendingPersist) return
+  persistIfChanged(pendingPersist)
+  pendingPersist = null
+}
+
 /**
  * Resolve a warm marketplace snapshot by exact cache key only. Do not reuse an
  * authenticated in-memory/disk entry under `anon` — token clear / account switch
@@ -319,14 +373,26 @@ export function getPluginMarketplaceCache(cacheKey: string): PluginMarketplaceCa
   return null
 }
 
-export function setPluginMarketplaceCache(next: PluginMarketplaceCacheSnapshot): void {
+export function setPluginMarketplaceCache(
+  next: PluginMarketplaceCacheSnapshot,
+  options?: { persistImmediately?: boolean }
+): void {
   // Memory always keeps full-fidelity logos for the current session.
   snapshot = { ...next, logosStripped: false }
-  persistSnapshot(next)
+  if (options?.persistImmediately) {
+    clearPersistTimer()
+    pendingPersist = null
+    persistIfChanged(next)
+  } else {
+    schedulePersistSnapshot(next)
+  }
   for (const listener of listeners) listener(snapshot)
 }
 
 export function clearPluginMarketplaceCache(): void {
+  clearPersistTimer()
+  pendingPersist = null
+  lastPersistedSignature = ''
   snapshot = null
   if (typeof window !== 'undefined') {
     try {
@@ -350,7 +416,12 @@ export function subscribePluginMarketplaceCache(listener: MarketplaceCacheListen
 
 /** Test helper: drop memory without clearing durable storage. */
 export function resetPluginMarketplaceCacheMemory(): void {
+  flushPluginMarketplaceCachePersist()
   snapshot = null
+}
+
+function pluginComponentsSignature(components: PluginMarketplaceItem['components']): string {
+  return JSON.stringify(slimPluginComponentsForCache(components))
 }
 
 export function marketplaceItemsSignature(items: PluginMarketplaceItem[]): string {
@@ -363,12 +434,14 @@ export function marketplaceItemsSignature(items: PluginMarketplaceItem[]): strin
         item.version ?? '',
         item.installed ? '1' : '0',
         item.installedLocally ? '1' : '0',
+        item.installedVersion ?? '',
         item.installedPluginId ?? '',
         item.updateAvailable ? '1' : '0',
         item.enabled ? '1' : '0',
         item.grantUserCount ?? 0,
         item.grantNamespaceCount ?? 0,
         item.accessRole ?? '',
+        item.allowCopy ? '1' : '0',
         item.latestReleaseId ?? '',
         item.interface?.logo ?? '',
         item.interface?.displayName ?? '',
@@ -382,6 +455,7 @@ export function marketplaceItemsSignature(items: PluginMarketplaceItem[]): strin
         typeof item.manifest?.installPolicy === 'string' ? item.manifest.installPolicy : '',
         item.localPersonalSource?.marketplacePath ?? '',
         item.localPersonalSource?.pluginName ?? '',
+        pluginComponentsSignature(item.components),
       ].join(':')
     )
     .join('|')
@@ -399,6 +473,7 @@ export function installedPluginsSignature(items: InstalledPluginItem[]): string 
         item.origin,
         item.sourceLabel,
         item.distribution,
+        pluginComponentsSignature(item.raw.spec.components),
       ].join(':')
     )
     .join('|')

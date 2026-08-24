@@ -32,6 +32,7 @@ export default {
         primary: 'rgb(var(--color-primary) / <alpha-value>)',
         'primary-contrast': 'rgb(var(--color-primary-contrast) / <alpha-value>)',
         focus: 'rgb(var(--color-focus) / <alpha-value>)',
+        success: 'rgb(var(--color-success) / <alpha-value>)',
         destructive: 'rgb(var(--color-destructive) / <alpha-value>)',
         'text-primary': 'rgb(var(--color-text-primary) / <alpha-value>)',
         'text-secondary': 'rgb(var(--color-text-secondary) / <alpha-value>)',

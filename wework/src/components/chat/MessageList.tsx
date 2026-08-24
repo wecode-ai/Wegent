@@ -85,6 +85,7 @@ import {
   cacheConversationVirtualMeasurements,
   getConversationVirtualMeasurements,
 } from '@/features/workbench/runtimeConversationCache'
+import { getRuntimeMessageActiveThinking } from '@/features/workbench/runtimeThinking'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -132,6 +133,7 @@ interface MessageListProps {
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   onVirtualLayoutChange?: () => void
+  virtualAnchorToEnd?: boolean
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -225,6 +227,7 @@ export const MessageList = memo(function MessageList({
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   onVirtualLayoutChange,
+  virtualAnchorToEnd = true,
   renderGapAfterMessage,
 }: MessageListProps) {
   const { t } = useTranslation('common')
@@ -321,7 +324,7 @@ export const MessageList = memo(function MessageList({
     paddingStart: MESSAGE_LIST_PADDING_TOP_PX,
     paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
     overscan: VIRTUAL_MESSAGE_OVERSCAN,
-    anchorTo: 'end',
+    anchorTo: virtualAnchorToEnd ? 'end' : 'start',
     rangeExtractor: range => {
       const indexes =
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
@@ -801,6 +804,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'onAskSelectionInSidebar'
       : null,
     previous.onVirtualLayoutChange !== next.onVirtualLayoutChange ? 'onVirtualLayoutChange' : null,
+    previous.virtualAnchorToEnd !== next.virtualAnchorToEnd ? 'virtualAnchorToEnd' : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
 
@@ -1944,24 +1948,6 @@ function getDisplayProcessingBlocks(
     })
 }
 
-function getLatestActiveThinkingContent(blocks: ProcessingBlock[] | undefined): string {
-  if (!blocks?.length) return ''
-
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    const block = blocks[index]
-    if (
-      block?.type === 'thinking' &&
-      block.status !== 'done' &&
-      block.status !== 'error' &&
-      block.content.trim()
-    ) {
-      return block.content
-    }
-  }
-
-  return ''
-}
-
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
   return blocks.filter(
     (block): block is Extract<ProcessingBlock, { type: 'tool' }> =>
@@ -1969,7 +1955,7 @@ function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
   )
 }
 
-function AssistantMessage({
+export function AssistantMessage({
   message,
   conversationKey,
   devices,
@@ -2039,9 +2025,7 @@ function AssistantMessage({
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = !isCancelled && message.status === 'streaming'
-  const activeThinkingContent = isStreaming
-    ? (message.streamingThinkingContent ?? getLatestActiveThinkingContent(message.blocks))
-    : ''
+  const activeThinkingContent = isStreaming ? getRuntimeMessageActiveThinking(message) : ''
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
   const isAssistantRunning = isStreaming || hasRunningBlocks
   const canShowFinalArtifacts = !isAssistantRunning

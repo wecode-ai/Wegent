@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { AspectRatioOption, ResolutionOption } from '@/apis/models'
+import { formatVideoDuration } from '@/features/tasks/utils/videoDuration'
 
 export interface VideoSettingsPopoverProps {
   // Aspect ratio
@@ -86,8 +87,10 @@ export function VideoSettingsPopover({
   const selectedResolutionLabel =
     resolutionOptions?.find(option => (option.value ?? option.label) === selectedResolution)
       ?.label ?? selectedResolution.toUpperCase()
+  const autoDurationLabel = t('video.duration_auto')
+  const selectedDurationLabel = formatVideoDuration(selectedDuration, autoDurationLabel)
   const summaryText = showDuration
-    ? `${selectedRatioLabel} · ${selectedDuration}S · ${selectedResolutionLabel}`
+    ? `${selectedRatioLabel} · ${selectedDurationLabel} · ${selectedResolutionLabel}`
     : `${selectedRatioLabel} · ${selectedResolutionLabel}`
   const displayedRatios = ratioOptions?.length
     ? ratioOptions
@@ -167,7 +170,7 @@ export function VideoSettingsPopover({
                       : 'border-border bg-surface hover:bg-hover text-text-secondary'
                   )}
                 >
-                  {duration}S
+                  {formatVideoDuration(duration, autoDurationLabel)}
                 </button>
               ))}
             </div>

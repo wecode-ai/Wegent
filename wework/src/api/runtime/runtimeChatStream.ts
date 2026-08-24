@@ -61,6 +61,16 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
           logRuntimeChatTerminalEvent(event, matchedSubscriptionCount, subscriptionEntries.length)
         }
         for (const [subscriptionId, subscription] of subscriptionEntries) {
+          if (event.event === 'project.task.assigned') {
+            const payload = projectTaskAssignedPayload(event.payload)
+            if (payload) subscription.handlers.onProjectTaskAssigned?.(payload)
+            continue
+          }
+          if (event.event === 'executor.event_lagged') {
+            const payload = runtimeEventLaggedPayload(event.payload)
+            if (payload) subscription.handlers.onRuntimeEventLagged?.(payload)
+            continue
+          }
           if (event.event === 'executor.runtime_replaced') {
             const payload = runtimeTransportReplacedPayload(event.payload)
             if (payload) {
@@ -192,8 +202,36 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onRuntimeSupervisorUpdated ||
     handlers.onRuntimePlanUpdated ||
     handlers.onGuidanceApplied ||
-    handlers.onRuntimeTransportReplaced
+    handlers.onRuntimeEventLagged ||
+    handlers.onRuntimeTransportReplaced ||
+    handlers.onProjectTaskAssigned
   )
+}
+
+function runtimeEventLaggedPayload(value: unknown): { skipped: number } | null {
+  const payload = asRecord(value)
+  const skipped = payload.skipped
+  return typeof skipped === 'number' && Number.isFinite(skipped) && skipped >= 0
+    ? { skipped }
+    : null
+}
+
+function projectTaskAssignedPayload(
+  payload: Record<string, unknown>
+): Parameters<NonNullable<ChatStreamHandlers['onProjectTaskAssigned']>>[0] | null {
+  const projectId = stringField(payload, 'projectId')
+  const projectName = stringField(payload, 'projectName')
+  const itemId = stringField(payload, 'itemId')
+  const itemTitle = stringField(payload, 'itemTitle')
+  const assignerName = stringField(payload, 'assignerName')
+  if (!projectId || !itemId || !itemTitle || !assignerName) return null
+  return {
+    projectId,
+    projectName: projectName ?? '',
+    itemId,
+    itemTitle,
+    assignerName,
+  }
 }
 
 function runtimeTransportReplacedPayload(

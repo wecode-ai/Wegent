@@ -3,7 +3,12 @@ import { normalizeBrowserUrl } from './browser-url'
 
 describe('browser URL helpers', () => {
   test('normalizes supported browser URLs', () => {
-    expect(normalizeBrowserUrl('example.test')).toBe('https://example.test/')
+    expect(normalizeBrowserUrl('example.test')).toBe('http://example.test/')
+    expect(normalizeBrowserUrl('localhost:3000')).toBe('http://localhost:3000/')
+    expect(normalizeBrowserUrl('localhost:3000/path?mode=dev')).toBe(
+      'http://localhost:3000/path?mode=dev'
+    )
+    expect(normalizeBrowserUrl('http://example.test')).toBe('http://example.test/')
     expect(normalizeBrowserUrl('https://example.test/mygroups?gid=1')).toBe(
       'https://example.test/mygroups?gid=1'
     )

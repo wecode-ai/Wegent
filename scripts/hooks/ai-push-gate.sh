@@ -128,7 +128,7 @@ run_changed_python_syntax_check() {
                 syntax_error=1
             fi
         fi
-    done <<< "$syntax_files"
+    done < <(printf '%s\n' "$syntax_files")
 
     if [ $syntax_error -eq 0 ]; then
         echo -e "   ${GREEN}✅ Syntax Check: PASSED${NC}"
@@ -384,7 +384,7 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         echo -e "   ${YELLOW}   Run 'pnpm install' from the repository root to install dependencies${NC}"
         WARNINGS+=("Wework: node_modules not found, checks skipped")
     else
-        echo -e "   Running ESLint, TypeScript, and unit tests in parallel..."
+        echo -e "   Running ESLint and TypeScript in parallel..."
 
         pnpm --filter wework lint > "$TEMP_DIR/wework_eslint.log" 2>&1 &
         ESLINT_PID=$!
@@ -392,16 +392,19 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         pnpm --filter wework typecheck > "$TEMP_DIR/wework_tsc.log" 2>&1 &
         TSC_PID=$!
 
-        pnpm --filter wework test > "$TEMP_DIR/wework_test.log" 2>&1 &
-        TEST_PID=$!
-
         wait "$ESLINT_PID"
         ESLINT_EXIT=$?
 
         wait "$TSC_PID"
         TSC_EXIT=$?
 
-        wait "$TEST_PID"
+        # Vitest's jsdom workers are CPU and memory intensive. Let the suite use
+        # the machine after the static checks finish instead of making all three
+        # processes contend for the same resources.
+        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
+        echo -e "   Running unit tests with $WEWORK_TEST_WORKERS workers..."
+        VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
+            pnpm --filter wework test > "$TEMP_DIR/wework_test.log" 2>&1
         TEST_EXIT=$?
 
         if [ $ESLINT_EXIT -eq 0 ]; then

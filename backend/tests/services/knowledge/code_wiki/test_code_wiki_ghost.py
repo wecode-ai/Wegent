@@ -54,8 +54,8 @@ def test_inventing_evidence_is_forbidden(system_prompt: str):
 
 
 def test_the_agent_is_told_to_do_the_work_itself(system_prompt: str):
-    assert "Plan the whole wiki first" in system_prompt
-    assert "only when the repository is genuinely too large" in system_prompt
+    assert "Plan the whole wiki before writing" in system_prompt
+    assert "repository is genuinely too large" in system_prompt
 
 
 def test_how_much_to_read_is_bounded(system_prompt: str):
@@ -92,6 +92,24 @@ def test_major_components_and_workflows_get_substantive_coverage(system_prompt: 
     assert "substantive coverage" in system_prompt
 
 
+def test_quickstart_is_the_canonical_task_routing_entry(system_prompt: str) -> None:
+    assert "canonical entry" in system_prompt
+    assert "`index` must link to `quickstart`" in system_prompt
+    assert "task-oriented routes" in system_prompt
+
+
+def test_consequential_operations_require_operational_evidence(
+    system_prompt: str,
+) -> None:
+    for subject in (
+        "state-changing operations",
+        "preconditions",
+        "propagation",
+        "rollback",
+    ):
+        assert subject in system_prompt
+
+
 def test_component_hierarchies_have_substantive_overview_pages(system_prompt: str):
     normalized_prompt = " ".join(system_prompt.split())
 
@@ -100,12 +118,33 @@ def test_component_hierarchies_have_substantive_overview_pages(system_prompt: st
     assert "do not invent hierarchy" in normalized_prompt
 
 
-def test_high_value_relationships_require_diagram_consideration(system_prompt: str):
+def test_a_single_topic_does_not_become_a_one_page_section(system_prompt: str) -> None:
+    assert "at least two independent child pages" in system_prompt
+    assert "one topical page" in system_prompt
+    assert "generic suffix" in system_prompt
+
+
+def test_high_value_relationships_require_diagram_consideration(
+    system_prompt: str,
+) -> None:
+    normalized_prompt = " ".join(system_prompt.split())
+
     for subject in ("architecture", "cross-component", "lifecycles", "data models"):
         assert subject in system_prompt
-    assert "Use Mermaid diagrams" in system_prompt
+    assert "Use source-grounded Mermaid" in system_prompt
     assert "code-wiki-mermaid" not in system_prompt
-    assert "decorative diagrams" in system_prompt
+    assert "multi-boundary architecture" in system_prompt
+    assert "system-context map" in system_prompt
+    assert "start with 4\N{EN DASH}8 major nodes" in system_prompt
+    assert "primary boundary or flow" in normalized_prompt
+    assert "abstraction level" in system_prompt
+    assert "branching, state transition" in normalized_prompt
+
+
+def test_flowchart_node_and_subgraph_ids_must_be_distinct(system_prompt: str) -> None:
+    assert "node and subgraph IDs share one namespace" in system_prompt
+    assert "rpc_group" in system_prompt
+    assert "parent cycle" in system_prompt
 
 
 def test_sensitive_sources_and_values_are_forbidden(system_prompt: str):
@@ -146,8 +185,5 @@ def test_tool_syntax_and_mode_specific_deletion_are_not_duplicated(
 def test_the_agent_must_finish_and_handle_feedback(system_prompt: str):
     normalized_prompt = " ".join(system_prompt.split())
 
-    assert "wiki_submit completion requirements" in system_prompt
-    assert (
-        "Act on publish refusal and diagram feedback before leaving"
-        in normalized_prompt
-    )
+    assert "completion checklist" in system_prompt
+    assert "act on publish refusal or diagram feedback" in normalized_prompt

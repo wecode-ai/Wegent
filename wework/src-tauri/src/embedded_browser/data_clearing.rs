@@ -12,9 +12,12 @@ use webview2_com::{ClearBrowsingDataCompletedHandler, Microsoft::Web::WebView2::
 #[cfg(target_os = "windows")]
 use windows::core::Interface;
 
+#[cfg(target_os = "windows")]
+use super::INSECURE_HARNESS_BROWSER_ARGS;
 use super::{
-    browser_data_directory, EmbeddedBrowserEntry, EmbeddedBrowserReadiness, EmbeddedBrowserState,
-    EMBEDDED_BROWSER_DATA_STORE_ID, EMBEDDED_BROWSER_NOT_READY_ERROR, MAIN_WINDOW_LABEL,
+    browser_data_directory, should_disable_web_security, EmbeddedBrowserReadiness,
+    EmbeddedBrowserState, EMBEDDED_BROWSER_DATA_STORE_ID, EMBEDDED_BROWSER_NOT_READY_ERROR,
+    MAIN_WINDOW_LABEL,
 };
 
 const CLEAR_DATA_COMPLETION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -27,6 +30,7 @@ pub enum EmbeddedBrowserDataKind {
     Cookies,
     Cache,
     Storage,
+    History,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -35,6 +39,7 @@ struct DataKindSet {
     cookies: bool,
     cache: bool,
     storage: bool,
+    history: bool,
 }
 
 impl DataKindSet {
@@ -45,6 +50,7 @@ impl DataKindSet {
                 cookies: true,
                 cache: true,
                 storage: true,
+                history: true,
             };
         };
         if kinds.is_empty() {
@@ -53,6 +59,7 @@ impl DataKindSet {
                 cookies: true,
                 cache: true,
                 storage: true,
+                history: true,
             };
         }
 
@@ -63,6 +70,7 @@ impl DataKindSet {
                     EmbeddedBrowserDataKind::Cookies => data_kinds.cookies = true,
                     EmbeddedBrowserDataKind::Cache => data_kinds.cache = true,
                     EmbeddedBrowserDataKind::Storage => data_kinds.storage = true,
+                    EmbeddedBrowserDataKind::History => data_kinds.history = true,
                 }
                 data_kinds
             })
@@ -92,23 +100,86 @@ pub async fn clear_embedded_browser_data(
             return Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string());
         }
         webviews
-            .values()
-            .map(EmbeddedBrowserEntry::ready_webview)
+            .iter()
+            .map(|(label, entry)| {
+                entry
+                    .ready_webview()
+                    .map(|webview| (should_disable_web_security(label), webview))
+            })
             .collect::<Result<Vec<_>, _>>()?
     };
 
-    if !webviews.is_empty() {
-        for webview in &webviews {
-            clear_webview_data(webview, data_kinds).await?;
-        }
-        return Ok(webviews.len());
+    // Only touch history after the readiness checks above have passed, so a
+    // failed clear never deletes history the UI reports as untouched. The
+    // generation bump still precedes the store wipe, blocking in-flight page
+    // loads from re-recording their visits afterwards.
+    if data_kinds.history {
+        state
+            .inner()
+            .history_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        super::with_history_store(&app, state.inner(), |store, path| {
+            store.clear();
+            if let Err(error) = store.persist(path) {
+                // Keep the in-memory store consistent with the intact file so
+                // the next access reloads the pre-clear entries.
+                store.mark_unloaded();
+                return Err(error);
+            }
+            Ok(())
+        })?;
     }
 
+    for (_, webview) in &webviews {
+        clear_webview_data(webview, data_kinds).await?;
+    }
+    let active_profiles = webviews
+        .iter()
+        .map(|(disable_web_security, _)| *disable_web_security)
+        .collect::<Vec<_>>();
+    for disable_web_security in
+        inactive_browser_data_profiles(&active_profiles, cfg!(target_os = "windows"))
+    {
+        clear_inactive_browser_data(&app, data_kinds, disable_web_security).await?;
+    }
+    Ok(webviews.len())
+}
+
+fn inactive_browser_data_profiles(
+    active_web_security_modes: &[bool],
+    separate_insecure_profile: bool,
+) -> Vec<bool> {
+    let active_profiles = active_web_security_modes
+        .iter()
+        .map(|disable_web_security| separate_insecure_profile && *disable_web_security)
+        .collect::<Vec<_>>();
+    let expected_profiles: &[bool] = if separate_insecure_profile {
+        &[false, true]
+    } else {
+        &[false]
+    };
+    expected_profiles
+        .iter()
+        .copied()
+        .filter(|profile| !active_profiles.contains(profile))
+        .collect()
+}
+
+async fn clear_inactive_browser_data(
+    app: &tauri::AppHandle,
+    data_kinds: DataKindSet,
+    disable_web_security: bool,
+) -> Result<(), String> {
     let window = app
         .get_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| "Main window not found".to_string())?;
+    let profile_name = if disable_web_security {
+        "insecure-harness"
+    } else {
+        "default"
+    };
     let cleanup_label = format!(
-        "browser-data-cleanup-{}",
+        "browser-data-cleanup-{profile_name}-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -118,8 +189,14 @@ pub async fn clear_embedded_browser_data(
         .map_err(|error| format!("Failed to create browser cleanup URL: {error}"))?;
     let builder =
         tauri::webview::WebviewBuilder::new(&cleanup_label, WebviewUrl::External(cleanup_url))
-            .data_directory(browser_data_directory(&app)?)
+            .data_directory(browser_data_directory(app, disable_web_security)?)
             .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID);
+    #[cfg(target_os = "windows")]
+    let builder = if disable_web_security {
+        builder.additional_browser_args(INSECURE_HARNESS_BROWSER_ARGS)
+    } else {
+        builder
+    };
     let webview = window
         .add_child(
             builder,
@@ -135,8 +212,7 @@ pub async fn clear_embedded_browser_data(
         .close()
         .map_err(|error| format!("Failed to close browser data cleanup view: {error}"));
     clear_result?;
-    close_result?;
-    Ok(0)
+    close_result
 }
 
 async fn clear_webview_data(webview: &Webview<Wry>, data_kinds: DataKindSet) -> Result<(), String> {
@@ -384,6 +460,7 @@ mod tests {
                 cookies: true,
                 cache: true,
                 storage: true,
+                history: true,
             }
         );
         assert_eq!(
@@ -393,6 +470,7 @@ mod tests {
                 cookies: true,
                 cache: true,
                 storage: true,
+                history: true,
             }
         );
     }
@@ -406,6 +484,7 @@ mod tests {
                 cookies: true,
                 cache: false,
                 storage: false,
+                history: false,
             }
         );
         assert_eq!(
@@ -415,6 +494,7 @@ mod tests {
                 cookies: false,
                 cache: true,
                 storage: false,
+                history: false,
             }
         );
         assert_eq!(
@@ -424,6 +504,7 @@ mod tests {
                 cookies: false,
                 cache: false,
                 storage: true,
+                history: false,
             }
         );
     }
@@ -441,6 +522,36 @@ mod tests {
                 cookies: true,
                 cache: true,
                 storage: false,
+                history: false,
+            }
+        );
+    }
+
+    #[test]
+    fn inactive_profiles_cover_both_windows_webview2_configurations() {
+        assert_eq!(inactive_browser_data_profiles(&[], true), vec![false, true]);
+        assert_eq!(inactive_browser_data_profiles(&[false], true), vec![true]);
+        assert_eq!(inactive_browser_data_profiles(&[true], true), vec![false]);
+        assert!(inactive_browser_data_profiles(&[false, true], true).is_empty());
+    }
+
+    #[test]
+    fn shared_profiles_only_require_one_cleanup_view() {
+        assert_eq!(inactive_browser_data_profiles(&[], false), vec![false]);
+        assert!(inactive_browser_data_profiles(&[false], false).is_empty());
+        assert!(inactive_browser_data_profiles(&[true], false).is_empty());
+    }
+
+    #[test]
+    fn selects_history_data_kind() {
+        assert_eq!(
+            DataKindSet::from_requested(Some(vec![EmbeddedBrowserDataKind::History])),
+            DataKindSet {
+                all: false,
+                cookies: false,
+                cache: false,
+                storage: false,
+                history: true,
             }
         );
     }

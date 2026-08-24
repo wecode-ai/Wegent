@@ -50,6 +50,7 @@ const items: CloudMyWorkItem[] = [
     title: '执行中的任务',
     status: 'in_progress',
     has_active_task: true,
+    execution_state: 'running',
     priority: 'medium',
     due_at: dueAt(1),
   }),
@@ -66,8 +67,16 @@ const items: CloudMyWorkItem[] = [
     id: 'WEG-6',
     title: '待我批准的任务',
     status: 'pending',
-    execution_state: 'pending_approval',
+    execution_state: 'waiting_approval',
     can_approve: true,
+  }),
+  makeItem({
+    id: 'APP-1',
+    cloud_project_id: 2,
+    project_key: 'APP',
+    project_name: '客户端',
+    title: '客户端任务',
+    status: 'pending',
   }),
 ]
 
@@ -137,6 +146,7 @@ describe('CloudMyWorkView', () => {
       'my-work-list-row-WEG-3',
       'my-work-list-row-WEG-5',
       'my-work-list-row-WEG-6',
+      'my-work-list-row-APP-1',
     ])
     await userEvent.click(screen.getByTestId('my-work-list-row-WEG-2'))
     expect(onSelectItem).toHaveBeenCalledWith(items[1])
@@ -168,5 +178,21 @@ describe('CloudMyWorkView', () => {
     await userEvent.click(screen.getByTestId('my-work-view-tab-timeline'))
     expect(screen.getByTestId('my-work-view-tab-timeline')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('my-work-view-tab-group')).toHaveAttribute('aria-selected', 'false')
+  })
+
+  it('filters every view by project while keeping all projects as the default', async () => {
+    renderView()
+
+    expect(screen.getByTestId('my-work-project-filter')).toHaveValue('all')
+    expect(screen.getByTestId('my-work-group-action-WEG-1')).toBeInTheDocument()
+    expect(screen.getByTestId('my-work-group-action-APP-1')).toBeInTheDocument()
+
+    await userEvent.selectOptions(screen.getByTestId('my-work-project-filter'), 'APP')
+
+    expect(screen.queryByTestId('my-work-group-action-WEG-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('my-work-group-action-APP-1')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('my-work-view-tab-list'))
+    expect(screen.queryByTestId('my-work-list-row-WEG-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('my-work-list-row-APP-1')).toBeInTheDocument()
   })
 })

@@ -69,6 +69,7 @@ describe('PublicSkillList', () => {
         is_active: true,
         is_public: true,
         user_id: 1,
+        updated_at: '2026-08-17T08:00:00Z',
       },
     ])
   })
@@ -88,6 +89,14 @@ describe('PublicSkillList', () => {
 
     expect(await screen.findByText('技术开发')).toBeInTheDocument()
     expect(screen.queryByText('python')).not.toBeInTheDocument()
+  })
+
+  it('shows the skill update time', async () => {
+    render(<PublicSkillList />)
+
+    const updatedAt = await screen.findByText(/admin:public_skills\.columns\.updated_at:/)
+    expect(updatedAt).toHaveTextContent('2026')
+    expect(screen.queryByText(/admin:public_skills\.columns\.created_at:/)).not.toBeInTheDocument()
   })
 
   it('falls back to skill keywords when marketplace tags are missing', async () => {

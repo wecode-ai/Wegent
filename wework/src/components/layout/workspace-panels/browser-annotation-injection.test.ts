@@ -4,6 +4,10 @@ import { browserAnnotationInjectionScript } from './browser-annotation/injection
 interface RuntimeApi {
   scope: { browserTabId: string; pageSessionId: string; url: string }
   getSnapshot: () => { revision: number; annotations: Array<{ comment: string; number: number }> }
+  setOriginalViewEnabled: (enabled: boolean) => {
+    revision: number
+    annotations: Array<{ comment: string; number: number }>
+  }
   clear: () => { revision: number; annotations: Array<{ comment: string; number: number }> }
   suspend: () => unknown
   resume: () => unknown
@@ -329,5 +333,31 @@ describe('browser annotation injection', () => {
     expect(editor.style.background).toBe('rgb(28, 31, 36)')
     expect(editor.style.color).toBe('rgb(241, 245, 249)')
     expect(input!.style.color).toBe('rgb(241, 245, 249)')
+  })
+
+  test('setOriginalViewEnabled restores and replays adjustments without mutating annotations', () => {
+    const target = document.querySelector<HTMLElement>('#first-target')!
+    target.style.color = 'blue'
+    const input = openEditor(target)
+    input!.value = 'Use a stronger color'
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+    click(document.querySelector('[data-wework-annotation="adjust-toggle"]')!)
+
+    const color = document.querySelector<HTMLInputElement>(
+      '[data-wework-annotation="adjustment-color"]'
+    )!
+    color.value = '#ff0000'
+    color.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(target.style.color).toBe('rgb(255, 0, 0)')
+    click(saveButton()!)
+
+    const before = annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot()
+    annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.setOriginalViewEnabled(true)
+    expect(target.style.color).toBe('blue')
+    expect(annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot()).toEqual(before)
+
+    annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.setOriginalViewEnabled(false)
+    expect(target.style.color).toBe('rgb(255, 0, 0)')
+    expect(annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot()).toEqual(before)
   })
 })

@@ -41,6 +41,9 @@ export interface TaskAiRuntimeBridge {
       deviceId?: string | null
       attachments?: Attachment[]
       onError?: (error: string) => void
+      prepareRuntimeTask?: (
+        address: RuntimeTaskAddress
+      ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
       onRuntimeTaskOptimisticOpen?: (address: RuntimeTaskAddress) => void | Promise<void>
     }
   ) => Promise<RuntimeTaskAddress | false>
@@ -388,9 +391,16 @@ export async function startTaskAiRun({
           },
         }
       : additionalContext,
+    prepareRuntimeTask: async nextAddress => {
+      const deliveryApi = services.deliveryApi
+      if (!deliveryApi) {
+        throw new Error('项目空间任务绑定服务不可用')
+      }
+      await deliveryApi.bindTask(task.id, nextAddress, task.title)
+      return () => deliveryApi.unbindTask(task.id, nextAddress)
+    },
     onError,
     onRuntimeTaskOptimisticOpen: async nextAddress => {
-      await services.deliveryApi?.bindTask(task.id, nextAddress, task.title)
       responseRef.current = await startTaskAiResponse(client, {
         projectId: project.id,
         taskId: task.id,

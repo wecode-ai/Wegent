@@ -7,25 +7,19 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
+import { projectKey, type LocatedProjectSpace } from './projectSpaceSelection'
 import { memberAvatarClasses, memberNameById } from './todoShared'
 
-export interface ProjectsHomeProject {
-  id: string
-  name: string
-  location: 'local' | 'cloud'
-  updated_at: string
-}
-
 interface CloudProjectsHomeProps {
-  projects: ProjectsHomeProject[]
+  projects: LocatedProjectSpace[]
   projectCounts: Record<string, number>
   projectMembers: Record<string, CloudProjectMember[]>
   projectItems: Record<string, CloudLoopItem[]>
   myWork: CloudMyWorkItem[]
   searchQuery: string
   onCreateProject: () => void
-  onSelectProject: (projectId: string) => void
-  onManageProject: (projectId: string) => void
+  onSelectProject: (project: LocatedProjectSpace) => void
+  onManageProject: (project: LocatedProjectSpace) => void
   onSelectItem: (item: CloudMyWorkItem) => void
   onOpenMyWork: () => void
 }
@@ -43,13 +37,13 @@ function isWithinLastWeek(timestamp: string | null | undefined, nowMs: number): 
   return !Number.isNaN(valueMs) && valueMs >= nowMs - WEEK_MS
 }
 
-function matchesQuery(project: ProjectsHomeProject, query: string): boolean {
+function matchesQuery(project: LocatedProjectSpace, query: string): boolean {
   if (!query) return true
   return project.name.toLowerCase().includes(query)
 }
 
 interface ProjectSpaceRowProps {
-  project: ProjectsHomeProject
+  project: LocatedProjectSpace
   members: CloudProjectMember[]
   openLabel: string
   manageLabel: string
@@ -200,7 +194,14 @@ export function CloudProjectsHome({
     [projects, query]
   )
 
-  const allItems = useMemo(() => Object.values(projectItems).flat(), [projectItems])
+  const allItemEntries = useMemo(
+    () =>
+      Object.entries(projectItems).flatMap(([spaceKey, items]) =>
+        items.map(item => ({ item, spaceKey }))
+      ),
+    [projectItems]
+  )
+  const allItems = useMemo(() => allItemEntries.map(entry => entry.item), [allItemEntries])
   const completedCount = useMemo(
     () => allItems.filter(item => item.status === 'completed').length,
     [allItems]
@@ -223,10 +224,10 @@ export function CloudProjectsHome({
 
   const recentActivity = useMemo(
     () =>
-      [...allItems]
-        .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+      [...allItemEntries]
+        .sort((a, b) => b.item.updated_at.localeCompare(a.item.updated_at))
         .slice(0, MAX_RECENT_ACTIVITY),
-    [allItems]
+    [allItemEntries]
   )
   const myTodos = useMemo(
     () => myWork.filter(item => item.status !== 'completed').slice(0, MAX_MY_TODOS),
@@ -261,8 +262,8 @@ export function CloudProjectsHome({
     completed: t('todo.status_completed', '已完成'),
   }
 
-  const projectNameById = useMemo(
-    () => new Map(projects.map(project => [String(project.id), project.name])),
+  const projectByKey = useMemo(
+    () => new Map(projects.map(project => [projectKey(project), project])),
     [projects]
   )
 
@@ -313,12 +314,12 @@ export function CloudProjectsHome({
                 {t('todo.home_no_activity', '暂无动态')}
               </p>
             ) : (
-              recentActivity.map((item, itemIndex) => {
-                const projectId = String(item.cloud_project_id)
+              recentActivity.map(({ item, spaceKey }, itemIndex) => {
+                const project = projectByKey.get(spaceKey)
                 const actorName =
-                  memberNameById(projectMembers[projectId] ?? [], item.assignee_user_id) ??
+                  memberNameById(projectMembers[spaceKey] ?? [], item.assignee_user_id) ??
                   item.created_by_user_name ??
-                  memberNameById(projectMembers[projectId] ?? [], item.created_by_user_id) ??
+                  memberNameById(projectMembers[spaceKey] ?? [], item.created_by_user_id) ??
                   t('todo.home_activity_someone', '有人')
                 const actionLabel =
                   item.status === 'completed'
@@ -326,9 +327,11 @@ export function CloudProjectsHome({
                     : t('todo.home_activity_updated', '更新了任务')
                 return (
                   <button
-                    key={item.id}
+                    key={`${spaceKey}:${item.id}`}
                     type="button"
-                    onClick={() => onSelectProject(projectId)}
+                    onClick={() => {
+                      if (project) onSelectProject(project)
+                    }}
                     className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2.5 text-left transition hover:bg-muted/60"
                   >
                     <span
@@ -346,7 +349,7 @@ export function CloudProjectsHome({
                         </span>
                       </span>
                       <span className="mt-0.5 block truncate text-xs text-text-muted">
-                        {projectNameById.get(projectId) ?? ''} · {statusLabels[item.status]}
+                        {project?.name ?? ''} · {statusLabels[item.status]}
                       </span>
                     </span>
                     <span className="mt-0.5 shrink-0 text-xs text-text-muted">
@@ -421,19 +424,19 @@ export function CloudProjectsHome({
           >
             {sortedProjects.map(project => (
               <ProjectSpaceRow
-                key={project.id}
+                key={projectKey(project)}
                 project={project}
-                members={projectMembers[project.id] ?? []}
+                members={projectMembers[projectKey(project)] ?? []}
                 openLabel={t('todo.home_open', '打开')}
                 manageLabel={t('todo.home_manage', '管理')}
                 localLabel={t('todo.location_local', '本地')}
                 taskCountLabel={t('todo.home_task_count', '{{count}} 任务', {
-                  count: projectCounts[project.id] ?? 0,
+                  count: projectCounts[projectKey(project)] ?? 0,
                 })}
                 memberCountLabel={t('todo.home_member_count', '{{count}} 人', {
-                  count: (projectMembers[project.id] ?? []).length,
+                  count: (projectMembers[projectKey(project)] ?? []).length,
                 })}
-                onOpen={() => onSelectProject(project.id)}
+                onOpen={() => onSelectProject(project)}
               />
             ))}
           </div>
@@ -473,25 +476,25 @@ export function CloudProjectsHome({
               ) : (
                 manageProjects.map(project => (
                   <ProjectSpaceRow
-                    key={project.id}
+                    key={projectKey(project)}
                     project={project}
-                    members={projectMembers[project.id] ?? []}
+                    members={projectMembers[projectKey(project)] ?? []}
                     openLabel={t('todo.home_open', '打开')}
                     manageLabel={t('todo.home_manage', '管理')}
                     localLabel={t('todo.location_local', '本地')}
                     taskCountLabel={t('todo.home_task_count', '{{count}} 任务', {
-                      count: projectCounts[project.id] ?? 0,
+                      count: projectCounts[projectKey(project)] ?? 0,
                     })}
                     memberCountLabel={t('todo.home_member_count', '{{count}} 人', {
-                      count: (projectMembers[project.id] ?? []).length,
+                      count: (projectMembers[projectKey(project)] ?? []).length,
                     })}
                     onOpen={() => {
                       setManageOpen(false)
-                      onSelectProject(project.id)
+                      onSelectProject(project)
                     }}
                     onManage={() => {
                       setManageOpen(false)
-                      onManageProject(project.id)
+                      onManageProject(project)
                     }}
                   />
                 ))

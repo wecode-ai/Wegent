@@ -171,11 +171,9 @@ def save_wiki_generation_contents(
     complete while its work was discarded — and it is the only party that could still
     act on the refusal, since it is running and its checkout is there.
 
-    ``corrections`` carries the same argument one step further. Broken diagrams never
-    hold a version back, so the run publishes and ends — and the finding was recorded
-    where only a human reading the run history would ever see it, which is the one
-    party that cannot fix a diagram. Returned here it reaches the agent while it can
-    still rewrite the page and finish again.
+    ``corrections`` makes a rejected diagram actionable. The publish gate leaves the
+    prior version live and returns the named errors while the agent can still rewrite
+    the affected pages and finish the same generation again.
     """
     _assert_caller_may_write_generation(wiki_db, caller, payload.generation_id)
     outcome = wiki_service.save_generation_contents(

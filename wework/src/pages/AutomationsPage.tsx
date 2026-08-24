@@ -39,7 +39,7 @@ import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
-import type { RuntimeTaskAddress, RuntimeTaskCreateRequest } from '@/types/api'
+import type { RuntimeSendRequest, RuntimeTaskAddress, RuntimeTaskCreateRequest } from '@/types/api'
 import type {
   Automation,
   AutomationMutation,
@@ -47,6 +47,7 @@ import type {
   AutomationSchedule,
   AutomationSource,
 } from '@/types/automation'
+import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 
 type StatusFilter = 'all' | 'active' | 'paused'
 
@@ -179,9 +180,12 @@ export function AutomationsPage() {
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void loadAutomations(), 0)
     const timer = window.setInterval(() => void loadAutomations(), 30_000)
+    const handleAutomationsChanged = () => void loadAutomations()
+    window.addEventListener(WORKBENCH_AUTOMATIONS_CHANGED_EVENT, handleAutomationsChanged)
     return () => {
       window.clearTimeout(initialLoad)
       window.clearInterval(timer)
+      window.removeEventListener(WORKBENCH_AUTOMATIONS_CHANGED_EVENT, handleAutomationsChanged)
     }
   }, [loadAutomations])
 
@@ -335,6 +339,13 @@ export function AutomationsPage() {
             address: draft.continuationAddress,
             message: draft.prompt.trim(),
             ...(initialGoal ? { initialGoal } : {}),
+            ...(draft.modelId
+              ? {
+                  modelId: draft.modelId,
+                  modelType: draft.modelType as RuntimeSendRequest['modelType'],
+                  modelOptions: draft.modelOptions,
+                }
+              : {}),
           }
         : null
     return {

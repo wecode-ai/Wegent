@@ -12,12 +12,14 @@ run's lifecycle (approval, queuing, capacity-gated claiming, lease, retries).
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Column,
     DateTime,
     Index,
     Integer,
     String,
     Text,
+    event,
     func,
 )
 
@@ -39,6 +41,20 @@ class LoopItemExecution(Base):
         Integer, nullable=False, default=0, server_default="0"
     )
     agent_id = Column(String(64), nullable=False, default="", server_default="")
+    team_id = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Executing Wegent Team id; 0 means none",
+    )
+    backend_task_id = Column(
+        big_integer_id_type(),
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Managed backend task id; 0 means none",
+    )
     automation_run_id = Column(
         String(64), nullable=False, default="", server_default=""
     )
@@ -52,8 +68,14 @@ class LoopItemExecution(Base):
     execution_device_id = Column(
         String(100), nullable=False, default="", server_default=""
     )
+    # Capacity belongs to one Runtime installation, not to one transport route.
+    runtime_instance_id = Column(
+        String(100), nullable=False, default="", server_default=""
+    )
     assigner_user_id = Column(Integer, nullable=False, default=0, server_default="0")
-    # pending_approval / queued / running / completed / failed / cancelled
+    # pending_approval / queued / claimed / running / cancel_requested /
+    # completed / failed / cancelled. `running` is accepted only after Runtime
+    # confirms the process; control-plane liveness is stored separately below.
     status = Column(
         String(24), nullable=False, default="queued", server_default="queued"
     )
@@ -89,6 +111,45 @@ class LoopItemExecution(Base):
         nullable=False,
         default=EPOCH_TIME,
         server_default="1970-01-01 00:00:00",
+    )
+    attempt_no = Column(Integer, nullable=False, default=1, server_default="1")
+    previous_execution_id = Column(
+        big_integer_id_type(), nullable=False, default=0, server_default="0"
+    )
+    execution_scope = Column(String(160), nullable=False, default="", server_default="")
+    observed_state = Column(
+        String(24), nullable=False, default="unconfirmed", server_default="unconfirmed"
+    )
+    sync_state = Column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    claimed_at = Column(
+        DateTime,
+        nullable=False,
+        default=EPOCH_TIME,
+        server_default="1970-01-01 00:00:00",
+    )
+    start_requested_at = Column(
+        DateTime,
+        nullable=False,
+        default=EPOCH_TIME,
+        server_default="1970-01-01 00:00:00",
+    )
+    observed_at = Column(
+        DateTime,
+        nullable=False,
+        default=EPOCH_TIME,
+        server_default="1970-01-01 00:00:00",
+    )
+    cancel_requested_at = Column(
+        DateTime,
+        nullable=False,
+        default=EPOCH_TIME,
+        server_default="1970-01-01 00:00:00",
+    )
+    last_event_seq = Column(BigInteger, nullable=False, default=0, server_default="0")
+    termination_reason = Column(
+        String(64), nullable=False, default="", server_default=""
     )
     retry_attempt = Column(Integer, nullable=False, default=0, server_default="0")
     max_retries = Column(Integer, nullable=False, default=1, server_default="1")
@@ -128,10 +189,18 @@ class LoopItemExecution(Base):
             "queued_at",
         ),
         Index("idx_exec_agent_status", "agent_id", "status"),
+        Index("idx_exec_team_status", "team_id", "status"),
         Index("idx_exec_automation_run_id", "automation_run_id"),
         Index("idx_exec_assigner_status", "assigner_user_id", "status"),
         Index("idx_exec_item_status", "loop_item_id", "status"),
         Index("idx_exec_status_device", "status", "execution_device_id"),
+        Index("idx_exec_scope_status", "execution_scope", "status"),
+        Index(
+            "idx_exec_runtime_capacity",
+            "executor_owner_user_id",
+            "runtime_instance_id",
+            "status",
+        ),
         {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
     )
 
@@ -139,4 +208,31 @@ class LoopItemExecution(Base):
     def executor_type(self) -> str:
         """Return the transport role without persisting redundant state."""
 
-        return "project_robot" if self.agent_id else "automation_manager"
+        if self.agent_id:
+            return "project_robot"
+        return "wegent_team" if self.team_id else "automation_manager"
+
+    @property
+    def optional_team_id(self) -> int | None:
+        """Expose the nullable domain value for the persisted team sentinel."""
+
+        return self.team_id or None
+
+    @property
+    def optional_backend_task_id(self) -> int | None:
+        """Expose the nullable domain value for the persisted task sentinel."""
+
+        return self.backend_task_id or None
+
+
+@event.listens_for(LoopItemExecution, "before_insert")
+@event.listens_for(LoopItemExecution, "before_update")
+def _adapt_optional_execution_ids(
+    _mapper: object, _connection: object, target: LoopItemExecution
+) -> None:
+    """Persist optional execution identifiers with the table's zero sentinel."""
+
+    if target.team_id is None:
+        target.team_id = 0
+    if target.backend_task_id is None:
+        target.backend_task_id = 0

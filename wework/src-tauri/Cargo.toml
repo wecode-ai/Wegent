@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.17"
+version = "0.2.5"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
@@ -29,6 +29,7 @@ libc = "0.2"
 ctrlc = { version = "3.4", features = ["termination"] }
 dirs = "5"
 fs2 = "0.4"
+flate2 = "1"
 tauri = { version = "2.11.5", features = ["macos-private-api", "protocol-asset", "tray-icon", "unstable", "image-png"] }
 tauri-plugin-log = "2"
 tauri-plugin-notification = "2.3.3"
@@ -48,8 +49,11 @@ getrandom = "0.2"
 infer = "0.19"
 mime_guess = "2"
 regex = "1"
+semver = "1"
 sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+tempfile = "3"
 # Keep Wry's devtools API available when its debug assertions are disabled below.
 wry = { version = "0.55.1", features = ["devtools"] }
 
@@ -75,9 +79,6 @@ webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 webview2-com = "0.38.2"
 windows = "0.61"
 windows-sys = { version = "0.59", features = ["Win32_System_Power", "Win32_System_Threading"] }
-
-[dev-dependencies]
-tempfile = "3"
 
 # Wry prints an expected WKDownload cancellation to stderr whenever Wework takes
 # over a browser download. Keep application debug assertions enabled while

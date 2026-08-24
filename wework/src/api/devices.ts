@@ -16,6 +16,7 @@ import type {
   CloudDeviceMetricsResponse,
   DeviceInfo,
   DeviceListResponse,
+  DeviceRuntimeSettingsResponse,
   DeviceSessionResponse,
   MetricsHistoryResponse,
   UpgradeDeviceOptions,
@@ -297,6 +298,19 @@ export function createDeviceApi(client: HttpClient) {
     listDevices: fetchDevices,
 
     getAllDevices: fetchDevices,
+
+    getRuntimeSettings(deviceId: string): Promise<DeviceRuntimeSettingsResponse> {
+      return client.get(`/devices/${encodeURIComponent(deviceId)}/runtime-settings`)
+    },
+
+    updateRuntimeSettings(
+      deviceId: string,
+      maxConcurrentTasks: number
+    ): Promise<DeviceRuntimeSettingsResponse> {
+      return client.put(`/devices/${encodeURIComponent(deviceId)}/runtime-settings`, {
+        max_concurrent_tasks: maxConcurrentTasks,
+      })
+    },
 
     async getHomeDirectory(deviceId: string): Promise<string> {
       const response = await client.post<DeviceCommandResponse>(

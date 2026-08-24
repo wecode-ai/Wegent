@@ -5,15 +5,13 @@ export function isGitWorkspaceProject(project: ProjectWithTasks): boolean {
   return project.config?.mode === 'workspace' && project.config?.workspace?.source === 'git'
 }
 
+export function isWorktreeEligibleProject(project: ProjectWithTasks): boolean {
+  return project.config?.mode === 'workspace'
+}
+
 export function supportsGitWorktreeExecution(project: ProjectWithTasks): boolean {
-  const config = project.config
   const workspacePath = configuredWorkspacePath(project)
   const deviceId = executionDeviceId(project)
 
-  return Boolean(
-    config?.mode === 'workspace' &&
-    (config.execution?.targetType === 'local' || !config.execution) &&
-    deviceId &&
-    workspacePath
-  )
+  return Boolean(isWorktreeEligibleProject(project) && deviceId && workspacePath)
 }

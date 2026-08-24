@@ -52,6 +52,7 @@ describe('localHarnessModels', () => {
 
     expect(launch.modelId).toBe('wework-messages/wework-selected')
     expect(launch.proxyToken).toBe('route-token')
+    expect(launch.baseUrl).toBe('http://127.0.0.1:1234/v1/harness-router/route-token')
     expect(config.provider['wework-messages']).toMatchObject({
       npm: '@ai-sdk/anthropic',
       options: {
@@ -71,6 +72,7 @@ describe('localHarnessModels', () => {
     expect(launch).toMatchObject({
       modelId: 'wework-selected',
       proxyToken: 'route-token',
+      baseUrl: 'http://127.0.0.1:1234/v1/harness-router/route-token',
       env: {
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:1234/v1/harness-router/route-token',
         ANTHROPIC_API_KEY: 'wework-local-router',
@@ -93,6 +95,7 @@ describe('localHarnessModels', () => {
     expect(launch).toEqual({
       modelId: '__kimi_env_model__',
       proxyToken: 'route-token',
+      baseUrl: 'http://127.0.0.1:1234/v1/harness-router/route-token',
       env: {
         KIMI_MODEL_NAME: 'wework-selected',
         KIMI_MODEL_PROVIDER_TYPE: 'anthropic',

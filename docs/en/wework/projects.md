@@ -8,9 +8,13 @@ Projects group conversations that use the same codebase. A project can map to fo
 
 ## Existing folders and Git projects
 
+When the project list is empty, the sidebar's **Projects** section shows **+ New project** directly. Select it to choose a **Local project** or **Cloud project**; cloud projects still require a cloud connection. Wework hides this empty-state action while project data is synchronizing so an unfinished load is not mistaken for an empty list.
+
 Choose **Use existing folder** for code already on the device. Adding the same folder again restores or reuses its project and conversations.
 
-In local mode, choose **Local project** and select one or more folders in the system directory picker. This entry always uses the local execution device, even when cloud or remote devices are connected; use **Cloud project** to select a folder on another device. The create-project dialog uses the first source folder's name as the project name by default; you can edit the name or add and remove source folders before confirming. Wework saves the folders as one Codex project and uses the first folder as its default workspace. The project list keeps one project row instead of expanding every source folder. Use **Edit project** from the project menu to rename the project, add or remove source folders, or change the primary folder. Multi-folder creation currently applies only to local Codex projects; cloud and remote projects are still added one folder at a time.
+In local mode, choose **Local project** and select one or more folders in the system directory picker. This entry always uses the local execution device, even when cloud or remote devices are connected. To use another device, choose **Cloud project**, then open an existing directory, create a blank project, or enter a Git repository URL to clone on the target device. Git projects use the repository name as the directory name by default and allow an optional branch and target parent directory. After submission, the dialog closes immediately and the project list shows clone progress; failed clones can be retried or dismissed there.
+
+The local create-project dialog uses the first source folder's name as the project name by default; you can edit the name or add and remove source folders before confirming. Wework saves the folders as one Codex project and uses the first folder as its default workspace. The project list keeps one project row instead of expanding every source folder. Use **Edit project** from the project menu to rename the project, add or remove source folders, or change the primary folder. Multi-folder creation currently applies only to local Codex projects; cloud and remote projects are still added one folder at a time.
 
 If a connected cloud device and the current local Wework executor refer to the same workspace, adding that folder as a local project merges the local and cloud records into one project row. Wework matches the executor identity, normalized workspace path, workspace kind, and worktree. The project remains deduplicated after Wework restarts, and existing cloud tasks continue to appear under the merged project.
 
@@ -18,7 +22,13 @@ To create a Git project, select a device, repository, default branch, and destin
 
 ## View pull request and merge request status
 
-For tasks using a GitHub or GitLab workspace, the environment panel looks up the pull request (PR) or merge request (MR) associated with the current branch. The request number and title stay on one line. The main icon color communicates the open, closed, or other request state, while a small lower-right icon shows checks pending, passed, or failed. A red merge-conflict icon takes priority over the check result when conflicts exist. When a GitHub workflow check has multiple runs, Wework uses the latest result so a superseded cancelled or failed run does not override the current status. Select the entry to open the PR or MR in your browser.
+When a task is opened or selected, Wework reads the branch, remote URL, PR/MR status, and change counts concurrently. It displays the PR/MR status as soon as that lookup finishes instead of waiting for a slower diff count; changed-file and line counts update independently afterward. These Git queries do not start the user's login shell, so shell startup scripts, SDK initialization, and other personal environment configuration cannot block the environment panel.
+
+During a manual environment refresh, Wework keeps the previous change statistics for the same device and workspace until the new diff statistics are ready. Intermediate branch or PR/MR results therefore do not briefly reset the counts to zero. Switching to another device or workspace does not reuse the old statistics.
+
+For tasks using a GitHub or GitLab workspace, the environment panel looks up the pull request (PR) or merge request (MR) associated with the current branch. The request number and title stay on one line. The main icon color communicates the open, closed, or other request state, while a small lower-right icon shows checks pending, passed, or failed. A red merge-conflict icon takes priority over the check result when conflicts exist. After a GitHub PR enters the merge queue, Wework shows a yellow **In merge queue** waiting icon even when all branch checks have passed, until the PR leaves the queue or is merged. When a GitHub workflow check has multiple runs, Wework uses the latest result so a superseded cancelled or failed run does not override the current status. Select the status icon to open its action menu. Selecting outside the menu, pressing `Esc`, or choosing an action closes it. Choose **Open PR/MR** to open the request in your browser.
+
+The task list in the left sidebar, project-space board, and right-side environment panel reuse the same PR/MR monitoring snapshot, status priority, and icon for a task. Failed checks, merge conflicts, Merge Queue states, drafts, closed requests, and merged requests update consistently in all three places. The environment panel also stops showing an old PR/MR after the shared monitor confirms that the current branch has none.
 
 The lookup runs in the task's actual workspace on its execution device: GitHub uses `gh`, and GitLab uses `glab`. In a single-machine Wework setup, the local executor runs the command directly, so a separate cloud Git service connection is not required. Install and authenticate the corresponding CLI on that machine:
 
@@ -41,6 +51,14 @@ New conversations started in that local project inherit the selected project spa
 
 The default project space belongs to the local project's settings and is stored with that project's device-local state; the project space does not keep a reverse link. Use the composer's **+** menu to select, replace, or remove the project space for an individual conversation before sending.
 
+## Project-space files
+
+The **Files** tab in a project space shows shared files and delivery snapshots together. Shared files support upload, folder creation, rename or move, delete, and open; delivery snapshots come from completed tasks and remain read-only. Select the preview action next to any shared file, delivery snapshot, or local task attachment to open it in the reusable workspace file preview panel on the right. The original download or open action remains available.
+
+Local and remote project spaces share files differently. Local project spaces aggregate attachments sent by users and generated by AI during task conversations into the **Task attachments** area by default. Remote project spaces do not expose raw task attachments; files appear in the project-space Files tab only after a task is completed and explicitly delivered. Remote delivery does not include the entire conversation by default. Select the chat messages, conversation attachments, and local files or folders that should be included in the snapshot.
+
+When another member assigns you a board task in a cloud project space, a Wework desktop app that is connected to that cloud and allowed to send system notifications displays a system notification. Reassigning the same owner or assigning a task to yourself does not send another notification.
+
 ## Project space automation
 
 Project space boards include an **Automation** tab that manages robot members and the execution queue together.
@@ -57,6 +75,12 @@ The execution queue shows waiting and running tasks in columns:
 - **One column per robot**: tasks assigned to that robot.
 
 The queue can be filtered by execution state (pending approval, queued, claimed, running, failed) and searched by title; running tasks show a spinning status icon. Robots configured for manual approval put their tasks into the pending approval state until a member approves them.
+
+### Automatic PR repair
+
+Under **PR automatic repair** in the **Automation** tab, choose which abnormal states should continue the original task and ask AI to repair the change request. Supported triggers include failed checks, merge conflicts, Merge Queue failures, Merge Queue timeouts, and Merge Queue conflicts. An optional instruction can be appended for the AI. The configuration is stored with the project space and can be changed by members with project-management permission.
+
+Automatic repair reuses the PR/MR monitoring state shown on the board and in the task sidebar. A trigger continues the linked task conversation rather than creating a replacement task, and a closed PR or MR does not trigger repair. The task's execution device must be online, and its `gh` or `glab` CLI must be able to read the repository.
 
 ### Automation rules and AI management
 

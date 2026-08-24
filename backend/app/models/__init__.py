@@ -25,6 +25,8 @@ from app.models.delivery import (
     LoopItemCollaborator,
     ProjectAutomationRule,
     ProjectAutomationRun,
+    ProjectIncomingEvent,
+    ProjectIncomingHook,
 )
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
@@ -47,6 +49,11 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
 from app.models.skill_binary import SkillBinary
+from app.models.smart_app_marketplace import (
+    SmartApp,
+    SmartAppRelease,
+    SmartAppSubmission,
+)
 from app.models.subscription import BackgroundExecution
 from app.models.subscription_follow import (
     SubscriptionFollow,
@@ -80,6 +87,8 @@ __all__ = [
     "LoopItem",
     "LoopItemAttachment",
     "LoopItemCollaborator",
+    "ProjectIncomingEvent",
+    "ProjectIncomingHook",
     "ProjectAutomationRule",
     "ProjectAutomationRun",
     "Delivery",
@@ -106,6 +115,9 @@ __all__ = [
     "PluginUpstream",
     "PluginSubmission",
     "PluginDeviceInstallation",
+    "SmartApp",
+    "SmartAppRelease",
+    "SmartAppSubmission",
     "MarketplaceResource",
     "SubscriptionFollow",
     "SubscriptionShareNamespace",

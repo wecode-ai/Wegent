@@ -200,6 +200,30 @@ describe('MessageList Tauri virtualization', () => {
     )
   })
 
+  test('reconfigures the virtualizer when end anchoring is released', () => {
+    const messages = buildMessages(100, 'anchor-switch')
+    const props = {
+      messages,
+      scrollElementRef: { current: createScrollElement(200) },
+    }
+    const view = render(<MessageList {...props} virtualAnchorToEnd />)
+
+    expect(useVirtualizerMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        anchorTo: 'end',
+      })
+    )
+
+    useVirtualizerMock.mockClear()
+    view.rerender(<MessageList {...props} virtualAnchorToEnd={false} />)
+
+    expect(useVirtualizerMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        anchorTo: 'start',
+      })
+    )
+  })
+
   test('remeasures mounted rows after guidance changes the message sequence', () => {
     const messages = buildMessages(3, 'guidance-layout')
     const guidanceMessage = {

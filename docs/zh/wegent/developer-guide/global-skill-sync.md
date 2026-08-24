@@ -130,6 +130,8 @@ local executor 收到 `device:sync_capabilities` 后会：
 
 当前设备同步同时接受两种源格式，解压历史包时也会补齐缺少的运行时清单。Executor 将标准化插件保存到中心 store，为 Codex 与 Claude Code 分别创建真实缓存目录，并登记各自要求的 marketplace 元数据。仅由某个运行时支持的组件仍由该运行时使用，不会写入另一运行时的生成清单。
 
+Plugin 包只从 Wegent Backend 下发的 `download_path` 下载；下载完成后的安装、更新和 `replace` 删除完全由 Executor 操作本地中心 store、运行时缓存和配置文件，不调用 Codex app-server，也不访问 GitHub 或 OpenAI。更新和删除使用本地事务：旧包和旧缓存先保留为可回滚状态，注册表及 Claude / Codex 配置写入全部成功后才提交；失败时恢复同步前的包、缓存、配置和 manifest。该边界只适用于 Wegent 管理的 `wegent` / `wework` 云端插件，不改变用户本地市场、OpenAI 市场或 Connector 授权流程。
+
 中心 store 结构：
 
 ```text
@@ -215,7 +217,7 @@ manifest 记录 Wegent 管理的能力：
 }
 ```
 
-`replace` 模式只会清理 manifest 中标记为 Wegent managed 的运行入口。本地用户自己放在 `~/.claude/skills` 或 plugin cache 中的条目会保留。如果同名本地 Skill 已占用运行路径，executor 会返回冲突错误而不会覆盖用户内容。
+`replace` 模式只会清理 manifest 中标记为 Wegent managed 的运行入口、中心包和对应的 `wegent` / `wework` 配置。本地用户自己放在 `~/.claude/skills` 或 plugin cache 中的条目以及个人、OpenAI 市场配置会保留。如果同名本地 Skill 已占用运行路径，executor 会返回冲突错误而不会覆盖用户内容。
 
 ## Heartbeat
 

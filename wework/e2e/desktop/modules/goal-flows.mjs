@@ -46,11 +46,7 @@ import {
   withTimeout,
 } from './shared.mjs'
 
-import {
-  captureVerificationScreenshot,
-  waitForAttribute,
-  waitForWorkbenchDebugState,
-} from './workspace-flows.mjs'
+import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
 const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}:default:0`
 
@@ -611,16 +607,14 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     SUPERVISOR_MODEL_KEY,
     'The active supervisor did not retain its selected model'
   )
-  await waitForAttribute(
-    control,
-    '[data-testid="task-supervisor-run-now-button"]',
-    'disabled',
-    '',
-    'The immediate supervisor review did not become available'
-  )
-  await control.command('click', '[data-testid="task-supervisor-run-now-button"]')
   await withTimeout(
     control.awaitScenarioRequestCount('supervisor', 4),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The supervisor did not inspect the completed auto-correction'
+  )
+  await control.command('clickWhenEnabled', '[data-testid="task-supervisor-run-now-button"]')
+  await withTimeout(
+    control.awaitScenarioRequestCount('supervisor', 5),
     DEFAULT_STEP_TIMEOUT_MS,
     'The immediate supervisor review did not reach the evaluator'
   )

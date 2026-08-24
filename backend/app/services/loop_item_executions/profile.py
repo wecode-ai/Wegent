@@ -21,6 +21,38 @@ from app.models.delivery import CloudProject, ProjectChatAgent
 from app.models.user import User
 
 
+class WeworkExecutionProfileError(ValueError):
+    """One canonical runtime profile cannot be materialized."""
+
+
+def build_project_robot_user_input(
+    *,
+    project_id: str,
+    task_id: str,
+    execution_id: int,
+    execution_prompt: str,
+    stage_instruction: str = "",
+) -> str:
+    """Build the one visible user input shared by every robot runtime."""
+
+    task_url = f"cloud://projects/{project_id}/todos/{task_id}"
+    sections = [
+        (
+            f"project_id: {project_id}\n"
+            f"task_id: {task_id}\n"
+            f"execution_id: {execution_id}"
+        ),
+        f"看板任务数据位于 {task_url}，请通过看板工具自行查看。",
+    ]
+    normalized_prompt = execution_prompt.strip()
+    normalized_stage_instruction = stage_instruction.strip()
+    if normalized_stage_instruction:
+        sections.append(normalized_stage_instruction)
+    if normalized_prompt:
+        sections.append(normalized_prompt)
+    return "\n\n".join(sections)
+
+
 def validate_wework_execution_target(
     db: Session,
     *,
@@ -68,31 +100,34 @@ class WeworkExecutionProfile:
 
     owner_user_id: int
     display_name: str
-    system_prompt: str
+    execution_prompt: str
     instruction: str
     model: str = ""
     agent_id: str = ""
     local_project_id: int = 0
+    max_concurrent_executions: int = 1
     manager_mode: bool = False
 
     @classmethod
     def for_project_robot(
         cls,
         agent: ProjectChatAgent,
-        *,
-        instruction: str | None = None,
     ) -> "WeworkExecutionProfile":
-        from app.services.project_chat.service import bot_config
+        from app.services.project_chat.service import (
+            bot_config,
+            bot_max_concurrent_executions,
+        )
 
         config = bot_config(agent)
         return cls(
             owner_user_id=int(agent.created_by_user_id or 0),
             display_name=str(agent.title or agent.name or "AI"),
-            system_prompt=str(config.get("system_prompt") or ""),
-            instruction=instruction or "",
+            execution_prompt=str(config.get("execution_prompt") or ""),
+            instruction="",
             model=str(config.get("model") or ""),
             agent_id=agent.id,
             local_project_id=int(agent.local_project_id or 0),
+            max_concurrent_executions=bot_max_concurrent_executions(agent),
         )
 
     @classmethod
@@ -103,7 +138,6 @@ class WeworkExecutionProfile:
         display_name: str,
         instruction: str,
         model: str,
-        system_prompt: str = "",
         local_project_id: int = 0,
     ) -> "WeworkExecutionProfile":
         if not model:
@@ -111,41 +145,49 @@ class WeworkExecutionProfile:
         return cls(
             owner_user_id=owner_user_id,
             display_name=display_name or "AI 托管",
-            system_prompt=system_prompt,
+            execution_prompt="",
             instruction=instruction,
             model=model,
             local_project_id=local_project_id,
             manager_mode=True,
         )
 
-    def identity_prompt(self) -> str:
+    def user_input(
+        self,
+        *,
+        project_id: str,
+        task_id: str,
+        execution_id: int,
+        workflow_stage_input: dict[str, Any] | None = None,
+    ) -> str:
         if self.manager_mode:
-            base = (
-                f"你是 {self.display_name}，负责读取看板信息并通过工具将任务分配给"
-                "合适的项目成员或项目机器人。你不是任务执行者。"
-            )
-        else:
-            base = f"你是 {self.display_name}，这个项目任务的 AI 执行者。"
-        if self.system_prompt:
-            base = f"{base}\n{self.system_prompt}"
-        return base
+            return self.instruction.strip()
+        from app.services.workflow_stage_context import (
+            workflow_stage_task_instruction,
+        )
 
-    def runtime_prompt(self) -> str:
-        identity = self.identity_prompt()
-        return (
-            f"{identity}\n\n自动化规则指令：\n{self.instruction}"
-            if self.instruction
-            else identity
+        return build_project_robot_user_input(
+            project_id=project_id,
+            task_id=task_id,
+            execution_id=execution_id,
+            execution_prompt=self.execution_prompt,
+            stage_instruction=(
+                workflow_stage_task_instruction(workflow_stage_input)
+                if workflow_stage_input
+                else ""
+            ),
         )
 
     def build_runtime_payload(
         self,
         db: Session,
         *,
+        execution_id: int,
         runtime_task_id: str,
         task: Any,
         cloud_project_id: str,
         origin_context: dict[str, Any],
+        execution_device_id: str = "",
         materialize_execution_request: bool = True,
     ) -> dict[str, Any]:
         """Build a transient runtime request from canonical live configuration.
@@ -177,26 +219,72 @@ class WeworkExecutionProfile:
                 model_config.get("codex_catalog_model_id") or "wework-gpt-5.6-sol"
             )
 
-        prompt = self.runtime_prompt()
-        identity = self.identity_prompt()
+        task_id = str(getattr(task, "id", ""))
+        workflow_stage_input = origin_context.get("workflow_stage_input")
+        workspace_policy = ""
+        workspace_source_task: dict[str, str] | None = None
+        if isinstance(workflow_stage_input, dict):
+            target_stage = workflow_stage_input.get("target_stage")
+            if isinstance(target_stage, dict):
+                workspace_policy = str(
+                    target_stage.get("workspace_policy") or "composer"
+                )
+            if workspace_policy == "inherit":
+                dependencies = workflow_stage_input.get("dependencies")
+                for dependency in reversed(
+                    dependencies if isinstance(dependencies, list) else []
+                ):
+                    if not isinstance(dependency, dict):
+                        continue
+                    runtime_tasks = dependency.get("runtime_tasks")
+                    for source in reversed(
+                        runtime_tasks if isinstance(runtime_tasks, list) else []
+                    ):
+                        if not isinstance(source, dict):
+                            continue
+                        device_id = str(source.get("device_id") or "")
+                        source_task_id = str(source.get("task_id") or "")
+                        if (
+                            device_id
+                            and source_task_id
+                            and (
+                                not execution_device_id
+                                or device_id == execution_device_id
+                            )
+                        ):
+                            workspace_source_task = {
+                                "deviceId": device_id,
+                                "taskId": source_task_id,
+                            }
+                            break
+                    if workspace_source_task:
+                        break
+                if workspace_source_task is None:
+                    raise WeworkExecutionProfileError(
+                        "Inherited workflow workspace is unavailable on the "
+                        "selected execution device"
+                    )
+            elif workspace_policy == "composer" and self.local_project_id <= 0:
+                raise WeworkExecutionProfileError(
+                    "Workflow stage requires a configured robot code project"
+                )
+        has_stage_workspace = workspace_policy in {"composer", "inherit"}
+        prompt = self.user_input(
+            project_id=str(project.id),
+            task_id=task_id,
+            execution_id=execution_id,
+            workflow_stage_input=(
+                workflow_stage_input if isinstance(workflow_stage_input, dict) else None
+            ),
+        )
         title = str(getattr(task, "title", "") or "")
-        task_context = task.to_context() if hasattr(task, "to_context") else dict(task)
-        project_context = {
-            "id": str(project.id),
-            "key": project.project_key,
-            "name": project.title or project.name or "",
-            "description": project.description or "",
-            "task_provider": project.task_provider,
-        }
-        event_context = origin_context.get("event")
-        event_context = event_context if isinstance(event_context, dict) else {}
         team_id = int(getattr(team, "id", 0) or 0)
         team_name = str(getattr(team, "name", "") or "")
         team_namespace = str(getattr(team, "namespace", "default") or "default")
         subtask_id = f"{runtime_task_id}-assistant"
         bot_id: int | str = self.agent_id or 0
         origin = {
-            "type": "project_automation" if origin_context else "board_task",
+            "type": "project_automation" if self.manager_mode else "board_task",
             "cloudProjectId": str(project.id),
             "loopItemId": str(getattr(task, "id", "")),
             **origin_context,
@@ -208,7 +296,6 @@ class WeworkExecutionProfile:
                 "id": bot_id,
                 "name": self.display_name,
                 "shell_type": "Codex",
-                "system_prompt": identity,
             }
         ]
         execution_request = {
@@ -230,10 +317,10 @@ class WeworkExecutionProfile:
             "bot": bot,
             "bot_name": self.display_name,
             "bot_namespace": "wework",
-            "system_prompt": identity,
             "prompt": prompt,
             "model_config": model_config,
-            "standalone_chat_workspace": self.local_project_id <= 0,
+            "standalone_chat_workspace": not has_stage_workspace
+            and self.local_project_id <= 0,
             "enable_tools": True,
             "enable_web_search": False,
             "enable_deep_thinking": False,
@@ -255,34 +342,29 @@ class WeworkExecutionProfile:
             # context without manager authority.
             "origin": origin,
         }
-        context_value = lambda value: {
-            "kind": "application",
-            "value": json.dumps(value, ensure_ascii=False, default=str),
-        }
-        additional_context = {
-            "projectChatAgent": {
+        if (
+            self.local_project_id > 0 or workspace_source_task
+        ) and self.max_concurrent_executions > 1:
+            execution_request["workspace_source"] = "git_worktree"
+        if workspace_source_task:
+            execution_request["workspace_source_task"] = workspace_source_task
+        additional_context: dict[str, dict[str, str]] = {}
+        if isinstance(workflow_stage_input, dict):
+            additional_context["workflowStageInput"] = {
                 "kind": "application",
-                "value": identity,
-            },
-        }
-        if not self.manager_mode:
-            additional_context.update(
-                {
-                    "project": context_value(project_context),
-                    "task": context_value(task_context),
-                    "event": context_value(event_context),
-                    "projectChat": {
-                        "kind": "application",
-                        "value": (
-                            f"This run is bound to task cloud://projects/{project.id}/todos/"
-                            f"{getattr(task, 'id', '')}. The project, current task context, "
-                            "and trigger event are provided in separate application contexts. "
-                            "Use that context to perform the requested work. Your final response "
-                            "is a reviewable task comment."
+                "value": "\n".join(
+                    [
+                        "<workflow_stage_input>",
+                        json.dumps(workflow_stage_input, ensure_ascii=False),
+                        "</workflow_stage_input>",
+                        (
+                            "This immutable snapshot is the input for the current "
+                            "workflow stage. Fulfill every required deliverable by "
+                            "its requirement ID before completing the task."
                         ),
-                    },
-                }
-            )
+                    ]
+                ),
+            }
 
         payload = {
             "taskId": runtime_task_id,
@@ -299,9 +381,16 @@ class WeworkExecutionProfile:
                 else {}
             ),
             "origin": origin,
-            "standaloneChatWorkspace": self.local_project_id <= 0,
+            "standaloneChatWorkspace": not has_stage_workspace
+            and self.local_project_id <= 0,
             "additionalContext": additional_context,
         }
+        if workspace_source_task:
+            payload["workspaceSourceTask"] = workspace_source_task
+        if (
+            self.local_project_id > 0 or workspace_source_task
+        ) and self.max_concurrent_executions > 1:
+            payload["execution"] = {"workspace": {"source": "git_worktree"}}
         if materialize_execution_request:
             payload["executionRequest"] = execution_request
         return payload

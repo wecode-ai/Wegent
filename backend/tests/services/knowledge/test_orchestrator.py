@@ -321,6 +321,166 @@ class TestKnowledgeOrchestrator:
         mock_get_retriever.assert_called_once_with(mock_db, mock_user.id, "default")
         mock_get_embedding.assert_called_once_with(mock_db, mock_user.id, "default")
 
+    def test_resolve_retrieval_config_uses_the_healthy_system_profile(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        profile = {
+            "retriever_name": "shared-retriever",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "shared-embedding",
+                "model_namespace": "default",
+            },
+            "retrieval_mode": "hybrid",
+            "top_k": 8,
+            "score_threshold": 0.3,
+            "hybrid_weights": {"vector_weight": 0.6, "keyword_weight": 0.4},
+        }
+
+        with (
+            patch(
+                "app.services.knowledge.orchestrator.get_profile",
+                return_value=(profile, 1, {"status": "valid", "fallback_reason": None}),
+            ),
+            patch.object(orchestrator, "get_default_retriever") as mock_get_retriever,
+            patch.object(
+                orchestrator, "get_default_embedding_model"
+            ) as mock_get_embedding,
+        ):
+            result = orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="default",
+                retrieval_config=None,
+            )
+
+        assert result == profile
+        mock_get_retriever.assert_not_called()
+        mock_get_embedding.assert_not_called()
+
+    def test_resolve_retrieval_config_gives_explicit_values_priority_over_profile(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        profile = {
+            "retriever_name": "shared-retriever",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "shared-embedding",
+                "model_namespace": "default",
+            },
+            "retrieval_mode": "hybrid",
+            "top_k": 8,
+            "score_threshold": 0.3,
+        }
+
+        with patch(
+            "app.services.knowledge.orchestrator.get_profile",
+            return_value=(profile, 1, {"status": "valid", "fallback_reason": None}),
+        ):
+            result = orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="default",
+                retrieval_config={
+                    "retriever_name": "requested-retriever",
+                    "embedding_config": {"model_name": "requested-embedding"},
+                    "retrieval_mode": "vector",
+                    "top_k": 3,
+                },
+            )
+
+        assert result == {
+            "retriever_name": "requested-retriever",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "requested-embedding",
+                "model_namespace": "default",
+            },
+            "retrieval_mode": "vector",
+            "top_k": 3,
+            "score_threshold": 0.3,
+        }
+
+    def test_resolve_retrieval_config_uses_explicit_resource_arguments_before_profile(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        profile = {
+            "retriever_name": "shared-retriever",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "shared-embedding",
+                "model_namespace": "default",
+            },
+        }
+
+        with patch(
+            "app.services.knowledge.orchestrator.get_profile",
+            return_value=(profile, 1, {"status": "valid", "fallback_reason": None}),
+        ):
+            result = orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="default",
+                retrieval_config=None,
+                retriever_name="requested-retriever",
+                embedding_model_name="requested-embedding",
+            )
+
+        assert result is not None
+        assert result["retriever_name"] == "requested-retriever"
+        assert result["embedding_config"] == {
+            "model_name": "requested-embedding",
+            "model_namespace": "default",
+        }
+
+    def test_resolve_retrieval_config_falls_back_when_profile_is_invalid(
+        self, orchestrator, mock_db, mock_user
+    ) -> None:
+        with (
+            patch(
+                "app.services.knowledge.orchestrator.get_profile",
+                return_value=(
+                    {"retriever_name": "inactive"},
+                    1,
+                    {"status": "invalid", "fallback_reason": "retriever_unavailable"},
+                ),
+            ),
+            patch.object(
+                orchestrator,
+                "get_default_retriever",
+                return_value={
+                    "retriever_name": "automatic-retriever",
+                    "retriever_namespace": "default",
+                },
+            ),
+            patch.object(
+                orchestrator,
+                "get_default_embedding_model",
+                return_value={
+                    "model_name": "automatic-embedding",
+                    "model_namespace": "default",
+                },
+            ),
+        ):
+            result = orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="default",
+                retrieval_config=None,
+            )
+
+        assert result == {
+            "retriever_name": "automatic-retriever",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "automatic-embedding",
+                "model_namespace": "default",
+            },
+            "retrieval_mode": "vector",
+            "top_k": 5,
+            "score_threshold": 0.5,
+        }
+
     def test_resolve_retrieval_config_returns_none_when_defaults_unavailable(
         self, orchestrator, mock_db, mock_user
     ):

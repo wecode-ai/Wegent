@@ -1,13 +1,17 @@
 import { useContext, useEffect, useState } from 'react'
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
   Bell,
   Check,
   CircleDot,
   Gauge,
   Loader2,
   Pencil,
+  Pin,
   Trash2,
+  X,
   type LucideIcon,
 } from 'lucide-react'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
@@ -28,13 +32,14 @@ import {
   type AppLanguagePreference,
   type AppPreferences,
   type AppPreferencesPatch,
-  type DefaultWorkspaceTab,
+  type FixedWorkspaceTabPreference,
 } from '@/tauri/appPreferences'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
+import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -54,7 +59,19 @@ const GENERAL_ROW_LABEL_CLASS_NAME = 'font-normal'
 const FRIENDLY_TITLE_TASK_MODEL_VALUE = 'task-model'
 const DEFAULT_MAX_CONCURRENT_TASKS = 10
 const MAX_CONCURRENT_TASKS_LIMIT = 20
-const DEFAULT_WORKSPACE_TAB_OPTIONS: DefaultWorkspaceTab[] = ['task', 'board', 'agent']
+const BUILT_IN_FIXED_TAB_OPTIONS = ['task', 'board', 'agent'] as const
+
+function moveFixedTab(
+  tabs: FixedWorkspaceTabPreference[],
+  sourceIndex: number,
+  targetIndex: number
+): FixedWorkspaceTabPreference[] {
+  const next = [...tabs]
+  const source = next[sourceIndex]
+  next[sourceIndex] = next[targetIndex]
+  next[targetIndex] = source
+  return next
+}
 
 interface TrayDisplayOption {
   preferenceKey: BooleanPreferenceKey
@@ -77,6 +94,7 @@ export function GeneralSettingsPage() {
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [recordingPopoutShortcut, setRecordingPopoutShortcut] = useState(false)
   const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(DEFAULT_MAX_CONCURRENT_TASKS)
+  const [installedSmartApps, setInstalledSmartApps] = useState<HarnessAppInstallation[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -112,6 +130,16 @@ export function GeneralSettingsPage() {
       cancelled = true
     }
   }, [runtimeWorkApi, t])
+
+  useEffect(() => {
+    if (!preferences.experimentalFeaturesEnabled) return
+    void harnessAppsApi
+      .list()
+      .then(setInstalledSmartApps)
+      .catch(error => {
+        console.warn('[Wework] Failed to load installed Smart apps for fixed tabs', error)
+      })
+  }, [preferences.experimentalFeaturesEnabled])
 
   useEffect(() => {
     if (!cloudConnection.isConnected) return
@@ -276,21 +304,32 @@ export function GeneralSettingsPage() {
     }
   }
 
-  const handleDefaultWorkspaceTabChange = async (defaultWorkspaceTab: DefaultWorkspaceTab) => {
-    if (defaultWorkspaceTab === preferences.defaultWorkspaceTab) return
-
-    const previousDefaultWorkspaceTab = preferences.defaultWorkspaceTab
-    setPreferences(current => ({ ...current, defaultWorkspaceTab }))
+  const saveFixedWorkspaceTabs = async (
+    fixedWorkspaceTabs: FixedWorkspaceTabPreference[],
+    startupWorkspaceTabId = preferences.startupWorkspaceTabId ??
+      defaultAppPreferences.startupWorkspaceTabId
+  ) => {
+    const nextStartupId = fixedWorkspaceTabs.some(tab => tab.id === startupWorkspaceTabId)
+      ? startupWorkspaceTabId
+      : (fixedWorkspaceTabs[0]?.id ?? '')
+    const previousPreferences = preferences
+    setPreferences(current => ({
+      ...current,
+      fixedWorkspaceTabs,
+      startupWorkspaceTabId: nextStartupId,
+    }))
     setSaving(true)
     setError(null)
     try {
-      setPreferences(await updateAppPreferences({ defaultWorkspaceTab }))
+      setPreferences(
+        await updateAppPreferences({
+          fixedWorkspaceTabs,
+          startupWorkspaceTabId: nextStartupId,
+        })
+      )
     } catch (saveError) {
-      console.error('[Wework] Failed to update default workspace tab', saveError)
-      setPreferences(current => ({
-        ...current,
-        defaultWorkspaceTab: previousDefaultWorkspaceTab,
-      }))
+      console.error('[Wework] Failed to update fixed workspace tabs', saveError)
+      setPreferences(previousPreferences)
       setError(t('workbench.general_settings_save_failed'))
     } finally {
       setSaving(false)
@@ -347,6 +386,14 @@ export function GeneralSettingsPage() {
         maxConcurrentTasks: value,
       })
       setMaxConcurrentTasks(settings?.maxConcurrentTasks ?? value)
+      try {
+        await workbench?.refreshWorkLists()
+      } catch (refreshError) {
+        console.warn(
+          '[Wework] Failed to refresh runtime tasks after updating concurrency settings',
+          refreshError
+        )
+      }
     } catch (saveError) {
       console.error('[Wework] Failed to update runtime concurrency settings', saveError)
       setMaxConcurrentTasks(previousValue)
@@ -357,6 +404,10 @@ export function GeneralSettingsPage() {
   }
 
   const friendlyTitleModel = preferences.friendlyTaskTitleModel
+  const fixedWorkspaceTabs =
+    preferences.fixedWorkspaceTabs ?? defaultAppPreferences.fixedWorkspaceTabs
+  const startupWorkspaceTabId =
+    preferences.startupWorkspaceTabId ?? defaultAppPreferences.startupWorkspaceTabId
   const friendlyTitleModels = workbench?.projectChat?.models ?? []
   const friendlyTitleModelKey = friendlyTitleModel
     ? `${friendlyTitleModel.modelType ?? ''}:${friendlyTitleModel.modelName}`
@@ -407,35 +458,140 @@ export function GeneralSettingsPage() {
             }
           />
           <SettingsRow
-            label={t('workbench.general_settings_default_workspace_tab')}
-            description={t('workbench.general_settings_default_workspace_tab_description')}
+            label={t('workbench.general_settings_fixed_workspace_tabs', '固定标签页')}
+            description={t(
+              'workbench.general_settings_fixed_workspace_tabs_description',
+              '每次启动时按顺序打开；通过加号创建的普通标签页不会在重启后恢复。'
+            )}
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
             control={
-              <div className="grid h-8 w-full shrink-0 grid-cols-3 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
-                {DEFAULT_WORKSPACE_TAB_OPTIONS.map(tabKind => {
-                  const active = preferences.defaultWorkspaceTab === tabKind
+              <div className="w-full space-y-2 md:w-[360px]" data-testid="general-fixed-tabs">
+                {fixedWorkspaceTabs.map((tab, index) => {
+                  const label =
+                    tab.kind === 'smart_app'
+                      ? (tab.title ?? t('workbench.smart_apps_title', '智能工作台'))
+                      : t(`workbench.general_settings_default_workspace_tab_${tab.kind}`)
                   return (
-                    <button
-                      key={tabKind}
-                      type="button"
-                      data-testid={`general-default-workspace-tab-${tabKind}-button`}
-                      disabled={loading || saving}
-                      aria-pressed={active}
-                      onClick={() => void handleDefaultWorkspaceTabChange(tabKind)}
-                      className={[
-                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-                        active
-                          ? 'bg-text-primary text-background shadow-sm'
-                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
-                      ].join(' ')}
+                    <div
+                      key={tab.id}
+                      data-testid={`general-fixed-tab-${tab.id}`}
+                      className="flex min-h-11 items-center gap-1 rounded-lg border border-border bg-background px-2 md:h-9 md:min-h-0"
                     >
-                      <span className="truncate">
-                        {t(`workbench.general_settings_default_workspace_tab_${tabKind}`)}
-                      </span>
-                    </button>
+                      <button
+                        type="button"
+                        data-testid={`general-fixed-tab-startup-${tab.id}`}
+                        disabled={loading || saving}
+                        aria-pressed={startupWorkspaceTabId === tab.id}
+                        onClick={() => void saveFixedWorkspaceTabs(fixedWorkspaceTabs, tab.id)}
+                        className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted md:h-6 md:w-6"
+                        title={t(
+                          'workbench.general_settings_startup_workspace_tab',
+                          '设为启动标签页'
+                        )}
+                      >
+                        <Pin
+                          className={
+                            startupWorkspaceTabId === tab.id
+                              ? 'h-3.5 w-3.5 fill-current'
+                              : 'h-3.5 w-3.5'
+                          }
+                        />
+                      </button>
+                      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+                      <button
+                        type="button"
+                        data-testid={`general-fixed-tab-up-${tab.id}`}
+                        disabled={loading || saving || index === 0}
+                        onClick={() => {
+                          void saveFixedWorkspaceTabs(
+                            moveFixedTab(fixedWorkspaceTabs, index, index - 1)
+                          )
+                        }}
+                        className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted disabled:opacity-30 md:h-6 md:w-6"
+                        aria-label={t('workbench.move_up', '上移')}
+                      >
+                        <ArrowUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`general-fixed-tab-down-${tab.id}`}
+                        disabled={loading || saving || index === fixedWorkspaceTabs.length - 1}
+                        onClick={() => {
+                          void saveFixedWorkspaceTabs(
+                            moveFixedTab(fixedWorkspaceTabs, index, index + 1)
+                          )
+                        }}
+                        className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted disabled:opacity-30 md:h-6 md:w-6"
+                        aria-label={t('workbench.move_down', '下移')}
+                      >
+                        <ArrowDown className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`general-fixed-tab-remove-${tab.id}`}
+                        disabled={loading || saving || fixedWorkspaceTabs.length === 1}
+                        onClick={() =>
+                          void saveFixedWorkspaceTabs(
+                            fixedWorkspaceTabs.filter(item => item.id !== tab.id)
+                          )
+                        }
+                        className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted disabled:opacity-30 md:h-6 md:w-6"
+                        aria-label={t('workbench.remove', '移除')}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   )
                 })}
+                <select
+                  data-testid="general-fixed-tab-add"
+                  disabled={loading || saving}
+                  value=""
+                  onChange={event => {
+                    const value = event.target.value
+                    if (!value) return
+                    const builtIn = BUILT_IN_FIXED_TAB_OPTIONS.find(kind => kind === value)
+                    const smartApp = installedSmartApps.find(app => `smart_app:${app.id}` === value)
+                    const nextTab: FixedWorkspaceTabPreference | null = builtIn
+                      ? { id: `fixed-${builtIn}`, kind: builtIn }
+                      : smartApp
+                        ? {
+                            id: `fixed-smart-app-${smartApp.id}`,
+                            kind: 'smart_app',
+                            installationId: smartApp.id,
+                            title: smartApp.manifest.displayName,
+                          }
+                        : null
+                    if (nextTab) {
+                      void saveFixedWorkspaceTabs([...fixedWorkspaceTabs, nextTab])
+                    }
+                  }}
+                  className="h-11 w-full rounded-lg border border-dashed border-border bg-background px-2 text-sm text-text-secondary md:h-9"
+                >
+                  <option value="">
+                    {t('workbench.general_settings_add_fixed_workspace_tab', '+ 添加固定标签页')}
+                  </option>
+                  {BUILT_IN_FIXED_TAB_OPTIONS.filter(
+                    kind => !fixedWorkspaceTabs.some(tab => tab.kind === kind)
+                  ).map(kind => (
+                    <option key={kind} value={kind}>
+                      {t(`workbench.general_settings_default_workspace_tab_${kind}`)}
+                    </option>
+                  ))}
+                  {(preferences.experimentalFeaturesEnabled ? installedSmartApps : [])
+                    .filter(
+                      app =>
+                        !fixedWorkspaceTabs.some(
+                          tab => tab.kind === 'smart_app' && tab.installationId === app.id
+                        )
+                    )
+                    .map(app => (
+                      <option key={app.id} value={`smart_app:${app.id}`}>
+                        {app.manifest.displayName}
+                      </option>
+                    ))}
+                </select>
               </div>
             }
           />

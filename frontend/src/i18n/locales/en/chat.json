@@ -60,6 +60,11 @@
     "playVideoSegment": "Play video segment",
     "pauseVideoSegment": "Pause video segment",
     "invalidVideoSegmentRange": "This segment is outside the actual video duration.",
+    "videoChapters": "Video chapters",
+    "videoChaptersProgress": "Video chapters progress",
+    "videoChaptersCount_one": "{{count}} chapter",
+    "videoChaptersCount_other": "{{count}} chapters",
+    "videoChaptersTruncated": "Showing the first chapters; some were omitted.",
     "footerCited": "Cited {{documents}} documents from {{sources}} knowledge sources",
     "footerNoHit": "{{count}} knowledge sources had no hits",
     "footerSkipped": "Skipped {{count}} unavailable sources",
@@ -743,6 +748,7 @@
     "no_models": "No video models available",
     "ratio_section": "Aspect ratio",
     "duration_section": "Duration",
+    "duration_auto": "Auto",
     "resolution_section": "Resolution"
   },
   "asyncCards": {

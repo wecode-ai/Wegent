@@ -29,16 +29,15 @@ import app.stores.tasks as task_stores
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.kind import Kind
-from app.schemas.device import (
-    MAX_DEVICE_SLOTS,
-    DeviceConnectionMode,
-    DeviceType,
-)
+from app.schemas.device import DeviceConnectionMode, DeviceType
 from app.services.device.base_provider import BaseDeviceProvider
 from app.services.device.version_service import executor_version_service
 from wecode.config.nevis_config import nevis_settings
 from wecode.service.cloud_device_git_tokens import build_git_token_envs
-from wecode.service.cloud_device_script import generate_simple_startup_script
+from wecode.service.cloud_device_script import (
+    build_cloud_device_runtime_envs,
+    generate_simple_startup_script,
+)
 from wecode.service.nevis_client import NevisClient, NevisClientError, nevis_client
 from wecode.service.wecode_apikey_client import get_or_create_apikey_async
 
@@ -48,6 +47,8 @@ logger = logging.getLogger(__name__)
 DEVICE_ONLINE_KEY_PREFIX = "device:online:"
 DEVICE_ONLINE_TTL = 90  # seconds
 UBUNTU_PASSWORD_TOKEN_BYTES = 24
+# The wecode cloud-device UI has always treated zero as unbounded capacity.
+WECODE_CLOUD_DEVICE_SLOT_MAX = 0
 
 
 class CloudDeviceProvider(BaseDeviceProvider):
@@ -181,7 +182,10 @@ class CloudDeviceProvider(BaseDeviceProvider):
                 )
 
         # Generate startup script with server-generated device info
-        git_token_envs = build_git_token_envs(git_tokens)
+        sandbox_envs = {
+            **build_git_token_envs(git_tokens),
+            **build_cloud_device_runtime_envs(server_device_id),
+        }
         user_data = generate_simple_startup_script(
             user_name=user_name,
             backend_url=backend_url,
@@ -206,7 +210,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
         )
         result = await self._client.create_sandbox(
             user_data=user_data,
-            envs=git_token_envs,
+            envs=sandbox_envs,
         )
 
         # Extract sandbox ID from response
@@ -884,7 +888,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
 
         return {
             "used": len(running_task_ids),
-            "max": MAX_DEVICE_SLOTS,
+            "max": WECODE_CLOUD_DEVICE_SLOT_MAX,
             "running_tasks": running_tasks,
         }
 

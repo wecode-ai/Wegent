@@ -14,6 +14,7 @@ import {
 import {
   findWorkbenchDevice,
   getWorkbenchDeviceUnavailableDisplayName,
+  isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo } from '@/types/api'
@@ -500,7 +501,7 @@ export function DeviceStatusPrompt({
   if (
     requiresOnlineCompatibleDevice &&
     compatibleDevices.length > 0 &&
-    !compatibleDevices.some(device => device.status === 'online')
+    !compatibleDevices.some(isWorkbenchDeviceOnline)
   ) {
     if (presentation === 'sidebar-action') return null
 

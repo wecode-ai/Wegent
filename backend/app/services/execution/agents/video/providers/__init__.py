@@ -39,6 +39,8 @@ def get_video_provider(
         )
         if resolved_model:
             video_config["model"] = resolved_model
+        if model_config.get("generation_mode_id"):
+            video_config["generation_mode_id"] = model_config["generation_mode_id"]
         return SeedanceProvider(
             base_url=model_config.get("base_url"),
             api_key=model_config.get("api_key"),

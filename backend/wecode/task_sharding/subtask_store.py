@@ -1613,6 +1613,20 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
             lambda query, model: query.filter(model.status == SubtaskStatus.RUNNING),
         )
 
+    def list_running_since(
+        self,
+        db: Session,
+        *,
+        created_after: datetime,
+    ) -> list[Subtask]:
+        return self._scan_subtask_tables(
+            db,
+            lambda query, model: query.filter(
+                model.status == SubtaskStatus.RUNNING,
+                model.created_at >= created_after,
+            ),
+        )
+
     def list_session_task_ids(self, db: Session, *, skip: int, limit: int) -> list[int]:
         max_subtask_id_by_task: dict[int, int] = {}
         for task_id_value, max_subtask_id in self._scan_subtask_tables(

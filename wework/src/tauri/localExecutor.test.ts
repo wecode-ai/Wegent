@@ -256,6 +256,92 @@ describe('localExecutor', () => {
     })
   })
 
+  test('installs missing bundled defaults without re-enabling configured plugins', async () => {
+    const path = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal'
+    invokeMock.mockImplementation(command => {
+      if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
+        return Promise.resolve({
+          id: 'wework-personal',
+          path,
+          pluginCount: 2,
+          defaultPluginNames: ['smart-app-builder', 'wework-space'],
+        })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.ensure) {
+        return Promise.resolve({
+          running: true,
+          ready: true,
+          deviceId: 'local-device',
+          runtimeInstanceId: 'runtime-defaults',
+        })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.request) {
+        const request = invokeMock.mock.calls.at(-1)?.[1] as
+          | { params?: { method?: string; params?: { pluginName?: string } } }
+          | undefined
+        if (request?.params?.method === 'marketplace/add') {
+          return Promise.resolve({ marketplaceName: 'wework-personal' })
+        }
+        if (request?.params?.method === 'config/read') {
+          return Promise.resolve({
+            config: {
+              plugins: {
+                'wework-space@wework-personal': { enabled: false },
+              },
+            },
+          })
+        }
+        if (request?.params?.method === 'plugin/install') {
+          return Promise.resolve({})
+        }
+      }
+      return Promise.reject(new Error(`Unexpected command: ${String(command)}`))
+    })
+
+    await ensureLocalExecutorStarted()
+    await ensureBundledPluginMarketplaceRegistered()
+
+    expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, {
+      method: 'codex.app_server_request',
+      params: {
+        method: 'plugin/install',
+        params: {
+          marketplacePath: `${path}/.agents/plugins/marketplace.json`,
+          remoteMarketplaceName: null,
+          pluginName: 'smart-app-builder',
+        },
+      },
+    })
+    expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, {
+      method: 'codex.app_server_request',
+      params: {
+        method: 'config/read',
+        params: {
+          includeLayers: false,
+          cwd: null,
+        },
+      },
+    })
+    expect(invokeMock).not.toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, {
+      method: 'codex.app_server_request',
+      params: {
+        method: 'plugin/install',
+        params: {
+          marketplacePath: `${path}/.agents/plugins/marketplace.json`,
+          remoteMarketplaceName: null,
+          pluginName: 'wework-space',
+        },
+      },
+    })
+    expect(invokeMock).not.toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, {
+      method: 'codex.app_server_request',
+      params: {
+        method: 'plugin/installed',
+        params: expect.anything(),
+      },
+    })
+  })
+
   test('defers bundled marketplace registration until it is explicitly requested', async () => {
     const path = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal-deferred'
     let shouldPromptMigration = true

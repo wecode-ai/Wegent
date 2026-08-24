@@ -183,23 +183,25 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('project-chat-composer-form')).toHaveClass(
-      'min-h-[76px]',
-      'pb-1.5',
-      'pt-2',
-      'bg-background'
-    )
-    expect(screen.getByTestId('project-chat-composer-form')).not.toHaveClass('bg-surface')
+    const form = screen.getByTestId('project-chat-composer-form')
+    const input = screen.getByTestId('chat-message-input')
+
+    expect(form).toHaveClass('min-h-[76px]', 'pb-1.5', 'pt-2', 'bg-background')
+    expect(form).not.toHaveClass('bg-surface')
+    expect(form).toHaveAttribute('data-short-collapse', 'true')
+    expect(form).toHaveAttribute('data-short-expanded', 'false')
     expect(screen.getByTestId('project-chat-composer')).toHaveClass(
       'shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
     )
-    expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
-    expect(screen.getByTestId('chat-message-input')).toHaveClass(
-      'min-h-[48px]',
-      'max-h-[112px]',
-      'pt-1',
-      'placeholder:text-text-muted/55'
-    )
+    expect(input).toHaveAttribute('rows', '2')
+    expect(input).toHaveClass('min-h-12', 'max-h-[112px]', 'pt-1', 'placeholder:text-text-muted/55')
+    fireEvent.click(input)
+    expect(form).toHaveAttribute('data-short-expanded', 'true')
+    fireEvent.pointerDown(document.body)
+    fireEvent.blur(input, { relatedTarget: document.body })
+    expect(form).toHaveAttribute('data-short-expanded', 'true')
+    fireEvent.click(document.body)
+    expect(form).toHaveAttribute('data-short-expanded', 'false')
     expect(screen.queryByTestId('custom-mode-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
@@ -355,6 +357,42 @@ describe('ChatInput', () => {
     const trailingText = paragraphs.item(paragraphs.length - 1).lastChild
     expect(window.getSelection()?.anchorNode).toBe(trailingText)
     expect(window.getSelection()?.anchorOffset).toBe(trailingText?.textContent?.length)
+  })
+
+  test('uses quick phrases from the current local project', async () => {
+    const scopedRuntimeWork = runtimeWork([{ id: 7, name: 'Wegent' }])
+    scopedRuntimeWork.projects[0].project.source = 'local_project'
+    scopedRuntimeWork.projects[0].project.aiSettings = {
+      quickPhrases: [
+        {
+          id: 'project-review',
+          title: '检查项目约束',
+          content: '先阅读项目约束',
+          mode: 'normal',
+        },
+      ],
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: 7,
+          runtimeWork: scopedRuntimeWork,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('quick-phrase-button'))
+
+    expect(screen.getByTestId('project-quick-phrase-option-project-review')).toHaveTextContent(
+      '检查项目约束'
+    )
   })
 
   test('opens plugin picker from its toolbar button without a separate slash action', async () => {
@@ -1080,6 +1118,7 @@ describe('ChatInput', () => {
       'rounded-[26px]'
     )
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
+    expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '1')
     expect(screen.getByTestId('chat-message-input')).toHaveClass(
       'py-[14px]',
       'scrollbar-none',
@@ -3083,17 +3122,66 @@ describe('ChatInput', () => {
     )
 
     const bar = screen.getByTestId('goal-status-bar')
-    expect(bar).toHaveTextContent('进行中的目标')
+    const details = screen.getByTestId('goal-status-details')
+    const pauseButton = screen.getByTestId('pause-goal-button')
+    expect(bar).not.toHaveTextContent('进行中')
     expect(bar).toHaveTextContent('实现 plan 里的功能')
     expect(bar).toHaveTextContent('2m 58s')
+    expect(pauseButton).toHaveAccessibleName('暂停目标')
+    expect(details).not.toContainElement(pauseButton)
+    expect(details).toContainElement(screen.getByTestId('edit-goal-button'))
+    expect(details).toContainElement(screen.getByTestId('clear-goal-button'))
+    expect(details.compareDocumentPosition(pauseButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(screen.getByTestId('goal-running-icon')).toHaveClass('opacity-100')
+    expect(screen.getByTestId('goal-pause-icon')).toHaveClass('absolute', 'inset-0', 'opacity-0')
+
+    fireEvent.mouseEnter(bar)
+    expect(screen.getByTestId('goal-running-icon')).toHaveClass('opacity-0')
+    expect(screen.getByTestId('goal-pause-icon')).toHaveClass('opacity-100')
 
     await userEvent.click(screen.getByTestId('edit-goal-button'))
-    await userEvent.click(screen.getByTestId('pause-goal-button'))
+    await userEvent.click(pauseButton)
     await userEvent.click(screen.getByTestId('clear-goal-button'))
 
     expect(onEditGoal).toHaveBeenCalledTimes(1)
     expect(onPauseGoal).toHaveBeenCalledTimes(1)
     expect(onClearGoal).toHaveBeenCalledTimes(1)
+  })
+
+  test('places work-item context and goal in one rail above the composer', () => {
+    const goal: RuntimeGoal = {
+      threadId: 'thread-1',
+      objective: '完成工作项验收',
+      status: 'active',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 12,
+      createdAt: 1780000000000,
+      updatedAt: 1780000000000,
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        contextHeader={<div data-testid="work-item-context-summary">WORK-1 · 下一步：验收</div>}
+        goal={goal}
+      />
+    )
+
+    const rail = screen.getByTestId('composer-context-rail')
+    const composer = screen.getByTestId('project-chat-composer-form')
+    expect(rail).toContainElement(screen.getByTestId('work-item-context-summary'))
+    expect(rail).toContainElement(screen.getByTestId('goal-status-bar'))
+    expect(
+      screen
+        .getByTestId('goal-status-bar')
+        .compareDocumentPosition(screen.getByTestId('work-item-context-summary'))
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(rail.compareDocumentPosition(composer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   test('renders a newly created active goal with a zero-second timer', () => {
@@ -3145,8 +3233,45 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('目标继续执行中')
+    expect(screen.getByTestId('goal-status-bar')).not.toHaveTextContent('继续执行中')
     expect(screen.getByTestId('pause-goal-button')).toBeInTheDocument()
+  })
+
+  test('replaces the paused status text with an always-visible start action', async () => {
+    const onResumeGoal = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        goal={{
+          threadId: 'thread-1',
+          objective: '继续完成目标',
+          status: 'paused',
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 12,
+          createdAt: 1780000000000,
+          updatedAt: 1780000000000,
+        }}
+        onResumeGoal={onResumeGoal}
+      />
+    )
+
+    const bar = screen.getByTestId('goal-status-bar')
+    const details = screen.getByTestId('goal-status-details')
+    const startButton = screen.getByTestId('resume-goal-button')
+    expect(bar).not.toHaveTextContent('已暂停')
+    expect(startButton).toHaveAccessibleName('开始目标')
+    expect(details).not.toContainElement(startButton)
+    expect(screen.queryByTestId('goal-running-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('goal-pause-icon')).not.toBeInTheDocument()
+
+    await userEvent.click(startButton)
+    expect(onResumeGoal).toHaveBeenCalledOnce()
   })
 
   test('offers the resume action for a blocked goal', async () => {
@@ -3612,7 +3737,7 @@ describe('ChatInput', () => {
     expect(removeButtons).toHaveLength(2)
     removeButtons.forEach(button => {
       expect(button).toHaveClass('absolute', '-right-1.5', '-top-1.5')
-      expect(button).toHaveClass('rounded-full', 'bg-text-primary', 'text-white')
+      expect(button).toHaveClass('rounded-full', 'bg-text-primary', 'text-background')
     })
   })
 
@@ -4139,6 +4264,12 @@ describe('ChatInput', () => {
           isGitProject: true,
           executionMode: 'git_worktree',
           executionModeLocked: false,
+          worktreeAvailability: {
+            available: true,
+            reason: 'available',
+            deviceId: 'device-1',
+            sourcePath: '/workspace/wegent',
+          },
           onExecutionModeChange: vi.fn(),
           branchName: 'main',
           branchLoading: false,

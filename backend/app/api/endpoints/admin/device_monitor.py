@@ -25,7 +25,10 @@ from app.services.device.admin_device_batch import (
     admin_device_batch_manager,
 )
 from app.services.device.admin_device_restart import restart_admin_device
-from app.services.device.local_provider import local_device_provider
+from app.services.device.local_provider import (
+    local_device_provider,
+    runtime_capacity_slot_values,
+)
 from app.services.device_service import DeviceService as device_service
 
 logger = logging.getLogger(__name__)
@@ -276,12 +279,12 @@ def _build_device_info(
     if online_info:
         status_val = online_info.get("status", DeviceStatusEnum.ONLINE.value)
         executor_version = online_info.get("executor_version")
-        running_task_ids = online_info.get("running_task_ids", [])
-        slot_used = len(running_task_ids)
+        slot_used, slot_max = runtime_capacity_slot_values(online_info)
     else:
         status_val = DeviceStatusEnum.OFFLINE.value
         executor_version = None
         slot_used = 0
+        slot_max = 0
 
     # Format created_at as ISO string
     created_at_str = None
@@ -300,7 +303,7 @@ def _build_device_info(
         client_ip=spec.get("clientIp"),
         executor_version=executor_version,
         slot_used=slot_used,
-        slot_max=5,  # MAX_DEVICE_SLOTS default
+        slot_max=slot_max,
         created_at=created_at_str,
     )
 

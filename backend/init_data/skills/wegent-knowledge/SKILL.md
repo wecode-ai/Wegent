@@ -1,7 +1,7 @@
 ---
 description: "Knowledge base management, RAG search, parsed document reading, and original source-file download tools for Wegent. Use this skill whenever the user selects or references Wegent knowledge bases, asks questions over knowledge documents, or needs precise spreadsheet, binary, parser-failed, or full-file analysis."
 displayName: "知识库工具"
-version: "1.1.0"
+version: "1.1.1"
 author: "Wegent Team"
 tags: ["knowledge", "knowledge-base", "document", "rag"]
 bindShells:
@@ -78,6 +78,7 @@ You now have access to Wegent Knowledge Base management tools.
 - **wegent_kb_search_knowledge_base**: Search documents using RAG retrieval
   - knowledge_base_id: Knowledge base ID to search
   - query: Search query text
+  - search_hints: Optional query plan. Only use `semantic_query` (string), `keywords` (array of terms), and `phrases` (array of exact multi-word matches). Never use `exact_keywords`.
   - max_results: Maximum results to return (default: 10, max: 50)
   - document_ids: Optional list of document IDs to filter search scope
   - folder_ids: Optional list of selected folder IDs

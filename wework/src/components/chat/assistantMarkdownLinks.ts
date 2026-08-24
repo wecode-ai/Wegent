@@ -1,5 +1,4 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { getAttachmentImageUrl } from '@/lib/attachments'
 
 const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/download(?:[?#].*)?$/
 
@@ -125,7 +124,7 @@ function localPathFromTauriUrl(value: string): string | null {
   }
 }
 
-function getAttachmentDownloadId(src: string): number | null {
+export function getAuthenticatedAttachmentId(src: string): number | null {
   try {
     const url = new URL(src)
     const match = url.pathname.match(ATTACHMENT_DOWNLOAD_PATH_PATTERN)
@@ -137,15 +136,7 @@ function getAttachmentDownloadId(src: string): number | null {
 }
 
 export function isAuthenticatedAttachmentImageSrc(src: string): boolean {
-  return getAttachmentDownloadId(src) !== null
-}
-
-export function getAuthenticatedImageFetchUrl(src: string): string {
-  if (src.startsWith('/api/')) return src
-  if (/^https?:\/\//i.test(src)) return src
-
-  const attachmentId = getAttachmentDownloadId(src)
-  return attachmentId === null ? src : getAttachmentImageUrl(attachmentId)
+  return getAuthenticatedAttachmentId(src) !== null
 }
 
 function isLocalImagePath(src: string): boolean {

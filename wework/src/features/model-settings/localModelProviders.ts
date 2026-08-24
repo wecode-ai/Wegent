@@ -2,13 +2,9 @@ import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import { shouldUseTauriFetch } from '@/api/http'
 import {
   DEEPSEEK_V4_CONTEXT_WINDOW,
-  DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
   DEEPSEEK_V4_FLASH_MODEL_ID,
-  DEEPSEEK_V4_PRO_CATALOG_MODEL_ID,
   DEEPSEEK_V4_PRO_MODEL_ID,
   KIMI_CODING_CONTEXT_WINDOW,
-  KIMI_K27_CATALOG_MODEL_ID,
-  KIMI_K3_CATALOG_MODEL_ID,
   KIMI_K3_CONTEXT_WINDOW,
   type LocalModelApiFormat,
   type LocalModelConfig,
@@ -45,7 +41,6 @@ export interface LocalModelProviderProfile {
     string,
     {
       contextWindow?: number
-      codexCatalogModelId?: string
       inputModalities?: readonly string[]
     }
   >
@@ -108,16 +103,13 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
     modelDefaults: {
       k3: {
         contextWindow: KIMI_CODING_CONTEXT_WINDOW,
-        codexCatalogModelId: KIMI_K3_CATALOG_MODEL_ID,
         inputModalities: ['text', 'image'],
       },
       'kimi-for-coding': {
         contextWindow: KIMI_CODING_CONTEXT_WINDOW,
-        codexCatalogModelId: KIMI_K27_CATALOG_MODEL_ID,
       },
       'kimi-for-coding-highspeed': {
         contextWindow: KIMI_CODING_CONTEXT_WINDOW,
-        codexCatalogModelId: KIMI_K27_CATALOG_MODEL_ID,
       },
     },
   },
@@ -137,7 +129,6 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
     modelDefaults: {
       'kimi-k3': {
         contextWindow: KIMI_K3_CONTEXT_WINDOW,
-        codexCatalogModelId: KIMI_K3_CATALOG_MODEL_ID,
         inputModalities: ['text', 'image'],
       },
       'kimi-k2.7-code': { contextWindow: 262_144 },
@@ -178,11 +169,9 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
     modelDefaults: {
       [DEEPSEEK_V4_FLASH_MODEL_ID]: {
         contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
-        codexCatalogModelId: DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
       },
       [DEEPSEEK_V4_PRO_MODEL_ID]: {
         contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
-        codexCatalogModelId: DEEPSEEK_V4_PRO_CATALOG_MODEL_ID,
       },
     },
   },

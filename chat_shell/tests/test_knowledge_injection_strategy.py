@@ -471,6 +471,45 @@ class TestKnowledgeBaseTool:
         assert "segments" not in source
 
     @pytest.mark.asyncio
+    async def test_direct_injection_keeps_same_name_video_documents_separate(self):
+        tool = KnowledgeBaseTool()
+        injection_result = {
+            "injected_content": "Two videos",
+            "chunks_used": [
+                {
+                    "content": "### First ([00:00:00 - 00:00:05])",
+                    "source": "chapter.video.md",
+                    "score": 0.9,
+                    "knowledge_base_id": 211,
+                    "document_id": "uuid-a",
+                    "source_media_type": "video",
+                    "metadata": {"doc_ref": "811"},
+                },
+                {
+                    "content": "### Second ([00:00:05 - 00:00:10])",
+                    "source": "chapter.video.md",
+                    "score": 0.8,
+                    "knowledge_base_id": 211,
+                    "document_id": "uuid-b",
+                    "source_media_type": "video",
+                    "metadata": {"doc_ref": "812"},
+                },
+            ],
+            "decision_details": {"strategy": "all_or_nothing"},
+        }
+
+        result = json.loads(
+            await tool._format_direct_injection_result(injection_result, "query")
+        )
+
+        assert len(result["sources"]) == 2
+        assert {source["document_id"] for source in result["sources"]} == {811, 812}
+        assert all(
+            source["source_type"] == "wegent_video_chapters"
+            for source in result["sources"]
+        )
+
+    @pytest.mark.asyncio
     async def test_format_rag_result(self):
         """Test _format_rag_result."""
         tool = KnowledgeBaseTool()
@@ -501,6 +540,7 @@ class TestKnowledgeBaseTool:
                     ),
                     "source": "123.video.md",
                     "score": 0.9,
+                    "knowledge_base_id": 1,
                     "document_id": 123,
                     "metadata": {
                         "video_segment_id": "segment_10_20",

@@ -4,8 +4,19 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from app.models.delivery import loop_unset_datetime_for_connection
-from app.services.project_automations import _next_run, project_automation_service
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    ProjectAutomationRule,
+    ProjectAutomationRun,
+    loop_unset_datetime_for_connection,
+)
+from app.services import project_automations as project_automations_module
+from app.services.project_automations import (
+    _next_run,
+    project_automation_execution,
+    project_automation_service,
+)
 
 
 def test_next_run_respects_rule_timezone():
@@ -68,3 +79,135 @@ def test_run_view_exposes_only_failure_descriptions_as_errors(
     result = project_automation_service._run_view(row)
 
     assert result["error"] == expected_error
+
+
+@pytest.mark.asyncio
+async def test_due_scan_ignores_enabled_rule_from_archived_project(
+    test_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = CloudProject(
+        project_key="ARCHIVED",
+        name="Archived project",
+        created_by_user_id=1,
+        storage_prefix="projects/archived",
+        status="archived",
+    )
+    test_db.add(project)
+    test_db.flush()
+    rule = ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Stale schedule",
+        status="enabled",
+        due_at=datetime(2020, 1, 1),
+        created_by_user_id=1,
+        metadata_json={
+            "trigger_type": "schedule",
+            "cron_expression": "0 3 * * *",
+            "timezone": "UTC",
+        },
+    )
+    test_db.add(rule)
+    test_db.commit()
+    dispatched_rules: list[str] = []
+
+    async def dispatch(*_args, **_kwargs) -> None:
+        dispatched_rules.append(str(rule.id))
+
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+
+    dispatched = await project_automation_service.check_due(test_db)
+
+    assert dispatched == 0
+    assert dispatched_rules == []
+
+
+@pytest.mark.asyncio
+async def test_workflow_node_run_is_created_once_and_projects_queued_state(
+    test_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = CloudProject(
+        project_key="WORKFLOW",
+        name="Workflow project",
+        created_by_user_id=1,
+        storage_prefix="projects/workflow",
+    )
+    test_db.add(project)
+    test_db.flush()
+    rule = ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Run test automation",
+        description="Execute the workflow test stage",
+        status="enabled",
+        created_by_user_id=1,
+        metadata_json={
+            "trigger_type": "schedule",
+            "timezone": "Asia/Shanghai",
+            "assignment_mode": "manual",
+        },
+    )
+    item = LoopItem(
+        cloud_project_id=project.id,
+        title="Workflow issue",
+        description="",
+        status="pending",
+        created_by_user_id=1,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "nodes": [
+                    {
+                        "id": "test",
+                        "name": "Test",
+                        "kind": "automation",
+                        "depends_on": [],
+                        "required": True,
+                        "workspace_policy": "none",
+                        "automation_rule_id": None,
+                        "status": "ready",
+                    }
+                ],
+            }
+        },
+    )
+    test_db.add_all([rule, item])
+    test_db.flush()
+    item.metadata_json["workflow"]["nodes"][0]["automation_rule_id"] = rule.id
+    test_db.commit()
+    dispatched: list[str] = []
+
+    async def dispatch(_db, _rule, run) -> None:
+        dispatched.append(str(run.id))
+
+    monkeypatch.setattr(
+        project_automations_module, "require_cloud_project_role", lambda *_args: None
+    )
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+
+    result = await project_automation_service.run_for_workflow_node(
+        test_db,
+        str(project.id),
+        str(rule.id),
+        str(item.id),
+        "test",
+        1,
+    )
+
+    test_db.refresh(item)
+    assert result["status"] == "pending"
+    assert item.metadata_json["workflow"]["nodes"][0]["status"] == "queued"
+    assert test_db.query(ProjectAutomationRun).count() == 1
+    assert dispatched == [result["id"]]
+
+    with pytest.raises(HTTPException) as exc_info:
+        await project_automation_service.run_for_workflow_node(
+            test_db,
+            str(project.id),
+            str(rule.id),
+            str(item.id),
+            "test",
+            1,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert test_db.query(ProjectAutomationRun).count() == 1

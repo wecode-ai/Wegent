@@ -47,10 +47,19 @@ export interface EmbeddedBrowserBounds {
 }
 
 export interface EmbeddedBrowserPageState {
+  label?: string
   nativeLabel: string
   title: string | null
   url: string | null
+  isLoading: boolean
+  navigationError?: EmbeddedBrowserNavigationError | null
   invalidTlsCertificate?: EmbeddedBrowserInvalidTlsCertificateEvent | null
+}
+
+export interface EmbeddedBrowserNavigationError {
+  code: number
+  message: string
+  url: string | null
 }
 
 export interface EmbeddedBrowserOpenRequest {
@@ -82,7 +91,7 @@ export interface EmbeddedBrowserCloseRequest {
   nativeLabel: string
 }
 
-export type EmbeddedBrowserDataKind = 'cookies' | 'cache' | 'storage'
+export type EmbeddedBrowserDataKind = 'cookies' | 'cache' | 'storage' | 'history'
 
 export interface EmbeddedBrowserDownloadEvent {
   id: string
@@ -279,7 +288,8 @@ export async function openEmbeddedBrowser(
   bounds: EmbeddedBrowserBounds,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL,
   visible = true,
-  readyWhenHidden = true
+  readyWhenHidden = true,
+  navigateExisting = true
 ): Promise<EmbeddedBrowserPageState> {
   return invoke<EmbeddedBrowserPageState>('embedded_browser_open', {
     ...browserArgs(label),
@@ -287,6 +297,7 @@ export async function openEmbeddedBrowser(
     bounds,
     visible,
     readyWhenHidden,
+    navigateExisting,
   })
 }
 
@@ -302,6 +313,12 @@ export async function setEmbeddedBrowserBounds(
     visible,
     readyWhenHidden,
   })
+}
+
+export async function captureEmbeddedBrowserSnapshot(
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<string> {
+  return invoke<string>('embedded_browser_capture_snapshot', browserArgs(label))
 }
 
 export async function navigateEmbeddedBrowser(
@@ -326,6 +343,16 @@ export async function goForwardEmbeddedBrowser(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
   await invoke('embedded_browser_go_forward', browserArgs(label))
+}
+
+export async function setEmbeddedBrowserZoom(
+  scaleFactor: number,
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
+  await invoke('embedded_browser_set_zoom', {
+    ...browserArgs(label),
+    scaleFactor,
+  })
 }
 
 export async function evalEmbeddedBrowser(

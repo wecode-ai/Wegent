@@ -50,7 +50,7 @@ def determine_image_mode(
     mode_id = model_config.get("generation_mode_id")
     if mode_id == "first_last_frame":
         return "first_frame"
-    if mode_id in {"reference", "omni_reference"}:
+    if mode_id in {"reference", "omni_reference", "edit", "extend"}:
         return "reference"
     return "first_frame"
 

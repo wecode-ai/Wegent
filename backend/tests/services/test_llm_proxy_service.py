@@ -6,11 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException, Request
+from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.services.chat.trigger.unified import _build_codex_runtime_model_config
+from app.services.chat.trigger.unified import (
+    _build_codex_runtime_model_config,
+    build_wework_runtime_model_config,
+)
 from app.services.llm_proxy_service import (
     _join_upstream_url,
     proxy_llm_responses,
@@ -26,25 +30,28 @@ def _model_kind(
     model_id: str = "gpt-4-turbo",
     api_key: str = "sk-test-key",
     base_url: str = "https://api.example.com/v1",
-    protocol: str = "openai-responses",
+    protocol: str | None = "openai-responses",
     api_format: str | None = None,
+    env_model: str | None = None,
     default_headers: dict[str, str] | None = None,
 ) -> Kind:
-    model_config: dict[str, object] = {
-        "env": {
-            "model_id": model_id,
-            "base_url": base_url,
-            "api_key": api_key,
-        }
+    env: dict[str, object] = {
+        "model_id": model_id,
+        "base_url": base_url,
+        "api_key": api_key,
     }
+    if env_model is not None:
+        env["model"] = env_model
+    model_config: dict[str, object] = {"env": env}
     if default_headers is not None:
         model_config["DEFAULT_HEADERS"] = default_headers
 
     spec: dict[str, object] = {
         "provider": "openai",
         "modelConfig": model_config,
-        "protocol": protocol,
     }
+    if protocol is not None:
+        spec["protocol"] = protocol
     if api_format is not None:
         spec["apiFormat"] = api_format
 
@@ -363,6 +370,111 @@ def test_build_codex_runtime_model_config_returns_provider_credentials(
     assert "codex_responses_compat_proxy" not in config
 
 
+@pytest.mark.parametrize(
+    ("model_id", "expected_catalog_model_id"),
+    [
+        ("deepseek-v4-flash", "wework-deepseek-v4-flash"),
+        ("deepseek-v4-pro", "wework-deepseek-v4-pro"),
+    ],
+)
+def test_build_codex_runtime_model_config_infers_deepseek_responses_catalog(
+    test_db: Session,
+    test_user: User,
+    model_id: str,
+    expected_catalog_model_id: str,
+) -> None:
+    model = _model_kind(
+        test_user.id,
+        name=f"{model_id}-profile",
+        model_id=model_id,
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    config = _build_codex_runtime_model_config(
+        model.name,
+        db=test_db,
+        user_id=test_user.id,
+    )
+
+    assert config["codex_catalog_model_id"] == expected_catalog_model_id
+
+
+def test_build_codex_runtime_model_config_does_not_infer_deepseek_chat_catalog(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    model = _model_kind(
+        test_user.id,
+        name="deepseek-chat-profile",
+        model_id="deepseek-v4-pro",
+        protocol="openai",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    config = _build_codex_runtime_model_config(
+        model.name,
+        db=test_db,
+        user_id=test_user.id,
+    )
+
+    assert "codex_catalog_model_id" not in config
+
+
+def test_build_codex_runtime_model_config_preserves_explicit_catalog(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    model = _model_kind(
+        test_user.id,
+        name="deepseek-explicit-profile",
+        model_id="deepseek-v4-pro",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    config = _build_codex_runtime_model_config(
+        model.name,
+        {"codex_catalog_model_id": "operator-selected-catalog"},
+        db=test_db,
+        user_id=test_user.id,
+    )
+
+    assert config["codex_catalog_model_id"] == "operator-selected-catalog"
+
+
+def test_build_wework_runtime_model_config_preserves_explicit_cloud_catalog(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.core.config import settings
+
+    model = _model_kind(
+        0,
+        name="deepseek-public-profile",
+        model_id="deepseek-v4-pro",
+    )
+    test_db.add(model)
+    test_db.commit()
+    monkeypatch.setattr(
+        settings,
+        "WEGENT_BACKEND_PUBLIC_URL",
+        "https://wegent.example.com",
+    )
+
+    config = build_wework_runtime_model_config(
+        test_db,
+        model_name=model.name,
+        creator=test_user,
+        model_options={"codex_catalog_model_id": "operator-selected-catalog"},
+    )
+
+    assert config["model_id"] == model.name
+    assert config["codex_catalog_model_id"] == "operator-selected-catalog"
+
+
 async def test_proxy_llm_responses_forwards_chat_completions_to_provider(
     test_db, test_user: User
 ):
@@ -635,6 +747,67 @@ async def test_proxy_llm_responses_does_not_duplicate_anthropic_version_path(
     assert response.status_code == 200
     sent_request = client_mock.send.call_args[0][0]
     assert str(sent_request.url) == "https://api.anthropic.com/v1/messages"
+
+
+async def test_proxy_llm_responses_infers_anthropic_endpoint_from_env_model(
+    test_db, test_user: User
+):
+    """Vision sidecars reference models that only declare env.model.
+
+    Most Model CRDs carry no spec.protocol, so the gateway must infer the upstream
+    endpoint from env.model. Without this, an anthropic-messages sidecar request is
+    rejected as an ambiguous protocol configuration.
+    """
+    model = _model_kind(
+        test_user.id,
+        name="kimi-k2.5-vision",
+        protocol=None,
+        env_model="claude",
+        api_key="sk-anthropic-key",
+        base_url="https://api.example.com",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(
+        return_value=(
+            b'{"model":"kimi-k2.5-vision","max_tokens":2000,'
+            b'"messages":[{"role":"user","content":[]}]}'
+        )
+    )
+    request_mock.headers = Headers(
+        {
+            "content-type": "application/json",
+            "x-wegent-model-type": "user",
+            "x-wegent-model-namespace": "default",
+            "x-wegent-model-user-id": str(test_user.id),
+        }
+    )
+
+    upstream_response_mock = MagicMock()
+    upstream_response_mock.status_code = 200
+    upstream_response_mock.headers = {"content-type": "application/json"}
+
+    async def fake_aiter_raw():
+        yield b'{"content":[{"type":"text","text":"a screenshot"}]}'
+
+    upstream_response_mock.aiter_raw = fake_aiter_raw
+    client_mock = AsyncMock()
+    client_mock.send = AsyncMock(return_value=upstream_response_mock)
+    client_mock.aclose = AsyncMock()
+
+    with patch(
+        "app.services.llm_proxy_service.httpx.AsyncClient",
+        return_value=client_mock,
+    ):
+        response = await proxy_llm_responses(request_mock, test_db, test_user)
+
+    assert response.status_code == 200
+    sent_request = client_mock.send.call_args[0][0]
+    assert str(sent_request.url) == "https://api.example.com/v1/messages"
+    assert sent_request.headers["x-api-key"] == "sk-anthropic-key"
+    assert sent_request.headers["anthropic-version"] == "2023-06-01"
 
 
 async def test_proxy_llm_responses_forwards_responses_to_provider(

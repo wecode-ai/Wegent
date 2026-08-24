@@ -1,33 +1,20 @@
 import {
-  AppWindow,
-  Archive,
+  AlertCircle,
   ArrowLeft,
-  Palette,
   Check,
   Cloud,
   Code2,
   Copy,
-  FolderGit2,
-  GitPullRequest,
-  Globe2,
   Info,
-  Keyboard,
-  MessageSquareText,
   Loader2,
   LogOut,
   MoreHorizontal,
-  Network,
-  Package,
   Pencil,
   Plus,
   RotateCcw,
   Server,
-  ScanLine,
-  SlidersHorizontal,
   Terminal,
   Trash2,
-  UserRound,
-  Webhook,
   X,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
@@ -60,28 +47,12 @@ import {
 import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
-import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import {
   defaultAppearance,
   getWorkbenchBackground,
   useOptionalAppearance,
 } from '@/features/appearance'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
-import { ProxySettingsPage } from './ProxySettingsPage'
-import { ModelSettingsPage } from './ModelSettingsPage'
-import { PluginSettingsPage } from './PluginSettingsPage'
-import { WorktreesSettingsPage } from './WorktreesSettingsPage'
-import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
-import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
-import { GeneralSettingsPage } from './GeneralSettingsPage'
-import { ContextSettingsPage } from './ContextSettingsPage'
-import { AboutSettingsPage } from './AboutSettingsPage'
-import { BrowserSettingsPage } from './BrowserSettingsPage'
-import { AppshotsSettingsPage } from './AppshotsSettingsPage'
-import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
-import { HarnessSettingsPage } from './HarnessSettingsPage'
-import { GitHostingSettingsPage } from './GitHostingSettingsPage'
-import { HooksSettingsPage } from '@/features/hooks/HooksSettingsPage'
 import { DeviceActionButton } from './DeviceActionButton'
 import {
   createSettingsDeviceApi,
@@ -89,6 +60,11 @@ import {
   createSettingsRemoteTerminalClientFactory,
   type CloudSettingsConnection,
 } from './settings-cloud-api'
+import { CORE_WORKBENCH_SETTINGS } from '@/plugin-runtime/core-settings-data'
+import {
+  type WorkbenchSettingsContribution,
+  useActiveWorkbenchSettings,
+} from '@/plugin-runtime/settings'
 
 const CloudDesktopDeviceAction = cloudDesktopExtension.DeviceAction
 const keepConnectionsSettingsOpen = () => undefined
@@ -102,178 +78,17 @@ interface ConnectionsSettingsPageProps {
   onRefreshWorkLists?: () => Promise<void>
 }
 
-type SettingsCategory = 'personal' | 'integrations' | 'coding' | 'archived'
-
-interface SettingsNavItem {
-  key: string
-  icon: ComponentType<{ className?: string }>
-  label: string
-  fallback: string
-  category?: SettingsCategory
-  experimental?: boolean
-}
-
-const settingsNavItems: SettingsNavItem[] = [
-  {
-    key: 'general',
-    icon: SlidersHorizontal,
-    label: 'settings_nav_general',
-    fallback: '通用',
-    category: 'personal',
-  },
-  {
-    key: 'connections',
-    icon: Globe2,
-    label: 'settings_nav_connections',
-    fallback: '云端连接',
-    category: 'personal',
-  },
-  {
-    key: 'appearance',
-    icon: Palette,
-    label: 'settings_nav_appearance',
-    fallback: '外观',
-    category: 'personal',
-  },
-  {
-    key: 'context',
-    icon: Terminal,
-    label: 'settings_nav_context',
-    fallback: '上下文',
-    category: 'personal',
-  },
-  {
-    key: 'model-settings',
-    icon: UserRound,
-    label: 'settings_nav_model_settings',
-    fallback: '模型',
-    category: 'personal',
-  },
-  {
-    key: 'proxy',
-    icon: Network,
-    label: 'settings_nav_proxy',
-    fallback: '代理',
-    category: 'personal',
-  },
-  {
-    key: 'keyboard-shortcuts',
-    icon: Keyboard,
-    label: 'settings_nav_keyboard_shortcuts',
-    fallback: '快捷键',
-    category: 'personal',
-  },
-  {
-    key: 'quick-phrases',
-    icon: MessageSquareText,
-    label: 'settings_nav_quick_phrases',
-    fallback: '快捷短语',
-    category: 'personal',
-  },
-  {
-    key: 'about',
-    icon: Info,
-    label: 'settings_nav_about',
-    fallback: '关于',
-    category: 'personal',
-  },
-  {
-    key: 'appshots',
-    icon: ScanLine,
-    label: 'settings_nav_appshots',
-    fallback: '应用快照',
-    category: 'integrations',
-  },
-  {
-    key: 'plugins',
-    icon: Package,
-    label: 'settings_nav_plugins',
-    fallback: '插件',
-    category: 'integrations',
-  },
-  {
-    key: 'browser',
-    icon: AppWindow,
-    label: 'settings_nav_browser',
-    fallback: '浏览器',
-    category: 'integrations',
-  },
-  {
-    key: 'git-hosting',
-    icon: GitPullRequest,
-    label: 'settings_nav_git_hosting',
-    fallback: '代码托管',
-    category: 'coding',
-  },
-  {
-    key: 'harnesses',
-    icon: Code2,
-    label: 'settings_nav_harnesses',
-    fallback: '编码工具',
-    category: 'coding',
-    experimental: true,
-  },
-  {
-    key: 'worktrees',
-    icon: FolderGit2,
-    label: 'settings_nav_worktrees',
-    fallback: '工作树',
-    category: 'coding',
-  },
-  {
-    key: 'hooks',
-    icon: Webhook,
-    label: 'settings_nav_hooks',
-    fallback: 'Hooks',
-    category: 'coding',
-  },
-  {
-    key: 'archived-conversations',
-    icon: Archive,
-    label: 'settings_nav_archived_conversations',
-    fallback: '已归档对话',
-    category: 'archived',
-  },
-]
-
-const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback: string }> = {
-  personal: {
-    label: 'settings_category_personal',
-    fallback: '个人',
-  },
-  integrations: {
-    label: 'settings_category_integrations',
-    fallback: '集成',
-  },
-  coding: {
-    label: 'settings_category_coding',
-    fallback: '编码',
-  },
-  archived: {
-    label: 'settings_category_archived',
-    fallback: '已归档',
-  },
-}
-
-function getSettingsNavFromPath(path: string): string {
+function getSettingsNavFromPath(
+  path: string,
+  contributions: readonly WorkbenchSettingsContribution[]
+): string {
   const normalizedPath = stripAppBasePath(path)
-  if (normalizedPath === '/settings') return 'general'
-  if (normalizedPath === '/settings/personal') return 'model-settings'
-  const matchedItem = settingsNavItems.find(item => getSettingsNavPath(item.key) === normalizedPath)
-  if (matchedItem) return matchedItem.key
-  const match = normalizedPath.match(/^\/settings\/([^/]+)$/)
-  if (!match) return 'general'
-  return settingsNavItems.some(item => item.key === match[1]) ? match[1] : 'general'
-}
-
-function getSettingsNavPath(key: string): string {
-  if (key === 'context') return '/settings/personal/context'
-  if (key === 'model-settings') return '/settings/personal/models'
-  if (key === 'proxy') return '/settings/personal/proxy'
-  if (key === 'keyboard-shortcuts') return '/settings/personal/keyboard-shortcuts'
-  if (key === 'quick-phrases') return '/settings/personal/quick-phrases'
-  if (key === 'general') return '/settings'
-  return `/settings/${key}`
+  return (
+    contributions.find(
+      contribution =>
+        contribution.path === normalizedPath || contribution.aliases?.includes(normalizedPath)
+    )?.key ?? 'general'
+  )
 }
 
 function StatusPill({ status }: { status: DeviceInfo['status'] }) {
@@ -569,6 +384,7 @@ function CloudDeviceConnectionInfoDialog({
 }
 
 function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () => void }) {
+  const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const remoteTerminalClientFactory = useMemo(
     () =>
@@ -590,6 +406,8 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const [confirmAction, setConfirmAction] = useState<ConfirmDeviceAction | null>(null)
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false)
   const [terminalSession, setTerminalSession] = useState<DeviceSessionResponse | null>(null)
+  const [sessionError, setSessionError] = useState<string | null>(null)
+  const [pendingIdeUrl, setPendingIdeUrl] = useState<string | null>(null)
   const [metricsState, setMetricsState] = useState<{
     deviceId: string
     value: CloudDeviceMetricsResponse | null
@@ -630,6 +448,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const handleStartTerminal = useCallback(async () => {
     if (device.status !== 'online') return
     setSessionLoading('terminal')
+    setSessionError(null)
     try {
       const result = await createSettingsDeviceApi(cloudConnection).startTerminal(device.device_id)
       if (result.url) {
@@ -642,15 +461,19 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
       setTerminalSession(result)
     } catch (e) {
       console.error('Failed to start terminal:', e)
+      setSessionError(
+        e instanceof Error ? e.message : t('workbench.connection_session_start_failed')
+      )
     } finally {
       setSessionLoading(null)
     }
-  }, [cloudConnection, device, remoteTerminalClientFactory])
+  }, [cloudConnection, device, remoteTerminalClientFactory, t])
 
   const handleStartCloudSession = useCallback(
     async (type: 'terminal' | 'code-server') => {
       if (device.status !== 'online') return
       setSessionLoading(type)
+      setSessionError(null)
       try {
         const deviceApi = createSettingsDeviceApi(cloudConnection)
         const result =
@@ -658,16 +481,45 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
             ? await deviceApi.startTerminal(device.device_id)
             : await deviceApi.startCodeServer(device.device_id)
         if (result.url) {
+          if (type === 'code-server') {
+            setPendingIdeUrl(result.url)
+            return
+          }
           await openExternalUrl(result.url)
         }
       } catch (e) {
         console.error(`Failed to start ${type}:`, e)
+        setSessionError(
+          e instanceof Error ? e.message : t('workbench.connection_session_start_failed')
+        )
       } finally {
         setSessionLoading(null)
       }
     },
-    [cloudConnection, device.device_id, device.status]
+    [cloudConnection, device.device_id, device.status, t]
   )
+
+  const handleOpenPendingIde = useCallback(async () => {
+    if (!pendingIdeUrl) return
+    setSessionError(null)
+    try {
+      await openExternalUrl(pendingIdeUrl)
+      setPendingIdeUrl(null)
+    } catch (e) {
+      setSessionError(
+        e instanceof Error ? e.message : t('workbench.connection_session_start_failed')
+      )
+    }
+  }, [pendingIdeUrl, t])
+
+  let pendingIdeTarget = pendingIdeUrl
+  if (pendingIdeUrl) {
+    try {
+      pendingIdeTarget = new URL(pendingIdeUrl).origin
+    } catch {
+      // Keep the complete value visible if the Backend returned an invalid URL.
+    }
+  }
 
   const handleStartEdit = () => {
     setEditName(device.name)
@@ -912,6 +764,43 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
             )}
           </div>
         </div>
+        {sessionError && (
+          <div
+            data-testid={`connection-session-error-${device.device_id}`}
+            className="mt-3 flex items-start gap-2 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-500"
+          >
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{sessionError}</span>
+          </div>
+        )}
+        {pendingIdeUrl && (
+          <div
+            data-testid={`connection-ide-target-${device.device_id}`}
+            className="mt-3 flex items-center justify-between gap-3 rounded-md bg-blue-500/10 px-3 py-2 text-xs text-text-secondary"
+          >
+            <span className="min-w-0">
+              {t('workbench.connection_ide_target')}: <strong>{pendingIdeTarget}</strong>
+            </span>
+            <div className="flex shrink-0 gap-2">
+              <button
+                type="button"
+                data-testid={`connection-ide-cancel-${device.device_id}`}
+                onClick={() => setPendingIdeUrl(null)}
+                className="rounded px-2 py-1 hover:bg-muted"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                data-testid={`connection-ide-confirm-${device.device_id}`}
+                onClick={() => void handleOpenPendingIde()}
+                className="rounded bg-text-primary px-2 py-1 text-background"
+              >
+                {t('workbench.connection_ide_open')}
+              </button>
+            </div>
+          </div>
+        )}
         {supportsDeviceMetrics(device) && (
           <div
             data-testid={`connection-device-metrics-${device.device_id}`}
@@ -1154,6 +1043,14 @@ function ConnectionsDeviceSettingsPage({
   const [addDialogOpen, setAddDialogOpen] = useState(autoOpenAddCloudDeviceDialog)
   const [creating, setCreating] = useState(false)
 
+  const applyDevices = useCallback((allDevices: DeviceInfo[]) => {
+    const claudeCodeDevices = allDevices.filter(isClaudeCodeDevice)
+    setDevices(claudeCodeDevices)
+    if (claudeCodeDevices.some(isCloudDevice)) {
+      setCreating(false)
+    }
+  }, [])
+
   const fetchDevices = useCallback(async () => {
     if (!cloudConnection.isConnected) {
       setDevices([])
@@ -1162,17 +1059,25 @@ function ConnectionsDeviceSettingsPage({
     }
     try {
       const allDevices = await createSettingsDeviceApi(cloudConnection).getAllDevices()
-      const claudeCodeDevices = allDevices.filter(isClaudeCodeDevice)
-      setDevices(claudeCodeDevices)
-      if (claudeCodeDevices.some(isCloudDevice)) {
-        setCreating(false)
-      }
+      applyDevices(allDevices)
     } catch (e) {
       console.error('Failed to fetch devices:', e)
     } finally {
       setLoading(false)
     }
-  }, [cloudConnection])
+  }, [applyDevices, cloudConnection])
+
+  const handleDeviceCreated = useCallback(
+    (discoveredDevices?: DeviceInfo[]) => {
+      if (discoveredDevices) {
+        applyDevices(discoveredDevices)
+        setLoading(false)
+        return
+      }
+      return fetchDevices()
+    },
+    [applyDevices, fetchDevices]
+  )
 
   const cloudDevices = devices.filter(isCloudDevice)
   const remoteDevices = devices.filter(isRemoteDevice)
@@ -1363,7 +1268,7 @@ function ConnectionsDeviceSettingsPage({
         hasCloudDevice={cloudDevices.length > 0 || creating}
         cloudConnection={cloudConnection}
         onClose={() => setAddDialogOpen(false)}
-        onCreated={fetchDevices}
+        onCreated={handleDeviceCreated}
         onCreatingChange={setCreating}
       />
     </>
@@ -1385,30 +1290,41 @@ export function ConnectionsSettingsPage({
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const isDesktopRuntime = isTauriRuntime()
-  const visibleSettingsNavItems = settingsNavItems.filter(
+  const registeredSettings = useActiveWorkbenchSettings()
+  const settingsContributions: readonly WorkbenchSettingsContribution[] =
+    registeredSettings.length > 0 ? registeredSettings : CORE_WORKBENCH_SETTINGS
+  const visibleSettingsNavItems = settingsContributions.filter(
     item =>
-      (!item.experimental || experimentalFeaturesEnabled) &&
-      (!['keyboard-shortcuts', 'appshots'].includes(item.key) || isDesktopRuntime)
+      (!item.experimental || experimentalFeaturesEnabled) && (!item.desktopOnly || isDesktopRuntime)
   )
   const shouldAutoOpenAddCloudDeviceDialog =
     autoOpenAddCloudDeviceDialog ||
     new URLSearchParams(window.location.search).get('addDevice') === '1'
-  const [activeNav, setActiveNav] = useState(() => getSettingsNavFromPath(window.location.pathname))
-  const effectiveActiveNav =
-    activeNav === 'harnesses' && !experimentalFeaturesEnabled ? 'general' : activeNav
+  const [activeNav, setActiveNav] = useState(() =>
+    getSettingsNavFromPath(window.location.pathname, settingsContributions)
+  )
+  const effectiveActiveNav = visibleSettingsNavItems.some(item => item.key === activeNav)
+    ? activeNav
+    : (visibleSettingsNavItems.find(item => item.key === 'general')?.key ??
+      visibleSettingsNavItems[0]?.key ??
+      'general')
 
   useEffect(() => {
     const handlePopState = () => {
-      setActiveNav(getSettingsNavFromPath(window.location.pathname))
+      setActiveNav(getSettingsNavFromPath(window.location.pathname, settingsContributions))
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
-  }, [])
+  }, [settingsContributions])
 
   const openCloudSettings = useCallback(() => {
     setActiveNav('connections')
-    navigateTo(getSettingsNavPath('connections'))
-  }, [setActiveNav])
+    const path = settingsContributions.find(item => item.key === 'connections')?.path
+    navigateTo(path ?? '/settings/connections')
+  }, [settingsContributions])
+  const activeContribution =
+    settingsContributions.find(item => item.key === effectiveActiveNav) ??
+    settingsContributions.find(item => item.key === 'general')
 
   return (
     <div
@@ -1452,10 +1368,9 @@ export function ConnectionsSettingsPage({
           {visibleSettingsNavItems.map((item, index) => {
             const showCategory =
               item.category && visibleSettingsNavItems[index - 1]?.category !== item.category
-            const categoryLabel = item.category ? settingsCategoryLabels[item.category] : null
             return (
               <div key={item.key}>
-                {showCategory && categoryLabel && (
+                {showCategory && (
                   <div
                     data-testid={`settings-category-${item.category}`}
                     className={cn(
@@ -1463,7 +1378,7 @@ export function ConnectionsSettingsPage({
                       index === 0 ? 'mt-2' : 'mt-5'
                     )}
                   >
-                    {t(`workbench.${categoryLabel.label}`, categoryLabel.fallback)}
+                    {t(`workbench.${item.categoryLabelKey}`, item.categoryLabel)}
                   </div>
                 )}
                 <button
@@ -1471,7 +1386,7 @@ export function ConnectionsSettingsPage({
                   data-testid={`settings-nav-${item.key}`}
                   onClick={() => {
                     setActiveNav(item.key)
-                    navigateTo(getSettingsNavPath(item.key))
+                    navigateTo(item.path)
                   }}
                   className={[
                     'flex min-h-[31px] w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium',
@@ -1481,7 +1396,7 @@ export function ConnectionsSettingsPage({
                   ].join(' ')}
                 >
                   <item.icon className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{t(`workbench.${item.label}`, item.fallback)}</span>
+                  <span className="truncate">{t(`workbench.${item.labelKey}`, item.label)}</span>
                   {item.experimental ? (
                     <ExperimentalBadge
                       className="ml-auto"
@@ -1509,49 +1424,15 @@ export function ConnectionsSettingsPage({
           background.imagePath && background.inMain ? 'bg-background/20' : 'bg-background'
         )}
       >
-        {effectiveActiveNav === 'general' ? (
-          <GeneralSettingsPage />
-        ) : effectiveActiveNav === 'appearance' ? (
-          <AppearanceSettingsPage />
-        ) : effectiveActiveNav === 'context' ? (
-          <ContextSettingsPage />
-        ) : effectiveActiveNav === 'about' ? (
-          <AboutSettingsPage />
-        ) : effectiveActiveNav === 'model-settings' ? (
-          <ModelSettingsPage onOpenCloudSettings={openCloudSettings} />
-        ) : effectiveActiveNav === 'proxy' ? (
-          <ProxySettingsPage />
-        ) : effectiveActiveNav === 'keyboard-shortcuts' ? (
-          <KeyboardShortcutsSettingsPage />
-        ) : effectiveActiveNav === 'quick-phrases' ? (
-          <QuickPhrasesSettingsPage />
-        ) : effectiveActiveNav === 'appshots' ? (
-          <AppshotsSettingsPage />
-        ) : effectiveActiveNav === 'plugins' ? (
-          <PluginSettingsPage />
-        ) : effectiveActiveNav === 'browser' ? (
-          <BrowserSettingsPage />
-        ) : effectiveActiveNav === 'git-hosting' ? (
-          <GitHostingSettingsPage />
-        ) : effectiveActiveNav === 'harnesses' ? (
-          <HarnessSettingsPage />
-        ) : effectiveActiveNav === 'worktrees' ? (
-          <WorktreesSettingsPage
-            api={services?.runtimeWorkApi}
-            devices={devices}
-            onOpenRuntimeTask={onOpenRuntimeTask}
-            onRefreshWorkLists={onRefreshWorkLists}
-            onLeaveSettings={onBack}
-          />
-        ) : effectiveActiveNav === 'hooks' ? (
-          <HooksSettingsPage />
-        ) : effectiveActiveNav === 'archived-conversations' ? (
-          <ArchivedConversationsSettingsPage
-            api={services?.runtimeWorkApi}
-            onOpenRuntimeTask={onOpenRuntimeTask}
-            onRefreshWorkLists={onRefreshWorkLists}
-            onLeaveSettings={onBack}
-          />
+        {activeContribution?.render ? (
+          activeContribution.render({
+            services,
+            devices,
+            onBack,
+            onOpenCloudSettings: openCloudSettings,
+            onOpenRuntimeTask,
+            onRefreshWorkLists,
+          })
         ) : (
           <ConnectionsDeviceSettingsPage
             key={shouldAutoOpenAddCloudDeviceDialog ? 'add-device' : 'connections'}

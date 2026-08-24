@@ -12,6 +12,7 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
+  RuntimeTaskPinRequest,
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
@@ -231,6 +232,98 @@ export function updateRuntimeWorkTask(
   }
 }
 
+export function getRuntimeTaskThreadId(task: RuntimeTaskSummary): string | null {
+  const explicitThreadId = task.threadId?.trim()
+  if (explicitThreadId) return explicitThreadId
+
+  const runtimeHandleThreadId = [task.runtimeHandle?.threadId, task.runtimeHandle?.thread_id].find(
+    value => typeof value === 'string' && value.trim()
+  )
+  if (typeof runtimeHandleThreadId === 'string') return runtimeHandleThreadId.trim()
+
+  const taskId = task.taskId.trim()
+  return task.runtime === 'codex' && !task.optimistic && taskId ? taskId : null
+}
+
+function runtimeWorkspaceMatchesTaskPinRequest(
+  workspace: RuntimeDeviceWorkspace,
+  request: RuntimeTaskPinRequest,
+  stateDeviceId?: string | null
+): boolean {
+  return [stateDeviceId, workspace.deviceId, workspace.remoteHostId].some(
+    deviceId => deviceId === request.deviceId
+  )
+}
+
+export function findRuntimeTaskForPinRequest(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  request: RuntimeTaskPinRequest
+): RuntimeTaskSummary | null {
+  if (!runtimeWork) return null
+
+  for (const projectWork of runtimeWork.projects) {
+    for (const workspace of projectWork.deviceWorkspaces) {
+      if (
+        !runtimeWorkspaceMatchesTaskPinRequest(
+          workspace,
+          request,
+          projectWork.project.stateDeviceId
+        )
+      ) {
+        continue
+      }
+      const task = workspace.tasks.find(item => getRuntimeTaskThreadId(item) === request.threadId)
+      if (task) return task
+    }
+  }
+
+  for (const workspace of runtimeWork.chats) {
+    if (!runtimeWorkspaceMatchesTaskPinRequest(workspace, request)) continue
+    const task = workspace.tasks.find(item => getRuntimeTaskThreadId(item) === request.threadId)
+    if (task) return task
+  }
+
+  return null
+}
+
+export function updateRuntimeWorkTaskPinned(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  request: RuntimeTaskPinRequest
+): RuntimeWorkListResponse | null {
+  if (!runtimeWork) return null
+
+  const updateWorkspace = (
+    workspace: RuntimeDeviceWorkspace,
+    stateDeviceId?: string | null
+  ): RuntimeDeviceWorkspace => {
+    if (!runtimeWorkspaceMatchesTaskPinRequest(workspace, request, stateDeviceId)) {
+      return workspace
+    }
+
+    const tasks = workspace.tasks.map(task => {
+      if (getRuntimeTaskThreadId(task) !== request.threadId) return task
+      return normalizeRuntimeTaskSummary({
+        ...task,
+        pinned: request.pinned,
+        ...(!request.pinned ? { pinnedOrder: undefined } : {}),
+      })
+    })
+    if (tasks.every((task, index) => task === workspace.tasks[index])) return workspace
+    return { ...workspace, tasks }
+  }
+
+  return {
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(projectWork => ({
+      ...projectWork,
+      deviceWorkspaces: projectWork.deviceWorkspaces.map(workspace =>
+        updateWorkspace(workspace, projectWork.project.stateDeviceId)
+      ),
+    })),
+    chats: runtimeWork.chats.map(workspace => updateWorkspace(workspace)),
+  }
+}
+
 export function updateRuntimeWorkTaskTitle(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   address: RuntimeTaskAddress,
@@ -321,6 +414,49 @@ export function findRuntimeTask(
   return workspace?.tasks.find(item => item.taskId === address?.taskId) ?? null
 }
 
+export function resolveComposerProjectPluginNames(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  currentProjectId: number | null | undefined,
+  currentRuntimeTask: RuntimeTaskAddress | null | undefined
+): string[] | null {
+  const task = findRuntimeTask(runtimeWork, currentRuntimeTask)
+  if (task?.projectPluginIds !== undefined) {
+    return normalizeProjectPluginNames(task.projectPluginIds)
+  }
+
+  if (!runtimeWork) return null
+  const taskProject = currentRuntimeTask
+    ? runtimeWork.projects.find(project =>
+        project.deviceWorkspaces.some(
+          workspace =>
+            (workspace.deviceId === currentRuntimeTask.deviceId ||
+              workspace.remoteHostId === currentRuntimeTask.deviceId) &&
+            workspace.tasks.some(item => item.taskId === currentRuntimeTask.taskId)
+        )
+      )
+    : null
+  const project =
+    taskProject ??
+    (currentProjectId == null
+      ? null
+      : runtimeWork.projects.find(item => runtimeProjectUiId(item.project) === currentProjectId))
+  if (project?.project.source !== 'local_project') return null
+  return normalizeProjectPluginNames(
+    (project.project.aiSettings?.plugins ?? []).map(plugin => plugin.pluginName)
+  )
+}
+
+function normalizeProjectPluginNames(pluginIds: string[]): string[] {
+  return Array.from(
+    new Set(
+      pluginIds.map(id => {
+        const separator = id.lastIndexOf('@')
+        return separator > 0 ? id.slice(0, separator) : id
+      })
+    )
+  ).sort()
+}
+
 export function findRuntimeTaskWorkspace(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   address: RuntimeTaskAddress | null | undefined
@@ -333,10 +469,26 @@ export function findRuntimeTaskWorkspace(
   return (
     workspaces.find(
       workspace =>
-        workspace.deviceId === address.deviceId &&
+        (workspace.deviceId === address.deviceId || workspace.remoteHostId === address.deviceId) &&
         workspace.tasks.some(task => task.taskId === address.taskId)
     ) ?? null
   )
+}
+
+export function hydrateRuntimeTaskAddress(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress
+): RuntimeTaskAddress {
+  const workspace = findRuntimeTaskWorkspace(runtimeWork, address)
+  const task = workspace?.tasks.find(item => item.taskId === address.taskId)
+  if (!workspace || !task) return address
+  return {
+    ...address,
+    runtime: task.runtime,
+    workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
+    ...(task.threadId ? { threadId: task.threadId } : {}),
+    ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
+  }
 }
 
 export function getRememberedStandaloneDeviceId(

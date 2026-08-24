@@ -2,6 +2,7 @@ import { AlertTriangle, Archive, CheckCircle2, Download, Loader2, Upload, X } fr
 import { useEffect, useRef, useState } from 'react'
 import type {
   LocalCodexPluginApi,
+  LocalPluginImportCompletion,
   LocalPluginImportIssue,
   LocalPluginImportPreview,
 } from '@/api/local/codexPlugins'
@@ -54,11 +55,11 @@ function issueGuidance(
     ),
     mcp_manifest_invalid: t(
       'workbench.plugins_import_issue_mcp',
-      '.mcp.json 必须是合法 JSON，并包含 mcpServers 对象。'
+      '.mcp.json 必须是合法的 MCP server map，或包含 mcp_servers / mcpServers 对象。'
     ),
     mcp_path_invalid: t(
       'workbench.plugins_import_issue_mcp',
-      '.mcp.json 必须是合法 JSON，并包含 mcpServers 对象。'
+      '.mcp.json 必须是合法的 MCP server map，或包含 mcp_servers / mcpServers 对象。'
     ),
     skill_manifest_invalid: t(
       'workbench.plugins_import_issue_skill_manifest',
@@ -150,7 +151,7 @@ export function PluginImportDialog({
 }: {
   pluginApi: LocalCodexPluginApi
   onCancel: () => void
-  onImported: () => void
+  onImported: (result: LocalPluginImportCompletion) => void
 }) {
   const { t } = useTranslation('common')
   const closeRef = useRef<HTMLButtonElement>(null)
@@ -215,8 +216,8 @@ export function PluginImportDialog({
     setImporting(true)
     setError(null)
     try {
-      await pluginApi.importPluginPackage(preview, preview.existing)
-      onImported()
+      const imported = await pluginApi.importPluginPackage(preview, preview.existing)
+      onImported(imported)
     } catch (importError) {
       console.warn('[Wework] plugin package import failed', importError)
       setError(importErrorGuidance(importError, t))

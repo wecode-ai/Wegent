@@ -23,6 +23,7 @@ async def test_get_or_create_private_session_uses_stable_redis_key(
         channel_id=33,
         conversation_id="chat-9",
         sender_id="1001",
+        proactive_recipient_id="staff-original",
         display_name="Alice",
     )
 
@@ -38,6 +39,7 @@ async def test_get_or_create_private_session_uses_stable_redis_key(
 
     assert refreshed.session_key == first.session_key
     assert refreshed.display_name == "Alice New"
+    assert refreshed.proactive_recipient_id == "staff-original"
     assert refreshed.mode == IMSessionMode.CHAT
     assert refreshed.state == IMSessionState.IDLE
     assert refreshed.active_task_id is None

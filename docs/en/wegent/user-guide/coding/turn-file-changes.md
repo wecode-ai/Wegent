@@ -14,6 +14,8 @@ The file changes list in the conversation also shows the actual edit duration fo
 
 Binary files do not have reliable text line counts, so the card displays only the file name and binary status.
 
+For whole-file creation or deletion events, Executor normalizes the complete file content into a unified diff before the summary, tooltip preview, and review view consume it. Every line in a newly created file therefore carries an addition marker, while a Markdown list's own `-` remains file content instead of being misclassified as a deleted line.
+
 ## Review the Full Diff
 
 Selecting **Review** loads the compressed patch from the original execution device and displays the unified diff grouped by file.

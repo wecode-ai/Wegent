@@ -207,6 +207,7 @@ def _merge_selected_knowledge_refs(
             knowledge_base_id=current.knowledge_base_id,
             knowledge_base_name=current.knowledge_base_name,
             resources=tuple(unique_resources),
+            retrieval_capabilities=current.retrieval_capabilities,
         )
     return list(merged.values())
 
@@ -219,6 +220,18 @@ def _build_wegent_refs(
     selected_ids = set(_int_values(request.knowledge_base_ids))
     if not selected_ids:
         return []
+
+    from app.models.kind import Kind
+    from app.services.knowledge.retrieval_capabilities import (
+        derive_retrieval_capabilities,
+    )
+
+    capabilities_by_kb_id = {
+        kind.id: derive_retrieval_capabilities(
+            ((kind.json or {}).get("spec") or {}).get("retrievalConfig")
+        )
+        for kind in db.query(Kind).filter(Kind.id.in_(selected_ids)).all()
+    }
 
     task_json = task.json if isinstance(task.json, dict) else {}
     spec = task_json.get("spec") if isinstance(task_json.get("spec"), dict) else {}
@@ -250,6 +263,7 @@ def _build_wegent_refs(
                     provider="wegent",
                     knowledge_base_id=str(kb_id),
                     knowledge_base_name=kb_name,
+                    retrieval_capabilities=capabilities_by_kb_id.get(kb_id, {}),
                 )
             )
             continue
@@ -296,6 +310,7 @@ def _build_wegent_refs(
                 knowledge_base_id=str(kb_id),
                 knowledge_base_name=kb_name,
                 resources=resources,
+                retrieval_capabilities=capabilities_by_kb_id.get(kb_id, {}),
             )
         )
     return result

@@ -5,6 +5,7 @@
 """Tests for wecode cloud device provider creation behavior."""
 
 import base64
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -26,8 +27,38 @@ class _FakeNevisClient:
 
 
 @pytest.mark.asyncio
-async def test_create_device_passes_git_token_envs_to_nevis(test_db, monkeypatch):
-    """Cloud device creation should set git token envs on the Nevis VM."""
+async def test_slot_usage_preserves_unbounded_cloud_device_semantics(
+    test_db, monkeypatch
+):
+    """Cloud devices should keep reporting running tasks with max=0."""
+    provider = CloudDeviceProvider(client=_FakeNevisClient())
+    monkeypatch.setattr(
+        provider,
+        "_get_online_info",
+        AsyncMock(return_value={"running_task_ids": [101, 202]}),
+    )
+    monkeypatch.setattr(
+        provider_module.task_stores.task_store,
+        "list_by_ids",
+        lambda db, task_ids: [],
+    )
+
+    result = await provider.get_slot_usage(
+        db=test_db,
+        user_id=7,
+        device_id="cloud-device-1",
+    )
+
+    assert result == {
+        "used": 2,
+        "max": 0,
+        "running_tasks": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_device_passes_runtime_envs_to_nevis(test_db, monkeypatch):
+    """Cloud device creation should set stable Worktree runtime envs on the VM."""
     client = _FakeNevisClient()
     provider = CloudDeviceProvider(client=client)
     monkeypatch.setattr(
@@ -36,7 +67,7 @@ async def test_create_device_passes_git_token_envs_to_nevis(test_db, monkeypatch
         "",
     )
 
-    await provider.create_device(
+    result = await provider.create_device(
         db=test_db,
         user_id=7,
         user_name="alice",
@@ -56,10 +87,14 @@ async def test_create_device_passes_git_token_envs_to_nevis(test_db, monkeypatch
         ],
     )
 
-    assert client.create_sandbox_kwargs["envs"] == {
-        "GIT_INTRA_WEIBO_COM_TOKEN": "git-intra-token",
-        "GITLAB_WEIBO_CN_TOKEN": "gitlab-weibo-token",
-    }
+    envs = client.create_sandbox_kwargs["envs"]
+    assert envs["GIT_INTRA_WEIBO_COM_TOKEN"] == "git-intra-token"
+    assert envs["GITLAB_WEIBO_CN_TOKEN"] == "gitlab-weibo-token"
+    assert envs["DEVICE_TYPE"] == "cloud"
+    assert envs["WEGENT_EXECUTOR_HOME"] == "/home/ubuntu/.wegent-executor"
+    assert envs["LOCAL_WORKSPACE_ROOT"] == ("/home/ubuntu/.wegent-executor/workspace")
+    assert envs["WEGENT_EXECUTOR_HOME_ID"] == result["device_id"]
+    assert envs["WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED"] == "true"
 
 
 @pytest.mark.asyncio
