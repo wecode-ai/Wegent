@@ -619,7 +619,9 @@ async function verifyBackgroundTaskWindowLifecycle({
 }
 
 async function verifyPopoutWindowLifecycle(control, composerSelector) {
-  await control.command('showPopoutWindow', 'body')
+  await control.command('showPopoutWindow', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   try {
     if (process.platform === 'darwin') {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
@@ -636,7 +638,9 @@ async function verifyPopoutWindowLifecycle(control, composerSelector) {
     await control.command('dismissPopoutWindow', 'body')
   }
   const reopenStartedAt = Date.now()
-  await control.command('showPopoutWindow', 'body')
+  await control.command('showPopoutWindow', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   const reopenDurationMs = Date.now() - reopenStartedAt
   try {
     assert.ok(

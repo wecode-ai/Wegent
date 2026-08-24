@@ -416,8 +416,6 @@ async function openWorkspaceWindow(input: {
     ...desktopWindowFrameOptions(),
     width: 1280,
     height: 800,
-    minWidth: 900,
-    minHeight: 620,
     title: input.title,
     backgroundColor: '#101316',
     show: false,
@@ -504,6 +502,22 @@ async function showSystemDragPanel(): Promise<void> {
   target.showInactive()
 }
 
+async function focusWindow(target: BrowserWindow): Promise<void> {
+  if (target.isFocused()) return
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      target.off('focus', handleFocus)
+      reject(new Error('Timed out waiting for the Electron window to receive focus'))
+    }, 5_000)
+    const handleFocus = () => {
+      clearTimeout(timeout)
+      resolve()
+    }
+    target.once('focus', handleFocus)
+    target.focus()
+  })
+}
+
 async function showPopoutWindow(): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
   await waitForRendererSelector(target.webContents, '[data-testid="popout-workbench-page"]')
@@ -513,7 +527,7 @@ async function showPopoutWindow(): Promise<void> {
     Math.round(display.workArea.y + (display.workArea.height - 112) / 2)
   )
   target.show()
-  target.focus()
+  await focusWindow(target)
 }
 
 async function createWindow(): Promise<void> {
@@ -521,8 +535,6 @@ async function createWindow(): Promise<void> {
     ...desktopWindowFrameOptions(),
     width: 1440,
     height: 960,
-    minWidth: 900,
-    minHeight: 600,
     title: 'Wework',
     backgroundColor: '#101316',
     show: false,

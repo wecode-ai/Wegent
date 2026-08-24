@@ -314,6 +314,9 @@ export function createElectronCapabilityRouter(
     const primaryContents = e2eHost.captureTarget('main')
     if (primaryContents && !primaryContents.isDestroyed()) primaryContents.focus()
   })
+  router.register('e2e.focusWindow', params => {
+    e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')
+  })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
   router.register('e2e.getRuntimeDiagnostics', () => e2eHost.runtimeDiagnostics())
   router.register('e2e.getWindowFocusSnapshot', () => {

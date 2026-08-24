@@ -72,19 +72,19 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | --------------------------------- | ----------------------------------------------- | ------ | ---------------------------------------- |
 | `remote-device-onboarding`        | 主流程                                          | PASSED | `2026-08-23T11-01-42-989Z-43550`         |
 | `cloud-space-mention`             | `cloud-space-mention.scenario.mjs`              | PASSED | `2026-08-23T12-37-09-540Z-33570`         |
-| `workspace-tabs`                  | 主流程                                          | PASSED | `2026-08-23T23-22-38-708Z-91703`，1m 42s |
-| `cloud-project-creation`          | 主流程                                          | PASSED | `2026-08-22T09-55-33-062Z-74493`，1m 24s |
+| `workspace-tabs`                  | 主流程                                          | PASSED | `2026-08-24T05-54-52-665Z-37983`，1m 7s  |
+| `cloud-project-creation`          | 主流程                                          | PASSED | `2026-08-24T07-02-14-894Z-23119`，1m 20s |
 | `priority-filter`                 | 主流程                                          | PASSED | `2026-08-22T09-57-05-022Z-81057`，1m 45s |
 | `telemetry-consent`               | 主流程                                          | PASSED | `2026-08-22T10-02-13-752Z-3705`，1m 4s   |
-| `automation-lifecycle`            | 主流程                                          | PASSED | `2026-08-24T04-51-47-113Z-41548`，1m 7s  |
-| `project-automation`              | `project-automation.scenario.mjs`               | PASSED | `2026-08-22T12-11-44-865Z-83917`，1m 37s |
+| `automation-lifecycle`            | 主流程                                          | PASSED | `2026-08-24T05-53-44-302Z-25784`，59s    |
+| `project-automation`              | `project-automation.scenario.mjs`               | PASSED | `2026-08-24T06-01-00-714Z-7059`，1m 15s  |
 | `project-assignment-notification` | `project-assignment-notification.scenario.mjs`  | PASSED | `2026-08-22T12-14-53-781Z-97297`，2m 3s  |
 | `offline-local-project-space`     | `offline-local-project-space.scenario.mjs`      | PASSED | `2026-08-22T12-17-27-648Z-10112`，33s    |
-| `plugin-auto-update`              | 主流程                                          | PASSED | `2026-08-22T12-18-31-195Z-16808`，47s    |
+| `plugin-auto-update`              | 主流程                                          | PASSED | `2026-08-24T06-04-17-385Z-43368`，50s    |
 | `project-ai-settings`             | 主流程                                          | PASSED | `2026-08-22T13-25-11-628Z-59608`，1m 34s |
 | `model-routing`                   | 主流程                                          | PASSED | `2026-08-22T14-02-30-164Z-76105`，3m 47s |
 | `permission-modes`                | 主流程                                          | PASSED | `2026-08-22T14-22-04-259Z-90942`，56s    |
-| `core-task-flow`                  | 主流程                                          | PASSED | `2026-08-22T15-18-00-563Z-41341`，3m 58s |
+| `core-task-flow`                  | 主流程                                          | PASSED | `2026-08-24T06-56-42-999Z-35780`，3m 19s |
 | `task-attachments`                | `task-attachments.scenario.mjs`                 | PASSED | `2026-08-22T15-25-01-692Z-69786`，17s    |
 | `cloud-git-worktree`              | 组合 checkpoint                                 | PASSED | `2026-08-22T15-26-24-214Z-74740`，2m 12s |
 | `cloud-worktree-capability`       | 云工作树流程                                    | PASSED | `2026-08-22T15-28-58-932Z-86406`，50s    |
@@ -99,13 +99,13 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | `running-conversation-history`    | `running-conversation-history.scenario.mjs`     | PASSED | `2026-08-22T15-42-52-258Z-43524`，39s    |
 | `codex-notification-isolation`    | `codex-notification-isolation.scenario.mjs`     | PASSED | `2026-08-22T15-54-13-855Z-89489`，36s    |
 | `split-workbench`                 | `split-workbench.scenario.mjs`                  | PASSED | `2026-08-22T16-13-52-957Z-16497`，1m 28s |
-| `window-lifecycle`                | 主流程                                          | PASSED | `2026-08-24T04-16-35-293Z-45720`，4m 18s |
-| `goal-lifecycle`                  | 主流程                                          | PASSED | `2026-08-23T03-26-55-017Z-73575`，2m 32s |
+| `window-lifecycle`                | 主流程                                          | PASSED | `2026-08-24T05-56-15-868Z-53061`，2m 30s |
+| `goal-lifecycle`                  | 主流程                                          | PASSED | `2026-08-24T07-00-15-426Z-80509`，1m 52s |
 | `supervisor-lifecycle`            | 主流程                                          | PASSED | `2026-08-23T03-30-10-625Z-98006`，1m 32s |
 | `resilience`                      | 主流程                                          | PASSED | `2026-08-23T03-32-01-654Z-13565`，2m 32s |
 | `conversation-state`              | `conversation-mention.scenario.mjs`             | PASSED | `2026-08-23T03-34-55-836Z-43070`，3m 9s  |
 | `temporary-chat`                  | `temporary-chat.scenario.mjs`                   | PASSED | `2026-08-23T03-38-37-776Z-83873`，33s    |
-| `workspace-attachments`           | 主流程                                          | PASSED | `2026-08-23T04-14-58-155Z-89089`，2m 15s |
+| `workspace-attachments`           | 主流程                                          | PASSED | `2026-08-24T06-02-31-669Z-23426`，1m 34s |
 | `rendering-extensions`            | `streaming-text.scenario.mjs`                   | PASSED | `2026-08-23T04-29-42-959Z-39829`，3m 46s |
 | `change-request-status`           | `change-request-status.scenario.mjs`            | PASSED | `2026-08-23T05-10-17-721Z-12207`，32s    |
 | `claude-runtime`                  | `claude-runtime.scenario.mjs`                   | PASSED | `2026-08-23T05-27-56-087Z-49057`，1m 35s |
@@ -123,7 +123,7 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | `plugin-marketplace-lifecycle` | PASSED | `2026-08-23T14-13-21-281Z-62260` |
 | `plugin-lifecycle`             | PASSED | `2026-08-23T14-11-03-745Z-41421` |
 | `skill-mention-rendering`      | PASSED | `2026-08-23T12-29-47-542Z-798`   |
-| `sites-plugin-auto-install`    | PASSED | `2026-08-23T12-31-52-898Z-10302` |
+| `sites-plugin-auto-install`    | PASSED | `2026-08-24T05-59-40-476Z-92487` |
 
 ## 独立桌面场景
 
@@ -320,3 +320,29 @@ Electron/Tauri 两份业务断言。
   Browser Bridge、Workbench、Core DSH 和 Executor，仅在 Darwin 25.0–25.4
   的 `quit` 事件后终止已完成清理的宿主；Darwin 25.5+ 和其他平台保持标准
   Electron 退出路径。对应 Electron 测试为 26 files / 77 tests。
+- PR #2945 CI 失败项逐项复核：
+  `automation-lifecycle`、`workspace-tabs`、`window-lifecycle`、
+  `sites-plugin-auto-install`、`project-automation`、
+  `workspace-attachments`、`plugin-auto-update` 均使用同一最新打包应用逐个通过。
+- `core-task-flow`：PASS，证据目录
+  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T06-56-42-999Z-35780`。
+  迁移时 Electron 自行增加的 600px 最小窗口高度与旧 Tauri 行为不一致，
+  导致 420px 窗口下侧边栏无法构造非边缘滚动位置；删除额外最小尺寸后，
+  原侧边栏滚动保持断言通过。弹出窗口现在等待 Electron `focus` 事件后才完成
+  `systemDrag.complete`，避免主窗口焦点竞态。该目录包含系统拖拽、引导消息、
+  请求输入、侧边栏滚动、任务分叉、工作区状态等完整截图。
+- 前台 guidance 顺序：Executor 日志、模型请求、Workbench debug snapshot 与
+  UI snapshot 共同证明“引导前已产生但延迟送达”的 process block 被错误追加到
+  guidance 之后。运行时合并现在按时间将该 block 插回 guidance 前；引导后的
+  tool block 仍留在 continuation。原渲染契约要求 pre-tool 文本位于
+  `process-text-block`，E2E 据此统计 assistant 内容和 process block 的总出现
+  次数为 1。聚焦验证目录
+  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T06-36-20-921Z-51091`
+  与完整 `core-task-flow` 均通过。
+- `goal-lifecycle`：PASS，证据目录
+  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-00-15-426Z-80509`；
+  忙碌交接、自动续跑、后台未读、重载及整应用重启恢复共生成 11 张阶段截图。
+- `cloud-project-creation`：PASS，证据目录
+  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-02-14-894Z-23119`；
+  临时 Git 仓库初始化、云项目创建和任务流完整通过，未再出现
+  `spawn git ENOENT`。

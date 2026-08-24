@@ -91,5 +91,26 @@ Wework 内置浏览器工具栏场景通过，证据目录：
 下载和清理浏览数据；设备模式使用 CDP metrics 的 image scale，不再将宿主适配
 缩放叠加到 Electron page zoom。
 
+## PR #2945 回归截图链
+
+最新 Electron 打包产物对历史 CI 失败项逐个复核，全部退出码为 0：
+
+| 流程             | 关键截图顺序                                                                                                                                                                                                                                            | 证据目录                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 核心任务与侧边栏 | `system-drag-panel.png` → `system-drag-popout-window.png` → `guidance-scroll-01-message-visible.png` → `02-background-request-user-input-visible.png` → `03-sidebar-manual-scroll-preserved.png` → `04-delayed-answer-completed.png`                    | `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T06-56-42-999Z-35780` |
+| Goal 生命周期    | `goal-idle-01-running.png` → `goal-idle-02-automatic-continuation.png` → `goal-idle-03-reloaded-continuation.png` → `goal-restart-01-working-before-restart.png` → `goal-restart-03-opened-waiting-for-user.png` → `goal-restart-06-completed-read.png` | `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-00-15-426Z-80509` |
+| 云项目创建       | `00-cloud-work-page.png` → `project-shared-root-both-visible.png`                                                                                                                                                                                       | `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T07-02-14-894Z-23119` |
+
+截图 review 结论：
+
+- 系统拖拽面板与 Popout Window 均由 Electron 原生窗口承载，弹出后焦点不回落
+  到主窗口。
+- guidance 前的 pre-tool 文本只出现一次，并位于 process block；guidance 后的
+  continuation 顺序正确。
+- 420px 高窗口中活动任务可被滚出视口，运行时状态刷新后侧边栏保持同一
+  `scrollTop`，证明 Electron 已恢复旧 Tauri 的窗口调整语义。
+- Goal 自动续跑、重载、整应用重启、等待用户恢复和最终已读状态均连续。
+- 云项目创建使用真实 Git 临时仓库完成，不存在 `spawn git ENOENT`。
+
 `git push` 会按仓库约定执行完整 pre-push 验证；不通过重试、跳过或修改旧 E2E
 断言换取通过。

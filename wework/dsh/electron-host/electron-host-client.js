@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline'
 
 export const ELECTRON_HOST_PROTOCOL_VERSION = 1
 const MAX_FRAME_BYTES = 1024 * 1024
-const DEFAULT_TIMEOUT_MS = 15_000
+const DEFAULT_TIMEOUT_MS = 120_000
 
 export class ElectronHostError extends Error {
   constructor(code, message, details = {}) {

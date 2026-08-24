@@ -556,6 +556,83 @@ describe('runtimeConversationCache', () => {
     ])
   })
 
+  test('keeps late-delivered pre-guidance blocks before the applied guidance', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'subtask-1',
+    })
+    const guidance = {
+      id: 'client-guidance-1',
+      content: 'follow the updated direction',
+      status: 'sending' as const,
+      deliveryMode: 'guidance' as const,
+      createdAt: '2026-07-27T00:00:01.000Z',
+    }
+    appendOptimisticRuntimeConversationGuidance(address, 'subtask-1', guidance)
+    cacheRuntimeConversationQueuedMessages(address, [guidance])
+    settleRuntimeConversationGuidance(address, {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      subtaskId: 'subtask-1',
+      guidanceId: 'runtime-guidance-1',
+      clientGuidanceId: guidance.id,
+      message: guidance.content,
+      appliedAtMs: Date.parse('2026-07-27T00:00:02.000Z'),
+    })
+
+    applyRuntimeConversationAction(address, {
+      type: 'block_created',
+      subtaskId: 'subtask-1',
+      block: {
+        id: 'pre-guidance-text',
+        subtaskId: 'subtask-1',
+        type: 'text',
+        content: 'working before guidance',
+        status: 'done',
+        createdAt: Date.parse('2026-07-27T00:00:01.500Z'),
+      },
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'block_created',
+      subtaskId: 'subtask-1',
+      block: {
+        id: 'post-guidance-tool',
+        subtaskId: 'subtask-1',
+        type: 'tool',
+        toolName: 'bash',
+        status: 'streaming',
+        createdAt: Date.parse('2026-07-27T00:00:02.500Z'),
+      },
+    })
+
+    expect(getRuntimeConversationMessages(address)).toMatchObject([
+      {
+        role: 'assistant',
+        runtimeGuidanceSplitBefore: true,
+        blocks: [{ id: 'pre-guidance-text' }],
+      },
+      {
+        id: guidance.id,
+        role: 'user',
+        runtimeGuidance: true,
+      },
+      {
+        role: 'assistant',
+        runtimeGuidanceContinuation: true,
+        blocks: [
+          {
+            type: 'tool',
+            toolName: 'conversation_guidance',
+          },
+          {
+            id: 'post-guidance-tool',
+          },
+        ],
+      },
+    ])
+  })
+
   test('settles an optimistic guidance message into the active turn without duplicating its id', () => {
     applyRuntimeConversationAction(address, {
       type: 'assistant_started',

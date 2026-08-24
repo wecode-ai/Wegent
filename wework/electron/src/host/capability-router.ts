@@ -38,6 +38,7 @@ export const HOST_CAPABILITIES = [
   'e2e.captureWorkspaceWindow',
   'e2e.closeMainWindow',
   'e2e.focusMainWindow',
+  'e2e.focusWindow',
   'e2e.getProcessSnapshot',
   'e2e.getRuntimeDiagnostics',
   'e2e.getWindowFocusSnapshot',

@@ -2040,7 +2040,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
       }
     )
   if (isElectronRuntime()) {
-    await invokeDesktopHost('e2e.focusMainWindow')
+    await invokeDesktopHost('e2e.focusWindow', { windowLabel })
   } else {
     await getCurrentWindow().show()
     await getCurrentWindow().unminimize()

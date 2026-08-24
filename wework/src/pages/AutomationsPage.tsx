@@ -37,6 +37,7 @@ import { isCloudDevice } from '@/lib/device-capabilities'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import type { RuntimeSendRequest, RuntimeTaskAddress, RuntimeTaskCreateRequest } from '@/types/api'
@@ -604,7 +605,7 @@ export function AutomationsPage() {
                 models={projectChat.models}
                 currentRuntimeTask={state.currentRuntimeTask}
                 runtimeWork={state.runtimeWork}
-                localDeviceIds={localDevices.map(device => device.device_id)}
+                localDeviceIds={localDevices.flatMap(getWorkbenchDeviceIds)}
                 cloudAvailable={cloudDevices.length > 0}
                 saving={saving}
                 dirty={dirty}
