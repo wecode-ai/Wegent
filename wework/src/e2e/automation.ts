@@ -225,21 +225,7 @@ async function captureEmbeddedBrowserWhenReady(command: DesktopControlCommand): 
         label
       )
       if (page.readyState === 'complete' && page.textLength > 0) {
-        if (command.text && !window.location.href.includes(command.text)) {
-          throw new Error(`current route does not include "${command.text}"`)
-        }
-        const snapshot = await invoke<string>('embedded_browser_capture_snapshot', { label })
-        const targetSelector = command.target?.trim()
-        if (targetSelector) {
-          const target = findDesktopControlElements(targetSelector)[0]
-          if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
-          if (!desktopControlElementEnabled(target)) {
-            throw new Error(`Target selector "${targetSelector}" is disabled`)
-          }
-          target.click()
-          await waitForDesktopControlTick()
-        }
-        return snapshot
+        return invoke<string>('embedded_browser_capture_snapshot', { label })
       }
       lastError = `page state is ${page.readyState} with ${page.textLength} visible text characters`
     } catch (error) {
