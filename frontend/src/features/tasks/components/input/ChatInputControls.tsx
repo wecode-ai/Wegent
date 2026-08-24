@@ -167,6 +167,8 @@ export interface ChatInputControlsProps {
   selectedVideoGenerationMode?: string
   onVideoGenerationModeChange?: (modeId: string) => void
   materialAccept?: string
+  showVideoControlsInChat?: boolean
+  hideDurationSelector?: boolean
 
   // Image mode props (only used when taskType === 'image')
   selectedImageModel?: Model | null
@@ -288,6 +290,8 @@ export function ChatInputControls({
   selectedVideoGenerationMode,
   onVideoGenerationModeChange,
   materialAccept,
+  showVideoControlsInChat = false,
+  hideDurationSelector = false,
   // Image mode props
   selectedImageModel,
   onImageModelChange,
@@ -304,7 +308,7 @@ export function ChatInputControls({
 }: ChatInputControlsProps) {
   const { t } = useTranslation('chat')
   // Check if we're in video or image mode
-  const isVideoMode = taskType === 'video'
+  const isVideoMode = taskType === 'video' || showVideoControlsInChat
   const isImageMode = taskType === 'image'
   // Check if we're in generation mode (video or image)
   const isGenerationMode = isVideoMode || isImageMode
@@ -479,6 +483,19 @@ export function ChatInputControls({
         selectedVideoModel={selectedVideoModel}
         onVideoModelChange={onVideoModelChange}
         isVideoModelsLoading={isVideoModelsLoading}
+        showVideoControlsInChat={showVideoControlsInChat}
+        selectedResolution={selectedResolution}
+        onResolutionChange={onResolutionChange}
+        availableResolutions={availableResolutions}
+        resolutionOptions={resolutionOptions}
+        selectedRatio={selectedRatio}
+        onRatioChange={onRatioChange}
+        availableRatios={availableRatios}
+        ratioOptions={ratioOptions}
+        selectedDuration={selectedDuration}
+        onDurationChange={onDurationChange}
+        availableDurations={availableDurations}
+        hideDurationSelector={hideDurationSelector}
       />
     )
   }
@@ -558,6 +575,7 @@ export function ChatInputControls({
                 availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
                 resolutionOptions={resolutionOptions}
                 disabled={isStreaming}
+                showDuration={!hideDurationSelector}
               />
             )}
           </>

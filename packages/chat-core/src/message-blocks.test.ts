@@ -6,6 +6,35 @@ import { describe, expect, it } from 'vitest'
 import { nestMessageBlocks, type MessageBlock } from './message-blocks'
 
 describe('nestMessageBlocks', () => {
+  it('merges incremental CardBlock updates by card id', () => {
+    const blocks: MessageBlock[] = [
+      {
+        id: 'card-1',
+        type: 'card',
+        status: 'pending',
+        card_id: 'card-1',
+        card_type: 'video_director_generation',
+        card_status: 'pending',
+        card_data: {},
+        card_preview_data: { progress: 10 },
+        card_error: null,
+      },
+      {
+        id: 'card-1',
+        type: 'card',
+        status: 'streaming',
+        card_id: 'card-1',
+        card_type: 'video_director_generation',
+        card_status: 'partial_ready',
+        card_data: { link: 'https://workflow.example.com/task/1' },
+        card_preview_data: { progress: 60 },
+        card_error: null,
+      },
+    ]
+
+    expect(nestMessageBlocks(blocks)).toEqual([blocks[1]])
+  })
+
   it('rebuilds nested subagent tools from persisted flat blocks', () => {
     const blocks: MessageBlock[] = [
       {

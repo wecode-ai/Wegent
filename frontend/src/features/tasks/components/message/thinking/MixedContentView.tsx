@@ -34,6 +34,7 @@ import {
 } from '../../subscription/SubscriptionPreviewCard'
 import { blockToToolPair } from './utils/blockToToolPair'
 import { resolveGeneratedImageDisplayLayout } from '@/features/tasks/utils/imageDisplaySize'
+import { CardRenderer } from '@/features/cards/CardRenderer'
 // Import to register prompt optimization block renderer
 import '@/features/prompt-optimization/block-renderer'
 
@@ -129,6 +130,8 @@ interface MixedContentViewProps {
     formattedMessage: string,
     answer: InteractiveFormAnswerPayload
   ) => void
+  /** Send a follow-up message from an interactive card button. */
+  onCardChatButtonClick?: (message: string) => void | Promise<void>
   /** Optional override for the running processing indicator text */
   processingMessage?: string
   /** Hide tool input/output details and parameter previews */
@@ -215,6 +218,7 @@ const MixedContentView = memo(function MixedContentView({
   subtaskId,
   currentMessageIndex,
   onAskUserSubmit,
+  onCardChatButtonClick,
   processingMessage,
   hideToolDetails = false,
 }: MixedContentViewProps) {
@@ -315,6 +319,12 @@ const MixedContentView = memo(function MixedContentView({
               data: block as unknown as SubscriptionPreviewBlock,
               blockId: block.id,
               status: block.status,
+            }
+          } else if (block.type === 'card') {
+            return {
+              type: 'card' as const,
+              data: block,
+              blockId: block.id,
             }
           } else if (block.type === 'guidance') {
             return {
@@ -722,6 +732,14 @@ const MixedContentView = memo(function MixedContentView({
             <div key={item.blockId} className="pb-4">
               <SubscriptionPreviewCard data={item.data} />
             </div>
+          )
+        } else if (item.type === 'card') {
+          return (
+            <CardRenderer
+              key={item.blockId}
+              block={item.data}
+              onChatButtonClick={onCardChatButtonClick}
+            />
           )
         } else if (item.type === 'guidance') {
           return <GuidanceBlock key={item.blockId} block={item.data} />

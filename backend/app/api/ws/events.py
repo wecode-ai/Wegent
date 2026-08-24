@@ -134,6 +134,10 @@ class GenerateParams(BaseModel):
     )
     ratio: Optional[str] = Field(None, description="Aspect ratio (e.g., '16:9')")
     duration: Optional[int] = Field(None, description="Duration in seconds")
+    model: Optional[str] = Field(None, description="Selected generation model name")
+    model_display_name: Optional[str] = Field(
+        None, description="Selected generation model display name"
+    )
     generation_mode_id: Optional[str] = Field(
         None, description="Selected video generation mode"
     )

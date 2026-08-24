@@ -441,6 +441,29 @@ async def _get_existing_subtask_result(subtask_id: int) -> Dict[str, Any]:
         db.close()
 
 
+async def persist_result_without_status(
+    subtask_id: int,
+    result: Dict[str, Any],
+) -> None:
+    """Persist result data while leaving the current subtask status unchanged."""
+    db = SessionLocal()
+    try:
+        subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
+        if not subtask:
+            raise ValueError(f"Subtask {subtask_id} not found")
+        task_stores.subtask_store.update_result(
+            db,
+            subtask=subtask,
+            result=result,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 async def collect_completed_result(
     subtask_id: int,
     *,

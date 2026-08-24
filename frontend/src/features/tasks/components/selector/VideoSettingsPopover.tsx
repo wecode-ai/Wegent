@@ -37,6 +37,8 @@ export interface VideoSettingsPopoverProps {
   resolutionOptions?: ResolutionOption[]
   // State
   disabled?: boolean
+  showDuration?: boolean
+  triggerVariant?: 'default' | 'menu-item'
 }
 
 // Aspect ratio icon dimensions for visual representation
@@ -75,6 +77,8 @@ export function VideoSettingsPopover({
   availableResolutions,
   resolutionOptions,
   disabled = false,
+  showDuration = true,
+  triggerVariant = 'default',
 }: VideoSettingsPopoverProps) {
   const { t } = useTranslation('chat')
   const [isOpen, setIsOpen] = useState(false)
@@ -87,7 +91,11 @@ export function VideoSettingsPopover({
       ?.label ?? selectedResolution.toUpperCase()
   const autoDurationLabel = t('video.duration_auto')
   const selectedDurationLabel = formatVideoDuration(selectedDuration, autoDurationLabel)
-  const summaryText = `${selectedRatioLabel} · ${selectedDurationLabel} · ${selectedResolutionLabel}`
+  const summaryText = [
+    selectedRatioLabel,
+    ...(showDuration ? [selectedDurationLabel] : []),
+    selectedResolutionLabel,
+  ].join(' · ')
   const displayedRatios = ratioOptions?.length
     ? ratioOptions
     : availableRatios.map(value => ({ label: value, value }))
@@ -101,9 +109,12 @@ export function VideoSettingsPopover({
         <button
           type="button"
           disabled={disabled}
+          data-testid="video-settings-trigger"
           className={cn(
-            'flex items-center gap-1.5 min-w-0 rounded-full pl-2.5 pr-3 py-2.5 h-9',
-            'border border-border bg-base text-text-primary hover:bg-hover',
+            'flex items-center gap-1.5 min-w-0 text-text-primary hover:bg-hover',
+            triggerVariant === 'menu-item'
+              ? 'h-11 w-full rounded-md px-3'
+              : 'h-9 rounded-full border border-border bg-base pl-2.5 pr-3 py-2.5',
             'transition-colors focus:outline-none focus:ring-0',
             'disabled:cursor-not-allowed disabled:opacity-50'
           )}
@@ -132,6 +143,7 @@ export function VideoSettingsPopover({
                 <button
                   key={option.value}
                   type="button"
+                  data-testid={`video-ratio-option-${option.value}`}
                   onClick={() => onRatioChange(option.value)}
                   className={cn(
                     'flex flex-col items-center gap-1 px-3 py-2 rounded-lg',
@@ -148,29 +160,31 @@ export function VideoSettingsPopover({
             </div>
           </div>
 
-          {/* Duration Section */}
-          <div>
-            <h4 className="text-sm font-medium text-text-primary mb-2">
-              {t('video.duration_section')}
-            </h4>
-            <div className="flex gap-2">
-              {availableDurations.map(duration => (
-                <button
-                  key={duration}
-                  type="button"
-                  onClick={() => onDurationChange(duration)}
-                  className={cn(
-                    'flex-1 py-2 rounded-lg border transition-colors text-sm',
-                    selectedDuration === duration
-                      ? 'border-primary bg-primary/5 text-primary'
-                      : 'border-border bg-surface hover:bg-hover text-text-secondary'
-                  )}
-                >
-                  {formatVideoDuration(duration, autoDurationLabel)}
-                </button>
-              ))}
+          {showDuration && (
+            <div>
+              <h4 className="text-sm font-medium text-text-primary mb-2">
+                {t('video.duration_section')}
+              </h4>
+              <div className="flex gap-2">
+                {availableDurations.map(duration => (
+                  <button
+                    key={duration}
+                    type="button"
+                    data-testid={`video-duration-option-${duration}`}
+                    onClick={() => onDurationChange(duration)}
+                    className={cn(
+                      'flex-1 py-2 rounded-lg border transition-colors text-sm',
+                      selectedDuration === duration
+                        ? 'border-primary bg-primary/5 text-primary'
+                        : 'border-border bg-surface hover:bg-hover text-text-secondary'
+                    )}
+                  >
+                    {formatVideoDuration(duration, autoDurationLabel)}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Resolution Section */}
           <div>
@@ -184,6 +198,7 @@ export function VideoSettingsPopover({
                   <button
                     key={value}
                     type="button"
+                    data-testid={`video-resolution-option-${value}`}
                     onClick={() => onResolutionChange(value)}
                     title={'tooltip' in option ? option.tooltip : undefined}
                     className={cn(

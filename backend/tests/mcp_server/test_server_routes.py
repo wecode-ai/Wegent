@@ -19,6 +19,7 @@ from app.core.rate_limit import ExternalMcpRateLimitStatus
 from app.main import create_app
 from app.mcp_server import server as mcp_server_module
 from app.mcp_server.server import (
+    _CARDS_MCP_SPEC,
     _MEDIA_UNDERSTANDING_MCP_SPEC,
     MCP_APP_SPECS,
     ExternalKnowledgeUser,
@@ -204,6 +205,23 @@ def test_media_understanding_mcp_root_returns_metadata_json():
         "endpoints": {
             "mcp": "/mcp/media-understanding/sse",
             "health": "/mcp/media-understanding/health",
+        },
+    }
+
+
+def test_cards_mcp_root_returns_metadata_json():
+    app = _build_mcp_app(_CARDS_MCP_SPEC)
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "service": "wegent-cards-mcp",
+        "transport": "streamable-http",
+        "endpoints": {
+            "mcp": "/mcp/cards/sse",
+            "health": "/mcp/cards/health",
         },
     }
 

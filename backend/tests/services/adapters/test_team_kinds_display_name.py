@@ -118,6 +118,29 @@ def test_update_team_persists_quick_phrases_in_spec(test_db, test_user):
     ]
 
 
+def test_update_team_persists_video_workflow_mode_spec(test_db, test_user):
+    team = _create_team_kind(test_db, test_user.id)
+
+    result = team_kinds_service.update_with_user(
+        test_db,
+        team_id=team.id,
+        obj_in=TeamUpdate(
+            mode_spec={
+                "allowedModelCategories": ["video"],
+                "hiddenVideoParams": ["duration"],
+            }
+        ),
+        user_id=test_user.id,
+    )
+
+    test_db.refresh(team)
+    assert result["mode_spec"] == {
+        "allowedModelCategories": ["video"],
+        "hiddenVideoParams": ["duration"],
+    }
+    assert team.json["spec"]["modeSpec"] == result["mode_spec"]
+
+
 def test_team_rename_requires_confirmation_and_leaves_task_reference_unchanged(
     test_db, test_user
 ):

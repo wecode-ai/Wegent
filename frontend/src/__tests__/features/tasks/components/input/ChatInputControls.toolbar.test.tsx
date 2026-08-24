@@ -58,7 +58,9 @@ jest.mock('@/components/ui/tooltip', () => ({
 
 jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
   __esModule: true,
-  default: () => <div data-testid="model-selector" />,
+  default: ({ modelCategoryType = 'llm' }: { modelCategoryType?: string }) => (
+    <div data-testid="model-selector" data-model-category={modelCategoryType} />
+  ),
 }))
 
 jest.mock('@/features/tasks/components/selector/UnifiedRepositorySelector', () => ({
@@ -123,7 +125,13 @@ jest.mock('@/features/tasks/components/selector', () => ({
   __esModule: true,
   ImageSizeSelector: () => <div data-testid="image-size-selector" />,
   GenerateModeSelector: () => <div data-testid="generate-mode-selector" />,
-  VideoSettingsPopover: () => <div data-testid="video-settings-popover" />,
+  VideoGenerationModeSelector: () => <div data-testid="video-generation-mode-selector" />,
+  VideoSettingsPopover: ({ showDuration }: { showDuration?: boolean }) => (
+    <div
+      data-testid="video-settings-popover"
+      data-show-duration={showDuration === false ? 'false' : 'true'}
+    />
+  ),
   isGenerateMode: () => false,
 }))
 
@@ -273,5 +281,51 @@ describe('ChatInputControls toolbar actions', () => {
     expect(screen.getByTestId('skill-selector')).toBeInTheDocument()
     expect(screen.getByTestId('clarification-toggle')).toBeInTheDocument()
     expect(screen.getByTestId('correction-toggle')).toBeInTheDocument()
+  })
+
+  it('shows only the video model selector for workflow-managed video chat', () => {
+    const workflowTeam: Team = {
+      ...selectedTeam,
+      mode_spec: {
+        allowedModelCategories: ['video'],
+        hiddenVideoParams: ['duration'],
+      },
+    }
+
+    render(
+      <ChatInputControls
+        {...createProps()}
+        selectedTeam={workflowTeam}
+        teams={[workflowTeam]}
+        showVideoControlsInChat
+        selectedVideoModel={null}
+        onVideoModelChange={jest.fn()}
+        selectedResolution="1080p"
+        onResolutionChange={jest.fn()}
+        selectedRatio="9:16"
+        onRatioChange={jest.fn()}
+        selectedDuration={5}
+        onDurationChange={jest.fn()}
+        hideDurationSelector
+        videoGenerationModes={[
+          { id: 'text_to_video', label: '文生视频' },
+          { id: 'omni_reference', label: '全能参考' },
+        ]}
+        selectedVideoGenerationMode="text_to_video"
+        onVideoGenerationModeChange={jest.fn()}
+      />
+    )
+
+    expect(
+      screen
+        .getAllByTestId('model-selector')
+        .map(selector => selector.getAttribute('data-model-category'))
+    ).toEqual(['video'])
+    expect(screen.getByTestId('video-generation-mode-selector')).toBeInTheDocument()
+    expect(screen.getByTestId('video-settings-popover')).toHaveAttribute(
+      'data-show-duration',
+      'false'
+    )
+    expect(screen.queryByTestId('agent-skill-selector-button')).not.toBeInTheDocument()
   })
 })

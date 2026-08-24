@@ -534,12 +534,29 @@ class TeamInputPlaceholder(LocalizedInputPlaceholder):
     desktop: Optional[LocalizedInputPlaceholder] = None
 
 
+class ModeSpec(BaseModel):
+    """Model selectors exposed for specialized task modes."""
+
+    allowedModelCategories: List[ModelCategoryType] = Field(
+        default_factory=list,
+        description="Model categories available for user selection.",
+    )
+    hiddenVideoParams: Optional[List[str]] = Field(
+        default=None,
+        description="Video parameters owned by the workflow and hidden from users.",
+    )
+
+
 class TeamSpec(QuickPhraseMixin):
     """Team specification"""
 
     members: List[TeamMember]
     collaborationModel: str  # solo、pipeline、route、coordinate、collaborate
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    modeSpec: Optional[ModeSpec] = Field(
+        default=None,
+        description="Optional media selectors exposed while retaining chat execution.",
+    )
     description: Optional[str] = None  # Team description
     icon: Optional[str] = None  # Icon ID from preset icon library
     displayConfig: TeamDisplayConfig = Field(default_factory=TeamDisplayConfig)

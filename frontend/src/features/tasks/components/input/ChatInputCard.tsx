@@ -297,6 +297,7 @@ export function ChatInputCard({
   selectedVideoModel,
   onVideoModelChange,
   isVideoModelsLoading,
+  showVideoControlsInChat,
   selectedResolution,
   onResolutionChange,
   availableResolutions,
@@ -891,6 +892,7 @@ export function ChatInputCard({
             selectedVideoModel={selectedVideoModel}
             onVideoModelChange={onVideoModelChange}
             isVideoModelsLoading={isVideoModelsLoading}
+            showVideoControlsInChat={showVideoControlsInChat}
             selectedResolution={selectedResolution}
             onResolutionChange={onResolutionChange}
             availableResolutions={availableResolutions}

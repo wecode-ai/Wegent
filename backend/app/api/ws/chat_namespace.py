@@ -86,6 +86,7 @@ from app.services.chat.trigger import (
 )
 from app.services.chat.wework_task_defaults import apply_wework_task_defaults
 from app.services.task_fork_history import task_fork_history_resolver
+from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.context import (
     set_request_context,
@@ -104,6 +105,8 @@ def _get_retry_generate_params(user_subtask: Subtask) -> Optional[GenerateParams
     video_config = result.get("video_config")
     if isinstance(video_config, dict):
         return GenerateParams(
+            model=video_config.get("model"),
+            model_display_name=video_config.get("model_display_name"),
             resolution=video_config.get("resolution"),
             ratio=video_config.get("ratio"),
             duration=video_config.get("duration"),
@@ -879,6 +882,8 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "resolution": payload.generate_params.resolution,
                     "ratio": payload.generate_params.ratio,
                     "duration": payload.generate_params.duration,
+                    "model": payload.generate_params.model,
+                    "model_display_name": payload.generate_params.model_display_name,
                     "generation_mode_id": payload.generate_params.generation_mode_id,
                     "size": payload.generate_params.size,
                 }
@@ -1988,7 +1993,7 @@ def _fetch_subtasks_for_task_join(
                     "message_id": st.message_id,
                     "role": st.role.value,
                     "prompt": extract_display_prompt(st.prompt),
-                    "result": st.result,
+                    "result": sanitize_client_payload(st.result),
                     "status": st.status.value,
                     "progress": st.progress,
                     "created_at": (
