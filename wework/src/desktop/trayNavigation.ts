@@ -49,6 +49,7 @@ export function syncTrayMenuState(
 export function installTraySettingsNavigation() {
   if (!trayActionPollingInstalled) {
     trayActionPollingInstalled = true
+    const pollingWindow = window
     const poll = async () => {
       try {
         const actions =
@@ -70,7 +71,7 @@ export function installTraySettingsNavigation() {
       } catch (error) {
         console.debug('[Wework] Failed to poll Electron tray actions', error)
       } finally {
-        window.setTimeout(poll, 100)
+        pollingWindow.setTimeout(poll, 100)
       }
     }
     void poll()
