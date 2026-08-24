@@ -94,7 +94,6 @@ from app.api.endpoints.adapter import (
     teams,
     templates,
 )
-from app.api.endpoints.adapter.aigc_video.router import router as aigc_video_router
 from app.api.endpoints.internal import (
     api_keys_internal_router,
 )
@@ -120,6 +119,7 @@ from app.api.endpoints.internal import (
     tables_router,
     workspace_archives_router,
 )
+from wecode.video.api.router import router as aigc_video_router
 
 # RAG internal router is conditionally imported based on STANDALONE_MODE
 if not settings.STANDALONE_MODE:

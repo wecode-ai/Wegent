@@ -109,7 +109,7 @@ import {
   isVideoExtension,
 } from '@/apis/attachments'
 import type { AttachmentTypeLimits } from '@/hooks/useMultiAttachment'
-import { teamHidesVideoParam, teamUsesModeSpecCategory } from '@/features/video/teamModeSpec'
+import { teamHidesVideoParam, teamUsesModeSpecCategory } from '@wecode/features/video/teamModeSpec'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.

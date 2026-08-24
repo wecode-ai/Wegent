@@ -17,9 +17,6 @@ from typing import Any, List, Optional, Union
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.endpoints.adapter.aigc_video.skill_context import (
-    inject_generation_into_public_skills,
-)
 from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.project import Project
@@ -50,6 +47,9 @@ from app.stores.tasks import task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
 from shared.utils.url_util import domains_match
+from wecode.video.api.skill_context import (
+    inject_generation_into_public_skills,
+)
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"

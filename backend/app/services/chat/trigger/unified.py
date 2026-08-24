@@ -22,10 +22,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from fastapi import HTTPException, status
 
-from app.api.endpoints.adapter.aigc_video.skill_context import (
-    filter_prior_user_attachments,
-    inherit_attachment_media_into_generation,
-)
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.session import SessionLocal
 from app.models.kind import Kind
@@ -48,6 +44,10 @@ from app.services.user_runtime_config import (
 from shared.codex_model_catalog import (
     codex_catalog_model_id_for_upstream,
     codex_catalog_model_id_from_config,
+)
+from wecode.video.api.skill_context import (
+    filter_prior_user_attachments,
+    inherit_attachment_media_into_generation,
 )
 
 if TYPE_CHECKING:

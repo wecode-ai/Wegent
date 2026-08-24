@@ -473,7 +473,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to recover video jobs: %s", e, exc_info=True)
 
-    from app.api.endpoints.adapter.aigc_video.recovery import (
+    from wecode.video.api.recovery import (
         start_aigc_card_recovery,
     )
 
@@ -504,7 +504,7 @@ async def lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 pass
 
-        from app.api.endpoints.adapter.aigc_video.recovery import (
+        from wecode.video.api.recovery import (
             stop_aigc_card_recovery,
         )
 

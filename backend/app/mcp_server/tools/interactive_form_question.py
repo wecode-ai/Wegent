@@ -33,11 +33,11 @@ from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.api.endpoints.adapter.aigc_video.clarification import (
-    normalize_video_clarification_questions,
-)
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
+from wecode.video.api.clarification import (
+    normalize_video_clarification_questions,
+)
 
 logger = logging.getLogger(__name__)
 

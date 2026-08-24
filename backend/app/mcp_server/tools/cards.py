@@ -8,18 +8,18 @@ import logging
 import uuid
 from typing import Any
 
-from app.api.endpoints.adapter.aigc_video.cards import create_pending_card_block
-from app.api.endpoints.adapter.aigc_video.client import validate_task_url
-from app.api.endpoints.adapter.aigc_video.polling import (
-    create_poll_token,
-    prepare_poll_context,
-)
-from app.api.endpoints.adapter.aigc_video.tasks import dispatch_aigc_card_poll
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
 from app.services.async_cards import AsyncCardService
 from shared.telemetry.decorators import trace_sync
+from wecode.video.api.cards import create_pending_card_block
+from wecode.video.api.client import validate_task_url
+from wecode.video.api.polling import (
+    create_poll_token,
+    prepare_poll_context,
+)
+from wecode.video.api.tasks import dispatch_aigc_card_poll
 
 logger = logging.getLogger(__name__)
 

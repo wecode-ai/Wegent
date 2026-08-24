@@ -52,7 +52,7 @@ import {
   teamSupportsBothGenerationModes,
   type TeamModeFilter,
 } from '../selector/team-selector-utils'
-import { teamHidesVideoParam, teamUsesModeSpecCategory } from '@/features/video/teamModeSpec'
+import { teamHidesVideoParam, teamUsesModeSpecCategory } from '@wecode/features/video/teamModeSpec'
 
 export interface ChatInputControlsProps {
   /** Task type to determine which controls to show */

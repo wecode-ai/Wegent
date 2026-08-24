@@ -49,7 +49,7 @@ def get_video_provider(
         )
 
     if protocol == "wanxiang":
-        from .wanxiang import WanxiangProvider
+        from wecode.video.providers.wanxiang import WanxiangProvider
 
         return WanxiangProvider(
             base_url=model_config.get("base_url"),
