@@ -180,9 +180,16 @@ export function createElectronCapabilityRouter(
   router.register('browser.setDeviceMetrics', params => {
     const width = nullableIntegerParam(params, 'width')
     const height = nullableIntegerParam(params, 'height')
+    const scale = nullableNumberParam(params, 'scale')
+    const hasMetrics = width != null || height != null || scale != null
+    if (hasMetrics && (width == null || height == null || scale == null)) {
+      invalidParam('browser.setDeviceMetrics')
+    }
     return browser.setDeviceMetrics(
       stringParam(params, 'label'),
-      width == null || height == null ? null : { width, height }
+      hasMetrics
+        ? { width: width as number, height: height as number, scale: scale as number }
+        : null
     )
   })
   router.register('browser.navigate', params =>
@@ -685,6 +692,15 @@ function numberParam(params: Record<string, unknown>, key: string): number {
   const value = params[key]
   if (typeof value !== 'number' || !Number.isFinite(value)) invalidParam(key)
   return value
+}
+
+function nullableNumberParam(
+  params: Record<string, unknown>,
+  key: string
+): number | null | undefined {
+  if (params[key] === null) return null
+  if (params[key] === undefined) return undefined
+  return numberParam(params, key)
 }
 
 function browserBoundsParam(params: Record<string, unknown>): BrowserBounds {

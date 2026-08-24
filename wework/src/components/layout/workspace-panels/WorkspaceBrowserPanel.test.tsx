@@ -2985,10 +2985,17 @@ describe('WorkspaceBrowserPanel', () => {
     })
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics).toHaveBeenLastCalledWith(
-        { width: 390, height: 844 },
+        expect.objectContaining({ width: 390, height: 844 }),
         'workspace-browser'
       )
     })
+    expect(
+      embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics.mock.calls.at(-1)?.[0]?.scale
+    ).toBeCloseTo(300 / 844)
+    expect(embeddedBrowserMocks.setEmbeddedBrowserZoom).toHaveBeenLastCalledWith(
+      1,
+      'workspace-browser'
+    )
     expect(
       embeddedBrowserMocks.setEmbeddedBrowserBounds.mock.invocationCallOrder.at(-1)
     ).toBeLessThan(embeddedBrowserMocks.setEmbeddedBrowserZoom.mock.invocationCallOrder.at(-1) ?? 0)
@@ -3008,10 +3015,13 @@ describe('WorkspaceBrowserPanel', () => {
     })
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics).toHaveBeenLastCalledWith(
-        { width: 844, height: 390 },
+        expect.objectContaining({ width: 844, height: 390 }),
         'workspace-browser'
       )
     })
+    expect(
+      embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics.mock.calls.at(-1)?.[0]?.scale
+    ).toBeCloseTo(400 / 844)
 
     fireEvent.click(screen.getByTestId('workspace-browser-device-close-button'))
     await waitFor(() => {
@@ -3024,6 +3034,102 @@ describe('WorkspaceBrowserPanel', () => {
         'workspace-browser'
       )
     })
+  })
+
+  test('restores device metrics after a native page reload resets browser zoom', async () => {
+    let handlePageStateChange!: Parameters<
+      typeof embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges
+    >[0]
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
+    await openExamplePage()
+
+    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+    fireEvent.click(screen.getByTestId('workspace-browser-device-toolbar-item'))
+    await screen.findByTestId('workspace-browser-device-toolbar')
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics).toHaveBeenLastCalledWith(
+        expect.objectContaining({ width: 390, height: 844 }),
+        'workspace-browser'
+      )
+    })
+
+    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
+    embeddedBrowserMocks.setEmbeddedBrowserZoom.mockClear()
+    embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics.mockClear()
+
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Example',
+        url: 'https://example.com',
+        isLoading: true,
+      })
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Example',
+        url: 'https://example.com',
+        isLoading: false,
+      })
+    })
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalled()
+      expect(embeddedBrowserMocks.setEmbeddedBrowserZoom).toHaveBeenCalled()
+      expect(embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics).toHaveBeenLastCalledWith(
+        expect.objectContaining({ width: 390, height: 844 }),
+        'workspace-browser'
+      )
+    })
+    expect(
+      embeddedBrowserMocks.setEmbeddedBrowserZoom.mock.invocationCallOrder.at(-1)
+    ).toBeLessThan(
+      embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics.mock.invocationCallOrder.at(-1) ?? 0
+    )
+  })
+
+  test('prevents a stale native bounds sync from clearing newer device metrics', async () => {
+    await openExamplePage()
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalled()
+    })
+
+    const staleMetricsClear = createDeferred<void>()
+    embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics.mockImplementationOnce(
+      () => staleMetricsClear.promise
+    )
+    fireEvent(window, new Event('resize'))
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics).toHaveBeenCalledWith(
+        null,
+        'workspace-browser'
+      )
+    })
+
+    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+    fireEvent.click(screen.getByTestId('workspace-browser-device-toolbar-item'))
+    await screen.findByTestId('workspace-browser-device-toolbar')
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics).toHaveBeenCalledWith(
+        expect.objectContaining({ width: 390, height: 844 }),
+        'workspace-browser'
+      )
+    })
+
+    staleMetricsClear.resolve()
+    await act(async () => {
+      await staleMetricsClear.promise
+      await new Promise(resolve => window.setTimeout(resolve, 120))
+    })
+
+    expect(embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics).toHaveBeenLastCalledWith(
+      expect.objectContaining({ width: 390, height: 844 }),
+      'workspace-browser'
+    )
   })
 
   test('navigates to the browser settings page from the more menu', async () => {

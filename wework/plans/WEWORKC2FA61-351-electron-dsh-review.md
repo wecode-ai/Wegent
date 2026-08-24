@@ -85,5 +85,11 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 OpenCode、Kimi Code、Claude Code、会话恢复、右侧工作区和底部 Terminal；
 未修改原 E2E 断言。
 
+Wework 内置浏览器工具栏场景通过，证据目录：
+`test-results/desktop-e2e/2026-08-24T00-51-25-179Z-68498`。场景完整覆盖
+响应式 390px viewport、旋转 844px、自定义尺寸、设备缩放、页面缩放、查找、
+下载和清理浏览数据；设备模式使用 CDP metrics 的 image scale，不再将宿主适配
+缩放叠加到 Electron page zoom。
+
 `git push` 会按仓库约定执行完整 pre-push 验证；不通过重试、跳过或修改旧 E2E
 断言换取通过。

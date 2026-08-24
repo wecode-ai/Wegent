@@ -253,7 +253,7 @@ export class EmbeddedBrowserManager {
 
   async setDeviceMetrics(
     label: string,
-    metrics: { width: number; height: number } | null
+    metrics: { width: number; height: number; scale: number } | null
   ): Promise<void> {
     const contents = this.required(label).contents
     const target = contents.debugger
@@ -264,11 +264,15 @@ export class EmbeddedBrowserManager {
     }
     try {
       if (metrics) {
+        if (!Number.isFinite(metrics.scale) || metrics.scale <= 0 || metrics.scale > 5) {
+          throw new Error('Browser device scale is invalid')
+        }
         await target.sendCommand('Emulation.setDeviceMetricsOverride', {
           width: Math.max(1, Math.round(metrics.width)),
           height: Math.max(1, Math.round(metrics.height)),
           deviceScaleFactor: 1,
           mobile: false,
+          scale: metrics.scale,
         })
       } else {
         if (target.isAttached()) {

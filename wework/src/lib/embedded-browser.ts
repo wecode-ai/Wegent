@@ -447,7 +447,7 @@ export async function setEmbeddedBrowserBounds(
 }
 
 export async function setEmbeddedBrowserDeviceMetrics(
-  metrics: { width: number; height: number } | null,
+  metrics: { width: number; height: number; scale: number } | null,
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
   if (!isElectronRuntime()) return
@@ -455,6 +455,7 @@ export async function setEmbeddedBrowserDeviceMetrics(
     label,
     width: metrics?.width ?? null,
     height: metrics?.height ?? null,
+    scale: metrics?.scale ?? null,
   })
 }
 

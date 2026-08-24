@@ -422,6 +422,7 @@ export function WorkspaceBrowserTabPanel({
   const [invalidTlsCertificate, setInvalidTlsCertificate] =
     useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
   const deviceFitScaleRef = useRef(1)
+  const browserBoundsSyncGenerationRef = useRef(0)
   const [zoomPercent, setZoomPercent] = useState(BROWSER_ZOOM_DEFAULT_PERCENT)
   const zoomPercentRef = useRef(BROWSER_ZOOM_DEFAULT_PERCENT)
   const [findOpen, setFindOpen] = useState(false)
@@ -780,6 +781,9 @@ export function WorkspaceBrowserTabPanel({
 
   const syncEmbeddedBrowserBounds = useCallback(
     async (visible = active) => {
+      const generation = browserBoundsSyncGenerationRef.current + 1
+      browserBoundsSyncGenerationRef.current = generation
+      const isCurrent = () => browserBoundsSyncGenerationRef.current === generation
       if (
         !embeddedBrowserAvailable ||
         !nativeBrowserOpenRef.current ||
@@ -789,14 +793,14 @@ export function WorkspaceBrowserTabPanel({
       }
       const host = browserHostRef.current
       if (!host) {
-        if (!visible) {
+        if (!visible && isCurrent()) {
           await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, label)
         }
         return
       }
       const bounds = getElementBounds(host)
       if (!bounds) {
-        if (!visible) {
+        if (!visible && isCurrent()) {
           await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, label)
         }
         return
@@ -811,9 +815,7 @@ export function WorkspaceBrowserTabPanel({
       const placement = deviceState.isEnabled
         ? computeDeviceViewportPlacement(bounds, deviceState, zoomPercentRef.current)
         : null
-      const nativeZoomScale = placement
-        ? placement.scale
-        : zoomPercentToScaleFactor(zoomPercentRef.current)
+      const nativeZoomScale = placement ? 1 : zoomPercentToScaleFactor(zoomPercentRef.current)
       if (placement) {
         deviceFitScaleRef.current = placement.fitScale
         const hostRect = host.getBoundingClientRect()
@@ -836,23 +838,34 @@ export function WorkspaceBrowserTabPanel({
             ? current
             : nextVisualRect
         )
+        if (!isCurrent()) return
         await setEmbeddedBrowserBounds(placement.webviewBounds, nativeVisible, label)
+        if (!isCurrent()) return
       } else {
         deviceFitScaleRef.current = 1
         setDeviceVisualRect(current => (current === null ? current : null))
+        if (!isCurrent()) return
         await setEmbeddedBrowserDeviceMetrics(null, label)
+        if (!isCurrent()) return
         await setEmbeddedBrowserBounds(bounds, nativeVisible, label)
+        if (!isCurrent()) return
       }
-      // The native webview zoom carries the page zoom; in device mode the
-      // placement already folds it into the combined fit scale.
+      // Regular pages use Electron zoom. Device mode keeps Electron zoom at 1
+      // because setZoomFactor changes the emulated CSS viewport; CDP metrics
+      // applies the combined fit and page zoom through its image scale instead.
       await setEmbeddedBrowserZoom(nativeZoomScale, label).catch(error => {
         console.error('Failed to apply embedded browser zoom:', error)
       })
+      if (!isCurrent()) return
       // Electron applies zoom to the CSS viewport. Reassert device metrics
       // after zoom so window.innerWidth/innerHeight remain the selected preset.
       if (placement) {
         await setEmbeddedBrowserDeviceMetrics(
-          { width: deviceState.width, height: deviceState.height },
+          {
+            width: deviceState.width,
+            height: deviceState.height,
+            scale: placement.scale,
+          },
           label
         )
       }
@@ -2267,15 +2280,16 @@ export function WorkspaceBrowserTabPanel({
     [scheduleEmbeddedBrowserBoundsSync]
   )
 
-  // Re-apply the remembered page zoom after the webview reloads or is
-  // recreated (native zoom resets on a fresh webview).
+  // Re-apply the complete browser viewport after the webview reloads or is
+  // recreated. Device mode must restore bounds, zoom, and CDP metrics as one
+  // ordered operation; restoring zoom alone changes the emulated CSS viewport.
   useEffect(() => {
     if (status !== 'ready') return
     if (zoomPercentRef.current === BROWSER_ZOOM_DEFAULT_PERCENT && deviceFitScaleRef.current === 1)
       return
     if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
-    void setEmbeddedBrowserZoom(deviceFitScaleRef.current, label).catch(() => undefined)
-  }, [status, embeddedBrowserAvailable, label])
+    scheduleEmbeddedBrowserBoundsSync(activeRef.current)
+  }, [status, embeddedBrowserAvailable, scheduleEmbeddedBrowserBoundsSync])
 
   const updateDeviceToolbar = useCallback(
     (patch: Partial<BrowserDeviceToolbarState>) => {

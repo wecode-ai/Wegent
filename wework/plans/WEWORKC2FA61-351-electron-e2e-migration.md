@@ -114,7 +114,7 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | `harness-apps`                    | `harness-apps.scenario.mjs`                     | PASSED | `2026-08-23T13-40-39-648Z-29751`         |
 | `browser-multi-tabs`              | `embedded-browser-multi-tabs.scenario.mjs`      | PASSED | `2026-08-23T23-29-45-242Z-85991`，1m 13s |
 | `embedded-browser`                | `embedded-browser-agent.scenario.mjs`           | PASSED | `2026-08-23T10-11-23-405Z-45839`，55s    |
-| `browser-toolbar-actions`         | `embedded-browser-toolbar-actions.scenario.mjs` | PASSED | `2026-08-23T10-59-55-871Z-36223`，22s    |
+| `browser-toolbar-actions`         | `embedded-browser-toolbar-actions.scenario.mjs` | PASSED | `2026-08-24T00-51-25-179Z-68498`         |
 
 ## 插件分段
 
