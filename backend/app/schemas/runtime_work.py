@@ -887,7 +887,6 @@ class RuntimeTaskCreateRequest(BaseModel):
         alias="taskId",
         validation_alias=AliasChoices("taskId", "localTaskId", "local_task_id"),
     )
-    team_id: int = Field(..., alias="teamId", ge=0)
     runtime: RuntimeName
     runtime_executable_path: Optional[str] = Field(
         default=None,
@@ -948,19 +947,17 @@ class RuntimeTaskCreateRequest(BaseModel):
     delivery_id: Optional[str] = Field(
         default=None, alias="deliveryId", min_length=36, max_length=36
     )
-    cloud_project_id: Optional[int] = Field(default=None, alias="cloudProjectId", ge=1)
+    cloud_project_id: Optional[str] = Field(
+        default=None,
+        alias="cloudProjectId",
+        min_length=1,
+    )
     origin: Optional[dict[str, Any]] = None
     additional_context: Optional[dict[str, dict[str, Any]]] = Field(
         default=None,
         alias="additionalContext",
         validation_alias=AliasChoices("additionalContext", "additional_context"),
     )
-
-    @model_validator(mode="after")
-    def validate_execution_identity(self) -> "RuntimeTaskCreateRequest":
-        if self.team_id == 0 and not self.bot:
-            raise ValueError("teamId=0 requires an explicit bot")
-        return self
 
 
 class RuntimeTaskCreatePayload(BaseModel):

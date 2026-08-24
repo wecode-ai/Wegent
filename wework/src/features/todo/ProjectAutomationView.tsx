@@ -7,7 +7,6 @@ import type {
 } from '@/api/deliveries'
 import type { ProjectAutomationInput, ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
-import { projectChatAgentWorkspaceBinding } from '@/api/projectChatAgents'
 import type { RuntimeProfile } from '@/api/runtimeProfiles'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -22,6 +21,7 @@ import { ProjectQueueView, type ExecutionListApi } from './ProjectQueueView'
 import { ProjectAutomationRulesSection } from './ProjectAutomationRulesSection'
 import { ProjectWorkflowEditor } from './ProjectWorkflowEditor'
 import { PullRequestAutomationSettings } from './PullRequestAutomationSettings'
+import { workflowExecutionConfigForAgent } from './workflowExecutionConfig'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -223,7 +223,6 @@ export function ProjectAutomationView({
           }
           const rule = automationRules.find(candidate => candidate.id === node.automation_rule_id)
           const agent = projectAgents.find(candidate => candidate.id === rule?.agentId)
-          const binding = agent ? projectChatAgentWorkspaceBinding(agent) : null
           const runtimeProfileId =
             rule?.runtimeSource === 'fixed_profile'
               ? rule.runtimeProfileId
@@ -233,26 +232,9 @@ export function ProjectAutomationView({
           )
           return {
             ...node,
-            execution_config: {
-              agent_id: agent?.id ?? null,
-              runtime_profile_id: runtimeProfileId ?? null,
-              model: runtimeProfile?.model || agent?.model || null,
-              workspace_binding:
-                binding?.status === 'ready' && binding.type === 'backend_project'
-                  ? {
-                      type: 'backend_project',
-                      projectId: binding.projectId,
-                      deviceWorkspaceId: binding.deviceWorkspaceId,
-                      deviceId: binding.deviceId,
-                    }
-                  : binding?.status === 'ready' && binding.type === 'device_project'
-                    ? {
-                        type: 'device_project',
-                        deviceId: binding.deviceId,
-                        runtimeProjectKey: binding.runtimeProjectKey,
-                      }
-                    : null,
-            },
+            execution_config: agent
+              ? workflowExecutionConfigForAgent(agent, runtimeProfile, runtimeProfileId)
+              : null,
             execution_config_override: false,
           }
         }),

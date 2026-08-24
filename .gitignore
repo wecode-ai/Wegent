@@ -118,6 +118,7 @@ docs/superpowers/
 .live-architecture/
 docs/en/architecture/
 docs/zh/architecture/
+local-artifacts/
 .worktrees/
 wework/src-tauri/bundled-harness-runtime/
 !wework/src-tauri/bundled-harness-runtime/

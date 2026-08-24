@@ -916,9 +916,21 @@ async def update_loop_item(
         commit=True,
     )
     workflow_updated = "workflow" in values.model_fields_set
-    if item.status in {"pending", "in_progress"} and (
+    should_start_workflow = item.status in {"pending", "in_progress"} and (
         previous_status not in {"pending", "in_progress"} or workflow_updated
-    ):
+    )
+    logger.info(
+        "[issue-workflow-start] update item=%s project=%s previous_status=%s "
+        "status=%s workflow_updated=%s should_start=%s fields=%s",
+        item.id,
+        item.cloud_project_id,
+        previous_status,
+        item.status,
+        workflow_updated,
+        should_start_workflow,
+        sorted(values.model_fields_set),
+    )
+    if should_start_workflow:
         project = cloud_project_service.get(
             db, int(item.cloud_project_id), current_user.id
         )

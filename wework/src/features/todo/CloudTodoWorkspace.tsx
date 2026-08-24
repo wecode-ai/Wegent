@@ -68,6 +68,7 @@ import type {
 } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { runtimeTaskProjectUiId } from '@/lib/runtime-task-workspace-binding'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
@@ -95,16 +96,14 @@ import type {
   ProjectWithTasks,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
   RuntimeWorkListResponse,
   User as UserProfile,
 } from '@/types/api'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
 import { stopLocalRobotQueueExecution } from './localRobotQueueDispatcher'
-import {
-  workflowExecutionConfigComplete,
-  workflowNeedsExecutionConfiguration,
-} from './workflowExecutionConfig'
+import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
 import {
   CloudTodoBoardCard,
   CloudTodoCardContent,
@@ -439,6 +438,7 @@ type TaskComposerRequest = {
   initialInput: string
   autoSubmit: boolean
   backgroundAfterSend: boolean
+  taskRequest?: RuntimeTaskCreateRequest
   workflowNodeId?: string
   inheritFromTask?: RuntimeTaskAddress | null
 }
@@ -2449,16 +2449,28 @@ export function CloudTodoWorkspace({
     const taskBindingCount = itemTaskBindings[item.id]?.length ?? 0
     const enteringExecution =
       nativeGroupBy === 'status' && (column.status === 'pending' || column.status === 'in_progress')
+    let executionItem = item
+    if (enteringExecution && !item.workflow && item.can_view_detail !== false) {
+      const itemApi = apiForProject(projectForItem(item))
+      if (!itemApi) {
+        setBoardError('项目空间当前不可用')
+        return
+      }
+      try {
+        const refreshed = await itemApi.getLoopItem(item.id)
+        executionItem = { ...refreshed, project_store: item.project_store }
+        setItems(current =>
+          current.map(candidate => (candidate.id === item.id ? executionItem : candidate))
+        )
+      } catch (cause) {
+        setBoardError(cause instanceof Error ? cause.message : '读取 Issue 配置失败')
+        return
+      }
+    }
     const needsExecutionConfig =
-      enteringExecution &&
-      (workflowNeedsExecutionConfiguration(item.workflow) ||
-        Boolean(
-          item.assignee_agent_id &&
-          (!workflowExecutionConfigComplete(item.execution_config) ||
-            ['waiting_runtime', 'waiting_device'].includes(item.execution_state ?? ''))
-        ))
+      enteringExecution && itemNeedsExecutionConfiguration(executionItem, column.status)
     if (needsExecutionConfig && !executionResult) {
-      setPendingExecutionMove({ item, columnKey, beforeItemId })
+      setPendingExecutionMove({ item: executionItem, columnKey, beforeItemId })
       return
     }
     if (
@@ -2688,7 +2700,7 @@ export function CloudTodoWorkspace({
     description: string
     files: File[]
     createTask: boolean
-    localProjectId: number | null
+    taskRequest?: RuntimeTaskCreateRequest
     continueCreating?: boolean
     status?: CloudLoopItem['status']
     priority?: CloudLoopItem['priority']
@@ -2703,8 +2715,9 @@ export function CloudTodoWorkspace({
     setIssueComposerBusy(true)
     setIssueComposerError(null)
     try {
+      const taskRuntimeProjectId = runtimeTaskProjectUiId(runtimeWork, input.taskRequest)
       const issueLocalProject =
-        localProjectOptions.find(project => project.id === input.localProjectId) ?? null
+        localProjectOptions.find(project => project.id === taskRuntimeProjectId) ?? null
       let created = await targetApi.createLoopItem(targetProject.id, {
         title: input.title,
         description: input.description,
@@ -2783,6 +2796,19 @@ export function CloudTodoWorkspace({
           initialInput: workItemTaskInput(locatedItem),
           autoSubmit: true,
           backgroundAfterSend: true,
+          taskRequest: input.taskRequest
+            ? {
+                ...input.taskRequest,
+                message: workItemTaskInput(locatedItem),
+                title: locatedItem.title,
+                cloudProjectId: String(targetProject.id),
+                origin: {
+                  type: 'board_task',
+                  cloudProjectId: String(targetProject.id),
+                  loopItemId: String(locatedItem.id),
+                },
+              }
+            : undefined,
         })
       }
       track('board_item_created', {
@@ -4040,6 +4066,7 @@ export function CloudTodoWorkspace({
             runtimeProfileApi={
               pendingExecutionServices?.runtimeProfileApi ?? services.runtimeProfileApi
             }
+            modelApi={services.modelApi}
             deviceApi={services.deviceApi}
             localProjects={localProjects}
             onClose={() => setPendingExecutionMove(null)}
@@ -4278,8 +4305,15 @@ export function CloudTodoWorkspace({
                 localProjects={localProjects}
                 task={selectedItem}
                 initialLocalProjectId={
-                  localProjectIdForItem(selectedItem) ??
-                  (isMyTasksBoard ? selectedLocalProject?.id : null)
+                  taskComposerRequest?.workItemId === selectedItem.id
+                    ? runtimeTaskProjectUiId(runtimeWork, taskComposerRequest.taskRequest)
+                    : (localProjectIdForItem(selectedItem) ??
+                      (isMyTasksBoard ? selectedLocalProject?.id : null))
+                }
+                initialTaskRequest={
+                  taskComposerRequest?.workItemId === selectedItem.id
+                    ? taskComposerRequest.taskRequest
+                    : undefined
                 }
                 inheritFromTask={
                   taskComposerRequest?.workItemId === selectedItem.id

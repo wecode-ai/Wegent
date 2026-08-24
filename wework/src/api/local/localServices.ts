@@ -97,7 +97,6 @@ import type {
   RuntimeWorktreePrepareRequest,
   RuntimeWorktreeSettings,
   RuntimeWorktreeSettingsPatch,
-  Team,
   UnifiedModel,
   User,
 } from '@/types/api'
@@ -196,14 +195,10 @@ const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 const STALE_CODEX_PROVIDER_MODEL_PREFIX = 'codex-provider:'
 const DEFAULT_GPT_56_CATALOG_MODEL_ID = 'wework-gpt-5.6-sol'
 
-export const LOCAL_WORKBENCH_TEAM = {
+const WEWORK_EXECUTION_IDENTITY = {
   id: 0,
-  name: 'local-wework',
-  displayName: 'Local WeWork',
-  is_active: true,
-  default_for_modes: ['wework'],
-  recommended_mode: 'code',
-} satisfies Team
+  name: 'Wework',
+}
 
 function localCodexModelFamily(model: CodexOfficialModel): string {
   if (model.providerType !== 'provider') return 'codex-official'
@@ -869,6 +864,8 @@ function runtimeTaskTitle(data: RuntimeTaskCreateRequest): string {
 function runtimeWorkspacePath(data: RuntimeTaskCreateRequest): string | null {
   const explicitPath = stringValue(data.workspacePath)
   if (explicitPath) return explicitPath
+  const projectPath = localRuntimeProjectWorkspacePath(data.runtimeProjectKey)
+  if (projectPath) return projectPath
   const execution = recordValue(data.execution)
   const workspace = recordValue(execution.workspace)
   return stringValue(workspace.path)
@@ -1422,7 +1419,6 @@ interface BuildLocalRuntimeExecutionRequestInput {
   runtime: string
   runtimeExecutablePath?: string
   runtimePermissionMode?: RuntimeTaskCreateRequest['runtimePermissionMode']
-  teamId: number
   title: string
   message: string
   bot?: Array<Record<string, unknown>>
@@ -1528,8 +1524,8 @@ function buildLocalRuntimeExecutionRequest(
   return {
     task_id: taskId,
     subtask_id: subtaskId,
-    team_id: input.teamId,
-    team_name: LOCAL_WORKBENCH_TEAM.name,
+    team_id: WEWORK_EXECUTION_IDENTITY.id,
+    team_name: WEWORK_EXECUTION_IDENTITY.name,
     team_namespace: 'default',
     task_title: input.title,
     subtask_title: `${input.title} - Assistant`,
@@ -1646,7 +1642,9 @@ async function prepareLocalRuntimeWorkspace(
 ): Promise<LocalRuntimeWorkspace | null> {
   const sourceWorkspacePath = runtimeWorkspacePath(data)
   if (!sourceWorkspacePath) {
-    if (data.standaloneChatWorkspace) return null
+    if (data.standaloneChatWorkspace || data.runtimeProjectKey || data.workspaceSourceTask) {
+      return null
+    }
     throw new Error('workspacePath is required')
   }
   const requestedSource = runtimeWorkspaceSource(data)
@@ -1720,7 +1718,6 @@ async function createLocalRuntimeTaskPayload(
     ? buildLocalRuntimeExecutionRequest({
         taskId: `friendly-title-${normalizedData.taskId ?? turnSeed}-${createRuntimeTurnSeed()}`,
         runtime: 'codex',
-        teamId: normalizedData.teamId,
         title: 'Generate friendly task title',
         message: [
           '为下面的用户请求生成一个简洁、具体、适合作为任务标题的中文标题。',
@@ -1755,7 +1752,6 @@ async function createLocalRuntimeTaskPayload(
       runtime: normalizedData.runtime,
       runtimeExecutablePath: normalizedData.runtimeExecutablePath,
       runtimePermissionMode: normalizedData.runtimePermissionMode,
-      teamId: normalizedData.teamId,
       title: runtimeTaskTitle(normalizedData),
       message: normalizedData.message,
       bot: normalizedData.bot,
@@ -1836,7 +1832,6 @@ function createLocalRuntimeSendPayload(
       executionRequest: buildLocalRuntimeExecutionRequest({
         taskId,
         runtime,
-        teamId: LOCAL_WORKBENCH_TEAM.id,
         title: taskId,
         message: normalizedData.message,
         turnSeed,
@@ -1880,7 +1875,6 @@ function createLocalRuntimeSendPayload(
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId,
       runtime,
-      teamId: LOCAL_WORKBENCH_TEAM.id,
       title: taskId,
       message: normalizedData.message,
       turnSeed,
@@ -3451,8 +3445,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const aitableApi = createLocalAITableApi(request)
   const dwsApi = createDwsApi(request)
   const teamApi = {
-    listTeams: async () => [LOCAL_WORKBENCH_TEAM],
-    getDefaultWorkbenchTeam: async () => LOCAL_WORKBENCH_TEAM,
+    listTeams: async () => [],
   }
   const modelApi = {
     listModels: async () => {

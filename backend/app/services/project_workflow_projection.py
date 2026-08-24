@@ -234,6 +234,7 @@ def update_workflow_node(
     node_id: str,
     node_status: str,
     automation_run_id: str | None = None,
+    execution_error: str | None = None,
 ) -> LoopItem | None:
     item = db.query(LoopItem).filter(LoopItem.id == item_id).with_for_update().first()
     if item is None:
@@ -256,6 +257,14 @@ def update_workflow_node(
                 changed = True
             if automation_run_id and node.get("automation_run_id") != automation_run_id:
                 node["automation_run_id"] = automation_run_id
+                changed = True
+            if execution_error:
+                normalized_error = execution_error[:2000]
+                if node.get("execution_error") != normalized_error:
+                    node["execution_error"] = normalized_error
+                    changed = True
+            elif "execution_error" in node:
+                node.pop("execution_error")
                 changed = True
         nodes.append(node)
 
@@ -314,6 +323,7 @@ def sync_automation_workflow_node(
         node_id=node_id,
         node_status=node_status,
         automation_run_id=str(run.id),
+        execution_error=run.description if node_status == "failed" else None,
     )
 
 

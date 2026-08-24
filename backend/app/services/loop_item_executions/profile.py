@@ -226,23 +226,36 @@ class WeworkExecutionProfile:
     def for_generic_robot(
         cls,
         *,
-        runtime_profile: RuntimeProfile,
+        runtime_profile: RuntimeProfile | None,
+        owner_user_id: int,
         display_name: str,
         execution_prompt: str,
+        model_override: str = "",
         local_project_id: int = 0,
+        workspace_binding_override: dict[str, Any] | None = None,
     ) -> "WeworkExecutionProfile":
-        metadata = dict(runtime_profile.metadata_json or {})
-        model = str(metadata.get("model") or "")
+        metadata = dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
+        model = str(model_override or metadata.get("model") or "")
         if not model:
-            raise ValueError("Runtime profile model is required")
+            raise ValueError("Execution model is required")
         return cls(
-            owner_user_id=int(runtime_profile.user_id or 0),
+            owner_user_id=owner_user_id,
             display_name=display_name or "AI",
             execution_prompt=execution_prompt,
             instruction="",
             model=model,
             local_project_id=local_project_id,
             workspace_policy=str(metadata.get("workspace_policy") or "project"),
+            workspace_binding_override=(
+                ProjectChatWorkspaceBindingView.model_validate(
+                    {
+                        **workspace_binding_override,
+                        "status": "ready",
+                    }
+                )
+                if workspace_binding_override
+                else None
+            ),
         )
 
     def user_input(
@@ -294,7 +307,6 @@ class WeworkExecutionProfile:
         project = db.get(CloudProject, cloud_project_id)
         if owner is None or project is None:
             raise ValueError("Wework execution owner or project is unavailable")
-        team = _resolve_default_wework_team(db, owner.id)
         model_config: dict[str, Any] = {}
         if self.model and materialize_execution_request:
             from app.services.chat.trigger.unified import (
@@ -379,11 +391,9 @@ class WeworkExecutionProfile:
                         "Inherited workflow workspace is unavailable on the "
                         "selected execution device"
                     )
-            elif workspace_policy == "composer" and not has_bound_workspace:
-                raise WeworkExecutionProfileError(
-                    "Workflow stage requires a configured robot code project"
-                )
-        has_stage_workspace = workspace_policy in {"composer", "inherit"}
+        has_stage_workspace = workspace_policy == "inherit" or (
+            workspace_policy == "composer" and has_bound_workspace
+        )
         prompt = self.user_input(
             project_id=str(project.id),
             task_id=task_id,
@@ -393,7 +403,6 @@ class WeworkExecutionProfile:
             ),
         )
         title = str(getattr(task, "title", "") or "")
-        team_id = int(getattr(team, "id", 0) or 0)
         bot_id: int | str = self.agent_id or 0
         origin = {
             "type": "project_automation" if self.manager_mode else "board_task",
@@ -432,7 +441,6 @@ class WeworkExecutionProfile:
         request = RuntimeTaskCreateRequest(
             schemaVersion=2,
             taskId=runtime_task_id,
-            teamId=team_id,
             runtime="codex",
             message=prompt,
             title=title,
@@ -484,25 +492,3 @@ class WeworkExecutionProfile:
             # compatibility alias to Executor.
             payload["local_project_id"] = workspace_binding.project_id
         return payload
-
-
-def _resolve_default_wework_team(db: Session, user_id: int) -> Any | None:
-    from app.api.endpoints.users import parse_default_team_config
-    from app.core.config import settings
-    from app.models.kind import Kind
-
-    config = parse_default_team_config(settings.DEFAULT_TEAM_WEWORK)
-    if config is None:
-        return None
-    return (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Team",
-            Kind.name == config.name,
-            Kind.namespace == config.namespace,
-            Kind.user_id.in_([user_id, 0]),
-            Kind.is_active == True,
-        )
-        .order_by((Kind.user_id == user_id).desc())
-        .first()
-    )

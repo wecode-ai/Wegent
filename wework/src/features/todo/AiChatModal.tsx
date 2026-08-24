@@ -15,14 +15,21 @@ import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSe
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
+import { resolveRuntimeTaskProjects } from '@/lib/runtime-project'
+import {
+  runtimeTaskProjectUiId,
+  withoutRuntimeTaskWorkspaceBinding,
+} from '@/lib/runtime-task-workspace-binding'
 import { cn } from '@/lib/utils'
 import type {
   Attachment,
   ModelOptions,
   ModelType,
+  ProjectExecutionMode,
   ProjectWithTasks,
   RuntimeSendRequest,
   RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
 } from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
 import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
@@ -39,6 +46,7 @@ interface AiChatModalProps {
   onClose: () => void
   initialAddress?: RuntimeTaskAddress | null
   initialLocalProjectId?: number | null
+  initialTaskRequest?: RuntimeTaskCreateRequest | null
   inheritFromTask?: RuntimeTaskAddress | null
   taskTitle?: string | null
   initialTaskInput?: string
@@ -78,6 +86,7 @@ export function AiChatModal({
   onClose,
   initialAddress = null,
   initialLocalProjectId = null,
+  initialTaskRequest = null,
   inheritFromTask = null,
   taskTitle,
   initialTaskInput = '',
@@ -90,7 +99,11 @@ export function AiChatModal({
   embedded = false,
 }: AiChatModalProps) {
   const { t } = useTranslation('common')
-  const { createProjectRuntimeTask } = useWorkbenchPaneContext()
+  const { createProjectRuntimeTask, state } = useWorkbenchPaneContext()
+  const runtimeTaskProjects = useMemo(
+    () => resolveRuntimeTaskProjects(localProjects, state?.runtimeWork),
+    [localProjects, state?.runtimeWork]
+  )
   const storageKey = lastAddressStorageKey(project.id, task?.id)
   const [currentAddress, setCurrentAddress] = useState<RuntimeTaskAddress | null>(
     () => initialAddress ?? storedLastAddress(storageKey)
@@ -102,15 +115,28 @@ export function AiChatModal({
   const [composeNew, setComposeNew] = useState(false)
   const [sessionKey, setSessionKey] = useState(0)
   const [localProjectId, setLocalProjectId] = useState<number | null>(() => {
+    const requestedProjectId = runtimeTaskProjectUiId(state?.runtimeWork, initialTaskRequest)
     const matched =
-      localProjects.find(candidate => candidate.id === initialLocalProjectId) ??
-      localProjects.find(candidate => String(candidate.id) === String(project.id)) ??
-      localProjects[0]
+      runtimeTaskProjects.find(
+        candidate => candidate.id === (requestedProjectId ?? initialLocalProjectId)
+      ) ??
+      runtimeTaskProjects.find(candidate => String(candidate.id) === String(project.id)) ??
+      runtimeTaskProjects[0]
     return matched?.id ?? null
   })
-  const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(null)
+  const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(
+    initialTaskRequest?.deviceWorkspaceId ?? null
+  )
+  const [executionMode, setExecutionMode] = useState<ProjectExecutionMode>(
+    initialTaskRequest?.execution?.workspace?.source === 'git_worktree'
+      ? 'git_worktree'
+      : 'current_workspace'
+  )
+  const [worktreeBranch, setWorktreeBranch] = useState<string | null>(
+    initialTaskRequest?.execution?.workspace?.branch ?? null
+  )
   const selectedLocalProject =
-    localProjects.find(candidate => candidate.id === localProjectId) ?? null
+    runtimeTaskProjects.find(candidate => candidate.id === localProjectId) ?? null
   const selectLocalProject = useCallback((projectId: number | null) => {
     setLocalProjectId(projectId)
     setLocalDeviceWorkspaceId(null)
@@ -226,6 +252,24 @@ export function AiChatModal({
         runtime: 'codex',
         attachments: options.attachments,
         executionModel: options.executionModel,
+        ...(initialTaskRequest
+          ? {
+              taskRequest: {
+                ...withoutRuntimeTaskWorkspaceBinding(initialTaskRequest),
+                message,
+                execution:
+                  executionMode === 'git_worktree'
+                    ? {
+                        workspace: {
+                          source: 'git_worktree' as const,
+                          ...(worktreeBranch?.trim() ? { branch: worktreeBranch.trim() } : {}),
+                        },
+                      }
+                    : undefined,
+                ...runtimeContext,
+              },
+            }
+          : {}),
         collaborationMode: 'default',
         ...runtimeContext,
         onError: options.onError,
@@ -239,12 +283,15 @@ export function AiChatModal({
     },
     [
       createProjectRuntimeTask,
+      executionMode,
       inheritFromTask,
+      initialTaskRequest,
       localDeviceWorkspaceId,
       onTaskCreated,
       prepareTask,
       runtimeContext,
       selectedLocalProject,
+      worktreeBranch,
     ]
   )
 
@@ -308,8 +355,12 @@ export function AiChatModal({
       <ConnectedIssueProjectWork
         project={selectedLocalProject}
         selectedDeviceWorkspaceId={localDeviceWorkspaceId}
+        executionMode={executionMode}
+        worktreeBranch={worktreeBranch}
         onSelectProject={selectLocalProject}
         onSelectProjectWorkspace={selectLocalProjectWorkspace}
+        onExecutionModeChange={setExecutionMode}
+        onWorktreeBranchChange={setWorktreeBranch}
         inheritFromTask={inheritFromTask}
       >
         {projectWork => composer(projectWork)}

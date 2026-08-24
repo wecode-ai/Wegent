@@ -511,6 +511,169 @@ class ProjectAutomationService:
             run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
         )
 
+    async def run_direct_workflow_node(
+        self,
+        db: Session,
+        project_id: str,
+        item_id: str,
+        workflow_node_id: str,
+        user_id: int,
+    ) -> dict:
+        """Run a workflow stage from its snapshotted Runtime configuration."""
+
+        require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
+        item = (
+            db.query(LoopItem).filter(LoopItem.id == item_id).with_for_update().first()
+        )
+        if item is None or str(item.cloud_project_id) != str(project_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+        workflow = (
+            item.metadata_json.get("workflow")
+            if isinstance(item.metadata_json, dict)
+            else None
+        )
+        nodes = workflow.get("nodes") if isinstance(workflow, dict) else None
+        node = next(
+            (
+                candidate
+                for candidate in nodes or []
+                if isinstance(candidate, dict)
+                and candidate.get("id") == workflow_node_id
+            ),
+            None,
+        )
+        if node is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
+        if node.get("automation_rule_id"):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Workflow stage is bound to an automation rule",
+            )
+        if node.get("status") not in {"ready", "failed"}:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Workflow node is not ready")
+
+        from app.schemas.issue_workflow import (
+            IssueWorkflowInstance,
+            WorkflowNodeInstance,
+        )
+
+        workflow_snapshot = IssueWorkflowInstance.model_validate(workflow)
+        node_snapshot = WorkflowNodeInstance.model_validate(node)
+        execution_config = workflow_snapshot.execution_config_for(node_snapshot)
+        if execution_config is None or not execution_config.is_complete():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Workflow execution configuration is incomplete",
+            )
+        if execution_config.agent_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Robot preset workflow execution requires an automation rule",
+            )
+
+        scheduled_for = utcnow()
+        run = ProjectAutomationRun(
+            cloud_project_id=project_id,
+            parent_id=item.id,
+            task_id=item.id,
+            task_title=item.title or "",
+            source="workflow",
+            status="pending",
+            created_by_user_id=user_id,
+            metadata_json={
+                "trigger": "workflow",
+                "scheduled_for": scheduled_for.isoformat(),
+                "workflow_node_id": workflow_node_id,
+                "workflow_node_name": str(node.get("name") or ""),
+                "instruction_override": str(node.get("prompt") or ""),
+                "dependency_context": node.get("dependency_context") or {},
+                "workflow_execution_config": execution_config.model_dump(
+                    mode="json", by_alias=True
+                ),
+                "workflow_stage_input": workflow_stage_context_resolver.resolve(
+                    db,
+                    item=item,
+                    target_node_id=workflow_node_id,
+                ),
+            },
+        )
+        db.add(run)
+        db.flush()
+        run_metadata = dict(run.metadata_json or {})
+        workspace_binding = execution_config.workspace_binding
+        runtime_subject_user_id = user_id
+        runtime_profile = None
+        if execution_config.runtime_profile_id:
+            from app.services.runtime_profiles import runtime_profile_service
+
+            runtime_profile = runtime_profile_service.require_owned(
+                db,
+                execution_config.runtime_profile_id,
+                user_id,
+            )
+            runtime_subject_user_id = int(runtime_profile.user_id or user_id)
+        context = {
+            "run_id": str(run.id),
+            "trigger": "workflow",
+            "runtime_source": (
+                "fixed_profile"
+                if execution_config.runtime_profile_id
+                else "runtime_user"
+            ),
+            "runtime_profile_id": execution_config.runtime_profile_id,
+            "runtime_subject_user_id": runtime_subject_user_id,
+            "execution_device_id": execution_config.execution_device_id,
+            "model": execution_config.model,
+            "workspace_binding": (
+                workspace_binding.model_dump(mode="json", by_alias=True)
+                if workspace_binding
+                else None
+            ),
+            "workflow_stage_input": run_metadata.get("workflow_stage_input"),
+        }
+        execution = loop_item_execution_service.enqueue_generic_robot(
+            db,
+            loop_item_id=str(item.id),
+            cloud_project_id=str(project_id),
+            runtime_subject_user_id=runtime_subject_user_id,
+            runtime_profile=runtime_profile,
+            execution_device_id=execution_config.execution_device_id,
+            model=execution_config.model,
+            assigner_user_id=user_id,
+            priority=item.priority or "medium",
+            automation_context=context,
+        )
+        run.device_id = execution.execution_device_id
+        run.status = (
+            "waiting_device" if execution.status == "waiting_runtime" else "queued"
+        )
+        run.version += 1
+        from app.services.project_workflow_projection import update_workflow_node
+
+        update_workflow_node(
+            db,
+            item_id=item.id,
+            node_id=workflow_node_id,
+            node_status="queued",
+            automation_run_id=str(run.id),
+        )
+        db.commit()
+        db.refresh(run)
+        logger.info(
+            "[ProjectAutomation] Queued direct workflow run=%s execution=%s "
+            "item=%s node=%s device=%s",
+            run.id,
+            execution.id,
+            item.id,
+            workflow_node_id,
+            execution.execution_device_id,
+        )
+        return {
+            "id": str(run.id),
+            "status": run.status,
+            "execution_id": execution.id,
+        }
+
     async def retry_run(
         self, db: Session, project_id: str, run_id: str, user_id: int
     ) -> dict:

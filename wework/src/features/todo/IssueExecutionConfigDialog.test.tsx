@@ -28,6 +28,133 @@ const item = {
 }
 
 describe('IssueExecutionConfigDialog', () => {
+  it('requires runtime choices for workflow robot stages without a robot rule', async () => {
+    render(
+      <IssueExecutionConfigDialog
+        item={
+          {
+            ...item,
+            assignee_agent_id: null,
+            workflow: {
+              version: 1,
+              definition_version: 1,
+              stage_mode: 'dag',
+              advancement_policy: 'manual',
+              execution_config: null,
+              nodes: [
+                {
+                  id: 'develop',
+                  name: '开发',
+                  execution_mode: 'robot',
+                  depends_on: [],
+                  required: true,
+                  workspace_policy: 'composer',
+                  automation_rule_id: null,
+                  status: 'ready',
+                },
+              ],
+            },
+          } as never
+        }
+        projectChatAgentApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        runtimeProfileApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        modelApi={
+          {
+            listModels: vi.fn().mockResolvedValue({
+              data: [{ name: 'kimi-code', type: 'public', displayName: 'Kimi Code' }],
+            }),
+          } as never
+        }
+        deviceApi={
+          {
+            listDevices: vi
+              .fn()
+              .mockResolvedValue([{ device_id: 'device-online', status: 'online' }]),
+          } as never
+        }
+        localProjects={[]}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(await screen.findByTestId('issue-execution-config-default-device')).toBeInTheDocument()
+    expect(screen.getByTestId('issue-execution-config-confirm')).toBeDisabled()
+  })
+
+  it('uses a configured custom robot without requiring a runtime profile', async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined)
+    render(
+      <IssueExecutionConfigDialog
+        item={item}
+        projectChatAgentApi={
+          {
+            list: vi.fn().mockResolvedValue([
+              {
+                id: 'agent-1',
+                name: '自定义机器人',
+                status: 'active',
+                model: 'custom-model',
+                defaultRuntimeProfileId: null,
+                executionDeviceId: 'device-online',
+                localProjectId: null,
+                workspaceBinding: {
+                  type: 'device_project',
+                  status: 'ready',
+                  deviceId: 'device-online',
+                  runtimeProjectKey: 'project-1',
+                },
+              },
+            ]),
+          } as never
+        }
+        runtimeProfileApi={
+          {
+            list: vi.fn().mockResolvedValue([]),
+          } as never
+        }
+        modelApi={
+          {
+            listModels: vi.fn().mockResolvedValue({
+              data: [{ name: 'kimi-code', type: 'public', displayName: 'Kimi Code' }],
+            }),
+          } as never
+        }
+        deviceApi={
+          {
+            listDevices: vi
+              .fn()
+              .mockResolvedValue([{ device_id: 'device-online', status: 'online' }]),
+          } as never
+        }
+        localProjects={[]}
+        onClose={vi.fn()}
+        onConfirm={onConfirm}
+      />
+    )
+
+    const confirm = await screen.findByTestId('issue-execution-config-confirm')
+    await waitFor(() => expect(confirm).toBeEnabled())
+    expect(screen.queryByTestId('issue-execution-config-no-runtime')).not.toBeInTheDocument()
+    await userEvent.click(confirm)
+
+    await waitFor(() =>
+      expect(onConfirm).toHaveBeenCalledWith({
+        execution_config: {
+          agent_id: 'agent-1',
+          runtime_profile_id: null,
+          execution_device_id: 'device-online',
+          model: 'custom-model',
+          workspace_binding: {
+            type: 'device_project',
+            deviceId: 'device-online',
+            runtimeProjectKey: 'project-1',
+          },
+        },
+      })
+    )
+  })
+
   it('lists only runtime environments whose devices are online and submits inline', async () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined)
     render(
@@ -65,6 +192,13 @@ describe('IssueExecutionConfigDialog', () => {
             ]),
           } as never
         }
+        modelApi={
+          {
+            listModels: vi.fn().mockResolvedValue({
+              data: [{ name: 'kimi-code', type: 'public', displayName: 'Kimi Code' }],
+            }),
+          } as never
+        }
         deviceApi={
           {
             listDevices: vi.fn().mockResolvedValue([
@@ -79,19 +213,25 @@ describe('IssueExecutionConfigDialog', () => {
       />
     )
 
-    const runtimeSelect = await screen.findByTestId('issue-execution-config-fields-runtime')
-    expect(runtimeSelect).toHaveTextContent('我的本地')
-    expect(runtimeSelect).not.toHaveTextContent('离线设备')
+    const deviceSelect = await screen.findByTestId('issue-execution-config-fields-device')
+    expect(deviceSelect).toHaveTextContent('device-online')
+    expect(deviceSelect).not.toHaveTextContent('device-offline')
 
-    await userEvent.selectOptions(runtimeSelect, 'runtime-online')
+    await userEvent.selectOptions(screen.getByTestId('issue-execution-config-fields-agent'), '')
+    await userEvent.selectOptions(deviceSelect, 'device-online')
+    await userEvent.selectOptions(
+      screen.getByTestId('issue-execution-config-fields-model'),
+      'kimi-code'
+    )
     await userEvent.selectOptions(screen.getByTestId('issue-execution-config-fields-project'), '7')
     await userEvent.click(screen.getByTestId('issue-execution-config-confirm'))
 
     await waitFor(() =>
       expect(onConfirm).toHaveBeenCalledWith({
         execution_config: {
-          agent_id: 'agent-1',
-          runtime_profile_id: 'runtime-online',
+          agent_id: null,
+          runtime_profile_id: null,
+          execution_device_id: 'device-online',
           model: 'kimi-code',
           workspace_binding: { type: 'backend_project', projectId: 7 },
         },

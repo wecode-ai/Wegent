@@ -24,7 +24,6 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.im_session import IMPrivateSession
-from app.models.kind import Kind
 from app.models.project import Project
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.models.user import User
@@ -3866,7 +3865,10 @@ def _resolve_runtime_task_target(
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="projectId + deviceWorkspaceId or deviceId + workspacePath is required",
+        detail=(
+            "projectId + deviceWorkspaceId, deviceId + runtimeProjectKey, "
+            "or deviceId + workspacePath is required"
+        ),
     )
 
 
@@ -3900,86 +3902,36 @@ def _build_runtime_execution_request(
     request: RuntimeTaskCreateRequest,
     target: RuntimeTaskTarget,
 ):
-    """Build an executor request from CRD config without persisting Task rows."""
-    if request.team_id == 0:
-        return _build_explicit_bot_runtime_execution_request(
-            db=db,
-            user_id=user_id,
-            request=request,
-            target=target,
-        )
-
-    from app.services.execution import TaskRequestBuilder
-
-    user = _get_user(db, user_id)
-    team = _get_team(db, user_id, request.team_id)
-    task_id, subtask_id = _runtime_execution_ids()
-    task = _runtime_task_context(
+    """Compile a Wework task intent without resolving Wegent CRDs."""
+    return _build_direct_wework_runtime_execution_request(
+        db=db,
         user_id=user_id,
-        task_id=task_id,
         request=request,
         target=target,
-        team=team,
     )
-    subtask = _runtime_assistant_context(
-        user_id=user_id,
-        task_id=task_id,
-        subtask_id=subtask_id,
-        request=request,
-        team=team,
-    )
-    payload = _runtime_execution_payload(request)
-    runtime_model_config, override_model_name, force_override = _runtime_model_override(
-        db,
-        user_id,
-        request,
-    )
-    execution_request = TaskRequestBuilder(db).build(
-        subtask=subtask,
-        task=task,
-        user=user,
-        team=team,
-        message=_message_with_application_context(
-            request.message, request.additional_context
-        ),
-        preload_skills=request.additional_skills,
-        override_model_name=override_model_name,
-        force_override=force_override,
-        runtime_model_config=runtime_model_config,
-        web_runtime_guidance=True,
-    )
-    _apply_runtime_task_target(execution_request, target)
-    _apply_runtime_create_request(execution_request, request)
-    _apply_runtime_model_options(db, execution_request, user, payload)
-    _apply_runtime_attachments(db, execution_request, user_id, request.attachment_ids)
-    from app.schemas.base_role import BaseRole
-    from app.services.cloud_projects.access import require_cloud_project_role
-    from app.services.delivery import delivery_service
-
-    if request.delivery_id:
-        delivery_service.get_delivery(db, request.delivery_id, user_id)
-    if request.cloud_project_id:
-        require_cloud_project_role(
-            db, request.cloud_project_id, user_id, BaseRole.Reporter
-        )
-    return execution_request
 
 
-def _build_explicit_bot_runtime_execution_request(
+def _build_direct_wework_runtime_execution_request(
     *,
     db: Session,
     user_id: int,
     request: RuntimeTaskCreateRequest,
     target: RuntimeTaskTarget,
 ):
-    """Build the canonical explicit-bot form used by Wework automations."""
+    """Build a direct Wework execution without resolving a Wegent Team."""
 
     from shared.models.execution import ExecutionRequest
 
     user = _get_user(db, user_id)
     task_id = request.local_task_id or str(_runtime_execution_ids()[0])
     title = _runtime_task_title(request)
-    model_config = dict(request.runtime_model_config or {})
+    runtime_model_config, _, _ = _runtime_model_override(
+        db,
+        user_id,
+        request,
+    )
+    model_config = dict(request.runtime_model_config or runtime_model_config or {})
+    first_bot = request.bot[0] if request.bot else {}
     execution_request = ExecutionRequest(
         task_id=task_id,
         subtask_id=f"{task_id}-assistant",
@@ -3997,8 +3949,10 @@ def _build_explicit_bot_runtime_execution_request(
         user_id=user.id,
         user_name=user.user_name,
         bot=list(request.bot),
-        bot_name=str(request.bot[0].get("name") or ""),
-        bot_namespace=str(request.bot[0].get("namespace") or "wework"),
+        bot_name=str(first_bot.get("name") or ""),
+        bot_namespace=str(
+            first_bot.get("namespace") or first_bot.get("bot_namespace") or "wework"
+        ),
         model_config=model_config,
         system_prompt=(request.project_instructions or "").strip(),
         prompt=_message_with_application_context(
@@ -4102,71 +4056,6 @@ def _message_with_application_context(
 def _runtime_execution_ids() -> tuple[int, int]:
     base_id = 10_000_000_000_000 + (uuid4().int % 8_000_000_000_000)
     return base_id, base_id + 1
-
-
-def _runtime_task_context(
-    *,
-    user_id: int,
-    task_id: int,
-    request: RuntimeTaskCreateRequest,
-    target: RuntimeTaskTarget,
-    team: Kind,
-) -> SimpleNamespace:
-    title = _runtime_task_title(request)
-    workspace_spec = _runtime_workspace_spec(request, target)
-    return SimpleNamespace(
-        id=task_id,
-        user_id=user_id,
-        kind="Task",
-        name=f"runtime-{task_id}",
-        namespace="default",
-        project_id=target.project.id if target.project else 0,
-        client_origin=CLIENT_ORIGIN_WEWORK,
-        is_group_chat=False,
-        json={
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Task",
-            "metadata": {
-                "name": f"runtime-{task_id}",
-                "namespace": "default",
-                "labels": (
-                    {"projectId": str(target.project.id)} if target.project else {}
-                ),
-            },
-            "spec": {
-                "title": title,
-                "prompt": request.message,
-                "teamRef": {"name": team.name, "namespace": team.namespace},
-                "workspaceRef": {"name": "runtime-local", "namespace": "default"},
-                "is_group_chat": False,
-                "device_id": target.device_id,
-                "execution": {
-                    "workspace": workspace_spec,
-                },
-            },
-        },
-    )
-
-
-def _runtime_assistant_context(
-    *,
-    user_id: int,
-    task_id: int,
-    subtask_id: int,
-    request: RuntimeTaskCreateRequest,
-    team: Kind,
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        id=subtask_id,
-        user_id=user_id,
-        task_id=task_id,
-        team_id=team.id,
-        title=f"{_runtime_task_title(request)} - Assistant",
-        bot_ids=[],
-        prompt=request.message,
-        message_id=None,
-        executor_name=None,
-    )
 
 
 def _runtime_execution_payload(
@@ -4518,46 +4407,6 @@ def _get_user(db: Session, user_id: int) -> User:
     return user
 
 
-def _get_team(db: Session, user_id: int, team_id: int) -> Kind:
-    team = (
-        db.query(Kind)
-        .filter(
-            Kind.id == team_id,
-            Kind.kind == "Team",
-            Kind.user_id.in_([user_id, 0]),
-            Kind.is_active.is_(True),
-        )
-        .first()
-    )
-    if not team:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Team not found",
-        )
-    return team
-
-
-def _get_task_mode_team(db: Session, user_id: int) -> Optional[Kind]:
-    """Resolve the default task-mode team (e.g. wegent-wework#default).
-
-    Mirrors ``IMChannelHandler._get_task_mode_team`` so the IM continuation
-    path uses the same default agent as the Wework workbench.
-    """
-    from app.services.readers.kinds import KindType, kindReader
-
-    config_value = settings.DEFAULT_TEAM_TASK
-    if not config_value or not config_value.strip():
-        return None
-    parts = config_value.strip().split("#", 1)
-    name = parts[0].strip()
-    namespace = parts[1].strip() if len(parts) > 1 else "default"
-    if not name:
-        return None
-    return kindReader.get_by_name_and_namespace(
-        db, user_id, KindType.TEAM, namespace, name
-    )
-
-
 def _build_runtime_send_execution_request(
     *,
     db: Session,
@@ -4568,22 +4417,7 @@ def _build_runtime_send_execution_request(
     model_selection: Optional[RuntimeModelSelection] = None,
     additional_context: Optional[dict[str, dict[str, Any]]] = None,
 ):
-    """Build an executor request for an IM continuation send.
-
-    The executor's ``runtime.tasks.send`` handler requires an
-    ``executionRequest`` to spawn a new turn (model config, user info,
-    skills, workspace, etc.). The Wework frontend constructs this
-    client-side for direct local sends; the IM continuation path flows
-    through the backend RPC, so we synthesize one here from the default
-    task-mode team — the same agent the workbench uses — and apply the bound
-    runtime task's model selection when available.
-    """
-    team = _get_task_mode_team(db, user_id)
-    if team is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Default task-mode team is not configured",
-        )
+    """Compile the Wework continuation request without Wegent Team lookup."""
     target = RuntimeTaskTarget(
         device_id=address.device_id,
         workspace_path=address.workspace_path or "",
@@ -4591,9 +4425,9 @@ def _build_runtime_send_execution_request(
         workspace_source="local_path",
     )
     request = RuntimeTaskCreateRequest(
+        schemaVersion=2,
         deviceId=address.device_id,
         workspacePath=address.workspace_path,
-        teamId=team.id,
         runtime="codex",
         message=message,
         modelId=model_selection.model_name if model_selection else None,

@@ -313,14 +313,10 @@ export function AutomationsPage() {
     if (!draft.deviceId) {
       throw new Error(t('workbench.automation_target_required', '请选择设备'))
     }
-    const team = state.defaultTeam
-    if (!team) {
-      throw new Error(t('workbench.automation_team_unavailable', '无法获取运行所需的默认智能体'))
-    }
     const taskRequest: RuntimeTaskCreateRequest = {
+      schemaVersion: 2,
       deviceId: draft.deviceId,
       ...automationWorkspaceTarget(draft.workspacePath),
-      teamId: team.id,
       runtime: 'codex',
       message: draft.prompt.trim(),
       title: draft.name.trim(),

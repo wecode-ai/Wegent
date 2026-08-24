@@ -748,7 +748,6 @@ describe('DesktopWorkbenchLayout', () => {
   const baseProps = {
     state: {
       user: null,
-      defaultTeam: null,
       projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
       devices: [],
       runtimeWork: null,

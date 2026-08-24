@@ -30,6 +30,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from typing import Any, Dict, Generator, Optional
 from urllib.parse import urlsplit
 
@@ -97,6 +98,10 @@ from app.services.execution.emitters.status_updating import StatusUpdatingEmitte
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
 from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.loop_item_events import publish_loop_item_changed
+from app.services.loop_item_executions.device_pull import (
+    acknowledge_cloud_execution,
+    pull_cloud_execution,
+)
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
 )
@@ -737,10 +742,6 @@ def _project_chat_runtime_event_sync(
             event_name=event_name,
             payload=payload,
         )
-        if matched_execution is not None:
-            from app.tasks.robot_queue_tasks import publish_run_event
-
-            publish_run_event(device_id, runtime_task_id, event_name)
         if projected is None:
             return None
         message, mode = projected
@@ -777,9 +778,6 @@ def _execution_runtime_event_sync(
                     execution=matched,
                     previous_version=previous_item_version,
                 )
-                from app.tasks.robot_queue_tasks import publish_run_event
-
-                publish_run_event(device_id, str(task_id), event_name)
     except Exception:
         logger.exception(
             "[RobotQueue] Execution runtime event write-back failed "
@@ -825,6 +823,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "device:status": "on_device_status",
             "device:upgrade_status": "on_device_upgrade_status",
             "runtime:event": "on_runtime_event",
+            "runtime.tasks.pull": "on_runtime_tasks_pull",
+            "runtime.tasks.accept": "on_runtime_tasks_accept",
             "runtime.tasks.updated": "on_runtime_task_updated",
             "terminal:output": "on_terminal_output",
             "terminal:exit": "on_terminal_exit",
@@ -1732,8 +1732,76 @@ class DeviceNamespace(socketio.AsyncNamespace):
             f"[Device WS] Heartbeat received: user={user_id}, device={payload.device_id}, "
             f"running_tasks={len(payload.running_task_ids)}"
         )
+        from app.tasks.robot_queue_tasks import reconcile_device_executions
+
+        self._schedule_background_task(
+            reconcile_device_executions(
+                user_id=int(user_id),
+                device_id=payload.device_id,
+                needs_confirmation_only=True,
+            ),
+            "reconcile unconfirmed executions after device heartbeat",
+        )
 
         return {"success": True}
+
+    async def on_runtime_tasks_pull(self, sid: str, data: dict) -> dict:
+        """Return one atomically claimed cloud execution to this Executor."""
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        device_id = session.get("device_id")
+        runtime_instance_id = session.get("runtime_instance_id")
+        if not user_id or not device_id or not runtime_instance_id:
+            return {"success": False, "error": "Device is not registered"}
+        runtime_capacity = (
+            data.get("runtime_capacity")
+            if isinstance(data, dict) and isinstance(data.get("runtime_capacity"), dict)
+            else None
+        )
+        return await run_sync_in_executor(
+            partial(
+                pull_cloud_execution,
+                owner_user_id=int(user_id),
+                device_id=str(device_id),
+                runtime_instance_id=str(runtime_instance_id),
+                runtime_capacity=runtime_capacity,
+            )
+        )
+
+    async def on_runtime_tasks_accept(self, sid: str, data: dict) -> dict:
+        """Record whether Runtime accepted a task returned by pull."""
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        device_id = session.get("device_id")
+        runtime_instance_id = session.get("runtime_instance_id")
+        if not user_id or not device_id or not runtime_instance_id:
+            return {"success": False, "error": "Device is not registered"}
+        if not isinstance(data, dict):
+            return {"success": False, "error": "Invalid acceptance payload"}
+        try:
+            execution_id = int(data.get("execution_id"))
+        except (TypeError, ValueError):
+            return {"success": False, "error": "execution_id is required"}
+        runtime_task_id = data.get("runtime_task_id")
+        if not isinstance(runtime_task_id, str) or not runtime_task_id:
+            return {"success": False, "error": "runtime_task_id is required"}
+        return await run_sync_in_executor(
+            partial(
+                acknowledge_cloud_execution,
+                owner_user_id=int(user_id),
+                device_id=str(device_id),
+                runtime_instance_id=str(runtime_instance_id),
+                execution_id=execution_id,
+                runtime_task_id=runtime_task_id,
+                accepted=bool(data.get("accepted")),
+                prompt=(
+                    data.get("prompt") if isinstance(data.get("prompt"), str) else None
+                ),
+                error=data.get("error") if isinstance(data.get("error"), str) else None,
+            )
+        )
 
     async def on_device_status(self, sid: str, data: dict) -> dict:
         """

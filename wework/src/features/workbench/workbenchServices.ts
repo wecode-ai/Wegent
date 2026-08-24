@@ -186,7 +186,6 @@ export interface WorkbenchServices {
   chatStream: ReturnType<typeof createChatStream>
   cloudBackgroundApi?: {
     listTeams?: ReturnType<typeof createTeamApi>['listTeams']
-    getDefaultWorkbenchTeam?: ReturnType<typeof createTeamApi>['getDefaultWorkbenchTeam']
     listDevices?: ReturnType<typeof createDeviceApi>['listDevices']
     listRuntimeWork?: ReturnType<typeof createRuntimeWorkApi>['listRuntimeWork']
   }

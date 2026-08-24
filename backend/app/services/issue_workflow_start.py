@@ -3,6 +3,8 @@
 
 """Start the configured Issue orchestration when work enters Pending."""
 
+import logging
+
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
@@ -19,6 +21,8 @@ from app.services.project_automations import (
     project_automation_service,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class IssueWorkflowStartService:
     """Enter an Issue's snapshotted orchestration exactly once."""
@@ -33,7 +37,25 @@ class IssueWorkflowStartService:
     ) -> int:
         workflow = self._workflow(item)
         if workflow is None:
+            logger.info(
+                "[issue-workflow-start] skipped item=%s project=%s reason=no_workflow "
+                "status=%s",
+                item.id,
+                item.cloud_project_id,
+                getattr(item, "status", None),
+            )
             return 0
+        logger.info(
+            "[issue-workflow-start] evaluating item=%s project=%s status=%s "
+            "policy=%s stage_mode=%s nodes=%s user=%s",
+            item.id,
+            item.cloud_project_id,
+            getattr(item, "status", None),
+            workflow.advancement_policy,
+            workflow.stage_mode,
+            len(workflow.nodes),
+            user_id,
+        )
         if workflow.advancement_policy == "ai":
             return await self._start_ai(db, item, project, workflow, user_id)
         return await self._start_ready_stages(db, item, workflow, user_id)
@@ -59,6 +81,11 @@ class IssueWorkflowStartService:
     ) -> int:
         rule_id = workflow.ai_automation_rule_id
         if not rule_id:
+            logger.info(
+                "[issue-workflow-start] skipped AI workflow item=%s "
+                "reason=missing_ai_automation_rule",
+                item.id,
+            )
             return 0
         planning_run = issue_workflow_planning_service.ensure_run(
             db,
@@ -66,8 +93,15 @@ class IssueWorkflowStartService:
             user_id=user_id,
         )
         if self._has_run(db, item, rule_id, planning_run.id):
+            logger.info(
+                "[issue-workflow-start] skipped AI workflow item=%s rule=%s "
+                "planning_run=%s reason=already_started",
+                item.id,
+                rule_id,
+                planning_run.id,
+            )
             return 0
-        return await project_automation_processor.process(
+        started = await project_automation_processor.process(
             db,
             ProjectAutomationEvent(
                 event_type="task.created",
@@ -94,6 +128,15 @@ class IssueWorkflowStartService:
             ),
             automation_id=rule_id,
         )
+        logger.info(
+            "[issue-workflow-start] AI workflow dispatched item=%s rule=%s "
+            "planning_run=%s started=%s",
+            item.id,
+            rule_id,
+            planning_run.id,
+            started,
+        )
+        return started
 
     async def _start_ready_stages(
         self,
@@ -104,19 +147,79 @@ class IssueWorkflowStartService:
     ) -> int:
         started = 0
         for node in workflow.nodes:
-            if node.status != "ready" or not node.automation_rule_id:
-                continue
-            if workflow.node_needs_execution_config(node):
-                continue
-            await project_automation_service.run_for_workflow_node(
-                db,
-                str(item.cloud_project_id),
-                node.automation_rule_id,
-                str(item.id),
+            execution_config = workflow.execution_config_for(node)
+            logger.info(
+                "[issue-workflow-start] node item=%s node=%s status=%s mode=%s "
+                "rule=%s config_complete=%s agent=%s device=%s model=%s "
+                "workspace=%s",
+                item.id,
                 node.id,
-                user_id,
+                node.status,
+                node.execution_mode,
+                node.automation_rule_id,
+                bool(execution_config and execution_config.is_complete()),
+                bool(execution_config and execution_config.agent_id),
+                bool(execution_config and execution_config.execution_device_id),
+                bool(execution_config and execution_config.model),
+                bool(execution_config and execution_config.workspace_binding),
             )
+            if node.status != "ready":
+                logger.info(
+                    "[issue-workflow-start] node skipped item=%s node=%s "
+                    "reason=status_not_ready status=%s",
+                    item.id,
+                    node.id,
+                    node.status,
+                )
+                continue
+            if node.execution_mode != "robot":
+                logger.info(
+                    "[issue-workflow-start] node skipped item=%s node=%s "
+                    "reason=human_execution",
+                    item.id,
+                    node.id,
+                )
+                continue
+            if execution_config is None or not execution_config.is_complete():
+                logger.info(
+                    "[issue-workflow-start] node skipped item=%s node=%s "
+                    "reason=incomplete_execution_config",
+                    item.id,
+                    node.id,
+                )
+                continue
+            if node.automation_rule_id:
+                run = await project_automation_service.run_for_workflow_node(
+                    db,
+                    str(item.cloud_project_id),
+                    node.automation_rule_id,
+                    str(item.id),
+                    node.id,
+                    user_id,
+                )
+            else:
+                run = await project_automation_service.run_direct_workflow_node(
+                    db,
+                    str(item.cloud_project_id),
+                    str(item.id),
+                    node.id,
+                    user_id,
+                )
             started += 1
+            logger.info(
+                "[issue-workflow-start] node dispatched item=%s node=%s rule=%s "
+                "run=%s",
+                item.id,
+                node.id,
+                node.automation_rule_id,
+                run.get("id") if isinstance(run, dict) else None,
+            )
+        logger.info(
+            "[issue-workflow-start] completed item=%s started=%s nodes=%s",
+            item.id,
+            started,
+            len(workflow.nodes),
+        )
         return started
 
     @staticmethod

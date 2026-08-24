@@ -1335,11 +1335,8 @@ export function createHybridWorkbenchServices(
     },
     pluginApi: projectPluginApi,
     teamApi: {
-      // Wegent Teams are backend CRDs. The local service only exposes the
-      // synthetic id=0 workbench Team, which is valid as the local default but
-      // can never be persisted as an automation executor.
+      // Wegent Teams are exposed only for explicitly selected Wegent execution.
       listTeams: cloudServices.teamApi.listTeams,
-      getDefaultWorkbenchTeam: localServices.teamApi.getDefaultWorkbenchTeam,
     },
     skillApi: localServices.skillApi,
     projectApi: {
@@ -1368,7 +1365,6 @@ export function createHybridWorkbenchServices(
     userApi: cloudServices.userApi,
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
-      getDefaultWorkbenchTeam: cloudServices.teamApi.getDefaultWorkbenchTeam,
       listDevices: requestOptions => listCloudDevices(requestOptions?.signal),
       listRuntimeWork: requestOptions => listCloudRuntimeWork(requestOptions?.signal),
     },

@@ -2308,6 +2308,7 @@ export function TodoEditor(props: TodoEditorProps) {
                         nodes={displayedWorkflow.nodes}
                         tasks={tasks}
                         deliveries={deliveries}
+                        executionError={item?.execution_error}
                         selectedTaskId={props.selectedTaskId}
                         onCreateTask={props.onCreateTask}
                         onRunAutomation={props.onRunWorkflowNode}

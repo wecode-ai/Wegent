@@ -18,8 +18,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import Session, aliased
 
 from app.models.delivery import (
     CloudProject,
@@ -248,18 +248,23 @@ def execution_ai_state(
     return state
 
 
-def _occupied_execution_scopes(db: Session) -> set[str]:
+def _occupied_execution_scopes(
+    db: Session,
+    execution_scopes: set[str] | None = None,
+) -> set[str]:
     """Return scopes whose previous attempt may still own a Runtime process."""
 
-    return {
-        scope
-        for (scope,) in db.query(LoopItemExecution.execution_scope)
-        .filter(
-            LoopItemExecution.status.in_(CAPACITY_STATUSES),
-            LoopItemExecution.execution_scope != "",
+    if execution_scopes is not None and not execution_scopes:
+        return set()
+    query = db.query(LoopItemExecution.execution_scope).filter(
+        LoopItemExecution.status.in_(CAPACITY_STATUSES),
+        LoopItemExecution.execution_scope != "",
+    )
+    if execution_scopes is not None:
+        query = query.filter(
+            LoopItemExecution.execution_scope.in_(execution_scopes),
         )
-        .all()
-    }
+    return {scope for (scope,) in query.all()}
 
 
 def _runtime_capacity_used(
@@ -301,19 +306,24 @@ def _runtime_capacity_used(
     return runtime_active + pending_reservations
 
 
-def _active_agent_counts(db: Session) -> dict[str, int]:
+def _active_agent_counts(
+    db: Session,
+    agent_ids: set[str] | None = None,
+) -> dict[str, int]:
+    if agent_ids is not None and not agent_ids:
+        return {}
+    query = db.query(
+        LoopItemExecution.agent_id,
+        func.count(LoopItemExecution.id),
+    ).filter(
+        LoopItemExecution.status.in_(CAPACITY_STATUSES),
+        LoopItemExecution.agent_id != "",
+    )
+    if agent_ids is not None:
+        query = query.filter(LoopItemExecution.agent_id.in_(agent_ids))
     return {
         str(agent_id): int(count)
-        for agent_id, count in db.query(
-            LoopItemExecution.agent_id,
-            func.count(LoopItemExecution.id),
-        )
-        .filter(
-            LoopItemExecution.status.in_(CAPACITY_STATUSES),
-            LoopItemExecution.agent_id != "",
-        )
-        .group_by(LoopItemExecution.agent_id)
-        .all()
+        for agent_id, count in query.group_by(LoopItemExecution.agent_id).all()
     }
 
 
@@ -593,6 +603,8 @@ class LoopItemExecutionService:
         cloud_project_id: str,
         runtime_subject_user_id: int,
         runtime_profile: RuntimeProfile | None,
+        execution_device_id: str | None,
+        model: str | None,
         assigner_user_id: int,
         priority: str | None,
         automation_context: dict[str, Any],
@@ -600,11 +612,27 @@ class LoopItemExecutionService:
         """Queue a workflow AI role whose Runtime is selected independently."""
 
         metadata = dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
-        environment = str(metadata.get("execution_environment") or "local")
-        device_id = str(runtime_profile.device_id or "") if runtime_profile else ""
-        waiting_runtime = runtime_profile is None or not (
-            device_id and metadata.get("model")
+        device_id = (
+            str(runtime_profile.device_id or "")
+            if runtime_profile
+            else str(execution_device_id or "")
         )
+        selected_model = str(metadata.get("model") or model or "")
+        environment = str(metadata.get("execution_environment") or "")
+        if not environment and device_id:
+            from app.services.device_service import device_service
+
+            device = device_service.get_device_by_device_id(
+                db, user_id=runtime_subject_user_id, device_id=device_id
+            )
+            device_type = (
+                (device.json or {}).get("spec", {}).get("deviceType", "local")
+                if device is not None
+                else "local"
+            )
+            environment = "cloud" if device_type in {"cloud", "remote"} else "local"
+        environment = environment or "local"
+        waiting_runtime = not (device_id and selected_model)
         return self._enqueue(
             db,
             loop_item_id=loop_item_id,
@@ -630,6 +658,7 @@ class LoopItemExecutionService:
                 "runtime_profile_version": (
                     runtime_profile.version if runtime_profile else None
                 ),
+                "model": selected_model or None,
                 "workspace_policy": metadata.get("workspace_policy") or "project",
             },
             waiting_runtime=waiting_runtime,
@@ -1051,7 +1080,7 @@ class LoopItemExecutionService:
         )
         if running_count is None or running_count >= device_capacity:
             return None
-        active_counts = _active_agent_counts(db)
+        active_counts = _active_agent_counts(db, {agent_id})
         limits = _agent_limits(db, {agent_id})
         if not _agent_has_capacity(
             agent_id,
@@ -1081,7 +1110,10 @@ class LoopItemExecutionService:
         candidate = query.first()
         if candidate is None:
             return None
-        if candidate.execution_scope in _occupied_execution_scopes(db):
+        if candidate.execution_scope in _occupied_execution_scopes(
+            db,
+            {candidate.execution_scope} if candidate.execution_scope else set(),
+        ):
             return None
 
         now = utcnow()
@@ -1139,27 +1171,70 @@ class LoopItemExecutionService:
         )
         if running_count is None or running_count >= device_capacity:
             return None
-        query = (
-            db.query(LoopItemExecution)
+        queue_filters = (
+            LoopItemExecution.executor_owner_user_id == owner_user_id,
+            LoopItemExecution.execution_device_id == execution_device_id,
+            LoopItemExecution.execution_environment == environment,
+            LoopItemExecution.status == STATUS_QUEUED,
+        )
+        agent_ids = {
+            str(agent_id)
+            for (agent_id,) in db.query(LoopItemExecution.agent_id)
+            .filter(*queue_filters, LoopItemExecution.agent_id != "")
+            .distinct()
+            .all()
+        }
+        active_counts = _active_agent_counts(db, agent_ids)
+        limits = _agent_limits(db, agent_ids)
+
+        active_execution = aliased(LoopItemExecution)
+        scope_is_available = or_(
+            LoopItemExecution.execution_scope == "",
+            ~db.query(active_execution.id)
             .filter(
-                LoopItemExecution.execution_device_id == execution_device_id,
-                LoopItemExecution.execution_environment == environment,
-                LoopItemExecution.status == STATUS_QUEUED,
+                active_execution.status.in_(CAPACITY_STATUSES),
+                active_execution.execution_scope == LoopItemExecution.execution_scope,
             )
+            .exists(),
+        )
+        ranked = (
+            db.query(
+                LoopItemExecution.id.label("execution_id"),
+                func.row_number()
+                .over(
+                    partition_by=LoopItemExecution.agent_id,
+                    order_by=(
+                        LoopItemExecution.priority_weight.desc(),
+                        LoopItemExecution.queued_at.asc(),
+                        LoopItemExecution.id.asc(),
+                    ),
+                )
+                .label("agent_queue_rank"),
+            )
+            .filter(*queue_filters, scope_is_available)
+            .subquery()
+        )
+        candidate_ids = [
+            int(execution_id)
+            for (execution_id,) in db.query(ranked.c.execution_id)
+            .filter(ranked.c.agent_queue_rank == 1)
+            .all()
+        ]
+        if not candidate_ids:
+            return None
+        rows = (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.id.in_(candidate_ids))
             .order_by(
                 LoopItemExecution.priority_weight.desc(),
                 LoopItemExecution.queued_at.asc(),
                 LoopItemExecution.id.asc(),
             )
+            .all()
         )
-        query = query.filter(LoopItemExecution.executor_owner_user_id == owner_user_id)
-        occupied_scopes = _occupied_execution_scopes(db)
-        active_counts = _active_agent_counts(db)
-        rows = query.all()
-        limits = _agent_limits(db, {row.agent_id for row in rows if row.agent_id})
         candidate = _fair_single_candidate(
             rows,
-            occupied_scopes=occupied_scopes,
+            occupied_scopes=set(),
             active_counts=active_counts,
             limits=limits,
         )
@@ -1243,11 +1318,17 @@ class LoopItemExecutionService:
         claimable: list[int] = []
         claimed_agent_counts: dict[str, int] = {}
         seen_scopes: set[str] = set()
-        occupied_scopes = _occupied_execution_scopes(db)
-        active_counts = _active_agent_counts(db)
-        limits = _agent_limits(
-            db, {candidate.agent_id for candidate in candidates if candidate.agent_id}
-        )
+        agent_ids = {
+            candidate.agent_id for candidate in candidates if candidate.agent_id
+        }
+        execution_scopes = {
+            candidate.execution_scope
+            for candidate in candidates
+            if candidate.execution_scope
+        }
+        occupied_scopes = _occupied_execution_scopes(db, execution_scopes)
+        active_counts = _active_agent_counts(db, agent_ids)
+        limits = _agent_limits(db, agent_ids)
         priorities = sorted(
             {candidate.priority_weight for candidate in candidates}, reverse=True
         )
@@ -1384,9 +1465,13 @@ class LoopItemExecutionService:
             )
             .all()
         )
-        occupied_scopes = _occupied_execution_scopes(db)
-        active_counts = _active_agent_counts(db)
-        limits = _agent_limits(db, {row.agent_id for row in candidates if row.agent_id})
+        agent_ids = {row.agent_id for row in candidates if row.agent_id}
+        execution_scopes = {
+            row.execution_scope for row in candidates if row.execution_scope
+        }
+        occupied_scopes = _occupied_execution_scopes(db, execution_scopes)
+        active_counts = _active_agent_counts(db, agent_ids)
+        limits = _agent_limits(db, agent_ids)
         candidate = _fair_single_candidate(
             candidates,
             occupied_scopes=occupied_scopes,
@@ -3160,16 +3245,14 @@ class LoopItemExecutionService:
             )
 
         if execution.executor_type == "generic_robot":
-            if run is None or rule is None:
+            if run is None:
                 raise WeworkRuntimeConfigurationError(
                     "Generic workflow execution has no automation run"
                 )
             runtime_profile = self._execution_runtime_profile(db, execution)
-            if runtime_profile is None:
-                raise WeworkRuntimeConfigurationError(
-                    "Generic workflow execution has no Runtime profile"
-                )
-            if int(runtime_profile.user_id or 0) != execution.executor_owner_user_id:
+            if runtime_profile is not None and (
+                int(runtime_profile.user_id or 0) != execution.executor_owner_user_id
+            ):
                 raise WeworkRuntimeConfigurationError(
                     "Selected Runtime owner no longer matches the queued execution"
                 )
@@ -3187,16 +3270,31 @@ class LoopItemExecutionService:
                 .order_by(CloudProjectLocalBinding.updated_at.desc())
                 .first()
             )
+            run_metadata = (
+                run.metadata_json if isinstance(run.metadata_json, dict) else {}
+            )
+            origin_context = self._automation_runtime_context(run, rule)
             return (
                 WeworkExecutionProfile.for_generic_robot(
                     runtime_profile=runtime_profile,
-                    display_name=rule.title or "AI",
-                    execution_prompt=rule.description or "",
+                    owner_user_id=execution.executor_owner_user_id,
+                    display_name=(
+                        rule.title
+                        if rule is not None and rule.title
+                        else str(run_metadata.get("workflow_node_name") or "AI")
+                    ),
+                    execution_prompt=(
+                        rule.description
+                        if rule is not None and rule.description
+                        else str(run_metadata.get("instruction_override") or "")
+                    ),
+                    model_override=str(origin_context.get("model") or ""),
                     local_project_id=(
                         int(binding.local_project_id or 0) if binding else 0
                     ),
+                    workspace_binding_override=origin_context.get("workspace_binding"),
                 ),
-                self._automation_runtime_context(run, rule),
+                origin_context,
             )
 
         if execution.executor_type != "automation_manager":
@@ -3293,6 +3391,10 @@ class LoopItemExecutionService:
             "event": run_metadata.get("event") or {},
             "workflow_stage_input": run_metadata.get("workflow_stage_input"),
             "model": workflow_config.get("model"),
+            "execution_device_id": (
+                workflow_config.get("executionDeviceId")
+                or workflow_config.get("execution_device_id")
+            ),
             "workspace_binding": workspace_binding,
         }
 
@@ -3580,22 +3682,28 @@ class LoopItemExecutionService:
         *,
         owner_user_id: int,
         runtime_device_id: str,
+        needs_confirmation_only: bool = False,
         limit: int = 100,
     ) -> list[LoopItemExecution]:
         """Return active attempts to reconcile when their device reconnects."""
 
-        return (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.executor_owner_user_id == owner_user_id,
-                LoopItemExecution.runtime_device_id == runtime_device_id,
-                LoopItemExecution.runtime_task_id != "",
-                LoopItemExecution.status.in_(CAPACITY_STATUSES),
-            )
-            .order_by(LoopItemExecution.id.asc())
-            .limit(limit)
-            .all()
+        query = db.query(LoopItemExecution).filter(
+            LoopItemExecution.executor_owner_user_id == owner_user_id,
+            LoopItemExecution.runtime_device_id == runtime_device_id,
+            LoopItemExecution.runtime_task_id != "",
+            LoopItemExecution.status.in_(CAPACITY_STATUSES),
         )
+        if needs_confirmation_only:
+            query = query.filter(
+                or_(
+                    LoopItemExecution.sync_state == SYNC_STALE,
+                    and_(
+                        LoopItemExecution.status == STATUS_CLAIMED,
+                        LoopItemExecution.observed_state == OBSERVED_ACCEPTED,
+                    ),
+                )
+            )
+        return query.order_by(LoopItemExecution.id.asc()).limit(limit).all()
 
     def reconcile_runtime_snapshot(
         self,

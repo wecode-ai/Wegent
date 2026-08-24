@@ -246,7 +246,6 @@ export interface CloudWorkStatus {
 
 export interface WorkbenchState {
   user: User | null
-  defaultTeam: Team | null
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   runtimeWork: RuntimeWorkListResponse | null

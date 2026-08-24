@@ -40,10 +40,7 @@ import {
 } from '@/features/workbench/changeRequestStatus'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import { priorityBadgeClasses } from './todoShared'
-import {
-  workflowExecutionConfigComplete,
-  workflowNeedsExecutionConfiguration,
-} from './workflowExecutionConfig'
+import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
@@ -77,14 +74,7 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
     (item.assignee_agent_id
       ? item.assignee_agent_name || agentNames?.[item.assignee_agent_id] || null
       : null)
-  const needsExecutionConfiguration =
-    ['pending', 'in_progress'].includes(item.status) &&
-    (workflowNeedsExecutionConfiguration(item.workflow) ||
-      Boolean(
-        item.assignee_agent_id &&
-        (!workflowExecutionConfigComplete(item.execution_config) ||
-          ['waiting_runtime', 'waiting_device'].includes(item.execution_state ?? ''))
-      ))
+  const needsExecutionConfiguration = itemNeedsExecutionConfiguration(item)
 
   return (
     <>

@@ -44,6 +44,15 @@ def project_robot_execution_config(
     return WorkflowExecutionConfig(
         agent_id=agent.id,
         runtime_profile_id=runtime_profile_id,
+        execution_device_id=str(
+            (
+                runtime_profile.device_id
+                if runtime_profile is not None
+                else config.get("execution_device_id")
+            )
+            or ""
+        )
+        or None,
         model=str(profile_metadata.get("model") or config.get("model") or "") or None,
         workspace_binding=workspace_binding,
     )
@@ -61,6 +70,7 @@ def execution_context(
         "runtime_profile_id": config.runtime_profile_id,
         "runtime_subject_user_id": runtime_subject_user_id,
         "agent_id": config.agent_id,
+        "execution_device_id": config.execution_device_id,
         "model": config.model,
         "workspace_binding": (
             config.workspace_binding.model_dump(mode="json", by_alias=True)

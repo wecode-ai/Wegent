@@ -15,7 +15,7 @@ use std::{
 
 use serde_json::{json, Value};
 use tokio::{
-    sync::broadcast,
+    sync::{broadcast, Mutex as AsyncMutex},
     task::JoinHandle,
     time::{sleep, sleep_until, Instant},
 };
@@ -84,6 +84,7 @@ const TERMINAL_EXIT_EVENT: &str = "terminal:exit";
 const TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
 const RUNTIME_EVENT_EVENT: &str = "runtime:event";
+const RUNTIME_TASKS_AVAILABLE_EVENT: &str = "runtime.tasks.available";
 const RUNTIME_EVENT_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
@@ -136,6 +137,7 @@ pub struct LocalBackendRunner<
     cancellations: LocalCancellationRegistry,
     runtime_event_forwarder: Option<JoinHandle<()>>,
     connection_status: Arc<AtomicBool>,
+    runtime_pull_lock: Arc<AsyncMutex<()>>,
 }
 
 impl<T, R> Drop for LocalBackendRunner<T, R>
@@ -252,6 +254,7 @@ where
             cancellations: LocalCancellationRegistry::default(),
             runtime_event_forwarder: None,
             connection_status: Arc::new(AtomicBool::new(false)),
+            runtime_pull_lock: Arc::new(AsyncMutex::new(())),
         }
     }
 
@@ -451,6 +454,10 @@ where
         self.client
             .transport
             .on(RUNTIME_RPC_EVENT, self.runtime_rpc_handler());
+        self.client.transport.on(
+            RUNTIME_TASKS_AVAILABLE_EVENT,
+            self.runtime_tasks_available_handler(),
+        );
         self.client
             .transport
             .on(DEVICE_UPGRADE_EVENT, self.upgrade_handler());
@@ -656,6 +663,27 @@ where
                     ],
                 ));
                 Some(encode_runtime_rpc_response(&method, response))
+            })
+        })
+    }
+
+    fn runtime_tasks_available_handler(&self) -> EventHandler {
+        let client = self.client.clone();
+        let runtime_work_handler = self.runtime_work_handler.clone();
+        let runtime_pull_lock = Arc::clone(&self.runtime_pull_lock);
+        Arc::new(move |_| {
+            let client = client.clone();
+            let runtime_work_handler = runtime_work_handler.clone();
+            let runtime_pull_lock = Arc::clone(&runtime_pull_lock);
+            Box::pin(async move {
+                if let Some(handler) = runtime_work_handler {
+                    tokio::spawn(poll_available_runtime_work(
+                        client,
+                        handler,
+                        runtime_pull_lock,
+                    ));
+                }
+                Some(json!({"success": true}))
             })
         })
     }
@@ -880,11 +908,11 @@ where
             .await
         {
             Ok(true) => {
-                self.refresh_runtime_capacity().await;
                 if let Err(error) = self.client.emit_liveness_heartbeat().await {
                     let _ = self.client.disconnect().await;
                     return Err(error);
                 }
+                self.trigger_runtime_work_poll();
                 Ok(())
             }
             Ok(false) => {
@@ -909,10 +937,10 @@ where
                     continue;
                 }
             }
-            self.refresh_runtime_capacity().await;
             let failure = match self.client.emit_liveness_heartbeat().await {
                 Ok(()) => {
                     consecutive_failures = 0;
+                    self.trigger_runtime_work_poll();
                     next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
                     continue;
                 }
@@ -932,18 +960,15 @@ where
         }
     }
 
-    async fn refresh_runtime_capacity(&self) {
-        let capacity = match &self.runtime_work_handler {
-            Some(handler) => handler
-                .handle_runtime_rpc(json!({
-                    "method": "runtime.capacity.get",
-                    "payload": {},
-                }))
-                .await
-                .ok(),
-            None => None,
+    fn trigger_runtime_work_poll(&self) {
+        let Some(handler) = self.runtime_work_handler.clone() else {
+            return;
         };
-        self.client.set_runtime_capacity(capacity);
+        tokio::spawn(poll_available_runtime_work(
+            self.client.clone(),
+            handler,
+            Arc::clone(&self.runtime_pull_lock),
+        ));
     }
 
     async fn forward_terminal_events(&self) {
@@ -986,6 +1011,70 @@ where
                     &[("event", event_name.to_owned()), ("error", error)],
                 ));
             }
+        }
+    }
+}
+
+async fn poll_available_runtime_work<T>(
+    client: LocalBackendClient<T>,
+    handler: Arc<dyn RuntimeWorkHandler>,
+    pull_lock: Arc<AsyncMutex<()>>,
+) where
+    T: LocalBackendTransport,
+{
+    let Ok(_guard) = pull_lock.try_lock() else {
+        return;
+    };
+    let capacity = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.capacity.get",
+            "payload": {},
+        }))
+        .await
+        .ok();
+    client.set_runtime_capacity(capacity);
+
+    loop {
+        let task = match client
+            .pull_runtime_task(client.config.heartbeat_timeout)
+            .await
+        {
+            Ok(Some(task)) => task,
+            Ok(None) => return,
+            Err(error) => {
+                write_executor_error_line(&format_executor_log(
+                    "runtime task pull failed",
+                    &[("error", error)],
+                ));
+                return;
+            }
+        };
+        let Some(payload) = task.get("payload").cloned() else {
+            write_executor_error_line("runtime task pull returned no payload");
+            return;
+        };
+        let response = match handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.create",
+                "payload": payload,
+            }))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => runtime_error_response(error),
+        };
+        let accepted = response.get("success").and_then(Value::as_bool) == Some(true);
+        if let Err(error) = client
+            .acknowledge_runtime_task(&task, accepted, &response, client.config.heartbeat_timeout)
+            .await
+        {
+            write_executor_error_line(&format_executor_log(
+                "runtime task acceptance report failed",
+                &[("error", error)],
+            ));
+        }
+        if !accepted {
+            return;
         }
     }
 }

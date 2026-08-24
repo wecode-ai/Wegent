@@ -97,7 +97,6 @@ const mockViewport = vi.hoisted(() => ({
 const workbenchValue: WorkbenchContextValue = {
   state: {
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
-    defaultTeam: null,
     projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
     devices: [],
     runtimeWork: null,

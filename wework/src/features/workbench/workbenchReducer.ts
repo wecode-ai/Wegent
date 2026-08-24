@@ -10,7 +10,6 @@ import type {
   RuntimeTaskAddress,
   RuntimeProjectWork,
   RuntimeWorkListResponse,
-  Team,
   User,
   UserPreferences,
 } from '@/types/api'
@@ -40,7 +39,6 @@ type WorkbenchDeviceStatus = DeviceInfo['status']
 const OPTIMISTIC_TASK_PRESERVE_MS = 2 * 60 * 1000
 export const initialWorkbenchState: WorkbenchState = {
   user: null,
-  defaultTeam: null,
   projects: [],
   devices: [],
   runtimeWork: null,
@@ -59,7 +57,6 @@ export type WorkbenchAction =
   | {
       type: 'bootstrapped'
       user: User
-      defaultTeam: Team | null
       projects: ProjectWithTasks[]
       devices: DeviceInfo[]
       runtimeWork?: RuntimeWorkListResponse | null
@@ -950,7 +947,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         user: action.user,
-        defaultTeam: action.defaultTeam,
         projects: action.projects,
         devices,
         runtimeWork,

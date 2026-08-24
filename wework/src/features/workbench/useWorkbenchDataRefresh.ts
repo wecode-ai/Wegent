@@ -590,10 +590,10 @@ export function useWorkbenchDataRefresh({
 
     async function bootstrap() {
       const bootstrapRevision = ++workListRefreshRevisionRef.current
-      const [defaultTeamResult, devicesResult] = await Promise.all([
-        timedWorkbenchBootstrapRequest('defaultTeam', services.teamApi.getDefaultWorkbenchTeam()),
-        timedWorkbenchBootstrapRequest('devices', executorClient.commands.listDevices()),
-      ])
+      const devicesResult = await timedWorkbenchBootstrapRequest(
+        'devices',
+        executorClient.commands.listDevices()
+      )
 
       if (cancelled) return
       window.clearTimeout(slowTimer)
@@ -601,7 +601,6 @@ export function useWorkbenchDataRefresh({
       const elapsedMs = Math.round(nowMs() - startedAt)
       if (elapsedMs > 5000) {
         console.warn(`[Wework] Workbench shell bootstrap completed slowly in ${elapsedMs}ms.`, {
-          defaultTeam: defaultTeamResult.status,
           devices: devicesResult.status,
         })
       }
@@ -618,7 +617,6 @@ export function useWorkbenchDataRefresh({
       dispatch({
         type: 'bootstrapped',
         user,
-        defaultTeam: defaultTeamResult.status === 'fulfilled' ? defaultTeamResult.value : null,
         projects: [],
         devices,
         standaloneDeviceId,
@@ -654,16 +652,6 @@ export function useWorkbenchDataRefresh({
           isCancelled: () => cancelled,
         }).catch(() => undefined)
       })
-
-      if (defaultTeamResult.status === 'rejected') {
-        dispatch({
-          type: 'error_set',
-          error:
-            defaultTeamResult.reason instanceof Error
-              ? defaultTeamResult.reason.message
-              : 'Wework default team is not configured',
-        })
-      }
     }
 
     void bootstrap()
@@ -677,7 +665,6 @@ export function useWorkbenchDataRefresh({
     executorClient,
     refreshCloudBackgroundData,
     selectVisibleRuntimeWork,
-    services.teamApi,
     user,
   ])
 

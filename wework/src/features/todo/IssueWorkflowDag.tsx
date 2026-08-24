@@ -25,6 +25,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import type { Delivery, WorkflowNodeInstance } from '@/api/deliveries'
+import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { layoutWorkflowGraph } from './workflowGraph'
@@ -46,6 +47,7 @@ interface IssueWorkflowDagProps {
   nodes: WorkflowNodeInstance[]
   tasks: WorkflowTaskBinding[]
   deliveries?: Delivery[]
+  executionError?: string | null
   selectedTaskId?: string | null
   onCreateTask?: (stageId: string) => void
   onRunAutomation?: (stageId: string, automationRuleId: string) => void | Promise<void>
@@ -150,6 +152,7 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
   const { t } = useTranslation('common')
   const { stage, tasks, selected, onSelect } = data
   const statusLabel = workflowNodeStatusLabel(t, stage.status)
+  const automated = workflowNodeExecutionMode(stage) === 'robot'
 
   return (
     <article
@@ -172,14 +175,8 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
       <header className="min-w-0">
         <span className="block truncate text-sm font-medium text-text-primary">{stage.name}</span>
         <span className="issue-workflow-node-kind">
-          {stage.automation_rule_id ? (
-            <Bot className="h-3.5 w-3.5" />
-          ) : (
-            <UserRound className="h-3.5 w-3.5" />
-          )}
-          {stage.automation_rule_id
-            ? t('todo.workflow_ai_execution')
-            : t('todo.workflow_stage_human_execution')}
+          {automated ? <Bot className="h-3.5 w-3.5" /> : <UserRound className="h-3.5 w-3.5" />}
+          {automated ? t('todo.workflow_ai_execution') : t('todo.workflow_stage_human_execution')}
         </span>
       </header>
       <footer className="issue-workflow-node-footer">
@@ -200,6 +197,7 @@ export function IssueWorkflowDag({
   nodes,
   tasks,
   deliveries = [],
+  executionError,
   selectedTaskId,
   onCreateTask,
   onRunAutomation,
@@ -399,11 +397,14 @@ export function IssueWorkflowDag({
           <div>
             {detailStages.map(stage => {
               const stageTasks = tasks.filter(task => task.workflow_node_id === stage.id)
-              const automated = Boolean(stage.automation_rule_id)
+              const automated = workflowNodeExecutionMode(stage) === 'robot'
               const startHumanStage = stageTasks.length === 0 && stage.status === 'ready'
               const awaitingApproval = stage.status === 'awaiting_approval'
               const canRunAutomation =
-                automated && ['ready', 'failed'].includes(stage.status) && Boolean(onRunAutomation)
+                automated &&
+                Boolean(stage.automation_rule_id) &&
+                ['ready', 'failed'].includes(stage.status) &&
+                Boolean(onRunAutomation)
               const canSubmitDeliverables =
                 automated && stage.status === 'awaiting_deliverables' && Boolean(onCompleteStage)
               const canCreateTask =
@@ -418,6 +419,8 @@ export function IssueWorkflowDag({
                 ].includes(stage.status) &&
                 Boolean(onCreateTask)
               const requirements = stage.required_deliverables ?? []
+              const stageExecutionError =
+                stage.execution_error ?? (stage.status === 'failed' ? executionError : null)
               const fulfilledIds = new Set(stage.fulfilled_deliverable_ids ?? [])
               const requirementDeliveries = new Map(
                 requirements.map(requirement => [
@@ -460,6 +463,14 @@ export function IssueWorkflowDag({
                         : t('todo.workflow_stage_human_execution')}
                     </span>
                   </header>
+                  {stageExecutionError ? (
+                    <div
+                      data-testid={`cloud-todo-workflow-execution-error-${stage.id}`}
+                      className="break-words rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700"
+                    >
+                      {stageExecutionError}
+                    </div>
+                  ) : null}
                   <div className="issue-workflow-stage-actions">
                     {canSubmitDeliverables ? (
                       <button

@@ -35,6 +35,7 @@ import {
   Trash2,
   UserRound,
   Workflow,
+  X,
 } from 'lucide-react'
 import type {
   IssueStageMode,
@@ -45,6 +46,7 @@ import type {
 } from '@/api/deliveries'
 import type { ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
+import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
 import { PopupMenu } from '@/components/common/MenuSelect'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -133,6 +135,7 @@ function createStage(
     required: true,
     required_deliverables: [],
     workspace_policy: dependsOn.length ? 'inherit' : 'composer',
+    execution_mode: 'human',
     automation_rule_id: null,
   }
 }
@@ -412,7 +415,10 @@ export function ProjectWorkflowEditor({
   const [deliverableDialog, setDeliverableDialog] = useState<DeliverableDialogState | null>(null)
   const graphContainerRef = useRef<HTMLDivElement>(null)
   const [robotModeNodeIds, setRobotModeNodeIds] = useState<Set<string>>(
-    () => new Set(value.nodes.filter(node => node.automation_rule_id).map(node => node.id))
+    () =>
+      new Set(
+        value.nodes.filter(node => workflowNodeExecutionMode(node) === 'robot').map(node => node.id)
+      )
   )
   const currentStageMode = stageMode(value)
   const currentAdvancementPolicy = value.advancement_policy ?? 'manual'
@@ -640,7 +646,9 @@ export function ProjectWorkflowEditor({
             ? t('todo.workflow_stage_robot_named', '机器人：{{name}}', {
                 name: automationRule.agentName || automationRule.name,
               })
-            : t('todo.workflow_stage_human_execution', '手动执行'),
+            : workflowNodeExecutionMode(node) === 'robot'
+              ? t('todo.workflow_stage_robot_execution', '自动执行')
+              : t('todo.workflow_stage_human_execution', '手动执行'),
           dependencyCount: node.depends_on.length,
           onInsertBefore: () => insertNode(node.id, 'before'),
           onInsertAfter: () => insertNode(node.id, 'after'),
@@ -710,19 +718,16 @@ export function ProjectWorkflowEditor({
     ) => {
       if (!config) {
         updateNode(node.id, {
+          execution_mode: 'robot',
           automation_rule_id: null,
           workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
         })
         return
       }
       if (!onEnsureStageRobotRule) return
-      const revertToHumanExecution = () => {
-        setRobotModeNodeIds(current => {
-          const next = new Set(current)
-          next.delete(node.id)
-          return next
-        })
+      const clearStageRobotRule = () => {
         updateNode(node.id, {
+          execution_mode: 'robot',
           automation_rule_id: null,
           workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
         })
@@ -731,15 +736,16 @@ export function ProjectWorkflowEditor({
       try {
         const ruleId = await onEnsureStageRobotRule(config)
         if (!ruleId) {
-          revertToHumanExecution()
+          clearStageRobotRule()
           return
         }
         updateNode(node.id, {
+          execution_mode: 'robot',
           automation_rule_id: ruleId,
           workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
         })
       } catch {
-        revertToHumanExecution()
+        clearStageRobotRule()
       } finally {
         setStageRobotBusyId(null)
       }
@@ -753,7 +759,15 @@ export function ProjectWorkflowEditor({
       else next.delete(node.id)
       return next
     })
-    if (mode === 'human') void selectStageExecutor(node, null)
+    if (mode === 'human') {
+      updateNode(node.id, {
+        execution_mode: 'human',
+        automation_rule_id: null,
+        workspace_policy: node.workspace_policy === 'none' ? 'composer' : node.workspace_policy,
+      })
+      return
+    }
+    updateNode(node.id, { execution_mode: 'robot' })
   }
 
   return (
@@ -1204,6 +1218,23 @@ export function ProjectWorkflowEditor({
                             {close => (
                               <>
                                 <div className="max-h-60 overflow-y-auto">
+                                  {selectedStageRule ? (
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      data-testid={`project-workflow-stage-automation-${selectedNode.id}-clear`}
+                                      onClick={() => {
+                                        void selectStageExecutor(selectedNode, null)
+                                        close()
+                                      }}
+                                      className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm text-text-secondary hover:bg-surface"
+                                    >
+                                      <X className="h-4 w-4 shrink-0 text-text-muted" />
+                                      <span className="min-w-0 flex-1 truncate">
+                                        {t('todo.workflow_stage_clear_robot', '取消选择机器人')}
+                                      </span>
+                                    </button>
+                                  ) : null}
                                   {[
                                     {
                                       id: '__generic__',

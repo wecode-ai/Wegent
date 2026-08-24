@@ -105,9 +105,9 @@ class ProjectAutomationExecution:
             configured_mode = assignment_mode(metadata(rule))
             if configured_mode == "manual":
                 configured_agent_id = str(context.get("agent_id") or "")
-                if (
-                    role_config(metadata(rule)).get("source") == "generic"
-                    and not configured_agent_id
+                if not configured_agent_id and (
+                    "workspace_binding" in context
+                    or role_config(metadata(rule)).get("source") == "generic"
                 ):
                     self._dispatch_generic_robot(
                         db,
@@ -334,6 +334,8 @@ class ProjectAutomationExecution:
             cloud_project_id=str(rule.cloud_project_id),
             runtime_subject_user_id=runtime_subject_user_id,
             runtime_profile=profile,
+            execution_device_id=str(context.get("execution_device_id") or "") or None,
+            model=str(context.get("model") or "") or None,
             assigner_user_id=owner.id,
             priority="medium",
             automation_context=context,
@@ -1164,6 +1166,10 @@ class ProjectAutomationExecution:
                     "agent_id": (
                         workflow_config.get("agentId")
                         or workflow_config.get("agent_id")
+                    ),
+                    "execution_device_id": (
+                        workflow_config.get("executionDeviceId")
+                        or workflow_config.get("execution_device_id")
                     ),
                     "model": workflow_config.get("model"),
                     "workspace_binding": workspace_binding,

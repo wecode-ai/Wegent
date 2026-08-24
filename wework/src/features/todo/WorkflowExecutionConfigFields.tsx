@@ -4,13 +4,20 @@ import type { RuntimeProfile } from '@/api/runtimeProfiles'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ProjectWithTasks } from '@/types/api'
-import { workflowExecutionConfigComplete } from './workflowExecutionConfig'
+import type { UnifiedModel } from '@/types/api'
+import type { DeviceInfo } from '@/types/devices'
+import {
+  workflowExecutionConfigComplete,
+  workflowExecutionConfigForAgent,
+} from './workflowExecutionConfig'
 
 export function WorkflowExecutionConfigFields({
   value,
   onChange,
   projectAgents,
   runtimeProfiles,
+  devices,
+  models,
   localProjects,
   testId,
 }: {
@@ -18,14 +25,16 @@ export function WorkflowExecutionConfigFields({
   onChange: (value: WorkflowExecutionConfig) => void
   projectAgents: ProjectChatAgent[]
   runtimeProfiles: RuntimeProfile[]
+  devices: DeviceInfo[]
+  models: UnifiedModel[]
   localProjects: ProjectWithTasks[]
   testId: string
 }) {
   const { t } = useTranslation('common')
-  const selectedProjectId =
+  const selectedWorkspace =
     value.workspace_binding?.type === 'backend_project'
       ? String(value.workspace_binding.projectId)
-      : ''
+      : 'standalone'
   const complete = workflowExecutionConfigComplete(value)
 
   return (
@@ -34,21 +43,24 @@ export function WorkflowExecutionConfigFields({
       data-testid={testId}
     >
       <label className="text-xs font-medium text-text-secondary">
-        {t('todo.workflow_execution_robot', '运行机器人')}
+        {t('todo.workflow_execution_robot', '机器人预设（可选）')}
         <select
           data-testid={`${testId}-agent`}
           value={value.agent_id ?? ''}
           onChange={event => {
             const agent = projectAgents.find(candidate => candidate.id === event.target.value)
-            onChange({
-              ...value,
-              agent_id: event.target.value || null,
-              model: value.model || agent?.model || null,
-            })
+            if (!agent) {
+              onChange({ ...value, agent_id: null, runtime_profile_id: null })
+              return
+            }
+            const runtimeProfile = runtimeProfiles.find(
+              candidate => candidate.id === agent.defaultRuntimeProfileId
+            )
+            onChange(workflowExecutionConfigForAgent(agent, runtimeProfile))
           }}
           className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
         >
-          <option value="">{t('todo.workflow_execution_fill_later', '运行时填写')}</option>
+          <option value="">{t('todo.workflow_execution_no_robot', '不使用机器人预设')}</option>
           {projectAgents.map(agent => (
             <option key={agent.id} value={agent.id}>
               {agent.name}
@@ -57,54 +69,72 @@ export function WorkflowExecutionConfigFields({
         </select>
       </label>
       <label className="text-xs font-medium text-text-secondary">
-        {t('todo.workflow_execution_runtime', '运行环境')}
+        {t('todo.workflow_execution_device', '执行机器')}
         <select
-          data-testid={`${testId}-runtime`}
-          value={value.runtime_profile_id ?? ''}
+          data-testid={`${testId}-device`}
+          value={value.execution_device_id ?? ''}
           onChange={event => {
-            const profile = runtimeProfiles.find(candidate => candidate.id === event.target.value)
             onChange({
               ...value,
-              runtime_profile_id: event.target.value || null,
-              model: value.model || profile?.model || null,
+              execution_device_id: event.target.value || null,
+              runtime_profile_id:
+                runtimeProfiles.find(
+                  profile =>
+                    profile.id === value.runtime_profile_id &&
+                    profile.executionDeviceId === event.target.value
+                )?.id ?? null,
             })
           }}
           className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
         >
           <option value="">{t('todo.workflow_execution_fill_later', '运行时填写')}</option>
-          {runtimeProfiles.map(profile => (
-            <option key={profile.id} value={profile.id}>
-              {profile.name}
+          {devices.map(device => (
+            <option key={device.device_id} value={device.device_id}>
+              {device.name || device.device_id}
             </option>
           ))}
         </select>
       </label>
       <label className="text-xs font-medium text-text-secondary">
         {t('todo.workflow_execution_model', '模型')}
-        <input
+        <select
           data-testid={`${testId}-model`}
           value={value.model ?? ''}
           onChange={event => onChange({ ...value, model: event.target.value || null })}
-          placeholder={t('todo.workflow_execution_model_empty', '运行时填写模型')}
           className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
-        />
+        >
+          <option value="">{t('todo.workflow_execution_model_empty', '运行时填写模型')}</option>
+          {value.model && !models.some(model => model.name === value.model) ? (
+            <option value={value.model}>{value.model}</option>
+          ) : null}
+          {models.map(model => (
+            <option key={`${model.type}:${model.name}`} value={model.name}>
+              {model.displayName || model.name}
+            </option>
+          ))}
+        </select>
       </label>
       <label className="text-xs font-medium text-text-secondary">
         {t('todo.workflow_execution_project', '代码项目')}
         <select
           data-testid={`${testId}-project`}
-          value={selectedProjectId}
+          value={selectedWorkspace}
           onChange={event =>
             onChange({
               ...value,
-              workspace_binding: event.target.value
-                ? { type: 'backend_project', projectId: Number(event.target.value) }
-                : null,
+              workspace_binding:
+                event.target.value === 'standalone'
+                  ? { type: 'standalone' }
+                  : event.target.value
+                    ? { type: 'backend_project', projectId: Number(event.target.value) }
+                    : null,
             })
           }
           className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
         >
-          <option value="">{t('todo.workflow_execution_fill_later', '运行时填写')}</option>
+          <option value="standalone">
+            {t('todo.workflow_execution_standalone', '独立对话目录（不绑定项目）')}
+          </option>
           {localProjects.map(project => (
             <option key={project.id} value={project.id}>
               {project.name}

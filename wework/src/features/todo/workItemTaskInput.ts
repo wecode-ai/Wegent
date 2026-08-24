@@ -1,4 +1,5 @@
 import type { CloudLoopItem, WorkflowNodeInstance } from '@/api/deliveries'
+import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
 
 type TaskEntryStatus = 'pending' | 'in_progress'
 
@@ -64,7 +65,9 @@ export function shouldRevealWorkItemWorkflowActions(
     targetStatus === 'pending' &&
     !isSelfManagedWorkItem(item) &&
     Boolean(
-      item.workflow?.nodes.some(stage => !stage.automation_rule_id && stage.status === 'ready')
+      item.workflow?.nodes.some(
+        stage => workflowNodeExecutionMode(stage) === 'human' && stage.status === 'ready'
+      )
     )
   )
 }

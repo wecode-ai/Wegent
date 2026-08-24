@@ -92,9 +92,21 @@ def test_workflow_projection_unlocks_dependencies_and_updates_issue_status(
         test_db,
         item_id=item.id,
         node_id="test",
+        node_status="failed",
+        execution_error="Runtime model is unavailable",
+    )
+    test_db.commit()
+    failed_node = item.metadata_json["workflow"]["nodes"][1]
+    assert failed_node["execution_error"] == "Runtime model is unavailable"
+
+    update_workflow_node(
+        test_db,
+        item_id=item.id,
+        node_id="test",
         node_status="running",
     )
     test_db.commit()
+    assert "execution_error" not in item.metadata_json["workflow"]["nodes"][1]
     assert item.status == "in_progress"
 
     update_workflow_node(

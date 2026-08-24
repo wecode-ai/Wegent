@@ -35,7 +35,6 @@ def test_runtime_task_create_v2_accepts_input_composer_capabilities() -> None:
         projectId=7,
         deviceWorkspaceId=9,
         taskId="runtime-1",
-        teamId=3,
         runtime="codex",
         runtimePermissionMode="plan",
         message="Implement the task",
@@ -83,13 +82,24 @@ def test_runtime_task_create_v2_accepts_input_composer_capabilities() -> None:
     }
 
 
+def test_runtime_task_create_preserves_cloud_project_id_as_string() -> None:
+    request = RuntimeTaskCreateRequest(
+        runtime="codex",
+        message="Implement the task",
+        cloudProjectId="3925292983218430463",
+    )
+
+    payload = request.model_dump(by_alias=True, exclude_none=True)
+
+    assert payload["cloudProjectId"] == "3925292983218430463"
+
+
 def test_runtime_task_create_rejects_invalid_supervisor_interval() -> None:
     with pytest.raises(ValidationError):
         RuntimeTaskCreateRequest(
             schemaVersion=2,
             projectId=7,
             deviceWorkspaceId=9,
-            teamId=3,
             runtime="codex",
             message="Implement the task",
             initialSupervisor={

@@ -58,6 +58,119 @@ sidebar_position: 1
 
 Executor 在创建任务前拒绝请求时，云端队列未获得明确业务结果，最终通过租约过期进入“状态待核实”。
 
+## 架构基线（2026-08-21）
+
+### Wegent 与 Wework 是两条独立主链
+
+```mermaid
+flowchart LR
+  subgraph Wegent["Wegent 主链"]
+    W_INPUT["Wegent Task / Automation"]
+    TEAM["Team CRD"]
+    W_BUILDER["TaskRequestBuilder"]
+    W_EXEC["ExecutionRequest"]
+    W_INPUT --> TEAM --> W_BUILDER --> W_EXEC
+  end
+
+  subgraph Wework["Wework 主链"]
+    WW_PRODUCER["人工输入 / 看板机器人 / 自动化"]
+    WW_REQUEST["RuntimeTaskCreateRequest V2"]
+    WW_COMPILER["LocalCompiler / CloudCompiler"]
+    WW_PAYLOAD["RuntimeTaskCreatePayload"]
+    WW_PRODUCER --> WW_REQUEST --> WW_COMPILER --> WW_PAYLOAD
+  end
+
+  EXECUTOR["Executor runtime.tasks.create"]
+  W_EXEC --> EXECUTOR
+  WW_PAYLOAD --> EXECUTOR
+```
+
+Wework 不读取 Team CRD，不调用 Wegent 的 `TaskRequestBuilder`。两条主链只在
+Executor 的 `ExecutionRequest` / Runtime 协议层汇合。
+
+Wework 原生任务链路不请求 `defaultTeam`，也不把 Team 作为创建任务的前置条件。
+共享 `ExecutionRequest` 当前仍保留 `team_id/team_name` 兼容字段；Wework 仅写入
+`0/Wework` 中性执行身份，不查询、不解析、也不持有任何 Team CRD。显式选择
+Wegent Manager 时进入独立的 Wegent 适配分支，不得复用 Wework 原生创建链路。
+
+### Wework 项目选择与执行模型
+
+```mermaid
+flowchart LR
+  RUNTIME["RuntimeWorkListResponse<br/>RuntimeProjectRef + DeviceWorkspace"]
+  VIEW["RuntimeProjectView<br/>菜单展示模型"]
+  UIID["Runtime UI ID<br/>仅用于 React 状态和列表 key"]
+  SELECT["用户选择<br/>projectUiId + workspaceUiId"]
+  BINDING{"稳定 Workspace Binding"}
+  BACKEND_BINDING["backend_project<br/>projectId + deviceWorkspaceId"]
+  DEVICE_BINDING["device_project<br/>deviceId + runtimeProjectKey"]
+  REQUEST["RuntimeTaskCreateRequest V2<br/>稳定执行意图"]
+  COMPILER["LocalCompiler / CloudCompiler"]
+  DYNAMIC["动态解析<br/>workspacePath / modelConfig / auth"]
+  PAYLOAD["RuntimeTaskCreatePayload"]
+
+  RUNTIME --> VIEW --> UIID --> SELECT
+  RUNTIME --> BINDING
+  SELECT --> BINDING
+  BINDING --> BACKEND_BINDING
+  BINDING --> DEVICE_BINDING
+  BACKEND_BINDING --> REQUEST
+  DEVICE_BINDING --> REQUEST
+  REQUEST --> COMPILER --> DYNAMIC --> PAYLOAD
+```
+
+边界规则：
+
+1. `RuntimeProjectRef` 是 Runtime 资源身份，不是 Backend Project。
+2. `runtimeProjectUiId()` 的数值只服务 UI，禁止进入 API、数据库或机器人配置。
+3. 中心项目使用 `projectId + deviceWorkspaceId`。
+4. 设备项目使用 `deviceId + runtimeProjectKey`。
+5. `workspacePath` 是 Compiler 解析出的动态值，禁止由 Issue Composer 持久化。
+6. 人工输入与机器人都直接持有同一种 `RuntimeTaskCreateRequest`，不得增加
+   `runtimeProjectId`、`localProjectId` 等旁路字段补充请求语义。
+
+### 人工创建 Issue 并执行
+
+```mermaid
+sequenceDiagram
+  participant U as 用户
+  participant UI as IssueComposer
+  participant RW as RuntimeWork
+  participant B as Binding Resolver
+  participant PS as Project Space
+  participant C as Runtime Compiler
+  participant E as Executor
+
+  U->>UI: 选择项目和工作区
+  UI->>RW: 读取 RuntimeProjectRef / DeviceWorkspace
+  UI->>B: projectUiId + workspaceUiId
+  B-->>UI: backend_project 或 device_project binding
+  UI->>PS: 创建 Issue + RuntimeTaskCreateRequest
+  PS->>C: 派发同一 Request
+  C->>C: 解析 workspacePath、模型、认证和能力
+  C->>E: RuntimeTaskCreatePayload
+```
+
+### 机器人或自动化执行
+
+```mermaid
+sequenceDiagram
+  participant T as Trigger
+  participant CFG as Robot / Automation Config
+  participant Q as Execution Queue
+  participant C as Runtime Compiler
+  participant E as Executor
+
+  T->>CFG: 触发执行
+  CFG-->>Q: RuntimeTaskCreateRequest + origin/context
+  Q->>C: 派发同一 Request
+  C->>C: 解析 Workspace Binding 和动态配置
+  C->>E: RuntimeTaskCreatePayload
+```
+
+人工和机器人只在 `origin`、业务上下文和触发方式上不同；项目绑定、模型、权限、
+Skills、Goal、Supervisor 和编译规则完全相同。
+
 ## 目标模型
 
 ### RuntimeTaskCreateRequest

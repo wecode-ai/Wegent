@@ -939,7 +939,6 @@ export function WorkbenchProvider({
   const conversationModels = modelSelection.models
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
-    teamId: state.defaultTeam?.id,
     locked: isOptionsLocked,
     scopeKey: projectChatScopeKey,
   })

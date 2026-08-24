@@ -391,6 +391,7 @@ export type IssueStageMode = 'none' | 'dag'
 export interface WorkflowExecutionConfig {
   agent_id: string | null
   runtime_profile_id: string | null
+  execution_device_id: string | null
   model: string | null
   workspace_binding: ProjectChatWorkspaceBindingInput | null
 }
@@ -400,6 +401,7 @@ export interface WorkflowNodeDefinition {
   name: string
   prompt?: string
   kind?: 'my_task' | 'automation' | 'ai' | null
+  execution_mode?: 'human' | 'robot'
   depends_on: string[]
   dependency_context?: Record<string, WorkflowContextSource[]>
   required: boolean
@@ -436,6 +438,7 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   }>
   execution_id?: number | null
   automation_run_id?: string | null
+  execution_error?: string | null
 }
 
 export interface IssueWorkflowInstance {

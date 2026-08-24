@@ -201,6 +201,20 @@ describe('IssueWorkflowDag', () => {
     expect(flow).toHaveAttribute('data-pan-on-drag', 'false')
   })
 
+  test('shows the execution failure reason in the failed stage details', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[stage('开发', { status: 'failed' })]}
+        tasks={[]}
+        executionError="Transient runtime payload does not match the claimed project"
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-execution-error-开发')).toHaveTextContent(
+      'Transient runtime payload does not match the claimed project'
+    )
+  })
+
   test('switches the detail panel when a completed graph node is clicked', () => {
     const onCreateTask = vi.fn()
     render(
@@ -271,6 +285,21 @@ describe('IssueWorkflowDag', () => {
     expect(screen.getByTestId('cloud-todo-workflow-action-审阅')).toHaveTextContent('可开始')
     fireEvent.click(screen.getByTestId('cloud-todo-run-workflow-node-审阅'))
     expect(onRunAutomation).toHaveBeenCalledWith('审阅', 'rule-1')
+  })
+
+  test('keeps an unconfigured automatic stage out of the manual task flow', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[stage('开发', { execution_mode: 'robot', automation_rule_id: null })]}
+        tasks={[]}
+        onCreateTask={vi.fn()}
+        onRunAutomation={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-action-开发')).toHaveTextContent('AI 执行')
+    expect(screen.queryByTestId('cloud-todo-create-workflow-task-开发')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-run-workflow-node-开发')).not.toBeInTheDocument()
   })
 
   test('prevents duplicate reruns and surfaces the backend rejection', async () => {

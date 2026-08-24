@@ -4,7 +4,7 @@
 """Validated project orchestration definitions and per-Issue snapshots."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -46,11 +46,21 @@ WorkflowNodeStatus = Literal[
 ]
 
 
+def workflow_node_execution_mode(
+    node: Mapping[str, Any],
+) -> Literal["human", "robot"]:
+    mode = node.get("execution_mode")
+    if mode in {"human", "robot"}:
+        return mode
+    return "robot" if node.get("automation_rule_id") else "human"
+
+
 class WorkflowExecutionConfig(BaseModel):
     """Execution choices snapshotted with a workflow or one Issue."""
 
     agent_id: str | None = Field(default=None, max_length=64)
     runtime_profile_id: str | None = Field(default=None, max_length=64)
+    execution_device_id: str | None = Field(default=None, max_length=100)
     model: str | None = Field(default=None, max_length=255)
     workspace_binding: ProjectChatWorkspaceBinding | None = None
 
@@ -60,16 +70,30 @@ class WorkflowExecutionConfig(BaseModel):
         self.runtime_profile_id = (
             self.runtime_profile_id.strip() if self.runtime_profile_id else None
         )
+        self.execution_device_id = (
+            self.execution_device_id.strip() if self.execution_device_id else None
+        )
         self.model = self.model.strip() if self.model else None
         return self
 
     def is_complete(self) -> bool:
         return bool(
-            self.agent_id
-            and self.runtime_profile_id
+            (self.agent_id or self.execution_device_id)
             and self.model
             and self.workspace_binding
-            and self.workspace_binding.type != "standalone"
+        )
+
+    def merged_with(
+        self, override: "WorkflowExecutionConfig"
+    ) -> "WorkflowExecutionConfig":
+        return WorkflowExecutionConfig(
+            agent_id=override.agent_id or self.agent_id,
+            runtime_profile_id=(override.runtime_profile_id or self.runtime_profile_id),
+            execution_device_id=(
+                override.execution_device_id or self.execution_device_id
+            ),
+            model=override.model or self.model,
+            workspace_binding=override.workspace_binding or self.workspace_binding,
         )
 
 
@@ -117,6 +141,7 @@ class WorkflowNodeDefinition(BaseModel):
     # Kept only to read workflow definitions written by older clients. Stage
     # nodes are task categories, not executor kinds.
     kind: Literal["my_task", "automation", "ai"] | None = None
+    execution_mode: Literal["human", "robot"] = "human"
     depends_on: list[str] = Field(default_factory=list, max_length=50)
     dependency_context: dict[str, list[WorkflowContextSource]] = Field(
         default_factory=dict
@@ -130,8 +155,21 @@ class WorkflowNodeDefinition(BaseModel):
     execution_config: WorkflowExecutionConfig | None = None
     execution_config_override: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_execution_mode(cls, value: object) -> object:
+        if (
+            isinstance(value, dict)
+            and "execution_mode" not in value
+            and value.get("automation_rule_id")
+        ):
+            return {**value, "execution_mode": "robot"}
+        return value
+
     @model_validator(mode="after")
     def validate_execution_configuration(self) -> "WorkflowNodeDefinition":
+        if self.automation_rule_id and self.execution_mode != "robot":
+            raise ValueError("workflow automation rule requires robot execution")
         if unknown := set(self.dependency_context) - set(self.depends_on):
             raise ValueError(
                 "workflow dependency context references non-dependencies: "
@@ -211,6 +249,7 @@ class WorkflowNodeInstance(WorkflowNodeDefinition):
     )
     execution_id: int | None = Field(default=None, ge=1)
     automation_run_id: str | None = Field(default=None, max_length=64)
+    execution_error: str | None = Field(default=None, max_length=2000)
 
 
 class WorkflowNodeDecision(BaseModel):
@@ -262,6 +301,7 @@ class IssueWorkflowInstance(BaseModel):
                     name=node.name,
                     prompt=node.prompt,
                     kind=node.kind,
+                    execution_mode=node.execution_mode,
                     depends_on=node.depends_on,
                     dependency_context=node.dependency_context,
                     required=node.required,
@@ -281,13 +321,18 @@ class IssueWorkflowInstance(BaseModel):
         self, node: WorkflowNodeDefinition
     ) -> WorkflowExecutionConfig | None:
         if node.execution_config_override:
-            return node.execution_config
+            if node.execution_config is None:
+                return None
+            if self.execution_config is None:
+                return node.execution_config
+            return self.execution_config.merged_with(node.execution_config)
         return self.execution_config or node.execution_config
 
     def node_needs_execution_config(self, node: WorkflowNodeDefinition) -> bool:
+        if node.execution_mode != "robot":
+            return False
         return bool(
-            node.automation_rule_id
-            and not (
+            not (
                 self.execution_config_for(node)
                 and self.execution_config_for(node).is_complete()
             )

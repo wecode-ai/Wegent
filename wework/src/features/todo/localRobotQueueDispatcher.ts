@@ -34,11 +34,6 @@ function optionalStringRecord(value: unknown, field: string): Record<string, str
   return record as Record<string, string>
 }
 
-function requiredNumber(value: unknown, field: string): number {
-  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value
-  throw new Error(`Transient runtime payload is missing ${field}`)
-}
-
 function runtimeBot(value: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(value)) {
     throw new Error('Transient runtime payload is missing bot identity')
@@ -318,7 +313,6 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         ...(runtimePayload as unknown as RuntimeTaskCreateRequest),
         schemaVersion: runtimePayload.schemaVersion === 1 ? 1 : 2,
         taskId,
-        teamId: requiredNumber(runtimePayload.teamId, 'team identity'),
         runtime: 'codex',
         message: prompt,
         title,

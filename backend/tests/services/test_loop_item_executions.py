@@ -1878,6 +1878,52 @@ def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project
     assert payload["additionalContext"] == {}
 
 
+def test_inline_workflow_execution_uses_standalone_conversation_workspace(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    profile = WeworkExecutionProfile.for_generic_robot(
+        runtime_profile=None,
+        owner_user_id=test_user.id,
+        display_name="Direct execution",
+        execution_prompt="",
+        model_override="test-model",
+        workspace_binding_override={"type": "standalone"},
+    )
+
+    payload = profile.build_runtime_payload(
+        test_db,
+        execution_id=92,
+        runtime_task_id="runtime-task-standalone",
+        task=TaskContext(
+            id="item-standalone",
+            cloud_project_id=str(project.id),
+            title="Standalone task",
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={
+            "workflow_stage_input": {
+                "target_stage": {
+                    "id": "build",
+                    "prompt": "Build it",
+                    "workspace_policy": "composer",
+                    "required_deliverables": [],
+                },
+                "dependencies": [],
+            }
+        },
+        execution_device_id="local-device",
+        materialize_execution_request=False,
+    )
+
+    assert payload["standaloneChatWorkspace"] is True
+    assert "projectId" not in payload
+    assert "runtimeProjectKey" not in payload
+
+
 def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
     test_db: Session, test_user: User
 ) -> None:

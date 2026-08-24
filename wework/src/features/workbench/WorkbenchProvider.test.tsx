@@ -536,7 +536,7 @@ function canonicalTranscriptTurnsFromMessages(
 function createWorkbenchServices(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices {
   const base = {
     teamApi: {
-      getDefaultWorkbenchTeam: vi.fn().mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+      listTeams: vi.fn().mockResolvedValue([]),
     },
     modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
     skillApi: {
@@ -581,10 +581,20 @@ function createWorkbenchServices(overrides: Partial<WorkbenchServices> = {}): Wo
 }
 
 function renderWorkbench(children: React.ReactNode, services = createWorkbenchServices()) {
+  const cloudConnectionValue: CloudConnectionContextValue = {
+    ...DISCONNECTED_STATE,
+    isConnected: false,
+    serviceKey: 'test-disconnected',
+    connectWithAuthorization: vi.fn(),
+    refreshUser: vi.fn(),
+    disconnect: vi.fn(),
+  }
   return render(
-    <WorkbenchProvider user={{ id: 1, user_name: 'alice', email: 'a@b.c' }} services={services}>
-      <WorkbenchProbeSessionProvider>{children}</WorkbenchProbeSessionProvider>
-    </WorkbenchProvider>
+    <CloudConnectionContext.Provider value={cloudConnectionValue}>
+      <WorkbenchProvider user={{ id: 1, user_name: 'alice', email: 'a@b.c' }} services={services}>
+        <WorkbenchProbeSessionProvider>{children}</WorkbenchProbeSessionProvider>
+      </WorkbenchProvider>
+    </CloudConnectionContext.Provider>
   )
 }
 
@@ -593,20 +603,40 @@ function renderWorkbenchForUser(
   user: User,
   services = createWorkbenchServices()
 ) {
+  const cloudConnectionValue: CloudConnectionContextValue = {
+    ...DISCONNECTED_STATE,
+    isConnected: false,
+    serviceKey: 'test-disconnected',
+    connectWithAuthorization: vi.fn(),
+    refreshUser: vi.fn(),
+    disconnect: vi.fn(),
+  }
   return render(
-    <WorkbenchProvider user={user} services={services}>
-      <WorkbenchProbeSessionProvider>{children}</WorkbenchProbeSessionProvider>
-    </WorkbenchProvider>
+    <CloudConnectionContext.Provider value={cloudConnectionValue}>
+      <WorkbenchProvider user={user} services={services}>
+        <WorkbenchProbeSessionProvider>{children}</WorkbenchProbeSessionProvider>
+      </WorkbenchProvider>
+    </CloudConnectionContext.Provider>
   )
 }
 
 function renderStrictWorkbench(children: React.ReactNode, services = createWorkbenchServices()) {
+  const cloudConnectionValue: CloudConnectionContextValue = {
+    ...DISCONNECTED_STATE,
+    isConnected: false,
+    serviceKey: 'test-disconnected',
+    connectWithAuthorization: vi.fn(),
+    refreshUser: vi.fn(),
+    disconnect: vi.fn(),
+  }
   return render(
-    <StrictMode>
-      <WorkbenchProvider user={{ id: 1, user_name: 'alice', email: 'a@b.c' }} services={services}>
-        {children}
-      </WorkbenchProvider>
-    </StrictMode>
+    <CloudConnectionContext.Provider value={cloudConnectionValue}>
+      <StrictMode>
+        <WorkbenchProvider user={{ id: 1, user_name: 'alice', email: 'a@b.c' }} services={services}>
+          {children}
+        </WorkbenchProvider>
+      </StrictMode>
+    </CloudConnectionContext.Provider>
   )
 }
 
@@ -5171,14 +5201,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        teamId: 2,
+        projectId: 7,
         message: '修复 CI',
         cloudProjectId: '841738010351776815',
       })
     )
-    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty(
       'deviceWorkspaceId'
     )
@@ -5194,7 +5221,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('message-roles')).toHaveTextContent('user:修复 CI')
     expect(runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',
-      workspacePath: '/workspace/project-alpha',
+      workspacePath: undefined,
       taskId: request.taskId,
       runtime: 'claude_code',
       limit: 50,
@@ -5268,8 +5295,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-beta',
+        projectId: 7,
+        deviceWorkspaceId: 23,
         message: '修复 CI',
       })
     )
@@ -6102,9 +6129,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         projectId: 7,
         deviceWorkspaceId: 11,
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        teamId: 2,
         message: '修复 CI',
         initialGoal: {
           objective: '修复 CI',
@@ -6232,7 +6256,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'device-1',
-        workspacePath: '/workspace/web',
         runtimeProjectKey: 'product',
         runtimeProjectName: 'Product',
         runtimeWorkspaceRoots: ['/workspace/web', '/workspace/api'],
@@ -7058,8 +7081,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         projectId: 7,
         deviceWorkspaceId: 22,
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
         message: '修复 CI',
       })
     )
@@ -7122,14 +7143,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
-        deviceId: 'remote-device',
-        workspacePath: '/workspace/project-alpha',
+        projectId: 7,
+        deviceWorkspaceId: 22,
         message: '修复 CI',
       })
-    )
-    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
-    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty(
-      'deviceWorkspaceId'
     )
   })
 
@@ -7507,8 +7524,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'device-1',
-        workspacePath: '/workspace/direct-codex',
-        teamId: 2,
+        runtimeProjectKey: '/workspace/direct-codex',
         message: '修复 CI',
       })
     )
@@ -7578,7 +7594,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'device-1',
-        workspacePath: '/workspace/web',
+        runtimeProjectKey: 'multi-project',
       })
     )
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
@@ -7699,7 +7715,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         deviceId: 'device-1',
         workspacePath: createdWorkspacePath,
-        teamId: 2,
         message: '修复 CI',
       })
     )
@@ -7807,7 +7822,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'device-real-local',
-        workspacePath: '/workspace/cli-codex',
+        runtimeProjectKey: '/workspace/cli-codex',
         message: '修复 CI',
       })
     )

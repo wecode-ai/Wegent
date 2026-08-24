@@ -36,7 +36,6 @@ const workbenchMock = {
     currentRuntimeTask: null,
     standaloneDeviceId: null,
     standaloneWorkspacePath: null,
-    defaultTeam: null,
   },
   services: { automationApi },
   projectChat: {
@@ -97,7 +96,6 @@ describe('AutomationsPage', () => {
     vi.clearAllMocks()
     automationApi.listAutomations.mockResolvedValue({ items: [automation] })
     automationApi.listAutomationRuns.mockResolvedValue({ items: [] })
-    workbenchMock.state.defaultTeam = null
   })
 
   test('keeps the detail panel closed after the user dismisses it', async () => {
@@ -149,7 +147,6 @@ describe('AutomationsPage', () => {
       },
     }
     try {
-      workbenchMock.state.defaultTeam = { id: 1 }
       automationApi.listAutomations.mockResolvedValue({ items: [continuationAutomation] })
       automationApi.updateAutomation.mockResolvedValue({
         automation: continuationAutomation,

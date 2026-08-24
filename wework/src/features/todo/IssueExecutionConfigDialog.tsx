@@ -9,11 +9,15 @@ import type { RuntimeProfile } from '@/api/runtimeProfiles'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWithTasks } from '@/types/api'
+import type { UnifiedModel } from '@/types/api'
+import type { DeviceInfo } from '@/types/devices'
+import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
 import { CloudTodoModal } from './CloudTodoModal'
 import { WorkflowExecutionConfigFields } from './WorkflowExecutionConfigFields'
 import {
   effectiveWorkflowNodeExecutionConfig,
   emptyWorkflowExecutionConfig,
+  resolveWorkflowExecutionConfig,
   workflowExecutionConfigComplete,
 } from './workflowExecutionConfig'
 
@@ -26,6 +30,7 @@ export function IssueExecutionConfigDialog({
   item,
   projectChatAgentApi,
   runtimeProfileApi,
+  modelApi,
   deviceApi,
   localProjects,
   onClose,
@@ -34,6 +39,7 @@ export function IssueExecutionConfigDialog({
   item: CloudLoopItem
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
   runtimeProfileApi?: WorkbenchServices['runtimeProfileApi']
+  modelApi?: WorkbenchServices['modelApi']
   deviceApi: WorkbenchServices['deviceApi']
   localProjects: ProjectWithTasks[]
   onClose: () => void
@@ -42,10 +48,13 @@ export function IssueExecutionConfigDialog({
   const { t } = useTranslation('common')
   const [agents, setAgents] = useState<ProjectChatAgent[]>([])
   const [runtimeProfiles, setRuntimeProfiles] = useState<RuntimeProfile[]>([])
+  const [devices, setDevices] = useState<DeviceInfo[]>([])
+  const [models, setModels] = useState<UnifiedModel[]>([])
   const [executionConfig, setExecutionConfig] = useState<WorkflowExecutionConfig>(
     item.execution_config ?? {
       ...emptyWorkflowExecutionConfig(),
       agent_id: item.assignee_agent_id ?? null,
+      workspace_binding: item.assignee_agent_id ? null : { type: 'standalone' },
     }
   )
   const [workflow, setWorkflow] = useState<IssueWorkflowInstance | null>(() =>
@@ -61,19 +70,56 @@ export function IssueExecutionConfigDialog({
       projectChatAgentApi?.list(String(item.cloud_project_id)) ?? Promise.resolve([]),
       runtimeProfileApi?.list() ?? Promise.resolve([]),
       deviceApi.listDevices(),
+      modelApi?.listModels() ?? Promise.resolve({ data: [] }),
     ])
-      .then(([nextAgents, profiles, devices]) => {
+      .then(([nextAgents, profiles, devices, modelResponse]) => {
         if (!active) return
         const onlineDeviceIds = new Set(
           devices
             .filter(device => device.status === 'online' || device.status === 'busy')
             .map(device => device.device_id)
         )
-        setAgents(nextAgents.filter(agent => agent.status === 'active'))
-        setRuntimeProfiles(
-          profiles.filter(
-            profile => profile.status === 'active' && onlineDeviceIds.has(profile.executionDeviceId)
+        const activeAgents = nextAgents.filter(agent => agent.status === 'active')
+        const onlineDevices = devices.filter(
+          device => device.status === 'online' || device.status === 'busy'
+        )
+        const onlineProfiles = profiles.filter(
+          profile => profile.status === 'active' && onlineDeviceIds.has(profile.executionDeviceId)
+        )
+        setAgents(activeAgents)
+        setDevices(onlineDevices)
+        setModels(
+          modelResponse.data.filter(
+            model => model.isActive !== false && !model.compatibilityDisabled
           )
+        )
+        setRuntimeProfiles(onlineProfiles)
+        setExecutionConfig(current =>
+          resolveWorkflowExecutionConfig(current, activeAgents, onlineProfiles)
+        )
+        setWorkflow(current =>
+          current
+            ? {
+                ...current,
+                execution_config: current.execution_config
+                  ? resolveWorkflowExecutionConfig(
+                      current.execution_config,
+                      activeAgents,
+                      onlineProfiles
+                    )
+                  : null,
+                nodes: current.nodes.map(node => ({
+                  ...node,
+                  execution_config: node.execution_config
+                    ? resolveWorkflowExecutionConfig(
+                        node.execution_config,
+                        activeAgents,
+                        onlineProfiles
+                      )
+                    : null,
+                })),
+              }
+            : null
         )
       })
       .catch(cause => {
@@ -85,10 +131,10 @@ export function IssueExecutionConfigDialog({
     return () => {
       active = false
     }
-  }, [deviceApi, item.cloud_project_id, projectChatAgentApi, runtimeProfileApi])
+  }, [deviceApi, item.cloud_project_id, modelApi, projectChatAgentApi, runtimeProfileApi])
 
   const automatedNodes = useMemo(
-    () => workflow?.nodes.filter(node => node.automation_rule_id) ?? [],
+    () => workflow?.nodes.filter(node => workflowNodeExecutionMode(node) === 'robot') ?? [],
     [workflow]
   )
   const workflowComplete = useMemo(
@@ -103,7 +149,6 @@ export function IssueExecutionConfigDialog({
   const canConfirm =
     !loading &&
     !saving &&
-    runtimeProfiles.length > 0 &&
     (workflow ? workflowComplete : workflowExecutionConfigComplete(executionConfig))
 
   async function confirm() {
@@ -146,6 +191,8 @@ export function IssueExecutionConfigDialog({
               }
               projectAgents={agents}
               runtimeProfiles={runtimeProfiles}
+              devices={devices}
+              models={models}
               localProjects={localProjects}
               testId="issue-execution-config-default"
             />
@@ -206,6 +253,8 @@ export function IssueExecutionConfigDialog({
                       }
                       projectAgents={agents}
                       runtimeProfiles={runtimeProfiles}
+                      devices={devices}
+                      models={models}
                       localProjects={localProjects}
                       testId={`issue-execution-config-node-${node.id}`}
                     />
@@ -220,11 +269,15 @@ export function IssueExecutionConfigDialog({
             onChange={setExecutionConfig}
             projectAgents={agents}
             runtimeProfiles={runtimeProfiles}
+            devices={devices}
+            models={models}
             localProjects={localProjects}
             testId="issue-execution-config-fields"
           />
         )}
-        {!loading && runtimeProfiles.length === 0 ? (
+        {!loading &&
+        runtimeProfiles.length === 0 &&
+        !(workflow ? workflowComplete : workflowExecutionConfigComplete(executionConfig)) ? (
           <p
             className="mt-3 text-sm text-amber-600"
             data-testid="issue-execution-config-no-runtime"

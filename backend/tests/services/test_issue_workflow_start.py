@@ -106,6 +106,83 @@ async def test_start_runs_only_ready_automated_stages(
 
 
 @pytest.mark.asyncio
+async def test_start_accepts_custom_robot_without_runtime_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = AsyncMock(return_value={"id": "run-1"})
+    monkeypatch.setattr(project_automation_service, "run_for_workflow_node", run)
+    snapshot = workflow()
+    snapshot["execution_config"]["runtime_profile_id"] = None
+    item = SimpleNamespace(
+        id="ISSUE-CUSTOM",
+        cloud_project_id="11",
+        metadata_json={"workflow": snapshot},
+    )
+
+    started = await issue_workflow_start_service.start(
+        SimpleNamespace(),
+        item=item,
+        project=SimpleNamespace(id=11, task_provider="local"),
+        user_id=7,
+    )
+
+    assert started == 1
+    run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_start_dispatches_direct_robot_without_automation_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    direct_run = AsyncMock(return_value={"id": "run-direct"})
+    monkeypatch.setattr(
+        project_automation_service,
+        "run_direct_workflow_node",
+        direct_run,
+    )
+    snapshot = workflow()
+    snapshot["execution_config"] = {
+        "execution_device_id": "local-device",
+        "model": "custom-model",
+        "workspace_binding": {"type": "standalone"},
+    }
+    snapshot["nodes"] = [
+        {
+            "id": "direct",
+            "name": "Direct",
+            "execution_mode": "robot",
+            "depends_on": [],
+            "required": True,
+            "workspace_policy": "none",
+            "automation_rule_id": None,
+            "status": "ready",
+        }
+    ]
+    item = SimpleNamespace(
+        id="ISSUE-DIRECT",
+        cloud_project_id="11",
+        metadata_json={"workflow": snapshot},
+    )
+    db = SimpleNamespace()
+
+    started = await issue_workflow_start_service.start(
+        db,
+        item=item,
+        project=SimpleNamespace(id=11, task_provider="local"),
+        user_id=7,
+    )
+
+    assert started == 1
+    direct_run.assert_awaited_once_with(
+        db,
+        "11",
+        "ISSUE-DIRECT",
+        "direct",
+        7,
+    )
+
+
+@pytest.mark.asyncio
 async def test_start_dispatches_ai_coordinator_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

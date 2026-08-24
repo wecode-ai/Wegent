@@ -71,6 +71,53 @@ def test_issue_snapshot_uses_shared_config_unless_node_overrides_it() -> None:
     assert workflow.execution_config_for(workflow.nodes[0]).agent_id == "node-agent"
 
 
+def test_custom_robot_config_is_complete_without_runtime_profile() -> None:
+    config = WorkflowExecutionConfig(
+        execution_device_id="device-1",
+        model="custom-model",
+        workspace_binding={"type": "standalone"},
+    )
+
+    assert config.is_complete()
+
+
+def test_node_execution_config_merges_with_shared_robot_config() -> None:
+    workflow = instantiate_workflow(
+        ProjectWorkflowDefinition(
+            stage_mode="dag",
+            execution_config=WorkflowExecutionConfig(
+                agent_id="shared-agent",
+                execution_device_id="device-1",
+                model="shared-model",
+                workspace_binding={
+                    "type": "backend_project",
+                    "projectId": 1,
+                },
+            ),
+            nodes=[
+                {
+                    "id": "build",
+                    "name": "Build",
+                    "depends_on": [],
+                    "automation_rule_id": "rule-1",
+                    "execution_config_override": True,
+                    "execution_config": {"model": "override-model"},
+                }
+            ],
+        )
+    )
+
+    config = workflow.execution_config_for(workflow.nodes[0])
+
+    assert config is not None
+    assert config.agent_id == "shared-agent"
+    assert config.runtime_profile_id is None
+    assert config.execution_device_id == "device-1"
+    assert config.model == "override-model"
+    assert config.workspace_binding is not None
+    assert config.workspace_binding.project_id == 1
+
+
 @pytest.mark.parametrize(
     "nodes",
     [
@@ -173,3 +220,46 @@ def test_workflow_definition_requires_a_rule_for_ai_advancement() -> None:
         ProjectWorkflowDefinition.model_validate(
             {"version": 1, "advancement_policy": "ai"}
         )
+
+
+def test_workflow_node_preserves_unconfigured_robot_execution() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "nodes": [
+                {
+                    "id": "develop",
+                    "name": "开发",
+                    "depends_on": [],
+                    "execution_mode": "robot",
+                    "automation_rule_id": None,
+                }
+            ],
+        }
+    )
+
+    workflow = instantiate_workflow(definition)
+
+    assert workflow.nodes[0].execution_mode == "robot"
+    assert workflow.nodes[0].automation_rule_id is None
+    assert workflow.node_needs_execution_config(workflow.nodes[0])
+
+
+def test_workflow_node_infers_robot_execution_for_legacy_automation_rule() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "version": 1,
+            "stage_mode": "dag",
+            "nodes": [
+                {
+                    "id": "develop",
+                    "name": "开发",
+                    "depends_on": [],
+                    "automation_rule_id": "rule-1",
+                }
+            ],
+        }
+    )
+
+    assert definition.nodes[0].execution_mode == "robot"

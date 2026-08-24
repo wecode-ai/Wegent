@@ -45,7 +45,11 @@ from app.schemas.delivery import (
     LoopItemTaskBind,
     LoopItemUpdate,
 )
-from app.schemas.issue_workflow import ProjectWorkflowDefinition, instantiate_workflow
+from app.schemas.issue_workflow import (
+    ProjectWorkflowDefinition,
+    instantiate_workflow,
+    workflow_node_execution_mode,
+)
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
@@ -1656,7 +1660,7 @@ class LoopItemService:
         )
         if node is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
-        if node.get("automation_rule_id") and not allow_automated_stage:
+        if workflow_node_execution_mode(node) == "robot" and not allow_automated_stage:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Automated workflow stage does not accept a user task",

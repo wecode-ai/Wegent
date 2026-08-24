@@ -184,10 +184,13 @@ class LoopItemExecution(Base):
         # order + FIFO tie-break.
         Index(
             "idx_exec_device_status_order",
+            "executor_owner_user_id",
             "execution_device_id",
+            "execution_environment",
             "status",
             "priority_weight",
             "queued_at",
+            "id",
         ),
         Index("idx_exec_agent_status", "agent_id", "status"),
         Index("idx_exec_team_status", "team_id", "status"),

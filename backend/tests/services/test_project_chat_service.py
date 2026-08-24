@@ -2116,11 +2116,6 @@ def test_device_runtime_projection_invalidates_only_material_issue_changes(
             (item.id, reason)
         ),
     )
-    monkeypatch.setattr(
-        "app.tasks.robot_queue_tasks.publish_run_event",
-        lambda *_args: None,
-    )
-
     for sequence, event_name in enumerate(
         ("response.created", "response.output_text.delta"),
         start=1,

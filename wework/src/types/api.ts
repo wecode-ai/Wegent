@@ -1293,6 +1293,13 @@ export interface RuntimeTaskCancelResponse {
   error?: string | null
 }
 
+export interface RuntimeTaskExecutionConfig {
+  workspace?: {
+    source: 'git_worktree'
+    branch?: string
+  }
+}
+
 export interface RuntimeTaskCreateRequest {
   schemaVersion?: 1 | 2
   projectId?: number
@@ -1306,7 +1313,6 @@ export interface RuntimeTaskCreateRequest {
   projectInstructions?: string
   projectPlugins?: RuntimeProjectPluginRef[]
   taskId?: string
-  teamId: number
   runtime: RuntimeName
   runtimeExecutablePath?: string
   runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
@@ -1323,7 +1329,7 @@ export interface RuntimeTaskCreateRequest {
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
   attachments?: Attachment[]
-  execution?: ChatSendPayload['execution']
+  execution?: RuntimeTaskExecutionConfig
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean

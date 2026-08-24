@@ -50,6 +50,7 @@ vi.mock('./AiChatModal', () => ({
     onTaskCreated,
     prepareTask,
     workflowNodeId,
+    initialTaskRequest,
   }: {
     task?: { id: string }
     open: boolean
@@ -63,6 +64,7 @@ vi.mock('./AiChatModal', () => ({
       taskId: string
     }) => void | Promise<void | (() => void | Promise<void>)>
     workflowNodeId?: string
+    initialTaskRequest?: { projectId?: number; modelId?: string }
   }) => (
     <div
       data-testid="ai-chat-modal"
@@ -70,6 +72,8 @@ vi.mock('./AiChatModal', () => ({
       data-open={open ? 'yes' : 'no'}
       data-runtime-task-id={initialAddress?.taskId}
       data-workflow-node-id={workflowNodeId}
+      data-task-project-id={initialTaskRequest?.projectId}
+      data-task-model-id={initialTaskRequest?.modelId}
     >
       <button
         type="button"

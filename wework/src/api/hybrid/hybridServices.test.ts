@@ -11,15 +11,12 @@ const mocks = vi.hoisted(() => {
   const cloudListRuntimeWork = vi.fn()
   const localListModels = vi.fn()
   const cloudListModels = vi.fn()
-  const localListTeams = vi.fn()
-  const localGetDefaultWorkbenchTeam = vi.fn()
   const localListProjects = vi.fn()
   const localUpdateCurrentUser = vi.fn()
   const cloudUpdateCurrentUser = vi.fn()
   const localListSkills = vi.fn()
   const localGetTeamSkills = vi.fn()
   const cloudListTeams = vi.fn()
-  const cloudGetDefaultWorkbenchTeam = vi.fn()
   const localSearchRuntimeWork = vi.fn()
   const localGetWorktreeCapabilities = vi.fn()
   const localPreflightWorktree = vi.fn()
@@ -62,8 +59,7 @@ const mocks = vi.hoisted(() => {
 
   const localServices = {
     teamApi: {
-      listTeams: localListTeams,
-      getDefaultWorkbenchTeam: localGetDefaultWorkbenchTeam,
+      listTeams: vi.fn().mockResolvedValue([]),
     },
     modelApi: { listModels: localListModels },
     skillApi: {
@@ -109,7 +105,6 @@ const mocks = vi.hoisted(() => {
   const cloudServices = {
     teamApi: {
       listTeams: cloudListTeams,
-      getDefaultWorkbenchTeam: cloudGetDefaultWorkbenchTeam,
     },
     modelApi: { listModels: cloudListModels },
     skillApi: {},
@@ -159,15 +154,12 @@ const mocks = vi.hoisted(() => {
     cloudListRuntimeWork,
     localListModels,
     cloudListModels,
-    localListTeams,
-    localGetDefaultWorkbenchTeam,
     localListProjects,
     localUpdateCurrentUser,
     cloudUpdateCurrentUser,
     localListSkills,
     localGetTeamSkills,
     cloudListTeams,
-    cloudGetDefaultWorkbenchTeam,
     localSearchRuntimeWork,
     localGetWorktreeCapabilities,
     localPreflightWorktree,
@@ -393,15 +385,6 @@ describe('createHybridWorkbenchServices', () => {
         bind_shell: 'claudecode',
       },
     ])
-    mocks.localListTeams.mockResolvedValue([
-      { id: 0, name: 'local-wework', is_active: true, default_for_modes: ['wework'] },
-    ])
-    mocks.localGetDefaultWorkbenchTeam.mockResolvedValue({
-      id: 0,
-      name: 'local-wework',
-      is_active: true,
-      default_for_modes: ['wework'],
-    })
     mocks.localListProjects.mockResolvedValue({ items: [] })
     mocks.localUpdateCurrentUser.mockImplementation(async data => data)
     mocks.localListSkills.mockResolvedValue([])
@@ -409,12 +392,6 @@ describe('createHybridWorkbenchServices', () => {
     mocks.cloudListTeams.mockResolvedValue([
       { id: 1, name: 'cloud-wework', is_active: true, default_for_modes: ['wework'] },
     ])
-    mocks.cloudGetDefaultWorkbenchTeam.mockResolvedValue({
-      id: 1,
-      name: 'cloud-wework',
-      is_active: true,
-      default_for_modes: ['wework'],
-    })
     mocks.cloudListDevices.mockResolvedValue([
       {
         id: 1,
@@ -759,23 +736,17 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
   })
 
-  it('lists persisted Wegent teams while keeping the local workbench default', async () => {
+  it('lists persisted Wegent teams only for explicit Wegent execution', async () => {
     const services = createServices()
 
     await expect(services.teamApi.listTeams()).resolves.toEqual([
       expect.objectContaining({ id: 1, name: 'cloud-wework' }),
     ])
-    await expect(services.teamApi.getDefaultWorkbenchTeam()).resolves.toMatchObject({
-      id: 0,
-      name: 'local-wework',
-    })
     await expect(services.skillApi.getTeamSkills(0)).resolves.toEqual({
       skills: [],
       preload_skills: [],
     })
     expect(mocks.cloudListTeams).toHaveBeenCalledTimes(1)
-    expect(mocks.localListTeams).not.toHaveBeenCalled()
-    expect(mocks.cloudGetDefaultWorkbenchTeam).not.toHaveBeenCalled()
   })
 
   it('returns local devices from the primary device list', async () => {
@@ -1155,8 +1126,7 @@ describe('createHybridWorkbenchServices', () => {
     mocks.cloudListArchivedConversations.mockReturnValue(new Promise(() => undefined))
     const services = createServices()
 
-    const [team, models, devices, runtimeWork, search, archives, projects] = await Promise.all([
-      services.teamApi.getDefaultWorkbenchTeam(),
+    const [models, devices, runtimeWork, search, archives, projects] = await Promise.all([
       services.modelApi.listModels(),
       services.deviceApi.listDevices(),
       services.runtimeWorkApi?.listRuntimeWork(),
@@ -1165,7 +1135,6 @@ describe('createHybridWorkbenchServices', () => {
       services.projectApi.listProjects(),
     ])
 
-    expect(team.name).toBe('local-wework')
     expect(models.data.map(model => model.name)).toEqual(['gpt-5.5'])
     expect(devices.map(device => device.device_id)).toEqual(['local-device'])
     expect(runtimeWork).toEqual({ projects: [], chats: [], totalTasks: 0 })
