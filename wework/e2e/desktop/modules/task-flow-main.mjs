@@ -1555,8 +1555,8 @@ last_updated = "2026-07-30T00:00:00Z"`
         return officialPluginFixture
       }
 
-      if (shouldRunPluginSegment('plugin-lifecycle')) {
-        phase = 'plugin-lifecycle'
+      if (shouldRunPluginSegment('plugin-marketplace-lifecycle')) {
+        phase = 'plugin-marketplace-lifecycle'
         await verifyMarketplacePluginLifecycle({
           blockingNetworkProxy,
           codexHome,
@@ -1565,6 +1565,9 @@ last_updated = "2026-07-30T00:00:00Z"`
           marketplacePath: marketplacePluginPath,
           workspacePath,
         })
+      }
+      if (shouldRunPluginSegment('plugin-lifecycle')) {
+        phase = 'plugin-lifecycle'
         await verifyPluginLifecycle({
           control,
           fixture: await ensureOfficialPluginFixture(),

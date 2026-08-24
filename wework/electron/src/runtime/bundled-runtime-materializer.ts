@@ -27,7 +27,8 @@ export async function materializeBundledRuntimes(
     await readFile(join(resolve(resourceRoot), 'runtimes.json'), 'utf8')
   ) as RuntimeCatalog
   const runtimes = catalog.runtimes.filter(runtime => ['core', 'workbench'].includes(runtime.role))
-  if (runtimes.length !== 2) {
+  const availableRoles = new Set(runtimes.map(runtime => runtime.role))
+  if (!availableRoles.has('core') || !availableRoles.has('workbench')) {
     throw new Error('Bundled Electron runtime catalog must contain Core and Workbench runtimes')
   }
   const requestedRoles = new Set(roles)
@@ -40,7 +41,8 @@ export async function materializeBundledRuntimes(
   const selectedRuntimes = runtimes.filter(runtime =>
     requestedRoles.has(runtime.role as BundledRuntimeRole)
   )
-  if (selectedRuntimes.length !== requestedRoles.size) {
+  const selectedRoles = new Set(selectedRuntimes.map(runtime => runtime.role))
+  if ([...requestedRoles].some(role => !selectedRoles.has(role))) {
     throw new Error('Bundled Electron runtime catalog is missing a requested runtime')
   }
   await mkdir(cacheRoot, { recursive: true, mode: 0o700 })

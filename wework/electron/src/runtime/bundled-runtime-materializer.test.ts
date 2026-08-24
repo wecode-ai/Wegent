@@ -20,10 +20,11 @@ describe('materializeBundledRuntimes', () => {
     const cache = join(root, 'cache')
     await mkdir(resources)
     const core = await runtimeArchive(resources, 'core', '0.1.1-rc.2', 'a')
-    const workbench = await runtimeArchive(resources, 'workbench', '0.1.0-rc.8', 'b')
+    const workbenchRc7 = await runtimeArchive(resources, 'workbench', '0.1.0-rc.7', 'b')
+    const workbenchRc8 = await runtimeArchive(resources, 'workbench', '0.1.0-rc.8', 'c')
     await writeFile(
       join(resources, 'runtimes.json'),
-      JSON.stringify({ runtimes: [core, workbench] })
+      JSON.stringify({ runtimes: [core, workbenchRc7, workbenchRc8] })
     )
 
     await expect(materializeBundledRuntimes(resources, cache, ['core'])).resolves.toBe(cache)
@@ -31,15 +32,18 @@ describe('materializeBundledRuntimes', () => {
       readFile(join(cache, core.sourceFingerprint, 'runtime.json'), 'utf8')
     ).resolves.toContain('"role":"core"')
     await expect(
-      readFile(join(cache, workbench.sourceFingerprint, 'runtime.json'), 'utf8')
+      readFile(join(cache, workbenchRc7.sourceFingerprint, 'runtime.json'), 'utf8')
     ).rejects.toThrow()
     await expect(readFile(join(cache, 'runtimes.json'), 'utf8')).resolves.toContain(
-      workbench.sourceFingerprint
+      workbenchRc8.sourceFingerprint
     )
 
     await expect(materializeBundledRuntimes(resources, cache, ['workbench'])).resolves.toBe(cache)
     await expect(
-      readFile(join(cache, workbench.sourceFingerprint, 'runtime.json'), 'utf8')
+      readFile(join(cache, workbenchRc7.sourceFingerprint, 'runtime.json'), 'utf8')
+    ).resolves.toContain('"role":"workbench"')
+    await expect(
+      readFile(join(cache, workbenchRc8.sourceFingerprint, 'runtime.json'), 'utf8')
     ).resolves.toContain('"role":"workbench"')
 
     const coreMetadata = await stat(join(cache, core.sourceFingerprint, 'runtime.json'))
@@ -81,7 +85,7 @@ async function runtimeArchive(
     join(staging, 'runtime.json'),
     JSON.stringify({ dshVersion, role, sourceFingerprint })
   )
-  const assetName = `${role}.tar.gz`
+  const assetName = `${role}-${dshVersion}.tar.gz`
   const archive = join(resources, assetName)
   await tar.c({ cwd: staging, file: archive, gzip: true }, ['runtime.json'])
   const bytes = await readFile(archive)

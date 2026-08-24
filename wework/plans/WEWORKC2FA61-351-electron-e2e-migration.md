@@ -147,12 +147,12 @@ Cloud CI。
 
 ## Plugin segment 全量对照
 
-| Segment                        | main | Electron runner                                              | 当前 CI                                        |
-| ------------------------------ | ---- | ------------------------------------------------------------ | ---------------------------------------------- |
-| `plugin-marketplace-lifecycle` | 是   | `e2e:desktop:plugins --segment plugin-marketplace-lifecycle` | `plugins:all` 全量任务覆盖；分类器无独立定向项 |
-| `plugin-lifecycle`             | 是   | `e2e:desktop:plugins --segment plugin-lifecycle`             | Plugins，可定向                                |
-| `skill-mention-rendering`      | 是   | `e2e:desktop:plugins --segment skill-mention-rendering`      | Plugins，可定向                                |
-| `sites-plugin-auto-install`    | 是   | `e2e:desktop:plugins --segment sites-plugin-auto-install`    | Plugins，可定向                                |
+| Segment                        | main | Electron runner                                              | 当前 CI                                     |
+| ------------------------------ | ---- | ------------------------------------------------------------ | ------------------------------------------- |
+| `plugin-marketplace-lifecycle` | 是   | `e2e:desktop:plugins --segment plugin-marketplace-lifecycle` | Plugins，可独立执行；`plugins:all` 全量覆盖 |
+| `plugin-lifecycle`             | 是   | `e2e:desktop:plugins --segment plugin-lifecycle`             | Plugins，可定向                             |
+| `skill-mention-rendering`      | 是   | `e2e:desktop:plugins --segment skill-mention-rendering`      | Plugins，可定向                             |
+| `sites-plugin-auto-install`    | 是   | `e2e:desktop:plugins --segment sites-plugin-auto-install`    | Plugins，可定向                             |
 
 ## Playwright Web E2E
 
@@ -214,8 +214,13 @@ WEWORK_DESKTOP_RUNTIME=electron
   `0.1.0-rc.7` 与 `0.1.0-rc.8` 均重新纳入物化运行时，原 E2E 未修改；完整
   Smart App 创建、预览、插件、导出、关联、导入、多版本启动与停止流程通过，
   证据为 `2026-08-24T17-59-37-880Z-67616`。
+- 审计发现 `plugin-marketplace-lifecycle` 虽已注册，但定向执行时原先没有进入
+  对应验证函数；runner 已按 segment 拆分执行，未修改原验证逻辑或断言。修复
+  多版本运行时目录的 Electron 启动物化条件并重建真实应用后，该 segment
+  独立通过，证据为 `2026-08-24T18-26-05-867Z-4699`。
 - Electron 单测：35 files / 120 tests；Frontend 聚焦测试：
   3 files / 110 tests；Electron 与 Wework TypeScript 类型检查均通过。
-- Tauri 删除门禁：排除本迁移记录与锁文件后，对源码、脚本、配置、文档和 CI
-  扫描 `tauri`、`src-tauri`、`isTauri`、`data-tauri`、
-  `@tauri-apps`、`WEWORK_E2E_DESKTOP_RUNTIME`，命中数为 0。
+- Tauri 删除门禁：对源码、可执行脚本、配置和 CI 扫描 `tauri`、
+  `src-tauri`、`isTauri`、`data-tauri`、`@tauri-apps`、
+  `WEWORK_E2E_DESKTOP_RUNTIME`，命中数为 0。迁移前设计稿、历史计划、QA 记录和
+  `.live-architecture` 事务文件保留历史文字，不属于可执行逻辑。

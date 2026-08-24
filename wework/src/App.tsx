@@ -873,7 +873,7 @@ function AppShell() {
     return <AppRoutes />
   }
 
-  if (isLoading) {
+  if (isLoading || (isMainWindow && !appPreferences?.loaded)) {
     if (isPopoutWindow) {
       return <div className="h-dvh bg-transparent" />
     }

@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import { createStartupSplash, type StartupSplashWindow } from './startup-splash.js'
 
@@ -49,8 +50,10 @@ function createFixture() {
 
 describe('StartupSplash', () => {
   test('ships a visible loading animation that reports readiness after two frames', async () => {
+    const electronRoot =
+      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
     const asset = (name: string) =>
-      readFile(new URL(`../shell/startup-splash/${name}`, import.meta.url), 'utf8')
+      readFile(join(electronRoot, 'src', 'shell', 'startup-splash', name), 'utf8')
 
     const [html, styles, script] = await Promise.all([
       asset('index.html'),
