@@ -9,6 +9,7 @@ import {
   type WebContents,
 } from 'electron'
 import { existsSync } from 'node:fs'
+import { release } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -16,6 +17,7 @@ import {
   createElectronCapabilityRouter,
 } from './host/electron-capabilities.js'
 import { HostPipeServer } from './host/host-pipe.js'
+import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
 import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
@@ -553,6 +555,8 @@ async function closeMainWindowToTray(): Promise<void> {
   console.log(`windowWillClose: electron close-to-tray revision=${mainWindowCloseRequestRevision}`)
   target.hide()
   if (process.platform === 'darwin') app.hide()
+  primaryDshLoaded = false
+  await target.webContents.loadURL('about:blank')
 }
 
 async function reactivateMainWindow(): Promise<void> {
@@ -598,10 +602,9 @@ async function shutdown(): Promise<void> {
   popoutWindow?.destroy()
   popoutWindow = null
   embeddedBrowser?.stop()
-  await embeddedBrowserBridge?.stop()
+  const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
-  await workbenchTabs?.stop()
-  await desktopRuntime?.stop()
+  await Promise.allSettled([browserBridge?.stop(), workbenchTabs?.stop(), desktopRuntime?.stop()])
 }
 
 function requestApplicationShutdown(exit: () => void): void {
@@ -873,6 +876,15 @@ app.on('before-quit', event => {
   if (quitting) return
   event.preventDefault()
   requestApplicationShutdown(() => app.quit())
+})
+
+app.on('quit', () => {
+  // Electron can finish every JS lifecycle event yet remain stuck in native teardown on
+  // physical macOS 26.0-26.4 hosts (electron/electron#52582). Runtime cleanup has already
+  // completed before app.quit() reaches this event, so terminate only the stranded host.
+  if (requiresMacosQuitWorkaround(process.platform, release())) {
+    process.kill(process.pid, 'SIGKILL')
+  }
 })
 
 for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {

@@ -3,7 +3,11 @@ interface RendererContents {
   isDestroyed: () => boolean
 }
 
-const DEFAULT_RENDERER_READY_TIMEOUT_MS = 10_000
+// Auxiliary renderers initialize their own auth, preferences, and workbench providers.
+// On cold CI runners that can legitimately take longer than the window creation timeout
+// used by the old Tauri event bridge. Keep the native window hidden until its real surface
+// mounts, but retain a bounded failure so a broken route cannot hang the host forever.
+const DEFAULT_RENDERER_READY_TIMEOUT_MS = 120_000
 const RENDERER_READY_POLL_MS = 50
 
 export async function waitForRendererSelector(

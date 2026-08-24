@@ -99,7 +99,7 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | `running-conversation-history`    | `running-conversation-history.scenario.mjs`     | PASSED | `2026-08-22T15-42-52-258Z-43524`，39s    |
 | `codex-notification-isolation`    | `codex-notification-isolation.scenario.mjs`     | PASSED | `2026-08-22T15-54-13-855Z-89489`，36s    |
 | `split-workbench`                 | `split-workbench.scenario.mjs`                  | PASSED | `2026-08-22T16-13-52-957Z-16497`，1m 28s |
-| `window-lifecycle`                | 主流程                                          | PASSED | `2026-08-23T03-19-41-297Z-3042`，3m 6s   |
+| `window-lifecycle`                | 主流程                                          | PASSED | `2026-08-24T04-16-35-293Z-45720`，4m 18s |
 | `goal-lifecycle`                  | 主流程                                          | PASSED | `2026-08-23T03-26-55-017Z-73575`，2m 32s |
 | `supervisor-lifecycle`            | 主流程                                          | PASSED | `2026-08-23T03-30-10-625Z-98006`，1m 32s |
 | `resilience`                      | 主流程                                          | PASSED | `2026-08-23T03-32-01-654Z-13565`，2m 32s |
@@ -308,3 +308,15 @@ Electron/Tauri 两份业务断言。
   `2026-08-24T02-26-56-211Z-66125`。`SIGTERM`、`SIGINT`、`SIGHUP`
   统一进入幂等 shutdown，完整重启后旧 Executor 已退出，验证结束后恢复 worktree
   无 Executor 残留。
+- `window-lifecycle`：PASS，证据目录
+  `/Users/axb-mac/.wework/e2e-results/pr2945/2026-08-24T04-16-35-293Z-45720`。
+  冷启动辅助 Renderer 使用有界 120 秒真实界面挂载预算；关闭到托盘时卸载主
+  Renderer，重开后控制客户端从 1 增至 2，旧客户端失效且 Executor PID
+  `65428` 保持不变。Popout 冷/热启动、后台任务、滚动与虚拟化恢复、整应用退出和
+  重启全部通过，共生成 10 张 `window-lifecycle-*.png` 核心流程截图。
+- macOS 26.0–26.4 Electron 退出：Electron 43.4.1 最小探针和真实 Wework
+  都复现所有 `before-quit`/`will-quit`/`quit` 事件完成后主进程仍驻留；与
+  `electron/electron#52582` 的原生 teardown 缺陷一致。Wework 先并行停止
+  Browser Bridge、Workbench、Core DSH 和 Executor，仅在 Darwin 25.0–25.4
+  的 `quit` 事件后终止已完成清理的宿主；Darwin 25.5+ 和其他平台保持标准
+  Electron 退出路径。对应 Electron 测试为 26 files / 77 tests。
