@@ -22,7 +22,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
-import { stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
+import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
@@ -1044,15 +1044,6 @@ async function appendProcessOutput(stream, destination) {
   stream.on('data', chunk => {
     void appendFile(destination, chunk)
   })
-}
-
-function processIsAlive(processId) {
-  try {
-    process.kill(processId, 0)
-    return true
-  } catch {
-    return false
-  }
 }
 
 function macosSleepAssertionIds(appProcessId) {
