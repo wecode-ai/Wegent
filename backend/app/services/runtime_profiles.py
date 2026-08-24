@@ -55,6 +55,52 @@ def _validate_cloud_model_identity(
 class RuntimeProfileService:
     """Own personal Runtime profiles and their per-project default bindings."""
 
+    @staticmethod
+    def execution_configuration(
+        profile: RuntimeProfile,
+    ) -> tuple[str, str, str, dict]:
+        """Return the canonical execution fields stored by one Runtime profile."""
+
+        metadata = _metadata(profile)
+        return (
+            str(metadata.get("execution_environment") or ""),
+            str(profile.device_id or ""),
+            str(metadata.get("model") or ""),
+            metadata,
+        )
+
+    def require_runnable(
+        self,
+        db: Session,
+        profile_id: str,
+        user_id: int,
+    ) -> RuntimeProfile:
+        """Require an active Runtime profile that can start an execution."""
+
+        profile = self.require_owned(db, profile_id, user_id)
+        if profile.status != "active":
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Runtime profile is not active",
+            )
+        environment, device_id, model, metadata = self.execution_configuration(profile)
+        if not model:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Runtime profile has no model",
+            )
+        validate_wework_execution_target(
+            db,
+            user_id=user_id,
+            environment=environment,
+            execution_device_id=device_id,
+        )
+        _validate_cloud_model_identity(
+            metadata.get("model_type"),
+            metadata.get("model_options"),
+        )
+        return profile
+
     def ensure_device_defaults(
         self,
         db: Session,
@@ -328,22 +374,8 @@ class RuntimeProfileService:
                 status.HTTP_409_CONFLICT,
                 "Runtime can only be selected before execution starts",
             )
-        profile = self.require_owned(db, profile_id, user_id)
-        metadata = _metadata(profile)
-        environment = str(metadata.get("execution_environment") or "")
-        device_id = str(profile.device_id or "")
-        validate_wework_execution_target(
-            db,
-            user_id=user_id,
-            environment=environment,
-            execution_device_id=device_id,
-        )
-        model = str(metadata.get("model") or "")
-        if not model:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Runtime profile has no model",
-            )
+        profile = self.require_runnable(db, profile_id, user_id)
+        environment, device_id, model, metadata = self.execution_configuration(profile)
         selection = dict(execution.runtime_selection)
         selection.update(
             {

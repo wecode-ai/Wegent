@@ -118,6 +118,16 @@ class IssueWorkflowStartService:
                 item.id,
             )
             return 0
+        if (
+            workflow.execution_config is not None
+            and not workflow.execution_config.is_complete()
+        ):
+            logger.info(
+                "[issue-workflow-start] skipped AI workflow item=%s "
+                "reason=incomplete_execution_config",
+                item.id,
+            )
+            return 0
         planning_run = issue_workflow_planning_service.ensure_run(
             db,
             issue=item,
@@ -149,6 +159,11 @@ class IssueWorkflowStartService:
                     "workflow_run_id": planning_run.id,
                     "workflow_plan_version": (planning_run.metadata_json or {}).get(
                         "plan_version"
+                    ),
+                    "execution_config": (
+                        workflow.execution_config.model_dump(mode="json", by_alias=True)
+                        if workflow.execution_config
+                        else None
                     ),
                     "tags": list(
                         (item.metadata_json or {}).get("tags", [])

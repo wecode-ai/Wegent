@@ -473,58 +473,36 @@ async def create_loop_item(
     project = cloud_project_service.get(db, project_id, current_user.id)
     created = loop_item_provider_router.create(db, project, current_user, values)
     response = LoopItemResponse.model_validate(created.values)
-    planning_run = None
-    if (
-        created.internal_item is not None
-        and response.workflow
-        and response.workflow.advancement_policy == "ai"
-    ):
-        planning_run = issue_workflow_planning_service.ensure_run(
-            db,
-            issue=created.internal_item,
-            user_id=current_user.id,
-        )
-    from app.services.project_automations import (
-        ProjectAutomationEvent,
-        project_automation_processor,
+    starts_immediately = response.status in {"pending", "in_progress"}
+    is_ai_workflow = bool(
+        response.workflow and response.workflow.advancement_policy == "ai"
     )
+    if starts_immediately and not is_ai_workflow:
+        from app.services.project_automations import (
+            ProjectAutomationEvent,
+            project_automation_processor,
+        )
 
-    try:
-        await project_automation_processor.process(
-            db,
-            ProjectAutomationEvent(
-                event_type="task.created",
-                project_id=str(project.id),
-                subject_id=str(created.values["id"]),
-                source=project.task_provider,
-                actor_user_id=current_user.id,
-                payload={
-                    **response.model_dump(mode="json"),
-                    **(
-                        {
-                            "workflow_run_id": planning_run.id,
-                            "workflow_plan_version": (
-                                planning_run.metadata_json or {}
-                            ).get("plan_version"),
-                        }
-                        if planning_run is not None
-                        else {}
-                    ),
-                },
-            ),
-            automation_id=(
-                response.workflow.ai_automation_rule_id
-                if response.workflow and response.workflow.advancement_policy == "ai"
-                else None
-            ),
-        )
-    except Exception:
-        db.rollback()
-        logger.exception(
-            "Project automation processing failed after task creation project=%s task=%s",
-            project.id,
-            created.values.get("id"),
-        )
+        try:
+            await project_automation_processor.process(
+                db,
+                ProjectAutomationEvent(
+                    event_type="task.created",
+                    project_id=str(project.id),
+                    subject_id=str(created.values["id"]),
+                    source=project.task_provider,
+                    actor_user_id=current_user.id,
+                    payload=response.model_dump(mode="json"),
+                ),
+            )
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "Project automation processing failed after task creation "
+                "project=%s task=%s",
+                project.id,
+                created.values.get("id"),
+            )
     if created.internal_item is not None:
         db.refresh(created.internal_item)
         if created.internal_item.status in {"pending", "in_progress"}:
@@ -980,6 +958,32 @@ async def update_loop_item(
         from app.services.board_team_execution import dispatch_board_team_assignment
 
         await dispatch_board_team_assignment(db, item=item, user=current_user)
+        db.refresh(item)
+    entered_execution = previous_status not in {
+        "pending",
+        "in_progress",
+    } and item.status in {"pending", "in_progress"}
+    item_view = _loop_item_response(db, item, current_user)
+    is_ai_workflow = bool(
+        item_view.workflow and item_view.workflow.advancement_policy == "ai"
+    )
+    if entered_execution and not is_ai_workflow:
+        from app.services.project_automations import (
+            ProjectAutomationEvent,
+            project_automation_processor,
+        )
+
+        await project_automation_processor.process(
+            db,
+            ProjectAutomationEvent(
+                event_type="task.created",
+                project_id=str(item.cloud_project_id),
+                subject_id=str(item.id),
+                source=project.task_provider,
+                actor_user_id=current_user.id,
+                payload=item_view.model_dump(mode="json"),
+            ),
+        )
         db.refresh(item)
     publish_loop_item_changed(
         db,

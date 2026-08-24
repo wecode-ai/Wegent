@@ -388,11 +388,24 @@ class ProjectAutomationExecution:
         profile_metadata = (
             dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
         )
-        model = text(profile_metadata.get("model"))
+        model = text(context.get("model") or profile_metadata.get("model"))
         environment = text(profile_metadata.get("execution_environment"))
         device_id = text(
-            runtime_profile.device_id if runtime_profile is not None else None
+            context.get("execution_device_id")
+            or (runtime_profile.device_id if runtime_profile is not None else None)
         )
+        if device_id and (
+            runtime_profile is None or device_id != str(runtime_profile.device_id or "")
+        ):
+            from app.services.loop_item_executions.profile import (
+                wework_execution_environment,
+            )
+
+            environment = wework_execution_environment(
+                db,
+                user_id=runtime_subject_user_id,
+                execution_device_id=device_id,
+            )
         waiting_runtime = not model or not environment or not device_id
         execution = loop_item_execution_service.enqueue_automation_manager(
             db,
@@ -409,6 +422,15 @@ class ProjectAutomationExecution:
                 "runtime_profile_id": (runtime_profile.id if runtime_profile else None),
                 "runtime_profile_version": (
                     runtime_profile.version if runtime_profile else None
+                ),
+                "model": model or None,
+                "model_type": (
+                    context.get("model_type") or profile_metadata.get("model_type")
+                ),
+                "model_options": dict(
+                    context.get("model_options")
+                    or profile_metadata.get("model_options")
+                    or {}
                 ),
                 "workspace_policy": (
                     profile_metadata.get("workspace_policy") or "project"
@@ -1431,6 +1453,9 @@ class ProjectAutomationProcessor:
                 "actor_user_id": event.actor_user_id,
                 "payload": event.payload,
             }
+            execution_config = event.payload.get("execution_config")
+            if isinstance(execution_config, dict):
+                run_metadata["workflow_execution_config"] = execution_config
             run.metadata_json = run_metadata
             db.commit()
             await project_automation_execution.dispatch(db, rule, run)

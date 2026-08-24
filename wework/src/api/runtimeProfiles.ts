@@ -27,6 +27,14 @@ export interface RuntimeProfileInput {
   workspacePolicy: RuntimeWorkspacePolicy
 }
 
+export function runtimeProfileIsRunnable(profile: RuntimeProfile): boolean {
+  return (
+    profile.status === 'active' &&
+    Boolean(profile.executionDeviceId.trim()) &&
+    Boolean(profile.model.trim())
+  )
+}
+
 export function createRuntimeProfileApi(client: HttpClient) {
   return {
     list() {

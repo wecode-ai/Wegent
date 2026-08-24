@@ -26,6 +26,7 @@ from app.models.delivery import (
     LoopItem,
     LoopItemAttachment,
     LoopItemCollaborator,
+    ProjectAutomationRule,
     ProjectChatAgent,
     adapt_loop_node_values_for_dialect,
     loop_datetime_is_unset,
@@ -470,9 +471,28 @@ class LoopItemService:
                     definition.stage_mode == "dag"
                     or definition.advancement_policy == "ai"
                 ):
-                    task_metadata["workflow"] = instantiate_workflow(
-                        definition
-                    ).model_dump()
+                    workflow = instantiate_workflow(definition)
+                    if (
+                        workflow.advancement_policy == "ai"
+                        and workflow.ai_automation_rule_id
+                    ):
+                        rule = db.get(
+                            ProjectAutomationRule,
+                            workflow.ai_automation_rule_id,
+                        )
+                        if rule is not None:
+                            from app.services.issue_execution_configuration import (
+                                project_automation_execution_config,
+                            )
+
+                            workflow.execution_config = (
+                                project_automation_execution_config(
+                                    db,
+                                    rule,
+                                    issue_creator_user_id=user_id,
+                                )
+                            )
+                    task_metadata["workflow"] = workflow.model_dump()
         if explicit_execution_config is not None:
             task_metadata["execution_config"] = explicit_execution_config.model_dump(
                 mode="json"

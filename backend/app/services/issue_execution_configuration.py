@@ -7,9 +7,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models.delivery import ProjectChatAgent, RuntimeProfile
+from app.models.delivery import ProjectAutomationRule, ProjectChatAgent, RuntimeProfile
 from app.schemas.issue_workflow import WorkflowExecutionConfig
 from app.schemas.project_chat import ProjectChatWorkspaceBinding
+from app.services.project_automation_domain import manager_type, runtime_config
 from app.services.project_chat.service import bot_config
 from app.services.project_chat.workspace_binding import read_agent_workspace_binding
 
@@ -98,6 +99,50 @@ def project_robot_execution_config(
             if "ephemeral" in profile_metadata
             else config.get("ephemeral")
         ),
+    )
+
+
+def project_automation_execution_config(
+    db: Session,
+    rule: ProjectAutomationRule,
+    *,
+    issue_creator_user_id: int,
+) -> WorkflowExecutionConfig | None:
+    """Snapshot the AI manager Runtime without starting the manager."""
+
+    metadata = dict(rule.metadata_json or {})
+    if manager_type(metadata) == "wegent":
+        return None
+    runtime = runtime_config(metadata)
+    runtime_source = str(runtime.get("source") or "")
+    runtime_user_id = int(rule.created_by_user_id or issue_creator_user_id)
+    if runtime_source == "issue_creator":
+        runtime_user_id = issue_creator_user_id
+    elif runtime_source == "runtime_user":
+        runtime_user_id = int(runtime.get("user_id") or runtime_user_id)
+
+    profile_id = str(runtime.get("runtime_profile_id") or "") or None
+    profile = db.get(RuntimeProfile, profile_id) if profile_id else None
+    if runtime_source in {"issue_creator", "runtime_user"}:
+        from app.services.runtime_profiles import runtime_profile_service
+
+        profile = runtime_profile_service.resolve_project_default(
+            db,
+            str(rule.cloud_project_id),
+            runtime_user_id,
+        )
+        profile_id = str(profile.id) if profile is not None else None
+
+    profile_metadata = dict(profile.metadata_json or {}) if profile is not None else {}
+    return WorkflowExecutionConfig(
+        runtime_profile_id=profile_id,
+        execution_device_id=(
+            str(profile.device_id or "") or None if profile is not None else None
+        ),
+        model=str(profile_metadata.get("model") or "") or None,
+        model_type=profile_metadata.get("model_type"),
+        model_options=dict(profile_metadata.get("model_options") or {}),
+        workspace_binding=ProjectChatWorkspaceBinding(type="standalone"),
     )
 
 

@@ -28,6 +28,57 @@ const item = {
 }
 
 describe('IssueExecutionConfigDialog', () => {
+  it('requires the AI manager runtime snapshot before confirming', async () => {
+    render(
+      <IssueExecutionConfigDialog
+        item={
+          {
+            ...item,
+            assignee_agent_id: null,
+            workflow: {
+              version: 1,
+              definition_version: 1,
+              stage_mode: 'none',
+              advancement_policy: 'ai',
+              ai_automation_rule_id: 'ai-manager',
+              execution_config: {
+                agent_id: null,
+                runtime_profile_id: 'runtime-incomplete',
+                execution_device_id: 'device-online',
+                model: null,
+                model_type: null,
+                model_options: {},
+                workspace_binding: { type: 'standalone' },
+              },
+              nodes: [],
+            },
+          } as never
+        }
+        projectChatAgentApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        runtimeProfileApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        modelApi={
+          {
+            listModels: vi.fn().mockResolvedValue({
+              data: [{ name: 'kimi-code', type: 'public', displayName: 'Kimi Code' }],
+            }),
+          } as never
+        }
+        deviceApi={
+          {
+            listDevices: vi
+              .fn()
+              .mockResolvedValue([{ device_id: 'device-online', status: 'online' }]),
+          } as never
+        }
+        localProjects={[]}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(screen.getByTestId('issue-execution-config-confirm')).toBeDisabled())
+  })
+
   it('requires runtime choices for workflow robot stages without a robot rule', async () => {
     render(
       <IssueExecutionConfigDialog

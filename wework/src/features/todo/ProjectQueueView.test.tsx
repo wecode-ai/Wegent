@@ -111,6 +111,20 @@ describe('ProjectQueueView', () => {
         runtimeProfileApi={{ selectExecution } as never}
         runtimeProfiles={[
           {
+            id: 'runtime-incomplete',
+            name: 'Incomplete Runtime',
+            executionEnvironment: 'local',
+            executionDeviceId: 'device-1',
+            model: '',
+            modelType: null,
+            modelOptions: {},
+            workspacePolicy: 'project',
+            status: 'active',
+            version: 1,
+            createdAt: '',
+            updatedAt: '',
+          },
+          {
             id: 'runtime-1',
             name: 'My Runtime',
             executionEnvironment: 'local',
@@ -133,6 +147,9 @@ describe('ProjectQueueView', () => {
       'Choose my Runtime'
     )
     await userEvent.click(screen.getByTestId('project-queue-runtime-303'))
+    expect(
+      screen.queryByTestId('project-queue-runtime-303-option-runtime-incomplete')
+    ).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('project-queue-runtime-303-option-runtime-1'))
     await waitFor(() => expect(selectExecution).toHaveBeenCalledWith('11', 303, 'runtime-1', 2))
   })

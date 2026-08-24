@@ -729,6 +729,90 @@ def test_moving_orchestrated_issue_to_pending_starts_its_workflow(
     dispatch.assert_awaited_once()
 
 
+def test_ai_issue_created_in_pending_waits_for_configuration_then_starts(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rule = ProjectAutomationRule(
+        cloud_project_id=delivery_project.id,
+        title="AI manager",
+        description="Plan and assign the Issue.",
+        status="enabled",
+        created_by_user_id=delivery_project.created_by_user_id,
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+            "event_config": {},
+            "action": "ai_assign",
+            "manager": {"type": "custom"},
+            "runtime": {
+                "source": "fixed_profile",
+                "runtime_profile_id": None,
+            },
+            "timezone": "Asia/Shanghai",
+        },
+    )
+    test_db.add(rule)
+    test_db.flush()
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 1,
+            "stage_mode": "none",
+            "advancement_policy": "ai",
+            "ai_automation_rule_id": str(rule.id),
+            "nodes": [],
+        },
+    }
+    test_db.commit()
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+
+    created_response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Configure before AI planning", "status": "pending"},
+    )
+
+    assert created_response.status_code == 201
+    created = created_response.json()
+    assert created["status"] == "pending"
+    assert created["workflow"]["execution_config"]["model"] is None
+    assert test_db.query(ProjectAutomationRun).count() == 0
+    dispatch.assert_not_awaited()
+
+    workflow = created["workflow"]
+    workflow["execution_config"] = {
+        "agent_id": None,
+        "runtime_profile_id": None,
+        "execution_device_id": "local-device",
+        "model": "gpt-5-codex",
+        "model_type": "runtime",
+        "model_options": {},
+        "workspace_binding": {"type": "standalone"},
+    }
+    started_response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "status": "pending",
+            "workflow": workflow,
+        },
+    )
+
+    assert started_response.status_code == 200
+    run = test_db.query(ProjectAutomationRun).one()
+    assert run.task_id == created["id"]
+    assert (run.metadata_json or {})["workflow_execution_config"]["model"] == (
+        "gpt-5-codex"
+    )
+    dispatch.assert_awaited_once()
+
+
 def test_pausing_planning_cancels_active_ai_manager(
     test_client: TestClient,
     test_db: Session,

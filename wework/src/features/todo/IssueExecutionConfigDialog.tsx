@@ -140,9 +140,11 @@ export function IssueExecutionConfigDialog({
   const workflowComplete = useMemo(
     () =>
       workflow
-        ? automatedNodes.every(node =>
-            workflowExecutionConfigComplete(effectiveWorkflowNodeExecutionConfig(workflow, node))
-          )
+        ? workflow.advancement_policy === 'ai'
+          ? workflowExecutionConfigComplete(workflow.execution_config)
+          : automatedNodes.every(node =>
+              workflowExecutionConfigComplete(effectiveWorkflowNodeExecutionConfig(workflow, node))
+            )
         : true,
     [automatedNodes, workflow]
   )

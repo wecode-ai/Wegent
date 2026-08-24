@@ -178,6 +178,53 @@ describe('workflow execution configuration', () => {
     ).toBe(false)
   })
 
+  it('requires configuration for an AI manager with an incomplete Issue snapshot', () => {
+    expect(
+      workflowNeedsExecutionConfiguration({
+        ...workflow(),
+        stage_mode: 'none',
+        advancement_policy: 'ai',
+        ai_automation_rule_id: 'ai-manager',
+        execution_config: {
+          agent_id: null,
+          runtime_profile_id: 'runtime-1',
+          execution_device_id: 'device-1',
+          model: null,
+          model_type: null,
+          model_options: {},
+          workspace_binding: { type: 'standalone' },
+        },
+        nodes: [],
+      })
+    ).toBe(true)
+  })
+
+  it('starts an AI manager only after its Issue snapshot is complete', () => {
+    expect(
+      workflowNeedsExecutionConfiguration({
+        ...workflow(),
+        stage_mode: 'none',
+        advancement_policy: 'ai',
+        ai_automation_rule_id: 'ai-manager',
+        execution_config: completeConfig,
+        nodes: [],
+      })
+    ).toBe(false)
+  })
+
+  it('does not request Wework Runtime configuration for a Wegent AI manager', () => {
+    expect(
+      workflowNeedsExecutionConfiguration({
+        ...workflow(),
+        stage_mode: 'none',
+        advancement_policy: 'ai',
+        ai_automation_rule_id: 'wegent-manager',
+        execution_config: null,
+        nodes: [],
+      })
+    ).toBe(false)
+  })
+
   it('requires configuration when neither the workflow nor the node defines it', () => {
     expect(
       workflowNeedsExecutionConfiguration({

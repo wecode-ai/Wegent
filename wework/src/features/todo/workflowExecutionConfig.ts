@@ -139,6 +139,11 @@ export function workflowNeedsExecutionConfiguration(
   workflow: IssueWorkflowInstance | null | undefined
 ): boolean {
   if (!workflow) return false
+  if (workflow.advancement_policy === 'ai') {
+    return Boolean(
+      workflow.execution_config && !workflowExecutionConfigComplete(workflow.execution_config)
+    )
+  }
   return workflow.nodes.some(
     node =>
       workflowNodeExecutionMode(node) === 'robot' &&

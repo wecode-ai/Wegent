@@ -283,6 +283,13 @@ async def test_start_dispatches_ai_coordinator_once(
         lambda *_args, **_kwargs: planning_run,
     )
     monkeypatch.setattr(issue_workflow_start_service, "_has_run", lambda *_args: False)
+    snapshot = workflow(advancement_policy="ai")
+    snapshot["execution_config"] = {
+        "runtime_profile_id": "runtime-1",
+        "execution_device_id": "device-1",
+        "model": "model-1",
+        "workspace_binding": {"type": "standalone"},
+    }
     item = SimpleNamespace(
         id="ISSUE-2",
         cloud_project_id="11",
@@ -290,7 +297,7 @@ async def test_start_dispatches_ai_coordinator_once(
         description="",
         status="pending",
         priority="none",
-        metadata_json={"workflow": workflow(advancement_policy="ai"), "tags": []},
+        metadata_json={"workflow": snapshot, "tags": []},
     )
     project = SimpleNamespace(id=11, task_provider="local")
 
@@ -305,6 +312,7 @@ async def test_start_dispatches_ai_coordinator_once(
     process.assert_awaited_once()
     assert process.await_args.kwargs["automation_id"] == "ai-manager-rule"
     assert process.await_args.args[1].payload["workflow_run_id"] == planning_run.id
+    assert process.await_args.args[1].payload["execution_config"]["model"] == "model-1"
 
     monkeypatch.setattr(issue_workflow_start_service, "_has_run", lambda *_args: True)
     assert (
@@ -317,6 +325,39 @@ async def test_start_dispatches_ai_coordinator_once(
         == 0
     )
     process.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_start_keeps_ai_coordinator_waiting_for_issue_runtime_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = AsyncMock(return_value=1)
+    ensure_run = MagicMock()
+    monkeypatch.setattr(project_automation_processor, "process", process)
+    monkeypatch.setattr(issue_workflow_planning_service, "ensure_run", ensure_run)
+    snapshot = workflow(advancement_policy="ai")
+    snapshot["execution_config"] = {
+        "runtime_profile_id": "runtime-1",
+        "execution_device_id": "device-1",
+        "model": None,
+        "workspace_binding": {"type": "standalone"},
+    }
+    item = SimpleNamespace(
+        id="ISSUE-AI-WAITING",
+        cloud_project_id="11",
+        metadata_json={"workflow": snapshot},
+    )
+
+    started = await issue_workflow_start_service.start(
+        SimpleNamespace(),
+        item=item,
+        project=SimpleNamespace(id=11, task_provider="local"),
+        user_id=7,
+    )
+
+    assert started == 0
+    ensure_run.assert_not_called()
+    process.assert_not_awaited()
 
 
 @pytest.mark.asyncio

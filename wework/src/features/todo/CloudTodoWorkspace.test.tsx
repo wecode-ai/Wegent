@@ -3580,6 +3580,58 @@ describe('CloudTodoWorkspace', () => {
     )
   })
 
+  it('prompts for AI manager configuration after creating directly into pending', async () => {
+    const user = userEvent.setup()
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_projectId, values) => ({
+      ...item,
+      id: 'WEG-AI-PENDING',
+      sequence_number: 2,
+      title: values.title,
+      description: values.description ?? '',
+      status: 'pending' as const,
+      workflow: {
+        version: 1,
+        definition_version: 1,
+        stage_mode: 'none' as const,
+        advancement_policy: 'ai' as const,
+        ai_automation_rule_id: 'ai-manager',
+        execution_config: {
+          agent_id: null,
+          runtime_profile_id: 'runtime-incomplete',
+          execution_device_id: 'local-device',
+          model: null,
+          model_type: null,
+          model_options: {},
+          workspace_binding: { type: 'standalone' as const },
+        },
+        nodes: [],
+      },
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await user.click((await screen.findAllByText('Wegent V4'))[0])
+    await user.click(screen.getByTestId('cloud-todo-column-add-pending'))
+    await user.type(screen.getByTestId('workspace-issue-input'), 'Pending AI Issue')
+    await user.click(screen.getByTestId('workspace-issue-submit'))
+
+    expect(await screen.findByTestId('issue-execution-config-dialog')).toBeVisible()
+    expect(workbenchServices.deliveryApi.createLoopItem).toHaveBeenCalledWith(11, {
+      title: 'Pending AI Issue',
+      description: 'Pending AI Issue',
+      status: 'pending',
+      parent_id: null,
+    })
+    expect(workbenchServices.deliveryApi.updateLoopItem).not.toHaveBeenCalled()
+  })
+
   it('opens the full issue composer popup with the quick title and lane', async () => {
     const workbenchServices = services()
     render(

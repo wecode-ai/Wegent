@@ -2242,6 +2242,21 @@ export function CloudTodoWorkspace({
     return locatedItem
   }
 
+  function requestCreatedItemExecutionConfiguration(item: LocatedLoopItem): boolean {
+    if (
+      !['pending', 'in_progress'].includes(item.status) ||
+      !itemNeedsExecutionConfiguration(item, item.status)
+    ) {
+      return false
+    }
+    setPendingExecutionMove({
+      item,
+      columnKey: item.status,
+      beforeItemId: null,
+    })
+    return true
+  }
+
   async function createTodoInBoardColumn(status: CloudLoopItem['status'], content: string) {
     if (!selectedProject || !selectedProjectApi) throw new Error('项目空间接口当前不可用')
     if (isMyTasksBoard && status !== 'inbox' && !selectedLocalProject) {
@@ -2266,7 +2281,8 @@ export function CloudTodoWorkspace({
           ? { creator_name: selectedProject.current_user_name }
           : {}),
       })
-      addCreatedTodo(created, selectedProject)
+      const locatedItem = addCreatedTodo(created, selectedProject)
+      requestCreatedItemExecutionConfiguration(locatedItem)
       setQuickCreateStatus(null)
     } catch (cause) {
       track('operation_failed', { operation: 'board_item_action' })
@@ -3066,7 +3082,8 @@ export function CloudTodoWorkspace({
         setIssueComposerOpen(false)
         setSelectedItem(locatedItem)
       }
-      if (input.createTask) {
+      const needsExecutionConfiguration = requestCreatedItemExecutionConfiguration(locatedItem)
+      if (input.createTask && !needsExecutionConfiguration) {
         setBackgroundTaskItemId(locatedItem.id)
         setTaskComposerRequest({
           workItemId: locatedItem.id,

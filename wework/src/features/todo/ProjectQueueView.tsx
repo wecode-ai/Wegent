@@ -11,7 +11,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import type { CloudLoopItem, CloudLoopItemExecution, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
-import type { RuntimeProfile } from '@/api/runtimeProfiles'
+import { runtimeProfileIsRunnable, type RuntimeProfile } from '@/api/runtimeProfiles'
 import { MenuSelect } from '@/components/common/MenuSelect'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -277,6 +277,10 @@ export function ProjectQueueView({
   const [stoppingExecutionId, setStoppingExecutionId] = useState<number | null>(null)
   const [selectingRuntimeExecutionId, setSelectingRuntimeExecutionId] = useState<number | null>(
     null
+  )
+  const runnableRuntimeProfiles = useMemo(
+    () => runtimeProfiles.filter(runtimeProfileIsRunnable),
+    [runtimeProfiles]
   )
 
   const selectRuntime = async (item: QueueItem, runtimeProfileId: string) => {
@@ -606,7 +610,7 @@ export function ProjectQueueView({
                                   disabled={selectingRuntimeExecutionId === item.execution_id}
                                   placeholder={t('workbench.runtime_select')}
                                   onChange={value => void selectRuntime(queueItem, value)}
-                                  options={runtimeProfiles.map(profile => ({
+                                  options={runnableRuntimeProfiles.map(profile => ({
                                     value: profile.id,
                                     label: `${profile.name} · ${profile.model}`,
                                   }))}
