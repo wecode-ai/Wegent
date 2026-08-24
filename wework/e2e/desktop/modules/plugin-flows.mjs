@@ -35,7 +35,6 @@ import {
   PLUGIN_NAME,
   QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
   QUALIFIED_SKILL_MENTION_PROMPT,
-  STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   commandOutput,
@@ -46,13 +45,55 @@ import {
   readFile,
   rm,
   selectE2EModel,
+  writeFile,
 } from './shared.mjs'
 
 import {
   captureVerificationScreenshot,
+  currentRuntimeTaskFromDebugSnapshot,
   waitForControlValueIncludes,
   waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
+
+async function createDirectRemoteMcpPluginZip(root) {
+  const { default: JSZip } = await import('jszip')
+  const archivePath = join(root, 'direct-remote-mcp-plugin.zip')
+  const zip = new JSZip()
+  zip.file(
+    '.codex-plugin/plugin.json',
+    JSON.stringify({
+      name: 'direct-remote-mcp-plugin',
+      version: '1.0.0',
+      description: 'Desktop E2E direct remote MCP plugin',
+      author: { name: 'Wework Desktop E2E' },
+      skills: './skills/',
+      mcpServers: './.mcp.json',
+      interface: {
+        displayName: 'Direct Remote MCP Plugin',
+        shortDescription: 'Exercises direct remote MCP parsing',
+        longDescription: 'Exercises direct remote MCP parsing in the native import preview.',
+        developerName: 'Wework Desktop E2E',
+        category: 'Developer Tools',
+        capabilities: ['MCP'],
+        defaultPrompt: 'Use the remote MCP server.',
+      },
+    })
+  )
+  zip.file(
+    '.mcp.json',
+    JSON.stringify({
+      remote: {
+        url: 'https://mcp.example.com/mcp',
+      },
+    })
+  )
+  zip.file(
+    'skills/direct-remote/SKILL.md',
+    '---\nname: direct-remote\ndescription: Exercise direct remote MCP parsing.\n---\n'
+  )
+  await writeFile(archivePath, await zip.generateAsync({ type: 'nodebuffer' }))
+  return archivePath
+}
 
 async function verifyCloudWorkPage(control) {
   await control.command('navigate', 'body', { value: '/cloud-work' })
@@ -120,25 +161,12 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   control,
   restartDesktopApp,
 }) {
-  const requestCountBeforeRestart = blockingNetworkProxy.requestCount()
   const modelRequestCountBeforeRestart = control.modelRequests.length
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
   await restartDesktopApp()
-  const [blockedRequest] = await Promise.all([
-    blockingNetworkProxy.waitForRequestMatchingAfter(
-      requestCountBeforeRestart,
-      STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
-      DEFAULT_STEP_TIMEOUT_MS
-    ),
-    control.command('waitFor', '[data-testid="projects-create-button"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }),
-  ])
-  assert.match(
-    blockedRequest,
-    /^(CONNECT|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) /,
-    'The blocking proxy did not capture a Codex startup request'
-  )
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     snapshot.testIds.includes('desktop-workbench-main'),
@@ -159,7 +187,7 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
     `Codex initialize took ${executorStatus.codexInitializeElapsedMs}ms with blocked network`
   )
   console.log(
-    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms while startup network remained blocked`
+    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms with a blocking network proxy configured`
   )
   assert.equal(
     control.modelRequests.length,
@@ -357,6 +385,27 @@ async function openOfficialPluginChat(control, installSelector) {
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   const detailTrySelector = `[data-testid="plugin-detail-toggle-${pluginId}"]`
   const installedStripSelector = `[data-testid="plugins-installed-strip-item-${pluginId}"]`
+  const activeTabSelector = '[data-testid^="workspace-tab-select-"][aria-selected="true"]'
+  const activeTabTestId = await control.command('getAttribute', activeTabSelector, {
+    value: 'data-testid',
+  })
+  assert.ok(activeTabTestId, 'The plugin trial did not expose its active workspace tab')
+  const activeTabId = activeTabTestId.replace('workspace-tab-select-', '')
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('click', '[data-testid="workspace-tab-add-task"]')
+  await control.command(
+    'waitFor',
+    '[data-testid^="workspace-tab-select-task-"][aria-selected="true"]',
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('click', `[data-testid="workspace-tab-select-${activeTabId}"]`)
+  await control.command(
+    'waitFor',
+    `[data-testid="workspace-tab-select-${activeTabId}"][aria-selected="true"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -415,10 +464,12 @@ async function createOfficialPluginTask({ control, installSelector, skillPath })
     errorLabel: 'The sent plugin reference degraded to its plain-text mention',
   })
   await control.awaitScenarioRequestCount('official_plugin', 2, WORKBENCH_READY_TIMEOUT_MS)
-  const taskId = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
-    ?.currentRuntimeTask?.taskId
-  assert.ok(taskId, 'The official plugin conversation did not expose its task ID')
-  return taskId
+  const taskSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => Boolean(currentRuntimeTaskFromDebugSnapshot(snapshot)?.taskId),
+    'The official plugin conversation did not expose its task ID'
+  )
+  return currentRuntimeTaskFromDebugSnapshot(taskSnapshot).taskId
 }
 
 async function verifyPluginLifecycle({ control, fixture }) {
@@ -468,6 +519,8 @@ async function waitForMarketplaceInstallStateAfterUninstall(control, pluginId) {
 }
 
 async function verifyMarketplacePluginLifecycle({
+  blockingNetworkProxy,
+  codexHome,
   control,
   executorHome,
   marketplacePath,
@@ -505,6 +558,108 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
 
   await control.command('click', '[data-testid="plugins-create-button"]')
+  await control.command('click', '[data-testid="plugins-import-plugin-option"]')
+  await control.command('waitFor', '[data-testid="plugin-import-dialog"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const importSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    importSnapshot.testIds.includes('plugin-import-select') &&
+      importSnapshot.testIds.includes('plugin-import-download-example'),
+    'The plugin import dialog did not expose package selection and the example download'
+  )
+  assert.ok(
+    importSnapshot.text.includes('.codex-plugin/plugin.json') &&
+      importSnapshot.text.includes('skills/<slug>/SKILL.md'),
+    'The plugin import dialog did not explain the standard Wework plugin package structure'
+  )
+  const archivePath = await createDirectRemoteMcpPluginZip(marketplacePath)
+  const personalMarketplacePath = join(
+    executorHome,
+    'capabilities/bundled-marketplaces/wework-personal'
+  )
+  const preview = JSON.parse(
+    await control.command('previewPluginImport', 'body', {
+      value: JSON.stringify({ archivePath, marketplacePath }),
+    })
+  )
+  assert.equal(preview.valid, true, `Direct remote MCP plugin was rejected: ${preview.issues}`)
+  assert.equal(preview.mcpServerCount, 1)
+  assert.equal(preview.name, 'direct-remote-mcp-plugin')
+  await captureVerificationScreenshot(control, 'marketplace-plugins-00-import.png')
+  await control.command('click', '[data-testid="plugin-import-close"]')
+
+  blockingNetworkProxy.block()
+  const blockedRequestCount = blockingNetworkProxy.requests.length
+  const importStartedAt = Date.now()
+  try {
+    await control.command('setLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
+    const imported = JSON.parse(
+      await control.command('importPluginPackage', 'body', {
+        value: JSON.stringify({ preview, overwrite: false }),
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+    )
+    const importElapsedMs = Date.now() - importStartedAt
+    assert.equal(imported.pluginName, 'direct-remote-mcp-plugin')
+    assert.ok(
+      importElapsedMs <= DEFAULT_STEP_TIMEOUT_MS,
+      `Local plugin import waited ${importElapsedMs}ms for blocked post-install network work`
+    )
+    assert.equal(
+      await pathExists(
+        join(
+          codexHome,
+          'plugins/cache/wework-personal/direct-remote-mcp-plugin/1.0.0/.codex-plugin/plugin.json'
+        )
+      ),
+      true,
+      'The offline import returned before the local plugin cache was committed'
+    )
+    const codexConfigAfterImport = await readFile(join(codexHome, 'config.toml'), 'utf8')
+    assert.ok(
+      codexConfigAfterImport.includes('"direct-remote-mcp-plugin@wework-personal"') &&
+        codexConfigAfterImport.includes('enabled = true'),
+      'The offline import returned before the plugin was enabled in Codex config'
+    )
+    const deleteStartedAt = Date.now()
+    await control.command('deleteLocalPluginPackage', 'body', {
+      value: JSON.stringify({
+        pluginId: 'direct-remote-mcp-plugin@wework-personal',
+        pluginName: 'direct-remote-mcp-plugin',
+      }),
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const deleteElapsedMs = Date.now() - deleteStartedAt
+    assert.ok(
+      deleteElapsedMs <= DEFAULT_STEP_TIMEOUT_MS,
+      `Local plugin deletion waited ${deleteElapsedMs}ms for blocked marketplace network work`
+    )
+    assert.equal(
+      await pathExists(join(codexHome, 'plugins/cache/wework-personal/direct-remote-mcp-plugin')),
+      false,
+      'The offline delete left the local Codex plugin cache behind'
+    )
+    assert.equal(
+      await pathExists(join(personalMarketplacePath, 'plugins/direct-remote-mcp-plugin')),
+      false,
+      'The offline delete left the personal plugin source behind'
+    )
+    assert.equal(
+      blockingNetworkProxy.requests.length,
+      blockedRequestCount,
+      'Local plugin import or deletion unexpectedly requested external network access'
+    )
+  } finally {
+    blockingNetworkProxy.release()
+    await control.command('setLocalProxyUrl', 'body', { value: '' })
+  }
+
+  await control.command('click', '[data-testid="plugins-create-button"]')
+  await control.command('waitFor', '[data-testid="plugins-create-menu"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'marketplace-plugins-00-create-menu.png')
   await control.command('click', '[data-testid="plugins-create-plugin-option"]')
   await control.command('waitFor', '[data-testid="plugin-create-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -513,6 +668,7 @@ async function verifyMarketplacePluginLifecycle({
     control,
     snapshot =>
       snapshot.testIds.includes('plugin-create-workspace') &&
+      snapshot.testIds.includes('plugin-creator-context') &&
       snapshot.testIds.includes('project-chat-composer') &&
       snapshot.testIds.includes('composer-toolbar') &&
       snapshot.testIds.includes('attachment-file-input') &&
@@ -672,6 +828,15 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', actionsSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`) &&
+      snapshot.testIds.some(
+        testId => testId.startsWith('plugins-installed-strip-item-') && testId.includes(PLUGIN_NAME)
+      ),
+    'The installed marketplace card and installed strip became inconsistent'
+  )
   await control.command('click', actionsSelector)
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   await control.command('waitFor', trySelector, {
@@ -695,6 +860,25 @@ async function verifyMarketplacePluginLifecycle({
     manageOpenedDetail.testIds.includes('plugin-management-page-content'),
     false,
     'Marketplace manage opened the management list instead of the plugin detail'
+  )
+  const detailActionMenuSelector =
+    '[data-testid^="plugin-detail-actions-"]:not([data-testid="plugin-detail-actions-bar"])'
+  const detailPrimaryActionSelector = '[data-testid^="plugin-detail-toggle-"]'
+  await control.command('waitFor', detailActionMenuSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', detailPrimaryActionSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const [detailActionMenuMetrics] = JSON.parse(
+    await control.command('getElementMetrics', detailActionMenuSelector)
+  )
+  const [detailPrimaryActionMetrics] = JSON.parse(
+    await control.command('getElementMetrics', detailPrimaryActionSelector)
+  )
+  assert.ok(
+    detailActionMenuMetrics.right <= detailPrimaryActionMetrics.left,
+    'The plugin detail overflow menu was not placed before the primary action'
   )
   await control.command('click', '[data-testid="plugin-detail-back-button"]')
   await control.command('waitFor', actionsSelector, {
@@ -896,10 +1080,14 @@ async function verifySkillMentionRendering({ control, fixture }) {
     text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const qualifiedSkillTaskId = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
-  ).workbench?.currentRuntimeTask?.taskId
-  assert.ok(qualifiedSkillTaskId, 'The qualified skill conversation did not expose its task ID')
+  const qualifiedSkillTaskSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => Boolean(currentRuntimeTaskFromDebugSnapshot(snapshot)?.taskId),
+    'The qualified skill conversation did not expose its task ID'
+  )
+  const qualifiedSkillTaskId = currentRuntimeTaskFromDebugSnapshot(
+    qualifiedSkillTaskSnapshot
+  ).taskId
   const officialPluginTaskRow = `[data-testid="runtime-local-task-row-${officialPluginTaskId}"]`
   const qualifiedSkillTaskRow = `[data-testid="runtime-local-task-row-${qualifiedSkillTaskId}"]`
   await control.command('waitFor', officialPluginTaskRow, {

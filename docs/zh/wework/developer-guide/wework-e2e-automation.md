@@ -114,22 +114,42 @@ node e2e/utils/mock-connector-upstream-server.mjs
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
-`workspace-tabs`、`priority-filter`、`telemetry-consent`、
-`automation-lifecycle`、`model-routing`、`core-task-flow`、
-`window-lifecycle`、`goal-lifecycle`、`supervisor-lifecycle`、`resilience`、
-`conversation-state`、`workspace-attachments`、`rendering-extensions`、
-`browser-multi-tabs` 和 `embedded-browser`。
+`remote-device-onboarding`、`workspace-tabs`、`cloud-project-creation`、
+`priority-filter`、`telemetry-consent`、`automation-lifecycle`、
+`project-automation`、`project-assignment-notification`、
+`offline-local-project-space`、`plugin-auto-update`、`project-ai-settings`、
+`model-routing`、`permission-modes`、`core-task-flow`、`task-attachments`、
+`cloud-git-worktree`、`cloud-worktree-capability`、`cloud-worktree-create`、
+`cloud-worktree-queued-cancel`、`cloud-worktree-tools`、
+`cloud-worktree-archive-restore`、`cloud-worktree-device-restart`、
+`context-compaction`、`runtime-task-queue`、`codex-notification-isolation`、
+`split-workbench`、`window-lifecycle`、`goal-lifecycle`、
+`supervisor-lifecycle`、`resilience`、`conversation-state`、`temporary-chat`、
+`workspace-attachments`、`rendering-extensions`、`change-request-status`、
+`claude-runtime`、`local-file-preview`、`local-harness`、`harness-apps`、
+`browser-multi-tabs`、`embedded-browser` 和 `browser-toolbar-actions`。
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
-完整 Core 套件会把每个 checkpoint 展开为独立的 GitHub Actions matrix job 并行
-执行，而不是在单个 `Wework Desktop E2E (Core)` job 中串行运行。CI 会先构建一次
-带固定测试端口的 Core Tauri 应用、Executor 和 Codex artifact；各 checkpoint
-只安装桌面运行时依赖并下载复用该 artifact，不再重复安装 pnpm、Rust、Python 或
-uv，也不重复执行 Vite、Tauri 和 Executor 构建。插件与云端套件需要不同的构建时
-配置，仍作为独立 job 与 Core 构建并行。
+完整 Core 和 Cloud 套件各固定使用 5 个 GitHub Actions matrix job；每个 job
+串行运行其 checkpoint，避免多个真实 Tauri、WebView 和 Executor 栈在同一
+GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 10 秒门槛。
+跨 runner 的 10 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡，
+新增或明显变慢的 checkpoint 必须重新校准分片，不能靠增加 runner、删覆盖或
+重跑失败用例来缩短关键路径。CI 会先构建一次 Core Tauri
+应用、Executor 和 Codex artifact，其中 `--build-only` 会在同一 runner 内并行
+编译相互独立的 Tauri 应用和 Executor；各 Core/Cloud 分片下载并复用该 artifact，
+不再重复执行 Vite、Tauri 和 Executor 构建。Rust 构建同时复用由 `main`
+维护的 Cargo target cache 和 sccache 编译单元：target cache 保障 PR 与首次
+运行的延迟，sccache 降低依赖或源码变化后的增量编译成本。归档时只移除复制到
+artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 10 个分片的
+上传和下载时间。桌面 E2E 构建跳过由并行 Lint 工作流完整执行的重复 TypeScript
+类型检查，只保留 Vite/Tauri 的真实产物构建；测试覆盖与类型门禁均保持不变。
+插件套件需要独立构建配置，仍作为
+单独 job 与共享 Core 构建并行。成功和失败诊断都保留完整证据；PNG 等已压缩文件
+上传时禁用二次压缩，避免诊断归档延长流水线尾部。
 merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
 重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。映射规则位于
 `.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
@@ -141,7 +161,9 @@ pnpm --filter wework e2e:desktop -- --segment local-harness
 pnpm --filter wework e2e:desktop -- --segment model-routing
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
+pnpm --filter wework e2e:desktop -- --segment temporary-chat
 pnpm --filter wework e2e:desktop -- --segment workspace-attachments
+pnpm --filter wework e2e:desktop -- --segment claude-runtime
 ```
 
 `automation-lifecycle` 独立覆盖自动化创建、立即执行、固定既有任务以及定时继续
@@ -149,6 +171,16 @@ pnpm --filter wework e2e:desktop -- --segment workspace-attachments
 sidecar 和本地模型协议矩阵。两者都建立自身最小 fixture，因此不会拉长
 `core-task-flow` 的任务创建、追问和后台计划关键路径。无参数运行完整桌面流程时，
 这些场景仍会执行，不会因为分段而减少覆盖。
+
+`temporary-chat` 使用独立本地项目和真实 Codex ephemeral thread，保持 follow-up
+回复处于流式运行状态，验证 user message 在“正在思考”之前显示，并在切换主会话后
+验证临时聊天内容仍从运行时会话缓存恢复。
+
+`claude-runtime` 使用真实 Tauri Wework、Backend、local executor 和 remote
+executor，验证 Claude Code 在本机与远程设备上的创建、追问和取消路径。场景还会
+确认远程执行使用目标设备自己的 Claude Code binary，并以可见 DOM 为准检查任务
+完成后侧栏和 composer 不再显示 running；布局保留的隐藏 sidebar preview 不计入
+可见状态断言。
 
 `local-harness` 使用 `.github/claude-code-cli/package-lock.json` 固定的真实
 OpenCode、Claude Code 和 Kimi Code CLI，不允许用只记录参数的 shell fixture
@@ -204,6 +236,7 @@ GitHub Actions 的 Executor E2E job 会在恢复 Python、Node.js 和 Playwright
 `wework/e2e/utils/mock-response-api-server.mjs` 提供真实 HTTP 服务，用于验证本地模型能力探针请求：
 
 - `POST /v1/responses`：返回非流式 Responses API JSON。
+- `POST /v1/responses` 能力探针：返回 `text/event-stream` 工具调用事件，例如 `response.output_item.added` 和 `response.output_item.done`。
 - `POST /v1/responses` 且 `stream: true`：返回 `text/event-stream`，事件包含 `response.created`、`response.output_text.delta` 和 `response.completed`。
 - `POST /v1/chat/completions`：校验并返回 Chat Completions function tool call。
 - `POST /v1/messages`：校验并返回 Anthropic Messages `tool_use`。

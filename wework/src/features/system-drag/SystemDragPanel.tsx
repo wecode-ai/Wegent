@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import type { DragDropEvent } from '@tauri-apps/api/window'
 import { emit, listen } from '@tauri-apps/api/event'
-import { MessageSquarePlus, CornerDownRight, Archive, Check, AlertCircle } from 'lucide-react'
+import { MessageSquarePlus, CornerDownRight, Archive, Check, AlertCircle, X } from 'lucide-react'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 
 type DropAction = 'new-chat' | 'follow-up' | 'stash'
@@ -13,11 +14,19 @@ type NativeTextDropPayload = { text: string; x: number }
 const FEEDBACK_DURATION_MS = 800
 const DROP_DEDUP_WINDOW_MS = 500
 const PANEL_WIDTH = 440
+const PANEL_CONTENT_INSET = 5
+const BRAND_WIDTH = 64
+const CLOSE_AREA_WIDTH = 32
 
-function actionAtPosition(x: number, hasConversation: boolean): DropAction {
-  if (!hasConversation) return x < PANEL_WIDTH / 2 ? 'new-chat' : 'stash'
-  if (x < PANEL_WIDTH / 3) return 'new-chat'
-  if (x < (PANEL_WIDTH / 3) * 2) return 'follow-up'
+function actionAtPosition(x: number, hasConversation: boolean): DropAction | null {
+  const actionAreaStart = PANEL_CONTENT_INSET + BRAND_WIDTH
+  const actionAreaEnd = PANEL_WIDTH - PANEL_CONTENT_INSET - CLOSE_AREA_WIDTH
+  const dropAreaWidth = actionAreaEnd - actionAreaStart
+  const relativeX = x - actionAreaStart
+  if (relativeX < 0 || relativeX >= dropAreaWidth) return null
+  if (!hasConversation) return relativeX < dropAreaWidth / 2 ? 'new-chat' : 'stash'
+  if (relativeX < dropAreaWidth / 3) return 'new-chat'
+  if (relativeX < (dropAreaWidth / 3) * 2) return 'follow-up'
   return 'stash'
 }
 
@@ -29,6 +38,14 @@ export function SystemDragPanel() {
   const lastFileDropRef = useRef<{ key: string; timestamp: number } | null>(null)
   const lastTextDropRef = useRef<{ key: string; timestamp: number } | null>(null)
   const lastOverLogRef = useRef<{ x: number; timestamp: number } | null>(null)
+
+  const dismiss = useCallback(() => {
+    setDropStatus(null)
+    setActiveAction(null)
+    void invoke('dismiss_system_drag_panel')
+  }, [])
+
+  useEscapeKey(dismiss)
 
   useEffect(() => {
     document.documentElement.dataset.systemDragPanel = 'true'
@@ -59,6 +76,10 @@ export function SystemDragPanel() {
       const text = event.payload.text.trim()
       if (!text) return
       const action = actionAtPosition(event.payload.x, Boolean(conversationTitle))
+      if (!action) {
+        dismiss()
+        return
+      }
       const key = `${action}:${text}`
       const now = Date.now()
       const previous = lastTextDropRef.current
@@ -74,7 +95,7 @@ export function SystemDragPanel() {
       cancelled = true
       dispose?.()
     }
-  }, [conversationTitle])
+  }, [conversationTitle, dismiss])
 
   useEffect(() => {
     let cancelled = false
@@ -106,6 +127,10 @@ export function SystemDragPanel() {
         }
         setActiveAction(action)
         if (payload.type === 'drop' && payload.paths.length > 0) {
+          if (!action) {
+            dismiss()
+            return
+          }
           const paths = [...new Set(payload.paths)]
           const key = `${action}:${[...paths].sort().join('\u0000')}`
           const now = Date.now()
@@ -135,7 +160,7 @@ export function SystemDragPanel() {
       cancelled = true
       unlisten?.()
     }
-  }, [conversationTitle])
+  }, [conversationTitle, dismiss])
 
   useEffect(() => {
     let cancelled = false
@@ -263,6 +288,24 @@ export function SystemDragPanel() {
                 ))}
             </div>
           )}
+          <div
+            className="flex w-8 shrink-0 items-center justify-center"
+            onDragOver={event => event.preventDefault()}
+            onDrop={event => {
+              event.preventDefault()
+              dismiss()
+            }}
+          >
+            <button
+              type="button"
+              data-testid="system-drag-close-button"
+              aria-label={t('common.close', '关闭')}
+              onClick={dismiss}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </section>
     </main>

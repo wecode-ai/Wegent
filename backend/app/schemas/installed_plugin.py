@@ -89,6 +89,34 @@ class PluginConnectorComponent(BaseModel):
     )
 
 
+class WorkbenchFrontendModule(BaseModel):
+    """Same-realm frontend entry exported by a Wework plugin package."""
+
+    entry: str
+    export: str = "default"
+    sha256: str
+
+
+class WorkbenchDesktopSidecar(BaseModel):
+    """Desktop JSON-RPC sidecar declared by a Wework plugin package."""
+
+    command: str
+    args: List[str] = Field(default_factory=list)
+    sha256: str
+    capabilities: List[str] = Field(default_factory=list)
+
+
+class WorkbenchPluginComponent(BaseModel):
+    """Optional Wework workbench runtime contribution."""
+
+    apiVersion: Literal["1"] = "1"
+    required: bool = False
+    pinnedToClientVersion: bool = False
+    clientVersion: Optional[str] = None
+    frontend: Optional[WorkbenchFrontendModule] = None
+    desktop: Optional[WorkbenchDesktopSidecar] = None
+
+
 class InstalledPluginComponents(BaseModel):
     """Cross-runtime plugin component inventory."""
 
@@ -102,6 +130,7 @@ class InstalledPluginComponents(BaseModel):
     monitors: List[PluginPathComponent] = Field(default_factory=list)
     bins: List[PluginPathComponent] = Field(default_factory=list)
     settings: Optional[Dict[str, Any]] = None
+    workbench: Optional[WorkbenchPluginComponent] = None
 
 
 class PluginInterface(BaseModel):
@@ -164,7 +193,7 @@ class InstalledPluginSpec(BaseModel):
     pluginId: Optional[int] = None
     releaseId: Optional[int] = None
     desiredVersion: Optional[str] = None
-    updatePolicy: Literal["manual"] = "manual"
+    updatePolicy: Literal["manual", "auto"] = "manual"
     sourceProvider: Literal["wegent", "codex", "user"] = "wegent"
     sourceLabel: str = "Wegent 官方"
     visibility: Literal["personal", "workspace", "public"] = "workspace"
@@ -222,6 +251,7 @@ class InstalledPluginUpdateRequest(BaseModel):
     displayName: Optional[str] = None
     description: Optional[str] = None
     releaseId: Optional[int] = None
+    updatePolicy: Optional[Literal["manual", "auto"]] = None
 
 
 class PluginUploadInfo(BaseModel):
@@ -319,6 +349,46 @@ class PluginDeviceSyncResponse(BaseModel):
     deviceId: str
     pendingCount: int = 0
     sync: DeviceCapabilitySyncResponse
+
+
+class PluginDeviceReportItem(BaseModel):
+    """One package version observed on the reporting device."""
+
+    installedPluginId: int = Field(gt=0)
+    releaseId: int = Field(gt=0)
+    version: str = Field(min_length=1)
+
+
+class PluginDeviceReportRequest(BaseModel):
+    """Local packages already present on a device; do not push installs."""
+
+    plugins: List[PluginDeviceReportItem] = Field(default_factory=list)
+
+
+class PluginDeviceReportResponse(BaseModel):
+    """Result of acknowledging local plugin presence on one device."""
+
+    deviceId: str
+    acknowledgedCount: int = 0
+    acknowledgedInstalledPluginIds: List[int] = Field(default_factory=list)
+
+
+class PluginAutoUpdateItem(BaseModel):
+    """One account installation advanced to a newer marketplace release."""
+
+    installedPluginId: int
+    pluginId: int
+    fromReleaseId: int
+    toReleaseId: int
+    version: str
+
+
+class PluginAutoUpdateBatchResponse(BaseModel):
+    """One bounded batch of automatic marketplace plugin updates."""
+
+    updated: List[PluginAutoUpdateItem] = Field(default_factory=list)
+    updatedCount: int = 0
+    remainingCount: int = 0
 
 
 class PluginMarketplaceCapabilities(BaseModel):
@@ -423,6 +493,23 @@ class PluginAccessResponse(BaseModel):
     targets: List[PluginAccessTarget] = Field(default_factory=list)
     allowCopy: bool = False
     revocationPendingCount: int = 0
+
+
+class PluginDeleteImpactResponse(BaseModel):
+    pluginId: int
+    affectedUserCount: int = 0
+    installedDeviceCount: int = 0
+    sharedTargetCount: int = 0
+    impactRevision: str
+
+
+class PluginDeleteRequest(BaseModel):
+    impactRevision: str = Field(..., min_length=1)
+    revokeAndDelete: bool = False
+
+
+class PluginDeleteResponse(BaseModel):
+    pendingDeviceCount: int = 0
 
 
 class PluginCopyResponse(BaseModel):

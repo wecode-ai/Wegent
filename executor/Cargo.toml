@@ -1,6 +1,6 @@
 [package]
 name = "wegent-executor"
-version = "1.8.5"
+version = "1.8.6"
 edition = "2021"
 rust-version = "1.77"
 description = "Wegent task executor service"

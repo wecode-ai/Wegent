@@ -8,29 +8,92 @@ sidebar_position: 5
 
 The Wework desktop app uses top-level tabs for tasks, project spaces, agents, and other product pages. Sidebar links navigate within the active tab. A new tab is created only when you select the top-bar **+** or another explicit new-tab action from a tab menu.
 
-The first main window starts with three default tabs: Task, Project spaces, and Agent. Every tab is an independent work instance. Two Task tabs retain separate conversations and unsent drafts, two Project-space tabs retain separate projects and routes, and two Agent tabs retain separate page state. Switching tabs does not synchronize content from another tab.
+When experimental features are enabled, the first main window shows three default tabs: Task, Workspaces, and Agent. When experimental features are off, the Workspaces tab is hidden. Every tab is an independent work instance. Two Task tabs retain separate conversations and unsent drafts, two Workspace tabs retain separate projects and routes, and two Agent tabs retain separate page state. Switching tabs does not synchronize content from another tab.
 
 When many tabs are open, the tab list scrolls horizontally while the **+** and the rightmost feedback button remain visible. A tab can also be moved to a separate window from its context menu. After the move succeeds, the source window removes the tab and the destination window contains only the moved tab and its state; it does not create the three default tabs again. If destination-window creation fails, the source tab remains unchanged.
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
-## Move between project-space tasks and runtime tasks
+## Manage issues and tasks in workspaces
 
-When a runtime task is linked to a specific project-space task, select the task name in the runtime task's Environment information to open the matching project-space tab and task details. The task details' **Local execution** section lists the linked Wework runtime tasks; select a record to return to its runtime task tab. Both directions reuse existing tabs and preserve a restorable project-space or runtime-task route.
+The top-level **Workspace** tab is where users browse boards, issues, and their linked tasks. It remains independent from Task tabs, preserving its selected board, route, and interface state.
+
+Selecting **New Issue** in a workspace opens a lightweight composer instead of a task form. Choose the destination board and describe the outcome in natural language; the first non-empty line becomes the title and the remaining text becomes the description. The issue is created directly in the selected status column and opens immediately for follow-up details such as participants and execution steps. The board header and every status column expose the same creation flow.
+
+Without any setup, new tasks select **My tasks** by default. Sending the first message creates a work item, links the runtime task, and keeps its execution status synchronized. Existing runtime tasks are also linked into **My tasks**, so this board is another view of the Task-page inventory rather than an independent task list.
+
+Every runtime task has at least one system-managed **My tasks** issue. A user may additionally link the task to one issue in a local or cloud project space. Task context prefers the user-selected issue and falls back to the system issue when no user link exists. The system issue remains linked and receives runtime status, task-title, and archive-state updates even after the extra project-space link is removed, so unlinking another board never removes the task from **My tasks**. Issues may also exist without a runtime task, which is why an ordinary project-space board is not itself a task inventory.
+
+Lanes follow actual execution state: a task that is explicitly queued but has not started appears in **To start**, and an active task appears in **In progress**. Successful, stopped, cancelled, and failed tasks all enter **To confirm**. A successful run means execution has ended; it does not automatically accept the work as completed. After confirming the result, the user can manually move the card to **Completed**. Confirmation cards show the linked task and the first three lines of the final AI response so users can decide whether more work is needed. Archived runtime tasks are excluded from the completed lane. The completed lane also provides batch archive, with an additional confirmation when a workspace still contains uncommitted changes.
+
+Hover over a board card's linked-task area to preview the current task progress. The preview remains visible while the pointer stays over either the trigger area or the preview itself, including when live task activity scrolls internally to the latest content. It closes after the pointer leaves both areas, the surrounding board scrolls, or the user presses `Esc`.
+
+The work-item control above the composer shows the board name and work-item identifier. Its menu exposes the next step, linked-task count, and participants, and can open details in the unified right workspace. **Open in work-item board** focuses the linked work item while preserving the original Task tab. If a board tab for the same project is already open, Wework reuses it instead of loading a duplicate board; otherwise, it creates a board tab.
+
+Local projects do not each create a separate board. Their tasks share **My tasks** and carry a project field, so project views can filter the same work-item data.
+
+## Create issues from external systems
+
+Maintainers of a cloud workspace can generate a hook address under **Manage > External task intake**. Configure this address in GitHub, GitLab, Sentry, Grafana, an alerting platform, or any system that supports HTTP callbacks. Each accepted external event is deterministically converted into an unassigned issue in the workspace inbox. Existing `task.created` automation rules continue to run after the issue is created.
+
+The hook address contains its own credential. Treat it as a secret and do not store it in a public repository or log. Select **Rotate address** if it is exposed; the old address becomes invalid immediately. Disable the hook when intake must be paused. This capability currently supports cloud workspaces whose tasks are managed by Wework.
+
+Built-in adapters recognize GitHub Issue `opened` and `reopened` events, GitLab Issue `open` and `reopen` events, and unresolved Sentry and Grafana alerts. Closed, resolved, or titleless events do not create issues, but their receipt is recorded. The same external event ID, delivery ID, or request body is processed only once.
+
+Other systems do not need to implement a Wework-specific protocol. They can send JSON, form data, or plain text. Generic JSON must provide at least one of `title`, `subject`, `summary`, `name`, or `message`:
+
+```bash
+curl -X POST '<Hook address>' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: incident-2026-08-16-001' \
+  -d '{
+    "title": "Production payment failures",
+    "description": "The error rate crossed its threshold. Investigate and restore service.",
+    "url": "https://monitor.example.com/incidents/001"
+  }'
+```
+
+For plain-text requests, the first line becomes the title and the complete body becomes the description. Request bodies are limited to 1 MiB. The service returns HTTP `202` with a `status` of `created`, `duplicate`, `ignored`, or `failed`; a `created` response also includes the new issue's `loop_item_id`.
+
+## Move between issues and runtime tasks
+
+The issue details' **Execution history** section lists linked Wework runtime tasks. Selecting a record opens the issue context and task conversation side by side in the unified workspace; select **Open full task** only when the complete execution interface is needed. Board and Task tabs retain their own routes and interface state.
+
+Board cards continue to represent issues; Wework does not create separate PR or MR cards. When a linked task has a PR or MR, its task icon in the execution history is replaced by the change-request status icon. The project sidebar on the Task page reuses the same state and interaction. Running tasks are always shown. A stopped task remains visible only while its PR or MR is open; it is hidden after the request is merged or closed, or when no request was created.
+
+Status lookup runs through the Executor on the device that owns the task. A local task uses the locally authenticated `gh` or `glab` CLI and does not require separate REST task authentication for the board. Wework batches branch lookups by repository and stores results in a local cache instead of querying once per task. Visible pages refresh periodically and check again when the app regains focus.
+
+When checks fail, a merge conflict exists, or Merge Queue enters an abnormal state, the status menu provides **Continue with AI repair**. This action continues the original runtime-task conversation with the failure context instead of creating another task. Closed PRs and MRs do not expose the repair action.
 
 ## Use the project sidebar
 
 Select a project name to expand or collapse its runtime tasks. Collapsed projects use a closed-folder icon; expanding a project changes the icon to an open folder so its state is easy to recognize.
 
+New tasks appear immediately at the top of their project's task list. Tasks with a saved drag order continue to follow that manual order; after a new task receives its persisted order, it remains stable within the same project ordering.
+
+## Use IM notifications
+
+IM notifications are generally available and do not require **Experimental features**. Use the message-bubble entry in the sidebar account area to configure away-from-computer reminders. After opening a runtime task, select **Continue in private chat** in the title bar to bind that task to an available IM private chat.
+
+After binding succeeds, Wework's switch confirmation uses the current task title instead of an internal `runtime-xxx` task identifier. Later task replies continue to be delivered to the selected private chat.
+
 ## Split tasks by dragging
 
 Drag a task from the sidebar to the top, bottom, left, or right target in the workbench to create a split in that direction. Dropping on the center target replaces the task in the current area. Once the pointer enters the workbench, sidebar sorting and automatic scrolling stop so they cannot take over the split operation. Move the pointer back into the sidebar to resume task reordering.
+
+A split is saved as a conversation group. Tasks in the same group show the same **Split N** badge in the sidebar. Selecting any member restores the complete split group and focuses that task. Selecting a task outside the group switches to a single-task view without replacing a member of the saved split; selecting any member later returns to the group. Multiple split groups can be retained, but a task belongs to only one group at a time. A group dissolves automatically when closing panes leaves only one task.
+
+When a split pane has limited height, an idle composer automatically collapses to a single text line and a smaller send button, hiding attachment, quick-phrase, model, and other feature controls. Selecting or focusing the composer animates it back to the complete input surface; selecting outside collapses it again. The composer remains expanded when attachments, code comments, mode settings, or other pending context must stay visible.
 
 ## Start a new task
 
 The new-task page uses compact suggestion buttons to help choose a task direction. Selecting a direction reveals more specific prompts. Selecting a prompt writes it into the composer, where it can still be edited before sending.
 
 Project selection, message input, quick phrases, and model selection share one composer surface. The composer shows a blue border while focused, and the simplified launcher preserves project, attachment, quick-phrase, and model controls.
+
+## Use the Popout Window composer
+
+When no task is running, the Wework Popout Window uses a compact composer with a fixed height. After the message exceeds three lines, the text scrolls inside the editor while attachment, model, and send controls remain visible.
 
 ## Files and terminals
 

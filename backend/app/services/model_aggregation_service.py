@@ -42,6 +42,7 @@ from app.services.runtime_codex_model import (
     build_codex_runtime_model_config,
     is_codex_runtime_model_enabled,
 )
+from shared.codex_model_catalog import codex_catalog_model_id_from_config
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +261,9 @@ class ModelAggregationService:
                 for key, value in model_crd.spec.modelConfig.items()
                 if key != "modelCapabilities"
             }
+            codex_catalog_model_id = codex_catalog_model_id_from_config(env)
+            if codex_catalog_model_id:
+                config["codex_catalog_model_id"] = codex_catalog_model_id
             if model_crd.spec.protocol:
                 config = {**config, "protocol": model_crd.spec.protocol}
             if model_crd.spec.apiFormat:
@@ -594,13 +598,31 @@ class ModelAggregationService:
                 user_id=current_user.id,
                 namespace=namespace,
             )
-            referenced_ids = {resource.id for resource in referenced_models}
-            existing_ids = {resource.id for resource in user_model_resources}
-            user_model_resources.extend(
-                resource
-                for resource in referenced_models
-                if resource.id not in existing_ids
+            direct_model_by_name: dict[str, Kind] = {}
+            for direct_model in sorted(
+                user_model_resources,
+                key=lambda model: model.id,
+            ):
+                direct_model_by_name.setdefault(direct_model.name, direct_model)
+
+            referenced_model_by_name: dict[str, Kind] = {}
+            referenced_models.sort(key=lambda model: model.id)
+            for referenced_model in referenced_models:
+                referenced_model_by_name.setdefault(
+                    referenced_model.name,
+                    referenced_model,
+                )
+            referenced_ids = {
+                resource.id
+                for name, resource in referenced_model_by_name.items()
+                if name not in direct_model_by_name
+            }
+            direct_model_by_name.update(
+                (name, resource)
+                for name, resource in referenced_model_by_name.items()
+                if name not in direct_model_by_name
             )
+            user_model_resources = list(direct_model_by_name.values())
 
             for resource in user_model_resources:
                 # Format the resource to get the full CRD data

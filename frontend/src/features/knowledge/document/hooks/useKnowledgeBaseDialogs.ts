@@ -11,9 +11,10 @@
 
 import { useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { buildKbUrl } from '@/utils/knowledgeUrl'
+import { toast } from 'sonner'
 import { migrateKnowledgeBaseToGroup } from '@/apis/knowledge'
 import { createCodeWiki } from '@/features/knowledge/code-wiki/createCodeWiki'
+import { useTranslation } from '@/hooks/useTranslation'
 import type {
   KnowledgeBase,
   KnowledgeBaseCreate,
@@ -86,6 +87,7 @@ export function useKnowledgeBaseDialogs({
   reloadGroupKbs,
 }: UseKnowledgeBaseDialogsParams): UseKnowledgeBaseDialogsReturn {
   const router = useRouter()
+  const { t } = useTranslation('knowledge')
 
   // Create dialog state
   const [showCreateDialog, setShowCreateDialog] = useState(false)
@@ -154,16 +156,14 @@ export function useKnowledgeBaseDialogs({
           // attached, and hand-picking here is what dropped the summary settings and
           // left the retrieval config to be auto-resolved instead of taken from the
           // form. `data` already carries every field the dialog collected.
-          const wiki = await createCodeWiki({
+          await createCodeWiki({
             namespace,
             data,
           })
           setShowCreateDialog(false)
           resetCreateDialogState()
-          await sidebar.refreshAll()
-          // Straight into the reader: generation has already started, and the empty
-          // state there shows its progress.
-          router.push(buildKbUrl(namespace, wiki.name, false))
+          toast.success(t('codeWiki.create.created'))
+          void sidebar.refreshAll()
           return
         }
 
@@ -214,6 +214,7 @@ export function useKnowledgeBaseDialogs({
       reloadGroupKbs,
       resetCreateDialogState,
       router,
+      t,
     ]
   )
 

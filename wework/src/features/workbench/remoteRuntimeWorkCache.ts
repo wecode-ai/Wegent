@@ -10,6 +10,7 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import { EMPTY_RUNTIME_WORK, mergeRuntimeWorkLists } from './workbenchCloudStatus'
+import { normalizeRuntimeTaskSummary } from './runtimeTaskLifecycle/projection'
 
 const REMOTE_RUNTIME_WORK_CACHE_VERSION = 1
 const REMOTE_RUNTIME_WORK_CACHE_KEY_PREFIX = 'wework.workbench.remoteRuntimeWork.v1'
@@ -48,6 +49,16 @@ function nullableNumberValue(value: unknown): number | null | undefined {
 
 function booleanValue(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined
+}
+
+function runtimeTurnStatusValue(value: unknown): RuntimeTaskSummary['turnStatus'] | undefined {
+  if (value === null) return null
+  return value === 'inProgress' ||
+    value === 'completed' ||
+    value === 'interrupted' ||
+    value === 'failed'
+    ? value
+    : undefined
 }
 
 function sanitizeProjectRoot(value: unknown): RuntimeProjectRoot | null {
@@ -147,7 +158,7 @@ function sanitizeTask(value: unknown, workspacePath: string): RuntimeTaskSummary
   if (!taskId || !title || !runtime) return null
 
   const gitInfo = sanitizeGitInfo(task.gitInfo)
-  return {
+  return normalizeRuntimeTaskSummary({
     taskId,
     title,
     runtime,
@@ -169,6 +180,18 @@ function sanitizeTask(value: unknown, workspacePath: string): RuntimeTaskSummary
     ...(typeof task.updatedAt === 'string' || typeof task.updatedAt === 'number'
       ? { updatedAt: task.updatedAt }
       : {}),
+    ...(typeof task.completedAt === 'string' || typeof task.completedAt === 'number'
+      ? { completedAt: task.completedAt }
+      : {}),
+    ...(stringValue(task.threadStatus) !== undefined
+      ? { threadStatus: stringValue(task.threadStatus) }
+      : {}),
+    ...(runtimeTurnStatusValue(task.turnStatus) !== undefined
+      ? { turnStatus: runtimeTurnStatusValue(task.turnStatus) }
+      : {}),
+    ...(booleanValue(task.continuable) !== undefined
+      ? { continuable: booleanValue(task.continuable) }
+      : {}),
     ...(booleanValue(task.pinned) !== undefined ? { pinned: booleanValue(task.pinned) } : {}),
     ...(nullableNumberValue(task.pinnedOrder) !== undefined
       ? { pinnedOrder: nullableNumberValue(task.pinnedOrder) }
@@ -179,7 +202,7 @@ function sanitizeTask(value: unknown, workspacePath: string): RuntimeTaskSummary
     ...(nullableStringValue(task.status) !== undefined
       ? { status: nullableStringValue(task.status) }
       : {}),
-  }
+  })
 }
 
 function sanitizeWorkspace(value: unknown): RuntimeDeviceWorkspace | null {

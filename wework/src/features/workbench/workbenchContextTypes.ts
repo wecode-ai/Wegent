@@ -1,7 +1,9 @@
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
+import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
+  CloneGitRepositoryInput,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   DeleteDeviceWorkspaceRequest,
@@ -12,6 +14,7 @@ import type {
   LocalDeviceApp,
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
+  MultiAttachmentUploadState,
   ModelOptions,
   ModelSelectionConfig,
   ModelType,
@@ -37,6 +40,7 @@ import type {
   RuntimeTaskCreateRequest,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectAiSettings,
   RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
@@ -91,6 +95,7 @@ export interface SendCurrentInputOptions {
   modelSelection?: ModelSelectionConfig | null
   additionalSkills?: SkillRef[]
   clientUserMessageId?: string
+  optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
@@ -99,6 +104,9 @@ export interface SendCurrentInputOptions {
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void | Promise<void>
+  prepareRuntimeTask?: (
+    address: RuntimeTaskAddress
+  ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
 }
@@ -107,13 +115,24 @@ export interface CreateTemporaryRuntimeTaskOptions {
   project?: ProjectWithTasks | null
   source?: RuntimeTaskAddress | null
   attachments?: Attachment[]
+  optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
   onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
 }
 
 export interface CreateProjectRuntimeTaskOptions {
   project?: ProjectWithTasks | null
+  /** Select a project workspace without mutating the global workbench
+   * selection, for embedded project-space composers. */
+  deviceWorkspaceId?: number | null
+  /** Reuse the exact workspace or worktree from a previous runtime task
+   * without inheriting its conversation. */
+  workspaceSource?: RuntimeTaskAddress | null
+  /** Project-space entry points can pin the shell independently from the
+   * globally selected model. */
+  runtime?: RuntimeName
   attachments?: Attachment[]
+  optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   collaborationMode?: 'default' | 'plan'
@@ -140,11 +159,13 @@ export interface CreateProjectRuntimeTaskOptions {
   deviceId?: string | null
   additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
+  prepareRuntimeTask?: SendCurrentInputOptions['prepareRuntimeTask']
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
 }
 
 export interface RuntimePaneActionOptions {
   onError?: (error: string) => void
+  silentBusyRetry?: boolean
 }
 
 export interface RuntimePaneGuidanceResult {
@@ -173,6 +194,7 @@ export interface WorkbenchContextValue {
     isModelSelectionReady: boolean
     input: string
     composerError?: string | null
+    composerErrorByScope?: Readonly<Record<string, string>>
     trialTemplates: PluginPathComponent[]
     trialPluginName?: string
     trialPluginApp?: LocalDeviceApp
@@ -180,6 +202,7 @@ export interface WorkbenchContextValue {
     dismissTrialGuide?: () => void
     applyTrialTemplate?: (template: PluginPathComponent) => void
     selectedSkills: SkillRef[]
+    attachmentStateByScope: Readonly<Record<string, MultiAttachmentUploadState>>
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
     errors: Map<string, string>
@@ -195,12 +218,17 @@ export interface WorkbenchContextValue {
     setInput: (value: string) => void
     setInputForScope: (scopeKey: string, value: string) => void
     setComposerError?: (error: string | null) => void
+    setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>
+    handleFileSelectForScope: (scopeKey: string, files: File | File[]) => Promise<void>
     addExistingAttachment: (attachment: Attachment) => void
+    addExistingAttachmentForScope: (scopeKey: string, attachment: Attachment) => void
     removeAttachment: (attachmentId: number) => Promise<void>
+    removeAttachmentForScope: (scopeKey: string, attachmentId: number) => Promise<void>
     resetAttachments: () => void
+    resetAttachmentsForScope: (scopeKey: string) => void
     listLocalSkills: () => Promise<LocalDeviceSkill[]>
     listLocalApps: () => Promise<LocalDeviceApp[]>
   }
@@ -275,7 +303,6 @@ export interface WorkbenchContextValue {
   unsubscribeRuntimeTaskNotifications: (
     address: RuntimeTaskAddress
   ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
-  rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: RefreshWorkLists
   refreshDevices: () => Promise<void>
   getRemoteDeviceStartupCommand: () => Promise<DockerRemoteDeviceCommandResponse>
@@ -299,6 +326,7 @@ export interface WorkbenchContextValue {
     name: string
     roots: string[]
     defaultProjectSpace: RuntimeProjectSpaceRef | null
+    aiSettings: RuntimeProjectAiSettings | null
   }) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>
@@ -310,6 +338,7 @@ export interface WorkbenchContextValue {
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
+  cloneGitRepository: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
   loadEnvironmentInfo: (
     project: ProjectWithTasks | null,
     workspaceTarget?: WorkspaceTarget | null,
@@ -424,7 +453,11 @@ export interface WorkbenchProviderProps {
   children: ReactNode
   user: User
   services?: WorkbenchServices
+  lifecycleStore?: RuntimeTaskLifecycleStore
   onStartupReadyChange?: (ready: boolean) => void
   workspaceTabId?: string
+  consumePluginTrials?: boolean
+  publishDebugSnapshots?: boolean
   syncRemoteProjects?: boolean
+  syncRuntimeTaskLifecycle?: boolean
 }

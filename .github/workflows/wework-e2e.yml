@@ -33,7 +33,12 @@ jobs:
   changes:
     name: Detect Wework E2E Changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     outputs:
+      browser_image: ${{ steps.image.outputs.browser-ref }}
+      desktop_image: ${{ steps.image.outputs.desktop-ref }}
       wework_e2e: ${{ steps.classify.outputs.wework_e2e }}
       wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
       wework_desktop_core_e2e: ${{ steps.classify.outputs.wework_desktop_core_e2e }}
@@ -42,6 +47,7 @@ jobs:
       wework_desktop_cloud_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_cloud_e2e_matrix }}
       wework_desktop_other_e2e: ${{ steps.classify.outputs.wework_desktop_other_e2e }}
       wework_desktop_other_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_other_e2e_matrix }}
+      wework_desktop_macos_inspector_e2e: ${{ steps.classify.outputs.wework_desktop_macos_inspector_e2e }}
 
     steps:
       - name: Checkout code
@@ -66,23 +72,6 @@ jobs:
             .github/scripts/classify-wework-desktop-e2e.sh < "$changed_files"
           fi
 
-  prepare-wework-e2e-image:
-    name: Prepare Wework E2E Image
-    needs: changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.wework_e2e == 'true' || needs.changes.outputs.wework_desktop_e2e == 'true') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      browser_image: ${{ steps.image.outputs.browser-ref }}
-      desktop_image: ${{ steps.image.outputs.desktop-ref }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Resolve Wework E2E image
         id: image
         run: |
@@ -94,28 +83,43 @@ jobs:
             >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-
       - name: Check Wework browser E2E image
+        if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
         id: browser-image-check
         env:
           IMAGE: ${{ steps.image.outputs.browser-ref }}
         run: |
-          if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Check Wework desktop E2E image
+        if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.classify.outputs.wework_e2e == 'true' || steps.classify.outputs.wework_desktop_e2e == 'true') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
+        id: desktop-image-check
+        env:
+          IMAGE: ${{ steps.image.outputs.desktop-ref }}
+        run: |
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.browser-image-check.outputs.exists == 'false' || steps.desktop-image-check.outputs.exists == 'false'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
       - name: Build and publish Wework browser E2E image
-        if: steps.browser-image-check.outputs.exists != 'true'
+        if: steps.browser-image-check.outputs.exists == 'false'
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
           context: .
@@ -125,19 +129,8 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser,mode=max
 
-      - name: Check Wework desktop E2E image
-        id: desktop-image-check
-        env:
-          IMAGE: ${{ steps.image.outputs.desktop-ref }}
-        run: |
-          if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Build and publish Wework desktop E2E image
-        if: steps.desktop-image-check.outputs.exists != 'true'
+        if: steps.desktop-image-check.outputs.exists == 'false'
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
           context: .
@@ -151,14 +144,13 @@ jobs:
     name: Wework E2E
     needs:
       - changes
-      - prepare-wework-e2e-image
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       HOME: /root
     container:
-      image: ${{ needs.prepare-wework-e2e-image.outputs.browser_image }}
+      image: ${{ needs.changes.outputs.browser_image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -200,14 +192,14 @@ jobs:
     name: Build Shared Wework Desktop E2E Artifact
     needs:
       - changes
-      - prepare-wework-e2e-image
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       HOME: /root
+      WEWORK_E2E_SKIP_TYPECHECK: "true"
     container:
-      image: ${{ needs.prepare-wework-e2e-image.outputs.desktop_image }}
+      image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -221,6 +213,16 @@ jobs:
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
           setup-toolchain: "false"
+
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Restore bundled Codex cache
+        id: bundled-codex-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/codex
+          key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
 
       - name: Restore shared Wework desktop E2E Cargo dependencies
         id: wework-desktop-cargo-cache
@@ -238,8 +240,15 @@ jobs:
       - name: Prepare bundled sidecars
         working-directory: ./wework
         run: |
-          pnpm run prepare:codex --materialize
-          pnpm run prepare:dws
+          node scripts/prepare-codex-binary.mjs --materialize &
+          codex_pid=$!
+          node scripts/prepare-dws-binary.mjs &
+          dws_pid=$!
+
+          status=0
+          wait "$codex_pid" || status=$?
+          wait "$dws_pid" || status=$?
+          exit "$status"
 
       - name: Build Wework desktop Core E2E binaries
         env:
@@ -258,6 +267,13 @@ jobs:
             executor/target
             wework/src-tauri/target
           key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}
+
+      - name: Save bundled Codex cache
+        if: github.ref == 'refs/heads/main' && steps.bundled-codex-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/codex
+          key: ${{ steps.bundled-codex-cache.outputs.cache-primary-key }}
 
       - name: Archive Wework desktop Core E2E build
         run: .github/scripts/archive-wework-core-e2e-build.sh
@@ -284,28 +300,30 @@ jobs:
     name: Wework Desktop E2E (${{ matrix.name }})
     needs:
       - changes
-      - prepare-wework-e2e-image
       - build-wework-desktop-core-e2e
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     env:
       HOME: /root
     container:
-      image: ${{ needs.prepare-wework-e2e-image.outputs.desktop_image }}
+      image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
+      max-parallel: 8
       matrix: ${{ fromJSON(needs.changes.outputs.wework_desktop_core_e2e_matrix) }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Restore local harness CLIs
-        if: matrix.segment == 'local-harness'
+        if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')
         id: local-harness-clis-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -313,11 +331,11 @@ jobs:
           key: ${{ runner.os }}-node-24-local-harness-clis-v2-${{ hashFiles('.github/claude-code-cli/package.json', '.github/claude-code-cli/package-lock.json') }}
 
       - name: Install local harness CLIs
-        if: matrix.segment == 'local-harness' && steps.local-harness-clis-cache.outputs.cache-hit != 'true'
+        if: (contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')) && steps.local-harness-clis-cache.outputs.cache-hit != 'true'
         run: npm ci --prefix .github/claude-code-cli --strict-allow-scripts
 
       - name: Verify local harness CLIs
-        if: matrix.segment == 'local-harness'
+        if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Wework desktop Core E2E build
@@ -329,20 +347,22 @@ jobs:
       - name: Restore Wework desktop Core E2E build
         run: .github/scripts/restore-wework-core-e2e-build.sh
 
-      - name: Run Wework desktop Core ${{ matrix.segment }} E2E
+      - name: Run Wework desktop Core shard E2E
         env:
           CI: true
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/WeWork
-          WEWORK_E2E_DESKTOP_SCENARIO_MODULE: ${{ matrix.segment == 'embedded-browser' && './scenarios/embedded-browser-agent.scenario.mjs' || matrix.segment == 'local-harness' && './scenarios/local-terminal.scenario.mjs' || './scenarios/streaming-text.scenario.mjs' }}
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
-          E2E_SEGMENT: ${{ matrix.segment }}
+          WEWORK_E2E_ISOLATED_XVFB: "true"
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+          WEWORK_E2E_PARALLEL_SCOPE: core
+          WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_CODEX_BIN"
-          xvfb-run -a --server-args="-screen 0 1280x720x24" \
-            node wework/e2e/desktop/run-checkpoints.mjs --segment "$E2E_SEGMENT"
+          node wework/e2e/desktop/run-checkpoints.mjs \
+            --parallel-segments "$WEWORK_E2E_SEGMENTS"
 
       - name: Upload Wework desktop E2E diagnostics
         if: always()
@@ -354,30 +374,33 @@ jobs:
             !wework/test-results/desktop-e2e/**/executor-home/**
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 0
 
   wework-desktop-cloud-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
     needs:
       - changes
-      - prepare-wework-e2e-image
       - build-wework-desktop-core-e2e
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 60
     env:
       HOME: /root
     container:
-      image: ${{ needs.prepare-wework-e2e-image.outputs.desktop_image }}
+      image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
+      max-parallel: 8
       matrix: ${{ fromJSON(needs.changes.outputs.wework_desktop_cloud_e2e_matrix) }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Download shared Wework desktop E2E build
         uses: actions/download-artifact@v4
@@ -403,6 +426,7 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/wegent-executor
           WEWORK_E2E_ISOLATED_XVFB: "true"
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+          WEWORK_E2E_PARALLEL_SCOPE: cloud
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
           test -x "$WEWORK_E2E_APP_BIN"
@@ -421,19 +445,20 @@ jobs:
             !wework/test-results/desktop-e2e/**/executor-home/**
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 0
 
   wework-desktop-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
     needs:
       - changes
-      - prepare-wework-e2e-image
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       HOME: /root
+      WEWORK_E2E_SKIP_TYPECHECK: "true"
     container:
-      image: ${{ needs.prepare-wework-e2e-image.outputs.desktop_image }}
+      image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -450,6 +475,15 @@ jobs:
         with:
           setup-toolchain: "false"
 
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Restore bundled Codex cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wegent/codex
+          key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
+
       - name: Restore shared Wework desktop E2E Cargo dependencies
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -465,8 +499,15 @@ jobs:
       - name: Prepare bundled sidecars
         working-directory: ./wework
         run: |
-          pnpm run prepare:codex
-          pnpm run prepare:dws
+          node scripts/prepare-codex-binary.mjs &
+          codex_pid=$!
+          node scripts/prepare-dws-binary.mjs &
+          dws_pid=$!
+
+          status=0
+          wait "$codex_pid" || status=$?
+          wait "$dws_pid" || status=$?
+          exit "$status"
 
       - name: Run Wework desktop ${{ matrix.name }} E2E
         env:
@@ -474,7 +515,7 @@ jobs:
           CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           E2E_COMMAND: ${{ matrix.command }}
           E2E_SEGMENT: ${{ matrix.segment }}
-          WEWORK_E2E_DESKTOP_SCENARIO_MODULE: ${{ matrix.segment == 'embedded-browser' && './scenarios/embedded-browser-agent.scenario.mjs' || matrix.segment == 'browser-multi-tabs' && './scenarios/embedded-browser-multi-tabs.scenario.mjs' || '' }}
+          WEWORK_E2E_DESKTOP_SCENARIO_MODULE: ${{ matrix.segment == 'embedded-browser' && './scenarios/embedded-browser-agent.scenario.mjs' || matrix.segment == 'browser-multi-tabs' && './scenarios/embedded-browser-multi-tabs.scenario.mjs' || matrix.segment == 'browser-toolbar-actions' && './scenarios/embedded-browser-toolbar-actions.scenario.mjs' || '' }}
         run: |
           test -x "$CODEX_BIN"
           args=()
@@ -494,17 +535,18 @@ jobs:
             !wework/test-results/desktop-e2e/**/executor-home/**
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 0
 
   wework-e2e-summary:
     name: Wework E2E Summary
     needs:
       - changes
-      - prepare-wework-e2e-image
       - wework-e2e
       - build-wework-desktop-core-e2e
       - wework-desktop-cloud-e2e
       - wework-desktop-core-e2e
       - wework-desktop-e2e
+      - wework-desktop-memory-e2e
     if: always()
     runs-on: ubuntu-latest
 
@@ -515,13 +557,14 @@ jobs:
           RUN_DESKTOP_CORE_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')) }}
           RUN_DESKTOP_CLOUD_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')) }}
           RUN_DESKTOP_OTHER_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')) }}
+          RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           CHANGES_RESULT: ${{ needs.changes.result }}
-          E2E_IMAGE_RESULT: ${{ needs.prepare-wework-e2e-image.result }}
           WEB_E2E_RESULT: ${{ needs.wework-e2e.result }}
           DESKTOP_CORE_BUILD_RESULT: ${{ needs.build-wework-desktop-core-e2e.result }}
           DESKTOP_CLOUD_E2E_RESULT: ${{ needs.wework-desktop-cloud-e2e.result }}
           DESKTOP_CORE_E2E_RESULT: ${{ needs.wework-desktop-core-e2e.result }}
           DESKTOP_OTHER_E2E_RESULT: ${{ needs.wework-desktop-e2e.result }}
+          MACOS_INSPECTOR_E2E_RESULT: ${{ needs.wework-desktop-memory-e2e.result }}
         run: |
           if [[ "$CHANGES_RESULT" != "success" ]]; then
             echo "Wework E2E change detection completed with: $CHANGES_RESULT"
@@ -531,11 +574,6 @@ jobs:
           if [[ "$RUN_E2E" != "true" ]]; then
             echo "Wework E2E is not required for this pull request"
             exit 0
-          fi
-
-          if [[ "$E2E_IMAGE_RESULT" != "success" ]]; then
-            echo "Wework E2E image preparation completed with: $E2E_IMAGE_RESULT"
-            exit 1
           fi
 
           if [[ "$WEB_E2E_RESULT" != "success" ]]; then
@@ -568,12 +606,20 @@ jobs:
             exit 1
           fi
 
+          if [[ "$RUN_MACOS_INSPECTOR_E2E" == "true" && \
+            "$MACOS_INSPECTOR_E2E_RESULT" != "success" ]]; then
+            echo "Wework desktop macOS Inspector E2E completed with: $MACOS_INSPECTOR_E2E_RESULT"
+            exit 1
+          fi
+
   wework-desktop-memory-e2e:
     name: Wework Desktop Memory E2E
     needs: changes
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
     runs-on: macos-14
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      WEWORK_E2E_SKIP_TYPECHECK: "true"
 
     steps:
       - name: Checkout code
@@ -637,11 +683,20 @@ jobs:
           echo "CODEX_BIN=$codex_bin" >> "$GITHUB_ENV"
 
       - name: Run Wework desktop memory E2E
+        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')
         env:
           CI: true
         run: |
           test -x "$CODEX_BIN"
           pnpm --filter wework e2e:desktop:memory
+
+      - name: Run Wework desktop macOS Inspector E2E
+        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        env:
+          CI: true
+        run: |
+          test -x "$CODEX_BIN"
+          pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
 
       - name: Save shared Wework Cargo sources
         if: github.ref == 'refs/heads/main' && steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'
@@ -662,3 +717,4 @@ jobs:
             !wework/test-results/desktop-e2e/**/executor-home/**
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 0

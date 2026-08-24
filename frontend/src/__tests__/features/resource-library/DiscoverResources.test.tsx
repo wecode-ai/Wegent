@@ -503,6 +503,34 @@ describe('DiscoverResources', () => {
     })
   })
 
+  it('loads search results only for the selected marketplace', async () => {
+    mockSearchParams = new URLSearchParams('keyword=summary')
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing({
+          id: 1,
+          resource_type: 'agent',
+          display_name: 'Summary Agent',
+          bind_modes: ['chat'],
+        }),
+      ],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+
+    render(<DiscoverResources resourceType="agent" hideSearch />)
+
+    expect(await screen.findByText('Summary Agent')).toBeInTheDocument()
+    expect(mockResourceLibraryApi.listListings).toHaveBeenCalledWith({
+      resourceType: 'agent',
+      keyword: 'summary',
+      targetNamespace: 'default',
+      cursor: undefined,
+      limit: 20,
+    })
+  })
+
   it('loads more resources when the scroll trigger enters the viewport', async () => {
     mockResourceLibraryApi.listListings
       .mockResolvedValueOnce({

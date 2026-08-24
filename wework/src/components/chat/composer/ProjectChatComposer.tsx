@@ -30,6 +30,7 @@ import {
   type ComposerTextareaHandle,
 } from './ComposerTextarea'
 import { ProjectWorkBar } from './ProjectWorkBar'
+import { resolveBranchNameGenerationSource } from '@/lib/branch-name'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/tauri/appPreferences'
@@ -45,11 +46,13 @@ import type {
 } from './composerMentionCandidates'
 import type { ComposerExternalMentionCandidate } from './composerTextareaTypes'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
+import styles from './ProjectChatComposer.module.css'
 
 interface ProjectChatComposerProps {
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
+  onCompositionStart?: () => void
   onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
@@ -86,7 +89,6 @@ interface ProjectChatComposerProps {
   cloudSpaceEnabled?: boolean
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
-  selectedCloudProjectId?: CloudProject['id']
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -102,7 +104,9 @@ interface ProjectChatComposerProps {
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   projectWork: ProjectWorkControls
+  projectPhrases?: QuickPhrase[]
   showProjectWorkBar?: boolean
+  showExecutionTools?: boolean
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
@@ -110,7 +114,9 @@ interface ProjectChatComposerProps {
   /** Called when Backspace is pressed on an empty composer (e.g. dismiss Plugin Creator). */
   onDismissInputLeadingContext?: () => void
   toolbarLeadingContext?: ReactNode
+  projectWorkBarMiddleContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
+  projectWorkBarEndContext?: ReactNode
   modelSelectorOverride?: ReactNode
 }
 
@@ -124,6 +130,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       value,
       onChange,
       onBlur,
+      onCompositionStart,
       onCompositionEnd,
       onSubmit,
       disabled,
@@ -160,7 +167,6 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       cloudSpaceEnabled,
       onSelectExternalMention,
       onSelectCloudProject,
-      selectedCloudProjectId,
       planModeActive = false,
       onSetPlanMode,
       onClearPlanMode,
@@ -176,14 +182,18 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onListLocalSkills,
       onListLocalApps,
       projectWork,
+      projectPhrases = [],
       showProjectWorkBar = true,
+      showExecutionTools = true,
       isStreaming = false,
       onPause,
       showWorkspaceMenu,
       inputLeadingContext,
       onDismissInputLeadingContext,
       toolbarLeadingContext,
+      projectWorkBarMiddleContext,
       projectWorkBarTrailingContext,
+      projectWorkBarEndContext,
       modelSelectorOverride,
     },
     ref
@@ -191,11 +201,14 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
     const { t } = useTranslation('common')
     const [isDraggingFiles, setIsDraggingFiles] = useState(false)
     const composerRef = useRef<ComposerTextareaHandle>(null)
+    const formRef = useRef<HTMLFormElement>(null)
     const [hasText, setHasText] = useState(value.trim().length > 0)
+    const [shortComposerExpanded, setShortComposerExpanded] = useState(false)
 
     useImperativeHandle(
       ref,
       () => ({
+        focus: () => composerRef.current?.focus(),
         getValue: () => composerRef.current?.getValue() ?? value,
         setValue: (nextValue, selectionOffset) =>
           composerRef.current?.setValue(nextValue, selectionOffset),
@@ -207,15 +220,40 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       () => mergePopoutWorkspaceProjects(projectWork.projects, projectWork.runtimeWork),
       [projectWork.projects, projectWork.runtimeWork]
     )
-    const textareaRef = useAutoResizeTextarea(value, 168)
+    const textareaRef = useAutoResizeTextarea(value, 112)
     const canSend =
       (hasText || attachments.length > 0 || codeComments.length > 0) && !disabled && !submitDisabled
+    const canCollapseInShortPane =
+      attachments.length === 0 &&
+      uploadingFiles.size === 0 &&
+      attachmentErrors.size === 0 &&
+      codeComments.length === 0 &&
+      !disabledReason &&
+      !supervisorPending &&
+      !inputLeadingContext &&
+      !toolbarLeadingContext &&
+      !planModeActive &&
+      !goalDraftActive
 
     useEffect(() => {
       // Sync local hasText with external value changes (e.g. clear after submit).
 
       setHasText(value.trim().length > 0)
     }, [value])
+
+    useEffect(() => {
+      if (!shortComposerExpanded) return
+
+      const handleOutsideClick = (event: MouseEvent) => {
+        if (!formRef.current?.contains(event.target as Node)) {
+          setShortComposerExpanded(false)
+        }
+      }
+      window.addEventListener('click', handleOutsideClick, true)
+      return () => {
+        window.removeEventListener('click', handleOutsideClick, true)
+      }
+    }, [shortComposerExpanded])
 
     const handleComposerChange = useCallback(
       (nextValue: string) => {
@@ -265,7 +303,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       if (phrase.mode === 'goal') onSetGoal?.()
       const currentValue = getLiveValue()
       const phraseValue = currentValue ? `${currentValue}\n${phrase.content}` : phrase.content
-      handleComposerChange(phraseValue)
+      composerRef.current?.setValue(phraseValue, phraseValue.length)
       if (phrase.attachmentPaths?.length) {
         void resolveStoredWorkspacePaths(
           phrase.attachmentPaths,
@@ -274,7 +312,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           applyWorkspacePathTransfer(phraseValue, transfer, handleComposerChange, onFileSelect)
         )
       }
-      window.requestAnimationFrame(() => textareaRef.current?.focus())
+      window.requestAnimationFrame(() => {
+        composerRef.current?.setValue(phraseValue, phraseValue.length)
+        textareaRef.current?.focus()
+      })
     }
 
     return (
@@ -294,6 +335,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
             executionMode={projectWork.executionMode}
             executionModeLocked={projectWork.executionModeLocked}
+            worktreeAvailability={projectWork.worktreeAvailability}
             isGitProject={projectWork.isGitProject}
             onSelectProject={projectWork.onSelectProject}
             onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
@@ -307,22 +349,35 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onListBranches={projectWork.onListBranches}
             onCheckoutBranch={projectWork.onCheckoutBranch}
             onCreateBranch={projectWork.onCreateBranch}
+            onGenerateBranchName={projectWork.onGenerateBranchName}
+            branchNameSource={resolveBranchNameGenerationSource(
+              value,
+              projectWork.branchNameSource
+            )}
             worktreeBranch={projectWork.worktreeBranch}
             onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
             showClearButton={projectWork.showProjectClearButton}
             projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
             projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
+            middleContext={projectWorkBarMiddleContext}
             trailingContext={projectWorkBarTrailingContext}
+            endContext={projectWorkBarEndContext}
             className="min-h-10 rounded-t-[26px] bg-surface px-4"
             buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
           />
         )}
         <form
+          ref={formRef}
           data-testid="project-chat-composer-form"
+          data-short-collapse={canCollapseInShortPane ? 'true' : undefined}
+          data-short-expanded={shortComposerExpanded ? 'true' : 'false'}
           className={cn(
             'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border bg-background px-4 pb-1.5 pt-2 transition-colors',
+            styles.form,
             isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
           )}
+          onClickCapture={() => setShortComposerExpanded(true)}
+          onFocusCapture={() => setShortComposerExpanded(true)}
           onDragEnter={handleDragOver}
           onDragLeave={event => {
             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
@@ -391,6 +446,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             value={value}
             onChange={handleComposerChange}
             onBlur={onBlur}
+            onCompositionStart={onCompositionStart}
             onCompositionEnd={onCompositionEnd}
             onSubmit={onSubmit}
             canSend={canSend}
@@ -425,7 +481,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
               onDismissInputLeadingContext()
               return true
             }}
-            className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
+            className={cn(
+              'max-h-[112px] min-h-12 w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55',
+              styles.input
+            )}
             skillMenuClassName="left-[-1rem] right-[-0.5rem]"
             onListLocalSkills={onListLocalSkills}
             onListLocalApps={onListLocalApps}
@@ -440,10 +499,12 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             isModelSelectionReady={isModelSelectionReady}
           />
           <ComposerToolbar
+            className={styles.toolbar}
             canSend={canSend}
             sendButtonTestId={submitButtonTestId}
             disabled={disabled}
             pluginPickerIconOnly={pluginPickerIconOnly}
+            showExecutionTools={showExecutionTools}
             models={models}
             selectedModel={selectedModel}
             activeModel={activeModel}
@@ -478,6 +539,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                     currentProjectId: projectWork.currentProjectId,
                     executionMode: projectWork.executionMode,
                     executionModeLocked: projectWork.executionModeLocked,
+                    worktreeAvailability: projectWork.worktreeAvailability,
                     isGitProject: projectWork.isGitProject,
                     projectName: projectWork.currentProject?.name,
                     projects: workspaceMenuProjects,
@@ -489,12 +551,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
                 : undefined
             }
             onQuickPhraseSelect={handleQuickPhraseSelect}
+            projectPhrases={projectPhrases}
             onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
             leadingContext={toolbarLeadingContext}
             onListLocalApps={onListLocalApps}
-            cloudProjectCandidates={cloudProjectCandidates}
-            selectedCloudProjectId={selectedCloudProjectId}
-            onSelectCloudProject={onSelectCloudProject}
           />
         </form>
       </div>

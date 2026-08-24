@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
 import {
+  hasLocalCodexMaterialization,
   isCloudManagedInstalledPlugin,
   mergeInstalledPlugins,
+  mergeLocalInstalledWithStorePackages,
   resolveProgressiveLocalInstalledRaw,
 } from './installedPluginMerge'
 
@@ -167,6 +169,194 @@ describe('mergeInstalledPlugins', () => {
 
     expect(merged).toHaveLength(1)
     expect(merged[0]?.spec.pluginId).toBe(4)
+    expect(merged[0]?.spec.sourcePayload).toMatchObject({ localPresent: true })
+  })
+
+  test('keeps a local Codex package when the cloud device row is still pending', () => {
+    const cloud = cloudPlugin({ installState: 'not_installed', version: '0.2.9' })
+    cloud.status.devices = [
+      {
+        deviceId: 'current-device',
+        desiredReleaseId: 6,
+        actualReleaseId: null,
+        state: 'pending',
+        attemptCount: 0,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]
+    const local = localCodexPlugin({
+      id: 'github-local',
+      name: 'github',
+      pluginKey: 'github',
+      marketplace: 'wegent',
+      version: '0.2.8',
+    })
+
+    const merged = mergeInstalledPlugins([cloud], [local], 'current-device')
+
+    expect(merged).toHaveLength(1)
+    expect(hasLocalCodexMaterialization(merged[0]!)).toBe(true)
+    expect(merged[0]?.spec.pluginId).toBe(4)
+    expect(merged[0]?.metadata.labels).toMatchObject({ id: 4 })
+    expect(merged[0]?.spec.sourcePayload).toMatchObject({
+      localPresent: true,
+      cloudInstalledPluginId: '4',
+      localVersion: '0.2.8',
+    })
+    expect(merged[0]?.spec.sourcePayload).not.toHaveProperty('localId')
+    expect(merged[0]?.status.devices?.[0]?.state).toBe('pending')
+  })
+
+  test('matches a wegent store directory to the cloud plugin even when Codex uses the folder name', () => {
+    const cloud = cloudPlugin({
+      id: 267250,
+      installState: 'not_installed',
+      version: '0.1.6',
+    })
+    cloud.metadata = {
+      name: 'wegent-sites',
+      namespace: 'default',
+      labels: { id: 267250 },
+    }
+    cloud.spec.source = {
+      ...cloud.spec.source,
+      pluginKey: 'wegent-sites',
+      catalogItemId: '267250',
+    }
+    cloud.status.devices = [
+      {
+        deviceId: 'current-device',
+        desiredReleaseId: 6,
+        actualReleaseId: null,
+        state: 'pending',
+        attemptCount: 1,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]
+    const local = localCodexPlugin({
+      id: '267250-wegent-wegent-sites-0.1.6',
+      name: '267250-wegent-wegent-sites-0.1.6',
+      pluginKey: '267250-wegent-wegent-sites-0.1.6',
+      marketplace: 'wegent',
+      version: '0.1.6',
+    })
+
+    const merged = mergeInstalledPlugins([cloud], [local], 'current-device')
+
+    expect(merged).toHaveLength(1)
+    expect(hasLocalCodexMaterialization(merged[0]!)).toBe(true)
+    expect(merged[0]?.spec.pluginId).toBe(267250)
+  })
+
+  test('dedupes codex membership and store ZIP for the same cloud plugin', () => {
+    const cloud = cloudPlugin({
+      id: 268634,
+      displayName: 'Code Review',
+      installState: 'update_available',
+      version: '0.1.3',
+    })
+    cloud.metadata = {
+      name: 'code-review',
+      namespace: 'default',
+      labels: { id: 268634 },
+    }
+    cloud.spec.source = {
+      ...cloud.spec.source,
+      pluginKey: 'code-review',
+      catalogItemId: '268634',
+    }
+    cloud.status.devices = [
+      {
+        deviceId: 'current-device',
+        desiredReleaseId: 7,
+        actualReleaseId: 6,
+        state: 'pending',
+        attemptCount: 1,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]
+    const codexMembership = localCodexPlugin({
+      id: 'code-review',
+      name: 'code-review',
+      pluginKey: 'code-review',
+      marketplace: 'wegent',
+      version: '0.1.2',
+    })
+    const storePackage = localCodexPlugin({
+      id: '268634-wegent-code-review-0.1.2',
+      name: '268634-wegent-code-review-0.1.2',
+      pluginKey: '268634-wegent-code-review-0.1.2',
+      marketplace: 'wegent',
+      version: '0.1.2',
+    })
+
+    const merged = mergeInstalledPlugins([cloud], [codexMembership, storePackage], 'current-device')
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]?.spec.displayName).toBe('Code Review')
+    expect(merged[0]?.spec.pluginId).toBe(268634)
+    expect(hasLocalCodexMaterialization(merged[0]!)).toBe(true)
+    expect(merged[0]?.spec.sourcePayload).toMatchObject({
+      localPresent: true,
+      localVersion: '0.1.2',
+    })
+  })
+
+  test('folds a disk store package that Codex membership omitted', () => {
+    const local = localCodexPlugin({ id: 'documents-local', name: 'documents' })
+    const store = localCodexPlugin({
+      id: '269646-wegent-sina-email-0.1.11',
+      name: 'sina-email',
+      pluginKey: 'sina-email',
+      marketplace: 'wegent',
+      version: '0.1.11',
+    })
+
+    const merged = mergeLocalInstalledWithStorePackages([local], [store, local])
+
+    expect(merged).toHaveLength(2)
+    expect(merged.map(item => item.metadata.labels?.id)).toEqual([
+      'documents-local',
+      '269646-wegent-sina-email-0.1.11',
+    ])
+  })
+
+  test('keeps same-name store packages from different marketplaces', () => {
+    const bundled = localCodexPlugin({
+      id: 'documents-bundled',
+      name: 'documents',
+      pluginKey: 'documents',
+      marketplace: 'openai-bundled',
+    })
+    const remote = localCodexPlugin({
+      id: 'documents-remote',
+      name: 'documents',
+      pluginKey: 'documents',
+      marketplace: 'openai-curated-remote',
+    })
+
+    const merged = mergeLocalInstalledWithStorePackages([bundled], [remote])
+
+    expect(merged).toEqual([bundled, remote])
+  })
+
+  test('does not append a manifest-backed store package already listed by Codex', () => {
+    const membership = localCodexPlugin({
+      id: 'sina-email',
+      name: 'sina-email',
+      pluginKey: 'sina-email',
+      marketplace: 'wegent',
+      version: '0.1.11',
+    })
+    const store = localCodexPlugin({
+      id: '269646-wegent-sina-email-0.1.11',
+      name: 'sina-email',
+      pluginKey: 'sina-email',
+      marketplace: 'wegent',
+      version: '0.1.11',
+    })
+
+    expect(mergeLocalInstalledWithStorePackages([membership], [store])).toEqual([membership])
   })
 
   test('prefers a locally created plugin linked to the same published cloud plugin', () => {
@@ -241,6 +431,16 @@ describe('isCloudManagedInstalledPlugin', () => {
   test('treats only numeric cloud pluginId as cloud-managed', () => {
     expect(isCloudManagedInstalledPlugin(cloudPlugin())).toBe(true)
     expect(isCloudManagedInstalledPlugin(localCodexPlugin())).toBe(false)
+  })
+})
+
+describe('hasLocalCodexMaterialization', () => {
+  test('treats a Codex package and a cloud row with localPresent as materialized', () => {
+    expect(hasLocalCodexMaterialization(localCodexPlugin())).toBe(true)
+    expect(hasLocalCodexMaterialization(cloudPlugin())).toBe(false)
+    const marked = cloudPlugin()
+    marked.spec.sourcePayload = { localPresent: true }
+    expect(hasLocalCodexMaterialization(marked)).toBe(true)
   })
 })
 

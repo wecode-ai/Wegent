@@ -27,6 +27,7 @@ import {
   type ProjectChatControls,
   type ProjectWorkControls,
 } from '@/components/chat/ChatInput'
+import { ConversationQueuePanel } from '@/components/chat/ConversationQueuePanel'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { Tooltip } from '@/components/ui/tooltip'
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
@@ -34,7 +35,15 @@ import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import {
+  cacheRuntimeConversationQueuedMessagesByKey,
+  getRuntimeConversationQueuedMessagesByKey,
+} from '@/features/workbench/runtimeConversationCache'
+import { persistAttachmentReferences } from '@/lib/attachments'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { isHttpUrl, openExternalUrl } from '@/lib/external-links'
+import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import type { RuntimePaneQueuedMessage } from '@/types/workbench'
 import {
   buildRobotRoleDescription,
   mergeProjectChatMessages,
@@ -60,6 +69,17 @@ interface TaskActivityViewProps {
   // message list and a composer pinned to the bottom
   rail?: boolean
   linear?: boolean
+  workflowManagerRunId?: string | null
+  onWorkflowManagerExecutionChange?: (action: (() => void) | null) => void
+  onWorkflowManagerFinished?: () => void
+}
+
+interface TaskCardQueuedReply extends RuntimePaneQueuedMessage {
+  selectedModelName?: string
+}
+
+interface TaskCardDispatchResult extends CardCommentSendResult {
+  persisted: boolean
 }
 
 export function TaskActivityView({
@@ -73,6 +93,9 @@ export function TaskActivityView({
   selfManagedExecution = false,
   rail = false,
   linear = false,
+  workflowManagerRunId = null,
+  onWorkflowManagerExecutionChange,
+  onWorkflowManagerFinished,
 }: TaskActivityViewProps) {
   const { t } = useTranslation('common')
   const { services, state, createProjectRuntimeTask, cancelRuntimeTask, sendRuntimePaneMessage } =
@@ -182,10 +205,92 @@ export function TaskActivityView({
   const [sending, setSending] = useState(false)
   const [cancellingMessageId, setCancellingMessageId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [cardQueuedReplies, setCardQueuedReplies] = useState<Record<string, TaskCardQueuedReply[]>>(
+    {}
+  )
   const listRef = useRef<HTMLDivElement>(null)
   const followCardRef = useRef<string | null>(null)
   const refreshedRunIds = useRef(new Set<string>())
+  const refreshedWorkflowManagerMessageIds = useRef(new Set<string>())
+  const queuedCardReplyInFlightRef = useRef<string | null>(null)
   const compact = rail || linear
+
+  const taskAiStatus = task.ai_state?.status
+  const taskAiMessageId = task.ai_state?.project_chat_message_id
+  const taskAiRuntimeDeviceId = task.ai_state?.runtime_device_id
+  const taskAiRuntimeTaskId = task.ai_state?.runtime_task_id
+  const workflowManagerMessage = useMemo(
+    () =>
+      workflowManagerRunId
+        ? messages
+            .filter(
+              message => String(message.metadata.automation_run_id ?? '') === workflowManagerRunId
+            )
+            .at(-1)
+        : undefined,
+    [messages, workflowManagerRunId]
+  )
+  const workflowManagerRuntimeAddress = useMemo(() => {
+    const address = workflowManagerMessage?.runtimeAddress
+    if (!address?.deviceId || !address.taskId) return null
+    return findRuntimeTask(state.runtimeWork, address) ? address : null
+  }, [state.runtimeWork, workflowManagerMessage])
+  const workflowManagerBackendExecution = useMemo(
+    () => (workflowManagerMessage ? backendTaskExecution(workflowManagerMessage) : null),
+    [workflowManagerMessage]
+  )
+  const openWorkflowManagerExecution = useCallback(() => {
+    if (!workflowManagerMessage) return
+    if (workflowManagerRuntimeAddress) {
+      setExecutionDetail({
+        address: workflowManagerRuntimeAddress,
+        senderName: workflowManagerMessage.sender.name,
+        runId:
+          typeof workflowManagerMessage.metadata.run_id === 'string'
+            ? workflowManagerMessage.metadata.run_id
+            : null,
+        modelName:
+          typeof workflowManagerMessage.metadata.model === 'string'
+            ? workflowManagerMessage.metadata.model
+            : null,
+        runStatus: resolveMessageRunStatus(task.ai_state, workflowManagerMessage),
+      })
+      return
+    }
+    if (workflowManagerBackendExecution) {
+      void openExternalUrl(workflowManagerBackendExecution.executionUrl)
+    }
+  }, [
+    task.ai_state,
+    workflowManagerBackendExecution,
+    workflowManagerMessage,
+    workflowManagerRuntimeAddress,
+  ])
+
+  useEffect(() => {
+    if (!onWorkflowManagerExecutionChange) return
+    const available = Boolean(
+      workflowManagerMessage && (workflowManagerRuntimeAddress || workflowManagerBackendExecution)
+    )
+    onWorkflowManagerExecutionChange(available ? openWorkflowManagerExecution : null)
+    return () => onWorkflowManagerExecutionChange(null)
+  }, [
+    onWorkflowManagerExecutionChange,
+    openWorkflowManagerExecution,
+    workflowManagerBackendExecution,
+    workflowManagerMessage,
+    workflowManagerRuntimeAddress,
+  ])
+
+  useEffect(() => {
+    if (!workflowManagerMessage || !onWorkflowManagerFinished) return
+    if (!['completed', 'failed', 'cancelled', 'canceled'].includes(workflowManagerMessage.status)) {
+      return
+    }
+    if (refreshedWorkflowManagerMessageIds.current.has(workflowManagerMessage.messageId)) return
+    refreshedWorkflowManagerMessageIds.current.add(workflowManagerMessage.messageId)
+    onWorkflowManagerFinished()
+  }, [onWorkflowManagerFinished, workflowManagerMessage])
 
   useEffect(() => {
     const agentApi = projectChatAgentApi ?? services.projectChatAgentApi
@@ -241,38 +346,44 @@ export function TaskActivityView({
 
   // Newest parent comments render at the top, so newly sent comments are
   // visible without scrolling the list to its end.
-  const scrollTaskCommentsToTop = useCallback((behavior: ScrollBehavior = 'auto') => {
-    const scroller = findTaskCommentScrollContainer(listRef.current)
-    if (scroller) {
-      if (typeof scroller.scrollTo === 'function') {
-        scroller.scrollTo({ top: 0, behavior })
-      } else {
-        scroller.scrollTop = 0
+  const scrollTaskCommentsToTop = useCallback(
+    (behavior: ScrollBehavior = 'auto') => {
+      const scroller = resolveTaskCommentScrollContainer(listRef.current, linear)
+      if (scroller) {
+        if (typeof scroller.scrollTo === 'function') {
+          scroller.scrollTo({ top: 0, behavior })
+        } else {
+          scroller.scrollTop = 0
+        }
       }
-    }
-  }, [])
+    },
+    [linear]
+  )
 
   // Card replies grow inside their own card; keep the card's bottom visible
   // (where the new reply and the streaming AI response appear) instead of
   // jumping to the end of the whole comment list.
-  const revealCardBottom = useCallback((cardId: string, behavior: ScrollBehavior = 'auto') => {
-    const card = listRef.current?.querySelector<HTMLElement>(
-      `[data-testid="cloud-task-activity-card-${cardId}"]`
-    )
-    const scroller = findTaskCommentScrollContainer(listRef.current)
-    if (!card || !scroller) return
-    const scrollerRect = scroller.getBoundingClientRect()
-    const cardRect = card.getBoundingClientRect()
-    if (cardRect.bottom > scrollerRect.bottom) {
-      scroller.scrollTo({
-        top: scroller.scrollTop + cardRect.bottom - scrollerRect.bottom + 12,
-        behavior,
-      })
-    }
-  }, [])
+  const revealCardBottom = useCallback(
+    (cardId: string, behavior: ScrollBehavior = 'auto') => {
+      const card = listRef.current?.querySelector<HTMLElement>(
+        `[data-testid="cloud-task-activity-card-${cardId}"]`
+      )
+      const scroller = resolveTaskCommentScrollContainer(listRef.current, linear)
+      if (!card || !scroller) return
+      const scrollerRect = scroller.getBoundingClientRect()
+      const cardRect = card.getBoundingClientRect()
+      if (cardRect.bottom > scrollerRect.bottom) {
+        scroller.scrollTo({
+          top: scroller.scrollTop + cardRect.bottom - scrollerRect.bottom + 12,
+          behavior,
+        })
+      }
+    },
+    [linear]
+  )
 
   useEffect(() => {
-    const scroller = findTaskCommentScrollContainer(listRef.current)
+    const scroller = resolveTaskCommentScrollContainer(listRef.current, linear)
     if (!scroller) return
     const updateFollowState = () => {
       if (followCardRef.current) {
@@ -291,7 +402,7 @@ export function TaskActivityView({
     }
     scroller.addEventListener('scroll', updateFollowState, { passive: true })
     return () => scroller.removeEventListener('scroll', updateFollowState)
-  }, [compact, loading, messages.length])
+  }, [compact, linear, loading, messages.length])
 
   useEffect(() => {
     if (
@@ -307,14 +418,14 @@ export function TaskActivityView({
       return !refreshedRunIds.current.has(message.messageId)
     })
     if (!terminalResponse) {
-      if (task.ai_state?.status === 'running') {
+      if (taskAiStatus === 'running') {
         console.info('[Wework] Task activity waiting for terminal AI message', {
           taskId: task.id,
           taskStatus: task.status,
-          aiStatus: task.ai_state.status,
-          aiMessageId: task.ai_state.project_chat_message_id,
-          runtimeDeviceId: task.ai_state.runtime_device_id,
-          runtimeTaskId: task.ai_state.runtime_task_id,
+          aiStatus: taskAiStatus,
+          aiMessageId: taskAiMessageId,
+          runtimeDeviceId: taskAiRuntimeDeviceId,
+          runtimeTaskId: taskAiRuntimeTaskId,
           agentMessages: messages
             .filter(message => message.taskId === task.id && message.sender.type === 'agent')
             .map(message => ({
@@ -349,7 +460,18 @@ export function TaskActivityView({
       .catch(cause => {
         setError(cause instanceof Error ? cause.message : t('workbench.project_chat_load_failed'))
       })
-  }, [messages, onTaskUpdated, projectDeliveryApi, t, task.id, task.status])
+  }, [
+    messages,
+    onTaskUpdated,
+    projectDeliveryApi,
+    t,
+    task.id,
+    task.status,
+    taskAiMessageId,
+    taskAiRuntimeDeviceId,
+    taskAiRuntimeTaskId,
+    taskAiStatus,
+  ])
 
   const threadMessages = useMemo(
     () => messages.filter(message => message.taskId === task.id),
@@ -446,9 +568,9 @@ export function TaskActivityView({
     ? String(assignedAgent.createdByUserId ?? '') === String(activeUserId ?? '')
     : false
   const canApproveCurrentRun = task.can_approve === true || isBotCreator
-  const awaitingApproval = task.execution_state === 'pending_approval'
-  const rawExecutionStatus = task.ai_state?.status ?? task.execution_state
-  const aiTerminalFailure = isExecutionFailed(task.ai_state?.status)
+  const awaitingApproval = task.execution_state === 'waiting_approval'
+  const rawExecutionStatus = task.execution_state ?? task.ai_state?.status
+  const aiTerminalFailure = isExecutionFailed(rawExecutionStatus)
   const commentCards = useMemo(() => {
     const ordered: { root: ProjectChatMessage; replies: ProjectChatMessage[] }[] = []
     const byRoot = new Map<string, { root: ProjectChatMessage; replies: ProjectChatMessage[] }>()
@@ -472,6 +594,39 @@ export function TaskActivityView({
     // Newest parent comment first; replies stay chronological inside each card.
     return ordered.sort((left, right) => right.root.sequenceNumber - left.root.sequenceNumber)
   }, [threadMessages])
+
+  const cardQueueScopeKey = useCallback(
+    (rootId: string) =>
+      `task-activity:${projectLocation ?? 'cloud'}:${project.id}:${task.id}:${rootId}`,
+    [project.id, projectLocation, task.id]
+  )
+
+  const updateCardQueuedReplies = useCallback(
+    (rootId: string, update: (current: TaskCardQueuedReply[]) => TaskCardQueuedReply[]) => {
+      const scopeKey = cardQueueScopeKey(rootId)
+      const current = getRuntimeConversationQueuedMessagesByKey(scopeKey) as TaskCardQueuedReply[]
+      const next = update(current)
+      cacheRuntimeConversationQueuedMessagesByKey(scopeKey, next)
+      setCardQueuedReplies(queues => ({ ...queues, [rootId]: next }))
+    },
+    [cardQueueScopeKey]
+  )
+
+  useEffect(() => {
+    setCardQueuedReplies(current => {
+      let changed = false
+      const next = { ...current }
+      for (const card of commentCards) {
+        const rootId = card.root.messageId
+        if (Object.prototype.hasOwnProperty.call(next, rootId)) continue
+        next[rootId] = getRuntimeConversationQueuedMessagesByKey(
+          cardQueueScopeKey(rootId)
+        ) as TaskCardQueuedReply[]
+        changed = true
+      }
+      return changed ? next : current
+    })
+  }, [cardQueueScopeKey, commentCards])
 
   function cardSessionAddress(card: {
     root: ProjectChatMessage
@@ -500,8 +655,77 @@ export function TaskActivityView({
 
   function cardSessionActive(card: { root: ProjectChatMessage; replies: ProjectChatMessage[] }) {
     return [card.root, ...card.replies].some(
-      message => message.sender.type === 'agent' && message.status === 'streaming'
+      message =>
+        message.sender.type === 'agent' &&
+        (message.status === 'pending' || message.status === 'streaming')
     )
+  }
+
+  function isCustomAutomationManager(message: ProjectChatMessage): boolean {
+    return (
+      message.sender.type === 'agent' &&
+      message.metadata.executor_type === 'automation_manager' &&
+      message.metadata.manager_type === 'custom'
+    )
+  }
+
+  async function continueCustomAutomationManager(
+    root: ProjectChatMessage,
+    trigger: ProjectChatMessage,
+    address: { runtimeDeviceId: string; runtimeTaskId: string },
+    attachments: Attachment[]
+  ): Promise<void> {
+    if (!client?.continueAutomationManager) return
+    let pending: ProjectChatMessage | null = null
+    try {
+      pending = await client.continueAutomationManager({
+        projectId: project.id,
+        taskId: task.id,
+        triggerMessageId: trigger.messageId,
+        managerMessageId: root.messageId,
+      })
+      setMessages(current => mergeProjectChatMessages(current, [pending!]))
+      let runtimeError: string | null = null
+      const continued = await sendRuntimePaneMessage(
+        {
+          address: {
+            deviceId: address.runtimeDeviceId,
+            taskId: address.runtimeTaskId,
+          },
+          message: trigger.content,
+          collaborationMode: 'default',
+          attachmentIds: remoteAttachmentIds(attachments),
+          attachments: localRuntimeAttachments(attachments),
+        },
+        {
+          onError: message => {
+            runtimeError = message
+          },
+        }
+      )
+      if (continued) return
+      const error = runtimeError ?? t('workbench.project_chat_agent_start_failed')
+      const failed = await client.failAgentResponse({
+        projectId: project.id,
+        taskId: task.id,
+        messageId: pending.messageId,
+        error,
+      })
+      setMessages(current => mergeProjectChatMessages(current, [failed]))
+      setCardAiErrors(current => ({ ...current, [root.messageId]: error }))
+    } catch (cause) {
+      setCardAiErrors(current => ({
+        ...current,
+        [root.messageId]:
+          cause instanceof Error ? cause.message : t('workbench.project_chat_agent_start_failed'),
+      }))
+    }
+  }
+
+  function existingRuntimeAddress(message: ProjectChatMessage): RuntimeTaskAddress | null {
+    const address = message.runtimeAddress
+    if (!address?.deviceId || !address.taskId) return null
+    return findRuntimeTask(state.runtimeWork, address) ? address : null
   }
 
   async function acceptTask() {
@@ -601,25 +825,48 @@ export function TaskActivityView({
     }
   }
 
-  async function sendCardReply(
+  async function persistConversationAttachments(attachments: Attachment[]) {
+    if (projectLocation !== 'local' || !projectDeliveryApi || attachments.length === 0) return
+    try {
+      await projectDeliveryApi.importLoopItemAttachments(task.id, attachments)
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : t('workbench.task_activity_attachment_persist_failed')
+      )
+    }
+  }
+
+  async function dispatchCardReply(
     card: {
       root: ProjectChatMessage
       replies: ProjectChatMessage[]
     },
-    text: string,
-    attachments: Attachment[]
-  ): Promise<CardCommentSendResult> {
+    queuedReply: TaskCardQueuedReply
+  ): Promise<TaskCardDispatchResult> {
     const rootId = card.root.messageId
-    if (!client || !text) return { ok: false, error: t('workbench.project_chat_send_failed') }
-    if (cardSessionActive(card)) {
-      return { ok: false, error: t('workbench.runtime_task_running_message') }
+    const text = queuedReply.content
+    const attachments = queuedReply.attachments ?? []
+    if (!client || !text) {
+      return { ok: false, persisted: false, error: t('workbench.project_chat_send_failed') }
     }
-    setSending(true)
+    const customManager = isCustomAutomationManager(card.root)
+    const customManagerAddress = customManager ? cardSessionAddress(card) : null
+    if (customManager && (!client.continueAutomationManager || !customManagerAddress)) {
+      return {
+        ok: false,
+        persisted: false,
+        error: t('workbench.project_chat_agent_start_failed'),
+      }
+    }
     setError(null)
+    let persisted = false
     try {
-      const activeMentions = assignedAgent
-        ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
-        : []
+      const activeMentions =
+        assignedAgent && !customManager
+          ? [{ type: 'agent' as const, id: assignedAgent.id, label: assignedAgent.name }]
+          : []
       const message = await client.send({
         projectId: project.id,
         taskId: task.id,
@@ -629,18 +876,53 @@ export function TaskActivityView({
         // Card composer replies are always one-level replies under the parent
         // comment.
         replyToMessageId: rootId,
-        model: selectedModel?.name ?? null,
+        model: queuedReply.selectedModelName ?? null,
       })
+      persisted = true
       // Card replies must never trigger the list-bottom follow: switch to
       // following this card synchronously so the message-change effect cannot
       // scroll the whole comment list to its end during the AI start.
       followCardRef.current = rootId
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setCardAiErrors(current => ({ ...current, [rootId]: '' }))
+      void persistConversationAttachments(attachments)
+      if (customManager && customManagerAddress) {
+        await continueCustomAutomationManager(card.root, message, customManagerAddress, attachments)
+        revealCardBottom(rootId)
+        return { ok: true, persisted: true }
+      }
       if (assignedAgent && !selfManagedExecution) {
-        // The comment is already posted; keep the input cleared and let the
-        // AI start settle in the background, surfacing failures in the card.
-        void startTaskAiRun({
+        if (assignedAgent.runtime === 'wegent') {
+          if (!client.continueWegentTask) {
+            const message = t('workbench.project_chat_agent_start_failed')
+            setCardAiErrors(current => ({ ...current, [rootId]: message }))
+            return { ok: false, persisted: true, error: message }
+          } else {
+            try {
+              const incoming = await client.continueWegentTask({
+                projectId: project.id,
+                taskId: task.id,
+                triggerMessageId: message.messageId,
+                agentId: assignedAgent.id,
+                attachmentIds: attachments.map(attachment => attachment.id),
+              })
+              setMessages(current => mergeProjectChatMessages(current, [incoming]))
+            } catch (cause) {
+              const message =
+                cause instanceof Error
+                  ? cause.message
+                  : t('workbench.project_chat_agent_start_failed')
+              setCardAiErrors(current => ({ ...current, [rootId]: message }))
+              return { ok: false, persisted: true, error: message }
+            }
+          }
+          revealCardBottom(rootId)
+          return { ok: true, persisted: true }
+        }
+        const queuedModel = queuedReply.selectedModelName
+          ? (availableModels.find(model => model.name === queuedReply.selectedModelName) ?? null)
+          : null
+        const started = await startTaskAiRun({
           client,
           services,
           runtime: { createProjectRuntimeTask, sendRuntimePaneMessage },
@@ -655,26 +937,108 @@ export function TaskActivityView({
           threadRootId: rootId,
           attachments,
           models: availableModels,
-          selectedModel,
-          selectedModelOptions,
+          selectedModel: queuedModel,
+          selectedModelOptions: queuedReply.modelOptions ?? {},
           onError: message => setCardAiErrors(current => ({ ...current, [rootId]: message })),
           onMessages: incoming =>
             setMessages(current => mergeProjectChatMessages(current, incoming)),
           onTaskUpdated,
           startFailedText: t('workbench.project_chat_agent_start_failed'),
         })
+        if (!started) {
+          return {
+            ok: false,
+            persisted: true,
+            error: t('workbench.project_chat_agent_start_failed'),
+          }
+        }
       }
       revealCardBottom(rootId)
-      return { ok: true }
+      return { ok: true, persisted: true }
     } catch (cause) {
       return {
         ok: false,
+        persisted,
         error: cause instanceof Error ? cause.message : t('workbench.project_chat_send_failed'),
       }
-    } finally {
-      setSending(false)
     }
   }
+
+  async function sendCardReply(
+    card: {
+      root: ProjectChatMessage
+      replies: ProjectChatMessage[]
+    },
+    text: string,
+    attachments: Attachment[]
+  ): Promise<CardCommentSendResult> {
+    const rootId = card.root.messageId
+    if (!client || !text) return { ok: false, error: t('workbench.project_chat_send_failed') }
+    const customManager = isCustomAutomationManager(card.root)
+    if (customManager && (!client.continueAutomationManager || !cardSessionAddress(card))) {
+      return { ok: false, error: t('workbench.project_chat_agent_start_failed') }
+    }
+    const queuedReply: TaskCardQueuedReply = {
+      id: `queued-task-card-${crypto.randomUUID()}`,
+      content: text,
+      status: 'queued',
+      createdAt: new Date().toISOString(),
+      attachments: persistAttachmentReferences(attachments),
+      selectedModelName: selectedModel?.name,
+      modelOptions: selectedModelOptions,
+    }
+    updateCardQueuedReplies(rootId, current => [...current, queuedReply])
+    return { ok: true }
+  }
+
+  useEffect(() => {
+    if (sending || queuedCardReplyInFlightRef.current) return
+    const candidate = commentCards
+      .flatMap(card => {
+        if (cardSessionActive(card)) return []
+        const queuedReply = (cardQueuedReplies[card.root.messageId] ?? []).find(
+          message => message.status === 'queued'
+        )
+        return queuedReply ? [{ card, queuedReply }] : []
+      })
+      .sort((left, right) =>
+        left.queuedReply.createdAt.localeCompare(right.queuedReply.createdAt)
+      )[0]
+    if (!candidate) return
+
+    const rootId = candidate.card.root.messageId
+    queuedCardReplyInFlightRef.current = candidate.queuedReply.id
+    setSending(true)
+    updateCardQueuedReplies(rootId, current =>
+      current.map(message =>
+        message.id === candidate.queuedReply.id
+          ? { ...message, status: 'sending', error: undefined }
+          : message
+      )
+    )
+    void dispatchCardReply(candidate.card, candidate.queuedReply)
+      .then(result => {
+        updateCardQueuedReplies(rootId, current =>
+          result.ok || result.persisted
+            ? current.filter(message => message.id !== candidate.queuedReply.id)
+            : current.map(message =>
+                message.id === candidate.queuedReply.id
+                  ? {
+                      ...message,
+                      status: 'failed',
+                      error: result.error ?? t('workbench.project_chat_send_failed'),
+                    }
+                  : message
+              )
+        )
+      })
+      .finally(() => {
+        queuedCardReplyInFlightRef.current = null
+        setSending(false)
+      })
+    // The dispatcher intentionally uses the latest card/session snapshot selected above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardQueuedReplies, commentCards, sending, t, updateCardQueuedReplies])
 
   async function sendNewComment(): Promise<boolean> {
     const text = newCommentDraft.trim()
@@ -712,6 +1076,7 @@ export function TaskActivityView({
       setNewCommentDraft('')
       attachmentSelection.resetAttachments()
       scrollTaskCommentsToTop()
+      void persistConversationAttachments(attachments)
       if (assignedAgent && !selfManagedExecution) {
         await startTaskAiRun({
           client,
@@ -776,7 +1141,7 @@ export function TaskActivityView({
                 compact ? 'text-base' : 'text-sm'
               )}
             >
-              {compact ? '评论' : t('workbench.task_activity_title')}
+              {t('workbench.task_activity_title')}
             </span>
           </span>
           {compact && threadMessages.length > 0 ? (
@@ -795,12 +1160,6 @@ export function TaskActivityView({
             </button>
           ) : null}
           <div className="task-detail-activity-tools">
-            {assignedAgent ? (
-              <span className="task-detail-activity-agent" title={assignedAgent.name}>
-                <Bot className="h-4 w-4" />
-                <span>{assignedAgent.name}</span>
-              </span>
-            ) : null}
             {awaitingApproval && canApproveCurrentRun ? (
               <div
                 data-testid={`cloud-task-activity-approval-${task.id}`}
@@ -843,8 +1202,8 @@ export function TaskActivityView({
             ) : null}
             {assignedAgent &&
             (task.execution_state === 'queued' ||
-              task.execution_state === 'claimed' ||
-              task.execution_state === 'assigned') &&
+              task.execution_state === 'starting' ||
+              task.execution_state === 'waiting_runtime') &&
             task.status !== 'in_review' ? (
               <button
                 type="button"
@@ -858,7 +1217,8 @@ export function TaskActivityView({
                 <span className="sr-only">{t('workbench.task_activity_run_now')}</span>
               </button>
             ) : null}
-            {task.status === 'in_review' || task.ai_state?.status === 'completed' ? (
+            {task.status === 'in_review' ||
+            ['completed', 'succeeded'].includes(rawExecutionStatus ?? '') ? (
               <div
                 data-testid={`cloud-task-activity-review-actions-${task.id}`}
                 className="flex items-center gap-1.5"
@@ -934,10 +1294,13 @@ export function TaskActivityView({
             <div className="flex flex-col">
               {commentCards.map(card => {
                 const rootId = card.root.messageId
+                const rootRuntimeAddress = existingRuntimeAddress(card.root)
                 return (
                   <article
                     key={rootId}
                     data-testid={`cloud-task-activity-card-${rootId}`}
+                    data-executor-type={String(card.root.metadata.executor_type ?? '')}
+                    data-manager-type={String(card.root.metadata.manager_type ?? '')}
                     className="task-detail-comment-card"
                   >
                     <ChatMessage
@@ -951,10 +1314,10 @@ export function TaskActivityView({
                       plain
                       taskAiState={task.ai_state}
                       onOpenExecution={
-                        card.root.runtimeAddress
+                        rootRuntimeAddress
                           ? () =>
                               setExecutionDetail({
-                                address: card.root.runtimeAddress!,
+                                address: rootRuntimeAddress,
                                 senderName: card.root.sender.name,
                                 runId:
                                   typeof card.root.metadata.run_id === 'string'
@@ -969,7 +1332,7 @@ export function TaskActivityView({
                           : undefined
                       }
                       onStopExecution={
-                        card.root.runtimeAddress ? () => void stopRuntimeTask(card.root) : undefined
+                        rootRuntimeAddress ? () => void stopRuntimeTask(card.root) : undefined
                       }
                       stopping={cancellingMessageId === card.root.messageId}
                     />
@@ -978,44 +1341,58 @@ export function TaskActivityView({
                         className="task-detail-comment-replies"
                         data-testid={`cloud-task-activity-replies-${rootId}`}
                       >
-                        {card.replies.map(reply => (
-                          <ChatMessage
-                            key={reply.messageId}
-                            message={reply}
-                            mine={
-                              reply.sender.type === 'user' &&
-                              String(reply.sender.id) ===
-                                String(chatCurrentUserId ?? currentUserId ?? '')
-                            }
-                            compact
-                            plain
-                            taskAiState={task.ai_state}
-                            onOpenExecution={
-                              reply.runtimeAddress
-                                ? () =>
-                                    setExecutionDetail({
-                                      address: reply.runtimeAddress!,
-                                      senderName: reply.sender.name,
-                                      runId:
-                                        typeof reply.metadata.run_id === 'string'
-                                          ? reply.metadata.run_id
-                                          : null,
-                                      modelName:
-                                        typeof reply.metadata.model === 'string'
-                                          ? reply.metadata.model
-                                          : null,
-                                      runStatus: resolveMessageRunStatus(task.ai_state, reply),
-                                    })
-                                : undefined
-                            }
-                            onStopExecution={
-                              reply.runtimeAddress ? () => void stopRuntimeTask(reply) : undefined
-                            }
-                            stopping={cancellingMessageId === reply.messageId}
-                          />
-                        ))}
+                        {card.replies.map(reply => {
+                          const replyRuntimeAddress = existingRuntimeAddress(reply)
+                          return (
+                            <ChatMessage
+                              key={reply.messageId}
+                              message={reply}
+                              mine={
+                                reply.sender.type === 'user' &&
+                                String(reply.sender.id) ===
+                                  String(chatCurrentUserId ?? currentUserId ?? '')
+                              }
+                              compact
+                              plain
+                              taskAiState={task.ai_state}
+                              onOpenExecution={
+                                replyRuntimeAddress
+                                  ? () =>
+                                      setExecutionDetail({
+                                        address: replyRuntimeAddress,
+                                        senderName: reply.sender.name,
+                                        runId:
+                                          typeof reply.metadata.run_id === 'string'
+                                            ? reply.metadata.run_id
+                                            : null,
+                                        modelName:
+                                          typeof reply.metadata.model === 'string'
+                                            ? reply.metadata.model
+                                            : null,
+                                        runStatus: resolveMessageRunStatus(task.ai_state, reply),
+                                      })
+                                  : undefined
+                              }
+                              onStopExecution={
+                                replyRuntimeAddress ? () => void stopRuntimeTask(reply) : undefined
+                              }
+                              stopping={cancellingMessageId === reply.messageId}
+                            />
+                          )
+                        })}
                       </div>
                     ) : null}
+                    <div data-testid={`cloud-task-activity-card-queue-${rootId}`}>
+                      <ConversationQueuePanel
+                        queuedMessages={cardQueuedReplies[rootId] ?? []}
+                        guidanceMessages={[]}
+                        onCancelQueuedMessage={id =>
+                          updateCardQueuedReplies(rootId, current =>
+                            current.filter(message => message.id !== id)
+                          )
+                        }
+                      />
+                    </div>
                     <CardCommentComposer
                       rootId={rootId}
                       projectId={project.id}
@@ -1036,40 +1413,43 @@ export function TaskActivityView({
                   : cn(DESKTOP_MESSAGE_LIST_CLASS, 'flex flex-col gap-4 pb-4 pt-5')
               }
             >
-              {threadMessages.map(message => (
-                <ChatMessage
-                  key={message.messageId}
-                  message={message}
-                  mine={
-                    message.sender.type === 'user' &&
-                    String(message.sender.id) === String(chatCurrentUserId ?? currentUserId ?? '')
-                  }
-                  compact={compact}
-                  taskAiState={task.ai_state}
-                  onOpenExecution={
-                    message.runtimeAddress
-                      ? () =>
-                          setExecutionDetail({
-                            address: message.runtimeAddress!,
-                            senderName: message.sender.name,
-                            runId:
-                              typeof message.metadata.run_id === 'string'
-                                ? message.metadata.run_id
-                                : null,
-                            modelName:
-                              typeof message.metadata.model === 'string'
-                                ? message.metadata.model
-                                : null,
-                            runStatus: resolveMessageRunStatus(task.ai_state, message),
-                          })
-                      : undefined
-                  }
-                  onStopExecution={
-                    message.runtimeAddress ? () => void stopRuntimeTask(message) : undefined
-                  }
-                  stopping={cancellingMessageId === message.messageId}
-                />
-              ))}
+              {threadMessages.map(message => {
+                const runtimeAddress = existingRuntimeAddress(message)
+                return (
+                  <ChatMessage
+                    key={message.messageId}
+                    message={message}
+                    mine={
+                      message.sender.type === 'user' &&
+                      String(message.sender.id) === String(chatCurrentUserId ?? currentUserId ?? '')
+                    }
+                    compact={compact}
+                    taskAiState={task.ai_state}
+                    onOpenExecution={
+                      runtimeAddress
+                        ? () =>
+                            setExecutionDetail({
+                              address: runtimeAddress,
+                              senderName: message.sender.name,
+                              runId:
+                                typeof message.metadata.run_id === 'string'
+                                  ? message.metadata.run_id
+                                  : null,
+                              modelName:
+                                typeof message.metadata.model === 'string'
+                                  ? message.metadata.model
+                                  : null,
+                              runStatus: resolveMessageRunStatus(task.ai_state, message),
+                            })
+                        : undefined
+                    }
+                    onStopExecution={
+                      runtimeAddress ? () => void stopRuntimeTask(message) : undefined
+                    }
+                    stopping={cancellingMessageId === message.messageId}
+                  />
+                )
+              })}
             </div>
           )}
         </div>
@@ -1121,46 +1501,51 @@ function resolveMessageRunStatus(
   taskAiState: CloudLoopItem['ai_state'] | undefined,
   message: ProjectChatMessage
 ): string {
-  return taskAiState?.project_chat_message_id === message.messageId && taskAiState.status
-    ? taskAiState.status
-    : message.status
+  const messageStatus = message.status.toLowerCase()
+  if (['completed', 'failed', 'cancelled', 'canceled'].includes(messageStatus)) {
+    return messageStatus
+  }
+  if (taskAiState?.project_chat_message_id === message.messageId && taskAiState.status) {
+    return taskAiState.status
+  }
+  const metadataStatus = message.metadata.run_status
+  return typeof metadataStatus === 'string' && metadataStatus ? metadataStatus : messageStatus
+}
+
+function backendTaskExecution(message: ProjectChatMessage): {
+  taskId: string
+  executionUrl: string
+} | null {
+  const rawTaskId = message.metadata.backend_task_id
+  const taskId =
+    typeof rawTaskId === 'number' && Number.isFinite(rawTaskId) && rawTaskId > 0
+      ? String(rawTaskId)
+      : typeof rawTaskId === 'string' && rawTaskId.trim()
+        ? rawTaskId.trim()
+        : null
+  const executionUrl = message.metadata.execution_url
+  return taskId && typeof executionUrl === 'string' && isHttpUrl(executionUrl)
+    ? { taskId, executionUrl }
+    : null
 }
 
 type TaskExecutionStatusKind =
-  | 'waiting'
+  | 'waiting_approval'
+  | 'queued'
+  | 'starting'
+  | 'waiting_runtime'
   | 'running'
-  | 'success'
+  | 'cancelling'
+  | 'succeeded'
   | 'failed'
   | 'cancelled'
+  | 'skipped'
+  | 'unknown'
   | 'interrupted'
 
 function taskExecutionStatusKind(status: string): TaskExecutionStatusKind {
-  switch (status.toLowerCase()) {
-    case 'completed':
-    case 'done':
-    case 'success':
-    case 'succeeded':
-      return 'success'
-    case 'failed':
-    case 'failure':
-    case 'error':
-    case 'stalled':
-      return 'failed'
-    case 'cancelled':
-    case 'canceled':
-    case 'skipped':
-      return 'cancelled'
-    case 'interrupted':
-      return 'interrupted'
-    case 'assigned':
-    case 'pending':
-    case 'pending_approval':
-    case 'queued':
-    case 'waiting_device':
-      return 'waiting'
-    default:
-      return 'running'
-  }
+  if (status.toLowerCase() === 'interrupted') return 'interrupted'
+  return executionDisplayStatus(status) ?? 'unknown'
 }
 
 function TaskExecutionStatusControl({
@@ -1182,24 +1567,31 @@ function TaskExecutionStatusControl({
   const rootRef = useRef<HTMLSpanElement>(null)
   const kind = taskExecutionStatusKind(status)
   const labels: Record<TaskExecutionStatusKind, string> = {
-    waiting: approvalLabel ?? t('workbench.task_activity_status_waiting'),
-    running: t('workbench.project_chat_processing'),
-    success: t('workbench.task_activity_status_succeeded'),
+    waiting_approval: approvalLabel ?? t('workbench.queue_state_pending_approval'),
+    queued: t('workbench.queue_state_queued'),
+    starting: t('workbench.queue_state_starting'),
+    waiting_runtime: t('workbench.queue_state_waiting_runtime'),
+    running: t('workbench.queue_state_running'),
+    cancelling: t('workbench.queue_state_cancelling'),
+    succeeded: t('workbench.task_activity_status_succeeded'),
     failed: t('workbench.task_activity_status_failed'),
-    cancelled: t('workbench.task_activity_status_cancelled'),
+    cancelled: t('workbench.queue_state_cancelled'),
+    skipped: t('workbench.queue_state_skipped'),
+    unknown: t('workbench.queue_state_unknown'),
     interrupted: t('workbench.task_activity_status_interrupted'),
   }
   const label = labels[kind]
   const Icon =
-    kind === 'success'
+    kind === 'succeeded'
       ? CircleCheck
       : kind === 'failed'
         ? AlertCircle
-        : kind === 'cancelled' || kind === 'interrupted'
+        : kind === 'cancelled' || kind === 'skipped' || kind === 'interrupted'
           ? CircleSlash
-          : kind === 'waiting'
+          : ['waiting_approval', 'queued', 'waiting_runtime'].includes(kind)
             ? Clock3
             : LoaderCircle
+  const animated = ['starting', 'running', 'cancelling'].includes(kind)
 
   useEffect(() => {
     if (!open) return
@@ -1235,7 +1627,7 @@ function TaskExecutionStatusControl({
           onClick={() => setOpen(current => !current)}
           className="task-detail-execution-status-trigger"
         >
-          <Icon className={cn('h-4 w-4', kind === 'running' && 'animate-spin')} />
+          <Icon className={cn('h-4 w-4', animated && 'animate-spin')} />
         </button>
       </Tooltip>
       {open ? (
@@ -1247,7 +1639,7 @@ function TaskExecutionStatusControl({
         >
           <span className="task-detail-execution-status-popover-head">
             <span className="task-detail-execution-status-popover-title">
-              <Icon className={cn('h-4 w-4', kind === 'running' && 'animate-spin')} />
+              <Icon className={cn('h-4 w-4', animated && 'animate-spin')} />
               {label}
             </span>
             <button
@@ -1316,6 +1708,15 @@ function ChatMessage({
   const runId = typeof message.metadata.run_id === 'string' ? message.metadata.run_id : null
   const modelName = typeof message.metadata.model === 'string' ? message.metadata.model : null
   const runStatus = resolveMessageRunStatus(taskAiState, message)
+  const backendExecution = isAgent ? backendTaskExecution(message) : null
+  const openBackendExecution = backendExecution
+    ? () => {
+        void openExternalUrl(backendExecution.executionUrl).catch(error => {
+          console.error('[Wework] Failed to open Wegent task execution', error)
+        })
+      }
+    : undefined
+  const openExecution = onOpenExecution ?? openBackendExecution
   const mentionedAgents = Array.isArray(message.metadata.mentions)
     ? message.metadata.mentions.filter(
         mention =>
@@ -1336,7 +1737,7 @@ function ChatMessage({
             <span className="whitespace-pre-wrap break-words">{text}</span>
           )}
         </div>
-      ) : message.type === 'agent_status' ? (
+      ) : message.type === 'agent_status' && !backendExecution ? (
         <span className="text-sm text-text-muted">
           {t('workbench.project_chat_processing_ellipsis')}
         </span>
@@ -1357,11 +1758,33 @@ function ChatMessage({
           {t('workbench.project_chat_processing')}
         </span>
       ) : null}
-      {isAgent && !compact && onOpenExecution ? (
+      {backendExecution ? (
+        <div
+          data-testid={`cloud-task-activity-backend-task-${message.messageId}`}
+          className="mt-2 flex min-w-0 items-center justify-between gap-3 rounded-lg bg-muted px-2.5 py-2 text-xs"
+        >
+          <span className="inline-flex min-w-0 items-center gap-1.5 text-text-secondary">
+            <Hash className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">
+              {t('workbench.task_activity_backend_task', { id: backendExecution.taskId })}
+            </span>
+          </span>
+          <button
+            type="button"
+            data-testid={`cloud-task-activity-open-backend-task-${message.messageId}`}
+            onClick={openBackendExecution}
+            className="inline-flex shrink-0 items-center gap-1 text-blue-600 hover:underline"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            {t('workbench.task_activity_open_in_task_page')}
+          </button>
+        </div>
+      ) : null}
+      {isAgent && !compact && openExecution && !backendExecution ? (
         <button
           type="button"
           data-testid={`cloud-task-activity-open-execution-${message.messageId}`}
-          onClick={onOpenExecution}
+          onClick={openExecution}
           className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary"
         >
           <ExternalLink className="h-3.5 w-3.5" />
@@ -1415,8 +1838,9 @@ function ChatMessage({
               </div>
             </div>
             <ExecutionStatusBadge
+              messageId={message.messageId}
               status={runStatus}
-              onOpenExecution={onOpenExecution}
+              onOpenExecution={openExecution}
               onStopExecution={onStopExecution}
               stopping={stopping}
             />
@@ -1452,8 +1876,9 @@ function ChatMessage({
           <div className="mt-1 text-sm leading-6">{body}</div>
           {isAgent ? (
             <ExecutionStatusBadge
+              messageId={message.messageId}
               status={runStatus}
-              onOpenExecution={onOpenExecution}
+              onOpenExecution={openExecution}
               onStopExecution={onStopExecution}
               stopping={stopping}
             />
@@ -1482,6 +1907,13 @@ function ChatMessage({
             {isAgent && modelName ? ` · ${modelName}` : ''}
           </span>
         </span>
+        {backendExecution ? (
+          <ExecutionStatusBadge
+            messageId={message.messageId}
+            status={runStatus}
+            onOpenExecution={openExecution}
+          />
+        ) : null}
       </header>
       <div className="px-4 py-4">{body}</div>
     </article>
@@ -1489,35 +1921,63 @@ function ChatMessage({
 }
 
 function ExecutionStatusBadge({
+  messageId,
   status,
   onOpenExecution,
   onStopExecution,
   stopping = false,
 }: {
+  messageId: string
   status: string
   onOpenExecution?: () => void
   onStopExecution?: () => void
   stopping?: boolean
 }) {
   const { t } = useTranslation('common')
-  const displayStatus = executionDisplayStatus(status)
-  const terminal = displayStatus === 'completed'
-  const statusContent = terminal ? (
+  const kind = taskExecutionStatusKind(status)
+  const terminal = ['succeeded', 'failed', 'cancelled', 'skipped', 'interrupted'].includes(kind)
+  const labels: Record<TaskExecutionStatusKind, string> = {
+    waiting_approval: t('workbench.queue_state_pending_approval'),
+    queued: t('workbench.queue_state_queued'),
+    starting: t('workbench.queue_state_starting'),
+    waiting_runtime: t('workbench.queue_state_waiting_runtime'),
+    running: t('workbench.queue_state_running'),
+    cancelling: t('workbench.queue_state_cancelling'),
+    succeeded: t('workbench.project_chat_completed'),
+    failed: t('workbench.task_activity_status_failed'),
+    cancelled: t('workbench.queue_state_cancelled'),
+    skipped: t('workbench.queue_state_skipped'),
+    unknown: t('workbench.queue_state_unknown'),
+    interrupted: t('workbench.task_activity_status_interrupted'),
+  }
+  const StatusIcon =
+    kind === 'succeeded'
+      ? Check
+      : kind === 'failed'
+        ? AlertCircle
+        : kind === 'cancelled' || kind === 'skipped' || kind === 'interrupted'
+          ? CircleSlash
+          : ['waiting_approval', 'queued', 'waiting_runtime'].includes(kind)
+            ? Clock3
+            : LoaderCircle
+  const animated = ['starting', 'running', 'cancelling'].includes(kind)
+  const statusContent = (
     <>
-      <Check className="h-3 w-3" />
-      {t('workbench.project_chat_completed')}
-    </>
-  ) : (
-    <>
-      <LoaderCircle className="h-3 w-3 animate-spin" />
-      {t('workbench.project_chat_processing')}
+      <StatusIcon className={cn('h-3 w-3', animated && 'animate-spin')} />
+      {labels[kind]}
     </>
   )
 
   return (
-    <span className={cn('task-detail-execution-pill', !onOpenExecution && 'is-static')}>
+    <span
+      className={cn('task-detail-execution-pill', !onOpenExecution && 'is-static')}
+      data-status={kind}
+    >
       <button
         type="button"
+        data-testid={`cloud-task-activity-execution-badge-${messageId}`}
+        data-status={kind}
+        aria-label={labels[kind]}
         disabled={!onOpenExecution}
         onClick={onOpenExecution}
         className="task-detail-execution-main"
@@ -1528,23 +1988,25 @@ function ExecutionStatusBadge({
           {t('workbench.task_activity_view_execution')}
         </span>
       </button>
-      <button
-        type="button"
-        disabled={terminal || !onStopExecution || stopping}
-        title={t('workbench.task_activity_stop_execution')}
-        aria-label={t('workbench.task_activity_stop_execution')}
-        className="task-detail-execution-stop"
-        onClick={event => {
-          event.stopPropagation()
-          onStopExecution?.()
-        }}
-      >
-        {stopping ? (
-          <LoaderCircle className="h-3 w-3 animate-spin" />
-        ) : (
-          <Square className="h-3 w-3" />
-        )}
-      </button>
+      {onStopExecution ? (
+        <button
+          type="button"
+          disabled={terminal || stopping}
+          title={t('workbench.task_activity_stop_execution')}
+          aria-label={t('workbench.task_activity_stop_execution')}
+          className="task-detail-execution-stop"
+          onClick={event => {
+            event.stopPropagation()
+            onStopExecution()
+          }}
+        >
+          {stopping ? (
+            <LoaderCircle className="h-3 w-3 animate-spin" />
+          ) : (
+            <Square className="h-3 w-3" />
+          )}
+        </button>
+      ) : null}
     </span>
   )
 }
@@ -1582,4 +2044,11 @@ function findTaskCommentScrollContainer(element: HTMLElement | null): HTMLElemen
     current = current.parentElement
   }
   return null
+}
+
+function resolveTaskCommentScrollContainer(
+  element: HTMLElement | null,
+  linear: boolean
+): HTMLElement | null {
+  return linear ? element : findTaskCommentScrollContainer(element)
 }

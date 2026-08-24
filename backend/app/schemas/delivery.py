@@ -5,7 +5,7 @@
 """API schemas for project TODO delivery snapshots."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -17,6 +17,7 @@ from pydantic import (
 )
 
 from app.schemas.cloud_project import CloudProjectResponse, SnowflakeId
+from app.schemas.issue_workflow import IssueWorkflowInstance
 from app.schemas.tagging import MAX_TAGS_PER_ITEM
 from app.schemas.tagging import normalize_tags as _normalize_tags
 
@@ -27,12 +28,28 @@ class LoopItemCreate(BaseModel):
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
     assignee_agent_id: str | None = Field(default=None, max_length=64)
+    assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
+    workflow: IssueWorkflowInstance | None = None
 
     _normalize = field_validator("tags", mode="before")(_normalize_tags)
+
+    @model_validator(mode="after")
+    def validate_assignee(self) -> "LoopItemCreate":
+        selected = sum(
+            value is not None
+            for value in (
+                self.assignee_user_id,
+                self.assignee_agent_id,
+                self.assignee_team_id,
+            )
+        )
+        if selected > 1:
+            raise ValueError("Only one assignee may be selected")
+        return self
 
 
 class LoopItemUpdate(BaseModel):
@@ -42,14 +59,31 @@ class LoopItemUpdate(BaseModel):
     status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
     assignee_agent_id: str | None = Field(default=None, max_length=64)
+    assignee_team_id: int | None = Field(default=None, ge=1)
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
     due_at: datetime | None = None
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
+    workflow: IssueWorkflowInstance | None = None
 
     _normalize = field_validator("tags", mode="before")(
         lambda value: None if value is None else _normalize_tags(value)
     )
+
+    @model_validator(mode="after")
+    def validate_assignee(self) -> "LoopItemUpdate":
+        values = [
+            value
+            for field, value in (
+                ("assignee_user_id", self.assignee_user_id),
+                ("assignee_agent_id", self.assignee_agent_id),
+                ("assignee_team_id", self.assignee_team_id),
+            )
+            if field in self.model_fields_set and value is not None
+        ]
+        if len(values) > 1:
+            raise ValueError("Only one assignee may be selected")
+        return self
 
 
 class LoopItemReorder(BaseModel):
@@ -74,15 +108,24 @@ class LoopItemResponse(BaseModel):
     assignee_name: str | None = None
     assignee_agent_id: str | None = None
     assignee_agent_name: str | None = None
+    assignee_team_id: int | None = None
+    assignee_team_name: str | None = None
     ai_state: dict[str, Any] | None = None
     execution_state: str | None = None
+    execution_control_state: str | None = None
+    execution_observed_state: str | None = None
+    execution_sync_state: str | None = None
+    execution_attempt_no: int | None = None
+    execution_last_event_seq: int | None = None
     can_approve: bool = False
     assignment_history: list[dict[str, Any]] = Field(default_factory=list)
+    status_history: list[dict[str, Any]] = Field(default_factory=list)
     approval: dict[str, Any] | None = None
     queued_at: str | None = None
     execution_note: str | None = None
     execution_error: str | None = None
     automation: dict[str, Any] | None = None
+    workflow: IssueWorkflowInstance | None = None
     priority: str
     due_at: datetime | None
     sort_order: int
@@ -91,6 +134,8 @@ class LoopItemResponse(BaseModel):
     created_by_user_name: str | None = None
     can_view_detail: bool = True
     can_edit: bool = True
+    content_revision: int = 1
+    is_unread: bool = False
     current_delivery_id: str | None
     version: int
     created_at: datetime
@@ -122,12 +167,30 @@ class LoopItemResponse(BaseModel):
                     else []
                 )
             )
+            status_history = (
+                value.get("status_history")
+                if value.get("status_history") is not None
+                else (
+                    metadata.get("status_history")
+                    if isinstance(metadata.get("status_history"), list)
+                    else []
+                )
+            )
             approval = (
                 value.get("approval")
                 if value.get("approval") is not None
                 else (
                     metadata.get("approval")
                     if isinstance(metadata.get("approval"), dict)
+                    else None
+                )
+            )
+            workflow = (
+                value.get("workflow")
+                if value.get("workflow") is not None
+                else (
+                    metadata.get("workflow")
+                    if isinstance(metadata.get("workflow"), dict)
                     else None
                 )
             )
@@ -148,7 +211,9 @@ class LoopItemResponse(BaseModel):
                     else metadata.get("execution_state")
                 ),
                 "assignment_history": assignment_history,
+                "status_history": status_history,
                 "approval": approval,
+                "workflow": workflow,
                 "queued_at": queued_at,
                 "execution_note": (
                     value.get("execution_note")
@@ -175,9 +240,9 @@ class LoopItemResponse(BaseModel):
     def normalize_empty_id(cls, value: object) -> object:
         return None if value == "" else value
 
-    @field_validator("assignee_user_id", mode="before")
+    @field_validator("assignee_user_id", "assignee_team_id", mode="before")
     @classmethod
-    def normalize_empty_user_id(cls, value: object) -> object:
+    def normalize_empty_numeric_assignee_id(cls, value: object) -> object:
         return None if value == 0 else value
 
     @field_validator("due_at", "completed_at", mode="before")
@@ -277,6 +342,21 @@ class LoopItemTaskBind(BaseModel):
     task_id: str = Field(alias="taskId", min_length=1, max_length=255)
     task_title: str | None = Field(default=None, alias="taskTitle", max_length=255)
     backend_task_id: int | None = Field(default=None, alias="backendTaskId")
+    workflow_node_id: str | None = Field(
+        default=None,
+        alias="workflowNodeId",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+
+
+class RuntimeTaskStatusUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: str = Field(alias="deviceId", min_length=1, max_length=100)
+    task_id: str = Field(alias="taskId", min_length=1, max_length=255)
+    status: Literal["running", "succeeded", "failed", "cancelled", "archived"]
 
 
 class LoopItemTaskBindingResponse(BaseModel):
@@ -290,6 +370,7 @@ class LoopItemTaskBindingResponse(BaseModel):
     task_id: str
     task_title: str | None
     backend_task_id: int | None
+    workflow_node_id: str | None = None
     linked_by_user_id: int
     linked_at: datetime
     unlinked_at: datetime | None
@@ -315,10 +396,137 @@ class CloudTaskContextResponse(LoopItemTaskBindingResponse):
     loop_item: LoopItemResponse | None = None
 
 
+class DeliveryChatSelection(BaseModel):
+    mode: Literal["all", "latest", "message_ids"]
+    count: int | None = Field(default=None, ge=1, le=500)
+    message_ids: list[str] = Field(default_factory=list, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> "DeliveryChatSelection":
+        if self.mode == "latest" and self.count is None:
+            raise ValueError("count is required when mode is latest")
+        if self.mode == "message_ids" and not self.message_ids:
+            raise ValueError("message_ids is required when mode is message_ids")
+        if self.mode != "message_ids" and self.message_ids:
+            raise ValueError("message_ids is only valid when mode is message_ids")
+        if self.mode != "latest" and self.count is not None:
+            raise ValueError("count is only valid when mode is latest")
+        return self
+
+
 class DeliveryCreate(BaseModel):
     markdown: str = ""
     chat: dict[str, Any] | None = None
+    chat_selection: DeliveryChatSelection | None = None
     source_task: LoopItemTaskBind | None = None
+
+    @model_validator(mode="after")
+    def validate_chat_source(self) -> "DeliveryCreate":
+        if self.chat is not None and self.chat_selection is not None:
+            raise ValueError("chat and chat_selection are mutually exclusive")
+        return self
+
+
+class DeliveryTextFulfillment(BaseModel):
+    requirement_id: str = Field(min_length=1, max_length=64)
+    kind: Literal["text"]
+    text: str = Field(min_length=1, max_length=100_000)
+
+
+class DeliveryFileFulfillment(BaseModel):
+    requirement_id: str = Field(min_length=1, max_length=64)
+    kind: Literal["file"]
+    asset_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class DeliveryCodeSnapshotFulfillment(BaseModel):
+    requirement_id: str = Field(min_length=1, max_length=64)
+    kind: Literal["code_snapshot"]
+    asset_id: str = Field(min_length=1, max_length=64)
+    changed_files: list[str] = Field(default_factory=list, max_length=5000)
+    base_revision: str | None = Field(default=None, max_length=255)
+    head_revision: str | None = Field(default=None, max_length=255)
+    sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+
+
+class DeliveryGitBranchFulfillment(BaseModel):
+    requirement_id: str = Field(min_length=1, max_length=64)
+    kind: Literal["git_branch"]
+    remote_url: str = Field(min_length=1, max_length=2000)
+    branch: str = Field(min_length=1, max_length=255)
+    commit_sha: str = Field(min_length=7, max_length=64)
+
+    @field_validator("remote_url")
+    @classmethod
+    def validate_remote_url(cls, value: str) -> str:
+        normalized = value.strip()
+        if not (
+            normalized.startswith(("https://", "ssh://", "git@"))
+            or normalized.endswith(".git")
+        ):
+            raise ValueError("remote_url must identify a Git remote")
+        return normalized
+
+
+class DeliveryPullRequestFulfillment(BaseModel):
+    requirement_id: str = Field(min_length=1, max_length=64)
+    kind: Literal["pull_request"]
+    provider: Literal["github", "gitlab"]
+    url: str = Field(min_length=1, max_length=2000)
+    number: int = Field(ge=1)
+    state: Literal["draft"] = "draft"
+    head_branch: str = Field(min_length=1, max_length=255)
+    base_branch: str = Field(min_length=1, max_length=255)
+    head_commit: str = Field(min_length=7, max_length=64)
+
+    @field_validator("url")
+    @classmethod
+    def validate_pull_request_url(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized.startswith(("http://", "https://")):
+            raise ValueError("pull request URL must use HTTP or HTTPS")
+        return normalized
+
+
+class DeliveryUrlFulfillment(BaseModel):
+    requirement_id: str = Field(min_length=1, max_length=64)
+    kind: Literal["url"]
+    url: str = Field(min_length=1, max_length=2000)
+    title: str = Field(default="", max_length=255)
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized.startswith(("http://", "https://")):
+            raise ValueError("URL fulfillment must use HTTP or HTTPS")
+        return normalized
+
+
+DeliveryFulfillment = Annotated[
+    DeliveryTextFulfillment
+    | DeliveryFileFulfillment
+    | DeliveryCodeSnapshotFulfillment
+    | DeliveryGitBranchFulfillment
+    | DeliveryPullRequestFulfillment
+    | DeliveryUrlFulfillment,
+    Field(discriminator="kind"),
+]
+
+
+class DeliveryFinalize(BaseModel):
+    fulfillments: list[DeliveryFulfillment] = Field(
+        default_factory=list, max_length=100
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_requirements(self) -> "DeliveryFinalize":
+        requirement_ids = [
+            fulfillment.requirement_id for fulfillment in self.fulfillments
+        ]
+        if len(requirement_ids) != len(set(requirement_ids)):
+            raise ValueError("a Delivery can fulfill each requirement only once")
+        return self
 
 
 class DeliveryAssetResponse(BaseModel):
@@ -355,6 +563,7 @@ class DeliveryResponse(BaseModel):
     created_at: datetime
     delivered_at: datetime | None
     assets: list[DeliveryAssetResponse] = Field(default_factory=list)
+    fulfillments: list[DeliveryFulfillment] = Field(default_factory=list)
 
     @field_validator("source_task_binding_id", mode="before")
     @classmethod

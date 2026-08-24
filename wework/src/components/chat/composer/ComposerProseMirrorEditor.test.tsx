@@ -49,6 +49,12 @@ function renderEditor(
 }
 
 describe('ComposerProseMirrorEditor', () => {
+  test('exposes the placeholder layer for scoped composer alignment', () => {
+    renderEditor('')
+
+    expect(screen.getByText('Message')).toHaveClass('composer-prosemirror-placeholder')
+  })
+
   test('restores the controlled value after an Activity tab is hidden and shown', () => {
     function ActivityEditorHarness() {
       const [visible, setVisible] = useState(true)
@@ -87,6 +93,7 @@ describe('ComposerProseMirrorEditor', () => {
     render(<ActivityEditorHarness />)
 
     const editor = screen.getByTestId('composer-editor') as HTMLElement & { value: string }
+    expect(editor).toHaveClass('composer-prosemirror-editor')
     act(() => {
       editor.value = '每个标签自己的草稿'
     })
@@ -171,6 +178,29 @@ describe('ComposerProseMirrorEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith('first line\nsecond line\nthird line')
   })
 
+  test('models each plain-text line as its own paragraph', () => {
+    const doc = createComposerDocument('first line\n\nthird line')
+
+    expect(doc.childCount).toBe(3)
+    expect(doc.child(0).textContent).toBe('first line')
+    expect(doc.child(1).content.size).toBe(0)
+    expect(doc.child(2).textContent).toBe('third line')
+    expect(serializeComposerDocument(doc)).toBe('first line\n\nthird line')
+  })
+
+  test('keeps offset zero before an empty leading paragraph separator', () => {
+    const { editorRef } = renderEditor('')
+
+    act(() => editorRef.current?.setValue('\ntext', 0))
+
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      value: '\ntext',
+      selectionOffset: 0,
+      selectionStart: 0,
+      selectionEnd: 0,
+    })
+  })
+
   test('inserts pasted text exactly once through the ProseMirror paste pipeline', () => {
     const { editorRef, onChange } = renderEditor('existing ')
     const editor = screen.getByTestId('composer-editor')
@@ -188,6 +218,93 @@ describe('ComposerProseMirrorEditor', () => {
     expect(editorRef.current?.getSnapshot().value).toBe('existing pasted text')
     expect(onChange).toHaveBeenCalledOnce()
     expect(onChange).toHaveBeenLastCalledWith('existing pasted text')
+  })
+
+  test('moves the caret to the end after pasting text', () => {
+    const { editorRef } = renderEditor('before after')
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => editorRef.current?.setValue('before after', 'before '.length))
+
+    fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? 'pasted ' : ''),
+        types: ['text/plain'],
+      },
+    })
+
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      value: 'before pasted after',
+      selectionOffset: 'before pasted after'.length,
+      selectionStart: 'before pasted after'.length,
+      selectionEnd: 'before pasted after'.length,
+    })
+  })
+
+  test.each([
+    ['Home', 0],
+    ['End', 'before after'.length],
+  ])('moves the caret with %s without inserting a control character', (key, selectionOffset) => {
+    const { editorRef, onChange } = renderEditor('before after')
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => {
+      editorRef.current?.setValue('before after', 'before '.length)
+      editorRef.current?.focus()
+    })
+
+    expect(fireEvent.keyDown(editor, { key, code: key })).toBe(false)
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      value: 'before after',
+      selectionOffset,
+      selectionStart: selectionOffset,
+      selectionEnd: selectionOffset,
+    })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    ['Home', 0, 'before '.length],
+    ['End', 'before '.length, 'before after'.length],
+  ])('extends the selection with Shift+%s', (key, selectionStart, selectionEnd) => {
+    const { editorRef } = renderEditor('before after')
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => {
+      editorRef.current?.setValue('before after', 'before '.length)
+      editorRef.current?.focus()
+    })
+
+    expect(fireEvent.keyDown(editor, { key, code: key, shiftKey: true })).toBe(false)
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      value: 'before after',
+      selectionStart,
+      selectionEnd,
+    })
+  })
+
+  test.each([
+    ['Home', 0],
+    ['End', 'first line\nsecond line'.length],
+  ])('moves to the document boundary with Cmd/Ctrl+%s', (key, selectionOffset) => {
+    const { editorRef } = renderEditor('first line\nsecond line')
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => {
+      editorRef.current?.setValue('first line\nsecond line', 'first line'.length)
+      editorRef.current?.focus()
+    })
+
+    expect(
+      fireEvent.keyDown(editor, {
+        key,
+        code: key,
+        metaKey: key === 'Home',
+        ctrlKey: key === 'End',
+      })
+    ).toBe(false)
+    expect(editorRef.current?.getSnapshot().selectionOffset).toBe(selectionOffset)
   })
 
   test('keeps line breaks when pasting rich text', () => {
@@ -208,6 +325,36 @@ describe('ComposerProseMirrorEditor', () => {
 
     expect(editorRef.current?.getSnapshot().value).toBe('first line\nsecond line\nthird line')
     expect(onChange).toHaveBeenCalledOnce()
+  })
+
+  test('scrolls the caret into view after inserting a line break', () => {
+    const { editorRef } = renderEditor('first line')
+    const editor = screen.getByTestId('composer-editor')
+    Object.defineProperties(editor, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 180 },
+    })
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+      callback(0)
+      return 1
+    })
+
+    act(() => editorRef.current?.setValue('first line', 'first line'.length))
+    fireEvent.keyDown(editor, {
+      key: 'Enter',
+      code: 'Enter',
+      shiftKey: true,
+    })
+
+    expect(editorRef.current?.getSnapshot().value).toBe('first line\n')
+    expect(editor.scrollTop).toBe(80)
+    expect(editor.querySelector('.composer-empty-caret')).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  test('uses the native caret when the composer is completely empty', () => {
+    renderEditor('')
+
+    expect(screen.getByTestId('composer-editor').querySelector('.composer-empty-caret')).toBeNull()
   })
 
   test('keeps the caret outside the skill while repeatedly moving left', () => {
@@ -366,6 +513,50 @@ describe('ComposerProseMirrorEditor', () => {
     expect(fireEvent.keyDown(editor, { key: 'a', code: 'KeyA', metaKey: true })).toBe(false)
     expect(editor.dispatchEvent(copyEvent)).toBe(false)
     expect(setData).toHaveBeenCalledWith('text/plain', value)
+  })
+
+  test.each(['Backspace', 'Delete'])('deletes a fully selected multiline document with %s', key => {
+    const { editorRef, onChange } = renderEditor('first line\n\nthird line')
+    const editor = screen.getByTestId('composer-editor')
+
+    editor.focus()
+    expect(fireEvent.keyDown(editor, { key: 'a', code: 'KeyA', metaKey: true })).toBe(false)
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      selectionStart: 0,
+      selectionEnd: 'first line\n\nthird line'.length,
+    })
+
+    expect(fireEvent.keyDown(editor, { key, code: key })).toBe(false)
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      value: '',
+      selectionOffset: 0,
+      selectionStart: 0,
+      selectionEnd: 0,
+    })
+    expect(onChange).toHaveBeenLastCalledWith('')
+  })
+
+  test.each(['Backspace', 'Delete'])('removes an empty line with %s', key => {
+    const value = 'first line\n\nthird line'
+    const { editorRef, onChange } = renderEditor(value)
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => {
+      editorRef.current?.setValue(value, 'first line\n'.length)
+      editorRef.current?.focus()
+    })
+
+    expect(editorRef.current?.getSnapshot().selectionOffset).toBe('first line\n'.length)
+    expect(fireEvent.keyDown(editor, { key, code: key })).toBe(false)
+    const expectedSelectionOffset =
+      key === 'Backspace' ? 'first line'.length : 'first line\n'.length
+    expect(editorRef.current?.getSnapshot()).toMatchObject({
+      value: 'first line\nthird line',
+      selectionOffset: expectedSelectionOffset,
+      selectionStart: expectedSelectionOffset,
+      selectionEnd: expectedSelectionOffset,
+    })
+    expect(onChange).toHaveBeenLastCalledWith('first line\nthird line')
   })
 
   test('moves right across the whole skill in one step', () => {

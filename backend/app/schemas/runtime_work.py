@@ -10,9 +10,53 @@ from typing import Any, Literal, Optional
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 RuntimeName = Literal["codex", "claude_code"]
-LocalTaskStatus = Literal["active", "archived", "queued", "running"]
 RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
 RuntimeWorkspaceSource = Literal["local", "remote"]
+
+
+class RuntimeWorktreeDeviceRequest(BaseModel):
+    """Address one Runtime-owned Worktree operation by logical device ID."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: str = Field(..., alias="deviceId", min_length=1)
+
+
+class RuntimeWorktreePreflightRequest(RuntimeWorktreeDeviceRequest):
+    """Validate one source workspace before enabling managed Worktrees."""
+
+    source_path: str = Field(..., alias="sourcePath", min_length=1)
+    ref: Optional[str] = None
+
+
+class RuntimeWorktreeSettingsPatch(RuntimeWorktreeDeviceRequest):
+    """Update Runtime-owned Worktree settings."""
+
+    worktree_root: Optional[str] = Field(default=None, alias="worktreeRoot")
+    auto_cleanup_enabled: Optional[bool] = Field(
+        default=None,
+        alias="autoCleanupEnabled",
+    )
+    keep_count: Optional[int] = Field(default=None, alias="keepCount", ge=1)
+
+
+class RuntimeWorktreePrepareRequest(RuntimeWorktreeDeviceRequest):
+    """Prepare one managed Worktree on the addressed Runtime."""
+
+    source_path: str = Field(..., alias="sourcePath", min_length=1)
+    worktree_id: str = Field(..., alias="worktreeId", min_length=1)
+    ref: Optional[str] = None
+    permanent: Optional[bool] = None
+
+
+class RuntimeWorktreePathRequest(RuntimeWorktreeDeviceRequest):
+    """Delete or restore one managed Worktree path."""
+
+    path: str = Field(..., min_length=1)
+    preserve_snapshot: Optional[bool] = Field(
+        default=None,
+        alias="preserveSnapshot",
+    )
 
 
 class RuntimeTaskAddress(BaseModel):
@@ -28,6 +72,16 @@ class RuntimeTaskAddress(BaseModel):
         validation_alias=AliasChoices("taskId", "localTaskId", "local_task_id"),
         min_length=1,
     )
+
+
+class RuntimeModelSelection(BaseModel):
+    """Model selection persisted with a device-local runtime task."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    model_name: str = Field(..., alias="modelName", min_length=1)
+    model_type: Optional[str] = Field(default=None, alias="modelType")
+    options: dict[str, Any] = Field(default_factory=dict)
 
 
 class RuntimeTranscriptRequest(RuntimeTaskAddress):
@@ -116,10 +170,19 @@ class LocalTaskSummary(BaseModel):
     git_info: Optional[dict[str, Any]] = Field(default=None, alias="gitInfo")
     parent: Optional[RuntimeTaskAddressRef] = None
     children: list[RuntimeTaskAddressRef] = Field(default_factory=list)
-    created_at: Optional[str] = Field(default=None, alias="createdAt")
-    updated_at: Optional[str] = Field(default=None, alias="updatedAt")
+    created_at: Optional[str | int] = Field(default=None, alias="createdAt")
+    updated_at: Optional[str | int] = Field(default=None, alias="updatedAt")
+    completed_at: Optional[str | int] = Field(default=None, alias="completedAt")
     running: bool = False
-    status: Optional[LocalTaskStatus] = None
+    continuable: Optional[bool] = None
+    thread_status: Optional[str] = Field(default=None, alias="threadStatus")
+    turn_status: Optional[str] = Field(default=None, alias="turnStatus")
+    goal_status: Optional[str] = Field(default=None, alias="goalStatus")
+    supervisor: Optional[dict[str, Any]] = None
+    pinned: Optional[bool] = None
+    pinned_order: Optional[int] = Field(default=None, alias="pinnedOrder")
+    sidebar_order: Optional[int] = Field(default=None, alias="sidebarOrder")
+    status: Optional[str] = None
 
 
 class DeviceWorkspaceUpsert(BaseModel):
@@ -277,7 +340,12 @@ class ArchivedConversationItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
-    local_task_id: str = Field(..., alias="localTaskId")
+    task_id: str = Field(
+        ...,
+        alias="taskId",
+        validation_alias=AliasChoices("taskId", "localTaskId", "local_task_id"),
+    )
+    thread_id: Optional[str] = Field(default=None, alias="threadId")
     title: str
     project_id: Optional[int] = Field(default=None, alias="projectId")
     project_key: Optional[str] = Field(default=None, alias="projectKey")
@@ -292,6 +360,10 @@ class ArchivedConversationItem(BaseModel):
     device_address: Optional[str] = Field(default=None, alias="deviceAddress")
     source: Literal["local", "cloud"] = "local"
     runtime: Optional[RuntimeName] = None
+    runtime_handle: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="runtimeHandle",
+    )
     created_at: Optional[str] = Field(default=None, alias="createdAt")
     updated_at: Optional[str] = Field(default=None, alias="updatedAt")
 
@@ -427,7 +499,15 @@ class RuntimeSendRequest(BaseModel):
 
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
+    client_user_message_id: Optional[str] = Field(
+        default=None,
+        alias="clientUserMessageId",
+    )
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
     source: Optional[RuntimeMessageSource] = None
     request_user_input_response: Optional[dict[str, Any]] = Field(
         default=None,
@@ -571,7 +651,12 @@ class BindRuntimeTaskIMSessionsRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     address: RuntimeTaskAddress
+    task_title: str = Field(..., alias="taskTitle", min_length=1, max_length=255)
     session_keys: list[str] = Field(..., alias="sessionKeys", min_length=1)
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
 
 
 class BindRuntimeTaskIMSessionsResponse(BaseModel):
@@ -749,6 +834,10 @@ class RuntimeTaskCreateRequest(BaseModel):
         default_factory=dict,
         alias="modelOptions",
     )
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
     additional_skills: list[Any] = Field(
         default_factory=list,
         alias="additionalSkills",
@@ -777,6 +866,7 @@ class RuntimeTaskCreateResponse(BaseModel):
     workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName
     error: Optional[str] = None
+    error_code: Optional[str] = Field(default=None, alias="errorCode")
 
 
 class RuntimeTaskForkTarget(BaseModel):

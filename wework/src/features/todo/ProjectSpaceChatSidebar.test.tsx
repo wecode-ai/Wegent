@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useRef } from 'react'
 
-import type { Attachment, RuntimeTaskAddress } from '@/types/api'
+import type { Attachment, ModelOptions, ModelType, RuntimeTaskAddress } from '@/types/api'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 
 const mocks = vi.hoisted(() => ({
@@ -38,6 +38,12 @@ interface MockChatPanelProps {
     message: string,
     options: {
       attachments: Attachment[]
+      executionModel: {
+        modelId?: string
+        modelType?: ModelType | null
+        modelOptions?: ModelOptions
+      }
+      optimisticUserMessage: import('@/types/workbench').WorkbenchMessage & { role: 'user' }
       onError: (message: string) => void
       onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
     }
@@ -70,6 +76,17 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
           onClick={() => {
             void createTask?.('管理当前项目', {
               attachments: [],
+              executionModel: {
+                modelId: 'backend-codex',
+                modelType: 'user',
+                modelOptions: { reasoningEffort: 'high' },
+              },
+              optimisticUserMessage: {
+                id: 'queued-side-chat-1',
+                role: 'user',
+                content: '管理当前项目',
+                status: 'done',
+              },
               onError: vi.fn(),
               onRuntimeTaskOptimisticOpen: address => onAddressChange?.(address),
             })
@@ -239,6 +256,16 @@ describe('ProjectSpaceChatSidebar', () => {
       '管理当前项目',
       expect.objectContaining({
         project: expect.objectContaining({ id: 91 }),
+        runtime: 'codex',
+        optimisticUserMessage: expect.objectContaining({
+          id: 'queued-side-chat-1',
+          role: 'user',
+        }),
+        executionModel: {
+          modelId: 'backend-codex',
+          modelType: 'user',
+          modelOptions: { reasoningEffort: 'high' },
+        },
         cloudProjectId: '11',
         additionalContext: expect.objectContaining({
           projectSpaceChat: expect.objectContaining({

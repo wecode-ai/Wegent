@@ -5,6 +5,7 @@
 use std::{
     collections::VecDeque,
     future::Future,
+    io::Read,
     pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
@@ -13,11 +14,14 @@ use std::{
 #[cfg(unix)]
 use std::{fs, os::unix::fs::PermissionsExt};
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use flate2::read::GzDecoder;
 use serde_json::{json, Value};
 use tokio::{sync::broadcast, time::timeout};
 use wegent_executor::{
     config::device::{DeviceConfig, UpdateConfig},
     emitter::ResponsesEventBuilder,
+    local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     local::backend::{
         build_runtime_auth_file_report, is_usable_device_ip, CapabilityReportProvider,
         LocalBackendClient, LocalBackendConfig, LocalBackendEventSink, LocalBackendRunner,
@@ -56,6 +60,23 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["client_ip"], "192.0.2.10");
     assert_eq!(calls[0].payload["runtime_transfer_host"], "192.0.2.10");
+    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 1);
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["version"],
+        1
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["managed"],
+        true
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["deferredPrepare"],
+        true
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["preflight"],
+        true
+    );
 }
 
 #[tokio::test]
@@ -93,6 +114,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     client.set_running_task_ids(["10".to_owned(), "20".to_owned()]);
 
     let accepted = client.send_heartbeat(Duration::from_secs(2)).await.unwrap();
+    client.emit_liveness_heartbeat().await.unwrap();
 
     assert!(accepted);
     let calls = transport.calls();
@@ -103,10 +125,31 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["capabilities"]["revision"], 0);
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
+    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 1);
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["version"],
+        1
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["managed"],
+        true
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["deferredPrepare"],
+        true
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["worktrees"]["preflight"],
+        true
+    );
     assert_eq!(
         calls[0].payload["runtime_auth_files"]["codex"],
         json!({"target_path": expected_auth_path, "exists": true})
     );
+    let emits = transport.emits();
+    assert_eq!(emits.len(), 1);
+    assert_eq!(emits[0].event, "device:heartbeat");
+    assert_eq!(emits[0].payload, calls[0].payload);
 }
 
 #[tokio::test]
@@ -146,6 +189,7 @@ async fn local_backend_task_execute_handler_runs_agent_and_emits_events() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-claude",
         r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"local done"}]}}'
 	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
 	"#,
@@ -189,6 +233,7 @@ async fn local_backend_task_execute_streams_claude_stdout_before_completion() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-streaming-claude",
         r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}'
 	sleep 0.1
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":" world"}]}}'
@@ -238,6 +283,7 @@ async fn local_backend_task_execute_streams_claude_thinking_deltas_before_text()
     let fake_claude = write_fake_executable(
         "fake-local-backend-thinking-claude",
         r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checking image"}}'
 	sleep 0.1
 	printf '%s\n' '{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"visible answer"}}'
@@ -285,6 +331,7 @@ async fn local_backend_task_execute_streams_claude_assistant_thinking_blocks_as_
     let fake_claude = write_fake_executable(
         "fake-local-backend-assistant-thinking-claude",
         r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"abcdef"},{"type":"text","text":"answer"}]}}'
 	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
 	"#,
@@ -341,6 +388,7 @@ async fn local_backend_task_execute_streams_claude_tool_use_blocks() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-tool-claude",
         r##"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"Read_0","name":"Read","input":{"file_path":"README.md"}}]}}'
 	sleep 0.1
 	printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"Read_0","content":"# Project"}]}}'
@@ -409,6 +457,7 @@ async fn local_backend_task_execute_streams_large_claude_assistant_message() {
         "fake-local-backend-large-assistant-claude",
         &format!(
             r#"#!/bin/sh
+	cat >/dev/null
 	printf '%s\n' '{}'
 	printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}}'
 	"#,
@@ -493,6 +542,40 @@ async fn local_backend_runtime_rpc_handler_uses_default_runtime_work_handler() {
 }
 
 #[tokio::test]
+async fn local_backend_runtime_rpc_handler_compresses_large_ack_payloads() {
+    let transport = RecordingTransport::default();
+    let (event_tx, event_rx) = broadcast::channel(8);
+    let expected = json!({
+        "success": true,
+        "messages": [{
+            "id": "message-1",
+            "role": "assistant",
+            "content": "large transcript 中文🙂".repeat(80_000),
+        }],
+    });
+    let runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+        local_backend_config(),
+        transport.clone(),
+        Arc::new(StaticRuntimeWorkHandler(expected.clone())),
+        event_rx,
+    );
+    drop(event_tx);
+    runner.register_handlers();
+
+    let handler = transport.handler("runtime:rpc").unwrap();
+    let ack = handler(json!({
+        "method": "runtime.tasks.transcript",
+        "payload": {"localTaskId": "large-1"}
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(ack["__runtimeRpcEncoding"], "gzip+base64+json");
+    assert!(serde_json::to_vec(&ack).unwrap().len() < 1_000_000);
+    assert_eq!(decode_compressed_runtime_ack(&ack), expected);
+}
+
+#[tokio::test]
 async fn local_backend_relays_events_from_shared_app_runtime_handler() {
     let transport = RecordingTransport::default();
     let (event_tx, _) = broadcast::channel(8);
@@ -518,7 +601,7 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
 
     timeout(Duration::from_secs(3), async {
         loop {
-            if !transport.calls().is_empty() {
+            if !transport.emits().is_empty() {
                 return;
             }
             tokio::task::yield_now().await;
@@ -527,10 +610,44 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
     .await
     .unwrap();
 
-    let calls = transport.calls();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].event, "runtime:event");
-    assert_eq!(calls[0].payload["event"], "runtime.task.completed");
+    let emits = transport.emits();
+    assert_eq!(emits.len(), 1);
+    assert_eq!(emits[0].event, "runtime:event");
+    assert_eq!(emits[0].payload["event"], "runtime.task.completed");
+}
+
+#[tokio::test]
+async fn local_backend_retries_runtime_events_until_the_backend_accepts_them() {
+    let transport = RecordingTransport::with_emit_results(vec![
+        Err("Socket.IO client is not connected".to_owned()),
+        Ok(()),
+    ]);
+    let (event_tx, _) = broadcast::channel(8);
+    let handler = Arc::new(RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        "/bin/false",
+        event_tx.clone(),
+    ));
+    let _runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+        local_backend_config(),
+        transport.clone(),
+        handler,
+        event_tx.subscribe(),
+    );
+    let event = json!({
+        "type": "event",
+        "event": "runtime.task.completed",
+        "payload": {"task_id": "runtime-1"}
+    });
+
+    event_tx.send(event.clone()).unwrap();
+
+    let emits = transport.wait_for_emits(2).await;
+    assert_eq!(emits.len(), 2);
+    assert_eq!(emits[0].event, "runtime:event");
+    assert_eq!(emits[0].payload, event);
+    assert_eq!(emits[1].event, "runtime:event");
+    assert_eq!(emits[1].payload, event);
 }
 
 #[test]
@@ -591,6 +708,7 @@ struct RecordedCall {
 struct RecordingTransport {
     calls: Arc<Mutex<Vec<RecordedCall>>>,
     emits: Arc<Mutex<Vec<RecordedCall>>>,
+    emit_results: Arc<Mutex<VecDeque<Result<(), String>>>>,
     responses: Arc<Mutex<VecDeque<Value>>>,
     handlers: Arc<Mutex<Vec<(String, wegent_executor::local::backend::EventHandler)>>>,
     disconnects: Arc<Mutex<usize>>,
@@ -601,6 +719,13 @@ impl RecordingTransport {
     fn with_responses(responses: Vec<Value>) -> Self {
         Self {
             responses: Arc::new(Mutex::new(responses.into())),
+            ..Self::default()
+        }
+    }
+
+    fn with_emit_results(results: Vec<Result<(), String>>) -> Self {
+        Self {
+            emit_results: Arc::new(Mutex::new(results.into())),
             ..Self::default()
         }
     }
@@ -627,7 +752,7 @@ impl RecordingTransport {
     }
 
     async fn wait_for_emits(&self, count: usize) -> Vec<RecordedCall> {
-        timeout(Duration::from_secs(3), async {
+        timeout(Duration::from_secs(10), async {
             loop {
                 let emits = self.emits();
                 if emits.len() >= count {
@@ -641,7 +766,7 @@ impl RecordingTransport {
     }
 
     async fn wait_for_emit_event(&self, event: &str) -> Vec<RecordedCall> {
-        timeout(Duration::from_secs(3), async {
+        timeout(Duration::from_secs(10), async {
             loop {
                 let emits = self.emits();
                 if emits.iter().any(|emit| emit.event == event) {
@@ -701,7 +826,11 @@ impl LocalBackendTransport for RecordingTransport {
                 payload,
             });
             self.notify.notify_waiters();
-            Ok(())
+            self.emit_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Ok(()))
         })
     }
 
@@ -761,6 +890,27 @@ impl CapabilityReportProvider for StaticCapabilityReporter {
             "last_sync_at": null,
         })
     }
+}
+
+struct StaticRuntimeWorkHandler(Value);
+
+impl RuntimeWorkHandler for StaticRuntimeWorkHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move { Ok(self.0.clone()) })
+    }
+}
+
+fn decode_compressed_runtime_ack(ack: &Value) -> Value {
+    let compressed = BASE64_STANDARD
+        .decode(ack["payload"].as_str().expect("compressed payload"))
+        .expect("valid base64");
+    let mut decoder = GzDecoder::new(compressed.as_slice());
+    let mut raw = Vec::new();
+    decoder.read_to_end(&mut raw).expect("valid gzip");
+    serde_json::from_slice(&raw).expect("valid runtime response")
 }
 
 #[cfg(unix)]

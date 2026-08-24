@@ -16,7 +16,7 @@ import {
   getRuntimeTaskWorkspaceTitle,
 } from '@/components/layout/runtimeTaskSidebarHelpers'
 import { getRuntimeTaskNotificationText } from './runtimeTaskNotificationContent'
-import { sendRuntimeTaskCompletionNotification } from './runtimeTaskSystemNotifications'
+import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 import { isMainWindowFocused, subscribeMainWindowFocus } from '@/tauri/windowFocus'
 import type {
   RuntimeTaskLifecycleStore,
@@ -111,6 +111,14 @@ function collectRuntimeTaskReminderItems(
   })
 }
 
+export function getVisibleRuntimeTaskUnreadKeys(
+  items: RuntimeTaskReminderItem[],
+  unreadTaskKeys: ReadonlySet<string>
+): ReadonlySet<string> {
+  const visibleKeys = new Set(items.map(item => item.key))
+  return new Set([...unreadTaskKeys].filter(key => visibleKeys.has(key)))
+}
+
 export function useRuntimeTaskReminders({
   runtimeWork,
   lifecycleStore,
@@ -153,6 +161,10 @@ export function useRuntimeTaskReminders({
 
   const items = useMemo(() => collectRuntimeTaskReminderItems(runtimeWork), [runtimeWork])
   const itemsByKey = useMemo(() => new Map(items.map(item => [item.key, item])), [items])
+  const visibleUnreadTaskKeys = useMemo(
+    () => getVisibleRuntimeTaskUnreadKeys(items, lifecycleSnapshot.unreadTaskKeys),
+    [items, lifecycleSnapshot.unreadTaskKeys]
+  )
 
   useEffect(() => {
     const previousUnreadTaskKeys = previousUnreadTaskKeysRef.current
@@ -176,7 +188,7 @@ export function useRuntimeTaskReminders({
         taskId: item.task.taskId,
         title: item.task.title,
       })
-      void getRuntimeTaskNotificationText(item).then(sendRuntimeTaskCompletionNotification)
+      void getRuntimeTaskNotificationText(item).then(sendSystemNotification)
     }
   }, [
     itemsByKey,
@@ -187,13 +199,19 @@ export function useRuntimeTaskReminders({
 
   return useMemo(
     () => ({
-      unreadTaskKeys: lifecycleSnapshot.unreadTaskKeys,
-      unreadCount: lifecycleSnapshot.unreadTaskKeys.size,
+      unreadTaskKeys: visibleUnreadTaskKeys,
+      unreadCount: visibleUnreadTaskKeys.size,
       hasRunningTasks: lifecycleSnapshot.runningTaskKeys.size > 0,
       preferences,
       items,
       markRuntimeTaskRead: (address: RuntimeTaskAddress) => lifecycleStore.markRead(address),
     }),
-    [items, lifecycleSnapshot, lifecycleStore, preferences]
+    [
+      items,
+      lifecycleSnapshot.runningTaskKeys.size,
+      lifecycleStore,
+      preferences,
+      visibleUnreadTaskKeys,
+    ]
   )
 }

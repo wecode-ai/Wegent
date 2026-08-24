@@ -121,6 +121,7 @@ def test_a_published_page_has_real_content_behind_it(
 ):
     """The document must point at an attachment that actually holds the page."""
     version = generation()
+    _page(test_db, version, "architecture", "# Architecture\n\nSystem overview.")
     _page(test_db, version, "architecture/backend", "# Backend\n\nHow it works.")
     enqueued: list[int] = []
 
@@ -129,7 +130,10 @@ def test_a_published_page_has_real_content_behind_it(
     assert result.published
     document = (
         test_db.query(KnowledgeDocument)
-        .filter(KnowledgeDocument.kind_id == knowledge_base.id)
+        .filter(
+            KnowledgeDocument.kind_id == knowledge_base.id,
+            KnowledgeDocument.name == "backend",
+        )
         .one()
     )
     attachment = test_db.get(SubtaskContext, document.attachment_id)
@@ -336,6 +340,7 @@ def test_the_folder_tree_is_built_from_the_page_paths(
 ):
     version = generation()
     _page(test_db, version, "index", "root page")
+    _page(test_db, version, "architecture", "section overview")
     _page(test_db, version, "architecture/backend", "nested page")
     enqueued: list[int] = []
 

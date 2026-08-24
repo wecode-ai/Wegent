@@ -1,5 +1,6 @@
 .paneGroup {
-  container-type: inline-size;
+  container-name: workbench-pane;
+  container-type: size;
 }
 
 @container (max-width: 44rem) {
@@ -18,5 +19,12 @@
   .paneHeaderActions [data-testid='open-workspace-location-label'],
   .paneHeaderActions [data-testid='open-local-workspace-picker-button'] {
     display: none;
+  }
+}
+
+@container workbench-pane (max-height: 34rem) {
+  .paneContent :global([data-testid='desktop-chat-scroll-sticky-footer']) {
+    padding-top: 8px;
+    padding-bottom: 4px;
   }
 }

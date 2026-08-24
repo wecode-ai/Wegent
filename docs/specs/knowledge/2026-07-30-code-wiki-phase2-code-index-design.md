@@ -127,15 +127,26 @@ code_wiki 的 splitter **由系统按目标类型固定,用户不可选/不可�
 
 **B — 用户自定义内容**(一期已埋 `origin`,故为纯加法):
 
-1. 开放 API:在 code_wiki 下创建 `origin='user'` 的**顶层文件夹**及其内文档(子级继承 user);根 `index.md` 仍归 generated。
+1. 开放 API:在 code_wiki 下创建 `origin='user'` 的文件夹及文档。文档管理以
+   「生成内容 / 用户内容」两个**虚拟根节点**分区,不把 origin 编码进真实路径;后端强制
+   folder/document 不得跨 origin 交错,投影 resolver 只能复用 generated folder。根
+   `index.md` 仍归 generated。
 2. **投影侧零改动** —— 一期已把投影作用域限定在 `origin='generated'`。
-3. 前端:同一棵树内按 `origin` 切换交互——user 子树可编辑(复用 notebook 的编辑原语),generated 子树只读。
-4. 索引:user 文档即普通 `KnowledgeDocument`,照常进 RAG,与生成页一起被 Ask 检索。
+3. 前端:Code Wiki 使用「Wiki / 文档管理」。文档管理内 user 子树可编辑(复用普通文档编辑
+   原语),generated 子树只读;Wiki 导航本期仍只显示 generated pages。
+4. 索引:user 文档即普通 `KnowledgeDocument`,照常进 RAG,与生成页一起被 Ask 检索。若后续
+   要在 Wiki 展示用户纠错,走下面 C 的关联,不把所有 user 文件自动塞进 Wiki 导航。
 
 **C — 纠错反馈回圈**(依赖 B 的归属原语):
 
 1. 在 B 之上加 note → page 关联字段;note 本身是 `origin='user'` 的文档,故**扛过重生成**。
-   - **靠关联而非物理放置**:note 存放在 user 顶层子树内,用关联字段指向生成页,UI 再把它展示在该页旁边。**不要**把 note 放进 generated 文件夹——那里会被 agent 重组/删除。
+   - **靠关联而非物理放置**:note 属于 user 内容区,用关联字段指向生成页,UI 再把它展示在
+     该页旁边。**不要**把 note 放进 generated 文件夹——那里会被 agent 重组/删除。
+   - **以路径而非 document ID 关联**:关联目标是规范化的 generated page path。只要 path 不变,
+     重生成后的投影文档换了 ID 也能重新找到 note。
+   - **重命名或删除不自动猜测迁移**:完整重生成把 path 变化视为删除加新增。旧 path 消失时保留
+     `origin='user'` note,标为待重新关联,由用户显式选定新的 generated page;不得自动重映射或
+     删除 note。
 2. 重生成某页时,把该页关联的 notes 一并喂进生成 prompt,让 agent 采纳人类纠正。
 3. 保持"生成是唯一真源":人不直接改生成页,只提供反馈。
 

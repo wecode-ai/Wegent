@@ -64,6 +64,7 @@ class IMSessionService:
         channel_id: int,
         conversation_id: str,
         sender_id: str,
+        proactive_recipient_id: str | None = None,
         display_name: str = "",
     ) -> IMPrivateSession:
         now = datetime.now()
@@ -82,6 +83,7 @@ class IMSessionService:
                 channel_id=channel_id,
                 conversation_id=conversation_id,
                 sender_id=sender_id,
+                proactive_recipient_id=proactive_recipient_id or "",
                 display_name=display_name,
                 last_seen_at=now,
                 created_at=now,
@@ -89,6 +91,8 @@ class IMSessionService:
             )
         else:
             session.sender_id = sender_id
+            if proactive_recipient_id:
+                session.proactive_recipient_id = proactive_recipient_id
             session.display_name = display_name
             session.last_seen_at = now
             session.updated_at = now
@@ -387,7 +391,10 @@ class IMSessionService:
             runtime_task.get("deviceId") or runtime_task.get("device_id") or ""
         ).strip()
         local_task_id = str(
-            runtime_task.get("localTaskId") or runtime_task.get("local_task_id") or ""
+            runtime_task.get("localTaskId")
+            or runtime_task.get("taskId")
+            or runtime_task.get("local_task_id")
+            or ""
         ).strip()
         if not device_id or not local_task_id:
             raise ValueError(

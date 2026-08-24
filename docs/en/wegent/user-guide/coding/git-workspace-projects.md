@@ -88,6 +88,8 @@ Select **Quick phrases** in the lower-left area of the Wework composer to open t
 
 Open **Settings > Quick phrases** to create, edit, delete, and reorder phrases. Each phrase can use Normal, Plan mode, or Goal; selecting it also switches the composer to that mode. Quick phrases are stored on the current device, remain available offline, and are not synchronized to other devices.
 
+Local projects can also maintain project-only phrases under **Project settings > Quick phrases**. In that project's composer, project phrases appear before device-wide phrases and disappear when you switch to another project. Items created through the system drag stash remain device-wide.
+
 ### Use the System Drag Panel
 
 The macOS desktop app enables the system drag panel by default. When you start dragging files, images, web links, or selected text, Wework shows a compact always-on-top panel at the top of the display containing the pointer. Drop the content onto one of these targets:
@@ -131,6 +133,8 @@ For a project bound to the local macOS device, the project row menu includes **S
 The file preview does not save or modify files. You can select a code range in the preview and add a local comment. The comment appears above the left composer as contextual input, such as “1 comment”. When you send the next message, Wework includes the file path, line range, selected code, and comment text in the request context so the agent can understand the referenced code location.
 
 When an assistant response, Codex reference, or memory citation includes a file link with line numbers, clicking the link opens the right-side file preview and scrolls to and highlights that line range. File links without line numbers still open the file without selecting code lines. When you are reading the middle of a long conversation, opening or closing the file panel, dragging the split, and resizing the window still resize the conversation normally. After the text reflows, Wework keeps the first visible line at the same screen position so your reading place is not interrupted.
+
+When the same document appears both as an inline assistant link and in the reference card below the response, Wework merges the duplicate references using the most specific file path, so both entry points open the same workspace file.
 
 Streaming progress text shown before the assistant's final response uses the same file-link behavior. Absolute paths are not resolved as web links against the Wework page URL; clicking a link with line numbers opens the workspace file directly at the referenced lines.
 

@@ -8,6 +8,7 @@ import type { WeworkInstalledReleaseNotes } from './app-release-notes'
 
 export const APP_UPDATE_LAST_AUTO_CHECK_KEY = 'wework:lastAutoUpdateCheckAt'
 export const APP_UPDATE_CHANNEL_KEY = 'wework:updateChannel'
+export const APP_UPDATE_AUTO_DOWNLOAD_KEY = 'wework:autoDownloadUpdates'
 export const APP_UPDATE_INITIAL_CHECK_DELAY_MS = 5_000
 export const APP_UPDATE_TIMER_INTERVAL_MS = 60 * 60 * 1000
 export const APP_UPDATE_AUTO_CHECK_MIN_AGE_MS = 24 * 60 * 60 * 1000
@@ -23,6 +24,7 @@ export type AppUpdateStatus =
 
 export interface AppUpdateContextValue {
   updateChannel: WeworkUpdateChannel
+  autoUpdateEnabled: boolean
   availableUpdate: WeworkUpdateInfo | null
   installedReleaseNotes: WeworkInstalledReleaseNotes | null
   status: AppUpdateStatus
@@ -32,6 +34,7 @@ export interface AppUpdateContextValue {
   checkNow: () => Promise<WeworkUpdateInfo | null>
   installUpdate: () => Promise<void>
   dismissInstalledReleaseNotes: () => void
+  setAutoUpdateEnabled: (enabled: boolean) => void
   setUpdateChannel: (channel: WeworkUpdateChannel) => Promise<void>
 }
 

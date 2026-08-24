@@ -20,12 +20,7 @@ async def test_creation_failure_releases_shutdown_wait_and_closes_placeholder() 
         prompt="Generate a video",
         model_config={"protocol": "seedance", "videoConfig": {}},
         user={"id": 4, "name": "test-user"},
-        attachments=[
-            {
-                "mime_type": "image/png",
-                "url": "https://example.com/reference.png",
-            }
-        ],
+        attachments=[],
     )
     emitter = AsyncMock()
     session_manager = MagicMock()
@@ -36,6 +31,7 @@ async def test_creation_failure_releases_shutdown_wait_and_closes_placeholder() 
     shutdown_manager.unregister_stream = AsyncMock()
     provider = AsyncMock()
     provider.create_job = AsyncMock(side_effect=RuntimeError("request rejected"))
+    staged_images = [{"url": "https://storage.example.com/reference.png"}]
 
     with (
         patch(
@@ -48,7 +44,17 @@ async def test_creation_failure_releases_shutdown_wait_and_closes_placeholder() 
         ),
         patch(
             "app.services.execution.agents.video.video_agent.resolve_uploaded_media",
-            return_value=([], [], []),
+            return_value=(
+                [
+                    {
+                        "attachment_id": 10,
+                        "storage_backend": "local",
+                        "storage_key": "attachments/reference",
+                    }
+                ],
+                [],
+                [],
+            ),
         ),
         patch(
             "app.services.execution.agents.video.video_agent.determine_image_mode",
@@ -59,8 +65,16 @@ async def test_creation_failure_releases_shutdown_wait_and_closes_placeholder() 
             "validate_reference_materials"
         ),
         patch(
+            "app.services.execution.agents.video.video_agent."
+            "stage_video_reference_images",
+            AsyncMock(return_value=staged_images),
+        ) as stage_images,
+        patch(
             "app.services.execution.agents.video.video_agent.get_video_provider",
             return_value=provider,
+        ),
+        patch(
+            "app.tasks.video_tasks.update_subtask_video_job",
         ),
     ):
         await VideoAgent().execute(request, emitter)
@@ -68,6 +82,10 @@ async def test_creation_failure_releases_shutdown_wait_and_closes_placeholder() 
     shutdown_manager.register_stream.assert_awaited_once_with(2)
     shutdown_manager.unregister_stream.assert_awaited_once_with(2)
     session_manager.unregister_stream.assert_awaited_once_with(2)
+    unstaged_images = stage_images.await_args.args[0]
+    assert unstaged_images[0]["attachment_id"] == 10
+    assert unstaged_images[0]["storage_key"] == "attachments/reference"
+    assert provider.create_job.await_args.kwargs["reference_images"] == staged_images
 
     chunk_events = [
         call.args[0]

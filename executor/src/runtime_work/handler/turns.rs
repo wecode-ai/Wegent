@@ -10,12 +10,20 @@ use aes_gcm::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex as StdMutex, OnceLock,
+};
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
 const RUNTIME_TURN_QUEUE_VERSION: u64 = 1;
 const RUNTIME_TURN_QUEUE_AAD: &[u8] = b"wework-runtime-turn-queue-v1";
+const WORKTREE_PREPARATION_STOP_WAIT_ATTEMPTS: usize = 600;
+const WORKTREE_PREPARATION_STOP_WAIT_MS: u64 = 50;
+static RUNTIME_TURN_QUEUE_WRITE_LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+static RUNTIME_TURN_QUEUE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +98,10 @@ pub(super) fn write_runtime_turn_queue(
     queue_path: &Path,
     turns: &VecDeque<SpawnTurnRequest>,
 ) -> Result<(), String> {
+    let _write_guard = RUNTIME_TURN_QUEUE_WRITE_LOCK
+        .get_or_init(|| StdMutex::new(()))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let parent = queue_path
         .parent()
         .ok_or_else(|| "Runtime turn queue path has no parent".to_owned())?;
@@ -124,6 +136,26 @@ pub(super) fn write_runtime_turn_queue(
     write_private_atomic(queue_path, &envelope)
 }
 
+pub(super) fn remove_worktree_turns_after_restart(
+    worktrees: &WorktreeManager,
+    turns: &mut VecDeque<SpawnTurnRequest>,
+) -> usize {
+    let initial_count = turns.len();
+    turns.retain(|turn| {
+        let deferred_worktree = turn
+            .request
+            .extra
+            .contains_key("deferred_worktree_source_path");
+        let managed_worktree = turn
+            .request
+            .project_workspace_path
+            .as_deref()
+            .is_some_and(|path| worktrees.is_managed_path(Path::new(path)));
+        !deferred_worktree && !managed_worktree
+    });
+    initial_count - turns.len()
+}
+
 fn read_runtime_turn_queue_key(queue_path: &Path) -> Result<[u8; 32], String> {
     let key_path = runtime_turn_queue_key_path(queue_path);
     let key = fs::read(&key_path)
@@ -153,9 +185,10 @@ fn write_private_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
         .and_then(|name| name.to_str())
         .unwrap_or("runtime-turn-queue");
     let temp_path = path.with_file_name(format!(
-        ".{file_name}.{}.{}.tmp",
+        ".{file_name}.{}.{}.{}.tmp",
         std::process::id(),
-        now_ms()
+        now_ms(),
+        RUNTIME_TURN_QUEUE_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ));
     let mut options = OpenOptions::new();
     options.create_new(true).write(true);
@@ -297,31 +330,45 @@ impl RuntimeWorkRpcHandler {
             .extra
             .remove("deferred_worktree_path")
             .and_then(|value| value.as_str().map(PathBuf::from));
+        let repo_root_fingerprint = turn
+            .request
+            .extra
+            .remove("deferred_worktree_repo_root_fingerprint")
+            .and_then(|value| value.as_str().map(ToOwned::to_owned));
         let worktrees = self.worktrees.clone();
         let worktree_id = turn.local_task_id.clone();
-        let record = tokio::task::spawn_blocking(move || match planned_path {
-            Some(planned_path) => worktrees.prepare_at(
-                Path::new(&source_path),
-                &worktree_id,
-                git_ref.as_deref(),
-                false,
-                &planned_path,
-            ),
-            None => worktrees.prepare(
-                Path::new(&source_path),
-                &worktree_id,
-                git_ref.as_deref(),
-                false,
-            ),
-        })
-        .await
-        .map_err(|error| {
-            AppIpcError::new(
-                "worktree_prepare_failed",
-                format!("Worktree preparation task failed: {error}"),
-            )
-        })?
-        .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
+        let record =
+            tokio::task::spawn_blocking(move || match (planned_path, repo_root_fingerprint) {
+                (Some(planned_path), Some(repo_root_fingerprint)) => worktrees.prepare_planned(
+                    Path::new(&source_path),
+                    &worktree_id,
+                    git_ref.as_deref(),
+                    false,
+                    &planned_path,
+                    &repo_root_fingerprint,
+                ),
+                (Some(planned_path), None) => worktrees.prepare_at(
+                    Path::new(&source_path),
+                    &worktree_id,
+                    git_ref.as_deref(),
+                    false,
+                    &planned_path,
+                ),
+                (None, _) => worktrees.prepare(
+                    Path::new(&source_path),
+                    &worktree_id,
+                    git_ref.as_deref(),
+                    false,
+                ),
+            })
+            .await
+            .map_err(|error| {
+                AppIpcError::new(
+                    "worktree_prepare_failed",
+                    format!("Worktree preparation task failed: {error}"),
+                )
+            })?
+            .map_err(|error| AppIpcError::new(worktree_error_code(&error), error))?;
         turn.request.project_workspace_path = Some(record.path.clone());
         self.store.update_task(&turn.local_task_id, |link| {
             link.workspace_path = record.path.clone();
@@ -362,30 +409,46 @@ impl RuntimeWorkRpcHandler {
         true
     }
 
+    pub(super) async fn wait_for_worktree_preparation_to_finish(
+        &self,
+        local_task_id: &str,
+    ) -> bool {
+        for attempt in 0..=WORKTREE_PREPARATION_STOP_WAIT_ATTEMPTS {
+            let preparing = self
+                .preparing_worktree_turns
+                .lock()
+                .expect("preparing worktree turn map lock should not be poisoned")
+                .contains_key(local_task_id);
+            if !preparing {
+                return true;
+            }
+            if attempt == WORKTREE_PREPARATION_STOP_WAIT_ATTEMPTS {
+                return false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(
+                WORKTREE_PREPARATION_STOP_WAIT_MS,
+            ))
+            .await;
+        }
+        false
+    }
+
     fn mark_deferred_worktree_failed(&self, turn: &SpawnTurnRequest, error: &AppIpcError) {
         let local_task_id = &turn.local_task_id;
         self.persist_failed_assistant_message(local_task_id, &turn.request, &error.message);
-        self.store.update_task(local_task_id, |link| {
-            link.running = false;
-            link.thread_status = "failed".to_owned();
-            link.turn_status = Some("failed".to_owned());
-            link.updated_at = now_ms();
-            link.completed_at = Some(link.updated_at);
-            if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
-                runtime_handle.remove("queuePosition");
-                runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
-            }
-        });
+        self.store
+            .update_task(local_task_id, |link| apply_local_task_failure(link, error));
     }
 
     fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
         self.store.update_task(local_task_id, |link| {
             link.running = false;
-            link.status = "active".to_owned();
+            link.status = "cancelled".to_owned();
             link.thread_status = "cancelled".to_owned();
             link.turn_status = Some("cancelled".to_owned());
             link.updated_at = now_ms();
             link.completed_at = Some(link.updated_at);
+            normalize_settled_task_state(link);
             if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
                 runtime_handle.remove("queuePosition");
             }
@@ -403,8 +466,19 @@ impl RuntimeWorkRpcHandler {
         };
         let worktrees = self.worktrees.clone();
         let cleanup_path = path.clone();
-        let result =
-            tokio::task::spawn_blocking(move || worktrees.delete(&cleanup_path, false)).await;
+        let worktree_id = turn.local_task_id.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            worktrees
+                .delete(&cleanup_path, false)
+                .map(|_| ())
+                .or_else(|delete_error| {
+                    worktrees
+                        .discard_failed_preparation(&cleanup_path, &worktree_id)
+                        .map(|_| ())
+                        .map_err(|discard_error| format!("{delete_error}; {discard_error}"))
+                })
+        })
+        .await;
         if let Err(error) = result
             .map_err(|error| error.to_string())
             .and_then(|result| result.map_err(|error| error.to_string()))
@@ -443,7 +517,7 @@ impl RuntimeWorkRpcHandler {
             }
             self.cleanup_cancelled_worktree(&turn).await;
             self.mark_deferred_worktree_cancelled(&turn.local_task_id);
-            self.finish_scheduled_turn().await;
+            self.finish_scheduled_turn(&turn.local_task_id).await;
             return Ok(());
         }
         let cancelled = {
@@ -456,13 +530,14 @@ impl RuntimeWorkRpcHandler {
                 .is_some_and(|preparation| preparation.cancellation_requested)
         };
         if cancelled {
+            self.cleanup_cancelled_worktree(&turn).await;
             self.mark_deferred_worktree_cancelled(&turn.local_task_id);
-            self.finish_scheduled_turn().await;
+            self.finish_scheduled_turn(&turn.local_task_id).await;
             return Ok(());
         }
         let error = preparation.expect_err("failed preparation should contain an error");
         self.mark_deferred_worktree_failed(&turn, &error);
-        self.finish_scheduled_turn().await;
+        self.finish_scheduled_turn(&turn.local_task_id).await;
         Err(error)
     }
 
@@ -487,7 +562,6 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.apply_backend_connection(&mut turn.request);
-        crate::task_runtime::mcp::ensure_space_mcp_server(&mut turn.request);
         let SpawnTurnRequest {
             local_task_id,
             runtime: _,
@@ -527,8 +601,21 @@ impl RuntimeWorkRpcHandler {
         ) = mpsc::channel(1);
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id =
-            self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
+        let execution_id = match self.start_local_task_execution(
+            local_task_id.clone(),
+            request
+                .project_workspace_path
+                .as_deref()
+                .or_else(|| request.cwd()),
+            cancel_tx,
+            stopped_rx,
+        ) {
+            Ok(execution_id) => execution_id,
+            Err(error) => {
+                self.fail_local_task_execution_start(&local_task_id, &error);
+                return;
+            }
+        };
         if let Ok(mut requests) = self.active_request_user_inputs.lock() {
             requests.insert(
                 local_task_id.clone(),
@@ -541,19 +628,31 @@ impl RuntimeWorkRpcHandler {
         let handler = self.clone();
         let turn_local_task_id = local_task_id.clone();
         let turn_handle = tokio::spawn(async move {
-            let _scheduled_turn_guard = ScheduledTurnGuard::new(handler.clone());
+            let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
+            let _scheduled_turn_guard =
+                ScheduledTurnGuard::new(handler.clone(), turn_local_task_id.clone());
             handler.ensure_notification_router().await;
             let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
             let mapper_handler = handler.clone();
             let mapper_local_task_id = turn_local_task_id.clone();
+            let mapper_execution_id = execution_id;
             let mapper_request = request.clone();
             let hook_turn = Arc::new(Mutex::new(None::<ActiveCodexTurn>));
             let mapper_hook_turn = Arc::clone(&hook_turn);
             let mapper_handle = tokio::spawn(async move {
                 let mut event_mapper = CodexNotificationEventMapper::default();
                 while let Some(message) = notification_rx.recv().await {
+                    if !mapper_handler
+                        .is_current_local_task_execution(&mapper_local_task_id, mapper_execution_id)
+                    {
+                        continue;
+                    }
                     mapper_handler
                         .sync_runtime_task_goal_from_notification(&mapper_local_task_id, &message);
+                    mapper_handler.persist_completed_codex_turn_from_notification(
+                        &mapper_local_task_id,
+                        &message,
+                    );
                     let active_turn = mapper_hook_turn
                         .lock()
                         .expect("hook turn context lock should not be poisoned")
@@ -614,17 +713,37 @@ impl RuntimeWorkRpcHandler {
             });
             let route_handler = handler.clone();
             let route_local_task_id = turn_local_task_id.clone();
+            let route_request = request.clone();
             let thread_started: CodexThreadStartedCallback = Box::new(move |thread_id| {
                 route_handler.record_local_task_thread(&route_local_task_id, &thread_id);
+                route_handler.register_codex_thread_workspace_root(&thread_id, &route_request);
             });
             let active_turn_handler = handler.clone();
             let active_turn_local_task_id = turn_local_task_id.clone();
             let active_turn_execution_id = execution_id;
             let active_turn_subtask_id = request.subtask_id.to_string();
+            let active_turn_client_user_message_id = request
+                .extra
+                .get("client_user_message_id")
+                .or_else(|| request.extra.get("clientUserMessageId"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned);
+            let pending_turn_presentation =
+                Arc::new(Mutex::new(active_turn_client_user_message_id));
             let active_turn_request = request.clone();
             let callback_hook_turn = Arc::clone(&hook_turn);
+            let callback_turn_presentation = Arc::clone(&pending_turn_presentation);
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
+                    if !active_turn_handler.is_current_local_task_execution(
+                        &active_turn_local_task_id,
+                        active_turn_execution_id,
+                    ) {
+                        return;
+                    }
+                    active_turn_handler.start_queue_run(&active_turn_local_task_id);
                     *callback_hook_turn
                         .lock()
                         .expect("hook turn context lock should not be poisoned") =
@@ -636,15 +755,23 @@ impl RuntimeWorkRpcHandler {
                     active_turn_handler.record_active_codex_turn(
                         &active_turn_local_task_id,
                         active_turn_execution_id,
-                        thread_id,
+                        thread_id.clone(),
                         turn_id.clone(),
                     );
-                    active_turn_handler
-                        .begin_active_codex_transcript(&active_turn_local_task_id, &turn_id);
+                    active_turn_handler.begin_active_codex_transcript(
+                        &active_turn_local_task_id,
+                        &thread_id,
+                        &turn_id,
+                    );
+                    let client_user_message_id = callback_turn_presentation
+                        .lock()
+                        .expect("turn presentation lock should not be poisoned")
+                        .clone();
                     active_turn_handler.record_runtime_turn_id(
                         &active_turn_local_task_id,
                         &active_turn_subtask_id,
                         &turn_id,
+                        client_user_message_id.as_deref(),
                     );
                     let mut event_request = active_turn_request.clone();
                     event_request.subtask_id = turn_id.clone();
@@ -664,7 +791,11 @@ impl RuntimeWorkRpcHandler {
                 });
             let finished_turn_handler = handler.clone();
             let finished_turn_local_task_id = turn_local_task_id.clone();
+            let finished_turn_presentation = Arc::clone(&pending_turn_presentation);
             let active_turn_finished: CodexActiveTurnFinishedCallback = Box::new(move || {
+                *finished_turn_presentation
+                    .lock()
+                    .expect("turn presentation lock should not be poisoned") = None;
                 finished_turn_handler
                     .clear_active_codex_turn(&finished_turn_local_task_id, execution_id);
             });
@@ -689,6 +820,20 @@ impl RuntimeWorkRpcHandler {
                 )
                 .await;
 
+            let _ = mapper_handle.await;
+            if !handler.is_current_local_task_execution(&turn_local_task_id, execution_id) {
+                log_executor_event(
+                    "runtime work stale execution result ignored",
+                    &[
+                        ("local_task_id", turn_local_task_id.clone()),
+                        ("execution_id", execution_id.to_string()),
+                    ],
+                );
+                handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
+                handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
+                return;
+            }
+
             if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
                 let mut event_request = request.clone();
                 if let Some(active_turn) = hook_turn
@@ -698,29 +843,39 @@ impl RuntimeWorkRpcHandler {
                 {
                     event_request.subtask_id = active_turn.turn_id.clone();
                 }
-                emit_response_event(
-                    &handler.event_tx,
-                    &handler.device_id,
-                    "response.incomplete",
-                    &turn_local_task_id,
-                    &event_request,
-                    json!({
-                        "type": "cancelled",
-                        "error": {"message": "cancelled"},
-                    }),
-                );
-                let _ = mapper_handle.await;
-                handler.clear_active_codex_transcript(&turn_local_task_id);
-                handler.finish_local_task(&turn_local_task_id, execution_id, None, "cancelled");
+                handler.persist_and_clear_active_codex_transcript(&turn_local_task_id, "cancelled");
+                if handler.settle_cancelled_local_task_execution(&turn_local_task_id, execution_id)
+                {
+                    emit_response_event(
+                        &handler.event_tx,
+                        &handler.device_id,
+                        "response.incomplete",
+                        &turn_local_task_id,
+                        &event_request,
+                        json!({
+                            "type": "cancelled",
+                            "error": {"message": "cancelled"},
+                        }),
+                    );
+                }
                 handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
                 handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
-                let _ = stopped_tx.send(());
                 return;
             }
 
-            let _ = mapper_handle.await;
-            handler.clear_active_codex_transcript(&turn_local_task_id);
+            let transcript_status = match result.as_ref() {
+                Ok(turn) => match turn.outcome {
+                    ExecutionOutcome::Completed { .. }
+                    | ExecutionOutcome::WaitingForUserInput { .. } => "completed",
+                    ExecutionOutcome::Cancelled { .. } => "cancelled",
+                    ExecutionOutcome::Failed { .. } => "failed",
+                    ExecutionOutcome::Running => "inProgress",
+                },
+                Err(_) => "failed",
+            };
+            handler
+                .persist_and_clear_active_codex_transcript(&turn_local_task_id, transcript_status);
             let active_turn = hook_turn
                 .lock()
                 .expect("hook turn context lock should not be poisoned")
@@ -734,7 +889,6 @@ impl RuntimeWorkRpcHandler {
             );
             handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
             handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
-            let _ = stopped_tx.send(());
         });
         drop(turn_handle);
     }
@@ -785,7 +939,7 @@ impl RuntimeWorkRpcHandler {
         Ok(true)
     }
 
-    pub(super) async fn finish_scheduled_turn(&self) {
+    pub(super) async fn finish_scheduled_turn(&self, local_task_id: &str) {
         let _operation = self.turn_queue_operation.lock().await;
         let (previous, turns, remaining_turns) = {
             let mut scheduler = self
@@ -793,7 +947,7 @@ impl RuntimeWorkRpcHandler {
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
             let previous = scheduler.clone();
-            let turns = scheduler.finish();
+            let turns = scheduler.finish(local_task_id);
             let remaining_turns = (!turns.is_empty()).then(|| scheduler.queued_turns.clone());
             (previous, turns, remaining_turns)
         };
@@ -804,7 +958,8 @@ impl RuntimeWorkRpcHandler {
                     .lock()
                     .expect("runtime turn scheduler lock should not be poisoned");
                 *scheduler = previous;
-                scheduler.active_tasks = scheduler.active_tasks.saturating_sub(1);
+                scheduler.active_task_ids.remove(local_task_id);
+                scheduler.active_tasks = scheduler.active_task_ids.len();
                 log_executor_event(
                     "runtime turn queue drain persistence failed",
                     &[("error", error.message)],
@@ -937,9 +1092,25 @@ impl RuntimeWorkRpcHandler {
                     ExecutionOutcome::WaitingForUserInput { .. } => "done",
                     ExecutionOutcome::Cancelled { .. } => "cancelled",
                     ExecutionOutcome::Failed { .. } => "failed",
-                    ExecutionOutcome::Running => "running",
+                    ExecutionOutcome::Running => return,
                 };
                 let thread_id = turn.thread_id.clone();
+                if !self.finish_local_task(
+                    local_task_id,
+                    execution_id,
+                    Some(thread_id.clone()),
+                    status,
+                ) {
+                    log_executor_event(
+                        "runtime work terminal result ignored for stale execution",
+                        &[
+                            ("local_task_id", local_task_id.to_owned()),
+                            ("execution_id", execution_id.to_string()),
+                            ("status", status.to_owned()),
+                        ],
+                    );
+                    return;
+                }
                 if turn.goal_status_observed {
                     self.sync_runtime_task_goal_status(local_task_id, turn.goal_status.clone());
                 }
@@ -948,12 +1119,6 @@ impl RuntimeWorkRpcHandler {
                     local_task_id.to_owned(),
                     event_request.clone(),
                     false,
-                );
-                self.finish_local_task(
-                    local_task_id,
-                    execution_id,
-                    Some(thread_id.clone()),
-                    status,
                 );
                 self.mark_thread_event_route_idle(&thread_id);
                 self.register_codex_thread_workspace_root(&thread_id, &event_request);
@@ -1018,8 +1183,17 @@ impl RuntimeWorkRpcHandler {
                 }
             }
             Err(error) => {
+                if !self.finish_local_task(local_task_id, execution_id, None, "failed") {
+                    log_executor_event(
+                        "runtime work failed result ignored for stale execution",
+                        &[
+                            ("local_task_id", local_task_id.to_owned()),
+                            ("execution_id", execution_id.to_string()),
+                        ],
+                    );
+                    return;
+                }
                 self.mark_thread_event_routes_idle_for_local_task(local_task_id);
-                self.finish_local_task(local_task_id, execution_id, None, "failed");
                 self.persist_failed_assistant_message(local_task_id, &event_request, &error);
                 let mut fields = task_fields(&event_request.task_id, &event_request.subtask_id);
                 fields.push(("local_task_id", local_task_id.to_owned()));
@@ -1158,7 +1332,7 @@ mod tests {
 
         assert_eq!(
             scheduler
-                .finish()
+                .finish("task-1")
                 .into_iter()
                 .map(|turn| turn.local_task_id)
                 .collect::<Vec<_>>(),
@@ -1166,7 +1340,7 @@ mod tests {
         );
         assert_eq!(
             scheduler
-                .finish()
+                .finish("task-2")
                 .into_iter()
                 .map(|turn| turn.local_task_id)
                 .collect::<Vec<_>>(),
@@ -1190,11 +1364,11 @@ mod tests {
             Some("forced".to_owned())
         );
         assert_eq!(scheduler.active_tasks, 2);
-        assert!(scheduler.finish().is_empty());
+        assert!(scheduler.finish("running").is_empty());
         assert_eq!(scheduler.active_tasks, 1);
         assert_eq!(
             scheduler
-                .finish()
+                .finish("forced")
                 .into_iter()
                 .map(|turn| turn.local_task_id)
                 .collect::<Vec<_>>(),
@@ -1262,6 +1436,10 @@ mod tests {
         turn.request.auth_token = Some("top-secret-auth-token".to_owned());
         turn.request.runtime_auth_token = Some("runtime-secret-token".to_owned());
         turn.request.model_config = json!({"api_key": "model-secret-key"});
+        turn.request.extra.insert(
+            "deferred_worktree_repo_root_fingerprint".to_owned(),
+            Value::String("sha256:planned-repository".to_owned()),
+        );
         let turns = VecDeque::from([turn]);
 
         write_runtime_turn_queue(&queue_path, &turns).expect("runtime queue should be persisted");
@@ -1286,6 +1464,10 @@ mod tests {
             restored[0].request.model_config["api_key"],
             "model-secret-key"
         );
+        assert_eq!(
+            restored[0].request.extra["deferred_worktree_repo_root_fingerprint"],
+            "sha256:planned-repository"
+        );
 
         #[cfg(unix)]
         {
@@ -1304,6 +1486,87 @@ mod tests {
             assert_eq!(queue_mode, 0o600);
             assert_eq!(key_mode, 0o600);
         }
+    }
+
+    #[test]
+    fn concurrent_queue_writes_use_one_key_and_unique_temporary_files() {
+        let temp = tempfile::tempdir().expect("temporary queue directory should exist");
+        let queue_path = Arc::new(temp.path().join("turn-queue.json"));
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let writers = (0..8)
+            .map(|index| {
+                let queue_path = Arc::clone(&queue_path);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let turns =
+                        VecDeque::from([scheduled_turn(&format!("task-concurrent-{index}"))]);
+                    barrier.wait();
+                    write_runtime_turn_queue(&queue_path, &turns)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for writer in writers {
+            writer
+                .join()
+                .expect("queue writer should not panic")
+                .expect("concurrent queue write should succeed");
+        }
+
+        let restored =
+            read_runtime_turn_queue(&queue_path).expect("final queue should remain decryptable");
+        assert_eq!(restored.len(), 1);
+        assert!(restored[0].local_task_id.starts_with("task-concurrent-"));
+        let temporary_files = fs::read_dir(temp.path())
+            .expect("queue directory should remain readable")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.ends_with(".tmp"))
+            })
+            .count();
+        assert_eq!(temporary_files, 0);
+    }
+
+    #[test]
+    fn restored_worktree_turns_are_removed_from_resumable_queue() {
+        let temp = tempfile::tempdir().expect("temporary worktree directory should exist");
+        let worktrees = WorktreeManager::new(temp.path().join("runtime-work/worktrees.json"));
+        let managed_root = temp.path().join("workspace/worktrees");
+        worktrees
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(managed_root.display().to_string()),
+                ..WorktreeSettingsPatch::default()
+            })
+            .expect("managed worktree root should be configured");
+
+        let normal = scheduled_turn("normal");
+        let mut deferred = scheduled_turn("deferred-worktree");
+        deferred.request.extra.insert(
+            "deferred_worktree_source_path".to_owned(),
+            Value::String(temp.path().join("source").display().to_string()),
+        );
+        let mut existing = scheduled_turn("existing-worktree");
+        existing.request.project_workspace_path = Some(
+            managed_root
+                .join("existing-worktree/repository")
+                .display()
+                .to_string(),
+        );
+
+        let mut restored = VecDeque::from([normal, deferred, existing]);
+        let removed = remove_worktree_turns_after_restart(&worktrees, &mut restored);
+
+        assert_eq!(
+            restored
+                .iter()
+                .map(|turn| turn.local_task_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["normal"]
+        );
+        assert_eq!(removed, 2);
     }
 
     #[test]

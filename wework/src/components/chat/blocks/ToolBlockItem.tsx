@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react'
 import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { terminalOutputToText } from '@/lib/terminal-text'
+import { navigateTo } from '@/lib/navigation'
 import { track } from '@/telemetry/client'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
@@ -33,6 +34,7 @@ import { getWebSearchActivityItems } from './webSearchActivity'
 import { usePersistentProcessingExpansion } from './processingExpansionState'
 
 const INLINE_DIFF_MAX_LINES = 96
+const RECONNECTING_DISPLAY_DELAY_MS = 10_000
 
 interface ToolBlockItemProps {
   block: ProcessingBlock
@@ -68,6 +70,14 @@ export function ToolBlockItem({
   const { t } = useTranslation('chat')
   const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(stateKey)
   const isRunning = block.status !== 'done' && block.status !== 'error'
+  const reconnectingBlockId =
+    block.type === 'tool' && block.toolName === 'runtime_reconnecting' && isRunning
+      ? block.id
+      : null
+  const showReconnectingStatus = useDelayedBlockVisibility(
+    reconnectingBlockId,
+    RECONNECTING_DISPLAY_DELAY_MS
+  )
   const duration = useToolDuration(
     durationStartedAt ?? block.createdAt,
     durationEndAt ?? block.completedAt,
@@ -107,6 +117,32 @@ export function ToolBlockItem({
   }
 
   if (block.toolName === 'runtime_reconnecting') {
+    if (!showReconnectingStatus) return null
+    const isChatGPTModel = block.toolInput?.model_kind === 'codex-official'
+    if (isChatGPTModel) {
+      return (
+        <div
+          className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 py-1 text-sm text-text-muted"
+          data-testid="runtime-reconnecting-chatgpt-status"
+          role="status"
+        >
+          <span>
+            {t(
+              'tool_activity.chatgpt_network_unavailable',
+              '当前正在使用 ChatGPT 模型，网络连接不可用。是否设置代理？'
+            )}
+          </span>
+          <button
+            type="button"
+            data-testid="runtime-reconnecting-open-proxy-settings"
+            onClick={() => navigateTo('/settings/personal/proxy')}
+            className="font-medium text-blue-600 hover:underline dark:text-blue-300"
+          >
+            {t('tool_activity.open_proxy_settings', '设置代理')}
+          </button>
+        </div>
+      )
+    }
     return (
       <div
         className="min-w-0 truncate py-1 text-sm text-text-muted"
@@ -554,6 +590,21 @@ function useToolDuration(startedAt: number, fallbackEndAt: number | undefined, i
   return `${(Math.max(0, endedAt - durationStartedAt) / 1000).toFixed(1)}s`
 }
 
+function useDelayedBlockVisibility(blockId: string | null, delayMs: number): boolean {
+  const [visibleBlockId, setVisibleBlockId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!blockId) return
+    const timer = window.setTimeout(() => setVisibleBlockId(blockId), delayMs)
+    return () => {
+      window.clearTimeout(timer)
+      setVisibleBlockId(null)
+    }
+  }, [blockId, delayMs])
+
+  return blockId !== null && visibleBlockId === blockId
+}
+
 function fileChangeRowLabel(
   file: TurnFileChangeItem,
   t: ReturnType<typeof useTranslation>['t'],
@@ -892,7 +943,7 @@ function ProcessTextBlockItem({
 
   return (
     <div
-      className="min-w-0 overflow-x-hidden text-sm text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-chat text-text-secondary"
       data-processing-block-id={block.id}
       role={isRunning ? 'status' : undefined}
       aria-live={isRunning ? 'polite' : undefined}

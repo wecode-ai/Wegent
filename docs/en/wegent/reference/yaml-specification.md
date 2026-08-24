@@ -182,9 +182,44 @@ spec:
 | `spec.modelSubGroup`   | string | No       | Second-level display group under `spec.modelGroup` |
 | `spec.modelConfig`     | object | Yes      | Model configuration object                         |
 | `spec.modelConfig.env` | object | Yes      | Environment variables configuration                |
+| `spec.modelConfig.visionSidecarModel` | object | No   | Explicit reference to the model that processes images; omission disables vision delegation. |
 | `spec.protocol`        | string | No       | Upstream protocol (`openai`, `openai-responses`, `claude`, ...). Inferred from `env.model` when omitted. |
 | `spec.apiFormat`       | string | No       | Upstream API format (`responses`, `chat/completions`, ...). Derived from `spec.protocol` when omitted. |
 | `spec.isWeworkAvailable` | boolean | No     | Whether the model is distributed to the wework desktop client. |
+
+### Vision delegation model reference
+
+A text-only model can explicitly reference another image-capable model in `modelConfig.visionSidecarModel`. The reference must use the complete resource identity and `apiFormat` returned by the Backend's authorized model list. The reference is authoritative: Wework only validates its shape, while the Backend's LLM gateway resolves and authorizes the target at call time using the same identity headers. Referencing a model that never declared `supportsImage`, or one that is not distributed to Wework, therefore still works. Wework never selects a default vision model from sign-in state or model names. A malformed reference leaves the primary model text-only with no image preprocessing; a reference whose target is missing or cannot read images replaces that image with an explicit failure message, so the original image never leaks to the text-only primary model.
+
+The Wegent web vision model dropdown only lists candidates that declare `modelCapabilities.supportsImage: true`, so image-capable models should carry that field. When an existing reference points at a model outside that candidate list, the dropdown keeps the reference and marks it as currently unselectable, so saving the model does not discard it.
+
+`apiFormat` must match the upstream protocol the referenced model actually speaks: `openai-responses`, `openai-chat-completions`, or `anthropic-messages`. Most Model CRDs only declare `spec.modelConfig.env.model`, in which case the protocol is inferred from that field (`claude` maps to Anthropic Messages, `openai` maps to OpenAI Chat Completions).
+
+```yaml
+spec:
+  protocol: openai-responses
+  apiFormat: responses
+  modelConfig:
+    env:
+      model: openai
+      model_id: deepseek-v4-pro
+      base_url: https://example.com/v1
+      api_key: ${WECODE_USER_API_KEY}
+    visionSidecarModel:
+      modelName: openai-gpt-5.6-luna
+      modelType: public
+      namespace: default
+      resourceUserId: 0
+      apiFormat: openai-responses
+```
+
+| Field            | Type    | Required | Description                                                             |
+| ---------------- | ------- | -------- | ----------------------------------------------------------------------- |
+| `modelName`      | string  | Yes      | Referenced Model's `metadata.name`.                                     |
+| `modelType`      | string  | Yes      | Resource source: `public`, `user`, or `group`.                          |
+| `namespace`      | string  | Yes      | Referenced Model's namespace.                                           |
+| `resourceUserId` | integer | Yes      | Resource owner ID of the referenced Model.                              |
+| `apiFormat`      | string  | Yes      | `openai-responses`, `openai-chat-completions`, or `anthropic-messages`. |
 
 ### Model Selector Grouping
 

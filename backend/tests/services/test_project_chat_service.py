@@ -4,8 +4,10 @@
 """Focused contracts for the shared project chat persistence service."""
 
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -16,6 +18,7 @@ from app.api.ws.device_namespace import _project_chat_runtime_event_sync
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    ProjectAutomationRun,
     ProjectChatAgent,
     loop_datetime_is_unset,
 )
@@ -27,6 +30,8 @@ from app.schemas.project_chat import (
     ProjectChatAgentCreate,
     ProjectChatAgentFailure,
     ProjectChatAgentStart,
+    ProjectChatAgentUpdate,
+    ProjectChatAutomationManagerContinuation,
     ProjectChatSend,
     ProjectChatSubscribe,
 )
@@ -113,6 +118,7 @@ def test_project_supports_multiple_robots_with_execution_config(
             execution_mode="manual_approval",
             visibility="public",
             execution_device_id="local-dev-1",
+            max_concurrent_executions=3,
         ),
     )
     second = project_chat_service.create_agent(
@@ -137,10 +143,46 @@ def test_project_supports_multiple_robots_with_execution_config(
     assert by_id[first.id].execution_environment == "local"
     assert by_id[first.id].execution_mode == "manual_approval"
     assert by_id[first.id].visibility == "public"
+    assert by_id[first.id].execution_device_id == "local-dev-1"
+    assert by_id[first.id].max_concurrent_executions == 3
     assert by_id[second.id].execution_environment == "cloud"
     assert by_id[second.id].execution_mode == "auto"
     assert by_id[second.id].visibility == "private"
+    assert by_id[second.id].execution_device_id == "cloud-dev-1"
+    assert by_id[second.id].max_concurrent_executions == 1
     assert by_id[second.id].created_by_user_id == test_user.id
+
+
+def test_update_agent_to_wegent_clears_codex_project_binding(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = create_project(test_db, test_user)
+    agent = test_db.query(ProjectChatAgent).filter(ProjectChatAgent.id == "12").one()
+    agent.device_id = "local-dev-1"
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.services.project_automation_domain.runnable_wegent_team",
+        lambda db, user_id, team_id: object(),
+    )
+
+    updated = project_chat_service.update_agent(
+        test_db,
+        user_id=test_user.id,
+        project_id=project.id,
+        agent_id=agent.id,
+        request=ProjectChatAgentUpdate(
+            version=agent.version,
+            runtime="wegent",
+            wegent_team_id=7,
+        ),
+    )
+
+    assert updated.runtime == "wegent"
+    assert updated.wegent_team_id == 7
+    assert updated.execution_device_id is None
+    assert updated.local_project_id is None
 
 
 def test_list_agents_filters_visibility_for_other_members(
@@ -304,6 +346,122 @@ def test_send_and_agent_response_record_requested_model_metadata(
 
     assert trigger.metadata["model"] == "gpt-5.5-codex"
     assert response.metadata["model"] == "gpt-5.5-codex"
+    assert trigger.sender["type"] == "user"
+    assert trigger.sender["id"] == str(test_user.id)
+    assert response.sender["type"] == "agent"
+    assert response.sender["id"] == "12"
+    assert response.message_id != trigger.message_id
+    assert response.trigger_message_id == trigger.message_id
+    assert response.reply_to_message_id == trigger.message_id
+
+
+def test_custom_manager_continuation_creates_a_new_manager_reply(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-MANAGER-CONTINUE-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Managed task",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="",
+        assigner_user_id=test_user.id,
+        automation_run_id="manager-run-1",
+        execution_environment="local",
+        execution_device_id="local-device",
+        runtime_device_id="local-device",
+        runtime_task_id="manager-runtime-1",
+        status="completed",
+    )
+    test_db.add_all([task, execution])
+    test_db.flush()
+    manager_message_id = str(uuid.uuid4())
+    manager = ProjectChatMessage(
+        message_id=manager_message_id,
+        client_message_id=manager_message_id,
+        project_id=project.id,
+        task_id=task.id,
+        sender_type="agent",
+        sender_id="automation_manager:rule-1",
+        sender_name="自定义 AI 调度员",
+        message_type="text",
+        content="已完成分派。",
+        metadata_json={
+            "kind": "project_automation_run",
+            "manager_type": "custom",
+            "executor_type": "automation_manager",
+            "execution_id": execution.id,
+            "run_status": "completed",
+            "model": "manager-model",
+        },
+        agent_id="",
+        runtime_device_id="local-device",
+        runtime_task_id="manager-runtime-1",
+        status="completed",
+    )
+    test_db.add(manager)
+    test_db.commit()
+
+    trigger = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            taskId=task.id,
+            content="任务完成了吗？",
+            replyToMessageId=manager.message_id,
+        ),
+    ).message
+    response = project_chat_service.start_automation_manager_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAutomationManagerContinuation(
+            projectId=project.id,
+            taskId=task.id,
+            triggerMessageId=trigger.message_id,
+            managerMessageId=manager.message_id,
+        ),
+    )
+
+    assert trigger.sender["type"] == "user"
+    assert response.message_id != manager.message_id
+    assert response.sender == {
+        "type": "agent",
+        "id": manager.sender_id,
+        "name": manager.sender_name,
+    }
+    assert response.agent_id is None
+    assert response.trigger_message_id == trigger.message_id
+    assert response.reply_to_message_id == trigger.message_id
+    assert response.root_message_id == manager.message_id
+    assert response.runtime_address is not None
+    assert response.runtime_address["taskId"] == "manager-runtime-1"
+    assert response.metadata["conversation_only"] is True
+
+    completed = project_chat_service.project_runtime_event(
+        test_db,
+        device_id="local-device",
+        runtime_task_id="manager-runtime-1",
+        event_name="response.completed",
+        payload={"data": {"value": "任务已分派，执行机器人仍在处理。"}},
+    )
+    assert completed is not None
+    assert completed[0].sender == response.sender
+    assert completed[0].content == "任务已分派，执行机器人仍在处理。"
+    test_db.refresh(task)
+    assert "ai_state" not in dict(task.metadata_json or {})
+    assert task.status == "in_progress"
 
 
 def test_task_subscription_returns_only_the_task_thread(
@@ -562,12 +720,10 @@ def test_task_agent_response_updates_task_ai_state(
     assert ai_state["trigger_message_id"] == trigger.message_id
 
 
-def test_expired_task_ai_lease_terminates_streaming_message(
+def test_expired_task_ai_lease_is_presented_unknown_without_writes(
     test_db: Session, test_user: User
 ) -> None:
-    """When the executor terminal event never arrives, the lease reconcile must
-    also terminate the streaming chat message so the activity rail stops
-    showing "running"."""
+    """An expired cache is unknown; a GET must not invent a terminal event."""
 
     project = create_project(test_db, test_user)
     task = LoopItem(
@@ -608,9 +764,11 @@ def test_expired_task_ai_lease_terminates_streaming_message(
     test_db.commit()
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
-    assert values["ai_state"]["status"] == "interrupted"
-    assert message.status == "failed"
-    assert message.metadata_json.get("lease_expired") is True
+    assert values["ai_state"]["status"] == "unknown"
+    test_db.refresh(message)
+    test_db.refresh(task)
+    assert message.status == "streaming"
+    assert (task.metadata_json or {})["ai_state"]["status"] == "running"
 
 
 def test_alive_execution_keeps_task_ai_state_running(
@@ -660,11 +818,14 @@ def test_alive_execution_keeps_task_ai_state_running(
     execution = LoopItemExecution(
         loop_item_id=task.id,
         cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
         agent_id="12",
         execution_environment="local",
         execution_device_id="device-1",
         assigner_user_id=test_user.id,
         status="running",
+        observed_state="running",
+        sync_state="in_sync",
         priority_weight=20,
         queued_at=now,
         started_at=now,
@@ -681,7 +842,6 @@ def test_alive_execution_keeps_task_ai_state_running(
         rejected_reason="",
         runtime_device_id="device-1",
         runtime_task_id="runtime-task-alive",
-        execution_payload="",
     )
     test_db.add(execution)
     test_db.commit()
@@ -844,7 +1004,12 @@ def test_lease_reconcile_skips_when_ai_state_is_not_running(
     test_db.commit()
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
-    assert values["ai_state"]["status"] == ai_status
+    expected = {
+        "completed": "succeeded",
+        "failed": "failed",
+        "interrupted": "failed",
+    }[ai_status]
+    assert values["ai_state"]["status"] == expected
     test_db.refresh(message)
     assert message.status == expected_message_status
 
@@ -878,7 +1043,7 @@ def test_lease_reconcile_skips_when_lease_missing(
     test_db.commit()
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
-    assert values["ai_state"]["status"] == "running"
+    assert values["ai_state"]["status"] == "unknown"
     test_db.refresh(message)
     assert message.status == "streaming"
 
@@ -897,7 +1062,7 @@ def test_lease_reconcile_tolerates_missing_message(
     test_db.commit()
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
-    assert values["ai_state"]["status"] == "interrupted"
+    assert values["ai_state"]["status"] == "unknown"
 
 
 def test_lease_reconcile_leaves_terminal_message_unchanged(
@@ -914,7 +1079,7 @@ def test_lease_reconcile_leaves_terminal_message_unchanged(
     _expire_ai_lease(test_db, task)
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
-    assert values["ai_state"]["status"] == "completed"
+    assert values["ai_state"]["status"] == "succeeded"
     test_db.refresh(message)
     assert message.status == "completed"
     assert message.content == "已完成"
@@ -935,10 +1100,10 @@ def test_lease_reconcile_increments_auto_retry_budget(
     test_db.commit()
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
-    assert values["ai_state"]["status"] == "interrupted"
-    assert values["ai_state"]["auto_retry_count"] == 2
+    assert values["ai_state"]["status"] == "unknown"
+    assert values["ai_state"]["auto_retry_count"] == 1
     test_db.refresh(message)
-    assert message.status == "failed"
+    assert message.status == "streaming"
 
 
 def test_message_reconcile_syncs_completed_ai_state(
@@ -952,7 +1117,7 @@ def test_message_reconcile_syncs_completed_ai_state(
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
     ai_state = values["ai_state"]
-    assert ai_state["status"] == "completed"
+    assert ai_state["status"] == "succeeded"
     assert ai_state["lease_expires_at"] is None
     assert ai_state["completed_at"] is not None
 
@@ -1326,6 +1491,149 @@ def test_runtime_completion_advances_assigned_task_to_review(
     assert task.metadata_json["ai_state"]["status"] == "completed"
 
 
+def test_runtime_completion_survives_workflow_projection_database_failure(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = create_project(test_db, test_user)
+    issue = LoopItem(
+        id="CHAT-PROJECTION-PARENT",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Workflow parent",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    task = LoopItem(
+        id="CHAT-PROJECTION-FAILURE",
+        cloud_project_id=project.id,
+        parent_id=issue.id,
+        sequence_number=3,
+        title="Complete despite projection failure",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+        metadata_json={"workflow_plan": {"run_id": "workflow-run-1"}},
+    )
+    test_db.add_all([issue, task])
+    test_db.commit()
+    response = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            taskId=task.id,
+            agentId="12",
+            runtimeDeviceId="local-device",
+            runtimeTaskId="runtime-task-projection-failure",
+            prompt="Complete the task",
+        ),
+    )
+
+    projection_calls: list[str] = []
+
+    def fail_projection(db: Session, *, child_id: str) -> None:
+        projection_calls.append(child_id)
+        db.add(
+            ProjectChatMessage(
+                message_id=response.message_id,
+                client_message_id=str(uuid.uuid4()),
+                project_id=project.id,
+                task_id=task.id,
+                sender_type="agent",
+                sender_id="12",
+                sender_name="Code Reviewer",
+                message_type="text",
+                content="Duplicate projection row",
+                metadata_json={},
+                status="completed",
+            )
+        )
+        db.flush()
+
+    monkeypatch.setattr(
+        "app.services.issue_workflow_planning."
+        "issue_workflow_planning_service.sync_from_child",
+        fail_projection,
+    )
+
+    completed = project_chat_service.project_runtime_event(
+        test_db,
+        device_id="local-device",
+        runtime_task_id="runtime-task-projection-failure",
+        event_name="response.completed",
+        payload={"data": {"value": "Ready for review"}},
+    )
+
+    assert completed is not None
+    assert completed[0].status == "completed"
+    assert projection_calls == [task.id]
+    test_db.refresh(task)
+    assert task.status == "in_review"
+    assert task.metadata_json["ai_state"]["status"] == "completed"
+    stored_response = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == response.message_id)
+        .one()
+    )
+    assert stored_response.status == "completed"
+    assert stored_response.content == "Ready for review"
+    assert test_db.query(LoopItem).filter(LoopItem.id == task.id).count() == 1
+
+
+def test_runtime_completion_keeps_project_robot_assignee_guard(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-OTHER-ASSIGNEE",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Owned by another robot",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        assignee_agent_id="another-agent",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(task)
+    test_db.commit()
+    project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            taskId=task.id,
+            agentId="12",
+            runtimeDeviceId="local-device",
+            runtimeTaskId="runtime-task-other-assignee",
+            prompt="Complete without taking ownership",
+        ),
+    )
+
+    project_chat_service.project_runtime_event(
+        test_db,
+        device_id="local-device",
+        runtime_task_id="runtime-task-other-assignee",
+        event_name="response.completed",
+        payload={"data": {"value": "Finished by the non-assignee"}},
+    )
+
+    test_db.refresh(task)
+    assert task.status == "in_progress"
+    assert task.assignee_agent_id == "another-agent"
+    assert task.metadata_json["ai_state"]["status"] == "completed"
+
+
 def test_runtime_task_terminal_status_closes_the_task_ai_state(
     test_db: Session, test_user: User
 ) -> None:
@@ -1468,8 +1776,9 @@ def test_loop_item_response_reconciles_expired_task_ai_lease(
     values = loop_item_service.response_values(test_db, task, test_user.id)
 
     assert values["ai_state"]["run_id"] == response.metadata["run_id"]
-    assert values["ai_state"]["status"] == "interrupted"
-    assert "lease expired" in values["ai_state"]["last_error"]
+    assert values["ai_state"]["status"] == "unknown"
+    test_db.refresh(task)
+    assert task.metadata_json["ai_state"]["status"] == "running"
 
 
 def test_loop_item_response_reconciles_terminal_ai_message(
@@ -1512,9 +1821,9 @@ def test_loop_item_response_reconciles_terminal_ai_message(
 
     values = loop_item_service.response_values(test_db, task, test_user.id)
 
-    assert values["status"] == "in_review"
+    assert values["status"] == "in_progress"
     assert values["ai_state"]["run_id"] == response.metadata["run_id"]
-    assert values["ai_state"]["status"] == "completed"
+    assert values["ai_state"]["status"] == "succeeded"
     assert values["ai_state"]["lease_expires_at"] is None
 
 
@@ -1562,6 +1871,56 @@ def test_response_completed_extracts_openai_response_output_text(
     assert completed[0].status == "completed"
 
 
+def test_ai_manager_comment_does_not_finish_robot_assignment_run(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        task_id="MANAGED-1",
+        title="Managed assignment",
+        description="",
+        status="queued",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    message_id = str(uuid.uuid4())
+    activity = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=str(project.id),
+        task_id="MANAGED-1",
+        sender_type="agent",
+        sender_id="automation_manager:rule-1",
+        sender_name="Custom AI manager",
+        message_type="agent_status",
+        content="",
+        metadata_json={
+            "automation_run_id": str(run.id),
+            "assignment_mode": "ai_managed",
+            "manager_type": "custom",
+        },
+        agent_id="",
+        runtime_device_id="local-device",
+        runtime_task_id="manager-runtime-1",
+        status="streaming",
+    )
+    test_db.add_all([run, activity])
+    test_db.commit()
+
+    projected = project_chat_service.project_runtime_event(
+        test_db,
+        device_id="local-device",
+        runtime_task_id="manager-runtime-1",
+        event_name="response.completed",
+        payload={"data": {"output_text": "Assigned to the implementation bot."}},
+    )
+
+    assert projected is not None
+    test_db.refresh(run)
+    assert run.status == "queued"
+
+
 def test_device_runtime_projection_accepts_local_task_id(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1602,6 +1961,152 @@ def test_device_runtime_projection_accepts_local_task_id(
     assert projected["message"]["messageId"] == response.message_id
     assert projected["message"]["status"] == "completed"
     assert projected["message"]["content"] == "Completed through localTaskId"
+
+
+def test_device_runtime_projection_invalidates_only_material_issue_changes(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-RUNTIME-INVALIDATION-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Project runtime state",
+        description="",
+        status="pending",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="local",
+        execution_device_id="local-device",
+        status="claimed",
+        runtime_device_id="local-device",
+        runtime_task_id="runtime-invalidation-1",
+    )
+    test_db.add_all([task, execution])
+    test_db.commit()
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        yield test_db
+
+    published_events: list[tuple[str, str]] = []
+    runtime_events = 0
+
+    def handle_runtime_event(db: Session, **_kwargs: Any) -> LoopItemExecution:
+        nonlocal runtime_events
+        runtime_events += 1
+        if runtime_events == 1:
+            current = db.get(LoopItem, task.id)
+            assert current is not None
+            current.status = "in_progress"
+            current.version += 1
+            db.commit()
+        db.refresh(execution)
+        return execution
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.loop_item_execution_service.handle_runtime_event",
+        handle_runtime_event,
+    )
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.publish_loop_item_changed",
+        lambda db, *, item, reason, actor_user_id: published_events.append(
+            (item.id, reason)
+        ),
+    )
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.publish_run_event",
+        lambda *_args: None,
+    )
+
+    for sequence, event_name in enumerate(
+        ("response.created", "response.output_text.delta"),
+        start=1,
+    ):
+        _project_chat_runtime_event_sync(
+            "local-device",
+            {
+                "event": event_name,
+                "payload": {
+                    "taskId": "runtime-invalidation-1",
+                    "eventSeq": sequence,
+                    "data": {"delta": "working"},
+                },
+            },
+        )
+
+    assert published_events == [
+        (task.id, "runtime_execution_status"),
+    ]
+
+
+def test_execution_truth_rejection_blocks_project_chat_projection(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(test_db, test_user)
+    response = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            agentId="12",
+            runtimeDeviceId="local-device",
+            runtimeTaskId="sequenced-task-1",
+        ),
+    )
+    execution = LoopItemExecution(
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="local",
+        execution_device_id="local-device",
+        status="claimed",
+        runtime_device_id="local-device",
+        runtime_task_id="sequenced-task-1",
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "runtime.task.completed",
+            "payload": {
+                "localTaskId": "sequenced-task-1",
+                "data": {"value": "must not bypass execution ordering"},
+            },
+        },
+    )
+
+    assert projected is None
+    test_db.refresh(execution)
+    assert execution.status == "claimed"
+    message = (
+        test_db.query(ProjectChatMessage)
+        .filter(ProjectChatMessage.message_id == response.message_id)
+        .one_or_none()
+    )
+    assert message is not None
+    assert message.status == "streaming"
 
 
 def test_subscribe_reconciles_streaming_message_from_terminal_task_ai_state(
@@ -1847,6 +2352,132 @@ def test_subscribe_reconciles_stale_run_metadata_from_terminal_message(
     assert messages[-1].message_id == response.message_id
     assert messages[-1].status == "completed"
     assert messages[-1].metadata["run_status"] == "completed"
+
+
+def test_subscribe_never_rewrites_wegent_activity_sender(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-ROBOT-1",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Run with Wegent",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    team = Kind(
+        kind="Team",
+        name="dev-team",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={"spec": {}, "metadata": {"name": "dev-team"}},
+    )
+    test_db.add_all([task, team])
+    test_db.commit()
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        team_id=team.id,
+        assigner_user_id=test_user.id,
+        execution_environment="wegent",
+        status="queued",
+    )
+    test_db.add(execution)
+    test_db.commit()
+    message_id = str(uuid.uuid4())
+    message = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=project.id,
+        task_id=task.id,
+        sender_type="agent",
+        sender_id=f"wegent_team:{team.id}",
+        sender_name="dev-team",
+        message_type="agent_status",
+        content="",
+        metadata_json={
+            "execution_id": execution.id,
+            "executor_type": "wegent_team",
+            "executor_ref": str(team.id),
+            "run_status": "queued",
+        },
+        agent_id="",
+        status="pending",
+    )
+    test_db.add(message)
+    test_db.commit()
+
+    messages = project_chat_service.subscribe(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatSubscribe(projectId=project.id, taskId=task.id),
+    )
+
+    assert messages[-1].sender["id"] == f"wegent_team:{team.id}"
+    assert messages[-1].sender["name"] == "dev-team"
+    assert messages[-1].agent_id is None
+    test_db.refresh(message)
+    assert message.sender_id == f"wegent_team:{team.id}"
+    assert message.sender_name == "dev-team"
+    assert message.agent_id == ""
+
+
+def test_subscribe_preserves_manager_activity_sender_after_robot_assignment(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-MANAGER-1",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Managed assignment",
+        description="",
+        status="in_progress",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    message_id = str(uuid.uuid4())
+    message = ProjectChatMessage(
+        message_id=message_id,
+        client_message_id=message_id,
+        project_id=project.id,
+        task_id=task.id,
+        sender_type="agent",
+        sender_id="automation_manager:rule-1",
+        sender_name="自定义 AI 调度员",
+        message_type="text",
+        content="AI 调度员已完成分派。",
+        metadata_json={
+            "kind": "project_automation_run",
+            "selected_assignee_type": "agent",
+            "selected_assignee_id": "12",
+            "run_status": "completed",
+        },
+        agent_id="",
+        status="completed",
+    )
+    test_db.add_all([task, message])
+    test_db.commit()
+
+    messages = project_chat_service.subscribe(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatSubscribe(projectId=project.id, taskId=task.id),
+    )
+
+    assert messages[-1].sender["id"] == "automation_manager:rule-1"
+    assert messages[-1].sender["name"] == "自定义 AI 调度员"
+    assert messages[-1].agent_id is None
+    test_db.refresh(message)
+    assert message.sender_id == "automation_manager:rule-1"
+    assert message.sender_name == "自定义 AI 调度员"
+    assert message.agent_id == ""
 
 
 def test_agent_response_dedup_matches_mysql_empty_trigger_sentinel(

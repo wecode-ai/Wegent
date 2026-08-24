@@ -8,6 +8,8 @@
   --color-bg-surface: 247 247 248;
   --color-bg-hover: 20 184 166 / 0.08;
   --color-focus: 51 156 255;
+  --color-success: 0 162 64;
+  --color-destructive: 220 38 38;
   --color-text-primary: 26 26 26;
   --color-text-secondary: 102 102 102;
   --color-text-muted: 153 153 153;
@@ -83,11 +85,24 @@
   --z-critical: 100;
   --z-system: 1000;
   --z-system-popover: 1010;
+  /* Browser annotation mode toolbar: a translucent surface tinted with the
+     focus blue so it tracks the active light/dark theme (mirrors Codex). */
+  --color-browser-annotation-surface: color-mix(
+    in srgb,
+    rgb(var(--color-bg-surface)) 82%,
+    rgb(var(--color-focus)) 18%
+  );
+  --color-browser-annotation-border: color-mix(in srgb, rgb(var(--color-focus)) 35%, transparent);
+  --color-browser-annotation-chip: color-mix(in srgb, rgb(var(--color-focus)) 14%, transparent);
 }
 
 .app-view-surface {
   height: calc(100% - var(--app-view-block-end-inset));
   margin: 0 var(--app-view-inline-inset) var(--app-view-block-end-inset);
+}
+
+.plugin-creator-context {
+  color: color-mix(in srgb, rgb(var(--color-focus)) 80%, rgb(var(--color-text-primary)) 20%);
 }
 
 .workspace-tab-strip-scrollbar {
@@ -96,6 +111,34 @@
 
 .workspace-tab-strip-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+@keyframes smart-app-workspace-tab-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(5px) scale(0.82);
+    width: 28px;
+  }
+  62% {
+    opacity: 1;
+    transform: translateY(0) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    width: 144px;
+  }
+}
+
+.smart-app-workspace-tab-enter {
+  animation: smart-app-workspace-tab-enter 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: left center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .smart-app-workspace-tab-enter {
+    animation: none;
+  }
 }
 
 .task-description-editor .bn-editor a:not([href^='wegent://attachments/']) {
@@ -119,6 +162,22 @@
    floats in the surrounding margin instead of reserving an inner gutter. */
 .task-description-editor .bn-editor {
   padding-inline: 0;
+}
+
+.issue-description-editor,
+.issue-description-editor .bn-container,
+.issue-description-editor .bn-editor {
+  min-height: 100%;
+}
+
+.issue-description-editor .bn-container {
+  display: flex;
+  flex: 1;
+}
+
+.issue-description-editor .bn-editor {
+  flex: 1;
+  padding-block: 0 32px;
 }
 
 /* Notion-like heading hierarchy shared by the detail and create dialogs. */
@@ -175,7 +234,7 @@
 .task-description-attachment-preview {
   z-index: 50;
   max-width: 320px;
-  background: rgb(var(--color-background));
+  background: rgb(var(--color-bg-base));
   border: 1px solid rgb(var(--color-border));
   border-radius: 8px;
   padding: 6px;
@@ -401,6 +460,8 @@
   --color-bg-surface: 28 31 36;
   --color-bg-hover: 45 212 191 / 0.12;
   --color-focus: 51 156 255;
+  --color-success: 64 201 119;
+  --color-destructive: 248 113 113;
   --color-text-primary: 241 245 249;
   --color-text-secondary: 203 213 225;
   --color-text-muted: 148 163 184;
@@ -442,6 +503,78 @@
   --plugin-source-external-fg: 241 245 249;
   --plugin-source-external-border: 116 124 136;
   --plugin-source-external-accent: 202 208 219;
+}
+
+/* Keep embedded file renderers aligned with Wework theme and available space. */
+.wework-workspace-file-viewer[data-viewer-theme] .image-viewer {
+  background: rgb(var(--color-bg-base));
+}
+
+.wework-workspace-file-viewer .image-stage img,
+.wework-workspace-file-viewer .image-lightbox img {
+  background: transparent;
+}
+
+.wework-diagram-preview .drawing-scroll,
+.wework-diagram-preview .drawing-canvas,
+.wework-diagram-preview .drawing-diagram-shell {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+}
+
+.wework-diagram-preview .drawing-scroll {
+  overflow: hidden;
+  padding: 12px;
+}
+
+.wework-diagram-preview .drawing-diagram-pan {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  padding: 16px;
+  width: 100%;
+}
+
+.wework-diagram-preview .drawing-canvas .drawing-diagram-svg {
+  height: auto;
+  max-height: 100%;
+  max-width: 100%;
+  width: auto;
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-viewer {
+  background: rgb(var(--color-bg-base));
+  color: rgb(var(--color-text-primary));
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-toolbar {
+  background: rgb(var(--color-bg-surface) / 0.94);
+  border-color: rgb(var(--color-border));
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-title strong {
+  color: rgb(var(--color-text-primary));
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-actions button {
+  background: rgb(var(--color-bg-base));
+  border-color: rgb(var(--color-border));
+  color: rgb(var(--color-text-primary));
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-actions span {
+  color: rgb(var(--color-text-secondary));
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-diagram-shell {
+  background: linear-gradient(135deg, rgb(var(--color-bg-base)), rgb(var(--color-bg-surface)));
+  box-shadow: none;
+}
+
+[data-theme='dark'] .wework-diagram-preview .drawing-canvas .drawing-diagram-svg {
+  background: transparent;
 }
 
 [data-sidebar-translucent='false'] {
@@ -657,6 +790,25 @@ button:disabled {
 
   .composer-link-node {
     cursor: pointer;
+  }
+
+  .composer-prosemirror-editor {
+    contain: paint;
+  }
+
+  .composer-prosemirror-editor:has(.composer-empty-caret) {
+    caret-color: transparent;
+  }
+
+  .composer-empty-caret {
+    display: inline-block;
+    width: 1px;
+    height: 1em;
+    margin-right: -1px;
+    background: currentcolor;
+    vertical-align: text-bottom;
+    pointer-events: none;
+    animation: local-skill-caret-blink 1s step-end infinite;
   }
 
   .composer-mention-link {
@@ -1230,6 +1382,27 @@ button:disabled {
     z-index: var(--z-system-popover);
   }
 
+  @keyframes wework-device-rotate {
+    0% {
+      transform: rotate(0) scale(1);
+    }
+    22% {
+      transform: rotate(44deg) scale(0.96);
+    }
+    42% {
+      transform: rotate(108deg) scale(0.98);
+    }
+    64% {
+      transform: rotate(158deg) scale(1.06);
+    }
+    84% {
+      transform: rotate(176deg) scale(1.02);
+    }
+    to {
+      transform: rotate(180deg) scale(1);
+    }
+  }
+
   .scrollbar-none {
     -ms-overflow-style: none;
     scrollbar-width: none;
@@ -1353,6 +1526,20 @@ button.plugin-operation-notice-dismiss {
   color: rgb(var(--color-text-muted));
 }
 
+button.plugin-operation-notice-action {
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 5px 7px;
+  color: rgb(var(--color-text-primary));
+  font-weight: 600;
+}
+
+button.plugin-operation-notice-action:hover {
+  background: rgb(var(--color-text-primary) / 0.07);
+}
+
 button.plugin-operation-notice-dismiss:hover {
   background: rgb(var(--color-text-primary) / 0.07);
   color: rgb(var(--color-text-primary));
@@ -1372,6 +1559,7 @@ button.plugin-market-icon-button:focus-visible,
 button.plugin-market-filter:focus-visible,
 button.plugin-installed-strip-item:focus-visible,
 button.plugin-installed-overflow-button:focus-visible,
+button.plugin-operation-notice-action:focus-visible,
 button.plugin-operation-notice-dismiss:focus-visible,
 button.plugin-detail-action-primary:focus-visible,
 button.plugin-detail-action-secondary:focus-visible,
@@ -1838,11 +2026,11 @@ button.plugin-installed-strip-item::after {
   z-index: 20;
   min-width: max-content;
   border-radius: 6px;
-  background: #242424;
+  background: rgb(var(--color-popover));
   padding: 4px 7px;
   font-size: var(--text-2xs);
   line-height: 1.2;
-  color: #fff;
+  color: rgb(var(--color-text-primary));
   content: attr(data-tooltip);
   opacity: 0;
   pointer-events: none;
@@ -2559,6 +2747,21 @@ button.plugin-market-card-menu {
     background-color 0.12s,
     color 0.12s,
     transform 0.12s;
+}
+
+.workflow-react-flow {
+  --xy-controls-button-background-color-default: rgb(var(--color-bg-surface));
+  --xy-controls-button-background-color-hover-default: rgb(var(--color-muted));
+  --xy-controls-button-color-default: rgb(var(--color-text-secondary));
+  --xy-controls-button-color-hover-default: rgb(var(--color-text-primary));
+  --xy-controls-button-border-color-default: rgb(var(--color-border));
+  --xy-controls-box-shadow-default: none;
+}
+
+.workflow-react-flow .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
 }
 
 button.plugin-market-card-menu:hover {

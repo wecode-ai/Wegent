@@ -182,6 +182,7 @@ impl CommandHandler {
         if let Some(cwd) = request.cwd.as_deref() {
             command.current_dir(cwd);
         }
+        command.stdin(Stdio::null());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
         command.kill_on_drop(true);
@@ -242,7 +243,10 @@ pub fn build_env(extra_env: &HashMap<String, String>) -> HashMap<String, String>
 
 fn process_command(request: &CommandRequest) -> Command {
     if !request.argv.is_empty() {
-        let mut command = Command::new(&request.argv[0]);
+        let (program, prefix_args) = crate::process::spawn_program_parts(&request.argv[0]);
+        let mut command = Command::new(program);
+        crate::process::hide_windows_console(&mut command);
+        command.args(prefix_args);
         command.args(&request.argv[1..]);
         return command;
     }

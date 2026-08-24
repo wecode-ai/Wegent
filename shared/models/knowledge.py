@@ -50,6 +50,7 @@ class SelectedKnowledgeRef:
     knowledge_base_id: str
     knowledge_base_name: str
     resources: tuple[SelectedKnowledgeResource, ...] = field(default_factory=tuple)
+    retrieval_capabilities: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

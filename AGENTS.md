@@ -4,6 +4,7 @@ Wegent is an AI-native operating system for defining, organizing, and running ag
 
 ## Repository map
 
+<!-- prettier-ignore -->
 | Area | Technology | Responsibility |
 | --- | --- | --- |
 | `backend/` | FastAPI, SQLAlchemy, MySQL | REST API and business logic |
@@ -57,6 +58,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 - Use strict TypeScript, function components, `const`, single quotes, and no semicolons.
 - Check existing UI in `src/components/ui/`, `src/components/common/`, and feature components before creating new components.
 - Preserve existing `data-testid` values; if one changes, update its E2E coverage in the same change. All new interactive elements need descriptive `data-testid` values.
+- Run a package-owned binary through that package, for example `pnpm --filter wework exec prettier`; do not use root-level `pnpm exec` for tools declared only in a workspace package.
 
 ## Testing and verification
 

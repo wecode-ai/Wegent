@@ -17,6 +17,8 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
+import { INTERNAL_DEVICE_MARKETPLACE_ID } from '@/features/plugins/marketplaceIdentity'
+import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import type {
   InstalledPlugin,
   PluginAccessResponse,
@@ -30,6 +32,7 @@ import {
   mergeInstalledPlugins,
 } from './installedPluginMerge'
 import { pluginUninstallWarningDetails, uninstallPluginIdentities } from './pluginUninstall'
+import { humanizeMarketplaceUninstallError } from './marketplaceInstallError'
 import { withPublishedPluginCloudLink } from './publishedPluginIdentity'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
@@ -43,10 +46,17 @@ import {
 import {
   findPackableCreatedPlugin,
   isPackableCreatedPlugin,
+  marketplaceItemOwnsLocalCreatedPackage,
   resolveContinueEditingPluginKey,
 } from './pluginOwnerLocalPackage'
 import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
-import { installedPluginDistribution } from './pluginDistribution'
+import {
+  installedPluginDistribution,
+  installedPluginMarketplaceId,
+  marketplaceItemMarketplaceId,
+} from './pluginDistribution'
+import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
+import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 import { getRuntimeConfig } from '@/config/runtime'
 
 interface PluginShareState {
@@ -391,6 +401,11 @@ export function PluginManagementWorkspace({
         next.delete(id)
         return next
       })
+      setPluginOperationNotice({
+        id: `uninstall-error-${id}`,
+        kind: 'error',
+        message: t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试'),
+      })
       return
     }
     void logoutLocalConnectorsForPlugin(plugin.raw)
@@ -432,11 +447,19 @@ export function PluginManagementWorkspace({
           source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
         })
       })
-      .catch((error: Error) => {
+      .catch((error: unknown) => {
+        const rawErrorMessage = getErrorMessage(
+          error,
+          t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试')
+        )
+        console.error('[Wework plugins] uninstall plugin failed', {
+          pluginId: id,
+          error: rawErrorMessage,
+        })
         setPluginOperationNotice({
           id: `uninstall-error-${id}`,
           kind: 'error',
-          message: error.message,
+          message: humanizeMarketplaceUninstallError(rawErrorMessage, t),
         })
         track('operation_failed', { operation: 'plugin_uninstall' })
       })
@@ -466,6 +489,48 @@ export function PluginManagementWorkspace({
     return marketplaceItems.find(
       item => item.accessRole === 'owner' && (item.name === slug || item.name === plugin.name)
     )
+  }
+
+  const openInstalledPluginDetail = (plugin: InstalledPluginItem) => {
+    const marketplaceItem =
+      (typeof plugin.raw.spec.pluginId === 'number'
+        ? marketplaceById.get(String(plugin.raw.spec.pluginId))
+        : undefined) ?? findMarketplaceItemForInstalled(plugin, marketplaceItems)
+    if (marketplaceItem && !marketplaceItemOwnsLocalCreatedPackage(marketplaceItem)) {
+      navigateTo(
+        buildPluginDetailRoute({
+          pluginName: marketplaceItem.name || plugin.raw.spec.source.pluginKey,
+          marketplaceName:
+            marketplaceItemMarketplaceId(marketplaceItem) ||
+            installedPluginMarketplaceId(plugin.raw) ||
+            INTERNAL_DEVICE_MARKETPLACE_ID,
+        })
+      )
+      return
+    }
+    const packableCreated =
+      findPackableCreatedPlugin(installedPlugins, [
+        plugin.raw.spec.source.pluginKey,
+        createdPluginSlug(plugin),
+        plugin.name,
+      ]) ?? (plugin.origin === 'created' ? plugin : null)
+    if (packableCreated?.origin === 'created') {
+      setSelectedPluginId(packableCreated.id)
+      return
+    }
+    if (marketplaceItem || isCloudManagedInstalledPlugin(plugin.raw)) {
+      navigateTo(
+        buildPluginDetailRoute({
+          pluginName: marketplaceItem?.name || plugin.raw.spec.source.pluginKey,
+          marketplaceName:
+            (marketplaceItem && marketplaceItemMarketplaceId(marketplaceItem)) ||
+            installedPluginMarketplaceId(plugin.raw) ||
+            INTERNAL_DEVICE_MARKETPLACE_ID,
+        })
+      )
+      return
+    }
+    setSelectedPluginId(plugin.id)
   }
 
   const listingTypeForPlugin = (plugin: InstalledPluginItem): 'plugin' | 'skill' => {
@@ -710,13 +775,15 @@ export function PluginManagementWorkspace({
     const isUninstalling = uninstallingPluginIds.has(selectedPlugin.id)
     const ownedMarketplace = findOwnedMarketplacePlugin(selectedPlugin)
     const packableCreated =
-      findPackableCreatedPlugin(installedPlugins, [
-        selectedPlugin.raw.spec.source.pluginKey,
-        createdPluginSlug(selectedPlugin),
-        selectedPlugin.name,
-        ownedMarketplace?.name,
-        ownedMarketplace?.displayName,
-      ]) ?? (selectedPlugin.origin === 'created' ? selectedPlugin : null)
+      ownedMarketplace && !marketplaceItemOwnsLocalCreatedPackage(ownedMarketplace)
+        ? null
+        : (findPackableCreatedPlugin(installedPlugins, [
+            selectedPlugin.raw.spec.source.pluginKey,
+            createdPluginSlug(selectedPlugin),
+            selectedPlugin.name,
+            ownedMarketplace?.name,
+            ownedMarketplace?.displayName,
+          ]) ?? (selectedPlugin.origin === 'created' ? selectedPlugin : null))
     const ownerActions = resolvePluginOwnerActions({
       isLocalCreated: Boolean(packableCreated),
       ownedListing: ownedMarketplace ?? null,
@@ -782,6 +849,7 @@ export function PluginManagementWorkspace({
         <PluginDetailView
           plugin={selectedPlugin}
           backLabel={t('workbench.plugins_back_to_management', '返回管理插件')}
+          usableOnThisDevice={pluginDetailReadyToTry(selectedPlugin, ownedMarketplace)}
           primaryActionLabel={
             isUninstalling
               ? t('workbench.plugins_uninstalling', '正在卸载')
@@ -861,15 +929,16 @@ export function PluginManagementWorkspace({
           'pt-[27px]',
         ].join(' ')}
       >
-        <header className="mb-6">
-          <h1 className="heading-base tracking-tight text-text-primary">
-            {t('workbench.plugins_manage_plugins', '管理插件')}
-          </h1>
-          <p className="mt-1 text-sm leading-5 text-text-secondary">
-            {t('workbench.plugins_manage_plugins_description', '管理已安装插件。')}
-          </p>
+        <header className="mb-5">
+          <div>
+            <h1 className="heading-base tracking-tight text-text-primary">
+              {t('workbench.plugins_manage_plugins', '管理插件')}
+            </h1>
+            <p className="mt-1 text-sm leading-5 text-text-secondary">
+              {t('workbench.plugins_manage_plugins_description', '管理已安装插件。')}
+            </p>
+          </div>
         </header>
-
         {isLoadingPlugins ? (
           <div className="py-10 text-sm text-text-secondary">
             {t('workbench.plugins_loading_plugins', '正在加载插件')}
@@ -883,15 +952,19 @@ export function PluginManagementWorkspace({
               const marketplaceItem = plugin.raw.spec.pluginId
                 ? marketplaceById.get(String(plugin.raw.spec.pluginId))
                 : undefined
+              const listing =
+                marketplaceItem ?? findMarketplaceItemForInstalled(plugin, marketplaceItems)
               const ownedMarketplace = findOwnedMarketplacePlugin(plugin)
               const packableCreated =
-                findPackableCreatedPlugin(installedPlugins, [
-                  plugin.raw.spec.source.pluginKey,
-                  createdPluginSlug(plugin),
-                  plugin.name,
-                  ownedMarketplace?.name,
-                  ownedMarketplace?.displayName,
-                ]) ?? (plugin.origin === 'created' ? plugin : null)
+                listing && !marketplaceItemOwnsLocalCreatedPackage(listing)
+                  ? null
+                  : (findPackableCreatedPlugin(installedPlugins, [
+                      plugin.raw.spec.source.pluginKey,
+                      createdPluginSlug(plugin),
+                      plugin.name,
+                      ownedMarketplace?.name,
+                      ownedMarketplace?.displayName,
+                    ]) ?? (plugin.origin === 'created' ? plugin : null))
               const ownerActions = resolvePluginOwnerActions({
                 isLocalCreated: Boolean(packableCreated),
                 ownedListing: ownedMarketplace ?? null,
@@ -911,7 +984,7 @@ export function PluginManagementWorkspace({
                   <InstalledPluginRow
                     plugin={plugin}
                     marketplaceItem={marketplaceItem}
-                    onOpen={() => setSelectedPluginId(packableCreated?.id ?? plugin.id)}
+                    onOpen={() => openInstalledPluginDetail(plugin)}
                     onTry={() => tryPluginInChat(plugin.raw)}
                     onPublish={
                       ownerActions.canOpenPublishDialog

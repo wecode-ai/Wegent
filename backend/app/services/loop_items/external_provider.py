@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.core.provider_credentials import decrypt_provider_token
 from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem, ProjectChatAgent, loop_datetime_value_is_unset
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -34,8 +35,14 @@ from app.services.cloud_projects.access import (
 )
 from app.services.delivery.storage import delivery_storage
 from app.services.loop_item_executions.service import (
+    execution_ai_state,
+    execution_display_state,
     loop_item_execution_service,
 )
+from app.services.loop_items.assignment_notification import (
+    notify_project_task_assignee,
+)
+from app.services.project_automation_domain import runnable_wegent_team
 
 PRIORITY_PREFIX = "wegent:priority:"
 STATUS_PREFIX = "wegent:status:"
@@ -73,7 +80,7 @@ class ExternalLoopItemProvider:
         project = access.project
         self._require_external(project)
         issues = self._list_issues(project)
-        if assignee_type in {"user", "agent"} and assignee_id:
+        if assignee_type in {"user", "agent", "team"} and assignee_id:
             assignee_label = f"{ASSIGNEE_PREFIX}{assignee_type}:{assignee_id}"
             issues = [
                 issue for issue in issues if assignee_label in self._labels(issue)
@@ -98,6 +105,9 @@ class ExternalLoopItemProvider:
         user_id: int,
         user_name: str,
         values: LoopItemCreate,
+        *,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> dict[str, object]:
         access = require_cloud_project_role(
             db, project_id, user_id, BaseRole.RestrictedAnalyst
@@ -108,10 +118,14 @@ class ExternalLoopItemProvider:
             access.role, BaseRole.Reporter
         ):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
+        assignee_label = self._assignee_label_for_values(
+            db, project, values, user_id=user_id
+        )
         labels = self._labels_for_write(
             values.tags + [f"{CREATOR_PREFIX}{user_id}:{self._safe_name(user_name)}"],
             values.priority,
             values.status,
+            assignee=assignee_label,
         )
         issue = self._create_issue(
             project,
@@ -123,6 +137,51 @@ class ExternalLoopItemProvider:
             issue = self._update_issue(
                 project, self._number(issue), {"state": "closed"}
             )
+        item_id = f"{project.project_key}-{self._number(issue)}"
+        if values.assignee_agent_id:
+            agent = db.get(ProjectChatAgent, values.assignee_agent_id)
+            if agent is None:  # Already validated while building the label.
+                raise RuntimeError("Validated project robot is unavailable")
+            self._ensure_index_row(
+                db,
+                item_id=item_id,
+                project=project,
+                assignee_type="agent",
+                assignee_id=agent.id,
+                assignee_name=agent.title or agent.name,
+                user_id=user_id,
+            )
+            self._create_execution_for_agent(
+                db,
+                item_id=item_id,
+                project=project,
+                agent=agent,
+                user_id=user_id,
+                priority=values.priority,
+                automation_context=automation_context,
+                instruction=instruction,
+            )
+            db.commit()
+        elif values.assignee_team_id:
+            team = runnable_wegent_team(db, user_id, values.assignee_team_id)
+            self._ensure_index_row(
+                db,
+                item_id=item_id,
+                project=project,
+                assignee_type="team",
+                assignee_id=str(team.id),
+                assignee_name=team.name,
+                user_id=user_id,
+            )
+            loop_item_execution_service.create_for_team_assignment(
+                db,
+                loop_item_id=item_id,
+                cloud_project_id=str(project.id),
+                team=team,
+                assigner_user_id=user_id,
+                priority=values.priority,
+            )
+            db.commit()
         return self._response(db, project, issue, access, user_id)
 
     def attach_gitlab_upload(
@@ -452,7 +511,11 @@ class ExternalLoopItemProvider:
             payload[self._body_key(project)] = self._with_parent(
                 description or "", parent_id
             )
-        assignee_change = {"assignee_user_id", "assignee_agent_id"} & dumped.keys()
+        assignee_change = {
+            "assignee_user_id",
+            "assignee_agent_id",
+            "assignee_team_id",
+        } & dumped.keys()
         label_change = {"tags", "priority", "status"} & dumped.keys()
         if label_change or assignee_change:
             tags = (
@@ -464,7 +527,9 @@ class ExternalLoopItemProvider:
             if creator:
                 tags.append(creator)
             if assignee_change:
-                assignee_label = self._assignee_label_for_values(db, project, values)
+                assignee_label = self._assignee_label_for_values(
+                    db, project, values, user_id=user_id
+                )
             else:
                 current_assignee = self._assignee_from_labels(self._labels(current))
                 assignee_label = (
@@ -503,6 +568,8 @@ class ExternalLoopItemProvider:
         db: Session,
         project: CloudProject,
         values: LoopItemUpdate,
+        *,
+        user_id: int,
     ) -> str | None:
         """Build the assignee label requested by a task update (None = unassign)."""
 
@@ -518,6 +585,9 @@ class ExternalLoopItemProvider:
                     "Robot is not active in this project",
                 )
             return self._assignee_label("agent", agent.id, agent.title or agent.name)
+        if values.assignee_team_id:
+            team = runnable_wegent_team(db, user_id, values.assignee_team_id)
+            return self._assignee_label("team", str(team.id), team.name)
         if values.assignee_user_id:
             target = db.get(User, values.assignee_user_id)
             return self._assignee_label(
@@ -528,14 +598,17 @@ class ExternalLoopItemProvider:
         return None
 
     @staticmethod
-    def _cancel_active_executions(db: Session, item_id: str) -> list:
+    def _cancel_active_executions(
+        db: Session,
+        item_id: str,
+        *,
+        preserve_automation_run_id: str = "",
+    ) -> list:
         """Cancel any active runs of one issue (assignee changed/unassigned).
 
         Returns the runs that were cancelled and already handed to a device so
         callers can ask the executor to stop them after the change commits.
         """
-
-        from app.services.loop_item_executions.service import utcnow
 
         cancelled_runs = []
         active = (
@@ -543,20 +616,36 @@ class ExternalLoopItemProvider:
             .filter(
                 LoopItemExecution.loop_item_id == item_id,
                 LoopItemExecution.status.in_(
-                    {"pending_approval", "queued", "claimed", "running"}
+                    {
+                        "pending_approval",
+                        "queued",
+                        "claimed",
+                        "running",
+                        "cancel_requested",
+                    }
                 ),
             )
             .all()
         )
-        now = utcnow()
         for execution in active:
-            execution.status = "cancelled"
-            execution.completed_at = now
-            execution.execution_note = (
-                execution.execution_note or "Assignee changed before the run finished"
+            if (
+                preserve_automation_run_id
+                and execution.executor_type == "automation_manager"
+                and str(execution.automation_run_id or "") == preserve_automation_run_id
+            ):
+                continue
+            cancelled = loop_item_execution_service.cancel(
+                db,
+                execution_id=execution.id,
+                note="Assignee changed before the run finished",
+                commit=False,
             )
-            if execution.runtime_device_id and execution.runtime_task_id:
-                cancelled_runs.append(execution)
+            if (
+                cancelled.status == "cancel_requested"
+                and cancelled.runtime_device_id
+                and cancelled.runtime_task_id
+            ) or (cancelled.team_id and cancelled.backend_task_id):
+                cancelled_runs.append(cancelled)
         return cancelled_runs
 
     def _apply_assignee_executions(
@@ -592,6 +681,25 @@ class ExternalLoopItemProvider:
                     user_id=user_id,
                     priority=priority,
                 )
+        elif values.assignee_team_id:
+            team = runnable_wegent_team(db, user_id, values.assignee_team_id)
+            self._ensure_index_row(
+                db,
+                item_id=item_id,
+                project=project,
+                assignee_type="team",
+                assignee_id=str(team.id),
+                assignee_name=team.name,
+                user_id=user_id,
+            )
+            loop_item_execution_service.create_for_team_assignment(
+                db,
+                loop_item_id=item_id,
+                cloud_project_id=str(project.id),
+                team=team,
+                assigner_user_id=user_id,
+                priority=priority,
+            )
         elif values.assignee_user_id:
             target = db.get(User, values.assignee_user_id)
             self._ensure_index_row(
@@ -607,9 +715,11 @@ class ExternalLoopItemProvider:
             self._soft_delete_index_row(db, item_id)
         db.commit()
         if cancelled_runs:
-            from app.tasks.robot_queue_tasks import emit_runtime_cancels
+            from app.services.board_team_execution import (
+                request_execution_cancellations,
+            )
 
-            emit_runtime_cancels(cancelled_runs)
+            request_execution_cancellations(cancelled_runs)
 
     def _create_execution_for_agent(
         self,
@@ -620,6 +730,8 @@ class ExternalLoopItemProvider:
         agent: ProjectChatAgent,
         user_id: int,
         priority: str,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> None:
         """Create the queue run row after assigning a robot to an issue."""
 
@@ -639,6 +751,8 @@ class ExternalLoopItemProvider:
                 else None
             ),
             priority=priority,
+            automation_context=automation_context,
+            instruction=instruction,
         )
 
     def assign(
@@ -647,6 +761,9 @@ class ExternalLoopItemProvider:
         item_id: str,
         user_id: int,
         values: LoopItemAssign,
+        *,
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> dict[str, object]:
         """Assign an issue to a project member or robot.
 
@@ -665,7 +782,9 @@ class ExternalLoopItemProvider:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         current = self._get_issue(project, number)
         current_labels = self._labels(current)
+        previous_assignee = self._assignee_from_labels(current_labels)
         agent: ProjectChatAgent | None = None
+        team: Kind | None = None
         if values.assignee_type == "agent":
             agent = db.get(ProjectChatAgent, values.assignee_id)
             if (
@@ -701,6 +820,17 @@ class ExternalLoopItemProvider:
                 target.user_name if target else None,
             )
             assignee_name = target.user_name if target else None
+        elif values.assignee_type == "team":
+            try:
+                target_team_id = int(values.assignee_id)
+            except ValueError as exc:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Team assignee id must be numeric",
+                ) from exc
+            team = runnable_wegent_team(db, user_id, target_team_id)
+            assignee_label = self._assignee_label("team", str(team.id), team.name)
+            assignee_name = team.name
         else:  # pragma: no cover - pydantic constrains assignee_type
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
@@ -723,12 +853,24 @@ class ExternalLoopItemProvider:
             project=project,
             assignee_type=values.assignee_type,
             assignee_id=(
-                agent.id if values.assignee_type == "agent" else str(target_user_id)
+                agent.id
+                if values.assignee_type == "agent"
+                else (
+                    str(team.id)
+                    if values.assignee_type == "team" and team is not None
+                    else str(target_user_id)
+                )
             ),
             assignee_name=assignee_name,
             user_id=user_id,
         )
-        cancelled_runs = self._cancel_active_executions(db, item_id)
+        cancelled_runs = self._cancel_active_executions(
+            db,
+            item_id,
+            preserve_automation_run_id=str(
+                (automation_context or {}).get("run_id") or ""
+            ),
+        )
         if agent is not None:
             self._create_execution_for_agent(
                 db,
@@ -737,12 +879,43 @@ class ExternalLoopItemProvider:
                 agent=agent,
                 user_id=user_id,
                 priority=self._priority(current_labels),
+                automation_context=automation_context,
+                instruction=instruction,
+            )
+        elif team is not None:
+            loop_item_execution_service.create_for_team_assignment(
+                db,
+                loop_item_id=item_id,
+                cloud_project_id=str(project.id),
+                team=team,
+                assigner_user_id=user_id,
+                priority=self._priority(current_labels),
             )
         db.commit()
         if cancelled_runs:
-            from app.tasks.robot_queue_tasks import emit_runtime_cancels
+            from app.services.board_team_execution import (
+                request_execution_cancellations,
+            )
 
-            emit_runtime_cancels(cancelled_runs)
+            request_execution_cancellations(cancelled_runs)
+        if (
+            values.assignee_type == "user"
+            and target_user_id != user_id
+            and (
+                previous_assignee is None
+                or previous_assignee["type"] != "user"
+                or previous_assignee["id"] != str(target_user_id)
+            )
+        ):
+            assigner = db.get(User, user_id)
+            notify_project_task_assignee(
+                user_id=target_user_id,
+                project_id=str(project.id),
+                project_name=project.name or "",
+                item_id=item_id,
+                item_title=str(issue.get("title") or item_id),
+                assigner_name=assigner.user_name if assigner else str(user_id),
+            )
         return self._response(db, project, issue, access, user_id)
 
     def _ensure_index_row(
@@ -777,14 +950,23 @@ class ExternalLoopItemProvider:
         metadata["external_index"] = True
         if assignee_type == "agent":
             row.assignee_agent_id = assignee_id
+            row.assignee_team_id = None
             # Production MySQL stores unset user assignees as 0, not NULL.
             row.assignee_user_id = 0
             loop_item_service._write_assignment_change(
                 metadata, user_id, "agent", assignee_id, assignee_name
             )
+        elif assignee_type == "team":
+            row.assignee_user_id = 0
+            row.assignee_agent_id = ""
+            row.assignee_team_id = int(assignee_id)
+            loop_item_service._write_assignment_change(
+                metadata, user_id, "team", assignee_id, assignee_name
+            )
         else:
             row.assignee_user_id = int(assignee_id) if assignee_id else 0
             row.assignee_agent_id = ""
+            row.assignee_team_id = None
             loop_item_service._write_assignment_change(
                 metadata, user_id, "user", assignee_id or None, assignee_name
             )
@@ -879,19 +1061,56 @@ class ExternalLoopItemProvider:
         return self.get(db, item_id, user_id)
 
     def task_view(self, db: Session, item_id: str, user_id: int) -> dict[str, object]:
-        """Minimal live task context used to build the runtime prompt."""
+        """Return current normalized task context for runtime materialization."""
 
         project, number = self._resolve_project(db, item_id)
         issue = self._get_issue(project, number)
         labels = self._labels(issue)
+        raw_description = str(issue.get(self._body_key(project)) or "")
+        description = "\n".join(
+            line
+            for line in raw_description.splitlines()
+            if not line.strip().startswith(PARENT_MARKER)
+        ).strip()
+        assignee = self._assignee_from_labels(labels)
+        assignee_user_id = None
+        assignee_agent_id = None
+        assignee_team_id = None
+        if assignee is not None and assignee["type"] == "user":
+            try:
+                assignee_user_id = int(assignee["id"])
+            except ValueError:
+                pass
+        elif assignee is not None and assignee["type"] == "agent":
+            assignee_agent_id = assignee["id"]
+        elif assignee is not None and assignee["type"] == "team":
+            try:
+                assignee_team_id = int(assignee["id"])
+            except ValueError:
+                pass
         return {
             "id": item_id,
             "cloud_project_id": str(project.id),
             "title": str(issue.get("title") or ""),
-            "description": str(issue.get(self._body_key(project)) or ""),
+            "description": description,
             "status": self._status(labels, str(issue.get("state") or "")),
             "priority": self._priority(labels),
+            "parent_id": self._parent_id(project, raw_description),
+            "tags": self._public_tags(labels),
+            "assignee_user_id": assignee_user_id,
+            "assignee_agent_id": assignee_agent_id,
+            "assignee_team_id": assignee_team_id,
         }
+
+    def normalize_issue_payload(self, issue: dict[str, Any]) -> dict[str, Any]:
+        """Map provider issue fields to the task fields used by automation rules."""
+
+        normalized = dict(issue)
+        labels = self._labels(issue)
+        normalized["status"] = self._status(labels, str(issue.get("state") or ""))
+        normalized["priority"] = self._priority(labels)
+        normalized["tags"] = self._public_tags(labels)
+        return normalized
 
     def ensure_shadow(self, db: Session, item_id: str, user_id: int) -> LoopItem:
         """Create a local LoopItem row for legacy binding/delivery flows.
@@ -994,6 +1213,8 @@ class ExternalLoopItemProvider:
         assignee_name: str | None = None
         assignee_agent_id: str | None = None
         assignee_agent_name: str | None = None
+        assignee_team_id: int | None = None
+        assignee_team_name: str | None = None
         assignee = self._assignee_from_labels(labels)
         if assignee is not None:
             if assignee["type"] == "user":
@@ -1005,7 +1226,7 @@ class ExternalLoopItemProvider:
                 if assignee_name is None and assignee_user_id is not None:
                     target = db.get(User, assignee_user_id)
                     assignee_name = target.user_name if target else None
-            else:
+            elif assignee["type"] == "agent":
                 assignee_agent_id = assignee["id"]
                 assignee_agent_name = assignee["name"] or None
                 if assignee_agent_name is None and assignee_agent_id:
@@ -1013,6 +1234,15 @@ class ExternalLoopItemProvider:
                     assignee_agent_name = (
                         agent.title or agent.name if agent is not None else None
                     )
+            elif assignee["type"] == "team":
+                try:
+                    assignee_team_id = int(assignee["id"])
+                except ValueError:
+                    assignee_team_id = None
+                assignee_team_name = assignee["name"] or None
+                if assignee_team_name is None and assignee_team_id is not None:
+                    team = db.get(Kind, assignee_team_id)
+                    assignee_team_name = team.name if team is not None else None
         return {
             "id": f"{project.project_key}-{number}",
             "cloud_project_id": str(project.id),
@@ -1025,6 +1255,8 @@ class ExternalLoopItemProvider:
             "assignee_name": assignee_name,
             "assignee_agent_id": assignee_agent_id,
             "assignee_agent_name": assignee_agent_name,
+            "assignee_team_id": assignee_team_id,
+            "assignee_team_name": assignee_team_name,
             "priority": self._priority(labels),
             "due_at": None,
             "sort_order": number,
@@ -1059,14 +1291,19 @@ class ExternalLoopItemProvider:
             return values
         merged = {**values}
         merged["execution_id"] = execution.id
-        merged["execution_state"] = execution.status
+        merged["execution_state"] = execution_display_state(execution)
+        merged["execution_control_state"] = execution.status
+        merged["execution_observed_state"] = execution.observed_state
+        merged["execution_sync_state"] = execution.sync_state
+        merged["execution_attempt_no"] = execution.attempt_no
+        merged["execution_last_event_seq"] = execution.last_event_seq
         merged["queued_at"] = self._optional_dt(execution.queued_at)
         merged["execution_note"] = execution.execution_note or None
         merged["can_approve"] = self._execution_can_approve(
             db, execution=execution, user_id=user_id
         )
         merged["approval"] = self._execution_approval_view(execution)
-        merged["ai_state"] = self._execution_ai_state(db, execution)
+        merged["ai_state"] = execution_ai_state(db, execution)
         merged["version"] = int(merged["version"]) + int(execution.id)
         return merged
 
@@ -1111,48 +1348,6 @@ class ExternalLoopItemProvider:
         if status == "rejected":
             view["rejected_reason"] = getattr(execution, "rejected_reason", None)
         return view
-
-    @staticmethod
-    def _execution_ai_state(db: Session, execution: object) -> dict | None:
-        """Synthesize the task AI state projection from the active run row."""
-
-        ai_status = {
-            "queued": "running",
-            "claimed": "running",
-            "running": "running",
-            "completed": "completed",
-            "failed": "failed",
-            "cancelled": "cancelled",
-        }.get(getattr(execution, "status", None))
-        if ai_status is None:
-            return None
-        agent = db.get(ProjectChatAgent, getattr(execution, "agent_id", None))
-        return {
-            "run_id": f"exec-{getattr(execution, 'id', '')}",
-            "status": ai_status,
-            "agent_id": getattr(execution, "agent_id", None),
-            "agent_name": (agent.title or agent.name if agent is not None else None),
-            "runtime_device_id": (
-                getattr(execution, "runtime_device_id", None) or None
-            ),
-            "runtime_task_id": getattr(execution, "runtime_task_id", None) or None,
-            "started_at": ExternalLoopItemProvider._optional_dt(
-                getattr(execution, "started_at", None)
-            ),
-            "heartbeat_at": ExternalLoopItemProvider._optional_dt(
-                getattr(execution, "heartbeat_at", None)
-            ),
-            "lease_expires_at": ExternalLoopItemProvider._optional_dt(
-                getattr(execution, "lease_expires_at", None)
-            ),
-            "completed_at": ExternalLoopItemProvider._optional_dt(
-                getattr(execution, "completed_at", None)
-            ),
-            "updated_at": ExternalLoopItemProvider._optional_dt(
-                getattr(execution, "updated_at", None)
-            ),
-            "last_error": getattr(execution, "error_message", None) or None,
-        }
 
     @staticmethod
     def _permissions(
@@ -1374,7 +1569,11 @@ class ExternalLoopItemProvider:
     def _labels(issue: dict[str, Any]) -> list[str]:
         labels = issue.get("labels") or []
         return [
-            str(label.get("name") if isinstance(label, dict) else label)
+            str(
+                (label.get("name") or label.get("title") or "")
+                if isinstance(label, dict)
+                else label
+            )
             for label in labels
         ]
 
@@ -1421,7 +1620,7 @@ class ExternalLoopItemProvider:
         if label is None:
             return None
         parts = label.removeprefix(ASSIGNEE_PREFIX).split(":", 2)
-        if len(parts) < 2 or parts[0] not in {"user", "agent"} or not parts[1]:
+        if len(parts) < 2 or parts[0] not in {"user", "agent", "team"} or not parts[1]:
             return None
         return {
             "type": parts[0],
@@ -1472,7 +1671,7 @@ class ExternalLoopItemProvider:
         )
         return (
             value
-            if value in {"inbox", "pending", "in_progress", "in_review"}
+            if value in {"inbox", "pending", "in_progress", "in_review", "completed"}
             else "pending"
         )
 

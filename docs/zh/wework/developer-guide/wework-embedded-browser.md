@@ -22,6 +22,100 @@ bridge 请求必须携带认证 token。`open` 和 `navigate` 只允许安全的
 
 bridge 支持有限并发。长时间 `waitFor` 不应阻塞独立的 `click`、`fill` 或 `inspect` 请求；超出并发上限时返回明确的忙碌错误，而不是让调用无限等待。
 
+### 多标签导航连线图
+
+```mermaid
+flowchart LR
+    E2E[E2E browser-multi-tabs] -->|读取 identity + Bearer token| BRIDGE[loopback browser bridge]
+    MCP[Executor browser MCP] -->|同一协议| BRIDGE
+    BRIDGE -->|base label + browser_session_id| ROUTE[active_tabs / agent_tabs 路由]
+    ROUTE -->|解析唯一 logical label| ENTRY[(EmbeddedBrowserState.webviews)]
+
+    BRIDGE -->|首次 open，宿主不存在| PENDING[(pending_open_requests)]
+    PENDING -->|open-request event / pending snapshot| MAIN[DesktopWorkbenchMain]
+    MAIN -->|创建顶层 browser:N + 选中| PANEL[WorkspaceBrowserPanel]
+    PANEL -->|embedded_browser_open| NATIVE[logical label 对应的原生 WKWebView]
+    NATIVE --> ENTRY
+
+    BRIDGE -->|宿主 ready 后 navigate| NATIVE
+    PANEL -->|地址栏提交或消费 open request| NATIVE
+    NATIVE -->|PageLoadEvent::Finished| LOAD[更新 loaded_url]
+    LOAD -->|page-state-change| PANEL
+    LOAD -->|解除 bridge open 等待| BRIDGE
+
+    MAIN -->|set_active_tab| ROUTE
+    MAIN -->|关闭标签，携带 expected native label| CLOSE[close / close_many]
+    CLOSE --> ENTRY
+    ENTRY -->|pageState / inspect / status| BRIDGE
+```
+
+连线职责如下：
+
+| 连线                           | 唯一职责                                                                | 当前代码归属                                                                                                                                    |
+| ------------------------------ | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| E2E/MCP → bridge               | 读取最新 identity、认证请求并携带基础 label 与可选 session ID           | `e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`、`executor/src/browser_mcp`、`src-tauri/src/embedded_browser/bridge_server.rs` |
+| bridge → 路由                  | 将基础 label 解析为当前活动的唯一逻辑标签；不得由测试猜测原生 label     | `src-tauri/src/embedded_browser.rs` 的 `active_tabs`、`agent_tabs`                                                                              |
+| bridge → pending open          | 首次打开先持久化带 ID 的请求，再通知 React 创建宿主                     | `request_browser_open`、`embedded_browser_pending_open_requests`                                                                                |
+| React → 顶层标签               | 为每个 `browser:N` 创建独立状态和逻辑 label，并同步活动标签             | `DesktopWorkbenchMain.tsx`、`RightWorkspacePanel.tsx`                                                                                           |
+| panel → 原生 WebView           | 宿主有可用 bounds 后创建或复用 logical label 对应的 WebView             | `WorkspaceBrowserPanel.tsx`、`embedded_browser_open`                                                                                            |
+| 原生加载 → 执行真值            | 只有 `PageLoadEvent::Finished` 写入 `loaded_url`；`url` 只表示导航意图  | `embedded_browser.rs` 的 `on_page_load`                                                                                                         |
+| 加载真值 → bridge              | `open` 等到目标 entry 的 `loaded_url` 后才成功                          | `wait_for_browser_navigation`                                                                                                                   |
+| 标签选择/关闭 → 路由与生命周期 | 选择更新 base label 路由；关闭只能销毁 expected native label 对应的实例 | `DesktopWorkbenchMain.tsx`、`embedded_browser_set_active_tab`、`embedded_browser_close(_many)`                                                  |
+
+### 多标签首次导航时序图
+
+```mermaid
+sequenceDiagram
+    participant T as E2E / browser MCP
+    participant B as loopback bridge
+    participant S as EmbeddedBrowserState
+    participant R as React 工作台
+    participant P as WorkspaceBrowserPanel
+    participant W as 原生 WKWebView
+    participant H as 目标 HTTP 服务
+
+    T->>B: open(base label, URL, timeout)
+    B->>S: 解析 active logical label
+    alt logical label 尚无宿主
+        B->>S: 写 pending open(request ID, target label, URL)
+        B-->>R: embedded-browser-open-request
+        R->>R: 创建并选中 browser:N
+        R->>S: set_active_tab(base, target label)
+        R->>P: 渲染带 openRequest 的 panel
+        P->>W: embedded_browser_open(URL, bounds, target label)
+        W->>S: Opening -> Ready
+        B->>S: 观察 target label Ready
+    else logical label 已 Ready
+        B->>S: 复用现有 entry
+    end
+    B->>W: navigate(URL)
+    W->>H: GET URL
+    H-->>W: 页面响应
+    W-->>S: PageLoadEvent::Finished(URL)
+    S->>S: loaded_url = URL
+    S-->>P: page-state-change(URL, title)
+    B->>S: 读取 loaded_url
+    S-->>B: 已完成导航
+    B-->>T: open 成功
+
+    T->>R: 新增第二个 browser:N 并选择
+    R->>S: set_active_tab(base, second label)
+    T->>B: open(base label, URL B)
+    B->>S: base label 路由到 second label
+    Note over B,W: 后续切换、检查、关闭都必须命中各自 logical label，两个 WebView 的页面状态互不覆盖
+```
+
+这条链路必须满足以下不变量：
+
+1. base label 只是 Agent 入口；实际状态、生命周期和页面真值都属于解析后的 logical label。
+2. `Ready` 只表示原生宿主可操作，不表示目标页面已加载；导航成功必须由该 entry 的 `loaded_url` 证明。
+3. 首次 `open` 只能有一个导航所有者。React 负责创建宿主，bridge 负责等待并提交目标导航；消费同一 pending request 不得形成相互覆盖的重复导航。
+4. `PageLoadEvent::Finished` 必须更新当前 native label 的 logical owner；标签切换或 relabel 后不得把事件写给旧 owner。
+5. E2E fixture 必须实际收到目标 URL 请求，并在 bridge 返回成功后同时断言地址栏和 `inspect` 内容；仅看到标签、地址草稿或 `navigation_requested` 日志不代表成功。
+6. 第二个浏览器标签必须拥有不同 logical label 和原生 WebView；`set_active_tab` 只改变 base-label 路由，不复制或交换页面状态。
+7. 关闭标签必须携带 expected native label，且关闭后 base label 必须路由到仍存活的活动标签。
+8. 超时、重试或扩大等待时间不能替代缺失的 `GET → Finished → loaded_url` 完成边。
+
 ## Agent 浏览器能力
 
 Agent 面向模型暴露的是浏览器动作工具，而不是底层 WebKit API。常用能力包括：
@@ -75,6 +169,7 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 WebKit API
 
 ## WebView 兼容性
 
+- 内置浏览器子 WebView 只在 debug 构建中启用 Web Inspector；release 构建通过显式 build cfg 禁用。macOS debug 构建会在 Inspector frontend 首次显示前保存子 WebView frame、执行 detach 并原样恢复 frame，因此 F12 只能打开独立窗口，不能停靠、改变浏览器尺寸或覆盖工作台。主 WebView 的 Inspector 仍只通过 Developer Commands 显式打开。
 - 浏览器 WebView 使用固定的独立数据存储标识和应用数据目录，不能与 Wework 主界面的登录存储混用。浏览器设置中的清理操作只作用于这个数据存储。
 - Tauri 中的 Wegent 智能体应用标签页也使用原生子 WebView，而不是跨源 iframe。所有应用标签共享同一个固定数据存储标识，因此同一来源的完整网站存储（包括全部 `localStorage` key、Cookie 和 IndexedDB）会在标签关闭、重新打开和应用重启后继续可用；标签 label 只标识 WebView 生命周期，不划分存储。macOS 14 及以上由 `data_store_identifier` 选择持久化 `WKWebsiteDataStore`，`data_directory` 主要服务其它平台。不要在 Wework 主界面逐 key 镜像或恢复页面存储。
 - 浏览器 WebView 使用 Safari 兼容 User-Agent，避免网站把缺少浏览器产品标识的 WebKit User-Agent 识别为不受支持的客户端。
@@ -114,10 +209,13 @@ cargo check --manifest-path wework/src-tauri/Cargo.toml
 cargo test --manifest-path executor/Cargo.toml browser_mcp
 cargo test --manifest-path wework/src-tauri/Cargo.toml embedded_browser
 pnpm --filter wework e2e:desktop:embedded-browser
+pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
 ```
 
 `e2e:desktop:embedded-browser` 必须在任务 A 创建后切换到任务 B，再使用任务 A 的专属 label 执行第一次 bridge `open`、`waitFor` 和 `inspect`，验证非活跃任务能在工具超时前完成后台导航且不会接管任务 B 的浏览器。切回任务 A 后还要验证同一页面状态可见。仅验证第二次打开、活跃任务打开或手工先展开浏览器面板，不能覆盖首次打开和非活跃任务路由竞态。
 
 浏览器涉及 Tauri 命令、原生 WebView、IPC 或 Agent 操作链路时，还应使用 `pnpm --filter wework ai:verify start` 启动隔离真实 Tauri 会话，并记录打开页面、inspect、动作和截图的验证证据。完整 E2E 太慢时，合并前至少要说明未运行的原因，并确保 CI 中的 `e2e:desktop:embedded-browser` 会覆盖该场景。
+
+macOS Inspector 变更还必须运行 `browser-toolbar-actions` checkpoint。该场景使用本地 HTTP 模拟页面，连续两次打开和关闭 Inspector，并校验独立原生窗口出现、关闭后不可见且子 WebView frame 完全不变。
 
 涉及 Executor Codex 启动配置时，还应运行对应的 Codex launch config 单元测试，确认 browser MCP server 会被正确注入。

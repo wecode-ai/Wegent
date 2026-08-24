@@ -33,6 +33,18 @@ export interface RuntimeTransportReplacedPayload {
   runtimeInstanceId: string
 }
 
+export interface RuntimeEventLaggedPayload {
+  skipped: number
+}
+
+export interface ProjectTaskAssignedPayload {
+  projectId: string
+  projectName: string
+  itemId: string
+  itemTitle: string
+  assignerName: string
+}
+
 export interface ChatStreamHandlers {
   scope?: ChatStreamScope
   onChatStart?: (payload: ChatStartPayload) => void
@@ -49,7 +61,9 @@ export interface ChatStreamHandlers {
   onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void
   onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
+  onRuntimeEventLagged?: (payload: RuntimeEventLaggedPayload) => void
   onRuntimeTransportReplaced?: (payload: RuntimeTransportReplacedPayload) => void
+  onProjectTaskAssigned?: (payload: ProjectTaskAssignedPayload) => void
   onDeviceOnline?: (payload: unknown) => void
   onDeviceOffline?: (payload: unknown) => void
   onDeviceStatus?: (payload: unknown) => void

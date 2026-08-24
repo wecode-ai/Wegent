@@ -28,11 +28,9 @@ fn create_standard_plugin(root: &Path) -> PluginSource {
     fs::write(
         root.join("mcp.json"),
         serde_json::to_vec(&json!({
-            "mcpServers": {
-                "demo": {
-                    "command": "${PLUGIN_ROOT}/bin/demo",
-                    "args": ["${PLUGIN_DATA}/state.json"],
-                }
+            "demo": {
+                "command": "${PLUGIN_ROOT}/bin/demo",
+                "args": ["${PLUGIN_DATA}/state.json"],
             }
         }))
         .unwrap(),
@@ -45,6 +43,50 @@ fn create_standard_plugin(root: &Path) -> PluginSource {
         root: root.to_path_buf(),
         data_root,
     }
+}
+
+#[test]
+fn reads_standard_and_compatibility_mcp_server_maps() {
+    let server = json!({"url": "https://mcp.example.com/mcp"});
+    for document in [
+        json!({"demo": server.clone()}),
+        json!({"mcp_servers": {"demo": server.clone()}}),
+        json!({"mcpServers": {"demo": server.clone()}}),
+    ] {
+        let servers = mcp_server_map(&document).expect("MCP server map");
+        assert_eq!(servers["demo"], server);
+    }
+
+    assert!(mcp_server_map(&json!({"mcp_servers": []})).is_none());
+}
+
+#[test]
+fn reads_mcp_servers_from_manifest_relative_path() {
+    let root = test_directory("manifest-mcp-path");
+    fs::create_dir_all(root.join(".codex-plugin")).unwrap();
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::write(
+        root.join(".codex-plugin/plugin.json"),
+        r#"{"name":"demo","mcpServers":"./config/remote.mcp.json"}"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("config/remote.mcp.json"),
+        r#"{"remote":{"url":"https://mcp.example.com/mcp"}}"#,
+    )
+    .unwrap();
+    let source = PluginSource {
+        name: "demo".to_string(),
+        root: fs::canonicalize(&root).unwrap(),
+        data_root: root.join("data"),
+    };
+
+    let servers = read_plugin_mcp_servers(&source);
+
+    assert_eq!(servers.len(), 1);
+    assert_eq!(servers[0].0, "remote");
+    assert_eq!(servers[0].1["url"], "https://mcp.example.com/mcp");
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -85,6 +127,36 @@ fn converts_stdio_mcp_servers_for_opencode() {
     assert_eq!(adapted["command"], json!(["node", "server.mjs"]));
     assert_eq!(adapted["environment"]["MODE"], "test");
     assert_eq!(adapted["cwd"], "/plugins/demo");
+}
+
+#[test]
+fn adapts_codex_remote_mcp_fields_for_claude_and_opencode() {
+    let source = PluginSource {
+        name: "demo".to_string(),
+        root: PathBuf::from("/plugins/demo"),
+        data_root: PathBuf::from("/data/demo"),
+    };
+    let server = json!({
+        "url": "https://mcp.example.com/mcp",
+        "http_headers": {
+            "Authorization": "Bearer token",
+            "X-Shared": "codex",
+        },
+        "headers": {
+            "X-Shared": "legacy",
+        },
+    });
+
+    let claude = adapt_claude_mcp_server(&server, &source).expect("Claude MCP adapter");
+    assert_eq!(claude["type"], "http");
+    assert_eq!(claude["headers"]["Authorization"], "Bearer token");
+    assert_eq!(claude["headers"]["X-Shared"], "legacy");
+    assert!(claude.get("http_headers").is_none());
+
+    let opencode = adapt_opencode_mcp_server(&server, Some(&source)).expect("OpenCode MCP adapter");
+    assert_eq!(opencode["type"], "remote");
+    assert_eq!(opencode["headers"]["Authorization"], "Bearer token");
+    assert_eq!(opencode["headers"]["X-Shared"], "legacy");
 }
 
 #[test]

@@ -31,7 +31,7 @@ Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when
 
 The desktop sidebar provides two cloud entry points with distinct responsibilities:
 
-- The workspace entry shows cloud connection status. It says "Connect cloud" while disconnected and "Cloud connection expired" after login expiry; clicking it can restore the connection directly.
+- The workspace entry shows cloud connection status. It says "Connect cloud" while disconnected and "Cloud connection expired" after login expiry; clicking it allows the user to reconnect or select "Disconnect" to clear a failed or expired state and return to the disconnected state.
 - The account area always opens the account menu and does not change its click behavior with login state. While signed out, "Sign in to Wegent" appears at the top of the menu, and Settings, Check for updates, and Remaining usage stay accessible.
 - After connection, the account area shows the cloud username and email, while the workspace entry shows the cloud host, cloud user, and online cloud device count.
 - Expired or failed cloud connections do not block local features.
@@ -62,6 +62,8 @@ New-chat composer preferences follow the same connection ownership. When disconn
 Wework cloud runtime execution uses the same app IPC protocol as local mode. The frontend connects to the Backend `/wework-runtime` Socket.IO namespace and wraps `runtime.*` requests as `{ id, method, params, device_id }` frames. Backend only authenticates the user, verifies the online target device, and forwards the request to the matching executor; it does not translate this Wework runtime path into `chat:*` events.
 
 Cloud executors still connect to Backend through the `/local-executor` namespace. Inside the executor, the same local `RuntimeWorkRpcHandler` handles `runtime.tasks.create`, `runtime.tasks.send`, `runtime.tasks.list`, `runtime.tasks.transcript`, and related methods. Responses API-style app IPC events are relayed back through `runtime:event` to `/wework-runtime`. The Wework frontend reuses the local streaming event mapper, so local and cloud runtime execution share the same runtime flow.
+
+The relay timeout for `device.execute_command` must use the request's `timeout_seconds`, with a fixed acknowledgement grace period in the frontend. Ordinary runtime requests keep the default 75-second timeout. This prevents long commands such as Git Clone from being rejected by the outer IPC before their own timeout while preserving the executor's 600-second upper bound.
 
 In a multi-instance Backend deployment, the Socket.IO Redis manager forwards RPCs to the worker that owns the executor connection. The Redis device-online record containing the `socket_id` is the routing source. The current worker's in-process connection table must not be used to declare the executor disconnected, because the connection may belong to another worker.
 
@@ -110,7 +112,7 @@ Local model configs, including API keys, are stored only in Wework's local brows
 
 When API Key is blank, local runtime sends a `dummy` bearer token to the Codex provider config so no-auth local OpenAI-compatible services can run. Local model configs and the built-in local Codex model enter the existing model selector as `UnifiedModel(type: "runtime")`.
 
-Test Connection forces the model to call a deterministic capability probe tool and succeeds only when the matching tool call is returned; a plain text response does not prove Agent tool support. The `custom` Responses profile probes with Codex's `apply_patch` custom-tool name and grammar, while the `function` profile uses a regular function probe. During execution, the executor generates an explicit Codex model catalog for the custom model. The `custom` and `function` profiles publish `apply_patch`, while `shell` publishes only shell-based editing.
+Test Connection forces the model to call a deterministic capability probe tool and succeeds only when the matching tool call is returned; a plain text response does not prove Agent tool support. The `custom` Responses profile probes with Codex's `apply_patch` custom-tool name and grammar, while the `function` profile uses a regular function probe. OpenAI Responses probes use `stream: true` and read the tool call from SSE events, matching Codex's real execution path and supporting providers whose non-streaming response leaves `output` empty. During execution, the executor generates an explicit Codex model catalog for the custom model. The `custom` and `function` profiles publish `apply_patch`, while `shell` publishes only shell-based editing.
 
 DeepSeek V4-Flash and V4-Pro are built-in provider profiles. Their upstream endpoint is `https://api.deepseek.com/responses`, and their catalog IDs are `wework-deepseek-v4-flash` and `wework-deepseek-v4-pro`. Both have a 1,048,576-token context window and support `low`, `high`, and `max` reasoning effort with `high` as the default. The catalog enables parallel tools, multi-agent v2, and Web Search, while declaring text-only input and no image generation. After Wework discovers models from DeepSeek `/models`, it keeps `deepseek-v4-flash` and `deepseek-v4-pro`, the models supported by the Codex profile. Existing Chat Completions configurations managed by this profile are migrated on read to the Responses API, the `custom` tool profile, and live search.
 

@@ -23,6 +23,7 @@ from app.schemas.kind import Bot, Model
 from app.services.capability_reference_service import get_referenced_capability
 from app.services.model_capabilities import normalize_model_capabilities
 from app.services.runtime_codex_model import get_enabled_codex_runtime_model_spec
+from shared.codex_model_catalog import codex_catalog_model_id_from_config
 from shared.models.execution import ExecutionRequest
 from shared.utils.crypto import decrypt_api_key
 
@@ -1016,9 +1017,7 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     # Catalog model id override for Codex-compatible models
-    codex_catalog_model_id = env.get("codex_catalog_model_id") or env.get(
-        "codexCatalogModelId"
-    )
+    codex_catalog_model_id = codex_catalog_model_id_from_config(env)
     if codex_catalog_model_id:
         logger.info(
             f"[model_resolver] _extract_model_config: codex_catalog_model_id={codex_catalog_model_id}"

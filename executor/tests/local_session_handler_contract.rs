@@ -580,6 +580,37 @@ fn start_code_server_session_returns_gateway_url() {
 }
 
 #[test]
+fn empty_session_path_uses_and_creates_configured_workspace_root() {
+    let root = temp_root("default-session-workspace").join("workspace");
+    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
+        RecordingTerminal::default(),
+    ))));
+    let mut handler = LocalSessionHandler::new(
+        "http://localhost:17888",
+        true,
+        18080,
+        root.clone(),
+        pty_manager,
+    );
+
+    let result = handler.handle_start_session(SessionStartRequest {
+        session_type: SessionType::CodeServer,
+        session_id: "code-default-root".to_owned(),
+        project_id: 0,
+        path: String::new(),
+        access_token: "secret".to_owned(),
+        rows: None,
+        cols: None,
+        create_if_missing: true,
+        ttl_seconds: None,
+    });
+
+    assert!(result.success);
+    assert!(root.is_dir());
+    assert_eq!(result.path.as_deref(), Some(root.as_path()));
+}
+
+#[test]
 fn disabled_session_gateway_rejects_code_server_session() {
     let root = temp_root("disabled-code-server");
     let pty_manager = Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
@@ -671,6 +702,39 @@ fn start_session_rejects_project_path_outside_allowed_workspace_roots() {
         result.error.as_deref(),
         Some("Project path is outside allowed workspace roots")
     );
+}
+
+#[test]
+fn start_session_allows_explicit_workspace_environment_root() {
+    let _lock = env_lock();
+    let root = temp_root("default-project-root");
+    let allowed_root = temp_root("explicit-project-root");
+    let project = allowed_root.join("wegent");
+    fs::create_dir_all(&project).unwrap();
+    let _workspace_roots = EnvGuard::set(
+        "WEGENT_WORKSPACE_ROOTS",
+        allowed_root.to_str().expect("workspace root must be UTF-8"),
+    );
+    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
+        RecordingTerminal::default(),
+    ))));
+    let mut handler =
+        LocalSessionHandler::new("http://localhost:17888", true, 18080, root, pty_manager);
+
+    let result = handler.handle_start_session(SessionStartRequest {
+        session_type: SessionType::CodeServer,
+        session_id: "code-explicit-root".to_owned(),
+        project_id: 123,
+        path: project.display().to_string(),
+        access_token: "secret".to_owned(),
+        rows: None,
+        cols: None,
+        create_if_missing: false,
+        ttl_seconds: None,
+    });
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.path.as_deref(), Some(project.as_path()));
 }
 
 #[test]

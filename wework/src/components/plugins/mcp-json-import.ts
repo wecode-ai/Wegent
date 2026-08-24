@@ -82,7 +82,10 @@ export function parseCustomMcpJson(input: string): CustomMcpFormState {
     asString(server.baseUrl) ||
     asString(server.endpoint)
   const env = asStringRecord(server.env)
-  const headers = asStringRecord(server.headers)
+  const codexHeaders = asStringRecord(server.http_headers)
+  const legacyHeaders = asStringRecord(server.headers)
+  const headers =
+    codexHeaders || legacyHeaders ? { ...(codexHeaders ?? {}), ...(legacyHeaders ?? {}) } : null
   const displayName =
     asString(server.displayName) || asString(server.display_name) || asString(server.name) || name
 

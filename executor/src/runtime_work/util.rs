@@ -7,7 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::protocol::ExecutionRequest;
 
@@ -20,6 +20,9 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {
+    if let Some(title) = string_field(payload, "title") {
+        set_runtime_task_title(request, &title);
+    }
     if !request.extra.contains_key("cloudProjectId")
         && !request.extra.contains_key("cloud_project_id")
     {
@@ -70,6 +73,13 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     {
         request.extra.insert("source".to_owned(), source);
     }
+    if let Some(origin) = payload
+        .get("origin")
+        .filter(|value| value.is_object())
+        .cloned()
+    {
+        request.extra.insert("origin".to_owned(), origin);
+    }
     if let Some(attachments) = payload
         .get("attachments")
         .filter(|value| value.is_array())
@@ -97,6 +107,12 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             .extra
             .insert("client_user_message_id".to_owned(), client_user_message_id);
     }
+    if let Some(generated_user_message) = runtime_generated_user_message(payload) {
+        request.extra.insert(
+            "runtime_generated_user_message".to_owned(),
+            generated_user_message,
+        );
+    }
     if let Some(collaboration_mode) = payload
         .get("collaborationMode")
         .or_else(|| payload.get("collaboration_mode"))
@@ -122,6 +138,49 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     }
 }
 
+pub(crate) fn set_runtime_task_title(request: &mut ExecutionRequest, title: &str) {
+    let title = title.trim();
+    if title.is_empty() {
+        return;
+    }
+    request.extra.insert(
+        "runtimeTaskTitle".to_owned(),
+        Value::String(title.to_owned()),
+    );
+}
+
+pub(crate) fn runtime_task_title(request: &ExecutionRequest) -> Option<String> {
+    request
+        .extra
+        .get("runtimeTaskTitle")
+        .or_else(|| request.extra.get("runtime_task_title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_owned)
+}
+
+fn runtime_generated_user_message(payload: &Value) -> Option<Value> {
+    let source = payload.get("source").filter(|value| value.is_object())?;
+    if string_field(source, "source").as_deref() != Some("im") {
+        return None;
+    }
+    let id = string_field(payload, "clientUserMessageId")
+        .or_else(|| string_field(payload, "client_user_message_id"))?;
+    let message = string_field(payload, "message").or_else(|| string_field(payload, "content"))?;
+    let created_at = payload
+        .get("createdAt")
+        .or_else(|| payload.get("created_at"))
+        .cloned()
+        .unwrap_or_else(|| json!(now_ms()));
+    Some(json!({
+        "id": id,
+        "message": message,
+        "createdAt": created_at,
+        "source": source,
+    }))
+}
+
 pub(crate) fn cloud_project_id(request: &ExecutionRequest) -> Option<Value> {
     request
         .extra
@@ -144,6 +203,19 @@ pub(crate) fn restore_cloud_project_id(request: &mut ExecutionRequest, runtime_h
         request
             .extra
             .insert("cloudProjectId".to_owned(), project_id);
+    }
+}
+
+pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Value) {
+    if request.extra.contains_key("origin") {
+        return;
+    }
+    if let Some(origin) = runtime_handle
+        .get("origin")
+        .filter(|value| value.is_object())
+        .cloned()
+    {
+        request.extra.insert("origin".to_owned(), origin);
     }
 }
 
@@ -478,10 +550,7 @@ pub(crate) fn workspace_group_path(path: &str) -> String {
 
 pub(crate) fn workspace_task_path(path: &str, group_path: &str) -> String {
     let normalized = normalize_workspace_path(path);
-    if let Some((worktree_root, _)) = git_worktree_root_and_id(&normalized) {
-        return worktree_root;
-    }
-    if let Some((worktree_root, _)) = path_worktree_root_and_id(&normalized) {
+    if let Some((worktree_root, _)) = resolved_worktree_root_and_id(&normalized) {
         return worktree_root;
     }
     if infer_workspace_kind(&normalized) == "chat" {
@@ -506,9 +575,7 @@ pub(crate) fn infer_workspace_kind(path: &str) -> &'static str {
 
 pub(crate) fn infer_worktree_id(path: &str) -> Option<String> {
     let normalized = normalize_workspace_path(path);
-    git_worktree_root_and_id(&normalized)
-        .map(|(_, worktree_id)| worktree_id)
-        .or_else(|| path_worktree_root_and_id(&normalized).map(|(_, worktree_id)| worktree_id))
+    resolved_worktree_root_and_id(&normalized).map(|(_, worktree_id)| worktree_id)
 }
 
 pub(crate) fn normalize_device_id(device_id: String) -> String {
@@ -604,6 +671,27 @@ fn git_worktree_root_and_id(path: &str) -> Option<(String, String)> {
     }
 }
 
+fn resolved_worktree_root_and_id(path: &str) -> Option<(String, String)> {
+    if !Path::new(path).exists() {
+        return path_worktree_root_and_id(path);
+    }
+    if let Some(worktree) = git_worktree_root_and_id(path) {
+        return Some(worktree);
+    }
+    if let Some((worktree_root, worktree_id)) = path_worktree_root_and_id(path) {
+        if let Some(repository_root) = git_common_workspace_root(path) {
+            if path_is_within(&worktree_root, &repository_root) {
+                return None;
+            }
+        }
+        return Some((worktree_root, worktree_id));
+    }
+    if git_common_workspace_root(path).is_some() {
+        return None;
+    }
+    path_worktree_root_and_id(path)
+}
+
 fn worktree_id_from_git_dir(git_dir: &Path) -> Option<String> {
     let mut components = git_dir.components().peekable();
     while let Some(component) = components.next() {
@@ -635,7 +723,7 @@ fn parse_gitdir_file(git_file: &Path, worktree_root: &Path) -> Option<PathBuf> {
 
 fn path_worktree_root_and_id(path: &str) -> Option<(String, String)> {
     let parts = Path::new(path).components().collect::<Vec<_>>();
-    for index in 0..parts.len() {
+    for index in (0..parts.len()).rev() {
         let component_text = parts[index].as_os_str().to_str()?;
         if component_text != "worktrees" && component_text != ".worktrees" {
             continue;
@@ -702,6 +790,7 @@ fn codex_worktree_fallback_root(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use tempfile::tempdir;
 
     use super::*;
 
@@ -715,11 +804,203 @@ mod tests {
     }
 
     #[test]
+    fn copies_runtime_task_title_from_runtime_payload() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(&mut request, &json!({"title": " Analyze issue "}));
+
+        assert_eq!(
+            runtime_task_title(&request).as_deref(),
+            Some("Analyze issue")
+        );
+    }
+
+    #[test]
+    fn copies_runtime_origin_from_runtime_payload() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({"origin": {"type": "project_automation", "run_id": "run-1"}}),
+        );
+
+        assert_eq!(
+            request.extra.get("origin"),
+            Some(&json!({"type": "project_automation", "run_id": "run-1"}))
+        );
+    }
+
+    #[test]
+    fn generates_visible_user_message_for_external_im_runtime_send() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "message": "continue from dingtalk",
+                "clientUserMessageId": "im:dingtalk:77:dingtalk-message-1",
+                "createdAt": 1_780_000_000_000_i64,
+                "source": {
+                    "source": "im",
+                    "channel_type": "dingtalk",
+                    "channel_id": 77,
+                    "message_id": "dingtalk-message-1"
+                }
+            }),
+        );
+
+        assert_eq!(
+            request.extra.get("runtime_generated_user_message"),
+            Some(&json!({
+                "id": "im:dingtalk:77:dingtalk-message-1",
+                "message": "continue from dingtalk",
+                "createdAt": 1_780_000_000_000_i64,
+                "source": {
+                    "source": "im",
+                    "channel_type": "dingtalk",
+                    "channel_id": 77,
+                    "message_id": "dingtalk-message-1"
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn does_not_generate_external_user_message_without_im_source() {
+        let mut request = ExecutionRequest::default();
+
+        apply_runtime_payload_metadata(
+            &mut request,
+            &json!({
+                "message": "continue from wework",
+                "clientUserMessageId": "runtime-local-pane-1"
+            }),
+        );
+
+        assert!(!request.extra.contains_key("runtime_generated_user_message"));
+    }
+
+    #[test]
     fn restores_cloud_project_id_for_a_follow_up_turn() {
         let mut request = ExecutionRequest::default();
 
         restore_cloud_project_id(&mut request, &json!({"cloudProjectId": "local-42"}));
 
         assert_eq!(cloud_project_id(&request), Some(json!("local-42")));
+    }
+
+    #[test]
+    fn restores_origin_for_a_follow_up_turn() {
+        let mut request = ExecutionRequest::default();
+
+        restore_origin(
+            &mut request,
+            &json!({"origin": {"type": "project_automation", "run_id": "run-1"}}),
+        );
+
+        assert_eq!(
+            request.extra.get("origin"),
+            Some(&json!({"type": "project_automation", "run_id": "run-1"}))
+        );
+    }
+
+    #[test]
+    fn normal_repository_under_worktrees_parent_is_not_a_worktree() {
+        let directory = tempdir().expect("temporary directory");
+        let repository = directory
+            .path()
+            .join("worktrees")
+            .join("runtime-1")
+            .join("project");
+        std::fs::create_dir_all(repository.join(".git")).expect("repository metadata");
+        let source = repository.join("src");
+        std::fs::create_dir_all(&source).expect("repository source directory");
+        let repository_path = repository.display().to_string();
+        let source_path = source.display().to_string();
+
+        assert_eq!(infer_workspace_kind(&source_path), "workspace");
+        assert_eq!(infer_worktree_id(&source_path), None);
+        assert_eq!(
+            workspace_task_path(&source_path, &repository_path),
+            repository_path
+        );
+    }
+
+    #[test]
+    fn nested_repository_inside_a_worktree_is_not_the_outer_worktree() {
+        let directory = tempdir().expect("temporary directory");
+        let common_dir = directory.path().join("repo").join(".git");
+        let outer_worktree = directory.path().join("worktrees").join("runtime-1");
+        let outer_git_dir = common_dir.join("worktrees").join("runtime-1");
+        std::fs::create_dir_all(&outer_git_dir).expect("outer worktree metadata");
+        std::fs::create_dir_all(&outer_worktree).expect("outer worktree");
+        std::fs::write(
+            outer_worktree.join(".git"),
+            format!("gitdir: {}\n", outer_git_dir.display()),
+        )
+        .expect("outer worktree git file");
+        let nested_repository = outer_worktree.join("artifacts").join("workspace");
+        std::fs::create_dir_all(nested_repository.join(".git")).expect("nested repository");
+        let nested_path = nested_repository.display().to_string();
+
+        assert_eq!(infer_workspace_kind(&nested_path), "workspace");
+        assert_eq!(infer_worktree_id(&nested_path), None);
+    }
+
+    #[test]
+    fn nonexistent_planned_worktree_does_not_inherit_an_ancestor_worktree() {
+        let directory = tempdir().expect("temporary directory");
+        let common_dir = directory.path().join("repo").join(".git");
+        let outer_worktree = directory.path().join("outer");
+        let outer_git_dir = common_dir.join("worktrees").join("outer");
+        std::fs::create_dir_all(&outer_git_dir).expect("outer worktree metadata");
+        std::fs::create_dir_all(&outer_worktree).expect("outer worktree");
+        std::fs::write(
+            outer_worktree.join(".git"),
+            format!("gitdir: {}\n", outer_git_dir.display()),
+        )
+        .expect("outer worktree git file");
+
+        let planned = outer_worktree
+            .join("executor-home")
+            .join("workspace")
+            .join("worktrees")
+            .join("runtime-1")
+            .join("workspace");
+        let planned_path = planned.display().to_string();
+
+        assert_eq!(
+            workspace_task_path(&planned_path, &outer_worktree.display().to_string()),
+            planned_path
+        );
+        assert_eq!(
+            infer_worktree_id(&planned_path).as_deref(),
+            Some("runtime-1")
+        );
+    }
+
+    #[test]
+    fn planned_worktree_path_under_repository_checkout_is_a_worktree() {
+        let checkout = tempdir().expect("temporary directory");
+        std::fs::create_dir_all(checkout.path().join(".git")).expect("checkout git metadata");
+        let planned = checkout
+            .path()
+            .join("executor-home")
+            .join("workspace")
+            .join("worktrees")
+            .join("runtime-132780333")
+            .join("workspace");
+        std::fs::create_dir_all(&planned).expect("planned worktree directory");
+        let planned_path = planned.display().to_string();
+
+        assert_eq!(infer_workspace_kind(&planned_path), "worktree");
+        assert_eq!(
+            infer_worktree_id(&planned_path),
+            Some("runtime-132780333".to_owned())
+        );
+        assert_eq!(
+            workspace_task_path(&planned_path, &checkout.path().display().to_string()),
+            planned_path
+        );
     }
 }

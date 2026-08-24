@@ -688,6 +688,7 @@ def test_build_resolved_embedding_model_config_preserves_additional_modalities()
                 },
                 "embeddingConfig": {
                     "dimensions": 3072,
+                    "encoding_format": "float",
                     "additional_input_modalities": ["image", "image", "audio"],
                 },
             }
@@ -704,4 +705,5 @@ def test_build_resolved_embedding_model_config_preserves_additional_modalities()
         )
 
     assert config.resolved_config["dimensions"] == 3072
+    assert config.resolved_config["encoding_format"] == "float"
     assert config.resolved_config["additional_input_modalities"] == ["image"]

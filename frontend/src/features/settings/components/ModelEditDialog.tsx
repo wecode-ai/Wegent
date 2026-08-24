@@ -64,10 +64,11 @@ import { CapabilityScopeSelector } from '@/features/resource-library/components/
 import { useCapabilityPublicationScope } from '@/features/resource-library/useCapabilityPublicationScope'
 import type { Group } from '@/types/group'
 import {
-  matchesVisionSidecarRef,
+  initialVisionSidecarSelection,
+  selectedVisionSidecarRef,
+  UNRESOLVED_VISION_SIDECAR_KEY,
   visionSidecarModelKey,
   visionSidecarModels,
-  visionSidecarRef,
 } from '@/features/settings/utils/vision-sidecar-model'
 
 // Model form data that can be used by callers
@@ -258,7 +259,9 @@ const PROTOCOL_BY_CATEGORY: Record<
 
 // Seedance model options
 const SEEDANCE_MODEL_OPTIONS = [
-  { value: 'doubao-seedance-1-5-pro-251215', label: 'Seedance 1.5 Pro (推荐)' },
+  { value: 'doubao-seedance-2-5-260628', label: 'Seedance 2.5 (推荐)' },
+  { value: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0' },
+  { value: 'doubao-seedance-1-5-pro-251215', label: 'Seedance 1.5 Pro' },
   { value: 'doubao-seedance-1-0-pro', label: 'Seedance 1.0 Pro' },
   { value: 'doubao-seedance-1-0-pro-fast', label: 'Seedance 1.0 Pro Fast' },
   { value: 'doubao-seedance-1-0-lite-t2v', label: 'Seedance 1.0 Lite (文生视频)' },
@@ -429,6 +432,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Wework desktop client availability
   const [isWeworkAvailable, setIsWeworkAvailable] = useState(false)
   const [selectedVisionSidecarKey, setSelectedVisionSidecarKey] = useState('')
+  const [unresolvedVisionSidecar, setUnresolvedVisionSidecar] =
+    useState<VisionSidecarModelRef | null>(null)
   const [availableVisionModels, setAvailableVisionModels] = useState<UnifiedModel[]>([])
   const [loadingVisionModels, setLoadingVisionModels] = useState(false)
 
@@ -585,6 +590,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Load wework availability
         setIsWeworkAvailable(effectiveInitialData.isWeworkAvailable ?? false)
         setSelectedVisionSidecarKey('')
+        setUnresolvedVisionSidecar(null)
       } else {
         // Reset for new model
         setModelIdName('')
@@ -626,6 +632,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Reset wework availability
         setIsWeworkAvailable(false)
         setSelectedVisionSidecarKey('')
+        setUnresolvedVisionSidecar(null)
         setCostIndex(undefined)
         // Reset video capabilities
         setCapRatios([])
@@ -660,10 +667,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setAvailableVisionModels(response.data)
         const initialRef = effectiveInitialData?.visionSidecarModel
         if (initialRef) {
-          const selected = response.data.find(candidate =>
-            matchesVisionSidecarRef(candidate, initialRef)
-          )
-          setSelectedVisionSidecarKey(selected ? visionSidecarModelKey(selected) : '')
+          const selection = initialVisionSidecarSelection(response.data, initialRef)
+          setSelectedVisionSidecarKey(selection.selectedKey)
+          setUnresolvedVisionSidecar(selection.unresolvedRef)
         }
       })
       .catch(() => {
@@ -1258,15 +1264,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         modelCategoryType === 'llm' && Object.keys(rawModelCapabilities).length > 0
           ? rawModelCapabilities
           : undefined
-      const selectedVisionModel =
-        modelCategoryType === 'llm' && isWeworkAvailable
-          ? visionModelOptions.find(
-              candidate => visionSidecarModelKey(candidate) === selectedVisionSidecarKey
-            )
-          : undefined
-      const selectedVisionSidecar = selectedVisionModel
-        ? (visionSidecarRef(selectedVisionModel) ?? undefined)
-        : undefined
+      const selectedVisionSidecar = selectedVisionSidecarRef(
+        modelCategoryType === 'llm' && isWeworkAvailable,
+        selectedVisionSidecarKey,
+        availableVisionModels,
+        unresolvedVisionSidecar
+      )
 
       // Map provider type to model field value
       // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini
@@ -1729,6 +1732,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                   <SelectItem value="disabled">
                     {t('common:models.vision_sidecar_disabled')}
                   </SelectItem>
+                  {unresolvedVisionSidecar && (
+                    <SelectItem
+                      value={UNRESOLVED_VISION_SIDECAR_KEY}
+                      data-testid="vision-sidecar-model-unavailable-option"
+                    >
+                      {t('common:models.vision_sidecar_unavailable', {
+                        modelName: unresolvedVisionSidecar.modelName,
+                      })}
+                    </SelectItem>
+                  )}
                   {visionModelOptions.map(candidate => (
                     <SelectItem
                       key={visionSidecarModelKey(candidate)}
@@ -2137,7 +2150,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     {t('common:models.video_capabilities_ratios')}
                   </Label>
                   <div className="flex flex-wrap gap-2">
-                    {['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(ratio => (
+                    {['adaptive', '16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map(ratio => (
                       <button
                         key={ratio}
                         type="button"
@@ -2155,7 +2168,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                             : 'bg-base border-border text-text-secondary hover:border-text-muted'
                         )}
                       >
-                        {ratio}
+                        {ratio === 'adaptive' ? t('chat:video.ratio.adaptive') : ratio}
                       </button>
                     ))}
                   </div>
@@ -2222,7 +2235,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     {t('common:models.video_capabilities_durations')}
                   </Label>
                   <div className="flex flex-wrap gap-2 items-center">
-                    {[5, 10].map(dur => (
+                    {[-1, 5, 10].map(dur => (
                       <button
                         key={dur}
                         type="button"
@@ -2240,12 +2253,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                             : 'bg-base border-border text-text-secondary hover:border-text-muted'
                         )}
                       >
-                        {dur}s
+                        {dur === -1 ? t('common:models.video_duration_auto') : `${dur}s`}
                       </button>
                     ))}
                     {/* Show custom durations that aren't predefined */}
                     {capDurations
-                      .filter(d => d !== 5 && d !== 10)
+                      .filter(d => d !== -1 && d !== 5 && d !== 10)
                       .map(dur => (
                         <button
                           key={dur}

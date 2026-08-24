@@ -23,7 +23,9 @@ Codex 插件运行配置位于“设置 → 集成 → 插件”，当前提供�
 
 本地市场和 OpenAI 官方市场由 Wework 前端通过本机 executor 的 Codex app-server 读取。列表请求不限制 `marketplaceKinds`，因此 Codex 可以按照当前功能开关和登录态返回本地市场与 `openai-curated-remote` 官方市场。远程 GitHub 自定义市场会被 clone 到本地缓存目录，后续列表读取使用缓存中的 marketplace 数据和插件目录。本地市场的安装、卸载、刷新和删除都走 Codex app-server。
 
-连接 Wegent 云端后，插件页还会展示 Backend 提供的 Wegent 云端市场。云端市场详情和安装状态来自 Backend；普通安装完成后，Backend 将用户的全局 `InstalledPlugin` 期望状态同步到在线本地设备和云设备。本机 Codex app-server 中用于承载云端插件的 `wegent` 内部市场继续参与插件注册和运行时解析，但不会作为设备侧市场标签显示。OpenAI 官方市场仍由 Codex 管理，不出现在自定义市场的编辑、排序和删除列表中。
+连接 Wegent 云端后，插件页还会展示 Backend 提供的 Wegent 云端市场。云端市场详情和安装状态来自 Backend；普通安装完成后，Backend 将用户的全局 `InstalledPlugin` 期望状态同步到在线本地设备和云设备。设备 Executor 从 Wework Backend / 对象存储取得包后，直接在隔离的 Claude 和 Codex home 中写入运行时缓存、marketplace 元数据和启用配置；云端插件的安装、更新和删除不调用 Codex app-server 的 `plugin/install`、`plugin/uninstall` 或配置 RPC，也不刷新 GitHub / OpenAI 市场。这样企业内部、Wework 公开和已发布个人插件在包已可达后不依赖 GitHub、OpenAI 或 Codex 联网接口。OpenAI 官方市场仍由 Codex 管理，不出现在自定义市场的编辑、排序和删除列表中。
+
+云端同步中的包替换、两个运行时缓存、注册表和配置文件按一个本地事务提交。任何解压、解析或写入失败都会恢复同步前状态，避免出现新包已落盘但旧运行时仍生效，或删除一半后无法恢复的状态。Connector 的 `localAuth` 仍在包同步完成后由 Wework 独立执行，不因本地物化方式变化而跳过。
 
 ### 安装期本地授权
 
@@ -52,7 +54,7 @@ Codex 插件运行配置位于“设置 → 集成 → 插件”，当前提供�
 
 创建入口会先调用 `GET /api/plugins/installed?device_id=<target>` 检查目标设备的本地插件安装态；如果对应插件在该设备上的 `currentDeviceInstallation` / `status.devices` 已是 `installed`，前端直接使用插件的 `displayName` 和默认提示词打开新任务，不再重复安装。未安装时，创建站点调用 `POST /api/plugins/builtin/wegent-sites/ensure-installed`，创建小程序调用 `POST /api/plugins/builtin/weibo-miniapp-h5-develop-agent/ensure-installed`，请求体都必须携带目标 `device_id`。该接口只允许安装系统所有者发布的内置插件；内置应用插件使用 `visibility=workspace`，因此 Backend 下发的 `create.marketplace_name` 和安装记录中的 `source.marketplace` 都是 `wegent`。不同 visibility 对应不同插件市场名：`personal` 使用 `wework-personal`，`workspace` 使用 `wegent`，`public` 使用 `wework`，前端不应写死某一个市场名，而应复用共享的 marketplace 身份工具。重复调用会复用并重新启用对应插件的已有安装记录；后端可能先执行全量 `replace` 同步，并在目标设备缺少该插件时再执行单插件 `merge`。前端只以目标设备回执为准，要求本次应用插件的安装 ID 或插件名返回 `synced`；如果旧响应没有 `sync.results`，则按没有目标设备专属结果处理，并继续使用顶层 `sync.plugins` 回退校验。其他设备或历史能力的同步错误不会阻塞应用创建对话。目标设备不存在、离线或本次请求的插件未能同步到目标设备时，前端不会创建对话。确认成功后，前端分别使用稳定的 `plugin://wegent-sites@wegent` 和 `plugin://weibo-miniapp-h5-develop-agent@wegent` 引用打开新任务；小程序入口还会带入插件提供的默认创建提示。插件安装和同步期间，应用页会显示“正在安装应用插件，完成后将进入会话...”的状态提示。点击 mention 时，插件页直接加载相应的云端插件详情。
 
-正常卸载会删除账号安装意图、设备期望状态、Codex app-server 安装记录，并按连接器策略清理本机登录态；它不主动删除 Codex 或 Claude `plugins/cache` 里的可复用包缓存。缓存目录由运行时负责复用和回收，若需要释放磁盘空间，应通过独立的缓存清理或垃圾回收流程处理未被任何安装记录引用的版本。
+本地自定义市场和 OpenAI 官方市场的卸载继续走 Codex app-server。Wegent 云端插件卸载则删除账号安装意图和设备期望状态，并由 Executor 本地删除 Wegent 管理的中心包、Claude / Codex 缓存及对应配置；个人本地插件和 OpenAI 市场配置不会被一并清理。连接器登录态仍按插件授权策略处理。
 
 ## 独立 Codex Home
 
@@ -78,15 +80,17 @@ executor 在启动 Codex app-server 前会解析并规范化 Wework Codex home �
 
 ## 运行时权限模式
 
-Wework Composer 为本地 Codex 任务提供三种权限模式，并把选择保存在任务的 `modelSelection.options.permissionMode` 中。新任务和缺少该字段的历史任务默认使用“工作区”，不会再隐式获得完整磁盘访问：
+Wework Composer 为本地 Codex 任务提供三种权限模式，并把选择保存在任务的 `modelSelection.options.permissionMode` 中。新任务和缺少该字段的历史任务默认使用“完整访问”；用户从其它模式主动切换到“完整访问”时，界面会显示明确的风险确认：
 
 | 权限模式 | Codex permission profile | Approval policy | 行为                                                                   |
 | -------- | ------------------------ | --------------- | ---------------------------------------------------------------------- |
 | 只读     | `:read-only`             | `on-request`    | 允许读取工作区；写文件、运行超出权限边界的命令或请求额外权限时需要审批 |
 | 工作区   | `:workspace`             | `on-request`    | 允许在工作区内读写；访问工作区之外或扩大权限时需要审批                 |
-| 完整访问 | `:danger-full-access`    | `never`         | 不经审批访问文件、终端和网络；启用前必须经过显式风险确认               |
+| 完整访问 | `:danger-full-access`    | granular        | 文件、终端和网络执行不弹审批；MCP 插件业务表单仍可以请求用户输入       |
 
 前端在每次本地运行时请求中发送 `runtime_permission_profile`。Executor 在 `thread/start`、`thread/resume`、`thread/fork` 和 `turn/start` 上同时设置对应的 `permissions` 与 `approvalPolicy`；从任务运行句柄恢复或继续会话时，也必须从保存的权限模式重建相同配置，不能回退为更高权限。
+
+完整访问使用 granular approval policy，关闭 `sandbox_approval`、`rules`、`skill_approval` 和 `request_permissions`，但保留 `mcp_elicitations: true`。MCP elicitation 是插件主动发起的业务交互，不属于命令、文件或权限提升等执行安全审批，因此不能通过 `approvalPolicy: "never"` 一并关闭。
 
 Wework 的 Claude Code 普通对话通过非交互子进程运行，无法展示或完成 Claude CLI 自带的审批提示。因此，Claude Code 设置中的 `default` 在这条执行路径上会映射为 `bypassPermissions`；用户明确选择的 `acceptEdits`、`plan`、`auto` 或 `bypassPermissions` 仍会原样传递。交互式本地终端不经过这项映射。
 
@@ -95,6 +99,12 @@ Codex app-server 的 `item/commandExecution/requestApproval`、`item/fileChange/
 ## 模型列表
 
 Wework 通过本机 executor 请求 Codex app-server 的 `model/list` 获取模型目录，并将返回的 provider 和模型数组顺序原样用于模型选择器。前端不会重排官方模型、默认模型或自定义 provider，也不会补充未由 Codex 返回的模型。请求使用 `includeHidden: false`，因此 Codex 标记为隐藏的模型不会显示。
+
+### 监督模型
+
+任务监督与会话共用同一个模型选择组件和同一份模型目录，但分别保存最近一次选择。监督设置不能维护第二套模型过滤或排序逻辑；会话中可选的官方 Codex 模型、自定义 provider 和本地模型也必须在监督中可选。
+
+云端 `public`、`user` 和 `group` 模型继续通过 Backend 的 `/api/model-runtime/responses` 执行。`runtime` 模型由 Wework 在保存监督设置时按会话模型的同一规则构造 `modelConfig`，通过本地 IPC 交给 Executor；Executor 只在进程内保存该配置，并为每次巡检启动独立、临时且不复用任务线程的 Codex app-server turn。这样巡检不会污染主会话记录，也不会把本地模型凭据写入任务持久化数据或日志。
 
 ### 图片附件预处理
 

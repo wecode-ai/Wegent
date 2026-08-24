@@ -294,6 +294,20 @@ async fn runtime_local_project_rpc_persists_multiple_roots() {
                 "defaultProjectSpace": {
                     "projectStore": "backend",
                     "projectId": "space-1"
+                },
+                "aiSettings": {
+                    "instructions": "Run focused tests before finishing.",
+                    "modelSelection": {
+                        "modelName": "gpt-5.5",
+                        "modelType": "runtime",
+                        "options": {"reasoning": "high"}
+                    },
+                    "plugins": [{
+                        "id": "quality-gate@team-market",
+                        "pluginName": "quality-gate",
+                        "marketplaceId": "team-market",
+                        "displayName": "Quality Gate"
+                    }]
                 }
             }
         }))
@@ -307,11 +321,32 @@ async fn runtime_local_project_rpc_persists_multiple_roots() {
         response["defaultProjectSpace"],
         json!({"projectStore": "backend", "projectId": "space-1"})
     );
+    assert_eq!(
+        response["aiSettings"],
+        json!({
+            "instructions": "Run focused tests before finishing.",
+            "modelSelection": {
+                "modelName": "gpt-5.5",
+                "modelType": "runtime",
+                "options": {"reasoning": "high"}
+            },
+            "plugins": [{
+                "id": "quality-gate@team-market",
+                "pluginName": "quality-gate",
+                "marketplaceId": "team-market",
+                "displayName": "Quality Gate"
+            }]
+        })
+    );
     let state = read_json_file(&codex_home.join(".codex-global-state.json"));
     assert_eq!(state["local-projects"]["product"]["name"], "Product");
     assert_eq!(
         state["local-projects"]["product"]["defaultProjectSpace"],
         json!({"projectStore": "backend", "projectId": "space-1"})
+    );
+    assert_eq!(
+        state["local-projects"]["product"]["aiSettings"],
+        response["aiSettings"]
     );
     assert_eq!(
         state["project-writable-roots"]["product"]
@@ -329,15 +364,37 @@ async fn runtime_local_project_rpc_persists_multiple_roots() {
                 "runtime": "codex",
                 "projectKey": "product",
                 "name": "Product",
-                "roots": [first_root, second_root],
-                "defaultProjectSpace": null
+                "roots": [first_root, second_root]
             }
         }))
         .await
-        .expect("clearing the default project space should succeed");
+        .expect("updating a project without AI settings should succeed");
+    let state = read_json_file(&codex_home.join(".codex-global-state.json"));
+    assert_eq!(
+        state["local-projects"]["product"]["aiSettings"],
+        response["aiSettings"]
+    );
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.projects.upsert_local",
+            "payload": {
+                "runtime": "codex",
+                "projectKey": "product",
+                "name": "Product",
+                "roots": [first_root, second_root],
+                "defaultProjectSpace": null,
+                "aiSettings": null
+            }
+        }))
+        .await
+        .expect("clearing the default project space and AI settings should succeed");
     let state = read_json_file(&codex_home.join(".codex-global-state.json"));
     assert!(state["local-projects"]["product"]
         .get("defaultProjectSpace")
+        .is_none());
+    assert!(state["local-projects"]["product"]
+        .get("aiSettings")
         .is_none());
 }
 
@@ -468,6 +525,7 @@ async fn runtime_task_list_groups_threads_under_open_workspace_roots() {
     assert_eq!(workspace["updatedAt"], 1780000060000_i64);
     assert_eq!(workspace["tasks"][0]["createdAt"], 1780000000000_i64);
     assert_eq!(workspace["tasks"][0]["updatedAt"], 1780000060000_i64);
+    assert!(workspace["tasks"][0]["sidebarOrder"].is_null());
 }
 
 #[tokio::test]
@@ -590,6 +648,83 @@ async fn runtime_task_list_applies_manual_order_to_projectless_chats() {
             .collect::<Vec<_>>(),
         vec!["thread-older", "thread-newer"]
     );
+}
+
+#[tokio::test]
+async fn runtime_task_list_applies_manual_order_without_project_state() {
+    let _lock = env_lock().await;
+    let home = temp_path("runtime-local-order-home", "dir");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-local-order-executor-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-local-order-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    let task_workspace = home
+        .join("Documents")
+        .join("Codex")
+        .join("2026-08-14")
+        .join("project-task");
+    let threads = json!([
+        {
+            "id": "thread-target",
+            "cwd": task_workspace,
+            "name": "Target task",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000200000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-source",
+            "cwd": task_workspace,
+            "name": "Source task",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000100000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-local-order-log", "jsonl"), &threads);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let reordered = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.sidebar.tasks.reorder",
+            "payload": {
+                "projectKey": "local:/repo/Manual",
+                "threadId": "thread-source",
+                "beforeThreadId": "thread-target"
+            }
+        }))
+        .await
+        .expect("task reorder should succeed");
+    assert_eq!(reordered["accepted"], true);
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    assert_eq!(
+        listed["workspaces"][0]["tasks"]
+            .as_array()
+            .expect("workspace tasks")
+            .iter()
+            .map(|task| task["taskId"].as_str().expect("task id"))
+            .collect::<Vec<_>>(),
+        vec!["thread-source", "thread-target"]
+    );
+    assert_eq!(listed["workspaces"][0]["tasks"][0]["sidebarOrder"], 0);
+    assert_eq!(listed["workspaces"][0]["tasks"][1]["sidebarOrder"], 1);
 }
 
 #[tokio::test]
@@ -1131,6 +1266,100 @@ async fn runtime_task_list_uses_thread_root_hints_and_skips_projectless_threads(
     let tasks = workspace["tasks"].as_array().unwrap();
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0]["taskId"], "thread-hinted");
+}
+
+#[tokio::test]
+async fn runtime_task_list_puts_new_unlisted_tasks_before_manual_project_order() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-hinted-order-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-hinted-order-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "electron-saved-workspace-roots": ["/repo/Wegent"],
+            "project-order": ["/repo/Wegent"],
+            "thread-workspace-root-hints": {
+                "thread-unlisted-first": "/repo/Wegent",
+                "thread-unlisted-second": "/repo/Wegent",
+                "thread-listed": "/repo/Wegent"
+            },
+            "sidebar-project-thread-orders": {
+                "/repo/Wegent": {
+                    "threadIds": ["thread-listed"],
+                    "sortKey": "manual"
+                }
+            }
+        }),
+    );
+    let threads = json!([
+        {
+            "id": "thread-unlisted-first",
+            "cwd": "/tmp/outside-a",
+            "name": "Unlisted first",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000010000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-unlisted-second",
+            "cwd": "/tmp/outside-b",
+            "name": "Unlisted second",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000030000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-listed",
+            "cwd": "/tmp/outside-c",
+            "name": "Listed",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000020000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-hinted-order-log", "jsonl"), &threads);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    let tasks = listed["workspaces"][0]["tasks"]
+        .as_array()
+        .expect("workspace tasks");
+    assert_eq!(
+        tasks
+            .iter()
+            .map(|task| task["taskId"].as_str().expect("task id"))
+            .collect::<Vec<_>>(),
+        vec![
+            "thread-unlisted-second",
+            "thread-unlisted-first",
+            "thread-listed"
+        ]
+    );
+    assert_eq!(
+        tasks
+            .iter()
+            .map(|task| task["sidebarOrder"].as_u64().expect("sidebar order"))
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
 }
 
 #[tokio::test]

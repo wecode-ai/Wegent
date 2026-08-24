@@ -12,6 +12,7 @@ WORKDIR /app
 
 # Copy dependency files and postinstall scripts
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
 COPY frontend/package.json ./frontend/package.json
 COPY frontend/scripts ./frontend/scripts
@@ -59,6 +60,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
 COPY wework/package.json ./wework/package.json
 
@@ -113,6 +115,7 @@ RUN dnf install -y \
 # Install Claude marketplace skills and npm packages for document generation
 RUN claude plugin marketplace add anthropics/skills \
     && npm install -g pptxgenjs playwright sharp react react-dom react-icons docx pdf-lib \
+        mermaid@11.15.0 jsdom@29.1.1 \
     && npx playwright install chromium \
     && npm cache clean --force
 

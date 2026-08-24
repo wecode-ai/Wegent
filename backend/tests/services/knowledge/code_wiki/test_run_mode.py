@@ -38,6 +38,18 @@ def test_unchanged_repository_is_skipped():
     assert decision.seeds_from_published is False
 
 
+def test_an_explicit_full_rebuild_overrides_the_unchanged_commit_skip():
+    decision = decide_run_mode(
+        head_commit=HEAD,
+        last_commit=HEAD,
+        force_full=True,
+    )
+
+    assert decision.mode is RunMode.FULL
+    assert decision.seeds_from_published is False
+    assert "explicitly requested" in decision.reason
+
+
 def test_small_change_stays_incremental():
     decision = decide_run_mode(
         head_commit=HEAD, last_commit=PREVIOUS, changed_paths=_edits(3)

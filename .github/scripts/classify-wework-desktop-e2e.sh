@@ -6,6 +6,8 @@ core_segments=(
   workspace-tabs
   priority-filter
   automation-lifecycle
+  project-automation
+  project-ai-settings
   model-routing
   permission-modes
   core-task-flow
@@ -13,38 +15,178 @@ core_segments=(
   goal-lifecycle
   supervisor-lifecycle
   resilience
+  runtime-task-queue
+  codex-notification-isolation
   conversation-state
+  temporary-chat
   workspace-attachments
   rendering-extensions
+  claude-runtime
+  local-file-preview
   local-harness
   embedded-browser
+  browser-toolbar-actions
 )
 plugin_segments=(
   plugin-lifecycle
   skill-mention-rendering
   sites-plugin-auto-install
 )
-# Group checkpoints by observed Cloud CI duration and order each shard from
-# longest to shortest so the five serial workers finish at similar times.
-cloud_shards=(
-  core-task-flow
-  model-routing,embedded-browser,telemetry-consent
-  window-lifecycle,conversation-state,browser-multi-tabs
-  resilience,goal-lifecycle,supervisor-lifecycle
-  rendering-extensions,workspace-attachments,workspace-tabs,priority-filter,automation-lifecycle
+cloud_worktree_segments=(
+  cloud-worktree-capability
+  cloud-worktree-create
+  cloud-worktree-queued-cancel
+  cloud-worktree-tools
+  cloud-worktree-archive-restore
+  cloud-worktree-device-restart
 )
+cloud_segments=(
+  cloud-project-creation
+  core-task-flow
+  "${cloud_worktree_segments[@]}"
+  model-routing
+  embedded-browser
+  telemetry-consent
+  window-lifecycle
+  conversation-state
+  browser-multi-tabs
+  resilience
+  goal-lifecycle
+  supervisor-lifecycle
+  rendering-extensions
+  workspace-attachments
+  workspace-tabs
+  priority-filter
+  automation-lifecycle
+  project-automation
+  plugin-auto-update
+)
+# Group checkpoints by observed Cloud CI duration and order each shard from
+# longest to shortest so the eight serial runners finish at similar times.
+# shellcheck disable=SC2054 # Each element is one comma-joined shard.
+cloud_shards=(
+  goal-lifecycle,telemetry-consent,cloud-worktree-capability
+  model-routing,plugin-auto-update,priority-filter
+  embedded-browser,cloud-worktree-device-restart,cloud-project-creation
+  resilience,cloud-worktree-queued-cancel,browser-multi-tabs
+  core-task-flow,supervisor-lifecycle,automation-lifecycle
+  window-lifecycle,cloud-worktree-tools,cloud-worktree-archive-restore
+  project-automation,workspace-attachments,cloud-worktree-create
+  conversation-state,rendering-extensions,workspace-tabs
+)
+# Group checkpoints by observed Core CI duration and order each shard so the
+# eight serial runners stay balanced while reusing the same prebuilt
+# application.
+# shellcheck disable=SC2054 # Each element is one comma-joined shard.
+core_shards=(
+  rendering-extensions,runtime-task-queue,local-file-preview
+  project-ai-settings,window-lifecycle,permission-modes
+  core-task-flow,temporary-chat,codex-notification-isolation
+  claude-runtime,workspace-attachments,local-harness
+  conversation-state,goal-lifecycle,workspace-tabs
+  resilience,supervisor-lifecycle
+  model-routing,project-automation,automation-lifecycle
+  embedded-browser,browser-toolbar-actions,priority-filter
+)
+
+validate_core_shards() {
+  declare -A known_segments=()
+  declare -A assigned_segments=()
+  local segment
+  for segment in "${core_segments[@]}"; do
+    if [[ -n "${known_segments[$segment]+set}" ]]; then
+      printf 'Duplicate core segment in catalog: %s\n' "$segment" >&2
+      return 1
+    fi
+    known_segments["$segment"]=true
+  done
+
+  local shard
+  for shard in "${core_shards[@]}"; do
+    local shard_segments
+    IFS=',' read -ra shard_segments <<< "$shard"
+    for segment in "${shard_segments[@]}"; do
+      if [[ -z "${known_segments[$segment]+set}" ]]; then
+        printf 'Unknown core segment in core_shards: %s\n' "$segment" >&2
+        return 1
+      fi
+      if [[ -n "${assigned_segments[$segment]+set}" ]]; then
+        printf 'Duplicate core segment in core_shards: %s\n' "$segment" >&2
+        return 1
+      fi
+      assigned_segments["$segment"]=true
+    done
+  done
+
+  for segment in "${core_segments[@]}"; do
+    if [[ -z "${assigned_segments[$segment]+set}" ]]; then
+      printf 'Core segment missing from core_shards: %s\n' "$segment" >&2
+      return 1
+    fi
+  done
+}
+
+validate_core_shards
+
+validate_cloud_shards() {
+  declare -A known_segments=()
+  declare -A assigned_segments=()
+  local segment
+  for segment in "${cloud_segments[@]}"; do
+    if [[ -n "${known_segments[$segment]+set}" ]]; then
+      printf 'Duplicate cloud segment in catalog: %s\n' "$segment" >&2
+      return 1
+    fi
+    known_segments["$segment"]=true
+  done
+
+  local shard
+  for shard in "${cloud_shards[@]}"; do
+    local shard_segments
+    IFS=',' read -ra shard_segments <<< "$shard"
+    for segment in "${shard_segments[@]}"; do
+      if [[ -z "${known_segments[$segment]+set}" ]]; then
+        printf 'Unknown cloud segment in cloud_shards: %s\n' "$segment" >&2
+        return 1
+      fi
+      if [[ -n "${assigned_segments[$segment]+set}" ]]; then
+        printf 'Duplicate cloud segment in cloud_shards: %s\n' "$segment" >&2
+        return 1
+      fi
+      assigned_segments["$segment"]=true
+    done
+  done
+
+  for segment in "${cloud_segments[@]}"; do
+    if [[ -z "${assigned_segments[$segment]+set}" ]]; then
+      printf 'Cloud segment missing from cloud_shards: %s\n' "$segment" >&2
+      return 1
+    fi
+  done
+}
+
+validate_cloud_shards
 
 declare -A selected=()
 desktop_runner_changed=false
+macos_inspector_e2e=false
 
 select_target() {
   selected["$1"]=true
+}
+
+select_cloud_worktree_checkpoints() {
+  local segment
+  for segment in "${cloud_worktree_segments[@]}"; do
+    select_target "cloud:$segment"
+  done
 }
 
 select_all_desktop_suites() {
   select_target "core:all"
   select_target "plugins:all"
   select_target "cloud:all"
+  macos_inspector_e2e=true
 }
 
 classify_wework_path() {
@@ -61,12 +203,17 @@ classify_wework_path() {
       desktop_runner_changed=true
       return
       ;;
+    wework/e2e/utils/mcp-elicitation-server.mjs)
+      select_target "core:permission-modes"
+      return
+      ;;
 
     # Plugin features have independently bootstrapped desktop segments.
     wework/src/components/plugins/* | \
       wework/src/features/plugins/* | \
       wework/src/pages/Plugin*)
       select_target "plugins:plugin-lifecycle"
+      select_target "core:project-ai-settings"
       return
       ;;
     wework/src/components/sites/* | \
@@ -113,9 +260,21 @@ classify_wework_path() {
       select_target "core:priority-filter"
       return
       ;;
+    wework/e2e/desktop/scenarios/project-automation.scenario.mjs)
+      select_target "core:automation-lifecycle"
+      select_target "core:project-automation"
+      select_target "cloud:all"
+      return
+      ;;
+    wework/src/features/todo/ProjectAutomation* | \
+      wework/src/features/todo/projectAutomationForm* | \
+      wework/src/api/projectAutomations*)
+      select_target "core:automation-lifecycle"
+      select_target "core:project-automation"
+      return
+      ;;
     wework/src/pages/AutomationsPage* | \
       wework/src/features/automations/* | \
-      wework/src/features/todo/ProjectAutomationView.tsx | \
       wework/src/types/automation.ts)
       select_target "core:automation-lifecycle"
       return
@@ -124,7 +283,38 @@ classify_wework_path() {
     wework/src/components/layout/DesktopSidebar.tsx)
       select_target "core:priority-filter"
       select_target "core:core-task-flow"
+      select_target "core:project-ai-settings"
       select_target "core:workspace-attachments"
+      return
+      ;;
+
+    # Managed Worktree availability, routing, task projection, and settings
+    # must keep both the local launch path and the real cloud lifecycle green.
+    wework/src/api/executorAccess* | \
+      wework/src/api/hybrid/hybridServices* | \
+      wework/src/api/local/localServices* | \
+      wework/src/api/runtimeWork* | \
+      wework/src/components/chat/composer/PopoutWorkspaceMenu* | \
+      wework/src/components/chat/composer/ProjectWorkBar* | \
+      wework/src/components/chat/composer/project-work-bar-utils* | \
+      wework/src/components/layout/useWorkbenchPaneEnvironment* | \
+      wework/src/components/settings/WorktreesSettingsPage* | \
+      wework/src/features/workbench/WorkbenchProvider* | \
+      wework/src/features/workbench/projectWorkPreferences* | \
+      wework/src/features/workbench/useWorkbenchRuntimeTasks* | \
+      wework/src/lib/projectClassification* | \
+      wework/src/lib/workspace-target* | \
+      wework/src/lib/worktree-availability*)
+      select_target "core:core-task-flow"
+      select_target "core:workspace-attachments"
+      select_cloud_worktree_checkpoints
+      if [[ "$path" == wework/src/api/local/localServices* || \
+        "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
+        select_target "core:project-ai-settings"
+      fi
+      if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
+        select_target "core:runtime-task-queue"
+      fi
       return
       ;;
 
@@ -132,6 +322,7 @@ classify_wework_path() {
     wework/src/components/chat/ConversationQueuePanel* | \
       wework/src/lib/chat-error*)
       select_target "core:resilience"
+      select_target "core:runtime-task-queue"
       return
       ;;
     wework/src/features/workbench/runtimeTaskLifecycle/*)
@@ -163,15 +354,25 @@ classify_wework_path() {
       return
       ;;
 
+    # Right-workspace temporary chats have an independently bootstrapped
+    # ephemeral-thread scenario.
+    wework/src/components/layout/DesktopWorkbenchMain.tsx | \
+      wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx | \
+      wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
+      wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
+      select_target "core:temporary-chat"
+      return
+      ;;
+
     # Project/worktree creation and composer path or attachment transfer.
     wework/src/api/attachments* | \
       wework/src/api/projects* | \
-      wework/src/api/runtimeWork* | \
       wework/src/components/projects/* | \
       wework/src/features/workbench/useWorkbenchAttachments* | \
       wework/src/components/chat/composer/AttachmentBadges* | \
       wework/src/components/chat/composer/WorktreeBranchSelector* | \
       wework/src/components/chat/composer/composerPathTransfer*)
+      select_target "core:project-ai-settings"
       select_target "core:workspace-attachments"
       return
       ;;
@@ -180,13 +381,28 @@ classify_wework_path() {
     wework/src-tauri/src/embedded_browser* | \
       wework/src/lib/embedded-browser* | \
       wework/src/lib/browser-url* | \
+      wework/src/lib/browser-device-toolbar* | \
       wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel* | \
-      wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs)
+      wework/src/components/layout/workspace-panels/BrowserDeviceToolbar* | \
+      wework/src/components/layout/workspace-panels/browser-find/* | \
+      wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs | \
+      wework/e2e/desktop/scenarios/embedded-browser-toolbar-actions.scenario.mjs)
       select_target "core:embedded-browser"
+      select_target "core:browser-toolbar-actions"
+      macos_inspector_e2e=true
       return
       ;;
 
-    # Local PTY-backed coding harnesses have a dedicated real-Tauri scenario.
+    # Claude conversations cover both local and remote executor routing.
+    wework/src/features/workbench/useWorkbenchRuntimeMessaging*)
+      select_target "core:core-task-flow"
+      select_target "core:project-ai-settings"
+      select_target "core:claude-runtime"
+      select_cloud_worktree_checkpoints
+      return
+      ;;
+
+    # Local PTY-backed coding harnesses have dedicated real-Tauri scenarios.
     wework/src-tauri/src/local_terminal* | \
       wework/src/lib/local-harness* | \
       wework/src/lib/local-terminal* | \
@@ -194,8 +410,34 @@ classify_wework_path() {
       wework/src/components/layout/WorkbenchHarnessSelector* | \
       wework/src/components/layout/localHarnessWorkbench* | \
       wework/src/components/settings/HarnessSettingsPage* | \
+      wework/e2e/desktop/scenarios/claude-runtime.scenario.mjs | \
       wework/e2e/desktop/scenarios/local-terminal.scenario.mjs)
+      select_target "core:claude-runtime"
       select_target "core:local-harness"
+      return
+      ;;
+
+    # Local file browsing, preview, editing, and review share one real-Tauri
+    # checkpoint so theme and loading regressions are covered together.
+    wework/src-tauri/src/local_workspace_files* | \
+      wework/src/tauri/localWorkspaceFiles* | \
+      wework/src/components/layout/workspace-panels/FileWorkspacePanel* | \
+      wework/src/components/layout/workspace-panels/WorkspaceFilePreview* | \
+      wework/src/components/layout/workspace-panels/WorkspaceFileTree* | \
+      wework/src/components/layout/workspace-panels/WorkspaceTextFileEditor* | \
+      wework/src/components/chat/FileChangesReviewPanel* | \
+      wework/e2e/desktop/scenarios/local-file-preview.scenario.mjs)
+      select_target "core:local-file-preview"
+      return
+      ;;
+
+    # Runtime queue orchestration has an independently bootstrapped checkpoint.
+    wework/e2e/desktop/scenarios/runtime-task-queue.scenario.mjs)
+      select_target "core:runtime-task-queue"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs)
+      select_target "core:codex-notification-isolation"
       return
       ;;
 
@@ -214,6 +456,7 @@ classify_wework_path() {
       wework/src/features/local-runtime/* | \
       wework/src/stream/*)
       select_target "core:core-task-flow"
+      select_target "core:project-ai-settings"
       select_target "core:model-routing"
       return
       ;;
@@ -231,6 +474,23 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    backend/app/api/endpoints/runtime_work.py | \
+      backend/app/api/ws/device_namespace.py | \
+      backend/app/api/ws/wework_runtime_namespace.py | \
+      backend/app/schemas/device.py | \
+      backend/app/schemas/runtime_work.py | \
+      backend/app/services/device/runtime_route.py | \
+      backend/app/services/device/runtime_rpc_service.py | \
+      backend/app/services/runtime_work_service.py | \
+      backend/tests/api/endpoints/test_runtime_work_api.py | \
+      backend/tests/api/ws/test_device_reconnect_storm.py | \
+      backend/tests/api/ws/test_wework_runtime_namespace.py | \
+      backend/tests/services/test_runtime_route.py | \
+      backend/tests/services/test_runtime_rpc_service.py | \
+      backend/tests/services/test_runtime_work_service.py | \
+      docker/device/Dockerfile)
+      select_cloud_worktree_checkpoints
+      ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)
       select_all_desktop_suites
       ;;
@@ -271,15 +531,26 @@ build_matrix() {
   cloud_matrix_entries=()
   other_matrix_entries=()
 
-  local segment
-  for segment in "${core_segments[@]}"; do
-    if [[ "${selected[core:all]:-false}" == "true" || \
-      "${selected[core:$segment]:-false}" == "true" ]]; then
-      append_matrix_entry \
-        "core-$segment" \
-        "Core / $segment" \
-        e2e:desktop \
-        "$segment"
+  local shard_index
+  for shard_index in "${!core_shards[@]}"; do
+    local selected_segments=()
+    local shard_segments
+    IFS=',' read -ra shard_segments <<< "${core_shards[$shard_index]}"
+    local segment
+    for segment in "${shard_segments[@]}"; do
+      if [[ "${selected[core:all]:-false}" == "true" || \
+        "${selected[core:$segment]:-false}" == "true" ]]; then
+        selected_segments+=("$segment")
+      fi
+    done
+    if ((${#selected_segments[@]} > 0)); then
+      local joined_segments
+      joined_segments="$(IFS=,; printf '%s' "${selected_segments[*]}")"
+      local entry
+      printf -v entry \
+        '{"id":"core-%s","name":"Core / shard %s","segments":"%s"}' \
+        "$((shard_index + 1))" "$((shard_index + 1))" "$joined_segments"
+      core_matrix_entries+=("$entry")
     fi
   done
 
@@ -297,16 +568,30 @@ build_matrix() {
     done
   fi
 
-  if [[ "${selected[cloud:all]:-false}" == "true" ]]; then
-    local shard
-    for shard in "${!cloud_shards[@]}"; do
+  local cloud_shard_index
+  for cloud_shard_index in "${!cloud_shards[@]}"; do
+    local selected_cloud_segments=()
+    local cloud_shard_segments
+    IFS=',' read -ra cloud_shard_segments <<< "${cloud_shards[$cloud_shard_index]}"
+    local cloud_segment
+    for cloud_segment in "${cloud_shard_segments[@]}"; do
+      if [[ "${selected[cloud:all]:-false}" == "true" || \
+        "${selected[cloud:$cloud_segment]:-false}" == "true" ]]; then
+        selected_cloud_segments+=("$cloud_segment")
+      fi
+    done
+    if ((${#selected_cloud_segments[@]} > 0)); then
+      local joined_cloud_segments
+      joined_cloud_segments="$(IFS=,; printf '%s' "${selected_cloud_segments[*]}")"
       local entry
       printf -v entry \
         '{"id":"cloud-%s","name":"Cloud / shard %s","segments":"%s"}' \
-        "$((shard + 1))" "$((shard + 1))" "${cloud_shards[$shard]}"
+        "$((cloud_shard_index + 1))" \
+        "$((cloud_shard_index + 1))" \
+        "$joined_cloud_segments"
       cloud_matrix_entries+=("$entry")
-    done
-  fi
+    fi
+  done
 }
 
 if [[ "${1:-}" == "--all" ]]; then
@@ -363,4 +648,5 @@ output_file="${GITHUB_OUTPUT:-/dev/stdout}"
   printf 'wework_desktop_cloud_e2e_matrix=%s\n' "$cloud_matrix_json"
   printf 'wework_desktop_other_e2e=%s\n' "$run_other"
   printf 'wework_desktop_other_e2e_matrix=%s\n' "$other_matrix_json"
+  printf 'wework_desktop_macos_inspector_e2e=%s\n' "$macos_inspector_e2e"
 } >> "$output_file"

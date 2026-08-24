@@ -195,16 +195,6 @@ jobs:
             fi
             echo ""
             cat "$generated_notes"
-            echo ""
-            echo "## macOS Distribution Notes"
-            echo ""
-            echo "Wework macOS DMG build."
-            echo ""
-            echo "This build is ad-hoc signed and not Apple notarized. On first launch, click Done if macOS shows a Move to Trash warning, then force-open it from System Settings > Privacy & Security > Open Anyway."
-            echo ""
-            echo "## Windows Distribution Notes"
-            echo ""
-            echo "Wework Windows x64 NSIS installer."
           } > "$release_notes"
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
@@ -222,7 +212,7 @@ jobs:
   build-macos:
     name: Build macOS ${{ matrix.arch }}
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 90
     needs: prepare-release
 
     strategy:
@@ -262,6 +252,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+          architecture: ${{ matrix.arch }}
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
@@ -349,6 +340,74 @@ jobs:
           cargo_lock_path.write_text(cargo_lock, encoding="utf-8")
           PY
 
+      - name: Import Apple signing certificate
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          for required_name in \
+            MACOS_CERTIFICATE_BASE64 \
+            MACOS_CERTIFICATE_PASSWORD \
+            MACOS_SIGNING_IDENTITY \
+            APPLE_TEAM_ID; do
+            if [ -z "${!required_name:-}" ]; then
+              echo "Missing GitHub secret: $required_name" >&2
+              exit 1
+            fi
+          done
+
+          certificate_path="$RUNNER_TEMP/wework-signing-certificate.p12"
+          keychain_path="$RUNNER_TEMP/wework-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          cleanup_certificate() {
+            rm -f "$certificate_path"
+          }
+          trap cleanup_certificate EXIT
+
+          printf '%s' "$MACOS_CERTIFICATE_BASE64" | base64 -D > "$certificate_path"
+          chmod 0600 "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+
+          imported_identity="$(
+            security find-identity -v -p codesigning "$keychain_path" \
+              | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' \
+              | head -n 1
+          )"
+          if [ -z "$imported_identity" ]; then
+            echo "The imported p12 does not contain a Developer ID Application identity." >&2
+            exit 1
+          fi
+          if [ "$imported_identity" != "$MACOS_SIGNING_IDENTITY" ]; then
+            echo "The imported signing identity does not match MACOS_SIGNING_IDENTITY." >&2
+            exit 1
+          fi
+          if [[ "$imported_identity" != *"($APPLE_TEAM_ID)" ]]; then
+            echo "The imported signing identity does not belong to APPLE_TEAM_ID." >&2
+            exit 1
+          fi
+
+          echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+          echo "MACOS_SIGNING_IDENTITY=$imported_identity" >> "$GITHUB_ENV"
+
       - name: Build Wework app bundle
         working-directory: wework
         env:
@@ -370,6 +429,13 @@ jobs:
             exit 1
           fi
 
+          source scripts/lib/wework-macos-signing.sh
+          wework_sign_prepared_codex_macos_binaries \
+            "$PWD" \
+            "${{ matrix.rust_target }}" \
+            "$MACOS_SIGNING_IDENTITY"
+          export APPLE_SIGNING_IDENTITY="$MACOS_SIGNING_IDENTITY"
+
           config_override="$(mktemp "$PWD/src-tauri/tauri.ci.XXXXXX.json")"
           cleanup() {
             rm -f "$config_override"
@@ -380,7 +446,7 @@ jobs:
           VERSION="${{ needs.prepare-release.outputs.version }}" \
           UPDATER_ENDPOINT="https://github.com/${GH_REPO}/releases/download/wework-updater/{{target}}-{{arch}}.json" \
           UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
-          SIGNING_IDENTITY="-" \
+          SIGNING_IDENTITY="$MACOS_SIGNING_IDENTITY" \
           ENABLE_INSECURE_TRANSPORT="false" \
           node scripts/generate-release-config.mjs
           pnpm exec tauri build \
@@ -388,6 +454,80 @@ jobs:
             --bundles app,dmg \
             --features release-devtools \
             --config "$config_override"
+
+      - name: Sign and notarize macOS disk image
+        shell: bash
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+
+          for required_name in APPLE_API_KEY_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [ -z "${!required_name:-}" ]; then
+              echo "Missing GitHub secret: $required_name" >&2
+              exit 1
+            fi
+          done
+
+          dmg_source="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -type f | sort | tail -1)"
+          if [ -z "$dmg_source" ]; then
+            echo "No .dmg bundle found for signing and notarization." >&2
+            exit 1
+          fi
+
+          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          notary_result_path="$RUNNER_TEMP/notary-result-${{ matrix.arch }}.json"
+          cleanup_notary_key() {
+            rm -f "$api_key_path"
+          }
+          trap cleanup_notary_key EXIT
+
+          printf '%s' "$APPLE_API_KEY_BASE64" | base64 -D > "$api_key_path"
+          chmod 0600 "$api_key_path"
+
+          codesign --force \
+            --timestamp \
+            --keychain "$MACOS_KEYCHAIN_PATH" \
+            --sign "$MACOS_SIGNING_IDENTITY" \
+            "$dmg_source"
+          codesign --verify --strict --verbose=2 "$dmg_source"
+
+          set +e
+          xcrun notarytool submit "$dmg_source" \
+            --key "$api_key_path" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait \
+            --output-format json > "$notary_result_path"
+          notary_exit_code=$?
+          set -e
+
+          cat "$notary_result_path"
+          if ! jq -e . "$notary_result_path" >/dev/null; then
+            echo "Apple notarization returned an invalid response." >&2
+            exit 1
+          fi
+          submission_id="$(jq -r '.id // empty' "$notary_result_path")"
+          notary_status="$(jq -r '.status // empty' "$notary_result_path")"
+          if [ "$notary_exit_code" -ne 0 ] || [ "$notary_status" != "Accepted" ]; then
+            if [ -n "$submission_id" ]; then
+              xcrun notarytool log "$submission_id" \
+                --key "$api_key_path" \
+                --key-id "$APPLE_API_KEY_ID" \
+                --issuer "$APPLE_API_ISSUER" || true
+            fi
+            echo "Apple notarization did not accept the DMG." >&2
+            exit 1
+          fi
+
+          xcrun stapler staple "$dmg_source"
+          xcrun stapler validate "$dmg_source"
+          {
+            echo "APPLE_NOTARY_SUBMISSION_ID=$submission_id"
+            echo "APPLE_NOTARY_STATUS=$notary_status"
+          } >> "$GITHUB_ENV"
 
       - name: Verify and collect release assets
         id: package
@@ -428,11 +568,12 @@ jobs:
           fi
           codesign --verify --deep --strict --verbose=2 "$app_path"
           codesign --display --verbose=4 "$app_path"
-          if spctl --assess --type execute --verbose "$app_path"; then
-            echo "Gatekeeper accepted the app bundle."
-          else
-            echo "::warning::Gatekeeper rejected this ad-hoc signed, non-notarized build. Users must click Done if macOS shows Move to Trash, then force-open it from System Settings > Privacy & Security > Open Anyway."
-          fi
+          spctl --assess --type execute --verbose=2 "$app_path"
+          spctl --assess \
+            --type open \
+            --context context:primary-signature \
+            --verbose=2 \
+            "$dmg_source"
           cleanup_mount
           trap - EXIT
 
@@ -444,24 +585,56 @@ jobs:
           cp "$dmg_source" "$dmg_path"
           cp "$archive_source" "$archive_path"
           cp "$signature_source" "$signature_path"
+          runtime_publish_dir="$artifact_dir/runtime-assets"
+          mkdir -p "$runtime_publish_dir"
+          node <<'NODE'
+          const fs = require('fs')
+          const path = require('path')
+          const catalog = require('./wework/src-tauri/bundled-harness-runtime/runtimes.json')
+          const source = 'wework/node_modules/.cache/harness-runtime-assets'
+          const destination = process.env.RUNTIME_PUBLISH_DIR
+          for (const runtime of catalog.runtimes) {
+            fs.copyFileSync(
+              path.join(source, runtime.assetName),
+              path.join(destination, runtime.assetName)
+            )
+            const descriptorName = runtime.assetName.replace(/\.tar\.gz$/, '.json')
+            fs.copyFileSync(
+              path.join(source, descriptorName),
+              path.join(destination, descriptorName)
+            )
+          }
+          NODE
+          node_runtime_asset_name="$(node -p "require('./wework/src-tauri/bundled-execution-runtimes/node.json').assetName")"
+          node_runtime_source="wework/node_modules/.cache/execution-runtime-assets/$node_runtime_asset_name"
+          node_runtime_path="$runtime_publish_dir/$node_runtime_asset_name"
+          cp "$node_runtime_source" "$node_runtime_path"
+          node_runtime_descriptor_path="$runtime_publish_dir/${node_runtime_asset_name%.tar.gz}.json"
+          cp "wework/src-tauri/bundled-execution-runtimes/node.json" "$node_runtime_descriptor_path"
           shasum -a 256 "$dmg_path"
           shasum -a 256 "$archive_path"
+          while IFS= read -r runtime_file; do
+            shasum -a 256 "$runtime_file"
+          done < <(find "$runtime_publish_dir" -maxdepth 1 -type f | sort)
           {
             echo "### Wework macOS ${{ matrix.arch }} release asset"
             echo ""
             echo "- DMG: $(basename "$dmg_path")"
             echo "- Updater archive: $(basename "$archive_path")"
-            echo "- This build is ad-hoc signed and not Apple notarized."
-            echo "- If the first launch dialog shows Move to Trash, click Done instead."
-            echo "- Then force-open from System Settings > Privacy & Security > Open Anyway."
-            echo "- If macOS keeps the quarantine flag: \`xattr -dr com.apple.quarantine /Applications/WeWork.app\`"
+            echo "- Signed with an Apple Developer ID Application certificate."
+            echo "- Apple notarization status: $APPLE_NOTARY_STATUS"
+            echo "- Apple notarization submission: $APPLE_NOTARY_SUBMISSION_ID"
+            echo "- Gatekeeper accepted both the application and DMG."
           } >> "$GITHUB_STEP_SUMMARY"
 
           {
             echo "dmg_path=$dmg_path"
             echo "archive_path=$archive_path"
             echo "signature_path=$signature_path"
+            echo "runtime_publish_dir=$runtime_publish_dir"
           } >> "$GITHUB_OUTPUT"
+        env:
+          RUNTIME_PUBLISH_DIR: ${{ runner.temp }}/wework-macos-${{ matrix.arch }}/runtime-assets
 
       - name: Create release app token
         if: needs.prepare-release.outputs.publish_release == 'true'
@@ -492,6 +665,45 @@ jobs:
             echo "- Direct DMG and updater downloads are available from: $release_url"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Publish changed runtime assets
+        if: needs.prepare-release.outputs.publish_release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          assets_json="$(mktemp)"
+          gh release view wework-updater --json assets > "$assets_json"
+
+          asset_exists() {
+            local name="$1"
+            jq -e --arg name "$name" 'any(.assets[]; .name == $name)' "$assets_json" >/dev/null
+          }
+
+          publish_pair() {
+            local descriptor_path="$1"
+            local asset_path="${descriptor_path%.json}.tar.gz"
+            local descriptor_name
+            local asset_name
+            descriptor_name="$(basename "$descriptor_path")"
+            asset_name="$(basename "$asset_path")"
+            if asset_exists "$asset_name" && asset_exists "$descriptor_name"; then
+              echo "Reusing published runtime: $asset_name"
+              return
+            fi
+            if asset_exists "$asset_name" || asset_exists "$descriptor_name"; then
+              echo "Runtime publication is incomplete for $asset_name" >&2
+              exit 1
+            fi
+            gh release upload wework-updater "$asset_path"
+            gh release upload wework-updater "$descriptor_path"
+          }
+
+          while IFS= read -r path; do
+            publish_pair "$path"
+          done < <(find "${{ steps.package.outputs.runtime_publish_dir }}" -maxdepth 1 -type f -name '*.json' | sort)
+
       - name: Upload macOS test artifacts
         if: needs.prepare-release.outputs.publish_release != 'true'
         uses: actions/upload-artifact@v4
@@ -502,6 +714,14 @@ jobs:
             ${{ steps.package.outputs.archive_path }}
             ${{ steps.package.outputs.signature_path }}
           if-no-files-found: error
+
+      - name: Remove temporary signing keychain
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${MACOS_KEYCHAIN_PATH:-}" ] && [ -f "$MACOS_KEYCHAIN_PATH" ]; then
+            security delete-keychain "$MACOS_KEYCHAIN_PATH"
+          fi
 
   build-windows:
     name: Build Windows x64
@@ -581,7 +801,6 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Missing GitHub secret: TAURI_SIGNING_PRIVATE_KEY' }
           if (-not $env:TAURI_UPDATER_PUBKEY) { throw 'Missing GitHub secret: TAURI_UPDATER_PUBKEY' }
-
           $package = Get-Content package.json -Raw | ConvertFrom-Json
           $package.version = $env:RELEASE_VERSION
           $package | ConvertTo-Json -Depth 100 | Set-Content package.json -Encoding utf8
@@ -616,10 +835,28 @@ jobs:
           $signaturePath = "$installerPath.sig"
           Copy-Item $installer.FullName $installerPath
           Copy-Item $signature.FullName $signaturePath
+          $runtimePublishDir = Join-Path $artifactDir 'runtime-assets'
+          New-Item -ItemType Directory -Force $runtimePublishDir | Out-Null
+          $runtimeCatalog = Get-Content 'wework/src-tauri/bundled-harness-runtime/runtimes.json' -Raw | ConvertFrom-Json
+          foreach ($runtime in $runtimeCatalog.runtimes) {
+            $runtimeSource = Join-Path 'wework/node_modules/.cache/harness-runtime-assets' $runtime.assetName
+            Copy-Item $runtimeSource (Join-Path $runtimePublishDir $runtime.assetName)
+            $descriptorName = $runtime.assetName -replace '\.tar\.gz$', '.json'
+            $descriptorSource = Join-Path 'wework/node_modules/.cache/harness-runtime-assets' $descriptorName
+            Copy-Item $descriptorSource (Join-Path $runtimePublishDir $descriptorName)
+          }
+          $nodeRuntimeMetadata = Get-Content 'wework/src-tauri/bundled-execution-runtimes/node.json' -Raw | ConvertFrom-Json
+          $nodeRuntimeSource = Join-Path 'wework/node_modules/.cache/execution-runtime-assets' $nodeRuntimeMetadata.assetName
+          $nodeRuntimePath = Join-Path $runtimePublishDir $nodeRuntimeMetadata.assetName
+          Copy-Item $nodeRuntimeSource $nodeRuntimePath
+          $nodeRuntimeDescriptorPath = Join-Path $runtimePublishDir ($nodeRuntimeMetadata.assetName -replace '\.tar\.gz$', '.json')
+          Copy-Item 'wework/src-tauri/bundled-execution-runtimes/node.json' $nodeRuntimeDescriptorPath
           Get-FileHash $installerPath -Algorithm SHA256
+          Get-ChildItem $runtimePublishDir -File | Sort-Object Name | Get-FileHash -Algorithm SHA256
 
           "installer_path=$installerPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "signature_path=$signaturePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "runtime_publish_dir=$runtimePublishDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Create release app token
         if: needs.prepare-release.outputs.publish_release == 'true'
@@ -638,6 +875,35 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: gh release upload $env:RELEASE_TAG '${{ steps.package.outputs.installer_path }}' '${{ steps.package.outputs.signature_path }}' --clobber
+
+      - name: Publish changed runtime assets
+        if: needs.prepare-release.outputs.publish_release == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = gh release view wework-updater --json assets | ConvertFrom-Json
+          $published = @{}
+          foreach ($asset in $assets.assets) { $published[$asset.name] = $true }
+
+          foreach ($descriptor in Get-ChildItem '${{ steps.package.outputs.runtime_publish_dir }}' -Filter '*.json' -File | Sort-Object Name) {
+            $descriptorName = $descriptor.Name
+            $assetName = $descriptorName -replace '\.json$', '.tar.gz'
+            $assetPath = Join-Path $descriptor.DirectoryName $assetName
+            $hasDescriptor = $published.ContainsKey($descriptorName)
+            $hasAsset = $published.ContainsKey($assetName)
+            if ($hasDescriptor -and $hasAsset) {
+              Write-Host "Reusing published runtime: $assetName"
+              continue
+            }
+            if ($hasDescriptor -or $hasAsset) {
+              throw "Runtime publication is incomplete for $assetName"
+            }
+            gh release upload wework-updater $assetPath
+            gh release upload wework-updater $descriptor.FullName
+          }
 
       - name: Upload Windows test artifacts
         if: needs.prepare-release.outputs.publish_release != 'true'

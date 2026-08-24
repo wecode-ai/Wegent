@@ -8,8 +8,8 @@ import {
   MessageSquareText,
   Package,
   Palette,
+  Plug,
   SlidersHorizontal,
-  Sparkles,
   Terminal,
   UserRound,
 } from 'lucide-react'
@@ -495,7 +495,7 @@ export function MobileSettingsPage({
             onClick={onOpenPlugins}
             className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
           >
-            <Sparkles className="h-5 w-5 shrink-0 text-text-secondary" />
+            <Plug className="h-5 w-5 shrink-0 text-text-secondary" aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">
               {t('workbench.settings_nav_plugins', '插件')}
             </span>

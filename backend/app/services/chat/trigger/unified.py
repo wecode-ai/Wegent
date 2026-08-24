@@ -20,7 +20,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.session import SessionLocal
@@ -40,6 +40,10 @@ from app.services.runtime_codex_model import (
 from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     user_runtime_config_service,
+)
+from shared.codex_model_catalog import (
+    codex_catalog_model_id_for_upstream,
+    codex_catalog_model_id_from_config,
 )
 
 if TYPE_CHECKING:
@@ -200,19 +204,44 @@ def _catalog_model_id_from_model_options(
     model_options: Optional[Dict[str, Any]],
 ) -> Optional[str]:
     """Extract catalog model id override from UI model options."""
-    if not model_options:
+    return codex_catalog_model_id_from_config(
+        model_options,
+        (
+            "weworkCloudModelCodexCatalogModelId",
+            "weworkCloudModelCatalogModelId",
+            "codex_catalog_model_id",
+            "codexCatalogModelId",
+        ),
+    )
+
+
+def _catalog_model_id_from_model_spec(
+    model_spec: Any,
+) -> Optional[str]:
+    """Resolve a catalog ID from non-secret fields in a Model spec."""
+    if not isinstance(model_spec, dict):
         return None
-    catalog_id = (
-        model_options.get("weworkCloudModelCatalogModelId")
-        or model_options.get("codex_catalog_model_id")
-        or model_options.get("codexCatalogModelId")
+    model_config = model_spec.get("modelConfig")
+    if not isinstance(model_config, dict):
+        return None
+    env = model_config.get("env")
+    if not isinstance(env, dict):
+        return None
+    explicit_catalog_model_id = _catalog_model_id_from_model_options(env)
+    if explicit_catalog_model_id:
+        return explicit_catalog_model_id
+    upstream_api_format = _canonical_codex_upstream_api_format(
+        str(
+            model_spec.get("apiFormat")
+            or model_config.get("apiFormat")
+            or model_spec.get("protocol")
+            or model_config.get("protocol")
+            or ""
+        )
     )
-    result = (
-        catalog_id.strip()
-        if isinstance(catalog_id, str) and catalog_id.strip()
-        else None
+    return codex_catalog_model_id_for_upstream(
+        env.get("model_id") or env.get("modelId"), upstream_api_format
     )
-    return result
 
 
 def _should_ignore_unavailable_task_model_override(payload: Any) -> bool:
@@ -315,6 +344,10 @@ def _build_codex_runtime_model_config(
                     resolved_config["temperature"] = full_config["temperature"]
                 if full_config.get("think_config"):
                     resolved_config["think_config"] = dict(full_config["think_config"])
+                if full_config.get("codex_catalog_model_id"):
+                    resolved_config["codex_catalog_model_id"] = str(
+                        full_config["codex_catalog_model_id"]
+                    )
                 # Upstream wire format mirrors the App's
                 # getCloudModelUpstreamApiFormat inference: claude-family
                 # models go through the Anthropic Messages protocol instead of
@@ -339,6 +372,9 @@ def _build_codex_runtime_model_config(
                     }:
                         upstream_format = "openai-chat-completions"
                 if upstream_format:
+                    upstream_format = _canonical_codex_upstream_api_format(
+                        str(upstream_format)
+                    )
                     resolved_config["upstream_api_format"] = upstream_format
                     if upstream_format == "anthropic-messages":
                         # The executor appends /responses by default, which the
@@ -364,9 +400,31 @@ def _build_codex_runtime_model_config(
         resolved_config["model_provider"] = str(provider_id)
     if provider_name:
         resolved_config["provider_name"] = str(provider_name)
-    if catalog_model_id:
-        resolved_config["codex_catalog_model_id"] = catalog_model_id
+    effective_catalog_model_id = (
+        catalog_model_id
+        or resolved_config.get("codex_catalog_model_id")
+        or codex_catalog_model_id_for_upstream(
+            resolved_config.get("model_id"),
+            resolved_config.get("upstream_api_format"),
+        )
+    )
+    if effective_catalog_model_id:
+        resolved_config["codex_catalog_model_id"] = effective_catalog_model_id
     return resolved_config
+
+
+def _canonical_codex_upstream_api_format(api_format: str) -> str:
+    """Map provider API endpoint names to the executor's protocol names."""
+
+    normalized = api_format.strip().lower()
+    return {
+        "responses": "openai-responses",
+        "openai-responses": "openai-responses",
+        "chat/completions": "openai-chat-completions",
+        "openai-chat-completions": "openai-chat-completions",
+        "messages": "anthropic-messages",
+        "anthropic-messages": "anthropic-messages",
+    }.get(normalized, normalized)
 
 
 def _build_cloud_gateway_model_config(
@@ -375,8 +433,11 @@ def _build_cloud_gateway_model_config(
     model_name: str,
     creator: Any,
     upstream_api_format: Optional[str] = None,
+    model_type: Optional[str] = None,
+    namespace: Optional[str] = None,
+    resource_user_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Build the backend LLM gateway config for a public/group cloud model.
+    """Build the backend LLM gateway config for an authorized cloud model.
 
     Mirrors the App's cloud-model send: the executor forwards to the backend
     `llm-responses-proxy` with the user's token and model identity headers; the
@@ -384,27 +445,64 @@ def _build_cloud_gateway_model_config(
     executor devices never see the raw API key and requests share the gateway's
     quota management instead of being rate-limited per device.
 
-    Returns None for models that should keep their direct config (user-owned
-    models that may be local, or models without a public/group Model CRD).
+    Exact identities route public, group, and user cloud models through the
+    gateway. Legacy name-only callers keep user-owned models on their direct
+    config path.
     """
 
     from app.core.config import settings
     from app.core.security import create_access_token
-    from app.services.chat.config.model_resolver import _find_model_with_namespace
 
-    kind, _spec = _find_model_with_namespace(db, model_name, creator.id)
-    if kind is None or not kind.json:
-        return None
-    namespace = str(kind.namespace or "default")
-    if kind.user_id == 0:
-        model_type = "public"
-        resource_user_id = 0
-    elif namespace != "default":
-        model_type = "group"
-        resource_user_id = int(kind.user_id or 0)
+    exact_identity = any(
+        value is not None for value in (model_type, namespace, resource_user_id)
+    )
+    if exact_identity:
+        if model_type is None or namespace is None or resource_user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cloud model identity is incomplete",
+            )
+        from app.services.llm_proxy_service import _validate_model_access
+
+        _validate_model_access(
+            db,
+            creator,
+            model_type,
+            namespace,
+            resource_user_id,
+        )
+        kind = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == resource_user_id,
+                Kind.kind == "Model",
+                Kind.namespace == namespace,
+                Kind.name == model_name,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if kind is None or not kind.json:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Cloud model not found",
+            )
     else:
-        # User-owned models may be local; keep the direct config path.
-        return None
+        from app.services.chat.config.model_resolver import _find_model_with_namespace
+
+        kind, _spec = _find_model_with_namespace(db, model_name, creator.id)
+        if kind is None or not kind.json:
+            return None
+        namespace = str(kind.namespace or "default")
+        if kind.user_id == 0:
+            model_type = "public"
+            resource_user_id = 0
+        elif namespace != "default":
+            model_type = "group"
+            resource_user_id = int(kind.user_id or 0)
+        else:
+            # Legacy callers keep user-owned models on their direct config path.
+            return None
     backend_base = str(settings.WEGENT_BACKEND_PUBLIC_URL or "").rstrip("/")
     if not backend_base:
         return None
@@ -412,7 +510,9 @@ def _build_cloud_gateway_model_config(
         {"sub": creator.user_name, "user_id": creator.id},
         expires_delta=30,
     )
-    return {
+    model_spec = kind.json.get("spec") if isinstance(kind.json, dict) else None
+    catalog_model_id = _catalog_model_id_from_model_spec(model_spec)
+    config = {
         "model": "openai",
         "model_id": model_name,
         "api_format": "responses",
@@ -429,6 +529,44 @@ def _build_cloud_gateway_model_config(
         },
         "runtime_config": {"codex": {"use_user_config": False, "configured": True}},
     }
+    if catalog_model_id:
+        config["codex_catalog_model_id"] = catalog_model_id
+    return config
+
+
+def build_wework_runtime_model_config(
+    db: "Session",
+    *,
+    model_name: str,
+    creator: User,
+    model_options: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Resolve a Wework model exactly as an App-started Codex run does."""
+    resolved = _build_codex_runtime_model_config(
+        model_name,
+        model_options or {},
+        db=db,
+        user_id=creator.id,
+    )
+    gateway_config = _build_cloud_gateway_model_config(
+        db,
+        model_name=model_name,
+        creator=creator,
+        upstream_api_format=resolved.get("upstream_api_format"),
+    )
+    if gateway_config is None:
+        return resolved
+    resolved_catalog_model_id = resolved.get(
+        "codex_catalog_model_id"
+    ) or codex_catalog_model_id_for_upstream(
+        resolved.get("model_id"), resolved.get("upstream_api_format")
+    )
+    if resolved_catalog_model_id:
+        gateway_config["codex_catalog_model_id"] = resolved_catalog_model_id
+    else:
+        gateway_config.setdefault("codex_catalog_model_id", "wework-gpt-5.6-sol")
+    gateway_config["codex_responses_compat_proxy"] = True
+    return gateway_config
 
 
 def _is_codex_model_config(model_config: Dict[str, Any]) -> bool:
@@ -644,6 +782,8 @@ async def build_execution_request(
     knowledge_base_names: Optional[List[Dict[str, str]]] = None,
     knowledge_base_refs: Optional[List[Dict[str, Any]]] = None,
     reasoning_config: Optional[Dict[str, Any]] = None,
+    include_wework_space_mcp: bool = False,
+    web_runtime_guidance: Optional[bool] = None,
 ):
     """Build ExecutionRequest without dispatching.
 
@@ -669,6 +809,7 @@ async def build_execution_request(
         knowledge_base_names: Optional legacy list of KB names in {'namespace': str, 'name': str} format
         knowledge_base_refs: Optional normalized KB refs with optional folder/document scope
         reasoning_config: Optional reasoning config dict with 'effort' and 'summary' keys
+        include_wework_space_mcp: Whether to expose the Wework board MCP
 
     Returns:
         ExecutionRequest ready for dispatch
@@ -697,10 +838,11 @@ async def build_execution_request(
             additional_skills = getattr(payload, "additional_skills", None)
             if additional_skills:
                 preload_skills = list(preload_skills or []) + list(additional_skills)
-        web_runtime_guidance = (
-            payload is not None
-            and getattr(payload, "client_origin", None) == CLIENT_ORIGIN_FRONTEND
-        )
+        if web_runtime_guidance is None:
+            web_runtime_guidance = (
+                payload is not None
+                and getattr(payload, "client_origin", None) == CLIENT_ORIGIN_FRONTEND
+            )
 
         # Extract model override from task metadata labels
         # This is where force_override_bot_model is stored when task is created
@@ -792,6 +934,7 @@ async def build_execution_request(
             previous_bot_id=previous_bot_id,
             web_runtime_guidance=web_runtime_guidance,
             runtime_model_config=runtime_model_config,
+            include_wework_space_mcp=include_wework_space_mcp,
         )
         request.device_id = device_id or request.device_id
         # Task spec is the runtime source of truth. Message-level external

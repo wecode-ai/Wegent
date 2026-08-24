@@ -35,7 +35,7 @@ import {
   CLOUD_ARTIFACT_NAME,
   CLOUD_COMPLETION_TEXT,
   CLOUD_DEVICE_ID,
-  CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES,
+  REMOTE_DOCKER_DEVICE_ID,
   CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
@@ -50,7 +50,6 @@ import {
   E2E_TRANSCRIPT_PAGE_SIZE,
   LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES,
   LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
-  LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES,
   MACOS_LAUNCH_SERVICES_REGISTER,
   MEMORY_ONLY,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
@@ -60,6 +59,7 @@ import {
   RETRY_COMPLETION_TEXT,
   RETRY_PROMPT,
   RUNS_PLUGIN_E2E,
+  SELECTED_DESKTOP_SEGMENT,
   TELEMETRY_TEST_PROJECT_KEY,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -72,6 +72,7 @@ import {
   isExecutable,
   join,
   mkdir,
+  mcpElicitationServerPath,
   randomUUID,
   readFile,
   rename,
@@ -79,6 +80,7 @@ import {
   resolve,
   resolveExecutable,
   resultDir,
+  rm,
   runChecked,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
@@ -90,6 +92,7 @@ import {
 } from './shared.mjs'
 
 import { waitForTaskRowByText } from './task-state-flows.mjs'
+import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 
 import {
   captureVerificationScreenshot,
@@ -116,6 +119,129 @@ async function waitForSingleProjectByTitle(control, expectedTitle, message, time
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
+}
+
+async function waitForWorkbenchDeviceStatus(control, deviceId, expectedStatus, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const device = snapshot.workbench?.devices?.find(item => item.device_id === deviceId)
+    if (device?.status === expectedStatus) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function waitForProjectTitleToRemainAbsent(control, projectTitle, message) {
+  const startedAt = Date.now()
+  let absentSince = null
+  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const projectIds = snapshot.testIds
+      .filter(testId => testId.startsWith('project-menu-'))
+      .map(testId => testId.slice('project-menu-'.length))
+    const titles = await Promise.all(
+      projectIds.map(projectId =>
+        control.command('getText', `[data-testid="project-title-${projectId}"]`)
+      )
+    )
+    if (titles.some(title => title.trim() === projectTitle)) {
+      absentSince = null
+    } else {
+      absentSince ??= Date.now()
+      if (Date.now() - absentSince >= COMPOSER_READY_STABILITY_MS * 4) return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function verifyOfflineRemoteProjectRemoval({
+  control,
+  cloudEnvironment,
+  preservedProjectTitle,
+  restartDesktopApp,
+}) {
+  const projectTitle = 'offline-removal-workspace'
+  const workspacePath = join(resultDir, 'remote-docker-executor-home', 'offline-removal-workspace')
+  await mkdir(workspacePath, { recursive: true })
+  await control.command('click', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-remote-option"]')
+  await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    value: REMOTE_DOCKER_DEVICE_ID,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    join(resultDir, 'remote-docker-executor-home'),
+    'The offline-removal picker did not load the remote Docker executor home'
+  )
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPathReady(control, workspacePath)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
+  await waitForSingleProjectByTitle(
+    control,
+    projectTitle,
+    'The real remote Docker project was not created for offline removal',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+
+  await cloudEnvironment.stopRemoteDockerExecutorAndWaitOffline()
+  await waitForWorkbenchDeviceStatus(
+    control,
+    REMOTE_DOCKER_DEVICE_ID,
+    'offline',
+    'Wework did not render the remote Docker device as offline'
+  )
+  await captureVerificationScreenshot(control, 'cloud-03a-offline-project-visible.png')
+  const { projectId: offlineProjectId } = await waitForSingleProjectByTitle(
+    control,
+    projectTitle,
+    'The offline remote Docker project changed identity without remaining visible',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await control.command('click', `[data-testid="project-menu-${offlineProjectId}"]`)
+  await control.command('click', `[data-testid="remove-project-${offlineProjectId}"]`)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="remove-project-dialog-${offlineProjectId}-confirm-button"]`
+  )
+  await waitForProjectTitleToRemainAbsent(
+    control,
+    projectTitle,
+    'The offline remote project remained visible after local removal'
+  )
+  await captureVerificationScreenshot(control, 'cloud-03b-offline-project-removed.png')
+
+  await restartDesktopApp()
+  await waitForSingleProjectByTitle(
+    control,
+    preservedProjectTitle,
+    'The restarted Wework app did not restore the existing cloud project',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await waitForWorkbenchDeviceStatus(
+    control,
+    REMOTE_DOCKER_DEVICE_ID,
+    'offline',
+    'The restarted Wework app did not restore the offline device state'
+  )
+  await waitForProjectTitleToRemainAbsent(
+    control,
+    projectTitle,
+    'Restarting Wework restored the locally removed offline project'
+  )
+  await captureVerificationScreenshot(control, 'cloud-03c-offline-project-absent-restart.png')
+  await control.command('dispatchLocalModelSettingsChanged', '')
 }
 
 async function writeCodexConfig(
@@ -147,6 +273,19 @@ function toolDetailsMcpConfigToml() {
     '[mcp_servers."github__issues"]',
     `command = ${command}`,
     `args = [${server}, "github__issues"]`,
+    'default_tools_approval_mode = "approve"',
+    '',
+  ].join('\n')
+}
+
+function mcpElicitationConfigToml(evidencePath) {
+  const command = JSON.stringify(process.execPath)
+  const server = JSON.stringify(mcpElicitationServerPath)
+  const evidence = JSON.stringify(evidencePath)
+  return [
+    '[mcp_servers.wegent_sites_interactions]',
+    `command = ${command}`,
+    `args = [${server}, ${evidence}]`,
     'default_tools_approval_mode = "approve"',
     '',
   ].join('\n')
@@ -275,6 +414,53 @@ async function bundleMacCodex(contentsPath, codexBinary) {
   return bundledCodexBinary
 }
 
+async function bundleMacHarnessRuntime(contentsPath) {
+  if (SELECTED_DESKTOP_SEGMENT !== 'harness-apps') return null
+
+  const source = join(weworkDir, 'src-tauri', 'bundled-harness-runtime')
+  const bundledRuntime = join(contentsPath, 'Resources', 'bundled-harness-runtime')
+  await mkdir(dirname(bundledRuntime), { recursive: true })
+  await rm(bundledRuntime, { recursive: true, force: true })
+  await symlink(source, bundledRuntime, 'dir')
+  console.log(`Bundled E2E Harness runtime: ${bundledRuntime}`)
+  return bundledRuntime
+}
+
+async function prepareHarnessRuntimeRoots() {
+  const catalogPath = join(weworkDir, 'src-tauri', 'bundled-harness-runtime', 'runtimes.json')
+  const catalog = JSON.parse(await readFile(catalogPath, 'utf8'))
+  const runtimeRoot = join(resultDir, 'harness-runtime')
+  await rm(runtimeRoot, { recursive: true, force: true })
+  await mkdir(runtimeRoot, { recursive: true })
+  for (const runtime of catalog.runtimes) {
+    const archivePath = join(
+      weworkDir,
+      'node_modules',
+      '.cache',
+      'harness-runtime-assets',
+      runtime.assetName
+    )
+    const extracted = join(runtimeRoot, runtime.sourceFingerprint)
+    await mkdir(extracted, { recursive: true })
+    await runChecked('tar', ['-xzf', archivePath, '-C', extracted], { cwd: weworkDir })
+    const dshEntry = join(extracted, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+    await readFile(dshEntry)
+  }
+
+  const nodeRuntimeRoot = join(resultDir, 'node-runtime')
+  const node = join(nodeRuntimeRoot, 'bin', process.platform === 'win32' ? 'node.exe' : 'node')
+  await rm(nodeRuntimeRoot, { recursive: true, force: true })
+  await mkdir(dirname(node), { recursive: true })
+  await copyFile(process.execPath, node)
+  await chmod(node, 0o755)
+  assert.equal(
+    await isExecutable(node),
+    true,
+    `The desktop E2E Node runtime was not executable at ${node}`
+  )
+  return { harnessRuntimeRoot: runtimeRoot, nodeRuntimeRoot }
+}
+
 async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier, codexBinary) {
   if (process.platform !== 'darwin') {
     return { binaryPath, appBundlePath: null, codexBinaryPath: null }
@@ -308,6 +494,7 @@ async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier, codexBin
     'utf8'
   )
   const bundledCodexBinary = await bundleMacCodex(contentsPath, codexBinary)
+  await bundleMacHarnessRuntime(contentsPath)
   commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
   return {
     binaryPath: bundledBinaryPath,
@@ -324,6 +511,10 @@ async function buildDesktopApp(
   modelServerUrl,
   codexBinary
 ) {
+  if (SELECTED_DESKTOP_SEGMENT === 'harness-apps') {
+    await runChecked('pnpm', ['run', 'prepare:harness-runtime'], { cwd: weworkDir })
+  }
+
   const configured = process.env.WEWORK_E2E_APP_BIN
   if (configured) {
     const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework desktop app')
@@ -335,17 +526,55 @@ async function buildDesktopApp(
     backgroundThrottling: 'disabled',
     focus: false,
   }))
+  const buildEnv = {
+    ...process.env,
+    VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
+    VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
+    VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
+    VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
+    VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY:
+      CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
+    VITE_WEWORK_E2E: 'true',
+    VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
+    VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
+    VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
+    VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
+    VITE_WEWORK_POSTHOG_HOST: modelServerUrl,
+    VITE_WEWORK_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
+    VITE_WEWORK_RELEASE_CHANNEL: 'stable',
+    VITE_WEWORK_RUNTIME_MODE: 'local-first',
+  }
+  if (process.env.WEWORK_E2E_SKIP_TYPECHECK !== 'true') {
+    await runChecked(
+      process.execPath,
+      [join(weworkDir, 'node_modules', 'typescript', 'bin', 'tsc'), '-b'],
+      {
+        cwd: weworkDir,
+        env: buildEnv,
+      }
+    )
+  }
   await runChecked(
-    'pnpm',
+    process.execPath,
+    [join(weworkDir, 'node_modules', 'vite', 'bin', 'vite.js'), 'build'],
+    {
+      cwd: weworkDir,
+      env: buildEnv,
+    }
+  )
+  await runChecked(
+    process.execPath,
     [
-      'exec',
-      'tauri',
+      join(weworkDir, 'node_modules', '@tauri-apps', 'cli', 'tauri.js'),
       'build',
       '--debug',
       '--no-bundle',
       '--config',
       JSON.stringify({
         identifier: appIdentifier,
+        build: {
+          beforeBuildCommand: null,
+        },
         app: {
           windows,
           security: {
@@ -356,7 +585,11 @@ async function buildDesktopApp(
                 identifier: 'desktop-e2e-window',
                 description: 'Allows the desktop E2E runner to manage test window visibility',
                 windows: ['main'],
-                permissions: ['core:window:allow-show', 'core:window:allow-unminimize'],
+                permissions: [
+                  'core:window:allow-set-size',
+                  'core:window:allow-show',
+                  'core:window:allow-unminimize',
+                ],
               },
             ],
           },
@@ -365,24 +598,7 @@ async function buildDesktopApp(
     ],
     {
       cwd: weworkDir,
-      env: {
-        ...process.env,
-        VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
-        VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
-        VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
-        VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
-        VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY:
-          CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
-        VITE_WEWORK_E2E: 'true',
-        VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
-        VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
-        VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
-        VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
-        VITE_WEWORK_POSTHOG_HOST: modelServerUrl,
-        VITE_WEWORK_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
-        VITE_WEWORK_RELEASE_CHANNEL: 'stable',
-        VITE_WEWORK_RUNTIME_MODE: 'local-first',
-      },
+      env: buildEnv,
     }
   )
   const mainBinaryName = await readTauriMainBinaryName()
@@ -508,6 +724,120 @@ async function verifyCloudVisionFlows(control, composerSelector) {
   })
 }
 
+export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
+  await control.command('navigate', 'body', { value: '/settings/connections?addDevice=1' })
+  await control.command('waitFor', '[data-testid="add-cloud-device-dialog"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const setupSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="add-cloud-device-dialog"]')
+  )
+  assert.equal(
+    setupSnapshot.testIds.includes('remote-docker-public-url-input'),
+    false,
+    'The remote Docker setup still exposed a manual IDE URL input'
+  )
+  await control.command('clickWhenEnabled', '[data-testid="add-remote-docker-button"]')
+  await control.command('waitFor', '[data-testid="remote-docker-command"]', {
+    text: remoteDeviceE2EExtension.commandMarker,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const commandSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="remote-docker-command"]')
+  )
+  remoteDeviceE2EExtension.assertCommand({
+    assert,
+    command: commandSnapshot.text,
+    backendUrl: cloudEnvironment.backendUrl,
+    socketUrl: cloudEnvironment.socketUrl,
+  })
+  let runnableCommandSnapshot = commandSnapshot
+  if (remoteDeviceE2EExtension.supportsStatusRecovery) {
+    await control.command('waitFor', '[data-testid="remote-docker-connection-status"]', {
+      text: '连接失败',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="add-remote-docker-button"]')
+    runnableCommandSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes(remoteDeviceE2EExtension.commandMarker) &&
+        snapshot.text !== commandSnapshot.text,
+      'Regenerating the remote Docker command did not replace the failed command',
+      WORKBENCH_READY_TIMEOUT_MS,
+      '[data-testid="remote-docker-command"]'
+    )
+  }
+  await control.command('click', '[data-testid="copy-remote-docker-command"]')
+  await control.command('waitFor', '[data-testid="copy-remote-docker-command"]', {
+    text: '已复制',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getClipboardText', ''),
+    runnableCommandSnapshot.text,
+    'The remote Docker command was not copied into the desktop E2E clipboard'
+  )
+  await captureVerificationScreenshot(control, 'cloud-00-remote-docker-command.png')
+  const generatedDeviceId = runnableCommandSnapshot.text.match(/DEVICE_ID=([^\s\\]+)/)?.[1]
+  const generatedDeviceName = runnableCommandSnapshot.text.match(/DEVICE_NAME=([^\s\\]+)/)?.[1]
+  const generatedAuthToken = runnableCommandSnapshot.text.match(/WEGENT_AUTH_TOKEN=([^\s\\]+)/)?.[1]
+  assert.ok(generatedDeviceId, 'The generated command did not include a device ID')
+  assert.ok(generatedDeviceName, 'The generated command did not include a device name')
+  assert.ok(generatedAuthToken, 'The generated command did not include an auth token')
+  await cloudEnvironment.startGeneratedRemoteDevice({
+    deviceId: generatedDeviceId,
+    deviceName: generatedDeviceName,
+    authToken: generatedAuthToken,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('add-cloud-device-dialog') &&
+      snapshot.testIds.includes(`connection-device-${generatedDeviceId}`),
+    'The generated remote device did not close the dialog and refresh the device list'
+  )
+  await control.command('navigate', 'body', { value: '/' })
+}
+
+async function verifyFailedCloudConnectionCanDisconnect(control) {
+  await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
+    text: '云端工作',
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('hover', '[data-testid="sidebar-cloud-connection-button"]')
+  await control.command('click', '[data-testid="sidebar-cloud-management-button"]')
+  await control.command('waitFor', '[data-testid="settings-cloud-disconnect-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="settings-cloud-disconnect-button"]')
+  await control.command('waitFor', '[data-testid="settings-cloud-connect-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await control.command('click', '[data-testid="settings-cloud-connect-button"]')
+  await control.command('fill', '[data-testid="cloud-backend-url-input"]', {
+    value: 'http://127.0.0.1:1',
+  })
+  await control.command('click', '[data-testid="cloud-authorization-submit-button"]')
+  await control.command('waitFor', '[data-testid="cloud-connection-error"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="cloud-disconnect-button"]', {
+    text: '断开连接',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="cloud-disconnect-button"]')
+  await control.command('waitFor', '[data-testid="settings-cloud-connect-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('cloud-connection-dialog'),
+    'Disconnecting a failed cloud connection did not clear the sidebar error state'
+  )
+}
+
 async function verifyCloudProjectFlow(
   control,
   cloudEnvironment,
@@ -516,6 +846,10 @@ async function verifyCloudProjectFlow(
   { visionOnly = false } = {}
 ) {
   const composerSelector = ACTIVE_COMPOSER_SELECTOR
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -538,6 +872,24 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`,
+    { text: 'Remote Docker', timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    value: REMOTE_DOCKER_DEVICE_ID,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    join(resultDir, 'remote-docker-executor-home'),
+    'The remote Docker device was not selectable from the real desktop device picker'
+  )
+  await captureVerificationScreenshot(control, 'cloud-01-remote-docker-device-selected.png')
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
@@ -547,7 +899,7 @@ async function verifyCloudProjectFlow(
     join(resultDir, 'cloud-executor-home'),
     'The remote folder picker did not load the real executor home directory'
   )
-  await captureVerificationScreenshot(control, 'cloud-01-remote-device-selected.png')
+  await captureVerificationScreenshot(control, 'cloud-02-cloud-device-selected.png')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -561,7 +913,7 @@ async function verifyCloudProjectFlow(
     workspacePath,
     'The remote folder picker did not retain the selected cloud workspace path'
   )
-  await captureVerificationScreenshot(control, 'cloud-02-workspace-path-confirmed.png')
+  await captureVerificationScreenshot(control, 'cloud-03-workspace-path-confirmed.png')
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
   await waitForSnapshot(
     control,
@@ -583,7 +935,17 @@ async function verifyCloudProjectFlow(
     1,
     'The cloud flow did not expose exactly one remote project'
   )
+  const preservedProjectId = projectMenuTestIds[0].slice('project-menu-'.length)
+  const preservedProjectTitle = (
+    await control.command('getText', `[data-testid="project-title-${preservedProjectId}"]`)
+  ).trim()
   await captureVerificationScreenshot(control, 'cloud-03-project-created.png')
+  await verifyOfflineRemoteProjectRemoval({
+    control,
+    cloudEnvironment,
+    preservedProjectTitle,
+    restartDesktopApp,
+  })
   await control.command('navigate', 'body', { value: '/plugins' })
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -777,18 +1139,6 @@ async function verifyCloudProjectFlow(
 
   await verifyAnthropicEmptyResponseRecovery({ composerSelector, control })
 
-  await verifyModelProtocolMatrix({
-    cases: CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES,
-    composerSelector,
-    control,
-    newConversationSelector:
-      '[data-testid^="project-row-"] [data-testid="project-new-conversation-button"]',
-    screenshotPrefix: 'cloud-matrix',
-    setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
-    startIndex: LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length,
-    workspacePath,
-  })
-
   const currentProjectSnapshot = await waitForSnapshot(
     control,
     value => value.testIds.some(testId => testId.startsWith('project-menu-')),
@@ -825,6 +1175,9 @@ async function verifyCloudProjectFlow(
   })
   await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await waitForControlValue(
     control,
@@ -873,6 +1226,7 @@ async function verifyCloudProjectFlow(
     'Restarting Wework restored the removed project identity'
   )
   await captureVerificationScreenshot(control, 'cloud-09-local-project-deduplicated-restart.png')
+  await verifyFailedCloudConnectionCanDisconnect(control)
 }
 
 async function verifyRetryFailureRestoration(control, composerSelector) {
@@ -1101,6 +1455,7 @@ async function waitForMatrixStage(control, model, ...expectedStages) {
 export {
   writeCodexConfig,
   toolDetailsMcpConfigToml,
+  mcpElicitationConfigToml,
   codexUpstreamApiFormat,
   buildExecutor,
   hostCodexTarget,
@@ -1110,6 +1465,8 @@ export {
   macCodexBundleLayout,
   findCodexPackageRoot,
   bundleMacCodex,
+  bundleMacHarnessRuntime,
+  prepareHarnessRuntimeRoots,
   wrapMacDesktopApp,
   buildDesktopApp,
   verifyConnectedModelsOnLocalExecution,

@@ -46,12 +46,12 @@ export interface Team {
 }
 
 export interface ProjectExecutionConfig {
-  targetType: 'local' | 'cloud'
+  targetType: 'local' | 'cloud' | 'remote'
   deviceId?: string
 }
 
 export interface ProjectWorkspaceConfig {
-  source: 'git' | 'local_path'
+  source: 'git' | 'local_path' | 'device_path'
   localPath?: string
   checkoutPath?: string
 }
@@ -122,6 +122,7 @@ export interface DeviceInfo {
   socket_device_id?: string | null
   runtime_instance_id?: string | null
   runtime_routes?: DeviceRuntimeRoute[]
+  runtime_features?: RuntimeFeatureSet | null
 }
 
 export type DeviceRuntimeRouteKind = 'local-ipc' | 'cloud-relay' | 'remote-relay' | 'app-ipc'
@@ -254,6 +255,8 @@ export interface RuntimeTaskAddress {
   runtime?: RuntimeName
   threadId?: string | null
   workspacePath?: string | null
+  workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
+  worktreeId?: string | null
   runtimeHandle?: Record<string, unknown> | null
 }
 
@@ -382,6 +385,7 @@ export interface RuntimeTaskSummary {
   error?: string | null
   runtimeHandle?: Record<string, unknown> | null
   modelSelection?: ModelSelectionConfig | null
+  projectPluginIds?: string[]
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
   supervisor?: RuntimeSupervisorState | null
@@ -486,11 +490,33 @@ export interface RuntimeProjectRef {
   active?: boolean
   appearance?: RuntimeProjectAppearance | null
   defaultProjectSpace?: RuntimeProjectSpaceRef | null
+  aiSettings?: RuntimeProjectAiSettings | null
 }
 
 export interface RuntimeProjectSpaceRef {
   projectStore: 'local' | 'backend'
   projectId: string
+}
+
+export interface RuntimeProjectAiSettings {
+  instructions?: string
+  modelSelection?: ModelSelectionConfig | null
+  plugins?: RuntimeProjectPluginRef[]
+  quickPhrases?: RuntimeProjectQuickPhrase[]
+}
+
+export interface RuntimeProjectQuickPhrase {
+  id: string
+  title: string
+  content: string
+  mode: 'normal' | 'plan' | 'goal'
+}
+
+export interface RuntimeProjectPluginRef {
+  id: string
+  pluginName: string
+  marketplaceId: string
+  displayName: string
 }
 
 export interface RuntimeProjectRoot {
@@ -667,6 +693,8 @@ export interface RuntimeSendRequest {
   attachmentIds?: number[]
   attachments?: Attachment[]
   source?: RuntimeMessageSource | null
+  cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
   requestUserInputResponse?: RequestUserInputResponse
   request_user_input_response?: RequestUserInputResponse
   additionalContext?: RuntimeAdditionalContext
@@ -698,6 +726,10 @@ export interface RequestUserInputResponse {
 export interface RuntimeSendResponse {
   accepted: boolean
   taskId: string
+  turnId?: string
+  turn_id?: string
+  compactionItemId?: string
+  compaction_item_id?: string
   error?: string | null
 }
 
@@ -795,6 +827,7 @@ export interface RuntimeSupervisorSetRequest {
   mode: RuntimeSupervisorMode
   instructions?: string
   modelSelection?: ModelSelectionConfig | null
+  modelConfig?: Record<string, unknown> | null
   intervalSeconds: number
 }
 
@@ -840,6 +873,7 @@ export interface RuntimeLocalProjectUpsertRequest {
   name: string
   roots: string[]
   defaultProjectSpace?: RuntimeProjectSpaceRef | null
+  aiSettings?: RuntimeProjectAiSettings | null
   runtime: 'codex'
 }
 
@@ -850,6 +884,7 @@ export interface RuntimeLocalProjectUpsertResponse {
   name: string
   roots: string[]
   defaultProjectSpace?: RuntimeProjectSpaceRef | null
+  aiSettings?: RuntimeProjectAiSettings | null
   runtime: 'codex'
   error?: string | null
 }
@@ -940,7 +975,9 @@ export interface RuntimeTaskPinRequest {
 
 export interface BindRuntimeTaskIMSessionsRequest {
   address: RuntimeTaskAddress
+  taskTitle: string
   sessionKeys: string[]
+  modelSelection?: ModelSelectionConfig | null
 }
 
 export interface BindRuntimeTaskIMSessionsResponse {
@@ -1017,6 +1054,59 @@ export interface RuntimeWorktreeSettings {
   keepCount: number
 }
 
+export interface RuntimeWorktreeCapability {
+  version: number
+  managed: boolean
+  deferredPrepare: boolean
+  snapshots: boolean
+  restore: boolean
+  preflight: boolean
+  reconcile?: boolean
+  persistentStorageVerified?: boolean
+}
+
+export interface RuntimeFeatureSet {
+  schemaVersion: number
+  worktrees?: RuntimeWorktreeCapability | null
+}
+
+export interface RuntimeWorktreeCapabilitiesRequest {
+  deviceId: string
+}
+
+export interface RuntimeWorktreeCapabilitiesResponse {
+  success: boolean
+  deviceId: string
+  runtimeWorktrees: RuntimeWorktreeCapability | null
+}
+
+export interface RuntimeWorktreePreflightRequest {
+  deviceId: string
+  sourcePath: string
+  ref?: string | null
+}
+
+export interface RuntimeWorktreePreflightResponse {
+  success: boolean
+  deviceId: string
+  supported: boolean
+  sourcePath: string
+  sourceExists: boolean
+  sourceDirectory: boolean
+  gitRepository: boolean
+  gitCommonDirValid: boolean
+  gitCommonDirWritable: boolean
+  writable: boolean
+  repoRoot?: string | null
+  gitCommonDir?: string | null
+  repoRootFingerprint?: string | null
+  gitRef?: string | null
+  refValid?: boolean | null
+  resolvedWorktreeRoot?: string | null
+  errorCode?: string | null
+  error?: string | null
+}
+
 export interface RuntimeWorktreeSettingsPatch {
   deviceId: string
   worktreeRoot?: string
@@ -1031,18 +1121,31 @@ export interface RuntimeWorktreeConversation extends RuntimeTaskAddress {
   updatedAt?: number | null
 }
 
-export interface RuntimeManagedWorktree {
-  deviceId: string
+export type RuntimeManagedWorktreeState =
+  | 'active'
+  | 'restorable'
+  | 'missing'
+  | 'deleted'
+  | (string & Record<never, never>)
+
+export interface RuntimeManagedWorktreePayload {
   worktreeId: string
   path: string
   repositoryName: string
   sourcePath?: string | null
-  permanent?: boolean
-  createdAt?: number | null
-  updatedAt?: number | null
-  state: 'active' | 'restorable' | 'missing' | 'deleted' | string
+  permanent: boolean
+  createdAt: number
+  updatedAt: number
+  snapshotRef?: string | null
+  snapshotCommit?: string | null
+  state: RuntimeManagedWorktreeState
   snapshotAt?: number | null
+  gitCommonDir?: string | null
   lastError?: string | null
+}
+
+export interface RuntimeManagedWorktree extends RuntimeManagedWorktreePayload {
+  deviceId: string
   conversations: RuntimeWorktreeConversation[]
 }
 
@@ -1063,7 +1166,7 @@ export interface RuntimeWorktreePrepareRequest {
 export interface RuntimeWorktreeMutationResponse {
   success: boolean
   deviceId: string
-  worktree: RuntimeManagedWorktree
+  worktree: RuntimeManagedWorktreePayload
   path?: string
   archivedTaskCount?: number
 }
@@ -1195,6 +1298,8 @@ export interface RuntimeTaskCreateRequest {
   runtimeProjectKey?: string
   runtimeProjectName?: string
   runtimeWorkspaceRoots?: string[]
+  projectInstructions?: string
+  projectPlugins?: RuntimeProjectPluginRef[]
   taskId?: string
   teamId: number
   runtime: RuntimeName
@@ -1221,10 +1326,11 @@ export interface RuntimeTaskCreateRequest {
   deliveryId?: string
   cloudProjectId?: string
   origin?: {
-    type: 'board_comment' | 'board_task'
+    type: 'board_comment' | 'board_task' | 'project_automation'
     cloudProjectId: string
     loopItemId: string
     rootCommentId?: string
+    [key: string]: unknown
   }
   additionalContext?: RuntimeAdditionalContext
 }
@@ -1429,6 +1535,22 @@ export interface DeviceCommandResponse {
   timed_out?: boolean
   stdout_truncated?: boolean
   stderr_truncated?: boolean
+}
+
+export interface CloneGitRepositoryInput {
+  url: string
+  branch?: string
+  targetPath: string
+}
+
+export interface GitCloneProjectOperation extends CloneGitRepositoryInput {
+  id: string
+  deviceId: string
+  name: string
+  status: 'cloning' | 'opening' | 'failed'
+  failureStage?: 'clone' | 'open'
+  failureReason?: 'executor-offline' | 'clone-failed' | 'open-failed'
+  error?: string
 }
 
 export interface TaskContextData {
@@ -1999,11 +2121,35 @@ export interface InstalledPluginComponents {
     slug: string
     authPolicy: 'on_install' | 'on_use' | 'optional'
     localAuth?: PluginLocalAuthDefinition | null
+    description?: string | null
   }>
   lsps: PluginPathComponent[]
   monitors: PluginPathComponent[]
   bins: PluginPathComponent[]
   settings?: Record<string, unknown> | null
+  workbench?: WorkbenchPluginComponent | null
+}
+
+export interface WorkbenchFrontendModule {
+  entry: string
+  export: string
+  sha256: string
+}
+
+export interface WorkbenchDesktopSidecar {
+  command: string
+  args: string[]
+  sha256: string
+  capabilities: string[]
+}
+
+export interface WorkbenchPluginComponent {
+  apiVersion: '1'
+  required: boolean
+  pinnedToClientVersion: boolean
+  clientVersion?: string | null
+  frontend?: WorkbenchFrontendModule | null
+  desktop?: WorkbenchDesktopSidecar | null
 }
 
 export interface PluginLocalAuthDefinition {
@@ -2077,7 +2223,7 @@ export interface InstalledPlugin {
     pluginId?: number | null
     releaseId?: number | null
     desiredVersion?: string | null
-    updatePolicy?: 'manual'
+    updatePolicy?: 'manual' | 'auto'
     sourceProvider?: 'wegent' | 'codex' | 'user'
     sourceLabel?: string
     visibility?: 'personal' | 'workspace' | 'public'
@@ -2127,6 +2273,8 @@ export interface PluginMarketplaceItem {
   installed: boolean
   installedPluginId?: string | number | null
   installedLocally?: boolean
+  /** Materialized package version on this device (may lag catalog `version`). */
+  installedVersion?: string | null
   enabled: boolean
   sourceType: 'marketplace'
   interface?: PluginInterface | null
@@ -2143,6 +2291,10 @@ export interface PluginMarketplaceItem {
   origin?: 'market'
   sourceProvider?: 'wegent' | 'codex' | 'user'
   sourceLabel?: string
+  localPersonalSource?: {
+    marketplacePath: string
+    pluginName: string
+  } | null
   updateAvailable?: boolean
   currentDeviceInstallation?: {
     deviceId: string
@@ -2207,6 +2359,32 @@ export interface PluginDeviceSyncResponse {
   sync: DeviceCapabilitySyncResponse
 }
 
+export interface PluginDeviceReportItem {
+  installedPluginId: number
+  releaseId: number
+  version: string
+}
+
+export interface PluginDeviceReportResponse {
+  deviceId: string
+  acknowledgedCount: number
+  acknowledgedInstalledPluginIds: number[]
+}
+
+export interface PluginAutoUpdateItem {
+  installedPluginId: number
+  pluginId: number
+  fromReleaseId: number
+  toReleaseId: number
+  version: string
+}
+
+export interface PluginAutoUpdateBatchResponse {
+  updated: PluginAutoUpdateItem[]
+  updatedCount: number
+  remainingCount: number
+}
+
 export interface PluginMarketplaceCapabilities {
   canPublish: boolean
   canSharePersonalPlugins?: boolean
@@ -2218,6 +2396,7 @@ export interface InstalledPluginUpdateRequest {
   displayName?: string
   description?: string
   releaseId?: number
+  updatePolicy?: 'manual' | 'auto'
 }
 
 export interface PluginSubmissionInitRequest {
@@ -2273,6 +2452,23 @@ export interface PluginAccessUpdateRequest {
 export interface PluginAccessResponse extends PluginAccessUpdateRequest {
   pluginId: number
   revocationPendingCount: number
+}
+
+export interface PluginDeleteImpactResponse {
+  pluginId: number
+  affectedUserCount: number
+  installedDeviceCount: number
+  sharedTargetCount: number
+  impactRevision: string
+}
+
+export interface PluginDeleteRequest {
+  impactRevision: string
+  revokeAndDelete: boolean
+}
+
+export interface PluginDeleteResponse {
+  pendingDeviceCount: number
 }
 
 export interface PluginCopyResponse {

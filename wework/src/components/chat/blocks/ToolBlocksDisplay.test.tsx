@@ -3,6 +3,7 @@ import i18n from '@/i18n'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ToolBlocksDisplay } from './ToolBlocksDisplay'
+import { getFileEditDurationsBySourceBlock } from './fileEditDurations'
 import type { ProcessingBlock } from '@/types/workbench'
 
 const completedCommandBlock: ProcessingBlock = {
@@ -1031,7 +1032,11 @@ describe('ToolBlocksDisplay', () => {
     render(
       <ToolBlocksDisplay
         blocks={[streamingFileChanges]}
-        fileEditDurationBlocks={[completedEdit, interleavedText, streamingFileChanges]}
+        fileEditDurationsBySourceBlock={getFileEditDurationsBySourceBlock([
+          completedEdit,
+          interleavedText,
+          streamingFileChanges,
+        ])}
         isStreaming={true}
         forceExpanded
       />
@@ -1041,6 +1046,24 @@ describe('ToolBlocksDisplay', () => {
     act(() => vi.advanceTimersByTime(3000))
     expect(screen.getByText('2.5s')).toBeInTheDocument()
     expect(screen.queryByText('7.0s')).not.toBeInTheDocument()
+  })
+
+  test('does not classify edit tools when a message has no file changes', () => {
+    const toolBlock: ProcessingBlock = {
+      id: 'edit-without-file-changes',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'apply_patch',
+      toolInput: { patch: '*** Update File: scripts/env' },
+      status: 'done',
+    }
+    Object.defineProperty(toolBlock, 'toolName', {
+      get() {
+        throw new Error('tool name should not be classified')
+      },
+    })
+
+    expect(getFileEditDurationsBySourceBlock([toolBlock])).toEqual(new Map())
   })
 
   test('renders completed edit tools as flat concrete rows', () => {
@@ -1639,7 +1662,8 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('秒')
   })
 
-  test('shows a subtle one-line reconnecting status only while it is active', () => {
+  test('shows a subtle one-line reconnecting status after a sustained interruption', () => {
+    vi.useFakeTimers()
     const reconnectingBlock: ProcessingBlock = {
       id: 'reconnecting-1',
       subtaskId: 1,
@@ -1653,6 +1677,15 @@ describe('ToolBlocksDisplay', () => {
       <ToolBlocksDisplay blocks={[reconnectingBlock]} isStreaming={true} />
     )
 
+    expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
+    act(() => {
+      vi.advanceTimersByTime(9999)
+    })
+    expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
+
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
     const status = screen.getByTestId('runtime-reconnecting-status')
     expect(status).toHaveTextContent('连接中断，正在重连…')
     expect(status).toHaveClass('truncate')
@@ -1662,6 +1695,49 @@ describe('ToolBlocksDisplay', () => {
       <ToolBlocksDisplay blocks={[{ ...reconnectingBlock, status: 'done' }]} isStreaming={true} />
     )
     expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
+  })
+
+  test('hides a brief ChatGPT reconnect and shows proxy guidance after ten seconds', () => {
+    vi.useFakeTimers()
+    window.history.replaceState({}, '', '/')
+    const reconnectingBlock: ProcessingBlock = {
+      id: 'reconnecting-chatgpt',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'runtime_reconnecting',
+      toolInput: { model_kind: 'codex-official' },
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+
+    const { rerender } = render(
+      <ToolBlocksDisplay blocks={[reconnectingBlock]} isStreaming={true} />
+    )
+
+    expect(screen.queryByTestId('runtime-reconnecting-chatgpt-status')).not.toBeInTheDocument()
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    rerender(
+      <ToolBlocksDisplay blocks={[{ ...reconnectingBlock, status: 'done' }]} isStreaming={true} />
+    )
+    act(() => {
+      vi.advanceTimersByTime(7000)
+    })
+    expect(screen.queryByTestId('runtime-reconnecting-chatgpt-status')).not.toBeInTheDocument()
+
+    rerender(<ToolBlocksDisplay blocks={[reconnectingBlock]} isStreaming={true} />)
+    expect(screen.queryByTestId('runtime-reconnecting-chatgpt-status')).not.toBeInTheDocument()
+    act(() => {
+      vi.advanceTimersByTime(10_000)
+    })
+    expect(screen.getByTestId('runtime-reconnecting-chatgpt-status')).toHaveTextContent(
+      '当前正在使用 ChatGPT 模型，网络连接不可用。是否设置代理？'
+    )
+
+    fireEvent.click(screen.getByTestId('runtime-reconnecting-open-proxy-settings'))
+
+    expect(`${window.location.pathname}${window.location.search}`).toBe('/settings/personal/proxy')
   })
 
   test('shows the current reasoning summary in the trailing tool thinking row', () => {

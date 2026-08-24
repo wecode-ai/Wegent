@@ -3,7 +3,10 @@ import { createRef } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
-import { getConversationScrollSnapshot } from '@/features/workbench/runtimeConversationCache'
+import {
+  cacheConversationScrollSnapshot,
+  getConversationScrollSnapshot,
+} from '@/features/workbench/runtimeConversationCache'
 import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
 
 function mockRect(element: Element, top: number, bottom: number) {
@@ -771,6 +774,7 @@ describe('ScrollableMessageArea', () => {
     expect(getConversationScrollSnapshot('external-stream-a')).toEqual({
       distanceFromBottomPx: 450,
       pinnedToBottom: false,
+      scrollTopPx: 350,
     })
   })
 
@@ -2055,8 +2059,88 @@ describe('ScrollableMessageArea', () => {
     mockScrollRelativeRect(firstMessageAnchor, scroller, 180, 60)
     act(() => vi.advanceTimersByTime(80))
     expect(scroller.scrollTop).toBe(84)
+    act(() => vi.runOnlyPendingTimers())
+    expect(scroller.scrollTop).toBe(84)
+    expect(getConversationScrollSnapshot('navigation-settle')).toEqual({
+      distanceFromBottomPx: 1216,
+      pinnedToBottom: false,
+      scrollTopPx: 84,
+    })
     expect(content).toBeInTheDocument()
     vi.stubGlobal('ResizeObserver', originalResizeObserver)
+  })
+
+  test('does not save stale turn navigation into a newly opened conversation', () => {
+    const messagesA = [
+      {
+        id: 'stale-navigation-user-1',
+        role: 'user' as const,
+        content: '旧会话第一条需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:00.000Z',
+      },
+      {
+        id: 'stale-navigation-assistant-1',
+        role: 'assistant' as const,
+        content: '旧会话回复',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:01.000Z',
+      },
+      {
+        id: 'stale-navigation-user-2',
+        role: 'user' as const,
+        content: '旧会话最新需求',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:02.000Z',
+      },
+    ]
+    const messagesB = [
+      {
+        id: 'stale-navigation-new-conversation',
+        role: 'assistant' as const,
+        content: '新会话内容',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:01:00.000Z',
+      },
+    ]
+    cacheConversationScrollSnapshot('stale-navigation-b', {
+      distanceFromBottomPx: 420,
+      pinnedToBottom: false,
+    })
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="stale-navigation-a" messages={messagesA} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const firstMessageAnchor = screen.getByText('旧会话第一条需求').closest('[data-message-id]')!
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 700,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      if (typeof top === 'number') scroller.scrollTop = top
+    })
+    mockRect(scroller, 0, 300)
+    mockScrollRelativeRect(firstMessageAnchor, scroller, 120, 60)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+    fireEvent.click(screen.getAllByTestId('message-turn-navigation-marker')[0])
+    rerender(<ScrollableMessageArea conversationKey="stale-navigation-b" messages={messagesB} />)
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 480,
+      writable: true,
+      configurable: true,
+    })
+    act(() => vi.runOnlyPendingTimers())
+
+    expect(getConversationScrollSnapshot('stale-navigation-b')).toEqual({
+      distanceFromBottomPx: 420,
+      pinnedToBottom: false,
+    })
   })
 
   test('jumps to the resolved client message id after loading an older turn', async () => {
@@ -2867,6 +2951,51 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('keeps an unpinned reading position when the restored layout height changes', () => {
+    const messageA = {
+      id: 'height-change-a',
+      role: 'assistant' as const,
+      content: '会话 A 的长内容',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const messageB = {
+      id: 'height-change-b',
+      role: 'assistant' as const,
+      content: '会话 B',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:01.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="height-change-a" messages={[messageA]} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.wheel(scroller)
+    fireEvent.scroll(scroller)
+    rerender(<ScrollableMessageArea conversationKey="height-change-b" messages={[messageB]} />)
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1400, configurable: true })
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    rerender(<ScrollableMessageArea conversationKey="height-change-a" messages={[messageA]} />)
+    flushScheduledTimers()
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 300,
+      behavior: 'auto',
+    })
+  })
+
   test('does not overwrite a saved reading position with a restore-generated scroll event', () => {
     const messageA = {
       id: 'transient-layout-a',
@@ -2995,6 +3124,7 @@ describe('ScrollableMessageArea', () => {
     expect(getConversationScrollSnapshot('streaming-unmount-bottom')).toEqual({
       distanceFromBottomPx: 0,
       pinnedToBottom: true,
+      scrollTopPx: 400,
     })
   })
 
@@ -3125,7 +3255,7 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
-  test('restores reopened conversations by saved distance from bottom', () => {
+  test('restores reopened conversations to the saved reading position', () => {
     const messagesA = [
       {
         id: 'anchor-a-intro',
@@ -3207,12 +3337,12 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 500,
+      top: 300,
       behavior: 'auto',
     })
   })
 
-  test('restores long conversations by saved distance from bottom', () => {
+  test('restores long conversations to the saved reading position', () => {
     const messageA = {
       id: 'markdown-anchor-message',
       role: 'assistant' as const,
@@ -3300,28 +3430,47 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 500,
+      top: 300,
       behavior: 'auto',
     })
   })
 
   test('keeps the restored position while reopened conversation content grows', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+    const firstUserMessage = {
+      id: 'a-growth-user',
+      role: 'user' as const,
+      content: '开始会话 A',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
     const messageA = {
       id: 'a-growth',
       role: 'assistant' as const,
       content: '会话 A',
       status: 'done' as const,
-      createdAt: '2026-05-29T00:00:00.000Z',
+      createdAt: '2026-05-29T00:00:01.000Z',
     }
     const messageB = {
       id: 'b-growth',
       role: 'assistant' as const,
       content: '会话 B',
       status: 'done' as const,
-      createdAt: '2026-05-29T00:00:00.000Z',
+      createdAt: '2026-05-29T00:00:02.000Z',
     }
+    const messagesA = [firstUserMessage, messageA]
     const { rerender } = render(
-      <ScrollableMessageArea conversationKey="conversation-growth-a" messages={[messageA]} />
+      <ScrollableMessageArea conversationKey="conversation-growth-a" messages={messagesA} />
     )
 
     const scroller = screen.getByTestId('chat-message-scroll-area')
@@ -3357,16 +3506,14 @@ describe('ScrollableMessageArea', () => {
       configurable: true,
     })
     scroller.scrollTop = 0
-    rerender(
-      <ScrollableMessageArea conversationKey="conversation-growth-a" messages={[messageA]} />
-    )
+    rerender(<ScrollableMessageArea conversationKey="conversation-growth-a" messages={messagesA} />)
 
     act(() => {
-      vi.advanceTimersByTime(0)
+      vi.runOnlyPendingTimers()
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 0,
+      top: 40,
       behavior: 'auto',
     })
 
@@ -3376,11 +3523,40 @@ describe('ScrollableMessageArea', () => {
     })
 
     act(() => {
-      vi.advanceTimersByTime(50)
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
       top: 260,
+      behavior: 'auto',
+    })
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="conversation-growth-a"
+        messages={[
+          ...messagesA,
+          {
+            id: 'a-growth-user-follow-up',
+            role: 'user',
+            content: '继续处理',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:03.000Z',
+          },
+        ]}
+      />
+    )
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 1400,
+      configurable: true,
+    })
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 1400,
       behavior: 'auto',
     })
   })
@@ -3439,6 +3615,129 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).not.toHaveBeenCalled()
+  })
+
+  test('cancels delayed bottom following as soon as the user scrolls upward', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+
+    render(
+      <ScrollableMessageArea
+        conversationKey="delayed-bottom-follow"
+        messages={[
+          {
+            id: 'delayed-bottom-follow-assistant',
+            role: 'assistant',
+            content: '回复已完成',
+            status: 'done',
+            createdAt: '2026-08-18T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const anchor = screen.getByText('回复已完成').closest('[data-scroll-anchor]')!
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 800,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 600,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+    mockRect(scroller, 100, 300)
+    let anchorTopAtScrollZero = 500
+    anchor.getBoundingClientRect = vi.fn(() => {
+      const top = anchorTopAtScrollZero - scroller.scrollTop
+      return {
+        top,
+        bottom: top + 800,
+        left: 0,
+        right: 320,
+        width: 320,
+        height: 800,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect
+    })
+
+    fireEvent.wheel(scroller, { deltaY: -80 })
+    scroller.scrollTop = 440
+    fireEvent.scroll(scroller)
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).not.toHaveBeenCalled()
+
+    anchorTopAtScrollZero += 120
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+
+    expect(scroller.scrollTop).toBe(560)
+    expect(anchor.getBoundingClientRect().top).toBe(60)
+  })
+
+  test('keeps delayed bottom following for pointer input without scrolling', () => {
+    render(
+      <ScrollableMessageArea
+        conversationKey="pointer-without-scroll"
+        messages={[
+          {
+            id: 'pointer-without-scroll-assistant',
+            role: 'assistant',
+            content: '回复已完成',
+            status: 'done',
+            createdAt: '2026-08-18T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 800,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 600,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn()
+
+    fireEvent.pointerDown(scroller)
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).toHaveBeenCalled()
   })
 
   test('scrolls to a newly applied guidance message inserted before the assistant continuation', () => {

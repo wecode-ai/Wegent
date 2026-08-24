@@ -4,9 +4,8 @@
 
 """Tests for the publish gate.
 
-The gate is advisory. One rule still refuses — a version holding no pages, which is a
-run that produced nothing rather than an empty repository — and everything else is
-measured, warned about and published.
+The gate refuses versions that have no pages, lack required section overview pages, or
+contain definite Mermaid errors. Content-size and removal measurements remain advisory.
 
 The two measures below say different things and are kept apart on purpose. A rebuild
 is judged on how much came back, because its version starts empty and its paths carry
@@ -109,15 +108,15 @@ def test_growth_is_never_treated_as_removal():
     assert verdict.passed
 
 
-def test_a_broken_diagram_is_reported_but_does_not_block():
-    """A diagram that will not render is a local display fault, not a bad version."""
+def test_a_broken_diagram_is_rejected_with_the_page_and_error() -> None:
+    """Readers never see a version whose declared diagram cannot render."""
     pages = [
         PageSource(path="index", title="Index", content="```mermaid\nflowchat TD\n```")
     ]
 
     verdict = evaluate_publish_gate(pages, published_paths=["index"])
 
-    assert verdict.passed
+    assert not verdict.passed
     assert len(verdict.warnings) == 1
     assert "index:" in verdict.warnings[0]
 
@@ -146,16 +145,16 @@ def test_a_verdict_with_nothing_wrong_carries_no_diagram_findings():
     assert verdict.diagram_warnings == ()
 
 
-def test_diagrams_can_be_made_blocking_by_policy():
+def test_diagrams_can_be_explicitly_advisory_for_a_non_reader_projection() -> None:
     pages = [
         PageSource(path="index", title="Index", content="```mermaid\nflowchat TD\n```")
     ]
 
     verdict = evaluate_publish_gate(
-        pages, published_paths=["index"], policy=PublishPolicy(block_on_mermaid=True)
+        pages, published_paths=["index"], policy=PublishPolicy(block_on_mermaid=False)
     )
 
-    assert not verdict.passed
+    assert verdict.passed
 
 
 def test_a_rejection_still_carries_its_warnings():
@@ -212,8 +211,13 @@ def test_replacing_every_path_is_reported_though_the_size_is_unchanged():
     rejection blocked deliberate restructuring outright.
     """
     renamed = [
-        PageSource(path=f"guide/page-{index}", title=f"Page {index}", content="body")
-        for index in range(10)
+        PageSource(path="guide", title="Guide", content="overview"),
+        *[
+            PageSource(
+                path=f"guide/page-{index}", title=f"Page {index}", content="body"
+            )
+            for index in range(10)
+        ],
     ]
 
     verdict = evaluate_publish_gate(renamed, published_paths=_published(10))
@@ -225,6 +229,7 @@ def test_replacing_every_path_is_reported_though_the_size_is_unchanged():
 def test_renaming_a_few_paths_is_still_allowed():
     """Moving a page is legitimate; the gate only refuses moving most of them."""
     moved = [
+        PageSource(path="guide", title="Guide", content="overview"),
         PageSource(path="guide/page-0", title="Page 0", content="body"),
         *_pages(10)[1:],
     ]
@@ -249,9 +254,8 @@ def test_a_path_kept_under_a_different_case_is_not_a_removal():
 # --- sections that hold pages but are not pages ------------------------------
 
 
-def test_a_section_with_no_page_of_its_own_is_reported_not_refused():
-    """The navigation is built from paths, so it renders as a group heading that
-    cannot be opened — worse to read, nowhere near worth discarding a version."""
+def test_a_section_with_no_page_of_its_own_is_refused() -> None:
+    """A path section without a page is an unreadable navigation node."""
     pages = [
         PageSource(path="index", title="Index", content="body"),
         PageSource(path="architecture/backend", title="Backend", content="body"),
@@ -259,11 +263,24 @@ def test_a_section_with_no_page_of_its_own_is_reported_not_refused():
 
     verdict = evaluate_publish_gate(pages, published_paths=[])
 
-    assert verdict.passed
+    assert not verdict.passed
+    assert "required section overview pages are missing" in verdict.reason
     assert any("architecture" in warning for warning in verdict.warnings)
 
 
-def test_a_section_that_is_itself_a_page_draws_no_warning():
+def test_all_missing_ancestor_pages_are_reported_together() -> None:
+    pages = [PageSource(path="architecture/backend/api", title="API", content="body")]
+
+    verdict = evaluate_publish_gate(pages, published_paths=[])
+
+    assert not verdict.passed
+    assert verdict.warnings == (
+        "architecture: holds pages but has no page of its own",
+        "architecture/backend: holds pages but has no page of its own",
+    )
+
+
+def test_a_section_that_is_itself_a_page_draws_no_warning() -> None:
     pages = [
         PageSource(path="architecture", title="Architecture", content="body"),
         PageSource(path="architecture/backend", title="Backend", content="body"),
@@ -274,9 +291,7 @@ def test_a_section_that_is_itself_a_page_draws_no_warning():
     assert verdict.warnings == ()
 
 
-def test_the_diagram_policy_does_not_reject_over_a_missing_section_page():
-    """`block_on_mermaid` is named for diagrams; letting it fire on a navigation nit
-    would make its name a lie and throw away versions nobody meant to refuse."""
+def test_a_section_page_is_required_independently_of_diagram_policy() -> None:
     pages = [
         PageSource(path="index", title="Index", content="body"),
         PageSource(path="architecture/backend", title="Backend", content="body"),
@@ -286,8 +301,8 @@ def test_the_diagram_policy_does_not_reject_over_a_missing_section_page():
         pages, published_paths=[], policy=PublishPolicy(block_on_mermaid=True)
     )
 
-    assert verdict.passed
-    assert verdict.warnings
+    assert not verdict.passed
+    assert "architecture" in verdict.reason
 
 
 # --- how loss is measured depends on how the version was made ----------------
@@ -375,7 +390,9 @@ def test_an_incremental_run_that_kept_everything_says_nothing():
 
     paths = [f"old/{index}" for index in range(20)]
     verdict = evaluate_publish_gate(
-        [_page(path) for path in paths], published_paths=paths, rebuilt=False
+        [_page("old"), *[_page(path) for path in paths]],
+        published_paths=paths,
+        rebuilt=False,
     )
 
     assert verdict.passed

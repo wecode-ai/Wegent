@@ -8,6 +8,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from app.core.constants import PLUGIN_AUTO_UPDATE_FAILURE_LIMIT
 from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation
 from app.schemas.device import (
@@ -15,6 +16,7 @@ from app.schemas.device import (
     DeviceCapabilitySyncResponse,
     DeviceCapabilitySyncResult,
 )
+from app.schemas.installed_plugin import PluginDeviceReportItem
 from app.services.device_service import device_service
 
 
@@ -28,6 +30,7 @@ class PluginDeviceInstallationService:
         user_id: int,
         installed_kind_id: int,
         desired_release_id: int,
+        reset_failures: bool = False,
     ) -> None:
         """Materialize desired state for registered online and offline devices."""
         devices = await device_service.get_all_devices(db, user_id)
@@ -44,8 +47,13 @@ class PluginDeviceInstallationService:
                     desired_release_id=desired_release_id,
                 )
                 db.add(row)
+            desired_changed = row.desired_release_id != desired_release_id
             row.desired_release_id = desired_release_id
+            if desired_changed or reset_failures:
+                row.attempt_count = 0
             if row.actual_release_id != desired_release_id:
+                if self._auto_update_blocked(row) and not reset_failures:
+                    continue
                 row.state = "pending"
                 row.error_code = ""
                 row.error_message = ""
@@ -136,6 +144,39 @@ class PluginDeviceInstallationService:
         self._record_device_sync_result(db, user_id, result)
         db.commit()
 
+    def acknowledge_local_installs(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str,
+        reported_plugins: list[PluginDeviceReportItem],
+    ) -> list[int]:
+        """Mark locally present plugins as installed without pushing packages."""
+        normalized_device_id = device_id.strip()
+        reports_by_id = {
+            report.installedPluginId: report for report in reported_plugins
+        }
+        if not normalized_device_id or not reports_by_id:
+            return []
+        acknowledged_ids: list[int] = []
+        for installed in self._desired_installs(db, user_id):
+            report = reports_by_id.get(installed.id)
+            if report is None:
+                continue
+            if self._acknowledge_local_install(
+                db,
+                user_id=user_id,
+                device_id=normalized_device_id,
+                installed=installed,
+                reported_release_id=report.releaseId,
+                reported_version=report.version,
+            ):
+                acknowledged_ids.append(installed.id)
+        if acknowledged_ids:
+            db.commit()
+        return acknowledged_ids
+
     def _record_device_sync_result(
         self,
         db: Session,
@@ -158,6 +199,48 @@ class PluginDeviceInstallationService:
                 result=result,
                 item_result=plugin_results.get(installed.id),
             )
+
+    def _acknowledge_local_install(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str,
+        installed: Kind,
+        reported_release_id: int,
+        reported_version: str,
+    ) -> bool:
+        spec = installed.json.get("spec", {})
+        release_id = spec.get("releaseId")
+        desired_version = str(spec.get("version") or "").strip()
+        if (
+            not isinstance(release_id, int)
+            or reported_release_id != release_id
+            or not desired_version
+            or reported_version.strip() != desired_version
+        ):
+            return False
+        row = self._device_row(db, installed.id, device_id)
+        if row and row.state == "uninstalling":
+            return False
+        if row and self._auto_update_blocked(row, desired_release_id=release_id):
+            return False
+        if not row:
+            row = PluginDeviceInstallation(
+                installed_kind_id=installed.id,
+                user_id=user_id,
+                device_id=device_id,
+                desired_release_id=release_id,
+            )
+            db.add(row)
+        row.desired_release_id = release_id
+        row.actual_release_id = release_id
+        row.state = "installed"
+        row.error_code = ""
+        row.error_message = ""
+        row.attempt_count = 0
+        row.last_sync_at = datetime.now()
+        return True
 
     def _record_removed_installs(
         self,
@@ -198,8 +281,10 @@ class PluginDeviceInstallationService:
         release_id = installed.json.get("spec", {}).get("releaseId")
         if not isinstance(release_id, int):
             return
-        state, error_message = self._device_install_state(result, item_result)
         row = self._device_row(db, installed.id, result.device_id)
+        if row and self._auto_update_blocked(row, desired_release_id=release_id):
+            return
+        state, error_message = self._device_install_state(result, item_result)
         if (
             item_result is None
             and result.success
@@ -217,13 +302,18 @@ class PluginDeviceInstallationService:
                 desired_release_id=release_id,
             )
             db.add(row)
+        desired_changed = row.desired_release_id != release_id
         row.desired_release_id = release_id
         if state == "installed":
             row.actual_release_id = release_id
+            row.attempt_count = 0
+        elif state == "failed":
+            row.attempt_count = 1 if desired_changed else (row.attempt_count or 0) + 1
+        elif desired_changed:
+            row.attempt_count = 0
         row.state = state
         row.error_code = "PLUGIN_SYNC_FAILED" if state == "failed" else ""
         row.error_message = error_message or ""
-        row.attempt_count = (row.attempt_count or 0) + 1
         row.last_sync_at = datetime.now()
 
     def ensure_pending_for_device(
@@ -232,12 +322,12 @@ class PluginDeviceInstallationService:
         *,
         user_id: int,
         device_id: str,
-        reset_failed: bool = True,
+        manual_retry: bool = False,
     ) -> int:
         """Ensure account desired plugins are pending on one device until synced.
 
-        Creates missing rows and resets stale failed gaps so marketplace can show
-        syncing instead of a false retry banner.
+        Creates missing rows and retries failed updates until their per-release
+        circuit breaker opens. Manual retries reset that breaker.
         """
         normalized_device_id = device_id.strip()
         if not normalized_device_id:
@@ -260,14 +350,17 @@ class PluginDeviceInstallationService:
                 )
                 changed += 1
                 continue
+            desired_changed = row.desired_release_id != release_id
             row.desired_release_id = release_id
+            if desired_changed or manual_retry:
+                row.attempt_count = 0
             if row.state == "installed" and row.actual_release_id == release_id:
                 continue
             # Never interrupt an in-flight uninstall; the Kind may still be
             # active for a brief window before account uninstall completes.
             if row.state == "uninstalling":
                 continue
-            if row.state == "failed" and not reset_failed:
+            if self._auto_update_blocked(row) and not manual_retry:
                 continue
             if (
                 row.state == "pending"
@@ -282,6 +375,34 @@ class PluginDeviceInstallationService:
             changed += 1
         db.commit()
         return changed
+
+    def auto_update_blocked_release_id(
+        self,
+        row: PluginDeviceInstallation | None,
+        *,
+        desired_release_id: int,
+    ) -> int | None:
+        """Return the preserved release when automatic retries are exhausted."""
+        if not row or not self._auto_update_blocked(
+            row, desired_release_id=desired_release_id
+        ):
+            return None
+        return row.actual_release_id
+
+    def _auto_update_blocked(
+        self,
+        row: PluginDeviceInstallation,
+        *,
+        desired_release_id: int | None = None,
+    ) -> bool:
+        expected_release_id = desired_release_id or row.desired_release_id
+        return bool(
+            row.state == "failed"
+            and row.attempt_count >= PLUGIN_AUTO_UPDATE_FAILURE_LIMIT
+            and row.actual_release_id
+            and row.actual_release_id != expected_release_id
+            and row.desired_release_id == expected_release_id
+        )
 
     def _device_install_state(
         self,

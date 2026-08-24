@@ -51,6 +51,7 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
+    KnowledgeBaseRetrievalProfileResponse,
     KnowledgeBaseTypeUpdate,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
@@ -79,6 +80,7 @@ from app.services.knowledge.orchestrator import (
     MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
+from app.services.knowledge.retrieval_profile import get_profile
 from shared.telemetry.decorators import (
     add_span_event,
     trace_async,
@@ -311,6 +313,24 @@ def get_knowledge_config():
     }
 
 
+@router.get(
+    "/code-wiki-retrieval-profile",
+    response_model=KnowledgeBaseRetrievalProfileResponse,
+)
+def get_knowledge_base_retrieval_profile(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> KnowledgeBaseRetrievalProfileResponse:
+    """Return safe public resource references for new knowledge base forms."""
+    del current_user
+    retrieval_config, version, health = get_profile(db)
+    return {
+        "version": version,
+        "retrieval_config": retrieval_config,
+        "health": health,
+    }
+
+
 @router.get("/organization-namespace")
 @trace_sync("get_organization_namespace", "knowledge.api")
 def get_organization_namespace(
@@ -537,6 +557,9 @@ def update_knowledge_base(
             retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
+            execution_model_ref=data.execution_model_ref,
+            execution_model_ref_is_set="execution_model_ref" in data.model_fields_set,
+            show_generation_task=data.show_generation_task,
             guided_questions=data.guided_questions,
             max_calls_per_conversation=data.max_calls_per_conversation,
             exempt_calls_before_check=data.exempt_calls_before_check,

@@ -31,6 +31,10 @@ import {
   GUIDANCE_SCROLL_PRE_TOOL_TEXT,
   GUIDANCE_SCROLL_PROMPT,
   IMAGE_ARTIFACT_BASE64,
+  MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
+  MESSAGE_EDIT_ORIGINAL_PROMPT,
+  MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
+  MESSAGE_EDIT_UPDATED_PROMPT,
   MULTIMODAL_VISION_COMPLETION_TEXT,
   MULTIMODAL_VISION_PROMPT,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
@@ -55,6 +59,7 @@ import {
   VIEW_IMAGE_COMPLETION_TEXT,
   VIEW_IMAGE_PROMPT,
   VISION_SIDECAR_COMPLETION_TEXT,
+  VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
   VISION_SIDECAR_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -65,12 +70,20 @@ import {
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
+async function waitForActiveTaskIdle(control) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const pauseButtonCount = Number(
+      await control.command('getElementCount', '[data-testid="pause-response-button"]')
+    )
+    if (pauseButtonCount === 0) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('The active task did not become idle before sending the next prompt')
+}
+
 async function sendPrompt(control, selector, prompt) {
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes('pause-response-button'),
-    'The active task did not become idle before sending the next prompt'
-  )
+  await waitForActiveTaskIdle(control)
   await control.command('fill', selector, { value: prompt })
   await control.command('press', selector, { key: 'Enter' })
 }
@@ -82,11 +95,7 @@ async function sendPromptWithButton(
   timeoutMs = MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
   { confirmCloudModelCatalogSync = false } = {}
 ) {
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes('pause-response-button'),
-    'The active task did not become idle before sending the next prompt'
-  )
+  await waitForActiveTaskIdle(control)
   await control.command('fill', selector, { value: prompt })
   await control.command('waitFor', selector, {
     text: prompt,
@@ -271,6 +280,11 @@ async function verifyQueuedFollowUpNavigation({
   runningTaskRowTestId,
 }) {
   await control.command('fill', composerSelector, { value: QUEUED_FOLLOW_UP })
+  await control.command('waitFor', composerSelector, {
+    text: QUEUED_FOLLOW_UP,
+    stableMs: 100,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('press', composerSelector, { key: 'Enter' })
   await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
     text: QUEUED_FOLLOW_UP,
@@ -720,6 +734,20 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
       scroller,
     })}`
   )
+  const composerMetrics = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
+    )
+  ).at(-1)
+  assert.ok(composerMetrics, 'The conversation composer was not rendered after guidance')
+  assert.ok(
+    guidanceMessage.bottom <= composerMetrics.top + 2,
+    `The newly applied guidance message rendered below the composer: ${JSON.stringify({
+      guidanceMessage,
+      composer: composerMetrics,
+    })}`
+  )
   await captureVerificationScreenshot(control, 'guidance-scroll-01-message-visible.png')
 
   control.releaseGuidanceScrollCompletion()
@@ -816,7 +844,7 @@ async function reopenCurrentTurnNavigationTask(
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await restartDesktopApp()
+  const restartedApp = await restartDesktopApp()
   await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
   await control.command('clickWhenEnabled', `[data-testid="runtime-local-task-row-${taskId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -829,6 +857,26 @@ async function reopenCurrentTurnNavigationTask(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  const focusStartedAt = Date.now()
+  let activeElementTestId = ''
+  while (Date.now() - focusStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    activeElementTestId = await control.command('getActiveElementTestId', 'body')
+    if (activeElementTestId === 'chat-message-input') break
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  if (activeElementTestId !== 'chat-message-input') {
+    const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
+      control.command('getComposerFocusSnapshot', 'body'),
+      control.command('getWorkbenchDebugSnapshot', 'body'),
+      control.command('getComposerDiagnosticsSnapshot', 'body'),
+    ])
+    throw new Error(
+      `Opening a conversation from the sidebar did not transfer keyboard focus to the composer; ` +
+        `activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
+        `workbench=${workbenchSnapshot}; ` +
+        `composerDiagnostics=${composerDiagnostics}`
+    )
+  }
   if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
     await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -892,6 +940,7 @@ async function reopenCurrentTurnNavigationTask(
     text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  return restartedApp
 }
 
 async function verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector }) {
@@ -925,17 +974,20 @@ async function verifyStandaloneViewImageTask({ composerSelector, control, projec
 async function verifyVisionSidecar({ composerSelector, control, modelCase, projectRowSelector }) {
   control.setScenario('vision_sidecar')
   control.visionSidecarRequests = []
+  const mainRequestOffset =
+    control.scenarioRequests.get(VISION_SIDECAR_MAIN_REQUEST_SCENARIO)?.length ?? 0
+
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, modelCase.mainOptionId, modelCase.mainLabel)
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    await control.command(
-      'clickWhenEnabled',
-      `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
-      { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-    )
-    await control.command('waitFor', composerSelector, {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await selectE2EModel(control, modelCase.mainOptionId, modelCase.mainLabel)
     await control.command('dropFile', composerSelector, {
       filename: 'vision-sidecar.png',
       mimeType: 'image/png',
@@ -951,10 +1003,22 @@ async function verifyVisionSidecar({ composerSelector, control, modelCase, proje
         : `${modelCase.source}-vision-sidecar-03-cache-request-ready.png`
     )
     await sendPrompt(control, composerSelector, VISION_SIDECAR_PROMPT)
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: VISION_SIDECAR_COMPLETION_TEXT,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
+    await control.awaitScenarioRequestCount(
+      VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
+      mainRequestOffset + attempt + 1
+    )
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes(VISION_SIDECAR_COMPLETION_TEXT) &&
+        snapshot.testIds.includes('send-message-button') &&
+        !snapshot.testIds.includes('pause-response-button') &&
+        !snapshot.testIds.includes('thinking-indicator') &&
+        !snapshot.testIds.includes('message-assistant-waiting'),
+      `Vision sidecar turn ${attempt + 1} did not complete in the same conversation`,
+      DEFAULT_STEP_TIMEOUT_MS,
+      ACTIVE_WORKBENCH_SELECTOR
+    )
     await captureVerificationScreenshot(
       control,
       attempt === 0
@@ -1222,6 +1286,74 @@ async function verifyPausedQueueLifecycle({ composerSelector, control }) {
   await captureVerificationScreenshot(control, 'queue-management-03-dialog-paths.png')
 }
 
+async function verifyLastUserMessageEdit({ composerSelector, control }) {
+  control.setScenario('message_edit')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+  await sendPrompt(control, composerSelector, MESSAGE_EDIT_ORIGINAL_PROMPT)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes('message-assistant-waiting'),
+    'The original response did not settle before editing the last user message'
+  )
+
+  await control.command(
+    'hover',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"] [data-testid="message-hover-region"]`
+  )
+  await control.command('waitFor', '[data-testid="edit-message-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="edit-message-button"]')
+  await control.command('waitFor', '[data-testid="edit-user-message-textarea"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="edit-user-message-textarea"]', {
+    value: MESSAGE_EDIT_UPDATED_PROMPT,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="submit-edit-user-message-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await withTimeout(
+    control.awaitScenarioRequestCount('message_edit', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Editing the last user message did not start a replacement model request'
+  )
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: MESSAGE_EDIT_UPDATED_PROMPT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const transcriptText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+  )
+  assert.equal(
+    transcriptText.includes(MESSAGE_EDIT_ORIGINAL_PROMPT),
+    false,
+    'The edited conversation still rendered the original user message'
+  )
+  assert.equal(
+    transcriptText.includes(MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT),
+    false,
+    'The edited conversation still rendered the superseded assistant response'
+  )
+}
+
 async function waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -1261,5 +1393,6 @@ export {
   pauseQueuedConversation,
   assertLatestScenarioRequestContains,
   verifyPausedQueueLifecycle,
+  verifyLastUserMessageEdit,
   waitForSuccessfulMatrixSubmission,
 }

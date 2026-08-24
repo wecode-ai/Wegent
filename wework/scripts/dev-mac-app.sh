@@ -164,6 +164,8 @@ fi
 BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
 BACKEND_PORT="${BACKEND_PORT:-9100}"
 WEWORK_PORT="${REQUESTED_WEWORK_PORT:-${WEWORK_PORT:-1420}}"
+WEWORK_PORT_LOCK_ROOT="${WEWORK_PORT_LOCK_ROOT:-${TMPDIR:-/tmp}/wework-dev-port-locks}"
+WEWORK_PORT_LOCK_DIR=""
 
 if ! [[ "$WEWORK_PORT" =~ ^[0-9]+$ ]] || [ "$WEWORK_PORT" -lt 1 ] || [ "$WEWORK_PORT" -gt 65535 ]; then
   echo "Error: WEWORK_PORT must be a number between 1 and 65535. Got: $WEWORK_PORT" >&2
@@ -171,36 +173,63 @@ if ! [[ "$WEWORK_PORT" =~ ^[0-9]+$ ]] || [ "$WEWORK_PORT" -lt 1 ] || [ "$WEWORK_
 fi
 
 is_port_available() {
-  node - "$1" <<'NODE'
-const net = require('node:net')
-const port = Number(process.argv[2])
+  node -e '
+    const net = require("node:net")
+    const port = Number(process.argv[1])
+    const canListen = host =>
+      new Promise(resolve => {
+        const server = net.createServer()
+        server.once("error", () => resolve(false))
+        server.listen(port, host, () => server.close(() => resolve(true)))
+      })
+    ;(async () => {
+      for (const host of ["127.0.0.1", "0.0.0.0"]) {
+        if (!(await canListen(host))) process.exit(1)
+      }
+    })()
+  ' "$1"
+}
 
-const canListen = host =>
-  new Promise(resolve => {
-    const server = net.createServer()
+release_wework_port_lock() {
+  if [ -z "$WEWORK_PORT_LOCK_DIR" ]; then
+    return
+  fi
+  rm -f "$WEWORK_PORT_LOCK_DIR/pid"
+  rmdir "$WEWORK_PORT_LOCK_DIR" 2>/dev/null || true
+  WEWORK_PORT_LOCK_DIR=""
+}
 
-    server.once('error', () => resolve(false))
-    server.listen(port, host, () => {
-      server.close(() => resolve(true))
-    })
-  })
+try_acquire_wework_port_lock() {
+  local port="$1"
+  local lock_dir="$WEWORK_PORT_LOCK_ROOT/$port"
+  local owner_pid=""
 
-;(async () => {
-  for (const host of ['127.0.0.1', '0.0.0.0']) {
-    if (!(await canListen(host))) {
-      process.exit(1)
-    }
-  }
-})()
-NODE
+  mkdir -p "$WEWORK_PORT_LOCK_ROOT"
+  if ! mkdir "$lock_dir" 2>/dev/null; then
+    owner_pid="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+    if ! [[ "$owner_pid" =~ ^[0-9]+$ ]] || kill -0 "$owner_pid" 2>/dev/null; then
+      return 1
+    fi
+    rm -f "$lock_dir/pid"
+    rmdir "$lock_dir" 2>/dev/null || return 1
+    mkdir "$lock_dir" 2>/dev/null || return 1
+  fi
+
+  echo "$$" >"$lock_dir/pid"
+  WEWORK_PORT_LOCK_DIR="$lock_dir"
 }
 
 find_available_wework_port() {
   local port="$1"
 
   while [ "$port" -le 65535 ]; do
-    if is_port_available "$port"; then
-      echo "$port"
+    if try_acquire_wework_port_lock "$port"; then
+      if ! is_port_available "$port"; then
+        release_wework_port_lock
+        port="$((port + 1))"
+        continue
+      fi
+      AVAILABLE_WEWORK_PORT="$port"
       return 0
     fi
     port="$((port + 1))"
@@ -240,7 +269,9 @@ build_wework_dev_title() {
   echo "$worktree_name"
 }
 
-AVAILABLE_WEWORK_PORT="$(find_available_wework_port "$WEWORK_PORT")"
+AVAILABLE_WEWORK_PORT=""
+find_available_wework_port "$WEWORK_PORT"
+trap release_wework_port_lock EXIT
 if [ "$AVAILABLE_WEWORK_PORT" != "$WEWORK_PORT" ]; then
   echo "WEWORK_PORT $WEWORK_PORT is already in use; using $AVAILABLE_WEWORK_PORT instead."
 fi
@@ -265,11 +296,15 @@ if [ -z "${WEWORK_EXECUTOR_SIDECAR:-}" ]; then
 fi
 export WEWORK_EXECUTOR_SIDECAR
 
-if [ "$WEWORK_RELEASE_UI" = "true" ]; then
-  BEFORE_DEV_COMMAND="pnpm run build && pnpm exec vite preview --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
-else
-  BEFORE_DEV_COMMAND="pnpm exec vite --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
-fi
+configure_before_dev_command() {
+  if [ "$WEWORK_RELEASE_UI" = "true" ]; then
+    BEFORE_DEV_COMMAND="pnpm run build && pnpm exec vite preview --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
+  else
+    BEFORE_DEV_COMMAND="pnpm exec vite --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
+  fi
+}
+
+configure_before_dev_command
 install_wegent_sccache_with_homebrew
 configure_wegent_cargo_target_dir "$PROJECT_DIR" "wework-src-tauri"
 
@@ -311,69 +346,36 @@ else
 fi
 
 TAURI_DEV_CONFIG="$(mktemp -t wework-tauri-dev.XXXXXX.json)"
-trap 'rm -f "$TAURI_DEV_CONFIG"' EXIT
+trap 'rm -f "$TAURI_DEV_CONFIG"; release_wework_port_lock' EXIT
 
-WEWORK_PORT_VALUE="$WEWORK_PORT" \
-BEFORE_DEV_COMMAND_VALUE="$BEFORE_DEV_COMMAND" \
-WEWORK_RELEASE_UI_VALUE="$WEWORK_RELEASE_UI" \
-WEWORK_APP_IDENTIFIER_VALUE="${WEWORK_APP_IDENTIFIER:-}" \
-WEWORK_DISABLE_BACKGROUND_THROTTLING_VALUE="${WEWORK_DISABLE_BACKGROUND_THROTTLING:-0}" \
-WEWORK_DIR_VALUE="$WEWORK_DIR" \
-TAURI_DEV_CONFIG_VALUE="$TAURI_DEV_CONFIG" \
-python3 - <<'PY'
-import json
-import os
-
-config = {
-    "build": {
-        "devUrl": f"http://localhost:{os.environ['WEWORK_PORT_VALUE']}",
-        "beforeDevCommand": os.environ["BEFORE_DEV_COMMAND_VALUE"],
-    },
+write_tauri_dev_config() {
+  WEWORK_PORT_VALUE="$WEWORK_PORT" \
+  BEFORE_DEV_COMMAND_VALUE="$BEFORE_DEV_COMMAND" \
+  WEWORK_RELEASE_UI_VALUE="$WEWORK_RELEASE_UI" \
+  WEWORK_APP_IDENTIFIER_VALUE="${WEWORK_APP_IDENTIFIER:-}" \
+  WEWORK_DISABLE_BACKGROUND_THROTTLING_VALUE="${WEWORK_DISABLE_BACKGROUND_THROTTLING:-0}" \
+  WEWORK_DIR_VALUE="$WEWORK_DIR" \
+  TAURI_DEV_CONFIG_VALUE="$TAURI_DEV_CONFIG" \
+  python3 "$SCRIPT_DIR/create-tauri-dev-config.py"
 }
 
-app_identifier = os.environ["WEWORK_APP_IDENTIFIER_VALUE"].strip()
-if app_identifier:
-    config["identifier"] = app_identifier
-
-if os.environ["WEWORK_DISABLE_BACKGROUND_THROTTLING_VALUE"] == "1":
-    with open(
-        os.path.join(os.environ["WEWORK_DIR_VALUE"], "src-tauri", "tauri.conf.json"),
-        encoding="utf-8",
-    ) as handle:
-        base_config = json.load(handle)
-    windows = base_config["app"]["windows"]
-    for window in windows:
-        window["backgroundThrottling"] = "disabled"
-    config["app"] = {"windows": windows}
-
-if os.environ["WEWORK_RELEASE_UI_VALUE"] != "true":
-    config["bundle"] = {
-        "icon": [
-            "icons/icon-dev.icns",
-            "icons/icon.png",
-        ],
-    }
-
-with open(os.environ["TAURI_DEV_CONFIG_VALUE"], "w", encoding="utf-8") as handle:
-    json.dump(config, handle, indent=2)
-    handle.write("\n")
-PY
-
-echo "Starting WeWork mac app"
-echo "  RELEASE_UI=$WEWORK_RELEASE_UI"
-echo "  WEWORK_PORT=$WEWORK_PORT"
-echo "  WEWORK_DEV_TITLE=$WEWORK_DEV_TITLE"
-echo "  WEWORK_DEV_WORKTREE=$WEWORK_DEV_WORKTREE"
-echo "  WEWORK_DEV_BRANCH=${WEWORK_DEV_BRANCH:-<detached>}"
-echo "  WEWORK_APP_IDENTIFIER=${WEWORK_APP_IDENTIFIER:-io.wecode.wework}"
-echo "  MACOS_BUILD_TARGET=${MACOS_BUILD_TARGET:-<native>}"
-echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
-echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
-echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"
-echo "  WEWORK_SHARED_EXECUTOR_HOME=${WEWORK_SHARED_EXECUTOR_HOME:-0}"
-echo "  EXECUTOR_ISOLATION=${EXECUTOR_ISOLATION_OVERRIDE:-auto}"
-echo "  CODEX_BINARY_PATH=${CODEX_BINARY_PATH:-${CODEX_BIN:-codex}}"
-echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
+print_startup_configuration() {
+  echo "Starting WeWork mac app"
+  echo "  RELEASE_UI=$WEWORK_RELEASE_UI"
+  echo "  WEWORK_PORT=$WEWORK_PORT"
+  echo "  WEWORK_DEV_TITLE=$WEWORK_DEV_TITLE"
+  echo "  WEWORK_DEV_WORKTREE=$WEWORK_DEV_WORKTREE"
+  echo "  WEWORK_DEV_BRANCH=${WEWORK_DEV_BRANCH:-<detached>}"
+  echo "  WEWORK_APP_IDENTIFIER=${WEWORK_APP_IDENTIFIER:-io.wecode.wework}"
+  echo "  MACOS_BUILD_TARGET=${MACOS_BUILD_TARGET:-<native>}"
+  echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
+  echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
+  echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"
+  echo "  WEWORK_SHARED_EXECUTOR_HOME=${WEWORK_SHARED_EXECUTOR_HOME:-0}"
+  echo "  EXECUTOR_ISOLATION=${EXECUTOR_ISOLATION_OVERRIDE:-auto}"
+  echo "  CODEX_BINARY_PATH=${CODEX_BINARY_PATH:-${CODEX_BIN:-codex}}"
+  echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
+}
 
 if [ "${WEWORK_MALLOC_STACK_LOGGING:-}" = "1" ]; then
   export MallocStackLogging=1
@@ -382,7 +384,9 @@ if [ "${WEWORK_MALLOC_STACK_LOGGING:-}" = "1" ]; then
   echo "  MallocStackLoggingNoCompact=1"
 fi
 
+write_tauri_dev_config
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
+  print_startup_configuration
   echo "  TAURI_DEV_CONFIG=$TAURI_DEV_CONFIG"
   cat "$TAURI_DEV_CONFIG"
   exit 0
@@ -398,6 +402,34 @@ if [ "$MANAGED_DEV_CODEX" = "true" ]; then
   echo "Using repository Codex: $("$DEV_CODEX_BINARY" --version)"
 fi
 WEWORK_DWS_TARGET="$(resolve_dev_codex_target)" pnpm run prepare:dws
+if [ -z "${WEWORK_HARNESS_RUNTIME_ROOT:-}" ] && [ -z "${WEWORK_DEEPSEEK_HARNESS_ROOT:-}" ]; then
+  pnpm run prepare:harness-runtime -- --materialize
+  export WEWORK_HARNESS_RUNTIME_ROOT="$WEWORK_DIR/node_modules/.cache/harness-runtime-dev"
+else
+  pnpm run prepare:harness-runtime
+fi
+echo "Using Harness runtime root: ${WEWORK_HARNESS_RUNTIME_ROOT:-${WEWORK_DEEPSEEK_HARNESS_ROOT}}"
+
+if [ -z "${WEWORK_NODE_RUNTIME_ROOT:-}" ]; then
+  pnpm run prepare:execution-runtime -- --materialize
+  export WEWORK_NODE_RUNTIME_ROOT="$WEWORK_DIR/node_modules/.cache/execution-runtime-node-dev"
+fi
+echo "Using Node runtime root: $WEWORK_NODE_RUNTIME_ROOT"
+
+if ! is_port_available "$WEWORK_PORT"; then
+  occupied_port="$WEWORK_PORT"
+  release_wework_port_lock
+  AVAILABLE_WEWORK_PORT=""
+  find_available_wework_port "$((occupied_port + 1))"
+  WEWORK_PORT="$AVAILABLE_WEWORK_PORT"
+  export WEWORK_DEV_PORT="$WEWORK_PORT"
+  export VITE_WEWORK_DEV_PORT="$WEWORK_PORT"
+  configure_before_dev_command
+  write_tauri_dev_config
+  echo "WEWORK_PORT $occupied_port became unavailable during preparation; using $WEWORK_PORT instead."
+fi
+
+print_startup_configuration
 TAURI_ARGS=(dev --config "$TAURI_DEV_CONFIG")
 if [ "$WEWORK_RELEASE_UI" = "true" ]; then
   TAURI_ARGS+=(--release)
@@ -425,7 +457,13 @@ cleanup_dev_processes() {
   TAURI_PROCESS_GROUP=""
 }
 
-trap cleanup_dev_processes EXIT
+cleanup_dev_resources() {
+  cleanup_dev_processes
+  rm -f "$TAURI_DEV_CONFIG"
+  release_wework_port_lock
+}
+
+trap cleanup_dev_resources EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 

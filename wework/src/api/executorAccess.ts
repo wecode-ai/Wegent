@@ -36,6 +36,10 @@ import type {
   RuntimeTaskQueueReorderResponse,
   RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
+  RuntimeWorktreeCapabilitiesRequest,
+  RuntimeWorktreeCapabilitiesResponse,
+  RuntimeWorktreePreflightRequest,
+  RuntimeWorktreePreflightResponse,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceOpenResponse,
   RuntimeWorkspaceRemoveRequest,
@@ -146,6 +150,12 @@ export interface ExecutorRuntimeClient {
   activateRuntimeProject: ReturnType<typeof createRuntimeWorkApi>['activateRuntimeProject']
   reorderRuntimeProjectTasks: ReturnType<typeof createRuntimeWorkApi>['reorderRuntimeProjectTasks']
   setRuntimeTaskPinned: ReturnType<typeof createRuntimeWorkApi>['setRuntimeTaskPinned']
+  getWorktreeCapabilities: (
+    data: RuntimeWorktreeCapabilitiesRequest
+  ) => Promise<RuntimeWorktreeCapabilitiesResponse>
+  preflightWorktree: (
+    data: RuntimeWorktreePreflightRequest
+  ) => Promise<RuntimeWorktreePreflightResponse>
   archiveRuntimeTask: ReturnType<typeof createRuntimeWorkApi>['archiveRuntimeTask']
   renameRuntimeTask: ReturnType<typeof createRuntimeWorkApi>['renameRuntimeTask']
   listArchivedConversations: ReturnType<typeof createRuntimeWorkApi>['listArchivedConversations']
@@ -193,11 +203,13 @@ interface ExecutorAccessApis {
     | 'executeCommand'
     | 'upgradeDevice'
     | 'listSkills'
-    | 'listWorkspaceEntries'
-    | 'readWorkspaceTextFile'
-    | 'readWorkspaceFileChunk'
   > &
-    Pick<WorkspaceFileApi, 'writeWorkspaceTextFile'>
+    Pick<
+      WorkspaceFileApi,
+      'listWorkspaceEntries' | 'readWorkspaceTextFile' | 'writeWorkspaceTextFile'
+    > & {
+      readWorkspaceFileChunk: NonNullable<WorkspaceFileApi['readWorkspaceFileChunk']>
+    }
   runtimeWorkApi: ExecutorRuntimeClient
   reviewApi?: ExecutorReviewClient
   resolveDevice?: (deviceId: string) => Promise<DeviceInfo | null>
@@ -311,9 +323,15 @@ export function createExecutorClientFromApis({
 
   const writeWorkspaceTextFile = deviceApi.writeWorkspaceTextFile
   const files: WorkspaceFileApi = {
-    async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
+    async listWorkspaceEntries(
+      deviceId: string,
+      path: string,
+      workspaceRoot?: string
+    ): Promise<WorkspaceTreeResponse> {
       await resolve(deviceId)
-      return deviceApi.listWorkspaceEntries(deviceId, path)
+      return workspaceRoot === undefined
+        ? deviceApi.listWorkspaceEntries(deviceId, path)
+        : deviceApi.listWorkspaceEntries(deviceId, path, workspaceRoot)
     },
     async searchWorkspaceEntries(deviceId, root, query, cancellationToken) {
       await resolve(deviceId)
@@ -326,13 +344,15 @@ export function createExecutorClientFromApis({
     },
     async readWorkspaceTextFile(
       deviceId: string,
-      filePath: string
+      filePath: string,
+      workspaceRoot: string
     ): Promise<WorkspaceTextFileResponse> {
       await resolve(deviceId)
-      return deviceApi.readWorkspaceTextFile(deviceId, filePath)
+      return deviceApi.readWorkspaceTextFile(deviceId, filePath, workspaceRoot)
     },
-    async readWorkspaceFileChunk(deviceId, filePath, offset) {
-      return deviceApi.readWorkspaceFileChunk(deviceId, filePath, offset)
+    async readWorkspaceFileChunk(deviceId, filePath, offset, workspaceRoot) {
+      await resolve(deviceId)
+      return deviceApi.readWorkspaceFileChunk(deviceId, filePath, offset, workspaceRoot)
     },
     ...(writeWorkspaceTextFile
       ? {
@@ -348,10 +368,21 @@ export function createExecutorClientFromApis({
         }
       : {}),
   }
+  const runtime: ExecutorRuntimeClient = {
+    ...runtimeWorkApi,
+    async getWorktreeCapabilities(data) {
+      await resolve(data.deviceId)
+      return runtimeWorkApi.getWorktreeCapabilities(data)
+    },
+    async preflightWorktree(data) {
+      await resolve(data.deviceId)
+      return runtimeWorkApi.preflightWorktree(data)
+    },
+  }
 
   return {
     registry,
-    runtime: runtimeWorkApi,
+    runtime,
     commands,
     files,
     review: reviewApi ?? {},

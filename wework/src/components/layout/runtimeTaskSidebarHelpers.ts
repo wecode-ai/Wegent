@@ -1,4 +1,5 @@
 import type { RuntimeTaskSummary, RuntimeDeviceWorkspace, RuntimeTaskAddress } from '@/types/api'
+import { isProjectAutomationManagerRuntimeTask } from '@/features/workbench/runtimeTaskOrigin'
 
 export interface RuntimeSidebarTaskItem {
   workspace: RuntimeDeviceWorkspace
@@ -18,10 +19,25 @@ export function isRuntimeTaskQueued(task: RuntimeTaskSummary): boolean {
 }
 
 function getRuntimeTaskSortTime(task: RuntimeTaskSummary) {
-  const value = task.completedAt ?? task.createdAt ?? task.updatedAt
+  const value = task.updatedAt ?? task.createdAt ?? task.completedAt
   if (value == null) return 0
   const timestamp = new Date(value).getTime()
   return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
+function compareRuntimeTasks(
+  left: RuntimeTaskSummary,
+  right: RuntimeTaskSummary,
+  useSidebarOrder: boolean
+) {
+  const leftOrder = left.sidebarOrder
+  const rightOrder = right.sidebarOrder
+  if (useSidebarOrder && leftOrder != null && rightOrder != null && leftOrder !== rightOrder) {
+    return leftOrder - rightOrder
+  }
+  if (useSidebarOrder && leftOrder != null && rightOrder == null) return 1
+  if (useSidebarOrder && leftOrder == null && rightOrder != null) return -1
+  return getRuntimeTaskSortTime(right) - getRuntimeTaskSortTime(left)
 }
 
 function getRuntimeTaskQueuePosition(task: RuntimeTaskSummary) {
@@ -35,8 +51,8 @@ function sortQueuedTasksWithinRecencyOrder<T>(
   getTask: (item: T) => RuntimeTaskSummary,
   getQueueKey: (item: T) => string
 ) {
-  const sorted = [...items].sort(
-    (left, right) => getRuntimeTaskSortTime(getTask(right)) - getRuntimeTaskSortTime(getTask(left))
+  const sorted = [...items].sort((left, right) =>
+    compareRuntimeTasks(getTask(left), getTask(right), getQueueKey(left) === getQueueKey(right))
   )
   const queues = new Map<string, T[]>()
 
@@ -92,7 +108,9 @@ export function getRuntimeSidebarTaskItems(
 export function getRuntimeChatSidebarTaskItems(
   workspaces: RuntimeDeviceWorkspace[] = []
 ): RuntimeSidebarTaskItem[] {
-  return getRuntimeSidebarTaskItems(workspaces.filter(isRuntimeChatWorkspace))
+  return getRuntimeSidebarTaskItems(workspaces.filter(isRuntimeChatWorkspace)).filter(
+    ({ task }) => !isProjectAutomationManagerRuntimeTask(task)
+  )
 }
 
 export function sortRuntimeTaskItems(items: RuntimeSidebarTaskItem[]) {
@@ -105,13 +123,35 @@ export function sortRuntimeTaskItems(items: RuntimeSidebarTaskItem[]) {
 
 export function getVisibleRuntimeSidebarTaskItems(
   items: RuntimeSidebarTaskItem[],
-  visibleLimit = RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+  visibleLimit = RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
+  alwaysVisibleTaskId?: string | null,
+  isAlwaysVisibleTask?: (item: RuntimeSidebarTaskItem) => boolean
 ) {
   const { pinnedItems, unpinnedItems } = partitionRuntimeSidebarTaskItems(items)
-  return [
-    ...pinnedItems,
-    ...unpinnedItems.slice(0, Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)),
-  ]
+  const visibleUnpinnedItems = unpinnedItems.slice(
+    0,
+    Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)
+  )
+  const mostRecentItem = unpinnedItems.reduce<RuntimeSidebarTaskItem | undefined>(
+    (latest, item) =>
+      !latest || getRuntimeTaskSortTime(item.task) > getRuntimeTaskSortTime(latest.task)
+        ? item
+        : latest,
+    undefined
+  )
+  const alwaysVisibleItems = unpinnedItems.filter(
+    item =>
+      item === mostRecentItem ||
+      item.task.taskId === alwaysVisibleTaskId ||
+      isAlwaysVisibleTask?.(item) ||
+      isRuntimeTaskQueued(item.task)
+  )
+  for (const item of alwaysVisibleItems) {
+    if (!visibleUnpinnedItems.some(visibleItem => visibleItem.task.taskId === item.task.taskId)) {
+      visibleUnpinnedItems.push(item)
+    }
+  }
+  return [...pinnedItems, ...visibleUnpinnedItems]
 }
 
 export function getNextRuntimeSidebarTaskVisibleLimit(currentLimit: number, totalCount: number) {

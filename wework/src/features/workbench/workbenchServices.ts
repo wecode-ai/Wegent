@@ -31,6 +31,7 @@ import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
 import type { Attachment, ProjectDeviceSessionResponse, User } from '@/types/api'
+import type { ModelOptions, ModelType } from '@/types/api'
 import type { DeviceSessionResponse } from '@/types/devices'
 import type {
   Automation,
@@ -50,6 +51,7 @@ import type {
 } from '@/features/local-harness/localHarnessModels'
 import type { LocalHarnessId } from '@/lib/local-harness'
 import type { createProjectAutomationApi } from '@/api/projectAutomations'
+import type { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
 
 export interface WorkspaceSessionApi {
   startProjectTerminal: (projectId: number) => Promise<ProjectDeviceSessionResponse>
@@ -67,6 +69,23 @@ export interface ProjectSpaceApis {
   local?: DeliveryApi
   cloud?: DeliveryApi
   defaultLocation: ProjectSpaceLocation
+}
+
+export interface ProjectSpaceDetailServices {
+  deliveryApi: DeliveryApi
+  projectChatClient?: ProjectChatClient
+  projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
+  projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
+  loopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
+  deviceApi: WorkbenchServices['deviceApi']
+  modelApi: WorkbenchServices['modelApi']
+  teamApi: WorkbenchServices['teamApi']
+}
+
+export interface ProjectSpaceDetailServiceMap {
+  local?: ProjectSpaceDetailServices
+  cloud?: ProjectSpaceDetailServices
 }
 
 export interface AutomationApi {
@@ -98,6 +117,8 @@ export interface WorkbenchServices {
   deviceApi: Pick<
     ReturnType<typeof createDeviceApi>,
     | 'listDevices'
+    | 'getRuntimeSettings'
+    | 'updateRuntimeSettings'
     | 'getHomeDirectory'
     | 'getProjectWorkspaceRoot'
     | 'listDirectories'
@@ -105,10 +126,10 @@ export interface WorkbenchServices {
     | 'executeCommand'
     | 'upgradeDevice'
     | 'listSkills'
-    | 'listWorkspaceEntries'
-    | 'readWorkspaceTextFile'
-    | 'readWorkspaceFileChunk'
   > & {
+    listWorkspaceEntries: WorkspaceFileApi['listWorkspaceEntries']
+    readWorkspaceTextFile: WorkspaceFileApi['readWorkspaceTextFile']
+    readWorkspaceFileChunk: NonNullable<WorkspaceFileApi['readWorkspaceFileChunk']>
     writeWorkspaceTextFile?: NonNullable<WorkspaceFileApi['writeWorkspaceTextFile']>
     createDockerRemoteDeviceCommand?: ReturnType<
       typeof createDeviceApi
@@ -120,12 +141,14 @@ export interface WorkbenchServices {
   dwsApi?: DwsApi
   externalIssueApi?: ExternalIssueApi
   projectSpaceApis?: ProjectSpaceApis
+  projectSpaceDetailServices?: ProjectSpaceDetailServiceMap
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
   automationApi?: AutomationApi
   attachmentApi?: {
     uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
     deleteAttachment?: (attachmentId: number) => Promise<void>
+    fetchAttachmentBlob?: (attachmentId: number) => Promise<Blob>
     uploadLocalAttachmentToCloud?: (attachment: Attachment) => Promise<Attachment>
   }
   executorClient?: ExecutorClient
@@ -135,6 +158,7 @@ export interface WorkbenchServices {
   localProjectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
+  projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
   localProjectChatAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>
   localLoopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
   localHarnessModelApi?: {
@@ -143,8 +167,18 @@ export interface WorkbenchServices {
       option: LocalHarnessModelOption | null
     ) => Promise<LocalHarnessModelLaunchConfig | null>
     unregisterProxy: (token: string) => Promise<void>
+    unregisterContext: (token: string) => Promise<void>
   }
   workspaceSessionApi?: WorkspaceSessionApi
+  branchNameApi?: {
+    generateBranchName: (data: {
+      sourceText: string
+      deviceId?: string | null
+      modelId: string
+      modelType?: ModelType | null
+      modelOptions?: ModelOptions
+    }) => Promise<string>
+  }
   chatStream: ReturnType<typeof createChatStream>
   cloudBackgroundApi?: {
     listTeams?: ReturnType<typeof createTeamApi>['listTeams']
@@ -229,6 +263,10 @@ export function createDefaultWorkbenchServices(
       local: localServices.deliveryApi,
       cloud: cloudProjectSpaceApi,
       defaultLocation: 'cloud',
+    },
+    projectSpaceDetailServices: {
+      local: localServices.projectSpaceDetailServices?.local,
+      cloud: cloudServices.projectSpaceDetailServices?.cloud,
     },
   }
 }

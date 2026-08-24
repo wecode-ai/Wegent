@@ -35,6 +35,8 @@ import { failureText } from './failureText'
 interface RunHistoryProps {
   knowledgeBaseId: number
   status: CodeWikiRunStatus | null
+  /** Reload reader data after a past version becomes live again. */
+  onRepublished?: () => void | Promise<void>
 }
 
 /** What the chip says before anyone opens it. */
@@ -96,7 +98,7 @@ function RunRow({
 }: {
   run: CodeWikiRunRecord
   knowledgeBaseId: number
-  onRepublished: () => void
+  onRepublished: () => void | Promise<void>
 }) {
   const { t } = useTranslation('knowledge')
   const when = formatRelativeTime(run.started_at, t)
@@ -112,8 +114,10 @@ function RunRow({
     setWorking(true)
     try {
       await codeWikiApi.republish(knowledgeBaseId, run.generation_id)
-      toast.success(t('codeWiki.history.republished'))
-      onRepublished()
+      await onRepublished()
+      toast.success(t('codeWiki.history.republished'), {
+        description: t('codeWiki.history.republishedDescription'),
+      })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
     } finally {
@@ -251,7 +255,7 @@ function RunRow({
  * Fetched when opened, not polled. The status chip beside it is already live, and
  * repeating a list of finished runs every few seconds would tell nobody anything.
  */
-export function RunHistory({ knowledgeBaseId, status }: RunHistoryProps) {
+export function RunHistory({ knowledgeBaseId, status, onRepublished }: RunHistoryProps) {
   const { t } = useTranslation('knowledge')
   const [runs, setRuns] = useState<CodeWikiRunRecord[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -268,6 +272,11 @@ export function RunHistory({ knowledgeBaseId, status }: RunHistoryProps) {
       setLoading(false)
     }
   }, [knowledgeBaseId])
+
+  const handleRepublished = useCallback(async () => {
+    await load()
+    await onRepublished?.()
+  }, [load, onRepublished])
 
   return (
     <Popover
@@ -301,7 +310,7 @@ export function RunHistory({ knowledgeBaseId, status }: RunHistoryProps) {
                 key={run.generation_id}
                 run={run}
                 knowledgeBaseId={knowledgeBaseId}
-                onRepublished={load}
+                onRepublished={handleRepublished}
               />
             ))}
           </ul>

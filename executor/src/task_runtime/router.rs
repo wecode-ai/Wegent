@@ -5,11 +5,11 @@
 use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
     issue_provider::IssueProvider, store::task_provider, BinaryInput, ChatAgent, ChatAgentCreate,
-    ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, IssueComment,
-    LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim, LocalTaskStore,
-    LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate, RuntimeTaskAddress,
-    TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError,
-    TaskUpdate,
+    ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, DeliveryFinalize,
+    IssueComment, LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim,
+    LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate,
+    RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
+    TaskRuntimeError, TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -205,6 +205,15 @@ impl TaskRuntime {
 
     pub async fn dws_auth_logout(&self) -> Result<(), TaskRuntimeError> {
         self.aitable_provider.auth_logout().await
+    }
+
+    pub fn dws_read_fallback(
+        &self,
+        project_id: &str,
+        task_id: &str,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider.fallback_descriptor(&project, task_id)
     }
 
     pub async fn aitable_describe(
@@ -532,9 +541,17 @@ impl TaskRuntime {
                 self.local_store
                     .bind_task(project_id, None, Some(item_id), input)
             }
-            (TaskProviderKind::Github | TaskProviderKind::Gitlab, None) => {
-                self.local_store.bind_task(project_id, None, None, input)
+            (TaskProviderKind::DingtalkAitable, Some(item_id)) => {
+                self.aitable_provider.get_board(&project, item_id).await?;
+                self.local_store
+                    .bind_task(project_id, None, Some(item_id), input)
             }
+            (
+                TaskProviderKind::Github
+                | TaskProviderKind::Gitlab
+                | TaskProviderKind::DingtalkAitable,
+                None,
+            ) => self.local_store.bind_task(project_id, None, None, input),
             (provider, _) => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?} bindings"
             ))),
@@ -543,6 +560,13 @@ impl TaskRuntime {
 
     pub fn list_task_bindings(&self, item_id: &str) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
         self.local_store.list_task_bindings(item_id)
+    }
+
+    pub fn list_task_bindings_batch(
+        &self,
+        item_ids: &[String],
+    ) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
+        self.local_store.list_task_bindings_batch(item_ids)
     }
 
     pub fn list_chat_agents(&self, project_id: &str) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
@@ -634,6 +658,14 @@ impl TaskRuntime {
         self.local_store.reject_execution(execution_id, reason)
     }
 
+    pub fn cancel_execution(
+        &self,
+        execution_id: i64,
+        note: Option<&str>,
+    ) -> Result<LocalExecution, TaskRuntimeError> {
+        self.local_store.cancel_execution(execution_id, note)
+    }
+
     pub fn claim_next_local_execution(
         &self,
         claim: LocalExecutionClaim,
@@ -656,6 +688,51 @@ impl TaskRuntime {
         )
     }
 
+    pub fn request_runtime_start(
+        &self,
+        execution_id: i64,
+        runtime_device_id: &str,
+        runtime_task_id: &str,
+        lease_seconds: u64,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.request_runtime_start(
+            execution_id,
+            runtime_device_id,
+            runtime_task_id,
+            lease_seconds,
+        )
+    }
+
+    pub fn confirm_runtime_accepted(
+        &self,
+        execution_id: i64,
+        runtime_device_id: &str,
+        runtime_task_id: &str,
+        lease_seconds: u64,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.confirm_runtime_accepted(
+            execution_id,
+            runtime_device_id,
+            runtime_task_id,
+            lease_seconds,
+        )
+    }
+
+    pub fn mark_runtime_dispatch_unknown(
+        &self,
+        execution_id: i64,
+        runtime_device_id: &str,
+        runtime_task_id: &str,
+        error: &str,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.mark_runtime_dispatch_unknown(
+            execution_id,
+            runtime_device_id,
+            runtime_task_id,
+            error,
+        )
+    }
+
     pub fn complete_execution(
         &self,
         execution_id: i64,
@@ -674,8 +751,35 @@ impl TaskRuntime {
             .fail_execution(execution_id, error, requeue)
     }
 
+    pub fn fail_runtime_preflight(
+        &self,
+        execution_id: i64,
+        error: &str,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.fail_runtime_preflight(execution_id, error)
+    }
+
     pub fn recover_stale_local_executions(&self) -> Result<(u64, u64), TaskRuntimeError> {
         self.local_store.recover_stale_local_executions()
+    }
+
+    pub fn stale_local_executions(&self) -> Result<Vec<LocalExecution>, TaskRuntimeError> {
+        self.local_store.stale_local_executions()
+    }
+
+    pub fn reconcile_execution_snapshot(
+        &self,
+        execution_id: i64,
+        runtime_status: &str,
+        running: bool,
+        turn_status: Option<&str>,
+    ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
+        self.local_store.reconcile_execution_snapshot(
+            execution_id,
+            runtime_status,
+            running,
+            turn_status,
+        )
     }
 
     pub fn find_task_binding(
@@ -686,8 +790,30 @@ impl TaskRuntime {
         self.local_store.find_task_binding(device_id, task_id)
     }
 
-    pub fn unbind_task(&self, device_id: &str, task_id: &str) -> Result<(), TaskRuntimeError> {
-        self.local_store.unbind_task(device_id, task_id)
+    pub fn find_system_task_binding(
+        &self,
+        device_id: &str,
+        task_id: &str,
+    ) -> Result<TaskBinding, TaskRuntimeError> {
+        self.local_store
+            .find_system_task_binding(device_id, task_id)
+    }
+
+    pub fn find_user_task_binding(
+        &self,
+        device_id: &str,
+        task_id: &str,
+    ) -> Result<TaskBinding, TaskRuntimeError> {
+        self.local_store.find_user_task_binding(device_id, task_id)
+    }
+
+    pub fn unbind_task(
+        &self,
+        device_id: &str,
+        task_id: &str,
+        item_id: Option<&str>,
+    ) -> Result<(), TaskRuntimeError> {
+        self.local_store.unbind_task(device_id, task_id, item_id)
     }
 
     pub fn list_project_files(
@@ -857,8 +983,10 @@ impl TaskRuntime {
         &self,
         item_id: &str,
         delivery_id: &str,
+        input: DeliveryFinalize,
     ) -> Result<Delivery, TaskRuntimeError> {
-        self.local_store.finalize_delivery(item_id, delivery_id)
+        self.local_store
+            .finalize_delivery(item_id, delivery_id, input)
     }
 
     pub fn discard_delivery(&self, delivery_id: &str) -> Result<(), TaskRuntimeError> {
@@ -1356,6 +1484,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: Some("GH-7".to_owned()),
                     tags: vec!["bug".to_owned()],
+                    workflow: None,
                 },
             )
             .await
@@ -1458,6 +1587,7 @@ mod tests {
                     priority: "none".to_owned(),
                     parent_id: Some("GL-9".to_owned()),
                     tags: vec!["delivery".to_owned()],
+                    workflow: None,
                 },
             )
             .await
@@ -1680,6 +1810,131 @@ mod tests {
         let result = runtime.aitable_create_record(&project.id, cells).await;
 
         assert!(matches!(result, Err(TaskRuntimeError::ProviderRequest(_))));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reads_bound_aitable_record_and_primary_document_through_task_interface() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = aitable_project(&store);
+        let mut runtime = TaskRuntime::new(store).unwrap();
+        let dws = directory.path().join("dws");
+        std::fs::write(
+            &dws,
+            r#"#!/bin/sh
+case "$*" in
+  *"field get"*) printf '%s\n' '{"success":true,"result":[{"fieldId":"fld_title","name":"标题"},{"fieldId":"fld_status","name":"状态"}]}' ;;
+  *"record query"*) printf '%s\n' '{"success":true,"result":[{"recordId":"record-1","cells":{"fld_title":"新模型接入","fld_status":"测试","owner":"刘亚飞"}}]}' ;;
+  *"get-primary-doc-id"*) printf '%s\n' '{"success":true,"result":{"dentryUuid":"doc-1"}}' ;;
+  *"doc read"*) printf '%s\n' '{"success":true,"result":{"markdown":"seedance2.0 mini\n千问3.8Max\nwan3.0"}}' ;;
+  *) printf '%s\n' '{"success":false,"error":{"message":"unexpected command"}}'; exit 1 ;;
+esac
+"#,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&dws).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&dws, permissions).unwrap();
+        runtime.aitable_provider.set_binary(dws);
+
+        let item = runtime
+            .get_task(&project.id, "aitable:AIT:record-1")
+            .await
+            .unwrap();
+
+        assert_eq!(item.title.as_deref(), Some("新模型接入"));
+        assert_eq!(item.metadata["source_cells"]["owner"], "刘亚飞");
+        assert_eq!(item.metadata["primary_document"]["available"], true);
+        assert_eq!(
+            item.metadata["primary_document"]["content"]["result"]["markdown"],
+            "seedance2.0 mini\n千问3.8Max\nwan3.0"
+        );
+        let fallback = runtime
+            .dws_read_fallback(&project.id, "aitable:AIT:record-1")
+            .unwrap();
+        assert_eq!(
+            fallback["binary_path"],
+            directory.path().join("dws").display().to_string()
+        );
+        assert_eq!(fallback["record_id"], "record-1");
+        assert_eq!(fallback["environment"]["DWS_DISABLE_KEYCHAIN"], "1");
+        assert_eq!(fallback["commands"][0][0], "aitable");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn backend_aitable_task_binding_validates_and_persists_the_external_record() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .configure_external_project(ProjectDescriptor {
+                id: "cloud-aitable-1".to_owned(),
+                public_id: Some("public-aitable-1".to_owned()),
+                project_key: "AIT".to_owned(),
+                name: "AI Table".to_owned(),
+                description: String::new(),
+                project_store: ProjectStoreKind::Backend,
+                task_provider: TaskProviderKind::DingtalkAitable,
+                provider_config: json!({
+                    "base_id": "base-1",
+                    "table_id": "table-1",
+                    "board_mapping": {
+                        "title_field_id": "fld_title",
+                        "status_field_id": "fld_status"
+                    }
+                }),
+                version: 1,
+            })
+            .unwrap();
+        let mut runtime = TaskRuntime::new(store).unwrap();
+        let dws = directory.path().join("dws");
+        std::fs::write(
+            &dws,
+            r#"#!/bin/sh
+case "$*" in
+  *"field get"*) printf '%s\n' '{"success":true,"result":[]}' ;;
+  *"record query"*) printf '%s\n' '{"success":true,"result":[{"recordId":"record-1","cells":{"fld_title":"AI Table task","fld_status":"待处理"}}]}' ;;
+  *) printf '%s\n' '{"success":false,"error":{"message":"unexpected command"}}'; exit 1 ;;
+esac
+"#,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&dws).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&dws, permissions).unwrap();
+        runtime.aitable_provider.set_binary(dws);
+
+        let binding = runtime
+            .bind_task(
+                &project.id,
+                Some("aitable:AIT:record-1"),
+                RuntimeTaskAddress {
+                    device_id: "device-1".to_owned(),
+                    task_id: "runtime-1".to_owned(),
+                    task_title: Some("AI Table task".to_owned()),
+                    backend_task_id: None,
+                    workflow_node_id: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            binding.loop_item_id.as_deref(),
+            Some("aitable:AIT:record-1")
+        );
+        assert_eq!(
+            runtime
+                .list_task_bindings("aitable:AIT:record-1")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

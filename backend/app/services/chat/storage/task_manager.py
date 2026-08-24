@@ -712,6 +712,7 @@ async def create_task_and_subtasks(
     task_id: Optional[int] = None,
     should_trigger_ai: bool = True,
     rag_prompt: Optional[str] = None,
+    commit: bool = True,
 ) -> TaskCreationResult:
     """
     Create or get task and create subtasks for chat.
@@ -729,6 +730,8 @@ async def create_task_and_subtasks(
         should_trigger_ai: If True, create both USER and ASSISTANT subtasks.
                           If False, only create USER subtask (for group chat without @mention)
         rag_prompt: Optional RAG-enhanced prompt (for AI inference, not stored in subtask)
+        commit: Commit the created Task and subtasks. Transactional callers may
+                defer the commit to atomically persist their own binding fields.
 
     Returns:
         TaskCreationResult with task and subtask information
@@ -791,6 +794,7 @@ async def create_task_and_subtasks(
         video_config=video_config,
         image_config=image_config,
         prepared_task=prepared_task,
+        commit=commit,
     )
     task = session.task
     task_id = session.task_id
@@ -815,7 +819,10 @@ async def create_task_and_subtasks(
                 f"(no AI triggered for group chat message)"
             )
 
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(task)
     if assistant_subtask:
         db.refresh(assistant_subtask)
@@ -928,6 +935,7 @@ async def create_chat_task(
     should_trigger_ai: bool = True,
     rag_prompt: Optional[str] = None,
     source: str = "web",
+    commit: bool = True,
 ) -> TaskCreationResult:
     """
     Unified chat task creation entry point.
@@ -966,6 +974,7 @@ async def create_chat_task(
         task_id=task_id,
         should_trigger_ai=should_trigger_ai,
         rag_prompt=rag_prompt,
+        commit=commit,
     )
     logger.debug(
         f"[create_chat_task] Task created: task_id={result.task.id if result.task else None}"

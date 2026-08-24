@@ -57,6 +57,24 @@ const RATE_LIMIT_RETRY_DELAYS: [Duration; 5] = [
 const MAX_RATE_LIMIT_RETRIES: u32 = RATE_LIMIT_RETRY_DELAYS.len() as u32;
 const MAX_RATE_LIMIT_RETRY_DELAY: Duration = Duration::from_secs(60);
 const LOCAL_MODEL_PROXY_REQUEST_TIMEOUT_SECONDS: u64 = 300;
+const FORWARDED_CODEX_REQUEST_HEADERS: [&str; 16] = [
+    "user-agent",
+    "originator",
+    "session-id",
+    "thread-id",
+    "x-client-request-id",
+    "x-codex-installation-id",
+    "x-codex-turn-state",
+    "x-codex-turn-metadata",
+    "x-codex-parent-thread-id",
+    "x-codex-window-id",
+    "x-codex-beta-features",
+    "x-openai-subagent",
+    "x-openai-memgen-request",
+    "x-openai-internal-codex-responses-lite",
+    "openai-beta",
+    "x-responsesapi-include-timing-metrics",
+];
 
 pub(crate) fn route<S>() -> MethodRouter<S>
 where
@@ -95,7 +113,8 @@ pub(crate) struct LocalModelProxyUpstream {
     pub max_output_tokens: Option<u64>,
 }
 
-pub(crate) fn register_harness(route_scope: &str, upstream: LocalModelProxyUpstream) -> String {
+pub(crate) fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream) -> String {
+    upstream.api_format = canonical_upstream_api_format(&upstream.api_format);
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
@@ -151,6 +170,15 @@ impl LocalModelProxyUpstream {
     }
 }
 
+fn canonical_upstream_api_format(api_format: &str) -> String {
+    match api_format.trim().to_ascii_lowercase().as_str() {
+        "responses" | "openai-responses" => "openai-responses".to_owned(),
+        "chat/completions" | "openai-chat-completions" => "openai-chat-completions".to_owned(),
+        "messages" | "anthropic-messages" => "anthropic-messages".to_owned(),
+        _ => api_format.trim().to_owned(),
+    }
+}
+
 pub(crate) fn upstream_from_model_config(model_config: &Value) -> Option<LocalModelProxyUpstream> {
     let base_url = non_empty_string(model_config, "base_url")
         .or_else(|| non_empty_string(model_config, "baseUrl"))?;
@@ -164,10 +192,12 @@ pub(crate) fn upstream_from_model_config(model_config: &Value) -> Option<LocalMo
             .or_else(|| non_empty_string(model_config, "responsesUrl"))
             .or_else(|| non_empty_string(model_config, "request_url"))
             .or_else(|| non_empty_string(model_config, "requestUrl")),
-        api_format: non_empty_string(model_config, "upstream_api_format")
-            .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
-            .or_else(|| non_empty_string(model_config, "api_format"))
-            .unwrap_or_else(|| "openai-responses".to_owned()),
+        api_format: canonical_upstream_api_format(
+            &non_empty_string(model_config, "upstream_api_format")
+                .or_else(|| non_empty_string(model_config, "upstreamApiFormat"))
+                .or_else(|| non_empty_string(model_config, "api_format"))
+                .unwrap_or_else(|| "openai-responses".to_owned()),
+        ),
         convert_custom_tools: non_empty_string(model_config, "tool_profile")
             .or_else(|| non_empty_string(model_config, "toolProfile"))
             .is_some_and(|profile| profile.eq_ignore_ascii_case("function")),
@@ -265,9 +295,10 @@ pub(crate) fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> 
 
 pub(crate) fn register_with_vision_sidecar(
     route_scope: &str,
-    upstream: LocalModelProxyUpstream,
+    mut upstream: LocalModelProxyUpstream,
     vision_sidecar: Option<VisionSidecarUpstream>,
 ) -> String {
+    upstream.api_format = canonical_upstream_api_format(&upstream.api_format);
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
@@ -493,16 +524,13 @@ async fn handle_harness_messages(
             ("body_bytes", request_body.len().to_string()),
         ],
     );
-    let user_agent = headers
-        .get(header::USER_AGENT)
-        .and_then(|value| value.to_str().ok());
     let client = proxy_client(upstream.proxy_url.as_deref())?;
     let upstream_response = send_upstream_request_with_rate_limit_retry(
         &client,
         &upstream,
         &request_url,
         &request_body,
-        user_agent,
+        &headers,
     )
     .await?;
     let status = upstream_response.status();
@@ -658,8 +686,13 @@ async fn handle_for_token(
     };
     let request_body =
         prepare_model_switch_request(&upstream, request_body, model_routing.model_switched)?;
-    let request_body =
-        vision::replace_images_with_descriptions(vision_sidecar.as_ref(), &request_body).await?;
+    let conversation_id = request_thread_identity(&request_body).map(|identity| identity.thread_id);
+    let request_body = vision::replace_images_with_descriptions(
+        vision_sidecar.as_ref(),
+        conversation_id.as_deref(),
+        &request_body,
+    )
+    .await?;
     let (request_body, conversion, expanded_browser_tools) = prepare_request_with_history(
         &upstream.api_format,
         upstream.responses_tool_capabilities(),
@@ -676,10 +709,23 @@ async fn handle_for_token(
         ("upstream", safe_url(&request_url)),
         ("body_bytes", request_body.len().to_string()),
         (
+            "convert_custom_tools",
+            upstream.convert_custom_tools.to_string(),
+        ),
+        (
+            "native_tool_search",
+            upstream.native_tool_search.to_string(),
+        ),
+        (
+            "native_namespace_tools",
+            upstream.native_namespace_tools.to_string(),
+        ),
+        (
             "expanded_browser_tools",
             expanded_browser_tools.len().to_string(),
         ),
     ];
+    request_log_fields.extend(request_tool_diagnostic_fields(&request_body));
     if let Some(parent_thread_id) = forked_from_thread_id {
         request_log_fields.extend([
             ("forked_from_thread_id", parent_thread_id),
@@ -691,17 +737,13 @@ async fn handle_for_token(
     }
     log_executor_event("local model proxy request started", &request_log_fields);
 
-    let user_agent = headers
-        .get(header::USER_AGENT)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
     let client = proxy_client(upstream.proxy_url.as_deref())?;
     let upstream_response = send_upstream_request_with_rate_limit_retry(
         &client,
         &upstream,
         &request_url,
         &request_body,
-        user_agent.as_deref(),
+        &headers,
     )
     .await?;
     let status = upstream_response.status();
@@ -748,9 +790,8 @@ async fn handle_for_token(
         }
         return Ok(response);
     }
-    if !content_type
-        .as_deref()
-        .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+    if upstream.api_format != "openai-responses"
+        && !is_event_stream_content_type(content_type.as_deref())
     {
         let response_body = upstream_response.bytes().await.map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
@@ -873,6 +914,129 @@ async fn handle_for_token(
         response.headers_mut().insert(header::CONTENT_TYPE, value);
     }
     Ok(response)
+}
+
+fn request_tool_diagnostic_fields(body: &[u8]) -> Vec<(&'static str, String)> {
+    let Ok(request) = serde_json::from_slice::<Value>(body) else {
+        return vec![("tool_payload_parse_ok", "false".to_owned())];
+    };
+    let tools = request
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut namespace_names = HashSet::new();
+    let mut relevant_tool_names = HashSet::new();
+    let mut tool_search_present = false;
+    for tool in tools {
+        collect_tool_diagnostics(
+            tool,
+            &mut namespace_names,
+            &mut relevant_tool_names,
+            &mut tool_search_present,
+        );
+    }
+    let mut namespace_names = namespace_names.into_iter().collect::<Vec<_>>();
+    namespace_names.sort();
+    let mut relevant_tool_names = relevant_tool_names.into_iter().collect::<Vec<_>>();
+    relevant_tool_names.sort();
+    let tool_search = tools.iter().find(|tool| {
+        let tool_type = tool.get("type").and_then(Value::as_str);
+        let name = tool
+            .get("name")
+            .and_then(Value::as_str)
+            .or_else(|| tool.pointer("/function/name").and_then(Value::as_str));
+        tool_type == Some("tool_search")
+            || matches!(name, Some("tool_search"))
+            || name == Some(chat::BRIDGED_TOOL_SEARCH_NAME)
+    });
+    let tool_search_wire_name = tool_search
+        .and_then(|tool| {
+            tool.get("name")
+                .and_then(Value::as_str)
+                .or_else(|| tool.pointer("/function/name").and_then(Value::as_str))
+        })
+        .unwrap_or(if tool_search_present { "native" } else { "" });
+    let tool_search_description_present = tool_search.is_some_and(|tool| {
+        tool.get("description")
+            .or_else(|| tool.pointer("/function/description"))
+            .and_then(Value::as_str)
+            .is_some_and(|description| !description.trim().is_empty())
+    });
+    let mut tool_search_parameter_names = tool_search
+        .and_then(|tool| {
+            tool.get("parameters")
+                .or_else(|| tool.pointer("/function/parameters"))
+        })
+        .and_then(|parameters| parameters.get("properties"))
+        .and_then(Value::as_object)
+        .map(|properties| properties.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    tool_search_parameter_names.sort();
+    vec![
+        ("tool_payload_parse_ok", "true".to_owned()),
+        ("tool_count", tools.len().to_string()),
+        ("namespace_names", namespace_names.join(",")),
+        ("wework_tool_names", relevant_tool_names.join(",")),
+        ("tool_search_present", tool_search_present.to_string()),
+        ("tool_search_wire_name", tool_search_wire_name.to_owned()),
+        (
+            "tool_search_description_present",
+            tool_search_description_present.to_string(),
+        ),
+        (
+            "tool_search_parameter_names",
+            tool_search_parameter_names.join(","),
+        ),
+    ]
+}
+
+fn collect_tool_diagnostics(
+    tool: &Value,
+    namespace_names: &mut HashSet<String>,
+    relevant_tool_names: &mut HashSet<String>,
+    tool_search_present: &mut bool,
+) {
+    let tool_type = tool.get("type").and_then(Value::as_str).unwrap_or_default();
+    let name = tool
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| tool.pointer("/function/name").and_then(Value::as_str));
+    if tool_type == "namespace" {
+        if let Some(name) = name {
+            namespace_names.insert(name.to_owned());
+        }
+        for nested in tool
+            .get("tools")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            collect_tool_diagnostics(
+                nested,
+                namespace_names,
+                relevant_tool_names,
+                tool_search_present,
+            );
+        }
+    }
+    if tool_type == "tool_search"
+        || name == Some("tool_search")
+        || name == Some(chat::BRIDGED_TOOL_SEARCH_NAME)
+    {
+        *tool_search_present = true;
+    }
+    if let Some(name) = name.filter(|name| is_wework_space_tool_name(name)) {
+        relevant_tool_names.insert(name.to_owned());
+    }
+}
+
+fn is_wework_space_tool_name(name: &str) -> bool {
+    name.contains("wework_space")
+        || matches!(
+            name,
+            "get_board_item" | "get_assignment_candidates" | "assign_board_item"
+        )
 }
 
 fn requested_model(body: &[u8]) -> Option<String> {
@@ -1280,9 +1444,9 @@ fn prepare_request_with_model_hint(
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
     normalize_responses_request_ids(&mut responses_body);
-    apply_default_max_output_tokens(&mut responses_body, max_output_tokens);
 
     if api_format == "openai-responses" {
+        apply_configured_max_output_tokens(&mut responses_body, max_output_tokens);
         let (converted, context) = chat::responses_to_responses(
             &responses_body,
             tool_capabilities.convert_custom_tools,
@@ -1302,6 +1466,7 @@ fn prepare_request_with_model_hint(
         })?;
         return Ok((body, conversion, expanded_browser_tools));
     }
+    apply_default_max_output_tokens(&mut responses_body, max_output_tokens);
     let (converted, context) = match api_format {
         "openai-chat-completions" => {
             chat::responses_to_chat_with_model_hint(&responses_body, model_hint)
@@ -1322,7 +1487,18 @@ fn prepare_request_with_model_hint(
     Ok((body, Some(context), HashSet::new()))
 }
 
+fn apply_configured_max_output_tokens(body: &mut Value, max_output_tokens: Option<u64>) {
+    let Some(max_output_tokens) = max_output_tokens else {
+        return;
+    };
+    apply_max_output_tokens(body, max_output_tokens);
+}
+
 fn apply_default_max_output_tokens(body: &mut Value, max_output_tokens: Option<u64>) {
+    apply_max_output_tokens(body, max_output_tokens.unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS));
+}
+
+fn apply_max_output_tokens(body: &mut Value, max_output_tokens: u64) {
     let Some(object) = body.as_object_mut() else {
         return;
     };
@@ -1334,11 +1510,7 @@ fn apply_default_max_output_tokens(body: &mut Value, max_output_tokens: Option<u
     }
     object.insert(
         "max_output_tokens".to_owned(),
-        Value::Number(
-            max_output_tokens
-                .unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS)
-                .into(),
-        ),
+        Value::Number(max_output_tokens.into()),
     );
 }
 
@@ -1482,17 +1654,22 @@ async fn send_upstream_request_with_rate_limit_retry(
     upstream: &LocalModelProxyUpstream,
     request_url: &str,
     request_body: &[u8],
-    user_agent: Option<&str>,
+    incoming_headers: &HeaderMap,
 ) -> Result<reqwest::Response, HttpError> {
     for retry_count in 0..=MAX_RATE_LIMIT_RETRIES {
-        let response =
-            build_upstream_request(client, upstream, request_url, request_body, user_agent)
-                .send()
-                .await
-                .map_err(|error| HttpError {
-                    status: StatusCode::BAD_GATEWAY,
-                    detail: format!("Local model proxy request failed: {error}"),
-                })?;
+        let response = build_upstream_request(
+            client,
+            upstream,
+            request_url,
+            request_body,
+            incoming_headers,
+        )
+        .send()
+        .await
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Local model proxy request failed: {error}"),
+        })?;
         if response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
             || retry_count == MAX_RATE_LIMIT_RETRIES
         {
@@ -1520,7 +1697,7 @@ fn build_upstream_request(
     upstream: &LocalModelProxyUpstream,
     request_url: &str,
     request_body: &[u8],
-    user_agent: Option<&str>,
+    incoming_headers: &HeaderMap,
 ) -> reqwest::RequestBuilder {
     let mut request = client
         .post(request_url)
@@ -1533,8 +1710,10 @@ fn build_upstream_request(
             .header("x-api-key", &upstream.api_key)
             .header("anthropic-version", "2023-06-01");
     }
-    if let Some(user_agent) = user_agent {
-        request = request.header(reqwest::header::USER_AGENT, user_agent);
+    for name in FORWARDED_CODEX_REQUEST_HEADERS {
+        if let Some(value) = incoming_headers.get(name) {
+            request = request.header(name, value);
+        }
     }
     for (key, value) in &upstream.default_headers {
         request = request.header(key, value);
@@ -1552,6 +1731,10 @@ fn detect_upstream_error_code(response_body: &[u8]) -> Option<String> {
     .into_iter()
     .find(|code| text.contains(code))
     .map(str::to_owned)
+}
+
+fn is_event_stream_content_type(content_type: Option<&str>) -> bool {
+    content_type.is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
 }
 
 fn rate_limit_retry_delay(headers: &reqwest::header::HeaderMap, retry_count: u32) -> Duration {
@@ -2023,6 +2206,144 @@ fn ensure_usage_detail(usage: &mut Map<String, Value>, details_key: &str, field:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upstream_request_preserves_codex_headers_without_forwarding_proxy_credentials() {
+        let upstream = LocalModelProxyUpstream {
+            base_url: "https://example.com/v1".to_owned(),
+            request_url: None,
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            native_tool_search: true,
+            native_namespace_tools: true,
+            api_key: "upstream-secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: Some("gpt-5.6-sol".to_owned()),
+            routing_model_id: None,
+            max_output_tokens: None,
+        };
+        let mut incoming_headers = HeaderMap::new();
+        incoming_headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer local-router-secret"),
+        );
+        incoming_headers.insert(header::COOKIE, HeaderValue::from_static("session=secret"));
+        incoming_headers.insert(
+            header::USER_AGENT,
+            HeaderValue::from_static("codex-cli-test"),
+        );
+        incoming_headers.insert("originator", HeaderValue::from_static("codex_cli_rs"));
+        incoming_headers.insert("session-id", HeaderValue::from_static("session-123"));
+        incoming_headers.insert("thread-id", HeaderValue::from_static("thread-123"));
+        incoming_headers.insert(
+            "x-client-request-id",
+            HeaderValue::from_static("thread-123"),
+        );
+        incoming_headers.insert(
+            "x-codex-turn-metadata",
+            HeaderValue::from_static("{\"turn_id\":\"turn-123\"}"),
+        );
+        incoming_headers.insert(
+            "x-oai-attestation",
+            HeaderValue::from_static("private-attestation"),
+        );
+
+        let request = build_upstream_request(
+            &reqwest::Client::new(),
+            &upstream,
+            "https://example.com/v1/responses",
+            br#"{"model":"gpt-5.6-sol"}"#,
+            &incoming_headers,
+        )
+        .build()
+        .expect("upstream request");
+
+        assert_eq!(
+            request.headers().get(header::AUTHORIZATION),
+            Some(&HeaderValue::from_static("Bearer upstream-secret"))
+        );
+        assert_eq!(
+            request.headers().get(header::USER_AGENT),
+            Some(&HeaderValue::from_static("codex-cli-test"))
+        );
+        assert_eq!(
+            request.headers().get("originator"),
+            Some(&HeaderValue::from_static("codex_cli_rs"))
+        );
+        assert_eq!(
+            request.headers().get("session-id"),
+            Some(&HeaderValue::from_static("session-123"))
+        );
+        assert_eq!(
+            request.headers().get("thread-id"),
+            Some(&HeaderValue::from_static("thread-123"))
+        );
+        assert_eq!(
+            request.headers().get("x-client-request-id"),
+            Some(&HeaderValue::from_static("thread-123"))
+        );
+        assert_eq!(
+            request.headers().get("x-codex-turn-metadata"),
+            Some(&HeaderValue::from_static("{\"turn_id\":\"turn-123\"}"))
+        );
+        assert!(!request.headers().contains_key(header::COOKIE));
+        assert!(!request.headers().contains_key("x-oai-attestation"));
+    }
+
+    #[test]
+    fn tool_diagnostics_find_wework_tools_without_logging_schema_values() {
+        let body = serde_json::to_vec(&json!({
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "wework_space",
+                    "description": "secret-description",
+                    "tools": [
+                        {"type": "function", "name": "get_board_item"},
+                        {"type": "function", "name": "assign_board_item"}
+                    ]
+                },
+                {"type": "tool_search", "execution": "client"}
+            ]
+        }))
+        .unwrap();
+
+        let fields = request_tool_diagnostic_fields(&body)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(fields["tool_count"], "2");
+        assert_eq!(fields["namespace_names"], "wework_space");
+        assert_eq!(
+            fields["wework_tool_names"],
+            "assign_board_item,get_board_item,wework_space"
+        );
+        assert_eq!(fields["tool_search_present"], "true");
+        assert_eq!(fields["tool_search_wire_name"], "native");
+        assert_eq!(fields["tool_search_description_present"], "false");
+        assert_eq!(fields["tool_search_parameter_names"], "");
+        assert!(!fields
+            .values()
+            .any(|value| value.contains("secret-description")));
+    }
+
+    #[test]
+    fn normalizes_provider_api_format_aliases_before_proxy_registration() {
+        for (configured, expected) in [
+            ("responses", "openai-responses"),
+            ("chat/completions", "openai-chat-completions"),
+            ("messages", "anthropic-messages"),
+        ] {
+            let upstream = upstream_from_model_config(&json!({
+                "base_url": "https://example.com",
+                "upstream_api_format": configured
+            }))
+            .expect("model config should produce an upstream");
+
+            assert_eq!(upstream.api_format, expected);
+        }
+    }
     use std::{
         env, fs,
         sync::{
@@ -2581,6 +2902,36 @@ mod tests {
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
 
         assert_eq!(prepared["max_tokens"], 96_000);
+    }
+
+    #[test]
+    fn native_responses_do_not_add_max_output_tokens_by_default() {
+        let body = serde_json::to_vec(&json!({
+            "model": "gpt-5.6-sol",
+            "input": [{"role": "user", "content": "finish the task"}]
+        }))
+        .expect("request body");
+
+        let (prepared, _, _) =
+            prepare_request("openai-responses", false, None, &body).expect("Responses request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert!(prepared.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn native_responses_add_configured_max_output_tokens() {
+        let body = serde_json::to_vec(&json!({
+            "model": "gpt-5.6-sol",
+            "input": [{"role": "user", "content": "finish the task"}]
+        }))
+        .expect("request body");
+
+        let (prepared, _, _) = prepare_request("openai-responses", false, Some(12_345), &body)
+            .expect("Responses request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert_eq!(prepared["max_output_tokens"], 12_345);
     }
 
     #[test]
@@ -3694,7 +4045,7 @@ mod tests {
                                 )
                             } else {
                                 concat!(
-                                    "data: {\"id\":\"chatcmpl-search\",\"model\":\"third-party-chat\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"search_1\",\"type\":\"function\",\"function\":{\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                                    "data: {\"id\":\"chatcmpl-search\",\"model\":\"third-party-chat\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"search_1\",\"type\":\"function\",\"function\":{\"name\":\"search_deferred_tools\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
                                     "data: [DONE]\n\n"
                                 )
                             };
@@ -3747,7 +4098,10 @@ mod tests {
             serde_json::to_vec(first_tools).expect("serialize first-turn tools");
 
         assert_eq!(first_tools.len(), 1);
-        assert_eq!(first_tools[0]["function"]["name"], "tool_search");
+        assert_eq!(
+            first_tools[0]["function"]["name"],
+            chat::BRIDGED_TOOL_SEARCH_NAME
+        );
         assert!(
             first_tools_bytes.len() < 1_024,
             "deferred App discovery must keep the first-turn tool payload compact: {} bytes",
@@ -3789,7 +4143,8 @@ mod tests {
 
         assert_eq!(second_tools.len(), 2);
         assert!(second_tools.iter().any(|tool| {
-            tool.pointer("/function/name").and_then(Value::as_str) == Some("tool_search")
+            tool.pointer("/function/name").and_then(Value::as_str)
+                == Some(chat::BRIDGED_TOOL_SEARCH_NAME)
         }));
         assert!(second_tools.iter().any(|tool| {
             tool.pointer("/function/name").and_then(Value::as_str) == Some("github__create_issue")
@@ -3904,9 +4259,9 @@ mod tests {
                             } else {
                                 concat!(
                                     "event: response.output_item.done\n",
-                                    "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}\n\n",
+                                    "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"search_deferred_tools\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}\n\n",
                                     "event: response.completed\n",
-                                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_search\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"tool_search\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"input_tokens_details\":{},\"output_tokens_details\":{}}}}\n\n"
+                                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_search\",\"status\":\"completed\",\"output\":[{\"id\":\"fc_search\",\"type\":\"function_call\",\"status\":\"completed\",\"call_id\":\"search_1\",\"name\":\"search_deferred_tools\",\"arguments\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"input_tokens_details\":{},\"output_tokens_details\":{}}}}\n\n"
                                 )
                             };
                             (
@@ -3928,7 +4283,7 @@ mod tests {
             LocalModelProxyUpstream {
                 base_url: format!("http://{address}"),
                 request_url: Some(format!("http://{address}/responses")),
-                api_format: "openai-responses".to_owned(),
+                api_format: "responses".to_owned(),
                 convert_custom_tools: false,
                 native_tool_search: false,
                 native_namespace_tools: false,
@@ -4238,7 +4593,7 @@ mod tests {
                                     "event: message_start\n",
                                     "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_search\",\"model\":\"kimi-k3\",\"usage\":{\"input_tokens\":1}}}\n\n",
                                     "event: content_block_start\n",
-                                    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"search_1\",\"name\":\"tool_search\",\"input\":{}}}\n\n",
+                                    "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"search_1\",\"name\":\"search_deferred_tools\",\"input\":{}}}\n\n",
                                     "event: content_block_delta\n",
                                     "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"query\\\":\\\"GitHub create issue\\\"}\"}}\n\n",
                                     "event: content_block_stop\n",
@@ -4472,7 +4827,7 @@ mod tests {
         assert_eq!(tools.len(), 1);
         assert_eq!(
             tools[0].pointer(tool_name_pointer).and_then(Value::as_str),
-            Some("tool_search")
+            Some(chat::BRIDGED_TOOL_SEARCH_NAME)
         );
         assert!(
             tool_bytes.len() < 1_024,
@@ -4625,7 +4980,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wraps_native_responses_non_sse_response() {
+    async fn streams_native_responses_without_interpreting_content_type() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("upstream listener");
@@ -4636,22 +4991,15 @@ mod tests {
                 Router::new().route(
                     "/responses",
                     post(|| async {
-                        Json(json!({
-                            "id": "resp_non_sse",
-                            "object": "response",
-                            "status": "completed",
-                            "output": [{
-                                "type": "message",
-                                "role": "assistant",
-                                "content": [{"type": "output_text", "text": "hi"}]
-                            }],
-                            "usage": {
-                                "input_tokens": 1,
-                                "output_tokens": 1,
-                                "input_tokens_details": {},
-                                "output_tokens_details": {}
-                            }
-                        }))
+                        (
+                            [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))],
+                            concat!(
+                                "event: response.created\n",
+                                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_mislabeled\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+                                "event: response.completed\n",
+                                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_mislabeled\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}]}}\n\n"
+                            ),
+                        )
                     }),
                 ),
             )
@@ -4659,7 +5007,7 @@ mod tests {
             .expect("upstream server");
         });
         let token = register(
-            "native-non-sse-test",
+            "native-mislabeled-sse-test",
             LocalModelProxyUpstream {
                 base_url: format!("http://{address}"),
                 request_url: Some(format!("http://{address}/responses")),
@@ -4686,19 +5034,18 @@ mod tests {
             Bytes::from_static(br#"{"model":"m","input":"hi","stream":true}"#),
         )
         .await
-        .expect("native non-SSE JSON should be wrapped");
+        .expect("native Responses stream should pass through");
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(header::CONTENT_TYPE),
-            Some(&HeaderValue::from_static("text/event-stream"))
+            Some(&HeaderValue::from_static("application/json"))
         );
         let body = to_bytes(response.into_body(), usize::MAX)
             .await
-            .expect("wrapped response body");
+            .expect("normalized response body");
         let body = String::from_utf8_lossy(&body);
-        assert!(body.contains("event: response.completed"));
-        assert!(body.contains("resp_non_sse"));
-        assert!(body.contains("input_tokens_details"), "{body}");
+        assert!(body.contains("event: response.completed"), "{body}");
+        assert!(body.contains("resp_mislabeled"), "{body}");
 
         unregister(&token);
         server.abort();

@@ -8,7 +8,6 @@ import {
   FolderPlus,
   GitCompareArrows,
   Loader2,
-  MessageCircle,
   Monitor,
   RotateCw,
   Search,
@@ -23,7 +22,6 @@ import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { isImeEnterEvent } from '@/lib/ime'
 import { cn } from '@/lib/utils'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
-import { runtimeTaskBoardOrigin } from '@/features/workbench/runtimeTaskOrigin'
 import {
   getRuntimeTaskLifecycleKey,
   useRuntimeTaskLifecycleStoreSnapshot,
@@ -181,7 +179,7 @@ export function MobileDrawer({
         role="status"
         aria-label={label}
         title={label}
-        className="ml-2 inline-flex h-7 w-7 shrink-0 items-center justify-center text-[#6B7280]"
+        className="ml-2 inline-flex h-7 w-7 shrink-0 items-center justify-center text-text-secondary"
       >
         <Loader2 className={MOBILE_RUNNING_SPINNER_CLASS} aria-hidden="true" />
       </span>
@@ -245,7 +243,7 @@ export function MobileDrawer({
           queuePosition <= 1
         }
         onClick={() => void reorderQueuedRuntimeTask(address, (queuePosition ?? 1) - 1, 'up')}
-        className="flex h-12 w-11 items-center justify-center rounded-[14px] text-[#6B7280] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-12 w-11 items-center justify-center rounded-[14px] text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         title={t('workbench.runtime_task_queue_move_up')}
         aria-label={t('workbench.runtime_task_queue_move_up')}
       >
@@ -266,7 +264,7 @@ export function MobileDrawer({
           queuePosition === undefined
         }
         onClick={() => void reorderQueuedRuntimeTask(address, (queuePosition ?? 1) + 1, 'down')}
-        className="flex h-12 w-11 items-center justify-center rounded-[14px] text-[#6B7280] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-12 w-11 items-center justify-center rounded-[14px] text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         title={t('workbench.runtime_task_queue_move_down')}
         aria-label={t('workbench.runtime_task_queue_move_down')}
       >
@@ -281,7 +279,7 @@ export function MobileDrawer({
         data-testid={`${testIdPrefix}-force-start-${address.taskId}`}
         disabled={!available || !workbench || Boolean(forceStartingTaskId)}
         onClick={() => void forceStartRuntimeTask(address)}
-        className="flex h-12 w-11 items-center justify-center rounded-[14px] text-[#6B7280] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-12 w-11 items-center justify-center rounded-[14px] text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         title={t('workbench.runtime_task_force_start')}
         aria-label={t('workbench.runtime_task_force_start')}
       >
@@ -364,9 +362,9 @@ export function MobileDrawer({
   }
 
   return (
-    <div className="fixed inset-0 z-critical isolate flex h-dvh select-none flex-col overflow-hidden bg-white pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(20px,env(safe-area-inset-top))] text-[#111111]">
+    <div className="fixed inset-0 z-critical isolate flex h-dvh select-none flex-col overflow-hidden bg-background pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(20px,env(safe-area-inset-top))] text-text-primary">
       <header className="flex shrink-0 items-center justify-between gap-4 px-6">
-        <h1 className="text-xl font-bold leading-8 tracking-normal text-[#111111]">
+        <h1 className="text-xl font-bold leading-8 tracking-normal text-text-primary">
           {t('workbench.brand', 'Wework')}
         </h1>
         <div className="flex items-center gap-5">
@@ -374,7 +372,7 @@ export function MobileDrawer({
             type="button"
             data-testid="mobile-search-icon-button"
             onClick={() => setSearchOpen(open => !open)}
-            className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-[#111111] hover:bg-[#F7F7F7]"
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-muted"
             aria-label={t('workbench.search', '搜索')}
           >
             <Search className="h-7 w-7 stroke-[2.5]" />
@@ -393,18 +391,18 @@ export function MobileDrawer({
 
       {searchOpen && (
         <div className="relative mx-6 mt-6 shrink-0">
-          <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#6B7280]" />
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-text-secondary" />
           <input
             data-testid="mobile-search-input"
             type="search"
             placeholder={t('workbench.search', '搜索')}
-            className="h-12 w-full select-text rounded-2xl border border-[#EDEDED] bg-white pl-12 pr-4 text-base leading-5 text-[#111111] outline-none placeholder:text-[#6B7280] focus:bg-[#FAFAFA]"
+            className="h-12 w-full select-text rounded-2xl border border-border bg-background pl-12 pr-4 text-base leading-5 text-text-primary outline-none placeholder:text-text-secondary focus:bg-muted"
             autoFocus
           />
         </div>
       )}
 
-      <div className="mx-6 mt-7 h-px shrink-0 bg-[#EDEDED]" />
+      <div className="mx-6 mt-7 h-px shrink-0 bg-border" />
 
       <div
         ref={scrollRef}
@@ -421,7 +419,7 @@ export function MobileDrawer({
             style={{ height: refreshing ? threshold : pullDistance }}
           >
             <RotateCw
-              className={cn('h-5 w-5 text-[#6B7280]', refreshing && 'animate-spin')}
+              className={cn('h-5 w-5 text-text-secondary', refreshing && 'animate-spin')}
               style={
                 refreshing
                   ? undefined
@@ -446,7 +444,7 @@ export function MobileDrawer({
                   type="button"
                   data-testid="mobile-new-project-button"
                   onClick={() => openProjectCreateDialog()}
-                  className="mx-3 flex h-[54px] min-w-[44px] w-[calc(100%-24px)] items-center gap-[18px] rounded-[14px] px-3 text-left text-heading-sm font-normal leading-6 text-[#111111] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:text-[#6B7280]"
+                  className="mx-3 flex h-[54px] min-w-[44px] w-[calc(100%-24px)] items-center gap-[18px] rounded-[14px] px-3 text-left text-heading-sm font-normal leading-6 text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:text-text-secondary"
                   disabled={!canOpenProjectSheet}
                 >
                   <FolderPlus className="h-6 w-6 shrink-0 stroke-[2.4]" />
@@ -454,14 +452,14 @@ export function MobileDrawer({
                 </button>
               </div>
               <section className="mt-5" data-testid="mobile-runtime-chat-section">
-                <div className="mb-2 px-6 text-heading-sm font-bold leading-6 text-[#111111]">
+                <div className="mb-2 px-6 text-heading-sm font-bold leading-6 text-text-primary">
                   {t('workbench.chats', '对话')}
                 </div>
                 <div className="space-y-1">
                   {chatTaskItems.length === 0 ? (
                     <div
                       data-testid="mobile-runtime-chat-empty"
-                      className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-base text-[#6B7280]"
+                      className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-base text-text-secondary"
                     >
                       {t('workbench.no_chats', '暂无会话')}
                     </div>
@@ -476,11 +474,6 @@ export function MobileDrawer({
                       const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
                       const queued = isRuntimeTaskQueued(task)
                       const taskAddress = getRuntimeTaskAddress(workspace, task)
-                      const boardOrigin = runtimeTaskBoardOrigin(task)
-                      const boardOriginLabel =
-                        boardOrigin === 'board_comment'
-                          ? t('workbench.runtime_task_origin_board_comment', '看板评论')
-                          : t('workbench.runtime_task_origin_board_task', '看板任务')
                       return (
                         <div
                           key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
@@ -498,16 +491,10 @@ export function MobileDrawer({
                             className={[
                               'flex h-12 min-w-[44px] flex-1 items-center rounded-[14px] px-3 text-left text-heading-sm font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
                               selectedTask
-                                ? 'bg-[#F1F1F1] text-[#111111]'
-                                : 'text-[#111111] hover:bg-[#F7F7F7]',
+                                ? 'bg-muted text-text-primary'
+                                : 'text-text-primary hover:bg-muted',
                             ].join(' ')}
                           >
-                            {boardOrigin ? (
-                              <MessageCircle
-                                className="mr-2 h-4 w-4 shrink-0 text-text-tertiary"
-                                aria-label={boardOriginLabel}
-                              />
-                            ) : null}
                             <span className="min-w-0 flex-1 truncate">{task.title}</span>
                             {queued ? (
                               <span
@@ -515,7 +502,7 @@ export function MobileDrawer({
                                 role="status"
                                 title={t('workbench.runtime_task_queued')}
                                 aria-label={t('workbench.runtime_task_queued')}
-                                className="ml-2 flex h-7 min-w-7 shrink-0 items-center justify-center gap-1 text-sm text-[#6B7280]"
+                                className="ml-2 flex h-7 min-w-7 shrink-0 items-center justify-center gap-1 text-sm text-text-secondary"
                               >
                                 <AlarmClock className="h-3.5 w-3.5" />
                                 {task.queuePosition ?? null}
@@ -536,7 +523,7 @@ export function MobileDrawer({
                                 className="ml-2 h-2 w-2 shrink-0 rounded-full bg-primary"
                               />
                             ) : (
-                              <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                              <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-text-secondary">
                                 <span
                                   title={workspaceTitle}
                                   aria-label={workspaceTitle}
@@ -605,8 +592,8 @@ export function MobileDrawer({
                       className={[
                         'mx-3 flex h-[54px] min-w-[44px] w-[calc(100%-24px)] items-center gap-[18px] rounded-[14px] px-3 text-left text-heading-sm font-normal leading-6',
                         selected
-                          ? 'bg-[#F1F1F1] text-[#111111]'
-                          : 'text-[#111111] hover:bg-[#F7F7F7]',
+                          ? 'bg-muted text-text-primary'
+                          : 'text-text-primary hover:bg-muted',
                       ].join(' ')}
                     >
                       {expanded ? (
@@ -634,7 +621,7 @@ export function MobileDrawer({
                               setRenamingProjectId(null)
                             }
                           }}
-                          className="min-w-0 flex-1 select-text rounded-lg border border-[#D8D8D8] bg-white px-2 py-1 text-heading-sm leading-6 outline-none focus:border-[#111111]"
+                          className="min-w-0 flex-1 select-text rounded-lg border border-border bg-background px-2 py-1 text-heading-sm leading-6 text-text-primary outline-none focus:border-focus"
                         />
                       ) : (
                         <span className="min-w-0 flex-1 truncate">{project.name}</span>
@@ -646,7 +633,7 @@ export function MobileDrawer({
                           const taskItems = getRuntimeSidebarTaskItems(workspaces)
                           if (taskItems.length === 0) {
                             return (
-                              <div className="flex h-10 items-center rounded-lg px-2 text-left text-base text-[#6B7280]">
+                              <div className="flex h-10 items-center rounded-lg px-2 text-left text-base text-text-secondary">
                                 {t('workbench.no_chats', '暂无会话')}
                               </div>
                             )
@@ -657,7 +644,12 @@ export function MobileDrawer({
                             RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
                           const visibleTaskItems = getVisibleRuntimeSidebarTaskItems(
                             taskItems,
-                            runtimeTaskVisibleLimit
+                            runtimeTaskVisibleLimit,
+                            currentRuntimeTask?.taskId,
+                            ({ workspace, task }) =>
+                              lifecycleSnapshot.runningTaskKeys.has(
+                                getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+                              )
                           )
                           const hasHiddenTasks = hasHiddenRuntimeSidebarTaskItems(
                             taskItems,
@@ -680,11 +672,6 @@ export function MobileDrawer({
                                 const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
                                 const queued = isRuntimeTaskQueued(task)
                                 const taskAddress = getRuntimeTaskAddress(workspace, task)
-                                const boardOrigin = runtimeTaskBoardOrigin(task)
-                                const boardOriginLabel =
-                                  boardOrigin === 'board_comment'
-                                    ? t('workbench.runtime_task_origin_board_comment', '看板评论')
-                                    : t('workbench.runtime_task_origin_board_task', '看板任务')
                                 return (
                                   <div
                                     key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
@@ -702,16 +689,10 @@ export function MobileDrawer({
                                       className={[
                                         'flex h-12 min-w-[44px] flex-1 items-center rounded-[14px] px-2 text-left text-heading-sm font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
                                         selectedTask
-                                          ? 'bg-[#F1F1F1] text-[#111111]'
-                                          : 'text-[#111111] hover:bg-[#F7F7F7]',
+                                          ? 'bg-muted text-text-primary'
+                                          : 'text-text-primary hover:bg-muted',
                                       ].join(' ')}
                                     >
-                                      {boardOrigin ? (
-                                        <MessageCircle
-                                          className="mr-2 h-4 w-4 shrink-0 text-text-tertiary"
-                                          aria-label={boardOriginLabel}
-                                        />
-                                      ) : null}
                                       <span className="min-w-0 flex-1 truncate">{task.title}</span>
                                       {queued ? (
                                         <span
@@ -719,7 +700,7 @@ export function MobileDrawer({
                                           role="status"
                                           title={t('workbench.runtime_task_queued')}
                                           aria-label={t('workbench.runtime_task_queued')}
-                                          className="ml-2 flex h-7 min-w-7 shrink-0 items-center justify-center gap-1 text-sm text-[#6B7280]"
+                                          className="ml-2 flex h-7 min-w-7 shrink-0 items-center justify-center gap-1 text-sm text-text-secondary"
                                         >
                                           <AlarmClock className="h-3.5 w-3.5" />
                                           {task.queuePosition ?? null}
@@ -740,7 +721,7 @@ export function MobileDrawer({
                                           className="ml-2 h-2 w-2 shrink-0 rounded-full bg-primary"
                                         />
                                       ) : (
-                                        <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
+                                        <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-text-secondary">
                                           <span
                                             title={workspaceTitle}
                                             aria-label={workspaceTitle}
@@ -787,7 +768,7 @@ export function MobileDrawer({
                                           ),
                                         }))
                                       }
-                                      className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-base font-semibold text-[#6B7280] hover:bg-[#F7F7F7]"
+                                      className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-base font-semibold text-text-secondary hover:bg-muted"
                                     >
                                       {t('workbench.expand_display', '展开显示')}
                                     </button>
@@ -802,7 +783,7 @@ export function MobileDrawer({
                                           return next
                                         })
                                       }
-                                      className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-base font-semibold text-[#6B7280] hover:bg-[#F7F7F7]"
+                                      className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-base font-semibold text-text-secondary hover:bg-muted"
                                     >
                                       {t('workbench.collapse_display', '折叠显示')}
                                     </button>
@@ -826,7 +807,7 @@ export function MobileDrawer({
         type="button"
         data-testid="mobile-new-chat-button"
         onClick={() => closeAfter(onNewChat ?? onStartStandaloneChat)}
-        className="absolute bottom-[max(32px,env(safe-area-inset-bottom))] right-8 z-10 flex h-14 items-center gap-3 rounded-full bg-[#1F1F1F] px-6 text-heading-sm font-semibold text-white shadow-[0_12px_32px_rgba(0,0,0,0.18)] hover:bg-[#111111]"
+        className="absolute bottom-[max(32px,env(safe-area-inset-bottom))] right-8 z-10 flex h-14 items-center gap-3 rounded-full bg-text-primary px-6 text-heading-sm font-semibold text-background shadow-[0_12px_32px_rgba(0,0,0,0.18)] hover:bg-text-primary/90"
         aria-label={t('workbench.new_chat', '新对话')}
       >
         <SquarePen className="h-6 w-6" />
@@ -864,7 +845,7 @@ export function MobileDrawer({
         >
           <div
             data-testid="mobile-project-actions-menu"
-            className="absolute w-[240px] overflow-hidden rounded-2xl border border-[#EDEDED] bg-white p-2 shadow-[0_12px_36px_rgba(0,0,0,0.18)]"
+            className="absolute w-[240px] overflow-hidden rounded-2xl border border-border bg-popover p-2 text-text-primary shadow-[0_12px_36px_rgba(0,0,0,0.18)]"
             style={actionMenuPosition}
             onClick={event => event.stopPropagation()}
           >
@@ -876,7 +857,7 @@ export function MobileDrawer({
                 setRenamingProjectId(projectActionTarget.id)
                 setProjectActionTarget(null)
               }}
-              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-heading-sm text-[#111111] hover:bg-[#F7F7F7]"
+              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-heading-sm text-text-primary hover:bg-muted"
             >
               <Edit3 className="h-6 w-6 shrink-0" />
               <span>{t('workbench.rename_project', '重命名项目')}</span>
@@ -885,7 +866,7 @@ export function MobileDrawer({
               type="button"
               data-testid="mobile-remove-project-button"
               onClick={() => handleAction(() => onRemoveProject?.(projectActionTarget.id))}
-              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-heading-sm text-[#EF4444] hover:bg-[#FFF5F5]"
+              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-heading-sm text-red-500 hover:bg-red-500/10"
             >
               <X className="h-6 w-6 shrink-0" />
               <span>{t('workbench.remove_project', '移除')}</span>

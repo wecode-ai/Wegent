@@ -8,6 +8,11 @@ use objc2_app_kit::{
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSDictionary, NSError};
+#[cfg(target_os = "macos")]
+use std::time::Duration;
+
+#[cfg(target_os = "macos")]
+const EMBEDDED_BROWSER_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[tauri::command]
 pub async fn capture_main_webview(app: tauri::AppHandle) -> Result<String, String> {
@@ -50,10 +55,8 @@ pub async fn capture_workspace_webview(app: tauri::AppHandle) -> Result<String, 
 }
 
 #[cfg(target_os = "macos")]
-#[allow(dead_code)]
 pub(crate) async fn capture_embedded_webview_png(
     webview: tauri::Webview<tauri::Wry>,
-    timeout: std::time::Duration,
 ) -> Result<Vec<u8>, String> {
     let (sender, mut receiver) = tauri::async_runtime::channel(1);
     webview
@@ -72,14 +75,13 @@ pub(crate) async fn capture_embedded_webview_png(
             }
         })
         .map_err(|error| format!("Failed to request embedded browser snapshot: {error}"))?;
-    tokio::time::timeout(timeout, receiver.recv())
+    tokio::time::timeout(EMBEDDED_BROWSER_SNAPSHOT_TIMEOUT, receiver.recv())
         .await
         .map_err(|_| "Timed out capturing embedded browser snapshot".to_string())?
         .ok_or_else(|| "Embedded browser snapshot request was cancelled".to_string())?
 }
 
 #[cfg(target_os = "macos")]
-#[allow(dead_code)]
 unsafe fn encode_embedded_webview_snapshot(image: *mut NSImage) -> Result<Vec<u8>, String> {
     if image.is_null() {
         return Err("WebKit returned no embedded browser snapshot".to_string());
@@ -114,20 +116,9 @@ async fn capture_webview_impl(
         .get_webview(label)
         .ok_or_else(|| format!("Webview {label} is unavailable"))?;
     let window = webview.window().clone();
-    let (sender, mut receiver) = tauri::async_runtime::channel(1);
-
-    webview
-        .with_webview(move |platform_webview| {
-            let result = unsafe { capture_macos_webview(platform_webview) };
-            let _ = sender.try_send(result);
-        })
-        .map_err(|error| format!("Failed to access webview {label}: {error}"))?;
-
-    let snapshot_result = receiver
-        .recv()
+    let snapshot_result = capture_embedded_webview_png(webview)
         .await
-        .ok_or_else(|| format!("Webview {label} snapshot was cancelled"))
-        .and_then(|result| result);
+        .map(|bytes| format!("data:image/png;base64,{}", crate::encode_base64(&bytes)));
     if !restore_after_capture {
         return snapshot_result;
     }
@@ -161,42 +152,6 @@ fn restore_webview(window: &tauri::Window, label: &str) -> Result<(), String> {
     } else {
         Err(errors.join("; "))
     }
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn capture_macos_webview(
-    platform_webview: tauri::webview::PlatformWebview,
-) -> Result<String, String> {
-    use objc2::runtime::AnyObject;
-    use objc2_app_kit::{NSBitmapImageFileType, NSView};
-    use objc2_foundation::NSDictionary;
-
-    let webview: &NSView = &*platform_webview.inner().cast();
-    let bounds = webview.bounds();
-    let bitmap = webview
-        .bitmapImageRepForCachingDisplayInRect(bounds)
-        .ok_or_else(|| "Failed to create bitmap for main webview".to_string())?;
-    webview.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
-    let properties: objc2::rc::Retained<
-        NSDictionary<objc2_app_kit::NSBitmapImageRepPropertyKey, AnyObject>,
-    > = NSDictionary::new();
-    let png = bitmap
-        .representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
-        .ok_or_else(|| "Failed to encode WebKit snapshot as PNG".to_string())?;
-    let bytes = ns_data_bytes(&png);
-    Ok(format!(
-        "data:image/png;base64,{}",
-        crate::encode_base64(&bytes)
-    ))
-}
-
-#[cfg(target_os = "macos")]
-fn ns_data_bytes(data: &objc2_foundation::NSData) -> Vec<u8> {
-    let mut bytes = vec![0; data.length()];
-    if let Some(buffer) = std::ptr::NonNull::new(bytes.as_mut_ptr().cast()) {
-        unsafe { data.getBytes_length(buffer, bytes.len()) };
-    }
-    bytes
 }
 
 #[cfg(not(target_os = "macos"))]

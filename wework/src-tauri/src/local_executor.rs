@@ -17,7 +17,7 @@ use tauri::{async_runtime::Mutex as AsyncMutex, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
-use crate::process_environment;
+use crate::{agent_plugins::mcp_server_map, process_environment};
 
 const LOCAL_EXECUTOR_EVENT: &str = "local-executor:event";
 const LOCAL_EXECUTOR_SIDECAR: &str = "wegent-executor";
@@ -41,6 +41,7 @@ const BUNDLED_HOOKS_DIR_ENV: &str = "WEGENT_BUNDLED_HOOKS_DIR";
 const MANAGED_HOOKS_DIR_ENV: &str = "WEGENT_MANAGED_HOOKS_DIR";
 const BUNDLED_PLUGIN_MARKETPLACE_DIR_NAME: &str = "bundled-plugins";
 const WEWORK_PERSONAL_MARKETPLACE_ID: &str = "wework-personal";
+const CODEX_PERSONAL_MARKETPLACE_ID: &str = "personal";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
 const WEGENT_AUTH_TOKEN_ENV: &str = "WEGENT_AUTH_TOKEN";
 const WEGENT_RUNTIME_AUTH_TOKEN_ENV: &str = "WEGENT_RUNTIME_AUTH_TOKEN";
@@ -59,7 +60,7 @@ const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = if cfg!(debug_assertions) {
     if cfg!(windows) {
         180
     } else {
-        60
+        120
     }
 } else {
     10
@@ -69,10 +70,12 @@ const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
 const LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS: u64 = 60;
 const MAX_PLUGIN_PACKAGE_BYTES: usize = 50 * 1024 * 1024;
 const MAX_PLUGIN_EXPANDED_BYTES: u64 = 200 * 1024 * 1024;
+const MAX_PLUGIN_ARCHIVE_ENTRIES: usize = 5_000;
 const PLUGIN_MUTATION_LOCK_FILE: &str = "plugin-mutations.lock";
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
 type SharedExecutorInner = Arc<Mutex<LocalExecutorInner>>;
+type SharedExecutorChild = Arc<Mutex<Option<LocalExecutorChild>>>;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +121,52 @@ pub struct LocalPluginCopyImportResult {
     version: String,
     marketplace_path: String,
     plugin_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalPluginImportIssue {
+    code: String,
+    path: Option<String>,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalPluginImportPreview {
+    valid: bool,
+    archive_path: String,
+    sha256: String,
+    name: String,
+    display_name: String,
+    version: String,
+    description: String,
+    skill_count: usize,
+    mcp_server_count: usize,
+    executable_capabilities: Vec<String>,
+    existing: bool,
+    existing_version: Option<String>,
+    issues: Vec<LocalPluginImportIssue>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalPluginPackageImportResult {
+    plugin_name: String,
+    display_name: String,
+    version: String,
+    marketplace_path: String,
+    plugin_path: String,
+    rollback_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalPluginImportRollback {
+    plugin_name: String,
+    replaced_existing: bool,
+    codex_marketplace_existed: bool,
+    claude_marketplace_existed: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -176,7 +225,7 @@ impl Clone for LocalExecutorState {
 
 #[derive(Default)]
 struct LocalExecutorInner {
-    child: Option<LocalExecutorChild>,
+    child: Option<SharedExecutorChild>,
     pending: HashMap<String, PendingSender>,
     backend_connection: Option<LocalExecutorBackendConnection>,
     running: bool,
@@ -410,7 +459,7 @@ pub fn shutdown_local_executor(state: &LocalExecutorState, reason: &str) {
     });
 
     if let Some(child) = child {
-        child.kill();
+        kill_executor_child(child);
     } else {
         audit_local_executor_signal(format!(
             "event=executor_shutdown_no_owned_child sender_pid={} reason={reason}",
@@ -553,6 +602,7 @@ pub struct BundledPluginMarketplace {
     id: String,
     path: String,
     plugin_count: usize,
+    default_plugin_names: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -564,8 +614,8 @@ pub struct PersonalMarketplacePluginSummary {
     description: Option<String>,
     logo: Option<String>,
     category: Option<String>,
+    marketplace_path: String,
     plugin_path: String,
-    installed: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -574,6 +624,28 @@ pub struct PersonalMarketplaceListResult {
     marketplace_id: String,
     marketplace_path: String,
     plugins: Vec<PersonalMarketplacePluginSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WegentStorePluginSummary {
+    name: String,
+    package_id: String,
+    marketplace: String,
+    version: Option<String>,
+    enabled: bool,
+    display_name: Option<String>,
+    description: Option<String>,
+    logo: Option<String>,
+    category: Option<String>,
+    plugin_path: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WegentStoreListResult {
+    store_path: String,
+    plugins: Vec<WegentStorePluginSummary>,
 }
 
 struct LocalExecutorLogTail {
@@ -957,7 +1029,8 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
         .to_string();
     let mut envs = vec![
         (LOCAL_EXECUTOR_HOME_ENV.to_string(), executor_home),
-        (CODEX_HOME_ENV.to_string(), codex_home),
+        (CODEX_HOME_ENV.to_string(), codex_home.clone()),
+        (WEGENT_CODEX_HOME_ENV.to_string(), codex_home),
         (LOCAL_EXECUTOR_LOG_DIR_ENV.to_string(), log_dir),
         (APP_IPC_DEVICE_ID_ENV.to_string(), app_ipc_device_id.clone()),
         ("DEVICE_ID".to_string(), app_ipc_device_id.clone()),
@@ -1285,8 +1358,7 @@ fn write_codex_shell_environment_value(
     let content = fs::read_to_string(&config_path).unwrap_or_default();
     let next_content = set_shell_environment_value_in_config(&content, key, value);
     if next_content != content {
-        fs::write(&config_path, next_content)
-            .map_err(|error| format!("failed to write {}: {error}", config_path.display()))?;
+        write_atomic_file(&config_path, next_content.as_bytes())?;
     }
     read_codex_local_config()
 }
@@ -1304,8 +1376,7 @@ fn restore_codex_shell_environment_config(
     content: &str,
 ) -> Result<(), String> {
     if existed {
-        fs::write(config_path, content)
-            .map_err(|error| format!("failed to restore {}: {error}", config_path.display()))?;
+        write_atomic_file(config_path, content.as_bytes())?;
     } else if config_path.exists() {
         fs::remove_file(config_path)
             .map_err(|error| format!("failed to remove {}: {error}", config_path.display()))?;
@@ -1319,8 +1390,7 @@ fn write_codex_remote_apps_enabled(enabled: bool) -> Result<CodexLocalConfig, St
         .map_err(|error| format!("failed to create {}: {error}", codex_home.display()))?;
     let content = fs::read_to_string(&config_path).unwrap_or_default();
     let next_content = set_remote_apps_enabled_in_config(&content, enabled);
-    fs::write(&config_path, next_content)
-        .map_err(|error| format!("failed to write {}: {error}", config_path.display()))?;
+    write_atomic_file(&config_path, next_content.as_bytes())?;
     read_codex_local_config()
 }
 
@@ -1486,9 +1556,9 @@ fn marketplace_plugin_names(manifest_path: &Path) -> Result<HashSet<String>, Str
         .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
     let manifest: Value = serde_json::from_str(&content)
         .map_err(|error| format!("invalid marketplace {}: {error}", manifest_path.display()))?;
-    if manifest.get("name").and_then(Value::as_str) != Some(WEWORK_PERSONAL_MARKETPLACE_ID) {
+    if !is_personal_marketplace_name(manifest.get("name").and_then(Value::as_str)) {
         return Err(format!(
-            "marketplace {} must use the reserved name {WEWORK_PERSONAL_MARKETPLACE_ID:?}",
+            "marketplace {} must use the reserved name {WEWORK_PERSONAL_MARKETPLACE_ID:?} or {CODEX_PERSONAL_MARKETPLACE_ID:?}",
             manifest_path.display()
         ));
     }
@@ -1524,6 +1594,35 @@ fn marketplace_plugin_names(manifest_path: &Path) -> Result<HashSet<String>, Str
     Ok(names)
 }
 
+fn marketplace_default_plugin_names(manifest_path: &Path) -> Result<Vec<String>, String> {
+    let content = fs::read_to_string(manifest_path)
+        .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+    let manifest: Value = serde_json::from_str(&content)
+        .map_err(|error| format!("invalid marketplace {}: {error}", manifest_path.display()))?;
+    let plugins = manifest
+        .get("plugins")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            format!(
+                "marketplace {} must contain a plugins array",
+                manifest_path.display()
+            )
+        })?;
+    let mut names = plugins
+        .iter()
+        .filter(|plugin| {
+            plugin
+                .pointer("/policy/installation")
+                .and_then(Value::as_str)
+                == Some("INSTALLED_BY_DEFAULT")
+        })
+        .filter_map(|plugin| plugin.get("name").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    names.sort();
+    Ok(names)
+}
+
 fn remove_bundled_marketplace_path(path: &Path) -> Result<(), String> {
     if path.is_dir() {
         fs::remove_dir_all(path)
@@ -1536,6 +1635,102 @@ fn remove_bundled_marketplace_path(path: &Path) -> Result<(), String> {
     }
 }
 
+fn preserve_personal_marketplace_plugins(
+    destination: &Path,
+    staging: &Path,
+    bundled_plugins: &HashSet<String>,
+) -> Result<(), String> {
+    if !destination.is_dir() {
+        return Ok(());
+    }
+
+    let mut personal_plugins = HashSet::new();
+    for manifest_path in [
+        destination.join(".agents/plugins/marketplace.json"),
+        destination.join(".claude-plugin/marketplace.json"),
+    ] {
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let content = fs::read_to_string(&manifest_path)
+            .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+        let manifest = serde_json::from_str::<Value>(&content)
+            .map_err(|error| format!("invalid marketplace {}: {error}", manifest_path.display()))?;
+        if !is_personal_marketplace_name(manifest.get("name").and_then(Value::as_str)) {
+            return Err(format!(
+                "marketplace {} must use the reserved personal marketplace name",
+                manifest_path.display()
+            ));
+        }
+        let plugins = manifest
+            .get("plugins")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!(
+                    "marketplace {} must contain a plugins array",
+                    manifest_path.display()
+                )
+            })?;
+        for plugin in plugins {
+            let Some(name) = plugin.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            let name = validate_plugin_name(name)?.to_string();
+            let bundled_by_default = plugin
+                .pointer("/policy/installation")
+                .and_then(Value::as_str)
+                == Some("INSTALLED_BY_DEFAULT");
+            if !bundled_plugins.contains(&name) && !bundled_by_default {
+                personal_plugins.insert(name);
+            }
+        }
+    }
+
+    for plugin_name in personal_plugins {
+        let source_plugin = destination.join("plugins").join(&plugin_name);
+        let manifest_path = source_plugin.join(".codex-plugin/plugin.json");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let manifest = fs::read(&manifest_path)
+            .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+        let manifest = serde_json::from_slice::<Value>(&manifest).map_err(|error| {
+            format!(
+                "invalid plugin manifest {}: {error}",
+                manifest_path.display()
+            )
+        })?;
+        if manifest.get("name").and_then(Value::as_str) != Some(plugin_name.as_str()) {
+            continue;
+        }
+
+        copy_directory_recursive(&source_plugin, &staging.join("plugins").join(&plugin_name))?;
+        for staging_manifest in [
+            staging.join(".agents/plugins/marketplace.json"),
+            staging.join(".claude-plugin/marketplace.json"),
+        ] {
+            upsert_marketplace_plugin_entry(&staging_manifest, &plugin_name)?;
+        }
+    }
+
+    let copy_registry = copy_registry_path(destination);
+    if copy_registry.is_file() {
+        let staging_registry = copy_registry_path(staging);
+        if let Some(parent) = staging_registry.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+        }
+        fs::copy(&copy_registry, &staging_registry).map_err(|error| {
+            format!(
+                "failed to preserve {} at {}: {error}",
+                copy_registry.display(),
+                staging_registry.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn initialize_bundled_plugin_marketplace_from_paths(
     source: &Path,
     destination: &Path,
@@ -1544,6 +1739,7 @@ fn initialize_bundled_plugin_marketplace_from_paths(
     let claude_manifest = source.join(".claude-plugin/marketplace.json");
     let codex_plugins = marketplace_plugin_names(&codex_manifest)?;
     let claude_plugins = marketplace_plugin_names(&claude_manifest)?;
+    let default_plugin_names = marketplace_default_plugin_names(&codex_manifest)?;
     if codex_plugins != claude_plugins {
         return Err(
             "Bundled Codex and Claude Code marketplace plugin names must match".to_string(),
@@ -1567,6 +1763,11 @@ fn initialize_bundled_plugin_marketplace_from_paths(
         let _ = remove_bundled_marketplace_path(&staging);
         return Err(error);
     }
+    if let Err(error) = preserve_personal_marketplace_plugins(destination, &staging, &codex_plugins)
+    {
+        let _ = remove_bundled_marketplace_path(&staging);
+        return Err(error);
+    }
     remove_bundled_marketplace_path(destination)?;
     fs::rename(&staging, destination).map_err(|error| {
         format!(
@@ -1579,6 +1780,7 @@ fn initialize_bundled_plugin_marketplace_from_paths(
         id: WEWORK_PERSONAL_MARKETPLACE_ID.to_string(),
         path: destination.display().to_string(),
         plugin_count: codex_plugins.len(),
+        default_plugin_names,
     })
 }
 
@@ -1612,6 +1814,11 @@ fn local_executor_sidecar_env(
     app: &tauri::AppHandle,
 ) -> Vec<(String, String)> {
     let mut envs = local_executor_backend_env(inner);
+    if let Ok(node_bin) = crate::execution_environments::node_bin_directory(app) {
+        if let Some((_, path)) = envs.iter_mut().find(|(key, _)| key == "PATH") {
+            *path = process_environment::prepend_path(path, node_bin);
+        }
+    }
     if let Some(path) = non_empty_env(MANAGED_HOOKS_DIR_ENV) {
         envs.push((MANAGED_HOOKS_DIR_ENV.to_string(), path));
     }
@@ -1826,7 +2033,7 @@ fn mark_child_terminated_for_generation(
     inner: &SharedExecutorInner,
     generation: u64,
     message: String,
-) -> Option<LocalExecutorChild> {
+) -> Option<SharedExecutorChild> {
     if let Ok(mut inner) = inner.lock() {
         if inner.generation != generation {
             return None;
@@ -2024,11 +2231,34 @@ fn is_terminal_response_event(event: &str) -> bool {
     )
 }
 
-fn write_request_line(inner: &mut LocalExecutorInner, line: &str) -> Result<(), String> {
-    let Some(child) = inner.child.as_mut() else {
-        return Err("Local executor stdio is not connected".to_string());
-    };
-    child.write(line.as_bytes())
+fn kill_executor_child(child: SharedExecutorChild) {
+    if let Ok(Some(child)) = child.lock().map(|mut child| child.take()) {
+        child.kill();
+    }
+}
+
+fn executor_child_is_running(child: &SharedExecutorChild) -> bool {
+    child
+        .try_lock()
+        .map(|mut child| {
+            child
+                .as_mut()
+                .map(LocalExecutorChild::is_running)
+                .unwrap_or(false)
+        })
+        .unwrap_or(true)
+}
+
+fn write_request_line(child: &SharedExecutorChild, line: &str) -> Result<(), String> {
+    // The state mutex only guards executor metadata. Keeping it out of this
+    // potentially blocking pipe write lets the stdout reader resolve responses.
+    let mut child = child
+        .lock()
+        .map_err(|_| "Failed to lock local executor child".to_string())?;
+    child
+        .as_mut()
+        .ok_or_else(|| "Local executor stdio is not connected".to_string())?
+        .write(line.as_bytes())
 }
 
 fn drain_process_output(
@@ -2055,7 +2285,7 @@ fn register_spawned_child(
         .lock()
         .map_err(|_| "Failed to lock local executor state".to_string())?;
     inner.generation = inner.generation.saturating_add(1);
-    inner.child = Some(child);
+    inner.child = Some(Arc::new(Mutex::new(Some(child))));
     inner.running = true;
     inner.ready = false;
     inner.codex_initialize_elapsed_ms = None;
@@ -2114,7 +2344,7 @@ fn finish_stdio_reader(
     fail_pending_requests_for_generation(state, generation, message);
     if terminate_child {
         if let Some(child) = child {
-            child.kill();
+            kill_executor_child(child);
         }
     }
 }
@@ -2133,6 +2363,7 @@ fn spawn_configured_sidecar(
     }
 
     let mut command = Command::new(&path);
+    crate::process::hide_windows_console(&mut command);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -2290,7 +2521,7 @@ fn stop_failed_sidecar_start(state: &LocalExecutorState, error: &str) {
         inner.child.take()
     });
     if let Some(child) = child {
-        child.kill();
+        kill_executor_child(child);
     }
     fail_pending_requests(state, error.to_string());
 }
@@ -2338,8 +2569,8 @@ async fn start_executor_if_needed_unlocked(
         if inner.running && inner.ready {
             if inner
                 .child
-                .as_mut()
-                .map(LocalExecutorChild::is_running)
+                .as_ref()
+                .map(executor_child_is_running)
                 .unwrap_or(false)
             {
                 return Ok(());
@@ -2350,7 +2581,7 @@ async fn start_executor_if_needed_unlocked(
         inner.child.take()
     };
     if let Some(child) = child_to_kill {
-        child.kill();
+        kill_executor_child(child);
     }
     if let Err(error) = spawn_sidecar(app, state).await {
         set_executor_error(state, error.clone());
@@ -2405,11 +2636,15 @@ async fn send_executor_request_with_timeout(
         serde_json::to_string(&message).map_err(|error| error.to_string())?
     );
 
-    {
+    let child = {
         let mut inner = state
             .inner
             .lock()
             .map_err(|_| "Failed to lock local executor state".to_string())?;
+        let child = inner
+            .child
+            .clone()
+            .ok_or_else(|| "Local executor stdio is not connected".to_string())?;
         inner.pending.insert(request_id.clone(), sender);
         let pending_count = inner.pending.len();
         if log_request {
@@ -2417,13 +2652,15 @@ async fn send_executor_request_with_timeout(
                 "Local executor IPC request started: request_id={request_id}, method={method}, pending_count={pending_count}"
             );
         }
-        if let Err(error) = write_request_line(&mut inner, &line) {
-            inner.pending.remove(&request_id);
-            log::warn!(
-                "Local executor IPC request write failed: request_id={request_id}, method={method}, error={error}"
-            );
-            return Err(error);
-        }
+        child
+    };
+
+    if let Err(error) = write_request_line(&child, &line) {
+        remove_pending_request(&state.inner, &request_id);
+        log::warn!(
+            "Local executor IPC request write failed: request_id={request_id}, method={method}, error={error}"
+        );
+        return Err(error);
     }
 
     let inner = state.inner.clone();
@@ -2803,6 +3040,13 @@ pub(crate) fn resolve_local_plugin_root(
     Err("Local plugin manifest is unavailable".to_string())
 }
 
+fn is_personal_marketplace_name(name: Option<&str>) -> bool {
+    matches!(
+        name,
+        Some(WEWORK_PERSONAL_MARKETPLACE_ID) | Some(CODEX_PERSONAL_MARKETPLACE_ID)
+    )
+}
+
 fn marketplace_root_from_path(path: &Path) -> PathBuf {
     if path
         .file_name()
@@ -2901,6 +3145,251 @@ fn upsert_marketplace_plugin_entry(manifest_path: &Path, plugin_name: &str) -> R
     let bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("Failed to serialize marketplace manifest: {error}"))?;
     write_atomic_file(manifest_path, &bytes)
+}
+
+fn remove_marketplace_plugin_entry(manifest_path: &Path, plugin_name: &str) -> Result<(), String> {
+    if !manifest_path.is_file() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(manifest_path)
+        .map_err(|error| format!("Failed to read {}: {error}", manifest_path.display()))?;
+    let mut manifest = serde_json::from_str::<Value>(&content).map_err(|error| {
+        format!(
+            "Invalid marketplace manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    if manifest.get("name").and_then(Value::as_str) == Some("personal") {
+        manifest["name"] = Value::String(WEWORK_PERSONAL_MARKETPLACE_ID.to_string());
+    }
+    let plugins = manifest
+        .get_mut("plugins")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "Marketplace plugins must be an array".to_string())?;
+    plugins.retain(|plugin| {
+        plugin
+            .get("name")
+            .and_then(Value::as_str)
+            .is_none_or(|name| name != plugin_name)
+    });
+    let bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("Failed to serialize marketplace manifest: {error}"))?;
+    write_atomic_file(manifest_path, &bytes)
+}
+
+fn remove_plugin_registry_entries(
+    marketplace_root: &Path,
+    plugin_name: &str,
+) -> Result<(), String> {
+    let cloud_link_path = plugin_cloud_link_registry_path(marketplace_root);
+    if cloud_link_path.is_file() {
+        let bytes = fs::read(&cloud_link_path)
+            .map_err(|error| format!("Failed to read plugin cloud links: {error}"))?;
+        let mut registry = serde_json::from_slice::<LocalPluginCloudLinkRegistry>(&bytes)
+            .map_err(|error| format!("Plugin cloud link registry is invalid: {error}"))?;
+        registry
+            .cloud_links
+            .retain(|link| link.local_plugin_name != plugin_name);
+        let updated = serde_json::to_vec_pretty(&registry)
+            .map_err(|error| format!("Failed to serialize plugin cloud links: {error}"))?;
+        write_atomic_file(&cloud_link_path, &updated)?;
+    }
+
+    let copy_path = copy_registry_path(marketplace_root);
+    if copy_path.is_file() {
+        let bytes = fs::read(&copy_path)
+            .map_err(|error| format!("Failed to read plugin copy registry: {error}"))?;
+        let mut registry = serde_json::from_slice::<LocalPluginCopyRegistry>(&bytes)
+            .map_err(|error| format!("Plugin copy registry is invalid: {error}"))?;
+        registry
+            .copies
+            .retain(|copy| copy.local_plugin_name != plugin_name);
+        let updated = serde_json::to_vec_pretty(&registry)
+            .map_err(|error| format!("Failed to serialize plugin copy registry: {error}"))?;
+        write_atomic_file(&copy_path, &updated)?;
+    }
+    Ok(())
+}
+
+fn read_optional_file(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("Failed to back up {}: {error}", path.display())),
+    }
+}
+
+fn personal_manifest_plugin_registration(
+    manifest_path: &Path,
+    plugin_name: &str,
+) -> Result<Option<bool>, String> {
+    if !manifest_path.is_file() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(manifest_path)
+        .map_err(|error| format!("Failed to read {}: {error}", manifest_path.display()))?;
+    let manifest = serde_json::from_str::<Value>(&content).map_err(|error| {
+        format!(
+            "Invalid marketplace manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    let is_personal = is_personal_marketplace_name(manifest.get("name").and_then(Value::as_str));
+    if !is_personal {
+        return Ok(None);
+    }
+    Ok(Some(
+        manifest
+            .get("plugins")
+            .and_then(Value::as_array)
+            .is_some_and(|plugins| {
+                plugins.iter().any(|plugin| {
+                    plugin
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .is_some_and(|name| name == plugin_name)
+                })
+            }),
+    ))
+}
+
+fn delete_personal_plugin(marketplace_path: &Path, plugin_name: &str) -> Result<(), String> {
+    let plugin_name = validate_plugin_name(plugin_name)?;
+    let resolved_marketplace_path = marketplace_path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
+    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let mut manifest_candidates = vec![
+        marketplace_root.join(".agents/plugins/marketplace.json"),
+        marketplace_root.join(".claude-plugin/marketplace.json"),
+    ];
+    if resolved_marketplace_path.is_file() {
+        manifest_candidates.push(resolved_marketplace_path.clone());
+    }
+    manifest_candidates.sort();
+    manifest_candidates.dedup();
+    let mut personal_marketplace_found = false;
+    let personal_manifests = manifest_candidates
+        .into_iter()
+        .filter_map(
+            |path| match personal_manifest_plugin_registration(&path, plugin_name) {
+                Ok(Some(registered)) => {
+                    personal_marketplace_found = true;
+                    registered.then_some(Ok(path))
+                }
+                Ok(None) => None,
+                Err(error) => Some(Err(error)),
+            },
+        )
+        .collect::<Result<Vec<_>, _>>()?;
+    if personal_manifests.is_empty() {
+        let plugin_path = marketplace_root.join("plugins").join(plugin_name);
+        match fs::symlink_metadata(&plugin_path) {
+            Err(error)
+                if personal_marketplace_found && error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                remove_plugin_registry_entries(&marketplace_root, plugin_name)?;
+                return Ok(());
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!("Failed to inspect personal plugin: {error}"));
+            }
+            _ => {}
+        }
+        return Err("Plugin is not registered in this personal marketplace".to_string());
+    }
+
+    let plugins_root = marketplace_root.join("plugins");
+    let plugin_path = plugins_root.join(plugin_name);
+    let canonical_plugin = match fs::symlink_metadata(&plugin_path) {
+        Ok(plugin_metadata) => {
+            if plugin_metadata.file_type().is_symlink() || !plugin_metadata.is_dir() {
+                return Err("Plugin is not a managed personal plugin directory".to_string());
+            }
+            let canonical_plugin = plugin_path
+                .canonicalize()
+                .map_err(|error| format!("Failed to resolve personal plugin: {error}"))?;
+            let canonical_plugins_root = plugins_root
+                .canonicalize()
+                .map_err(|error| format!("Failed to resolve personal plugin directory: {error}"))?;
+            if canonical_plugin.parent() != Some(canonical_plugins_root.as_path())
+                || canonical_plugin
+                    .file_name()
+                    .is_none_or(|name| name != plugin_name)
+                || !canonical_plugin.join(".codex-plugin/plugin.json").is_file()
+            {
+                return Err("Plugin is not a managed personal plugin".to_string());
+            }
+            Some(canonical_plugin)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("Failed to inspect personal plugin: {error}")),
+    };
+
+    let cloud_link_path = plugin_cloud_link_registry_path(&marketplace_root);
+    let copy_path = copy_registry_path(&marketplace_root);
+    let mut backup_paths = personal_manifests.clone();
+    backup_paths.push(cloud_link_path.clone());
+    backup_paths.push(copy_path.clone());
+    let file_backups = backup_paths
+        .into_iter()
+        .map(|path| read_optional_file(&path).map(|bytes| (path, bytes)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let backup_root = marketplace_root
+        .join(".wegent/plugin-delete-backups")
+        .join(format!("{}-{}-{}", plugin_name, std::process::id(), unique));
+    let backed_up_plugin = backup_root.join("plugin");
+    if let Some(canonical_plugin) = &canonical_plugin {
+        fs::create_dir_all(&backup_root)
+            .map_err(|error| format!("Failed to prepare plugin deletion: {error}"))?;
+        fs::rename(canonical_plugin, &backed_up_plugin)
+            .map_err(|error| format!("Failed to stage personal plugin deletion: {error}"))?;
+    }
+
+    let update_result = personal_manifests
+        .iter()
+        .try_for_each(|path| remove_marketplace_plugin_entry(path, plugin_name))
+        .and_then(|_| remove_plugin_registry_entries(&marketplace_root, plugin_name));
+    if let Err(error) = update_result {
+        for (path, bytes) in file_backups {
+            match bytes {
+                Some(bytes) => {
+                    let _ = write_atomic_file(&path, &bytes);
+                }
+                None => {
+                    let _ = fs::remove_file(path);
+                }
+            }
+        }
+        if let Some(canonical_plugin) = &canonical_plugin {
+            let _ = fs::rename(&backed_up_plugin, canonical_plugin);
+        }
+        let _ = fs::remove_dir_all(&backup_root);
+        return Err(error);
+    }
+
+    if canonical_plugin.is_some() {
+        fs::remove_dir_all(&backup_root)
+            .map_err(|error| format!("Failed to finalize personal plugin deletion: {error}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn local_executor_delete_personal_plugin(
+    marketplace_path: String,
+    plugin_name: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_personal_plugin(Path::new(&marketplace_path), &plugin_name)
+    })
+    .await
+    .map_err(|error| format!("Failed to join personal plugin deletion task: {error}"))?
 }
 
 fn ensure_plugin_in_personal_marketplace(
@@ -3006,6 +3495,13 @@ fn package_local_plugin(
     let (_marketplace_root, plugin_root) =
         resolve_local_plugin_root(marketplace_path, normalized_name)?;
 
+    package_plugin_directory(&plugin_root, normalized_name)
+}
+
+fn package_plugin_directory(
+    plugin_root: &Path,
+    plugin_name: &str,
+) -> Result<LocalPluginPackage, String> {
     let files = collect_plugin_files(&plugin_root)?;
     let expanded_size = files.iter().try_fold(0_u64, |total, path| {
         let size = fs::metadata(path)
@@ -3044,7 +3540,7 @@ fn package_local_plugin(
         return Err("Plugin ZIP exceeds 50 MB".to_string());
     }
     Ok(LocalPluginPackage {
-        name: format!("{normalized_name}.zip"),
+        name: format!("{plugin_name}.zip"),
         bytes,
     })
 }
@@ -3059,6 +3555,40 @@ pub async fn local_executor_package_plugin(
     })
     .await
     .map_err(|error| format!("Failed to join plugin packaging task: {error}"))?
+}
+
+#[tauri::command]
+pub async fn local_executor_save_plugin_example(
+    app: tauri::AppHandle,
+    destination_path: String,
+) -> Result<String, String> {
+    let source = if cfg!(debug_assertions) {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(BUNDLED_PLUGIN_MARKETPLACE_DIR_NAME)
+            .join("wework-plugin-example")
+    } else {
+        app.path()
+            .resource_dir()
+            .map_err(|error| format!("Failed to resolve Wework resources: {error}"))?
+            .join(BUNDLED_PLUGIN_MARKETPLACE_DIR_NAME)
+            .join("wework-plugin-example")
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let packaged = package_plugin_directory(&source, "wework-plugin-example")?;
+        let destination = PathBuf::from(destination_path);
+        if destination
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_none_or(|extension| !extension.eq_ignore_ascii_case("zip"))
+        {
+            return Err("Plugin example destination must use the .zip extension".to_string());
+        }
+        fs::write(&destination, packaged.bytes)
+            .map_err(|error| format!("Failed to save plugin example package: {error}"))?;
+        Ok(destination.display().to_string())
+    })
+    .await
+    .map_err(|error| format!("Failed to join plugin example packaging task: {error}"))?
 }
 
 #[tauri::command]
@@ -3191,6 +3721,11 @@ fn reject_duplicate_zip_paths(package: &[u8]) -> Result<(), String> {
     {
         return Err("ZIP64 plugin copies are not supported".to_string());
     }
+    if entry_count > MAX_PLUGIN_ARCHIVE_ENTRIES {
+        return Err(format!(
+            "Plugin ZIP contains more than {MAX_PLUGIN_ARCHIVE_ENTRIES} entries"
+        ));
+    }
     let directory_end = cursor
         .checked_add(directory_size)
         .ok_or_else(|| "Plugin ZIP directory size overflow".to_string())?;
@@ -3227,6 +3762,33 @@ fn reject_duplicate_zip_paths(package: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+fn copy_with_expanded_limit<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    remaining_bytes: u64,
+) -> Result<u64, String> {
+    let mut copied = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("Failed to decompress plugin ZIP entry: {error}"))?;
+        if read == 0 {
+            return Ok(copied);
+        }
+        let next = copied
+            .checked_add(read as u64)
+            .ok_or_else(|| "Plugin expanded size overflow".to_string())?;
+        if next > remaining_bytes {
+            return Err("Expanded plugin package exceeds 200 MB".to_string());
+        }
+        writer
+            .write_all(&buffer[..read])
+            .map_err(|error| format!("Failed to write plugin ZIP entry: {error}"))?;
+        copied = next;
+    }
+}
+
 fn extract_plugin_copy(package: &[u8], destination: &Path) -> Result<Value, String> {
     if package.len() > MAX_PLUGIN_PACKAGE_BYTES {
         return Err("Plugin ZIP exceeds 50 MB".to_string());
@@ -3234,6 +3796,11 @@ fn extract_plugin_copy(package: &[u8], destination: &Path) -> Result<Value, Stri
     reject_duplicate_zip_paths(package)?;
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package))
         .map_err(|error| format!("Plugin package is not a valid ZIP: {error}"))?;
+    if archive.len() > MAX_PLUGIN_ARCHIVE_ENTRIES {
+        return Err(format!(
+            "Plugin ZIP contains more than {MAX_PLUGIN_ARCHIVE_ENTRIES} entries"
+        ));
+    }
     let mut paths = HashSet::new();
     let mut expanded_size = 0_u64;
     for index in 0..archive.len() {
@@ -3242,6 +3809,13 @@ fn extract_plugin_copy(package: &[u8], destination: &Path) -> Result<Value, Stri
             .map_err(|error| format!("Failed to read plugin ZIP entry: {error}"))?;
         let entry_name = entry.name().trim_end_matches('/');
         if entry_name.is_empty() {
+            continue;
+        }
+        if entry_name == ".DS_Store"
+            || entry_name.ends_with("/.DS_Store")
+            || entry_name == "__MACOSX"
+            || entry_name.starts_with("__MACOSX/")
+        {
             continue;
         }
         let relative = safe_archive_path(entry_name)?;
@@ -3257,12 +3831,6 @@ fn extract_plugin_copy(package: &[u8], destination: &Path) -> Result<Value, Stri
         {
             return Err(format!("Plugin ZIP contains a symbolic link: {normalized}"));
         }
-        expanded_size = expanded_size
-            .checked_add(entry.size())
-            .ok_or_else(|| "Plugin expanded size overflow".to_string())?;
-        if expanded_size > MAX_PLUGIN_EXPANDED_BYTES {
-            return Err("Expanded plugin package exceeds 200 MB".to_string());
-        }
         let output = destination.join(&relative);
         if entry.is_dir() {
             fs::create_dir_all(&output)
@@ -3275,8 +3843,12 @@ fn extract_plugin_copy(package: &[u8], destination: &Path) -> Result<Value, Stri
         }
         let mut file = fs::File::create(&output)
             .map_err(|error| format!("Failed to create {}: {error}", output.display()))?;
-        std::io::copy(&mut entry, &mut file)
+        let remaining_bytes = MAX_PLUGIN_EXPANDED_BYTES.saturating_sub(expanded_size);
+        let copied = copy_with_expanded_limit(&mut entry, &mut file, remaining_bytes)
             .map_err(|error| format!("Failed to extract {normalized}: {error}"))?;
+        expanded_size = expanded_size
+            .checked_add(copied)
+            .ok_or_else(|| "Plugin expanded size overflow".to_string())?;
     }
 
     let manifest_path = destination.join(".codex-plugin/plugin.json");
@@ -3291,6 +3863,490 @@ fn extract_plugin_copy(package: &[u8], destination: &Path) -> Result<Value, Stri
         return Err("Local plugin manifest requires string name and version fields".to_string());
     }
     Ok(manifest)
+}
+
+fn plugin_import_issue(
+    code: &str,
+    path: Option<&str>,
+    message: impl Into<String>,
+) -> LocalPluginImportIssue {
+    LocalPluginImportIssue {
+        code: code.to_string(),
+        path: path.map(str::to_string),
+        message: message.into(),
+    }
+}
+
+fn valid_plugin_slug(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 100
+        && value
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_lowercase() || character.is_ascii_digit())
+        && value.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '-' | '_')
+        })
+}
+
+fn valid_semver_identifier(value: &str, allow_leading_zero: bool) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        && (allow_leading_zero
+            || value.len() == 1
+            || !value.starts_with('0')
+            || !value.chars().all(|character| character.is_ascii_digit()))
+}
+
+fn valid_strict_semver(value: &str) -> bool {
+    let (core_and_pre, build) = value
+        .split_once('+')
+        .map_or((value, None), |(left, right)| (left, Some(right)));
+    if build.is_some_and(|build| {
+        build
+            .split('.')
+            .any(|item| !valid_semver_identifier(item, true))
+    }) {
+        return false;
+    }
+    let (core, pre) = core_and_pre
+        .split_once('-')
+        .map_or((core_and_pre, None), |(left, right)| (left, Some(right)));
+    if pre.is_some_and(|pre| {
+        pre.split('.')
+            .any(|item| !valid_semver_identifier(item, false))
+    }) {
+        return false;
+    }
+    let parts = core.split('.').collect::<Vec<_>>();
+    parts.len() == 3
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && part.chars().all(|character| character.is_ascii_digit())
+                && (part.len() == 1 || !part.starts_with('0'))
+        })
+}
+
+fn manifest_string<'a>(manifest: &'a Value, key: &str) -> &'a str {
+    manifest
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+}
+
+fn plugin_interface_string<'a>(manifest: &'a Value, key: &str) -> &'a str {
+    manifest
+        .get("interface")
+        .and_then(Value::as_object)
+        .and_then(|interface| interface.get(key))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+}
+
+fn read_plugin_mcp_document(
+    root: &Path,
+    manifest: &Value,
+) -> Result<Option<Value>, LocalPluginImportIssue> {
+    let (path, display_path) = match manifest.get("mcpServers") {
+        Some(declaration) if declaration.is_object() => return Ok(Some(declaration.clone())),
+        Some(declaration) => {
+            let Some(relative) = declaration.as_str().map(str::trim) else {
+                return Err(plugin_import_issue(
+                    "mcp_manifest_invalid",
+                    Some(".codex-plugin/plugin.json"),
+                    "plugin.json field `mcpServers` must be a relative path or an object",
+                ));
+            };
+            let Some(trimmed) = relative.strip_prefix("./") else {
+                return Err(plugin_import_issue(
+                    "mcp_path_invalid",
+                    Some(".codex-plugin/plugin.json"),
+                    "plugin.json field `mcpServers` must start with `./`",
+                ));
+            };
+            if safe_archive_path(trimmed).is_err() || !root.join(trimmed).is_file() {
+                return Err(plugin_import_issue(
+                    "mcp_path_invalid",
+                    Some(".codex-plugin/plugin.json"),
+                    "plugin.json field `mcpServers` must resolve to a file inside the plugin",
+                ));
+            }
+            (root.join(trimmed), trimmed.to_string())
+        }
+        None => {
+            let Some(relative) = ["mcp.json", ".mcp.json"]
+                .into_iter()
+                .find(|relative| root.join(relative).is_file())
+            else {
+                return Ok(None);
+            };
+            (root.join(relative), relative.to_string())
+        }
+    };
+    let document = fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .ok_or_else(|| {
+            plugin_import_issue(
+                "mcp_manifest_invalid",
+                Some(&display_path),
+                "MCP configuration must contain valid JSON",
+            )
+        })?;
+    Ok(Some(document))
+}
+
+fn valid_plugin_mcp_document(document: &Value) -> bool {
+    mcp_server_map(document).is_some_and(|servers| {
+        servers
+            .iter()
+            .all(|(name, server)| !name.trim().is_empty() && server.is_object())
+    })
+}
+
+fn validate_plugin_import_manifest(root: &Path, manifest: &Value) -> Vec<LocalPluginImportIssue> {
+    let mut issues = Vec::new();
+    let name = manifest_string(manifest, "name");
+    if !valid_plugin_slug(name) {
+        issues.push(plugin_import_issue(
+            "manifest_name_invalid",
+            Some(".codex-plugin/plugin.json"),
+            "plugin.json field `name` must be a lowercase plugin slug",
+        ));
+    }
+    let version = manifest_string(manifest, "version");
+    if !valid_strict_semver(version) {
+        issues.push(plugin_import_issue(
+            "manifest_version_invalid",
+            Some(".codex-plugin/plugin.json"),
+            "plugin.json field `version` must use strict SemVer, for example 0.1.0",
+        ));
+    }
+    if manifest_string(manifest, "description").is_empty() {
+        issues.push(plugin_import_issue(
+            "manifest_description_missing",
+            Some(".codex-plugin/plugin.json"),
+            "plugin.json field `description` is required",
+        ));
+    }
+    if manifest
+        .get("author")
+        .and_then(Value::as_object)
+        .and_then(|author| author.get("name"))
+        .and_then(Value::as_str)
+        .is_none_or(|name| name.trim().is_empty())
+    {
+        issues.push(plugin_import_issue(
+            "manifest_author_missing",
+            Some(".codex-plugin/plugin.json"),
+            "plugin.json field `author.name` is required",
+        ));
+    }
+    for key in [
+        "displayName",
+        "shortDescription",
+        "longDescription",
+        "developerName",
+        "category",
+    ] {
+        if plugin_interface_string(manifest, key).is_empty() {
+            issues.push(plugin_import_issue(
+                "manifest_interface_incomplete",
+                Some(".codex-plugin/plugin.json"),
+                format!("plugin.json field `interface.{key}` is required"),
+            ));
+        }
+    }
+    if manifest
+        .get("interface")
+        .and_then(Value::as_object)
+        .and_then(|interface| interface.get("capabilities"))
+        .is_none_or(|value| !value.is_array())
+    {
+        issues.push(plugin_import_issue(
+            "manifest_capabilities_invalid",
+            Some(".codex-plugin/plugin.json"),
+            "plugin.json field `interface.capabilities` must be an array",
+        ));
+    }
+    if manifest
+        .get("interface")
+        .and_then(Value::as_object)
+        .is_none_or(|interface| {
+            !interface.contains_key("defaultPrompt") && !interface.contains_key("default_prompt")
+        })
+    {
+        issues.push(plugin_import_issue(
+            "manifest_default_prompt_missing",
+            Some(".codex-plugin/plugin.json"),
+            "plugin.json field `interface.defaultPrompt` is required",
+        ));
+    }
+
+    if let Some(skills) = manifest.get("skills") {
+        if skills
+            .as_str()
+            .is_none_or(|path| path.trim_end_matches('/') != "./skills")
+            || !root.join("skills").is_dir()
+        {
+            issues.push(plugin_import_issue(
+                "skills_path_invalid",
+                Some(".codex-plugin/plugin.json"),
+                "plugin.json field `skills` must resolve to an existing `./skills/` directory",
+            ));
+        }
+    }
+    let skills_root = root.join("skills");
+    if let Ok(entries) = fs::read_dir(&skills_root) {
+        for entry in entries.flatten() {
+            let skill_root = entry.path();
+            if !skill_root.is_dir() || entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let skill_path = skill_root.join("SKILL.md");
+            let label = format!("skills/{}/SKILL.md", entry.file_name().to_string_lossy());
+            match fs::read_to_string(&skill_path) {
+                Ok(contents)
+                    if contents.starts_with("---\n") && contents[4..].contains("\n---") =>
+                {
+                    let frontmatter = contents[4..].split("\n---").next().unwrap_or("");
+                    let has_value = |key: &str| {
+                        frontmatter.lines().any(|line| {
+                            line.trim_start()
+                                .strip_prefix(key)
+                                .is_some_and(|value| !value.trim().is_empty())
+                        })
+                    };
+                    if !has_value("name:") || !has_value("description:") {
+                        issues.push(plugin_import_issue(
+                            "skill_frontmatter_incomplete",
+                            Some(&label),
+                            "SKILL.md frontmatter must include non-empty `name` and `description` fields",
+                        ));
+                    }
+                }
+                _ => issues.push(plugin_import_issue(
+                    "skill_manifest_invalid",
+                    Some(&label),
+                    "Each skill directory must contain SKILL.md with closed YAML frontmatter",
+                )),
+            }
+        }
+    }
+    match read_plugin_mcp_document(root, manifest) {
+        Ok(Some(document)) if !valid_plugin_mcp_document(&document) => {
+            issues.push(plugin_import_issue(
+                "mcp_manifest_invalid",
+                Some(".mcp.json"),
+                "MCP configuration must be a direct server map or contain an `mcp_servers` or `mcpServers` object",
+            ));
+        }
+        Err(issue) => issues.push(issue),
+        _ => {}
+    }
+    if let Some(interface) = manifest.get("interface").and_then(Value::as_object) {
+        for key in ["composerIcon", "logo", "logoDark"] {
+            if let Some(path) = interface.get(key).and_then(Value::as_str) {
+                let relative = path.trim_start_matches("./");
+                if safe_archive_path(relative).is_err() || !root.join(relative).is_file() {
+                    issues.push(plugin_import_issue(
+                        "interface_asset_missing",
+                        Some(".codex-plugin/plugin.json"),
+                        format!("plugin.json field `interface.{key}` points to a missing file"),
+                    ));
+                }
+            }
+        }
+    }
+    issues
+}
+
+fn plugin_component_summary(root: &Path, manifest: &Value) -> (usize, usize, Vec<String>) {
+    let skill_count = fs::read_dir(root.join("skills"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.path().join("SKILL.md").is_file())
+                .count()
+        })
+        .unwrap_or(0);
+    let document = read_plugin_mcp_document(root, manifest).ok().flatten();
+    let mcp = document
+        .as_ref()
+        .and_then(mcp_server_map)
+        .cloned()
+        .map(Value::Object);
+    let mcp_server_count = mcp
+        .as_ref()
+        .and_then(Value::as_object)
+        .map_or(0, |servers| servers.len());
+    let mut executable = Vec::new();
+    if let Some(servers) = mcp.as_ref().and_then(Value::as_object) {
+        for (name, server) in servers {
+            if server.get("command").is_some()
+                || server.get("type").and_then(Value::as_str) == Some("stdio")
+            {
+                executable.push(format!("stdio MCP: {name}"));
+            }
+        }
+    }
+    if root.join("hooks").exists() || root.join("hooks.json").exists() {
+        executable.push("hooks".to_string());
+    }
+    if root.join("bin").exists() || root.join("bins").exists() {
+        executable.push("binaries".to_string());
+    }
+    (skill_count, mcp_server_count, executable)
+}
+
+fn read_plugin_archive(path: &Path) -> Result<Vec<u8>, String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("Unable to read selected plugin ZIP: {error}"))?;
+    if !metadata.is_file() {
+        return Err("Selected plugin package is not a file".to_string());
+    }
+    if metadata.len() > MAX_PLUGIN_PACKAGE_BYTES as u64 {
+        return Err("Plugin ZIP exceeds 50 MB".to_string());
+    }
+    fs::read(path).map_err(|error| format!("Unable to read selected plugin ZIP: {error}"))
+}
+
+fn classify_plugin_import_error(package: &[u8], error: String) -> LocalPluginImportIssue {
+    if error.contains("missing .codex-plugin/plugin.json") {
+        if let Ok(mut archive) = zip::ZipArchive::new(std::io::Cursor::new(package)) {
+            let nested = (0..archive.len()).find_map(|index| {
+                archive.by_index(index).ok().and_then(|entry| {
+                    let name = entry.name().to_string();
+                    (name != ".codex-plugin/plugin.json"
+                        && name.ends_with("/.codex-plugin/plugin.json"))
+                    .then_some(name)
+                })
+            });
+            if let Some(path) = nested {
+                return plugin_import_issue(
+                    "manifest_not_at_root",
+                    Some(&path),
+                    "The ZIP contains an extra top-level directory. Compress the contents of the plugin directory so `.codex-plugin/plugin.json` is at the ZIP root",
+                );
+            }
+        }
+        return plugin_import_issue(
+            "manifest_missing",
+            Some(".codex-plugin/plugin.json"),
+            "This is not a standard Wework plugin package. Add `.codex-plugin/plugin.json` at the ZIP root",
+        );
+    }
+    let normalized_error = error.to_ascii_lowercase();
+    let code = if normalized_error.contains("password")
+        || normalized_error.contains("decrypt")
+        || normalized_error.contains("encrypted")
+    {
+        "archive_encrypted"
+    } else if error.contains("valid ZIP") || error.contains("ZIP directory") {
+        "zip_invalid"
+    } else if error.contains("unsafe path")
+        || error.contains("symbolic link")
+        || error.contains("duplicate path")
+    {
+        "archive_unsafe"
+    } else if error.contains("50 MB") || error.contains("200 MB") || error.contains("entries") {
+        "archive_limit_exceeded"
+    } else if error.contains("manifest") {
+        "manifest_invalid"
+    } else {
+        "package_invalid"
+    };
+    plugin_import_issue(code, None, error)
+}
+
+fn preview_plugin_import(
+    archive_path: &Path,
+    marketplace_path: &Path,
+) -> Result<LocalPluginImportPreview, String> {
+    let package = read_plugin_archive(archive_path)?;
+    let sha256 = format!("{:x}", Sha256::digest(&package));
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let preview_root = std::env::temp_dir().join(format!(
+        "wework-plugin-preview-{}-{}-{nonce}",
+        std::process::id(),
+        &sha256[..16]
+    ));
+    let _ = fs::remove_dir_all(&preview_root);
+    fs::create_dir_all(&preview_root)
+        .map_err(|error| format!("Failed to prepare plugin preview: {error}"))?;
+    let extracted = extract_plugin_copy(&package, &preview_root);
+    let manifest = match extracted {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&preview_root);
+            return Ok(LocalPluginImportPreview {
+                valid: false,
+                archive_path: archive_path.display().to_string(),
+                sha256,
+                name: String::new(),
+                display_name: String::new(),
+                version: String::new(),
+                description: String::new(),
+                skill_count: 0,
+                mcp_server_count: 0,
+                executable_capabilities: Vec::new(),
+                existing: false,
+                existing_version: None,
+                issues: vec![classify_plugin_import_error(&package, error)],
+            });
+        }
+    };
+    let issues = validate_plugin_import_manifest(&preview_root, &manifest);
+    let name = manifest_string(&manifest, "name").to_string();
+    let version = manifest_string(&manifest, "version").to_string();
+    let description = manifest_string(&manifest, "description").to_string();
+    let display_name = {
+        let value = plugin_interface_string(&manifest, "displayName");
+        if value.is_empty() {
+            name.clone()
+        } else {
+            value.to_string()
+        }
+    };
+    let (skill_count, mcp_server_count, executable_capabilities) =
+        plugin_component_summary(&preview_root, &manifest);
+    let marketplace_root = marketplace_root_from_path(marketplace_path);
+    let existing_root = marketplace_root.join("plugins").join(&name);
+    let existing_version = fs::read(existing_root.join(".codex-plugin/plugin.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|value| {
+            value
+                .get("version")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+    let existing = existing_root.is_dir();
+    let _ = fs::remove_dir_all(&preview_root);
+    Ok(LocalPluginImportPreview {
+        valid: issues.is_empty(),
+        archive_path: archive_path.display().to_string(),
+        sha256,
+        name,
+        display_name,
+        version,
+        description,
+        skill_count,
+        mcp_server_count,
+        executable_capabilities,
+        existing,
+        existing_version,
+        issues,
+    })
 }
 
 fn copy_registry_path(marketplace_root: &Path) -> PathBuf {
@@ -3444,17 +4500,298 @@ fn updated_copy_registry(path: &Path, record: LocalPluginCopyRecord) -> Result<V
 fn write_atomic_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
-        .ok_or_else(|| "Plugin copy registry path is invalid".to_string())?;
+        .ok_or_else(|| format!("Atomic write path has no parent: {}", path.display()))?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
-    let temp_path = parent.join(format!(".plugin-copy-registry-{}.tmp", std::process::id()));
-    fs::write(&temp_path, bytes)
-        .map_err(|error| format!("Failed to write plugin copy registry: {error}"))?;
-    if let Err(error) = fs::rename(&temp_path, path) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(format!("Failed to replace plugin copy registry: {error}"));
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|error| {
+        format!(
+            "Failed to create temporary file for {}: {error}",
+            path.display()
+        )
+    })?;
+    temporary.write_all(bytes).map_err(|error| {
+        format!(
+            "Failed to write temporary file for {}: {error}",
+            path.display()
+        )
+    })?;
+    temporary.as_file().sync_all().map_err(|error| {
+        format!(
+            "Failed to sync temporary file for {}: {error}",
+            path.display()
+        )
+    })?;
+    if let Ok(metadata) = fs::metadata(path) {
+        fs::set_permissions(temporary.path(), metadata.permissions()).map_err(|error| {
+            format!(
+                "Failed to preserve permissions while replacing {}: {error}",
+                path.display()
+            )
+        })?;
     }
+    temporary.persist(path).map_err(|error| {
+        format!(
+            "Failed to atomically replace {}: {}",
+            path.display(),
+            error.error
+        )
+    })?;
     Ok(())
+}
+
+fn plugin_import_backup_root(
+    marketplace_root: &Path,
+    rollback_id: &str,
+) -> Result<PathBuf, String> {
+    if rollback_id.is_empty()
+        || !rollback_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    {
+        return Err("Plugin import rollback identifier is invalid".to_string());
+    }
+    Ok(marketplace_root
+        .join(".wegent/plugin-import-backups")
+        .join(rollback_id))
+}
+
+fn restore_plugin_import(marketplace_root: &Path, rollback_id: &str) -> Result<(), String> {
+    let backup_root = plugin_import_backup_root(marketplace_root, rollback_id)?;
+    let metadata_bytes = fs::read(backup_root.join("rollback.json"))
+        .map_err(|error| format!("Failed to read plugin import rollback state: {error}"))?;
+    let metadata = serde_json::from_slice::<LocalPluginImportRollback>(&metadata_bytes)
+        .map_err(|error| format!("Plugin import rollback state is invalid: {error}"))?;
+    let plugins_root = marketplace_root.join("plugins");
+    let plugin_path = plugins_root.join(&metadata.plugin_name);
+    if plugin_path.exists() {
+        fs::remove_dir_all(&plugin_path).map_err(|error| {
+            format!("Failed to remove imported plugin during rollback: {error}")
+        })?;
+    }
+    let backed_up_plugin = backup_root.join("plugin");
+    if metadata.replaced_existing && backed_up_plugin.exists() {
+        fs::rename(&backed_up_plugin, &plugin_path)
+            .map_err(|error| format!("Failed to restore previous plugin: {error}"))?;
+    }
+    for (marketplace_path, backup_name, existed) in [
+        (
+            marketplace_root.join(".agents/plugins/marketplace.json"),
+            "codex-marketplace.json",
+            metadata.codex_marketplace_existed,
+        ),
+        (
+            marketplace_root.join(".claude-plugin/marketplace.json"),
+            "claude-marketplace.json",
+            metadata.claude_marketplace_existed,
+        ),
+    ] {
+        if existed {
+            let bytes = fs::read(backup_root.join(backup_name))
+                .map_err(|error| format!("Failed to read marketplace rollback copy: {error}"))?;
+            write_atomic_file(&marketplace_path, &bytes)?;
+        } else if marketplace_path.exists() {
+            fs::remove_file(&marketplace_path).map_err(|error| {
+                format!("Failed to remove imported marketplace manifest: {error}")
+            })?;
+        }
+    }
+    fs::remove_dir_all(&backup_root)
+        .map_err(|error| format!("Failed to clear plugin import rollback state: {error}"))?;
+    Ok(())
+}
+
+fn import_plugin_package(
+    marketplace_path: &Path,
+    archive_path: &Path,
+    expected_sha256: &str,
+    overwrite: bool,
+) -> Result<LocalPluginPackageImportResult, String> {
+    let package = read_plugin_archive(archive_path)?;
+    let actual_sha256 = format!("{:x}", Sha256::digest(&package));
+    if actual_sha256 != expected_sha256 {
+        return Err("The plugin ZIP changed after preview; select it again".to_string());
+    }
+    fs::create_dir_all(marketplace_path).map_err(|error| {
+        format!(
+            "Failed to create personal marketplace {}: {error}",
+            marketplace_path.display()
+        )
+    })?;
+    let resolved_marketplace_path = marketplace_path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
+    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+    let plugins_root = marketplace_root.join("plugins");
+    fs::create_dir_all(&plugins_root)
+        .map_err(|error| format!("Failed to create plugin directory: {error}"))?;
+    let staging_root = plugins_root.join(format!(
+        ".plugin-import-{}-{}",
+        std::process::id(),
+        &actual_sha256[..12]
+    ));
+    let _ = fs::remove_dir_all(&staging_root);
+    fs::create_dir(&staging_root)
+        .map_err(|error| format!("Failed to create plugin staging directory: {error}"))?;
+    let import_result = (|| {
+        let manifest = extract_plugin_copy(&package, &staging_root)?;
+        let issues = validate_plugin_import_manifest(&staging_root, &manifest);
+        if let Some(issue) = issues.first() {
+            return Err(issue.message.clone());
+        }
+        let plugin_name = manifest_string(&manifest, "name").to_string();
+        let version = manifest_string(&manifest, "version").to_string();
+        let display_name = {
+            let value = plugin_interface_string(&manifest, "displayName");
+            if value.is_empty() {
+                plugin_name.clone()
+            } else {
+                value.to_string()
+            }
+        };
+        let plugin_path = plugins_root.join(&plugin_name);
+        let replaced_existing = plugin_path.exists();
+        if replaced_existing && !overwrite {
+            return Err(format!(
+                "Plugin `{plugin_name}` already exists; confirm overwrite before importing"
+            ));
+        }
+        let rollback_id = format!("{}-{}", &actual_sha256[..16], std::process::id());
+        let backup_root = plugin_import_backup_root(&marketplace_root, &rollback_id)?;
+        if backup_root.exists() {
+            fs::remove_dir_all(&backup_root)
+                .map_err(|error| format!("Failed to clear stale plugin import backup: {error}"))?;
+        }
+        fs::create_dir_all(&backup_root)
+            .map_err(|error| format!("Failed to create plugin import backup: {error}"))?;
+        let codex_marketplace = marketplace_root.join(".agents/plugins/marketplace.json");
+        let claude_marketplace = marketplace_root.join(".claude-plugin/marketplace.json");
+        let codex_marketplace_existed = codex_marketplace.is_file();
+        let claude_marketplace_existed = claude_marketplace.is_file();
+        if codex_marketplace_existed {
+            fs::copy(
+                &codex_marketplace,
+                backup_root.join("codex-marketplace.json"),
+            )
+            .map_err(|error| format!("Failed to back up Codex marketplace: {error}"))?;
+        }
+        if claude_marketplace_existed {
+            fs::copy(
+                &claude_marketplace,
+                backup_root.join("claude-marketplace.json"),
+            )
+            .map_err(|error| format!("Failed to back up Claude marketplace: {error}"))?;
+        }
+        let metadata = LocalPluginImportRollback {
+            plugin_name: plugin_name.clone(),
+            replaced_existing,
+            codex_marketplace_existed,
+            claude_marketplace_existed,
+        };
+        let metadata_bytes = serde_json::to_vec_pretty(&metadata).map_err(|error| {
+            format!("Failed to serialize plugin import rollback state: {error}")
+        })?;
+        write_atomic_file(&backup_root.join("rollback.json"), &metadata_bytes)?;
+        if replaced_existing {
+            fs::rename(&plugin_path, backup_root.join("plugin"))
+                .map_err(|error| format!("Failed to back up existing plugin: {error}"))?;
+        }
+        if let Err(error) = fs::rename(&staging_root, &plugin_path) {
+            if replaced_existing {
+                let _ = fs::rename(backup_root.join("plugin"), &plugin_path);
+            }
+            let _ = fs::remove_dir_all(&backup_root);
+            return Err(format!("Failed to activate imported plugin: {error}"));
+        }
+        if let Err(error) = upsert_marketplace_plugin_entry(&codex_marketplace, &plugin_name)
+            .and_then(|_| upsert_marketplace_plugin_entry(&claude_marketplace, &plugin_name))
+        {
+            let _ = restore_plugin_import(&marketplace_root, &rollback_id);
+            return Err(error);
+        }
+        Ok(LocalPluginPackageImportResult {
+            plugin_name,
+            display_name,
+            version,
+            marketplace_path: marketplace_root.display().to_string(),
+            plugin_path: plugin_path.display().to_string(),
+            rollback_id,
+        })
+    })();
+    if import_result.is_err() {
+        let _ = fs::remove_dir_all(&staging_root);
+    }
+    import_result
+}
+
+#[tauri::command]
+pub async fn local_executor_preview_plugin_import(
+    archive_path: String,
+    marketplace_path: String,
+) -> Result<LocalPluginImportPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        preview_plugin_import(Path::new(&archive_path), Path::new(&marketplace_path))
+    })
+    .await
+    .map_err(|error| format!("Failed to join plugin preview task: {error}"))?
+}
+
+#[tauri::command]
+pub async fn local_executor_import_plugin_package(
+    archive_path: String,
+    marketplace_path: String,
+    expected_sha256: String,
+    overwrite: bool,
+) -> Result<LocalPluginPackageImportResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        import_plugin_package(
+            Path::new(&marketplace_path),
+            Path::new(&archive_path),
+            &expected_sha256,
+            overwrite,
+        )
+    })
+    .await
+    .map_err(|error| format!("Failed to join plugin import task: {error}"))?
+}
+
+#[tauri::command]
+pub async fn local_executor_finalize_plugin_import(
+    marketplace_path: String,
+    rollback_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let resolved = Path::new(&marketplace_path)
+            .canonicalize()
+            .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+        let marketplace_root = marketplace_root_from_path(&resolved);
+        let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+        let backup_root = plugin_import_backup_root(&marketplace_root, &rollback_id)?;
+        if backup_root.exists() {
+            fs::remove_dir_all(backup_root)
+                .map_err(|error| format!("Failed to finalize plugin import: {error}"))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Failed to join plugin import finalize task: {error}"))?
+}
+
+#[tauri::command]
+pub async fn local_executor_rollback_plugin_import(
+    marketplace_path: String,
+    rollback_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let resolved = Path::new(&marketplace_path)
+            .canonicalize()
+            .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+        let marketplace_root = marketplace_root_from_path(&resolved);
+        let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
+        restore_plugin_import(&marketplace_root, &rollback_id)
+    })
+    .await
+    .map_err(|error| format!("Failed to join plugin import rollback task: {error}"))?
 }
 
 fn import_plugin_copy_package(
@@ -3761,8 +5098,8 @@ fn optional_trimmed_string(value: Option<&Value>) -> Option<String> {
 
 fn personal_plugin_summary_from_root(
     name: &str,
+    marketplace_root: &Path,
     plugin_root: &Path,
-    installed: bool,
 ) -> PersonalMarketplacePluginSummary {
     let plugin_path = plugin_root.display().to_string();
     let manifest_path = [
@@ -3778,8 +5115,8 @@ fn personal_plugin_summary_from_root(
         description: None,
         logo: None,
         category: None,
+        marketplace_path: marketplace_root.display().to_string(),
         plugin_path,
-        installed,
     };
     if let Some(manifest_path) = manifest_path {
         if let Ok(content) = fs::read_to_string(&manifest_path) {
@@ -3833,42 +5170,6 @@ fn enrich_personal_plugin_summary(
     if existing.category.is_none() {
         existing.category = candidate.category;
     }
-    if candidate.installed {
-        existing.installed = true;
-        // Prefer the concrete installed tree when marketplace.json only had a stub.
-        if existing.plugin_path.is_empty()
-            || !Path::new(&existing.plugin_path)
-                .join(".codex-plugin/plugin.json")
-                .is_file()
-        {
-            existing.plugin_path = candidate.plugin_path;
-        }
-    }
-}
-
-fn latest_cached_personal_plugin_root(plugin_dir: &Path) -> Option<PathBuf> {
-    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    let entries = fs::read_dir(plugin_dir).ok()?;
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let has_manifest = path.join(".codex-plugin/plugin.json").is_file()
-            || path.join(".claude-plugin/plugin.json").is_file();
-        if !has_manifest {
-            continue;
-        }
-        let modified = entry
-            .metadata()
-            .and_then(|metadata| metadata.modified())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        match &best {
-            Some((best_modified, _)) if modified <= *best_modified => {}
-            _ => best = Some((modified, path)),
-        }
-    }
-    best.map(|(_, path)| path)
 }
 
 fn list_personal_marketplace_plugins(
@@ -3881,15 +5182,15 @@ fn list_personal_marketplace_plugins(
 
     let manifest_path = root.join(".agents/plugins/marketplace.json");
     if manifest_path.is_file() {
-        // Invalid marketplace.json must not abort directory/cache scans — those
-        // still return installable personal plugins for first paint.
+        // Invalid marketplace.json must not abort the source-directory scan — it
+        // still returns installable personal plugins for first paint.
         match marketplace_plugin_names(&manifest_path) {
             Ok(names) => {
                 for name in names {
                     let plugin_root = root.join("plugins").join(&name);
                     by_name.insert(
                         name.clone(),
-                        personal_plugin_summary_from_root(&name, &plugin_root, false),
+                        personal_plugin_summary_from_root(&name, &root, &plugin_root),
                     );
                 }
             }
@@ -3919,44 +5220,11 @@ fn list_personal_marketplace_plugins(
             if !has_manifest {
                 continue;
             }
-            let summary = personal_plugin_summary_from_root(&name, &plugin_root, true);
+            let summary = personal_plugin_summary_from_root(&name, &root, &plugin_root);
             match by_name.get_mut(&name) {
                 Some(existing) => enrich_personal_plugin_summary(existing, summary),
                 None => {
                     by_name.insert(name, summary);
-                }
-            }
-        }
-    }
-
-    // Codex materializes installed personal plugins under CODEX_HOME/plugins/cache/
-    // even when the source marketplace.json stays empty.
-    for codex_home in personal_plugin_cache_codex_homes() {
-        let cache_root = codex_home
-            .join("plugins")
-            .join("cache")
-            .join(WEWORK_PERSONAL_MARKETPLACE_ID);
-        if let Ok(entries) = fs::read_dir(&cache_root) {
-            for entry in entries.filter_map(Result::ok) {
-                let plugin_dir = entry.path();
-                if !plugin_dir.is_dir() {
-                    continue;
-                }
-                let Some(name) = entry.file_name().to_str().map(str::to_string) else {
-                    continue;
-                };
-                if name.starts_with('.') {
-                    continue;
-                }
-                let Some(plugin_root) = latest_cached_personal_plugin_root(&plugin_dir) else {
-                    continue;
-                };
-                let summary = personal_plugin_summary_from_root(&name, &plugin_root, true);
-                match by_name.get_mut(&name) {
-                    Some(existing) => enrich_personal_plugin_summary(existing, summary),
-                    None => {
-                        by_name.insert(name, summary);
-                    }
                 }
             }
         }
@@ -3976,23 +5244,6 @@ fn default_personal_marketplace_path() -> Result<PathBuf, String> {
         .join(WEWORK_PERSONAL_MARKETPLACE_ID))
 }
 
-fn personal_plugin_cache_codex_homes() -> Vec<PathBuf> {
-    let mut homes = Vec::new();
-    if let Ok(executor_home) = local_executor_home_path() {
-        if let Ok(codex_home) = wework_codex_home_path(&executor_home.display().to_string()) {
-            homes.push(codex_home);
-        }
-    }
-    if let Ok(managed) = managed_codex_home_paths() {
-        for path in managed {
-            if !homes.iter().any(|existing| existing == &path) {
-                homes.push(path);
-            }
-        }
-    }
-    homes
-}
-
 fn resolve_personal_marketplace_path(marketplace_path: &str) -> Result<PathBuf, String> {
     let trimmed = marketplace_path.trim();
     if !trimmed.is_empty() {
@@ -4008,7 +5259,28 @@ pub async fn local_executor_list_personal_marketplace_plugins(
 ) -> Result<PersonalMarketplaceListResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = resolve_personal_marketplace_path(&marketplace_path)?;
-        let listed = list_personal_marketplace_plugins(&path)?;
+        let mut listed = list_personal_marketplace_plugins(&path)?;
+        if let Some(home) = dirs::home_dir() {
+            let legacy_manifest = home.join(".agents/plugins/marketplace.json");
+            let primary_root = marketplace_root_from_path(&path);
+            let legacy_root = marketplace_root_from_path(&legacy_manifest);
+            if legacy_manifest.is_file()
+                && primary_root.canonicalize().ok() != legacy_root.canonicalize().ok()
+            {
+                let legacy = list_personal_marketplace_plugins(&legacy_manifest)?;
+                let mut names = listed
+                    .plugins
+                    .iter()
+                    .map(|plugin| plugin.name.clone())
+                    .collect::<std::collections::HashSet<_>>();
+                listed.plugins.extend(
+                    legacy
+                        .plugins
+                        .into_iter()
+                        .filter(|plugin| names.insert(plugin.name.clone())),
+                );
+            }
+        }
         log::info!(
             "Listed personal marketplace plugins from disk: path={}, count={}",
             listed.marketplace_path,
@@ -4018,6 +5290,131 @@ pub async fn local_executor_list_personal_marketplace_plugins(
     })
     .await
     .map_err(|error| format!("Failed to join personal marketplace list task: {error}"))?
+}
+
+fn wegent_store_plugin_summary(
+    installed: &Value,
+    plugin_root: &Path,
+) -> Option<WegentStorePluginSummary> {
+    let manifest_path = [
+        plugin_root.join(".codex-plugin/plugin.json"),
+        plugin_root.join(".claude-plugin/plugin.json"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file());
+    let manifest = manifest_path
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|content| serde_json::from_str::<Value>(&content).ok())?;
+    let name = optional_trimmed_string(manifest.get("name"))
+        .or_else(|| optional_trimmed_string(installed.get("name")))?;
+    let package_id = plugin_root.file_name()?.to_str()?.to_string();
+    let interface = manifest.get("interface");
+    Some(WegentStorePluginSummary {
+        name,
+        package_id,
+        marketplace: optional_trimmed_string(installed.get("marketplace"))?,
+        version: optional_trimmed_string(manifest.get("version"))
+            .or_else(|| optional_trimmed_string(installed.get("version"))),
+        enabled: installed
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        display_name: optional_trimmed_string(interface.and_then(|value| value.get("displayName"))),
+        description: optional_trimmed_string(manifest.get("description")).or_else(|| {
+            optional_trimmed_string(interface.and_then(|value| value.get("shortDescription")))
+        }),
+        logo: optional_trimmed_string(interface.and_then(|value| value.get("logo"))),
+        category: optional_trimmed_string(interface.and_then(|value| value.get("category"))),
+        plugin_path: plugin_root.display().to_string(),
+    })
+}
+
+fn list_wegent_store_plugins(executor_home: &Path) -> Result<WegentStoreListResult, String> {
+    let capabilities_root = executor_home.join("capabilities");
+    let store_root = capabilities_root.join("store").join("plugins");
+    let store_path = store_root.display().to_string();
+    let manifest_path = capabilities_root.join("manifest.json");
+    if !manifest_path.is_file() {
+        return Ok(WegentStoreListResult {
+            store_path,
+            plugins: Vec::new(),
+        });
+    }
+    let content = fs::read_to_string(&manifest_path).map_err(|error| {
+        format!(
+            "Failed to read capability manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    let manifest = serde_json::from_str::<Value>(&content).map_err(|error| {
+        format!(
+            "Failed to parse capability manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    let installed = manifest
+        .get("plugins")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            format!(
+                "Capability manifest {} is missing plugins",
+                manifest_path.display()
+            )
+        })?;
+    let Ok(canonical_store_root) = store_root.canonicalize() else {
+        return Ok(WegentStoreListResult {
+            store_path,
+            plugins: Vec::new(),
+        });
+    };
+    let mut plugins = Vec::new();
+    for entry in installed.values() {
+        let Some(path) = optional_trimmed_string(entry.get("store_path")).map(PathBuf::from) else {
+            continue;
+        };
+        let plugin_root = if path.is_absolute() {
+            path
+        } else {
+            capabilities_root.join(path)
+        };
+        if !plugin_root.is_dir() {
+            continue;
+        }
+        let Ok(plugin_root) = plugin_root.canonicalize() else {
+            continue;
+        };
+        if !plugin_root.starts_with(&canonical_store_root) {
+            continue;
+        }
+        if let Some(summary) = wegent_store_plugin_summary(entry, &plugin_root) {
+            plugins.push(summary);
+        }
+    }
+    plugins.sort_by(|left, right| {
+        left.marketplace
+            .cmp(&right.marketplace)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(WegentStoreListResult {
+        store_path,
+        plugins,
+    })
+}
+
+/// Lists installed packages from the active capability manifest without calling Codex.
+#[tauri::command]
+pub async fn local_executor_list_wegent_store_plugins() -> Result<WegentStoreListResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let listed = list_wegent_store_plugins(&local_executor_home_path()?)?;
+        log::info!(
+            "Listed wegent store plugins from disk: path={}, count={}",
+            listed.store_path,
+            listed.plugins.len()
+        );
+        Ok(listed)
+    })
+    .await
+    .map_err(|error| format!("Failed to join wegent store list task: {error}"))?
 }
 
 #[tauri::command]
@@ -4270,7 +5667,6 @@ mod tests {
         assert_eq!(listed.plugins[0].name, "notes");
         assert_eq!(listed.plugins[0].display_name.as_deref(), Some("Notes"));
         assert_eq!(listed.plugins[0].version.as_deref(), Some("1.2.0"));
-        assert!(listed.plugins[0].installed);
         assert_eq!(listed.plugins[1].name, "tasks");
         assert_eq!(
             listed.plugins[1].description.as_deref(),
@@ -4285,7 +5681,118 @@ mod tests {
     }
 
     #[test]
-    fn lists_personal_plugins_from_codex_cache_when_marketplace_json_is_empty() {
+    fn lists_wegent_store_plugins_from_disk_without_codex() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os("HOME");
+        let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let fake_home = import_test_root("list-wegent-store-home");
+        let executor_home = fake_home.join(".wework");
+        let store_dir = executor_home
+            .join("capabilities")
+            .join("store")
+            .join("plugins");
+        let package_dir = store_dir.join("269646-wegent-sina-email-0.1.11");
+        fs::create_dir_all(&package_dir).unwrap();
+        fs::create_dir_all(package_dir.join(".codex-plugin")).unwrap();
+        fs::write(
+            package_dir.join(".codex-plugin/plugin.json"),
+            r#"{"name":"sina-email","version":"0.1.11","interface":{"displayName":"Sina Email","shortDescription":"Read email","category":"Productivity","logo":"./assets/icon.png"}}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(store_dir.join("268634-wegent-code-review-0.1.2")).unwrap();
+        fs::create_dir_all(store_dir.join(".hidden")).unwrap();
+        fs::write(store_dir.join("not-a-plugin.txt"), "skip").unwrap();
+        fs::write(
+            executor_home.join("capabilities/manifest.json"),
+            serde_json::to_string(&json!({
+                "version": 1,
+                "plugins": {
+                    "sina-email@wegent": {
+                        "enabled": true,
+                        "marketplace": "wegent",
+                        "name": "sina-email",
+                        "store_path": package_dir,
+                        "version": "0.1.11"
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let stale_app_package = executor_home
+            .join("apps/com.weibo.wework/capabilities/store/plugins")
+            .join("267529-wework-lark-0.1.0");
+        fs::create_dir_all(stale_app_package.join(".codex-plugin")).unwrap();
+        fs::write(
+            stale_app_package.join(".codex-plugin/plugin.json"),
+            r#"{"name":"lark","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        std::env::set_var("HOME", &fake_home);
+        std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, &executor_home);
+
+        let listed = list_wegent_store_plugins(&executor_home).unwrap();
+
+        restore_env("HOME", previous_home);
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
+        let _ = fs::remove_dir_all(fake_home);
+
+        assert_eq!(listed.plugins.len(), 1);
+        assert_eq!(listed.plugins[0].name, "sina-email");
+        assert_eq!(
+            listed.plugins[0].package_id,
+            "269646-wegent-sina-email-0.1.11"
+        );
+        assert_eq!(listed.plugins[0].marketplace, "wegent");
+        assert_eq!(listed.plugins[0].version.as_deref(), Some("0.1.11"));
+        assert_eq!(
+            listed.plugins[0].display_name.as_deref(),
+            Some("Sina Email")
+        );
+        assert_eq!(listed.plugins[0].description.as_deref(), Some("Read email"));
+        assert!(listed
+            .store_path
+            .replace('\\', "/")
+            .ends_with("capabilities/store/plugins"));
+    }
+
+    #[test]
+    fn lists_legacy_codex_personal_marketplace_named_personal() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os("HOME");
+        let fake_home = import_test_root("list-legacy-codex-personal-home");
+        std::env::set_var("HOME", &fake_home);
+
+        let marketplace_manifest = fake_home.join(".agents/plugins/marketplace.json");
+        let notes_manifest = fake_home.join("plugins/notes/.codex-plugin/plugin.json");
+        fs::create_dir_all(marketplace_manifest.parent().unwrap()).unwrap();
+        fs::create_dir_all(notes_manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &marketplace_manifest,
+            r#"{"interface":{"displayName":"Personal"},"name":"personal","plugins":[{"name":"notes"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            notes_manifest,
+            r#"{"name":"notes","version":"1.0.0","interface":{"displayName":"Notes"}}"#,
+        )
+        .unwrap();
+
+        let listed = list_personal_marketplace_plugins(&marketplace_manifest).unwrap();
+        assert_eq!(listed.marketplace_id, "wework-personal");
+        assert_eq!(listed.plugins.len(), 1);
+        assert_eq!(listed.plugins[0].name, "notes");
+        assert_eq!(
+            marketplace_plugin_names(&marketplace_manifest).unwrap(),
+            HashSet::from(["notes".to_string()])
+        );
+
+        restore_env("HOME", previous_home);
+        let _ = fs::remove_dir_all(fake_home);
+    }
+
+    #[test]
+    fn ignores_codex_cache_when_personal_marketplace_is_empty() {
         let _guard = env_lock();
         let previous_home = std::env::var_os("HOME");
         let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
@@ -4316,21 +5823,12 @@ mod tests {
         .unwrap();
 
         let listed = list_personal_marketplace_plugins(&marketplace_root).unwrap();
-        assert_eq!(listed.plugins.len(), 1);
-        assert_eq!(listed.plugins[0].name, "dev-tools");
-        assert_eq!(listed.plugins[0].display_name.as_deref(), Some("Dev Tools"));
-        assert!(listed.plugins[0].installed);
+        assert!(listed.plugins.is_empty());
 
         let listed_default =
             list_personal_marketplace_plugins(&resolve_personal_marketplace_path("").unwrap())
                 .unwrap();
-        assert!(
-            listed_default
-                .plugins
-                .iter()
-                .any(|plugin| plugin.name == "dev-tools"),
-            "empty marketplacePath should still resolve cache via default home"
-        );
+        assert!(listed_default.plugins.is_empty());
 
         restore_env("HOME", previous_home);
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
@@ -4338,6 +5836,154 @@ mod tests {
         let _ = fs::remove_dir_all(executor_home);
         let _ = fs::remove_dir_all(marketplace_root);
         let _ = fs::remove_dir_all(fake_home);
+    }
+
+    #[test]
+    fn deletes_a_managed_personal_plugin_and_its_marketplace_metadata() {
+        let root = import_test_root("delete-personal-plugin");
+        let plugin_manifest = root.join("plugins/dev-tools/.codex-plugin/plugin.json");
+        let codex_marketplace = root.join(".agents/plugins/marketplace.json");
+        let claude_marketplace = root.join(".claude-plugin/marketplace.json");
+        fs::create_dir_all(plugin_manifest.parent().unwrap()).unwrap();
+        fs::create_dir_all(codex_marketplace.parent().unwrap()).unwrap();
+        fs::create_dir_all(claude_marketplace.parent().unwrap()).unwrap();
+        fs::write(
+            &plugin_manifest,
+            r#"{"name":"dev-tools","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        let marketplace =
+            r#"{"name":"wework-personal","plugins":[{"name":"dev-tools"},{"name":"keep-me"}]}"#;
+        fs::write(&codex_marketplace, marketplace).unwrap();
+        fs::write(&claude_marketplace, marketplace).unwrap();
+        write_plugin_cloud_links(
+            &root,
+            vec![LocalPluginCloudLink {
+                local_plugin_name: "dev-tools".to_string(),
+                cloud_plugin_id: 71,
+                cloud_release_id: Some(72),
+            }],
+        )
+        .unwrap();
+        write_atomic_file(
+            &copy_registry_path(&root),
+            &serde_json::to_vec_pretty(&LocalPluginCopyRegistry {
+                copies: vec![LocalPluginCopyRecord {
+                    local_plugin_name: "dev-tools".to_string(),
+                    source_plugin_id: 1,
+                    source_release_id: 2,
+                    source_plugin_name: "source".to_string(),
+                }],
+                cloud_links: Vec::new(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        delete_personal_plugin(&root, "dev-tools").unwrap();
+
+        assert!(!root.join("plugins/dev-tools").exists());
+        assert_eq!(
+            marketplace_plugin_names(&codex_marketplace).unwrap(),
+            HashSet::from(["keep-me".to_string()])
+        );
+        assert_eq!(
+            marketplace_plugin_names(&claude_marketplace).unwrap(),
+            HashSet::from(["keep-me".to_string()])
+        );
+        assert!(load_plugin_cloud_links(&root).is_empty());
+        let copy_registry: LocalPluginCopyRegistry =
+            serde_json::from_slice(&fs::read(copy_registry_path(&root)).unwrap()).unwrap();
+        assert!(copy_registry.copies.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn removes_a_stale_legacy_personal_plugin_entry_when_source_is_missing() {
+        let home = import_test_root("delete-stale-personal-plugin");
+        let marketplace = home.join(".agents/plugins/marketplace.json");
+        fs::create_dir_all(marketplace.parent().unwrap()).unwrap();
+        fs::write(
+            &marketplace,
+            r#"{"name":"personal","plugins":[{"name":"quality-gate"},{"name":"keep-me"}]}"#,
+        )
+        .unwrap();
+
+        delete_personal_plugin(&marketplace, "quality-gate").unwrap();
+
+        assert_eq!(
+            marketplace_plugin_names(&marketplace).unwrap(),
+            HashSet::from(["keep-me".to_string()])
+        );
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn deleting_an_already_absent_personal_plugin_is_idempotent() {
+        let root = import_test_root("delete-absent-personal-plugin");
+        let codex_marketplace = root.join(".agents/plugins/marketplace.json");
+        let claude_marketplace = root.join(".claude-plugin/marketplace.json");
+        fs::create_dir_all(codex_marketplace.parent().unwrap()).unwrap();
+        fs::create_dir_all(claude_marketplace.parent().unwrap()).unwrap();
+        let marketplace = r#"{"name":"wework-personal","plugins":[]}"#;
+        fs::write(&codex_marketplace, marketplace).unwrap();
+        fs::write(&claude_marketplace, marketplace).unwrap();
+        write_plugin_cloud_links(
+            &root,
+            vec![LocalPluginCloudLink {
+                local_plugin_name: "already-gone".to_string(),
+                cloud_plugin_id: 71,
+                cloud_release_id: Some(72),
+            }],
+        )
+        .unwrap();
+        write_atomic_file(
+            &copy_registry_path(&root),
+            &serde_json::to_vec_pretty(&LocalPluginCopyRegistry {
+                copies: vec![LocalPluginCopyRecord {
+                    local_plugin_name: "already-gone".to_string(),
+                    source_plugin_id: 1,
+                    source_release_id: 2,
+                    source_plugin_name: "source".to_string(),
+                }],
+                cloud_links: Vec::new(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        delete_personal_plugin(&root, "already-gone").unwrap();
+        delete_personal_plugin(&root, "already-gone").unwrap();
+
+        assert!(load_plugin_cloud_links(&root).is_empty());
+        let copy_registry: LocalPluginCopyRegistry =
+            serde_json::from_slice(&fs::read(copy_registry_path(&root)).unwrap()).unwrap();
+        assert!(copy_registry.copies.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_delete_an_unregistered_personal_plugin_directory() {
+        let root = import_test_root("delete-unregistered-personal-plugin");
+        let marketplace = root.join(".agents/plugins/marketplace.json");
+        let plugin_manifest = root.join("plugins/unregistered/.codex-plugin/plugin.json");
+        fs::create_dir_all(marketplace.parent().unwrap()).unwrap();
+        fs::create_dir_all(plugin_manifest.parent().unwrap()).unwrap();
+        fs::write(&marketplace, r#"{"name":"wework-personal","plugins":[]}"#).unwrap();
+        fs::write(
+            &plugin_manifest,
+            r#"{"name":"unregistered","version":"1.0.0"}"#,
+        )
+        .unwrap();
+
+        let error = delete_personal_plugin(&root, "unregistered").unwrap_err();
+
+        assert_eq!(
+            error,
+            "Plugin is not registered in this personal marketplace"
+        );
+        assert!(plugin_manifest.is_file());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -4503,6 +6149,241 @@ mod tests {
             ),
             ("skills/review/SKILL.md", b"# Review"),
         ])
+    }
+
+    fn valid_plugin_import_zip(version: &str) -> Vec<u8> {
+        valid_plugin_import_zip_with_mcp(
+            version,
+            br#"{"example":{"command":"node","args":["mcp/server.mjs"]}}"#,
+        )
+    }
+
+    fn valid_plugin_import_zip_with_mcp(version: &str, mcp: &[u8]) -> Vec<u8> {
+        valid_plugin_import_zip_at_path(version, "./.mcp.json", ".mcp.json", mcp)
+    }
+
+    fn valid_plugin_import_zip_at_path(
+        version: &str,
+        manifest_path: &str,
+        archive_path: &str,
+        mcp: &[u8],
+    ) -> Vec<u8> {
+        let manifest = format!(
+            r#"{{"name":"example-plugin","version":"{version}","description":"Example plugin","author":{{"name":"Wework"}},"skills":"./skills/","mcpServers":"{manifest_path}","interface":{{"displayName":"Example Plugin","shortDescription":"Example","longDescription":"Example plugin package","developerName":"Wework","category":"Productivity","capabilities":["Skill","MCP"],"defaultPrompt":"Use the example plugin."}}}}"#
+        );
+        plugin_copy_zip(&[
+            (".codex-plugin/plugin.json", manifest.as_bytes()),
+            (
+                "skills/example/SKILL.md",
+                b"---\nname: example\ndescription: Example skill\n---\n\n# Example\n",
+            ),
+            (archive_path, mcp),
+            ("mcp/server.mjs", b"process.stdin.resume()\n"),
+        ])
+    }
+
+    #[test]
+    fn previews_a_standard_plugin_zip_and_reports_executable_components() {
+        let root = import_test_root("plugin-import-preview");
+        fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("example-plugin.zip");
+        fs::write(&archive_path, valid_plugin_import_zip("1.2.3")).unwrap();
+
+        let preview = preview_plugin_import(&archive_path, &root).unwrap();
+
+        assert!(preview.valid, "unexpected issues: {:?}", preview.issues);
+        assert_eq!(preview.name, "example-plugin");
+        assert_eq!(preview.version, "1.2.3");
+        assert_eq!(preview.skill_count, 1);
+        assert_eq!(preview.mcp_server_count, 1);
+        assert_eq!(preview.executable_capabilities, vec!["stdio MCP: example"]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn previews_standard_and_legacy_wrapped_mcp_server_maps() {
+        for (label, document) in [
+            (
+                "snake-case",
+                br#"{"mcp_servers":{"example":{"url":"https://mcp.example.com/mcp"}}}"#.as_slice(),
+            ),
+            (
+                "camel-case",
+                br#"{"mcpServers":{"example":{"url":"https://mcp.example.com/mcp"}}}"#.as_slice(),
+            ),
+        ] {
+            let root = import_test_root(label);
+            fs::create_dir_all(&root).unwrap();
+            let archive_path = root.join("example-plugin.zip");
+            fs::write(
+                &archive_path,
+                valid_plugin_import_zip_with_mcp("1.2.3", document),
+            )
+            .unwrap();
+
+            let preview = preview_plugin_import(&archive_path, &root).unwrap();
+
+            assert!(preview.valid, "unexpected issues: {:?}", preview.issues);
+            assert_eq!(preview.mcp_server_count, 1);
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn previews_mcp_server_map_from_safe_manifest_relative_path() {
+        let root = import_test_root("custom-mcp-path");
+        fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("example-plugin.zip");
+        fs::write(
+            &archive_path,
+            valid_plugin_import_zip_at_path(
+                "1.2.3",
+                "./config/remote.mcp.json",
+                "config/remote.mcp.json",
+                br#"{"remote":{"url":"https://mcp.example.com/mcp"}}"#,
+            ),
+        )
+        .unwrap();
+
+        let preview = preview_plugin_import(&archive_path, &root).unwrap();
+
+        assert!(preview.valid, "unexpected issues: {:?}", preview.issues);
+        assert_eq!(preview.mcp_server_count, 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_mcp_wrapper_with_non_object_server_map() {
+        let root = import_test_root("invalid-mcp-wrapper");
+        fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("example-plugin.zip");
+        fs::write(
+            &archive_path,
+            valid_plugin_import_zip_with_mcp("1.2.3", br#"{"mcp_servers":[]}"#),
+        )
+        .unwrap();
+
+        let preview = preview_plugin_import(&archive_path, &root).unwrap();
+
+        assert!(!preview.valid);
+        assert!(preview
+            .issues
+            .iter()
+            .any(|issue| issue.code == "mcp_manifest_invalid"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preview_guides_users_to_remove_a_zip_wrapper_directory() {
+        let root = import_test_root("plugin-import-wrapper");
+        fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("wrapped.zip");
+        fs::write(
+            &archive_path,
+            plugin_copy_zip(&[(
+                "example-plugin/.codex-plugin/plugin.json",
+                br#"{"name":"example-plugin","version":"1.0.0"}"#,
+            )]),
+        )
+        .unwrap();
+
+        let preview = preview_plugin_import(&archive_path, &root).unwrap();
+
+        assert!(!preview.valid);
+        assert_eq!(preview.issues[0].code, "manifest_not_at_root");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn classifies_password_protected_plugin_archives() {
+        let issue = classify_plugin_import_error(
+            &[],
+            "unsupported Zip archive: Password required to decrypt file".to_string(),
+        );
+
+        assert_eq!(issue.code, "archive_encrypted");
+    }
+
+    #[test]
+    fn limits_plugin_extraction_by_actual_written_bytes() {
+        let mut oversized_reader = std::io::Cursor::new(vec![1_u8; 5]);
+        let mut oversized_output = Vec::new();
+
+        let error =
+            copy_with_expanded_limit(&mut oversized_reader, &mut oversized_output, 4).unwrap_err();
+
+        assert!(error.contains("exceeds 200 MB"));
+        assert!(oversized_output.is_empty());
+
+        let mut exact_reader = std::io::Cursor::new(vec![2_u8; 4]);
+        let mut exact_output = Vec::new();
+        let copied = copy_with_expanded_limit(&mut exact_reader, &mut exact_output, 4).unwrap();
+        assert_eq!(copied, 4);
+        assert_eq!(exact_output, vec![2_u8; 4]);
+    }
+
+    #[test]
+    fn rolls_back_a_plugin_package_import_and_both_marketplace_manifests() {
+        let root = import_test_root("plugin-package-rollback");
+        fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("example-plugin.zip");
+        let package = valid_plugin_import_zip("1.2.3");
+        fs::write(&archive_path, &package).unwrap();
+
+        let imported = import_plugin_package(
+            &root,
+            &archive_path,
+            &format!("{:x}", Sha256::digest(&package)),
+            false,
+        )
+        .unwrap();
+        assert!(root
+            .join("plugins/example-plugin/.codex-plugin/plugin.json")
+            .is_file());
+        assert!(root.join(".agents/plugins/marketplace.json").is_file());
+        assert!(root.join(".claude-plugin/marketplace.json").is_file());
+
+        restore_plugin_import(&root, &imported.rollback_id).unwrap();
+
+        assert!(!root.join("plugins/example-plugin").exists());
+        assert!(!root.join(".agents/plugins/marketplace.json").exists());
+        assert!(!root.join(".claude-plugin/marketplace.json").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rollback_restores_the_previous_plugin_after_an_overwrite() {
+        let root = import_test_root("plugin-package-overwrite-rollback");
+        fs::create_dir_all(&root).unwrap();
+        let archive_path = root.join("example-plugin.zip");
+        let first_package = valid_plugin_import_zip("1.0.0");
+        fs::write(&archive_path, &first_package).unwrap();
+        let first = import_plugin_package(
+            &root,
+            &archive_path,
+            &format!("{:x}", Sha256::digest(&first_package)),
+            false,
+        )
+        .unwrap();
+        fs::remove_dir_all(plugin_import_backup_root(&root, &first.rollback_id).unwrap()).unwrap();
+
+        let replacement_package = valid_plugin_import_zip("2.0.0");
+        fs::write(&archive_path, &replacement_package).unwrap();
+        let replacement = import_plugin_package(
+            &root,
+            &archive_path,
+            &format!("{:x}", Sha256::digest(&replacement_package)),
+            true,
+        )
+        .unwrap();
+        restore_plugin_import(&root, &replacement.rollback_id).unwrap();
+
+        let restored: Value = serde_json::from_slice(
+            &fs::read(root.join("plugins/example-plugin/.codex-plugin/plugin.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(restored["version"], "1.0.0");
+        let _ = fs::remove_dir_all(root);
     }
 
     fn plugin_copy_options(
@@ -4863,6 +6744,7 @@ mod tests {
 
         assert_eq!(first.id, WEWORK_PERSONAL_MARKETPLACE_ID);
         assert_eq!(first.plugin_count, 0);
+        assert!(first.default_plugin_names.is_empty());
         assert_eq!(first.path, second.path);
         assert!(destination
             .join(".agents/plugins/marketplace.json")
@@ -4871,6 +6753,126 @@ mod tests {
             .join(".claude-plugin/marketplace.json")
             .is_file());
         assert!(!destination.join("stale.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn preserves_registered_personal_plugins_when_refreshing_bundled_plugins() {
+        let root = import_test_root("bundled-plugin-marketplace-personal");
+        let source = root.join("source");
+        let destination = root.join("destination/wework-personal");
+        fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+        fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+        fs::create_dir_all(source.join("plugins/smart-app-builder/.codex-plugin")).unwrap();
+        fs::write(
+            source.join(".agents/plugins/marketplace.json"),
+            r#"{"name":"wework-personal","plugins":[{"name":"smart-app-builder"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join(".claude-plugin/marketplace.json"),
+            r#"{"name":"wework-personal","plugins":[{"name":"smart-app-builder"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join("plugins/smart-app-builder/.codex-plugin/plugin.json"),
+            r#"{"name":"smart-app-builder","version":"1.0.0"}"#,
+        )
+        .unwrap();
+
+        initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+        let personal_plugin = destination.join("plugins/dev-tools");
+        fs::create_dir_all(personal_plugin.join(".codex-plugin")).unwrap();
+        fs::write(
+            personal_plugin.join(".codex-plugin/plugin.json"),
+            r#"{"name":"dev-tools","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        let retired_bundled_plugin = destination.join("plugins/retired-bundled-plugin");
+        fs::create_dir_all(retired_bundled_plugin.join(".codex-plugin")).unwrap();
+        fs::write(
+            retired_bundled_plugin.join(".codex-plugin/plugin.json"),
+            r#"{"name":"retired-bundled-plugin","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        for manifest in [
+            destination.join(".agents/plugins/marketplace.json"),
+            destination.join(".claude-plugin/marketplace.json"),
+        ] {
+            upsert_marketplace_plugin_entry(&manifest, "dev-tools").unwrap();
+            let mut value = serde_json::from_slice::<Value>(&fs::read(&manifest).unwrap()).unwrap();
+            value
+                .get_mut("plugins")
+                .and_then(Value::as_array_mut)
+                .unwrap()
+                .push(json!({
+                    "name": "retired-bundled-plugin",
+                    "policy": { "installation": "INSTALLED_BY_DEFAULT" }
+                }));
+            fs::write(&manifest, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        }
+        let registry = copy_registry_path(&destination);
+        fs::create_dir_all(registry.parent().unwrap()).unwrap();
+        fs::write(&registry, br#"{"copies":[]}"#).unwrap();
+        fs::write(destination.join("stale.txt"), "stale").unwrap();
+
+        initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+        initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+
+        let expected = HashSet::from(["dev-tools".to_string(), "smart-app-builder".to_string()]);
+        assert_eq!(
+            marketplace_plugin_names(&destination.join(".agents/plugins/marketplace.json"))
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            marketplace_plugin_names(&destination.join(".claude-plugin/marketplace.json")).unwrap(),
+            expected
+        );
+        assert!(personal_plugin.join(".codex-plugin/plugin.json").is_file());
+        assert!(!retired_bundled_plugin.exists());
+        assert_eq!(fs::read(&registry).unwrap(), br#"{"copies":[]}"#);
+        assert!(!destination.join("stale.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exposes_bundled_plugins_marked_for_default_installation() {
+        let root = import_test_root("bundled-plugin-marketplace-defaults");
+        let source = root.join("source");
+        let destination = root.join("destination/wework-personal");
+        fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+        fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+        fs::write(
+            source.join(".agents/plugins/marketplace.json"),
+            r#"{
+  "name": "wework-personal",
+  "plugins": [
+    {"name":"available","policy":{"installation":"AVAILABLE"}},
+    {"name":"smart-app-builder","policy":{"installation":"INSTALLED_BY_DEFAULT"}}
+  ]
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join(".claude-plugin/marketplace.json"),
+            r#"{
+  "name": "wework-personal",
+  "plugins": [
+    {"name":"available"},
+    {"name":"smart-app-builder"}
+  ]
+}"#,
+        )
+        .unwrap();
+
+        let initialized =
+            initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+
+        assert_eq!(
+            initialized.default_plugin_names,
+            vec!["smart-app-builder".to_string()]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -5039,6 +7041,43 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
 
         assert!(!next.contains("WEGENT_RUNTIME_AUTH_TOKEN"));
         assert!(next.contains("BROWSER_USE_AVAILABLE_BACKENDS = \"chrome,iab\""));
+    }
+
+    #[test]
+    fn atomic_file_replacement_never_exposes_partial_content() {
+        let root = import_test_root("atomic-file-replacement");
+        let path = root.join("config.toml");
+        let first = vec![b'a'; 256 * 1024];
+        let second = vec![b'b'; 256 * 1024];
+        write_atomic_file(&path, &first).unwrap();
+
+        let writer_path = path.clone();
+        let writer_first = first.clone();
+        let writer_second = second.clone();
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer_finished = Arc::clone(&finished);
+        let writer = thread::spawn(move || {
+            for index in 0..100 {
+                let content = if index % 2 == 0 {
+                    &writer_second
+                } else {
+                    &writer_first
+                };
+                write_atomic_file(&writer_path, content).unwrap();
+            }
+            writer_finished.store(true, Ordering::Release);
+        });
+
+        while !finished.load(Ordering::Acquire) {
+            let content = fs::read(&path).unwrap();
+            assert!(
+                content == first || content == second,
+                "atomic replacement exposed {} partial bytes",
+                content.len()
+            );
+        }
+        writer.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -5503,6 +7542,9 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
         let codex_home_env = envs
             .get(CODEX_HOME_ENV)
             .expect("codex home env should be passed to sidecar");
+        let wegent_codex_home_env = envs
+            .get(WEGENT_CODEX_HOME_ENV)
+            .expect("Wegent Codex home env should be passed to sidecar");
         let log_dir_env = envs
             .get(LOCAL_EXECUTOR_LOG_DIR_ENV)
             .expect("log dir env should be passed to sidecar");
@@ -5511,10 +7553,12 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
                 executor_home_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-")
             );
             assert_eq!(codex_home_env, &format!("{executor_home_env}/codex"));
+            assert_eq!(wegent_codex_home_env, codex_home_env);
             assert!(log_dir_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-"));
         } else {
             assert_eq!(executor_home_env, "/tmp/wework-instance-executor");
             assert_eq!(codex_home_env, "/tmp/wework-instance-executor/codex");
+            assert_eq!(wegent_codex_home_env, codex_home_env);
             assert_eq!(log_dir_env, "/tmp/wework-instance-executor/logs");
         }
     }
@@ -5757,7 +7801,7 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
 
     #[cfg(unix)]
     #[test]
-    fn configured_sidecar_kill_stops_grandchild_process_group() {
+    fn shutdown_stops_configured_sidecar_process_group_before_returning() {
         let dir = std::env::temp_dir().join(format!(
             "wework-local-executor-process-group-{}",
             std::process::id()
@@ -5796,13 +7840,28 @@ wait
             .stderr(Stdio::piped());
         configure_managed_process_group(&mut command);
         let child = command.spawn().expect("sidecar should start");
-        let child = LocalExecutorChild::Process(ManagedProcessChild::new(child));
-        let grandchild_pid =
-            wait_for_pid_file(&pid_path, Duration::from_secs(2)).expect("grandchild pid");
+        let child_pid = child.id();
+        let state = LocalExecutorState::default();
+        register_spawned_child(
+            &state,
+            LocalExecutorChild::Process(ManagedProcessChild::new(child)),
+        )
+        .expect("sidecar should be registered");
+        let grandchild_pid = match wait_for_pid_file(&pid_path, Duration::from_secs(10)) {
+            Some(pid) => pid,
+            None => {
+                shutdown_local_executor(&state, "test_cleanup");
+                panic!("grandchild pid");
+            }
+        };
         let _cleanup = ProcessCleanup::new(grandchild_pid);
 
-        child.kill();
+        shutdown_local_executor(&state, "test_shutdown");
 
+        assert!(
+            !process_alive(child_pid),
+            "sidecar process should be stopped before kill returns"
+        );
         assert!(
             wait_until_dead(grandchild_pid, Duration::from_secs(2)),
             "grandchild process should be stopped when sidecar is killed"

@@ -18,11 +18,13 @@ from app.services.execution.agents.generation_context import (
     resolve_generation_model,
 )
 
+from .image_staging import stage_video_reference_images
 from .materials import (
     determine_image_mode,
     normalize_reference_materials,
     validate_reference_materials,
 )
+from .prompt import normalize_video_prompt
 from .providers import get_video_provider
 
 
@@ -39,7 +41,7 @@ class VideoGenerationService:
         reference_audios: Optional[list[str | int]] = None,
     ) -> dict[str, Any]:
         """Create a durable video generation job and return immediately."""
-        prompt_text = (prompt or "").strip()
+        prompt_text = normalize_video_prompt(prompt or "")
         if not prompt_text:
             raise ValueError("prompt is required")
 
@@ -70,6 +72,7 @@ class VideoGenerationService:
         validate_reference_materials(model_config, images, videos, audios)
 
         image_mode = determine_image_mode(model_config, images, videos, audios)
+        images = await stage_video_reference_images(images, token_info.user_id)
         reference_image = images[0]["url"] if images else None
         protocol = model_config.get("protocol") or "seedance"
         provider = get_video_provider(protocol, model_config)

@@ -117,14 +117,12 @@ function capabilityRequestError(req, request, apiFormat) {
   if (!String(req.headers.authorization || '').startsWith('Bearer ')) {
     return 'Missing bearer authorization'
   }
-  if (request?.stream !== false) return 'Capability probe must be non-streaming'
-
   if (apiFormat === 'responses') {
-    const expectedMaxOutputTokens = tool.type === 'custom' ? 256 : 64
-    if (request?.store !== false || request?.max_output_tokens !== expectedMaxOutputTokens) {
+    if (request?.stream !== true) return 'Capability probe must be streaming'
+    if (request?.store !== false || request?.max_output_tokens !== undefined) {
       return 'Responses probe options are incorrect'
     }
-    if (!String(request?.input || '').includes('PING')) return 'Responses probe prompt is missing'
+    if (!extractText(request?.input).includes('PING')) return 'Responses probe prompt is missing'
     if (request?.tool_choice !== undefined) return 'Responses probe must not force a tool'
     if (tool.type === 'custom') {
       if (
@@ -258,6 +256,58 @@ function writeSseEvent(res, event) {
   res.write(`data: ${JSON.stringify(event)}\n\n`)
 }
 
+function writeStreamingResponsesCapability(res, request) {
+  const capability = responsesCapabilityBody(request)
+  const item = capability.output[0]
+  const response = {
+    ...capability,
+    status: 'in_progress',
+    output: [],
+  }
+
+  res.writeHead(
+    200,
+    corsHeaders({
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    })
+  )
+
+  writeSseEvent(res, { type: 'response.created', response })
+  writeSseEvent(res, {
+    type: 'response.output_item.added',
+    output_index: 0,
+    item,
+  })
+  if (item.type === 'custom_tool_call') {
+    writeSseEvent(res, {
+      type: 'response.custom_tool_call_input.done',
+      item_id: item.id,
+      output_index: 0,
+      input: item.input,
+    })
+  } else {
+    writeSseEvent(res, {
+      type: 'response.function_call_arguments.done',
+      item_id: item.id,
+      output_index: 0,
+      arguments: item.arguments,
+    })
+  }
+  writeSseEvent(res, {
+    type: 'response.output_item.done',
+    output_index: 0,
+    item,
+  })
+  writeSseEvent(res, {
+    type: 'response.completed',
+    response: capability,
+  })
+  res.write('data: [DONE]\n\n')
+  res.end()
+}
+
 function writeStreamingResponsesApi(res, request, content) {
   const response = responseBody(request, content)
   res.writeHead(
@@ -344,7 +394,7 @@ function handleResponses(req, res, body) {
       writeJson(res, 422, { error: { message: error } })
       return
     }
-    writeJson(res, 200, responsesCapabilityBody(parsedBody))
+    writeStreamingResponsesCapability(res, parsedBody)
     return
   }
   if (parsedBody?.stream === true) {

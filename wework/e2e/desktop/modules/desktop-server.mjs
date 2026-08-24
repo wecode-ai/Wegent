@@ -45,11 +45,11 @@ import {
   selectShellToolCommand,
   selectTool,
   selectToolSearch,
+  toolSearchResponseEvents,
   selectViewImageTool,
   streamingMarkdownReport,
   streamingTextEvents,
   telemetryEvents,
-  toolSearchCall,
 } from './response-protocol.mjs'
 
 import {
@@ -130,6 +130,17 @@ import {
   LOCAL_MODEL_SWITCH_INVALID_CALL_ID,
   LOCAL_VISION_SIDECAR_CASE,
   MEMORY_PROMPT,
+  MCP_ELICITATION_ACCEPTED_MARKER,
+  MCP_ELICITATION_CALL_ID,
+  MCP_ELICITATION_COMPLETION_TEXT,
+  MCP_ELICITATION_NAMESPACE,
+  MCP_ELICITATION_PROMPT,
+  MCP_ELICITATION_SEARCH_ID,
+  MCP_ELICITATION_TOOL_NAME,
+  MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
+  MESSAGE_EDIT_ORIGINAL_PROMPT,
+  MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
+  MESSAGE_EDIT_UPDATED_PROMPT,
   MODEL_API_KEY,
   NODE_REPL_TOOL_BLOCK_ID,
   NODE_REPL_TOOL_SEARCH_ID,
@@ -206,6 +217,7 @@ import {
   VIEW_IMAGE_PROMPT,
   VISION_SIDECAR_COMPLETION_TEXT,
   VISION_SIDECAR_DESCRIPTION,
+  VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
   VISION_SIDECAR_PROMPT,
   MULTIMODAL_VISION_COMPLETION_TEXT,
   MULTIMODAL_VISION_PROMPT,
@@ -217,6 +229,8 @@ import {
   randomUUID,
   withTimeout,
 } from './shared.mjs'
+
+const DESKTOP_CONTROL_COMMAND_INTERVAL_MS = 250
 
 class DesktopE2EServer {
   constructor(
@@ -249,6 +263,7 @@ class DesktopE2EServer {
     this.activeControlClientId = null
     this.controlClientsByWindow = new Map()
     this.controlWindowsByClient = new Map()
+    this.controlCommandAvailableAt = new Map()
     this.readyWaiters = []
     this.commandQueue = []
     this.commandResults = new Map()
@@ -256,6 +271,7 @@ class DesktopE2EServer {
     this.modelRequests = []
     this.catalogRequests = []
     this.httpRequests = []
+    this.runtimeImBindingRequests = []
     this.telemetryRequests = []
     this.blockedCloudRequests = []
     this.blockedCloudResponses = new Set()
@@ -401,6 +417,7 @@ class DesktopE2EServer {
     this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
+    this.heldScenarioResponses = new Map()
     this.localProtocolStates = new Map(
       LOCAL_MODEL_CASES.map(model => [model.protocol, { stage: 'initial', requests: [] }])
     )
@@ -571,6 +588,7 @@ class DesktopE2EServer {
         'fork_follow_up',
         'task_plan',
         'request_user_input',
+        'mcp_elicitation',
         'window_lifecycle',
         'background_completion_restore',
         'background_follow_up_restore',
@@ -588,6 +606,9 @@ class DesktopE2EServer {
         'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
+        'worktree_queue_hold',
+        'worktree_restart_hold',
+        'message_edit',
         'file_panel_anchor',
         'fresh_chat',
         'attachment_only',
@@ -615,6 +636,24 @@ class DesktopE2EServer {
       `Unknown desktop E2E scenario: ${scenario}`
     )
     this.scenario = scenario
+  }
+
+  holdScenarioResponse(scenario) {
+    assert.ok(
+      ['worktree_queue_hold', 'worktree_restart_hold'].includes(scenario),
+      `Scenario "${scenario}" does not support held responses`
+    )
+    let release
+    const promise = new Promise(resolvePromise => {
+      release = resolvePromise
+    })
+    this.heldScenarioResponses.set(scenario, { promise, release })
+  }
+
+  releaseScenarioResponse(scenario) {
+    const held = this.heldScenarioResponses.get(scenario)
+    held?.release()
+    this.heldScenarioResponses.delete(scenario)
   }
 
   setMatrixCase(model) {
@@ -815,6 +854,11 @@ class DesktopE2EServer {
   }
 
   async commandForClient(clientId, action, selector, options = {}) {
+    const availableAt = this.controlCommandAvailableAt.get(clientId) ?? 0
+    const delayMs = Math.max(0, availableAt - Date.now())
+    if (delayMs > 0) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, delayMs))
+    }
     assert.ok(
       this.controlWindowsByClient.has(clientId),
       `Desktop control client ${clientId} is not registered`
@@ -828,9 +872,15 @@ class DesktopE2EServer {
       rejectDelivery = reject
     })
     const result = new Promise((resolvePromise, reject) => {
-      this.commandResults.set(id, { clientId, resolve: resolvePromise, reject })
+      this.commandResults.set(id, {
+        clientId,
+        resolve: resolvePromise,
+        reject,
+        resolveDelivery,
+        started: false,
+      })
     })
-    this.commandQueue.push({ clientId, command, rejectDelivery, resolveDelivery })
+    this.commandQueue.push({ clientId, command, rejectDelivery })
     try {
       await withTimeout(
         this.guard(Promise.race([delivery, result])),
@@ -847,6 +897,20 @@ class DesktopE2EServer {
       this.commandResults.delete(id)
       throw error
     }
+  }
+
+  deliverQueuedControlCommand(clientId, response) {
+    const commandIndex = this.commandQueue.findIndex(item => item.clientId === clientId)
+    if (commandIndex < 0) return false
+
+    const { command } = this.commandQueue[commandIndex]
+    this.commandHistory.push({
+      ...command,
+      clientId,
+      deliveredAt: new Date().toISOString(),
+    })
+    json(response, 200, command)
+    return true
   }
 
   async handleControl(request, response) {
@@ -896,6 +960,52 @@ class DesktopE2EServer {
         id: 9001,
         user_name: 'wework-desktop-e2e-cloud-user',
         email: 'desktop-e2e@wework.local',
+      })
+      return
+    }
+
+    if (
+      request.method === 'POST' &&
+      url.pathname === '/api/v1/loop-item-executions/claim-my-next'
+    ) {
+      json(response, 200, null)
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/apps/installed') {
+      json(response, 200, { apps: [] })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/im/private-sessions') {
+      json(response, 200, {
+        total: 1,
+        items: [
+          {
+            session_key: 'desktop-e2e-im-session',
+            channel_type: 'dingtalk',
+            channel_label: 'DingTalk',
+            channel_id: 77,
+            conversation_id: 'desktop-e2e-conversation',
+            sender_id: 'desktop-e2e-user',
+            display_name: 'Desktop E2E',
+            mode: 'task',
+            state: 'idle',
+            active_task_id: null,
+            last_seen_at: '2026-08-12T00:00:00.000Z',
+          },
+        ],
+      })
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/runtime-work/im-sessions') {
+      const body = await readRequestBody(request)
+      this.runtimeImBindingRequests.push(body)
+      json(response, 200, {
+        address: body.address,
+        boundSessionKeys: body.sessionKeys,
+        notifiedCount: 1,
       })
       return
     }
@@ -1328,6 +1438,7 @@ class DesktopE2EServer {
       this.controlWindowsByClient.set(ready.clientId, ready.windowLabel)
       if (previousClientId && previousClientId !== ready.clientId) {
         this.controlWindowsByClient.delete(previousClientId)
+        this.controlCommandAvailableAt.delete(previousClientId)
         const replacementError = new Error(
           `Desktop control client ${previousClientId} for ${ready.windowLabel} was replaced by ${ready.clientId}`
         )
@@ -1366,18 +1477,7 @@ class DesktopE2EServer {
         response.end()
         return true
       }
-      const commandIndex = this.commandQueue.findIndex(item => item.clientId === clientId)
-      if (commandIndex >= 0) {
-        const [{ command, resolveDelivery }] = this.commandQueue.splice(commandIndex, 1)
-        this.commandHistory.push({
-          ...command,
-          clientId,
-          deliveredAt: new Date().toISOString(),
-        })
-        resolveDelivery()
-        json(response, 200, command)
-        return true
-      }
+      if (this.deliverQueuedControlCommand(clientId, response)) return true
       response.writeHead(204)
       response.end()
       return true
@@ -1388,6 +1488,28 @@ class DesktopE2EServer {
         response.writeHead(204)
         response.end()
       }, 50)
+      return true
+    }
+
+    if (request.method === 'POST' && url.pathname === '/started') {
+      const started = await readRequestBody(request)
+      const pending = this.commandResults.get(started.id)
+      if (!pending) {
+        json(response, 404, { error: `Unknown command ${started.id}` })
+        return true
+      }
+      if (started.clientId !== pending.clientId) {
+        json(response, 409, {
+          error: `Command ${started.id} belongs to a different desktop control client`,
+        })
+        return true
+      }
+      if (!pending.started) {
+        pending.started = true
+        this.commandQueue = this.commandQueue.filter(item => item.command.id !== started.id)
+        pending.resolveDelivery()
+      }
+      json(response, 200, { ok: true })
       return true
     }
 
@@ -1410,6 +1532,10 @@ class DesktopE2EServer {
         return true
       }
       this.commandResults.delete(result.id)
+      this.controlCommandAvailableAt.set(
+        result.clientId,
+        Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
+      )
       if (result.ok) {
         pending.resolve(result.value ?? '')
       } else {
@@ -1490,6 +1616,7 @@ class DesktopE2EServer {
           'The original image leaked to the text-only primary model'
         )
         this.visionSidecarRequests.push({ kind: 'main', body })
+        this.recordScenarioRequest(VISION_SIDECAR_MAIN_REQUEST_SCENARIO, modelRequest)
         const responseId = `vision-sidecar-main-${this.modelRequests.length}`
         this.writeSse(response, [
           responseCreated(responseId),
@@ -1723,10 +1850,10 @@ class DesktopE2EServer {
           true,
           'The earlier command output did not return through the real Codex tool loop'
         )
-        const argumentsValue = selectToolSearch(body, 'node_repl js')
+        const search = selectToolSearch(body, 'node_repl js')
         this.writeSse(response, [
           responseCreated(responseId),
-          toolSearchCall(NODE_REPL_TOOL_SEARCH_ID, argumentsValue),
+          ...toolSearchResponseEvents(NODE_REPL_TOOL_SEARCH_ID, search),
           responseCompleted(responseId),
         ])
         return
@@ -1761,10 +1888,10 @@ class DesktopE2EServer {
         )
         this.resolveToolBlockNodeOutputObserved()
         await this.toolBlockNodeRelease
-        const argumentsValue = selectToolSearch(body, 'github issue details')
+        const search = selectToolSearch(body, 'github issue details')
         this.writeSse(response, [
           responseCreated(responseId),
-          toolSearchCall(GENERIC_MCP_TOOL_SEARCH_ID, argumentsValue),
+          ...toolSearchResponseEvents(GENERIC_MCP_TOOL_SEARCH_ID, search),
           responseCompleted(responseId),
         ])
         return
@@ -1838,7 +1965,7 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         ...functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
-        ...functionCall('wework-e2e-view-image', image.name, image.arguments),
+        ...functionCall('wework-e2e-view-image', image.name, image.arguments, 1),
         customToolCall('wework-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])
@@ -2559,6 +2686,57 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'mcp_elicitation') {
+      this.recordScenarioRequest('mcp_elicitation', modelRequest)
+      const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
+      const requestText = JSON.stringify(body)
+
+      if (requestNumber === 1) {
+        assert.ok(
+          requestText.includes(MCP_ELICITATION_PROMPT),
+          'The real Codex request did not contain the MCP elicitation prompt'
+        )
+        const search = selectToolSearch(body, MCP_ELICITATION_TOOL_NAME)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchResponseEvents(MCP_ELICITATION_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 2) {
+        const tool = selectMcpTool(body, MCP_ELICITATION_NAMESPACE, MCP_ELICITATION_TOOL_NAME, {})
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            MCP_ELICITATION_CALL_ID,
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 3, `Unexpected MCP elicitation request ${requestNumber}`)
+      assert.ok(
+        requestContainsToolOutput(body, MCP_ELICITATION_CALL_ID),
+        'The MCP elicitation tool output did not return to the real model request'
+      )
+      assert.ok(
+        requestText.includes(MCP_ELICITATION_ACCEPTED_MARKER),
+        'The MCP server did not return the accepted audience marker to the model'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(MCP_ELICITATION_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'task_plan') {
       this.recordScenarioRequest('task_plan', modelRequest)
       assert.ok(
@@ -2631,13 +2809,13 @@ class DesktopE2EServer {
       }
 
       if (requestNumber === 3) {
-        const argumentsValue = selectToolSearch(
+        const search = selectToolSearch(
           body,
           `${OFFICIAL_PLUGIN_DISPLAY_NAME} ${OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION}`
         )
         this.writeSse(response, [
           responseCreated(responseId),
-          toolSearchCall(OFFICIAL_PLUGIN_MCP_SEARCH_ID, argumentsValue),
+          ...toolSearchResponseEvents(OFFICIAL_PLUGIN_MCP_SEARCH_ID, search),
           responseCompleted(responseId),
         ])
         return
@@ -2716,6 +2894,66 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(CHECKPOINT_TASK_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'worktree_queue_hold' || this.scenario === 'worktree_restart_hold') {
+      const scenario = this.scenario
+      const held = this.heldScenarioResponses.get(scenario)
+      assert.ok(held, `The ${scenario} response was not held before the task started`)
+      this.recordScenarioRequest(scenario, modelRequest)
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.flushHeaders()
+      response.write(createSse([responseCreated(responseId)]))
+      await held.promise
+      if (!response.writableEnded && !response.destroyed) {
+        response.end(
+          createSse([
+            assistantMessage(`${scenario.toUpperCase()}_COMPLETE`),
+            responseCompleted(responseId),
+          ])
+        )
+      }
+      return
+    }
+
+    if (this.scenario === 'message_edit') {
+      this.recordScenarioRequest('message_edit', modelRequest)
+      const latestInput = latestModelInputText(body)
+      const requestNumber = this.scenarioRequests.get('message_edit').length
+      if (requestNumber === 1) {
+        assert.ok(
+          latestInput.includes(MESSAGE_EDIT_ORIGINAL_PROMPT),
+          'The message-edit setup request lost its original prompt'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 2, `Unexpected message-edit request ${requestNumber}`)
+      assert.ok(
+        latestInput.includes(MESSAGE_EDIT_UPDATED_PROMPT),
+        'Editing the last user message resent stale content instead of the updated prompt'
+      )
+      assert.equal(
+        latestInput.includes(MESSAGE_EDIT_ORIGINAL_PROMPT),
+        false,
+        'The edited turn retained the original prompt in the latest model input'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(MESSAGE_EDIT_UPDATED_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -3071,18 +3309,6 @@ class DesktopE2EServer {
     if (this.scenario === 'queue_management') {
       this.recordScenarioRequest('queue_management', modelRequest)
       const latestInput = latestModelInputText(body)
-      const initialPrompts = [QUEUE_DIRECT_INITIAL, QUEUE_PRESERVE_INITIAL, QUEUE_CLEAR_INITIAL]
-      if (initialPrompts.some(prompt => latestInput.includes(prompt))) {
-        response.writeHead(200, {
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          'Content-Type': 'text/event-stream; charset=utf-8',
-        })
-        response.write(createSse([responseCreated(responseId)]))
-        return
-      }
-
       const followUpPrompts = [
         QUEUE_DIRECT_FIRST,
         QUEUE_DIRECT_SECOND,
@@ -3092,8 +3318,15 @@ class DesktopE2EServer {
         QUEUE_CLEAR_MANUAL,
       ]
       const prompt = followUpPrompts.find(candidate => latestInput.includes(candidate))
-      assert.ok(prompt, `Unexpected queue management request: ${latestInput}`)
-      if (prompt === QUEUE_DIRECT_THIRD) {
+      if (prompt) {
+        if (prompt !== QUEUE_DIRECT_THIRD) {
+          this.writeSse(response, [
+            responseCreated(responseId),
+            assistantMessage(`${QUEUE_MANAGEMENT_COMPLETION_PREFIX}:${prompt}`),
+            responseCompleted(responseId),
+          ])
+          return
+        }
         response.writeHead(200, {
           'Access-Control-Allow-Origin': '*',
           'Cache-Control': 'no-cache',
@@ -3111,11 +3344,19 @@ class DesktopE2EServer {
         )
         return
       }
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(`${QUEUE_MANAGEMENT_COMPLETION_PREFIX}:${prompt}`),
-        responseCompleted(responseId),
-      ])
+
+      const initialPrompts = [QUEUE_DIRECT_INITIAL, QUEUE_PRESERVE_INITIAL, QUEUE_CLEAR_INITIAL]
+      assert.ok(
+        initialPrompts.some(candidate => latestInput.includes(candidate)),
+        `Unexpected queue management request: ${latestInput}`
+      )
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
       return
     }
 
@@ -3535,9 +3776,9 @@ class DesktopE2EServer {
         excludes: [followUpPrompt],
       })
       this.assertLocalApplyPatchTool(model, body)
-      const argumentsValue = selectToolSearch(body, 'Wework browser open')
+      const search = selectToolSearch(body, 'Wework browser open')
       state.stage = 'awaiting_browser_search_output'
-      this.writeLocalToolSearchCall(response, model, argumentsValue)
+      this.writeLocalToolSearchCall(response, model, search)
       return
     }
     if (state.stage === 'awaiting_browser_search_output') {
@@ -4023,22 +4264,22 @@ class DesktopE2EServer {
     this.writeAnthropicToolCall(response, patch)
   }
 
-  writeLocalToolSearchCall(response, model, argumentsValue) {
+  writeLocalToolSearchCall(response, model, search) {
     const callId = `${model.protocol}-local-browser-search`
     if (model.protocol === 'responses') {
       const id = `local-${model.protocol}-browser-search`
       this.writeSse(response, [
         responseCreated(id),
-        ...functionCall(callId, 'tool_search', argumentsValue),
+        ...toolSearchResponseEvents(callId, search),
         responseCompleted(id),
       ])
       return
     }
     if (model.protocol === 'chat') {
-      this.writeChatToolCall(response, argumentsValue, callId, 'tool_search')
+      this.writeChatToolCall(response, search.arguments, callId, search.name)
       return
     }
-    this.writeAnthropicToolCall(response, argumentsValue, callId, 'tool_search')
+    this.writeAnthropicToolCall(response, search.arguments, callId, search.name)
   }
 
   writeLocalNamespaceToolCall(response, model, tool) {

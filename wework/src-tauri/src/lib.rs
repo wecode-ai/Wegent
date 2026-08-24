@@ -3,15 +3,29 @@ mod appshots;
 #[cfg(desktop)]
 mod cloud_authorization_window;
 mod desktop_capture;
+mod diagram_image;
 mod embedded_browser;
+#[cfg(all(target_os = "macos", debug_assertions, not(wework_release_build)))]
+mod embedded_browser_devtools;
 #[cfg(target_os = "macos")]
 mod embedded_browser_tls;
+#[cfg(target_os = "macos")]
+mod embedded_browser_web_security;
+mod execution_environments;
 #[cfg(desktop)]
 mod feedback;
+mod harness_apps;
+mod inline_visualization;
 mod local_executor;
 mod local_terminal;
+mod local_workspace_files;
+mod local_workspace_openers;
+#[cfg(target_os = "windows")]
+mod opener_store;
+mod platform_fs;
 #[cfg(desktop)]
 mod popout_window;
+mod process;
 mod process_environment;
 #[cfg(desktop)]
 mod storage_maintenance;
@@ -20,11 +34,13 @@ mod system_lock;
 mod system_sleep;
 mod todo_store;
 mod workbench_background;
+#[cfg(desktop)]
+mod workbench_plugins;
 
 use std::collections::{HashMap, HashSet};
 #[cfg(desktop)]
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
     Mutex,
 };
 use tauri::Manager;
@@ -495,34 +511,7 @@ fn open_app_log_directory(app: tauri::AppHandle) -> Result<(), String> {
     std::fs::create_dir_all(&log_directory)
         .map_err(|error| format!("Failed to create app log directory: {error}"))?;
 
-    #[cfg(target_os = "macos")]
-    let output = std::process::Command::new("open")
-        .arg(&log_directory)
-        .output()
-        .map_err(|error| format!("Failed to run macOS open command: {error}"))?;
-
-    #[cfg(target_os = "windows")]
-    let output = std::process::Command::new("explorer")
-        .arg(&log_directory)
-        .output()
-        .map_err(|error| format!("Failed to run Windows explorer command: {error}"))?;
-
-    #[cfg(target_os = "linux")]
-    let output = std::process::Command::new("xdg-open")
-        .arg(&log_directory)
-        .output()
-        .map_err(|error| format!("Failed to run xdg-open command: {error}"))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if stderr.is_empty() {
-        Err("Failed to open app log directory".to_string())
-    } else {
-        Err(stderr)
-    }
+    platform_fs::open_directory(&log_directory.to_string_lossy())
 }
 
 #[cfg(not(desktop))]
@@ -603,6 +592,10 @@ struct AppPreferences {
     show_main_window_on_launch: bool,
     #[serde(default = "default_workspace_tab")]
     default_workspace_tab: String,
+    #[serde(default)]
+    fixed_workspace_tabs: Vec<FixedWorkspaceTabPreference>,
+    #[serde(default)]
+    startup_workspace_tab_id: String,
     #[serde(default = "default_true")]
     system_drag_enabled: bool,
     #[serde(default = "default_true")]
@@ -660,6 +653,33 @@ struct AppPreferences {
     quick_phrases: Vec<QuickPhrase>,
     #[serde(default = "default_local_harness_preferences")]
     local_harnesses: Vec<LocalHarnessPreference>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FixedWorkspaceTabPreference {
+    id: String,
+    kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    installation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+}
+
+fn default_fixed_workspace_tabs() -> Vec<FixedWorkspaceTabPreference> {
+    ["task", "board", "agent"]
+        .into_iter()
+        .map(|kind| FixedWorkspaceTabPreference {
+            id: format!("fixed-{kind}"),
+            kind: kind.to_string(),
+            installation_id: None,
+            title: None,
+        })
+        .collect()
+}
+
+fn default_startup_workspace_tab_id() -> String {
+    "fixed-task".to_string()
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -833,6 +853,8 @@ impl Default for AppPreferences {
             close_to_tray_enabled: true,
             show_main_window_on_launch: true,
             default_workspace_tab: default_workspace_tab(),
+            fixed_workspace_tabs: default_fixed_workspace_tabs(),
+            startup_workspace_tab_id: default_startup_workspace_tab_id(),
             system_drag_enabled: true,
             prevent_sleep_while_tasks_running: true,
             close_to_tray_hint_seen: false,
@@ -894,6 +916,8 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     default_workspace_tab: Option<String>,
+    fixed_workspace_tabs: Option<Vec<FixedWorkspaceTabPreference>>,
+    startup_workspace_tab_id: Option<String>,
     system_drag_enabled: Option<bool>,
     prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
@@ -937,9 +961,60 @@ enum MainWindowOpenAction {
 }
 
 #[cfg(desktop)]
+#[derive(Default)]
+struct MainWindowDestroyExitGuard {
+    state: AtomicU8,
+}
+
+#[cfg(desktop)]
+impl MainWindowDestroyExitGuard {
+    const IDLE: u8 = 0;
+    const DESTROY_REQUESTED: u8 = 1;
+    const PREVENT_NEXT_EXIT: u8 = 2;
+
+    fn begin(&self) {
+        self.state.store(Self::DESTROY_REQUESTED, Ordering::SeqCst);
+    }
+
+    fn cancel(&self) {
+        let _ = self.state.compare_exchange(
+            Self::DESTROY_REQUESTED,
+            Self::IDLE,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+    }
+
+    fn finish(&self, is_last_window: bool) {
+        let next = if is_last_window {
+            Self::PREVENT_NEXT_EXIT
+        } else {
+            Self::IDLE
+        };
+        let _ = self.state.compare_exchange(
+            Self::DESTROY_REQUESTED,
+            next,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+    }
+
+    fn take_exit_prevention(&self) -> bool {
+        self.state
+            .compare_exchange(
+                Self::PREVENT_NEXT_EXIT,
+                Self::IDLE,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_ok()
+    }
+}
+
+#[cfg(desktop)]
 struct MainWindowLifecycleState {
     dock_icon_visible: AtomicBool,
-    destroy_to_tray_in_progress: AtomicBool,
+    destroy_exit_guard: MainWindowDestroyExitGuard,
     pending_open_action: Mutex<Option<MainWindowOpenAction>>,
     frontend_recovery_ready: AtomicBool,
     frontend_probe_in_flight: AtomicBool,
@@ -1068,7 +1143,7 @@ impl Default for MainWindowLifecycleState {
     fn default() -> Self {
         Self {
             dock_icon_visible: AtomicBool::new(true),
-            destroy_to_tray_in_progress: AtomicBool::new(false),
+            destroy_exit_guard: MainWindowDestroyExitGuard::default(),
             pending_open_action: Mutex::new(None),
             frontend_recovery_ready: AtomicBool::new(false),
             frontend_probe_in_flight: AtomicBool::new(false),
@@ -1215,6 +1290,33 @@ fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences 
         "task" | "board" | "agent"
     ) {
         preferences.default_workspace_tab = default_workspace_tab();
+    }
+    let mut seen_fixed_tab_ids = std::collections::HashSet::new();
+    preferences.fixed_workspace_tabs.retain_mut(|tab| {
+        tab.id = tab.id.trim().to_string();
+        tab.kind = tab.kind.trim().to_string();
+        tab.installation_id = tab.installation_id.take().and_then(normalized_non_empty);
+        tab.title = tab.title.take().and_then(normalized_non_empty);
+        !tab.id.is_empty()
+            && seen_fixed_tab_ids.insert(tab.id.clone())
+            && matches!(tab.kind.as_str(), "task" | "board" | "agent" | "smart_app")
+            && (tab.kind != "smart_app" || tab.installation_id.is_some())
+    });
+    if preferences.fixed_workspace_tabs.is_empty() {
+        preferences.fixed_workspace_tabs = default_fixed_workspace_tabs();
+        preferences.startup_workspace_tab_id =
+            format!("fixed-{}", preferences.default_workspace_tab);
+    }
+    if !preferences
+        .fixed_workspace_tabs
+        .iter()
+        .any(|tab| tab.id == preferences.startup_workspace_tab_id)
+    {
+        preferences.startup_workspace_tab_id = preferences
+            .fixed_workspace_tabs
+            .first()
+            .map(|tab| tab.id.clone())
+            .unwrap_or_else(default_startup_workspace_tab_id);
     }
     preferences.context_compaction_threshold =
         preferences.context_compaction_threshold.clamp(1, 100);
@@ -1497,6 +1599,12 @@ fn update_app_preferences(
     if let Some(value) = patch.default_workspace_tab {
         preferences.default_workspace_tab = value;
     }
+    if let Some(value) = patch.fixed_workspace_tabs {
+        preferences.fixed_workspace_tabs = value;
+    }
+    if let Some(value) = patch.startup_workspace_tab_id {
+        preferences.startup_workspace_tab_id = value;
+    }
     if let Some(value) = patch.system_drag_enabled {
         preferences.system_drag_enabled = value;
     }
@@ -1604,6 +1712,8 @@ struct AppPreferences {
     close_to_tray_enabled: bool,
     show_main_window_on_launch: bool,
     default_workspace_tab: String,
+    fixed_workspace_tabs: Vec<FixedWorkspaceTabPreference>,
+    startup_workspace_tab_id: String,
     system_drag_enabled: bool,
     prevent_sleep_while_tasks_running: bool,
     close_to_tray_hint_seen: bool,
@@ -1642,6 +1752,8 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     default_workspace_tab: Option<String>,
+    fixed_workspace_tabs: Option<Vec<FixedWorkspaceTabPreference>>,
+    startup_workspace_tab_id: Option<String>,
     system_drag_enabled: Option<bool>,
     prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
@@ -1680,6 +1792,8 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         close_to_tray_enabled: true,
         show_main_window_on_launch: true,
         default_workspace_tab: "task".to_string(),
+        fixed_workspace_tabs: default_fixed_workspace_tabs(),
+        startup_workspace_tab_id: default_startup_workspace_tab_id(),
         system_drag_enabled: true,
         prevent_sleep_while_tasks_running: true,
         close_to_tray_hint_seen: false,
@@ -1725,6 +1839,13 @@ fn update_app_preferences(
             .default_workspace_tab
             .filter(|value| matches!(value.as_str(), "task" | "board" | "agent"))
             .unwrap_or_else(|| "task".to_string()),
+        fixed_workspace_tabs: patch
+            .fixed_workspace_tabs
+            .filter(|tabs| !tabs.is_empty())
+            .unwrap_or_else(default_fixed_workspace_tabs),
+        startup_workspace_tab_id: patch
+            .startup_workspace_tab_id
+            .unwrap_or_else(default_startup_workspace_tab_id),
         system_drag_enabled: patch.system_drag_enabled.unwrap_or(true),
         prevent_sleep_while_tasks_running: patch.prevent_sleep_while_tasks_running.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
@@ -2257,10 +2378,10 @@ fn process_config_arg(tokens: &[&str]) -> Option<std::path::PathBuf> {
 }
 
 fn read_executor_process_device_id(expected_backend_url: Option<&str>) -> Option<String> {
-    let output = std::process::Command::new("ps")
-        .args(["eww", "-axo", "pid=,command="])
-        .output()
-        .ok()?;
+    let mut command = std::process::Command::new("ps");
+    command.args(["eww", "-axo", "pid=,command="]);
+    process::hide_windows_console(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -2348,27 +2469,8 @@ fn get_local_path_kind(path: String) -> Option<&'static str> {
     }
 }
 
-fn local_workspace_opener_app_name(opener: &str) -> Option<&'static str> {
-    match opener {
-        "vscode" => Some("Visual Studio Code"),
-        "vscode-insiders" => Some("Visual Studio Code - Insiders"),
-        "cursor" => Some("Cursor"),
-        "sublime-text" => Some("Sublime Text"),
-        "windsurf" => Some("Windsurf"),
-        "finder" => Some("Finder"),
-        "terminal" => Some("Terminal"),
-        "iterm2" => Some("iTerm"),
-        "ghostty" => Some("Ghostty"),
-        "warp" => Some("Warp"),
-        "xcode" => Some("Xcode"),
-        "android-studio" => Some("Android Studio"),
-        "intellij-idea" => Some("IntelliJ IDEA"),
-        _ => None,
-    }
-}
-
 #[cfg(target_os = "macos")]
-fn open_local_workspace_with_app(app_name: &str, path: &str) -> Result<(), String> {
+pub(crate) fn open_local_workspace_with_app(app_name: &str, path: &str) -> Result<(), String> {
     let output = std::process::Command::new("open")
         .args(["-a", app_name, path])
         .output()
@@ -2387,47 +2489,21 @@ fn open_local_workspace_with_app(app_name: &str, path: &str) -> Result<(), Strin
 }
 
 #[cfg(not(target_os = "macos"))]
-fn open_local_workspace_with_app(_app_name: &str, _path: &str) -> Result<(), String> {
+pub(crate) fn open_local_workspace_with_app(_app_name: &str, _path: &str) -> Result<(), String> {
     Err("Opening a local workspace is only supported on macOS".to_string())
 }
 
-#[cfg(target_os = "macos")]
-fn open_local_file_with_default_app(path: &str) -> Result<(), String> {
-    let output = std::process::Command::new("open")
-        .arg(path)
-        .output()
-        .map_err(|error| format!("Failed to run macOS open command: {error}"))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if stderr.is_empty() {
-        Err("Failed to open local file".to_string())
-    } else {
-        Err(stderr)
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn open_local_file_with_default_app(_path: &str) -> Result<(), String> {
-    Err("Opening a local file is only supported on macOS".to_string())
-}
-
 #[tauri::command]
-fn open_local_workspace(opener: String, path: String) -> Result<(), String> {
+fn open_local_workspace(app: tauri::AppHandle, opener: String, path: String) -> Result<(), String> {
     let opener =
         normalized_non_empty(opener).ok_or_else(|| "Workspace opener is empty".to_string())?;
     let path = normalized_non_empty(path).ok_or_else(|| "Workspace path is empty".to_string())?;
-    let app_name = local_workspace_opener_app_name(&opener)
-        .ok_or_else(|| format!("Unsupported workspace opener: {opener}"))?;
 
     if !std::path::Path::new(&path).exists() {
         return Err("Workspace path does not exist".to_string());
     }
 
-    open_local_workspace_with_app(app_name, &path)
+    local_workspace_openers::launch_opener(&app, &opener, &path)
 }
 
 #[tauri::command]
@@ -2438,7 +2514,7 @@ fn open_local_file(path: String) -> Result<(), String> {
         return Err("Local path does not exist".to_string());
     }
 
-    open_local_file_with_default_app(&path)
+    platform_fs::open_with_default_app(&path)
 }
 
 #[tauri::command]
@@ -2448,20 +2524,7 @@ fn reveal_local_file(path: String) -> Result<(), String> {
         return Err("Local path does not exist".to_string());
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        let status = std::process::Command::new("open")
-            .args(["-R", &path])
-            .status()
-            .map_err(|error| format!("Failed to reveal local file: {error}"))?;
-        if !status.success() {
-            return Err("Failed to reveal local file".to_string());
-        }
-        Ok(())
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    Err("Revealing local files is only supported on macOS".to_string())
+    platform_fs::reveal_file_in_manager(&path)
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -2799,6 +2862,15 @@ fn save_text_file_to_downloads(
         return Err("File content is empty".to_string());
     }
 
+    save_bytes_to_downloads(&app, &filename, content.as_bytes(), "plan.md")
+}
+
+fn save_bytes_to_downloads(
+    app: &tauri::AppHandle,
+    filename: &str,
+    bytes: &[u8],
+    fallback_filename: &str,
+) -> Result<String, String> {
     let downloads_dir = app
         .path()
         .download_dir()
@@ -2806,13 +2878,25 @@ fn save_text_file_to_downloads(
     std::fs::create_dir_all(&downloads_dir)
         .map_err(|error| format!("Failed to create Downloads directory: {error}"))?;
 
-    let filename = sanitized_download_filename(&filename, std::path::Path::new("plan.md"));
+    let filename = sanitized_download_filename(filename, std::path::Path::new(fallback_filename));
     let target_path = unique_download_path(&downloads_dir, &filename);
-    std::fs::write(&target_path, content)
+    std::fs::write(&target_path, bytes)
         .map_err(|error| format!("Failed to save file to Downloads: {error}"))?;
     notify_download_finished(&target_path);
 
     Ok(target_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn save_binary_file_to_downloads(
+    app: tauri::AppHandle,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("File content is empty".to_string());
+    }
+    save_bytes_to_downloads(&app, &filename, &bytes, "download")
 }
 
 fn default_executor_home(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -3139,15 +3223,11 @@ fn recreate_unresponsive_main_window<R: tauri::Runtime>(app: tauri::AppHandle<R>
     let placement = main_window_placement(&window);
     let state = app.state::<MainWindowLifecycleState>();
     state.frontend_recovery_ready.store(false, Ordering::SeqCst);
-    state
-        .destroy_to_tray_in_progress
-        .store(true, Ordering::SeqCst);
+    state.destroy_exit_guard.begin();
 
     log::warn!("Recreating unresponsive main WebView after resume probe timed out");
     if let Err(error) = window.destroy() {
-        state
-            .destroy_to_tray_in_progress
-            .store(false, Ordering::SeqCst);
+        state.destroy_exit_guard.cancel();
         state
             .frontend_probe_in_flight
             .store(false, Ordering::SeqCst);
@@ -3272,13 +3352,9 @@ fn maybe_show_main_window_on_launch(app: &tauri::AppHandle) {
 fn destroy_main_window_to_tray<R: tauri::Runtime>(window: &tauri::Window<R>) {
     let app = window.app_handle();
     let state = app.state::<MainWindowLifecycleState>();
-    state
-        .destroy_to_tray_in_progress
-        .store(true, Ordering::SeqCst);
+    state.destroy_exit_guard.begin();
     if let Err(error) = window.destroy() {
-        state
-            .destroy_to_tray_in_progress
-            .store(false, Ordering::SeqCst);
+        state.destroy_exit_guard.cancel();
         set_dock_icon_visible(app, true);
         log::warn!("Failed to destroy main window for tray background mode: {error}");
         return;
@@ -3343,13 +3419,9 @@ fn close_main_window_to_tray(
         Err(_) => log::warn!("Failed to lock app preferences for close-to-tray acknowledgement"),
     }
     let state = app.state::<MainWindowLifecycleState>();
-    state
-        .destroy_to_tray_in_progress
-        .store(true, Ordering::SeqCst);
+    state.destroy_exit_guard.begin();
     if let Err(error) = window.destroy() {
-        state
-            .destroy_to_tray_in_progress
-            .store(false, Ordering::SeqCst);
+        state.destroy_exit_guard.cancel();
         set_dock_icon_visible(&app, true);
         return Err(format!(
             "Failed to destroy main window for tray background mode: {error}"
@@ -3363,6 +3435,20 @@ fn close_main_window_to_tray(
 #[tauri::command]
 fn close_main_window_to_tray(_app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
+}
+
+#[cfg(desktop)]
+fn handle_main_window_destroyed<R: tauri::Runtime>(
+    window: &tauri::Window<R>,
+    event: &tauri::WindowEvent,
+) {
+    if window.label() != MAIN_WINDOW_LABEL || !matches!(event, tauri::WindowEvent::Destroyed) {
+        return;
+    }
+
+    let app = window.app_handle();
+    let state = app.state::<MainWindowLifecycleState>();
+    state.destroy_exit_guard.finish(app.windows().is_empty());
 }
 
 #[cfg(desktop)]
@@ -4376,9 +4462,9 @@ mod tests {
     use super::{
         can_replace_wework_cli_path, executor_home_attachment_root,
         inspect_workspace_path_candidates, install_wework_cli_impl,
-        local_workspace_opener_app_name, normalize_local_harness_preferences,
-        normalized_browser_link_target, parse_local_workspace_open_request, tray_template_pixel,
-        wework_cli_launcher_content, LocalHarnessPreference,
+        normalize_local_harness_preferences, normalized_browser_link_target,
+        parse_local_workspace_open_request, tray_template_pixel, wework_cli_launcher_content,
+        LocalHarnessPreference,
     };
     #[cfg(target_os = "macos")]
     use super::{
@@ -4390,7 +4476,7 @@ mod tests {
     #[cfg(desktop)]
     use super::{
         close_native_sentry_guard, sanitize_native_sentry_event, should_probe_frontend_after_focus,
-        AppPreferences, AppPreferencesPatch, PatchField,
+        AppPreferences, AppPreferencesPatch, MainWindowDestroyExitGuard, PatchField,
     };
     use std::collections::HashSet;
     #[cfg(desktop)]
@@ -4463,6 +4549,40 @@ mod tests {
         assert!(!should_probe_frontend_after_focus(Duration::from_secs(59)));
         assert!(should_probe_frontend_after_focus(Duration::from_secs(60)));
         assert!(should_probe_frontend_after_focus(Duration::from_secs(120)));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn prevents_only_the_exit_triggered_by_destroying_the_last_main_window() {
+        let guard = MainWindowDestroyExitGuard::default();
+
+        guard.begin();
+        guard.finish(true);
+
+        assert!(guard.take_exit_prevention());
+        assert!(!guard.take_exit_prevention());
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn does_not_leak_exit_prevention_when_other_windows_remain() {
+        let guard = MainWindowDestroyExitGuard::default();
+
+        guard.begin();
+        guard.finish(false);
+
+        assert!(!guard.take_exit_prevention());
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn cancels_exit_prevention_when_main_window_destroy_fails() {
+        let guard = MainWindowDestroyExitGuard::default();
+
+        guard.begin();
+        guard.cancel();
+
+        assert!(!guard.take_exit_prevention());
     }
 
     #[cfg(desktop)]
@@ -4636,28 +4756,6 @@ mod tests {
             *transport.shutdown_timeouts.lock().unwrap(),
             vec![Duration::ZERO]
         );
-    }
-
-    #[test]
-    fn maps_local_workspace_openers_to_macos_app_names() {
-        assert_eq!(
-            local_workspace_opener_app_name("vscode"),
-            Some("Visual Studio Code")
-        );
-        assert_eq!(
-            local_workspace_opener_app_name("vscode-insiders"),
-            Some("Visual Studio Code - Insiders")
-        );
-        assert_eq!(local_workspace_opener_app_name("iterm2"), Some("iTerm"));
-        assert_eq!(
-            local_workspace_opener_app_name("android-studio"),
-            Some("Android Studio")
-        );
-        assert_eq!(
-            local_workspace_opener_app_name("intellij-idea"),
-            Some("IntelliJ IDEA")
-        );
-        assert_eq!(local_workspace_opener_app_name("unknown"), None);
     }
 
     #[test]
@@ -5031,15 +5129,20 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.manage(NativeTelemetryState::default());
 
+    #[cfg(desktop)]
+    let builder = builder.manage(workbench_plugins::WorkbenchPluginState::default());
+
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
+        .manage(execution_environments::ExecutionEnvironmentState::default())
         .manage(AppPreferencesWriteState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
         .manage(TrayVisualState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
+        .manage(harness_apps::HarnessAppRuntimeState::default())
         .manage(popout_window::PopoutWindowState::default())
         .manage(system_drag::SystemDragState::default())
         .manage(system_lock::SystemLockState::default())
@@ -5047,6 +5150,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             #[cfg(desktop)]
             {
+                handle_main_window_destroyed(window, event);
                 if let tauri::WindowEvent::Focused(focused) = event {
                     handle_main_window_focus_for_frontend_recovery(window, *focused);
                     emit_main_window_focus_changed(window, *focused);
@@ -5144,6 +5248,8 @@ pub fn run() {
             #[cfg(desktop)]
             storage_maintenance::schedule(app.handle().clone());
             #[cfg(desktop)]
+            execution_environments::setup(app.handle());
+            #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
                     log::warn!("Failed to open Web Inspector from {WEBVIEW_DEVTOOLS_ENV}: {error}");
@@ -5173,12 +5279,16 @@ pub fn run() {
             feedback::submit_feedback_bundle,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_close_many,
+            #[cfg(target_os = "macos")]
+            embedded_browser::embedded_browser_capture_snapshot,
             embedded_browser::embedded_browser_clear_data,
             embedded_browser::embedded_browser_delete_download,
             embedded_browser::embedded_browser_eval,
             embedded_browser::embedded_browser_eval_json,
             embedded_browser::embedded_browser_go_back,
             embedded_browser::embedded_browser_go_forward,
+            embedded_browser::embedded_browser_history_remove,
+            embedded_browser::embedded_browser_history_search,
             embedded_browser::embedded_browser_navigate,
             embedded_browser::embedded_browser_open,
             embedded_browser::embedded_browser_pending_open_requests,
@@ -5190,17 +5300,54 @@ pub fn run() {
             embedded_browser::embedded_browser_resolve_agent_approval,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_agent_control_paused,
+            embedded_browser::embedded_browser_set_zoom,
             embedded_browser::embedded_browser_set_bounds,
+            embedded_browser::embedded_browser_verify_detached_inspector_for_e2e,
+            execution_environments::install_execution_environment,
+            execution_environments::list_execution_environments,
+            execution_environments::remove_execution_environment,
+            harness_apps::delete_harness_app,
+            harness_apps::download_harness_app_package,
+            harness_apps::export_harness_app_package,
+            harness_apps::upload_harness_app_package,
+            harness_apps::install_harness_app,
+            harness_apps::list_harness_apps,
+            harness_apps::preview_harness_app,
+            harness_apps::start_harness_app,
+            harness_apps::store_harness_app_context_token,
+            harness_apps::store_harness_app_proxy_token,
+            harness_apps::stop_harness_app,
+            harness_apps::take_harness_app_context_token,
+            harness_apps::take_harness_app_proxy_token,
+            harness_apps::update_harness_app,
             local_terminal::archive_local_harness_session,
             local_terminal::attach_local_terminal,
             local_terminal::close_local_terminal,
             local_terminal::delete_archived_local_harness_session,
+            local_workspace_files::read_local_workspace_file_chunk,
+            local_workspace_files::read_local_workspace_text_file,
+            local_workspace_files::list_local_workspace_entries,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_authorize_capability,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_inspect,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_list,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_request,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_start,
+            #[cfg(desktop)]
+            workbench_plugins::workbench_plugin_stop,
             pick_workspace_paths,
             read_clipboard_workspace_paths,
             read_dropped_workspace_paths,
             inspect_workspace_paths,
+            inline_visualization::read_inline_visualization_html,
+            diagram_image::copy_diagram_png,
+            diagram_image::save_diagram_png,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
             local_executor::local_executor_copy_debug_info,
@@ -5210,14 +5357,21 @@ pub fn run() {
             local_executor::local_executor_initialize_bundled_plugin_marketplace,
             local_executor::local_executor_initialize_codex_home,
             local_executor::local_executor_import_external_content,
+            local_executor::local_executor_delete_personal_plugin,
             local_executor::local_executor_ensure_personal_plugin,
             local_executor::local_executor_import_plugin_copy,
+            local_executor::local_executor_import_plugin_package,
+            local_executor::local_executor_preview_plugin_import,
+            local_executor::local_executor_finalize_plugin_import,
+            local_executor::local_executor_rollback_plugin_import,
+            local_executor::local_executor_save_plugin_example,
             local_executor::local_executor_link_plugin_release,
             local_executor::local_executor_unlink_plugin_release,
             local_executor::local_executor_migrate_native_codex_home,
             local_executor::local_executor_package_plugin,
             local_executor::local_executor_read_plugin_cloud_links,
             local_executor::local_executor_list_personal_marketplace_plugins,
+            local_executor::local_executor_list_wegent_store_plugins,
             local_executor::local_executor_read_plugin_manifest,
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,
@@ -5238,6 +5392,7 @@ pub fn run() {
             update_app_preferences,
             download_local_file_to_downloads,
             save_text_file_to_downloads,
+            save_binary_file_to_downloads,
             local_path_exists,
             get_local_path_kind,
             open_local_file,
@@ -5246,6 +5401,8 @@ pub fn run() {
             open_local_file_with_application,
             get_local_file_opener_icon,
             open_local_workspace,
+            local_workspace_openers::list_local_workspace_openers,
+            local_workspace_openers::pick_local_workspace_opener_exe,
             read_dropped_files,
             save_local_attachment_file,
             todo_store::ensure_todo_work_directory,
@@ -5259,7 +5416,9 @@ pub fn run() {
             todo_store::write_todo_workspace_file,
             system_drag::complete_system_drag_drop,
             system_drag::dismiss_system_drag_panel,
+            system_drag::get_system_drag_panel_visibility_for_e2e,
             system_drag::log_system_drag_debug,
+            system_drag::show_system_drag_panel_for_e2e,
             system_drag::take_pending_system_drag_drops,
             #[cfg(desktop)]
             system_lock::get_system_session_locked,
@@ -5317,17 +5476,21 @@ pub fn run() {
             }
             tauri::RunEvent::ExitRequested { api, .. } => {
                 let lifecycle = app_handle.state::<MainWindowLifecycleState>();
-                if lifecycle.destroy_to_tray_in_progress.load(Ordering::SeqCst) {
+                if lifecycle.destroy_exit_guard.take_exit_prevention() {
                     api.prevent_exit();
-                    lifecycle
-                        .destroy_to_tray_in_progress
-                        .store(false, Ordering::SeqCst);
                     return;
                 }
                 shutdown_local_executor_for_app(app_handle, "run_event_exit_requested");
             }
             tauri::RunEvent::Exit => {
                 shutdown_local_executor_for_app(app_handle, "run_event_exit");
+                #[cfg(desktop)]
+                {
+                    let state = app_handle.state::<workbench_plugins::WorkbenchPluginState>();
+                    workbench_plugins::shutdown(state.inner());
+                    let harness_state = app_handle.state::<harness_apps::HarnessAppRuntimeState>();
+                    harness_apps::shutdown(harness_state.inner());
+                }
             }
             _ => {}
         }

@@ -59,6 +59,12 @@ Tauri 无参数启动 executor sidecar，并通过子进程 stdin/stdout 交换�
 
 stdio 生命周期由父子进程关系直接确定：写入失败、stdout EOF 或子进程退出才表示本地 IPC 失效。普通请求超时只结束对应请求，不销毁通道，因此系统休眠或调度延迟不会触发端口重连或误切换到其他 executor。
 
+Executor 启动的设备命令必须关闭 stdin，不能继承承载 App JSONL 协议的进程 stdin，否则子命令读取标准输入时会窃取请求字节并破坏后续协议帧。Executor 按字节读取并以换行符划分 App IPC 帧，再单独验证每一帧的 UTF-8；非法帧只记录长度和错误偏移后丢弃，不能终止整个 executor 或中断其他正在运行的任务。检测到 executor runtime instance 变化后，Wework 会重新获取受影响任务的列表和 transcript；已被 transcript 确认接收的排队消息会从队列移除，断线时尚未确认的发送会恢复为可重试的排队状态。
+
+本地 runtime 事件通道和 App IPC 写入队列使用有界缓冲，容量均为 8192。IPC 写入将 Responses 文本、终态、错误和 RPC 响应放入高优先级队列，将工具块、诊断、计划和文件变化事件放入低优先级队列。高优先级队列满时发送方显式等待并记录背压；低优先级队列满时丢弃当前可恢复事件、记录背压并发送 `executor.event_lagged`，避免直到 broadcast 覆盖旧事件后才发现消息缺失。
+
+工具输出事件最多携带 64 KiB，文件变化事件中的 diff 预览最多携带 128 KiB；完整 patch 仍保存在可读取的 artifact 中。Wework 收到 `executor.event_lagged` 后会重新拉取当前任务和全部运行中任务的 transcript，并使用稳定的客户端消息 ID 将 transcript 与尚未落盘的乐观用户消息合并。因此任务切换或事件积压后，运行状态、用户输入和 AI 输出会从同一份恢复结果重新收敛。
+
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过 stdio 服务 Wework App，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
 ### Executor 启动环境与 Codex Home 初始化
@@ -75,6 +81,8 @@ Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为�
 
 `running` 由两类实时信号共同确定：executor 当前进程维护的活跃任务集合，以及 Codex thread 中明确标记为 `inProgress` 的 turn。后者覆盖 Goal 自动续轮等场景：本地执行包装可能已经返回，但 provider 仍在运行后续 turn。Codex thread 自身的 `active` 状态、已持久化的任务摘要和 Wework 本地提醒都不能单独推断任务仍在运行。任务列表、transcript、详情面板、系统托盘和阻止休眠逻辑必须消费同一份 executor `running` 值；executor 或 Wework 重启后，如果 `thread/read` 或 `thread/list` 仍返回活跃 turn，界面必须恢复运行态，只有不存在活跃 turn 时才收敛为空闲。
 
+在单个 executor 进程内，发送、引导和取消操作只使用一份本地执行记录作为生命周期权威来源。Codex 的 `threadId` 和 `turnId` 是该执行记录的附属上下文，只在 execution ID 仍匹配时有效，不能存放在独立注册表中继续维持任务运行。执行结束时，executor 会原子删除本地执行及其 Codex turn 上下文，再发送终态响应；与完成事件并发但稍后返回的 `turn/steer` 等 provider 回调必须被忽略，不能把已经结束的任务重新标记为运行中。`thread/read` 或 `thread/list` 返回的活跃 turn 仍可用于任务列表投影和重启恢复，但不能创建第二套进程内执行生命周期。
+
 任务摘要同时透传 Codex 的 `threadStatus`（`notLoaded`、`idle`、`systemError`、`active`）和 `turnStatus`（`inProgress`、`completed`、`interrupted`、`failed`）。`continuable` 单独表示会话未归档、仍可继续发送消息；它不能用于推断当前回合正在运行。Wework 只使用明确的 `running` 和真实回合状态显示运行反馈，不把线程或消息的 `active` 状态转换为 streaming。
 
 线程元数据刷新也不能覆盖已经持久化的任务终态。当 Codex 线程进入 `idle` 时，executor 保留本地 `done`、`cancelled` 或 `failed`；只有真实活跃回合才能把任务重新设置为 `running`。因此，一个正常完成且可继续的会话会同时表现为 `status=done`、`running=false`、`continuable=true`、`threadStatus=idle` 和 `turnStatus=completed`。
@@ -85,9 +93,11 @@ Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为�
 
 Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任务生命周期；Store 为每个任务维护一个状态机并负责事件路由，状态机是执行状态、回合状态、Goal 状态和未读状态的聚合根，reducer 仅作为状态机内部的状态转换实现。React Provider 只把同一个 Store 适配为订阅，不保存或推断运行状态。任务列表、输入框、消息思考态、系统托盘、关闭保护和完成提醒都读取该 Store 的同一份快照。
 
-前端运行状态只保存在内存中，不写入本地文件或浏览器存储。用户发送消息时的乐观 `starting` 也由同一个状态机维护，并在 executor 明确返回 `running=true` 或 `running=false` 后收敛。Active Goal 自动续轮时，只要本地执行仍活跃或 provider 仍返回 `inProgress` turn，两轮之间和页面重载后都保持任务运行中；回合没有流式内容时可以为 `idle`，因此不显示“正在思考”也不产生未读。只有未读完成提醒会持久化，且不能反向推断运行状态。
+前端的权威运行状态只保存在内存中，不写入本地文件或浏览器存储。用户发送消息时的乐观 `starting` 也由同一个状态机维护，并在 executor 明确返回 `running=true` 或 `running=false` 后收敛。Active Goal 自动续轮时，只要本地执行仍活跃或 provider 仍返回 `inProgress` turn，两轮之间和页面重载后都保持任务运行中；回合没有流式内容时可以为 `idle`，因此不显示“正在思考”也不产生未读。为支持应用重启后的未读边沿判断，Wework 仅持久化已经产生的未读任务键和上一次观察到仍在运行的任务键；后者不是运行状态来源，不能覆盖 executor 的当前快照。
 
 普通持久线程续聊在调用 `turn/start` 前必须通过 `thread/read` 确认当前没有活跃 turn。ephemeral 临时线程不支持 `thread/read(includeTurns)`，因此必须在按任务串行化的发送临界区内检查 executor 本地活跃执行；新 turn 必须先登记为本地运行中，后一个并发发送才能离开临界区。若 provider 拒绝重叠发送，Wework 将任务状态立即恢复为运行中、刷新任务列表，并把用户输入保留在队列；provider 收敛为空闲后复用同一个客户端消息 ID 自动发送，避免丢消息或重复消息。完成或中断事件会清除活跃 turn 并使界面恢复为空闲。“打断并发送”只有在旧 turn 已确认中断后才创建新 turn；持久线程还要确认 provider turn 已停止，ephemeral 临时线程则以本地执行中断为准。
+
+ephemeral 临时线程的连续续聊依赖其在共享 Codex app-server 中保持已加载状态。成功回合结束后，executor 不得对这类线程发送 `thread/unsubscribe`，否则后续直接调用 `turn/start` 可能停留在已经卸载的线程上。临时线程也不支持分页 transcript RPC，因此 transcript 查询必须读取 executor 的本地运行时缓存，不能调用 `thread/turns/list`。持久线程仍在每个终态回合后取消订阅，并继续使用 provider transcript 作为历史记录来源。
 
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
 
@@ -108,6 +118,10 @@ Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 tran
 分页 transcript 响应不再伪造全局 `rangeStart`、`rangeEnd` 或 provider 级完整导航索引。Wework 使用当前已加载消息构建回合导航；用户请求更早历史时，将 `beforeCursor` 原样传回 executor，加载结果再合并到现有会话。真实 Codex 桌面 E2E 必须创建超过单页大小的会话，重启应用后验证首屏只恢复最新页、加载更早历史使用不透明游标，并确认虚拟滚动中的导航状态仍由当前可见用户消息决定。
 
 工具状态以 app-server 的生命周期事件为准：`item/started` 创建运行中的工具块，`item/completed` 必须将对应工具块收敛为 `done`（显式失败除外）。部分独立工具条目（如图片查看、等待和网页搜索）不携带 `status` 字段；executor 在实时事件映射和 transcript 恢复时都将这类终态条目规范化为 `done`，避免 Wework 在工具已经完成后继续显示运行状态或递增计时。
+
+手动上下文压缩以 Codex thread 中新的 `contextCompaction` 条目持久化为成功边界，而不是以 `thread/compact/start` 接受请求为成功。executor 在发起压缩前记录最新 turn，随后轮询近期 transcript；只有发现新 turn 中的压缩条目后，才向 Wework 返回 `turnId` 和 `compactionItemId`，超时或读取失败则返回明确错误。压缩期间 Wework 先显示单一的“正在自动压缩上下文”处理块，完成后将同一处理块收敛为“上下文已自动压缩”，失败时收敛为错误态。
+
+压缩事件路由保留 `${taskId}-context-compact` 这一合成 subtask 身份，避免真实 Codex turn ID 把前端乐观处理块拆成另一条消息。executor 同时兼容 `item/completed` 和 `context/compaction` 两种通知形式：相同压缩项按 item ID 去重，不同压缩项必须分别发出。Wework 会按 subtask 对账乐观块和运行时块，避免同一次压缩显示两条指示器。桌面 E2E 通过受控的 mock 模型端点接收并阻塞 Wework 发出的压缩请求，验证确认、运行中、完成和后续消息四个阶段，并确认后续模型请求实际包含 mock 返回的压缩摘要，而不是只验证界面标记；Codex transcript 持久化完成边界由 executor 回归测试覆盖。
 
 Codex 同一回合可以交错产生推理、助手文本和工具调用。executor 必须按 provider item ID 跟踪每一段助手文本的流式偏移和完成快照：同一 item 的 `delta` 与 `completed` 是同一内容的增量和快照，应去重；不同 item 的完成文本即使位于同一回合，也必须作为后续文本继续发送，不能因为前一个 item 已产生 delta 而丢弃。Wework 在把当前助手文本移动到工具或处理块之前会清空该文本流的偏移状态，使工具后的下一段助手文本从 offset 0 开始，并保持 transcript 的事件顺序。
 
@@ -453,7 +467,7 @@ flowchart LR
 
 本地执行器启动时按“环境变量、`~/.wegent-executor/device-config.json`、默认值”的顺序解析配置。未设置 `WEGENT_EXECUTOR_HOME` 时默认使用 `~/.wegent-executor`。executor 启动时始终提供 HTTP server。Wework 启动子进程时会设置 `WEGENT_APP_IPC_DEVICE_ID`，由此明确启用当前进程 stdin/stdout 上的本机 App JSONL IPC；如果同时设置 `connection.backend_url` 或 `WEGENT_BACKEND_URL`，同一进程还会连接 Backend，`connection.auth_token` 或 `WEGENT_AUTH_TOKEN` 用于设备认证。独立启动且只提供 Backend 连接信息的 Local Executor 不启用 stdio 控制面，继续沿用原有 Socket.IO 远端设备链路。Wework App 只管理并连接自己直接启动的 executor 子进程，不会发现或附着 App 外手动启动的 executor；完整退出 App 时也只终止自己持有的子进程。
 
-开发模式通过 `wegent-executor-dev` 监控源码并重启实际 executor。该守护进程必须同时监控启动它的 Wework 父进程：Unix 上一旦父 PID 变化，就停止当前 executor 并退出，不能在 Wework 已退出后被系统接管并继续重启 executor。
+macOS 开发模式通过 Node 监听器监控源码：启动时只编译并运行一次实际 executor，源码变化后重新编译并重启。Windows 开发模式继续使用 `wegent-executor-dev`。监听器必须同时监控启动它的 Wework 父进程：Unix 上一旦父 PID 变化，就停止当前 executor 并退出，不能在 Wework 已退出后被系统接管并继续重启 executor。
 
 `EXECUTOR_MODE` 覆盖 `mode`。`docker` 表示只启动 HTTP server；其他值启动 loopback HTTP server，并根据上述显式身份选择 Wework stdio 控制面或独立 Local Executor 的远端 Backend 控制面，不再创建本机 IPC socket。`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_SOCKET_URL` 覆盖 `connection.socket_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。Socket 地址为空时默认复用 Backend 地址；地址分离时，HTTP API 使用 Backend 地址，executor 的 Socket.IO transport 使用独立 Socket 地址。因此常规独立启动脚本不需要传入 `WEGENT_APP_IPC_DEVICE_ID`，远端功能和连接方式保持不变。
 

@@ -4,16 +4,34 @@
 
 'use client'
 
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Download, X, ZoomIn, ZoomOut, RotateCw, Loader2, Eye } from 'lucide-react'
+import {
+  AudioLines,
+  Download,
+  Eye,
+  FileText,
+  Loader2,
+  Pause,
+  Play,
+  RotateCw,
+  Video,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import {
   formatFileSize,
   getFileIcon,
   downloadAttachment,
+  createAttachmentDownloadUrl,
+  getAttachmentDownloadUrl,
   isImageExtension,
+  isAudioExtension,
   isHtmlExtension,
+  isVideoExtension,
 } from '@/apis/attachments'
 import type { Attachment } from '@/types/api'
 import { useAttachmentImage } from '@/hooks/useAttachmentImage'
@@ -189,6 +207,13 @@ export default function AttachmentPreview({
   const { t } = useTranslation('common')
   const [showLightbox, setShowLightbox] = useState(false)
   const [showPreviewDialog, setShowPreviewDialog] = useState(false)
+  const [showVideoDialog, setShowVideoDialog] = useState(false)
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false)
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null)
+  const [mediaLoading, setMediaLoading] = useState(false)
+  const [mediaError, setMediaError] = useState(false)
+  const videoPreviewRef = useRef<HTMLVideoElement>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
 
   const handleDownload = useCallback(async () => {
     try {
@@ -217,13 +242,43 @@ export default function AttachmentPreview({
   const icon = getFileIcon(attachment.file_extension)
   const isImage = isImageExtension(attachment.file_extension)
   const isHtml = isHtmlExtension(attachment.file_extension)
+  const isVideo = isVideoExtension(attachment.file_extension)
+  const isAudio = isAudioExtension(attachment.file_extension)
 
-  // Use authenticated image fetching
+  // Images use a Blob URL; video and audio use a tokenized URL so browsers can
+  // request byte ranges without downloading the complete file first.
   const {
     blobUrl: imageUrl,
     isLoading: imageLoading,
     error: imageError,
   } = useAttachmentImage(attachment.id, isImage, shareToken)
+
+  useEffect(() => {
+    if (!isVideo && !isAudio) return
+
+    let active = true
+    setMediaLoading(true)
+    setMediaError(false)
+
+    const resolveUrl = async () => {
+      try {
+        const url = shareToken
+          ? getAttachmentDownloadUrl(attachment.id, shareToken)
+          : await createAttachmentDownloadUrl(attachment.id)
+        if (active) setMediaUrl(url)
+      } catch (error) {
+        console.error('Failed to resolve attachment media URL:', error)
+        if (active) setMediaError(true)
+      } finally {
+        if (active) setMediaLoading(false)
+      }
+    }
+
+    void resolveUrl()
+    return () => {
+      active = false
+    }
+  }, [attachment.id, isAudio, isVideo, shareToken])
 
   const lightbox =
     showLightbox && typeof document !== 'undefined'
@@ -319,6 +374,130 @@ export default function AttachmentPreview({
         </>
       )
     }
+  }
+
+  // Protected media is loaded through an authenticated attachment URL.
+  if (isVideo) {
+    if (mediaLoading) {
+      return (
+        <div className="flex h-16 w-16 items-center justify-center rounded-md border border-border bg-black">
+          <Loader2 className="h-4 w-4 animate-spin text-white/70" />
+        </div>
+      )
+    }
+
+    return (
+      <>
+        <button
+          type="button"
+          data-testid={`sent-video-attachment-${attachment.id}`}
+          onClick={() => mediaUrl && setShowVideoDialog(true)}
+          onMouseEnter={() => {
+            void videoPreviewRef.current?.play().catch(() => undefined)
+          }}
+          onMouseLeave={() => {
+            videoPreviewRef.current?.pause()
+          }}
+          className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-md border border-border bg-black text-white transition-transform hover:z-10 hover:scale-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          title={attachment.filename}
+        >
+          {mediaUrl && !mediaError ? (
+            <video
+              ref={videoPreviewRef}
+              src={mediaUrl}
+              muted
+              playsInline
+              preload="metadata"
+              onLoadedData={event => {
+                if (event.currentTarget.currentTime === 0) {
+                  event.currentTarget.currentTime = 0.01
+                }
+              }}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <Video className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2" />
+          )}
+          <span className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition-opacity group-hover:opacity-100">
+            <Play className="h-5 w-5 fill-white" />
+          </span>
+          <span className="absolute bottom-0 left-0 right-0 truncate bg-black/60 px-1 py-0.5 text-[10px]">
+            {attachment.filename}
+          </span>
+        </button>
+
+        <Dialog open={showVideoDialog} onOpenChange={setShowVideoDialog}>
+          <DialogContent className="w-[calc(100vw-32px)] max-w-4xl overflow-hidden border-0 bg-black p-0">
+            <DialogTitle className="sr-only">{attachment.filename}</DialogTitle>
+            <DialogDescription className="sr-only">{attachment.filename}</DialogDescription>
+            {mediaUrl && (
+              <video
+                data-testid={`sent-video-dialog-${attachment.id}`}
+                src={mediaUrl}
+                controls
+                autoPlay
+                playsInline
+                className="max-h-[80vh] w-full bg-black object-contain"
+              />
+            )}
+          </DialogContent>
+        </Dialog>
+      </>
+    )
+  }
+
+  if (isAudio) {
+    const toggleAudio = () => {
+      const audio = audioRef.current
+      if (!audio) return
+      if (audio.paused) {
+        void audio
+          .play()
+          .then(() => setIsAudioPlaying(true))
+          .catch(() => setIsAudioPlaying(false))
+      } else {
+        audio.pause()
+        setIsAudioPlaying(false)
+      }
+    }
+
+    return (
+      <div
+        data-testid={`sent-audio-attachment-${attachment.id}`}
+        className="flex h-12 max-w-52 items-center gap-2 rounded-md border border-border bg-surface px-2"
+      >
+        <audio
+          ref={audioRef}
+          src={mediaUrl ?? undefined}
+          preload="metadata"
+          onEnded={() => setIsAudioPlaying(false)}
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={toggleAudio}
+          disabled={!mediaUrl || mediaLoading || mediaError}
+          className="h-8 w-8 shrink-0 text-primary"
+          title={isAudioPlaying ? t('actions.pause') : t('actions.play')}
+        >
+          {mediaLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : isAudioPlaying ? (
+            <Pause className="h-4 w-4 fill-current" />
+          ) : (
+            <Play className="h-4 w-4 fill-current" />
+          )}
+        </Button>
+        <div className="min-w-0 flex-1 text-left">
+          <div className="truncate text-xs font-medium" title={attachment.filename}>
+            {attachment.filename}
+          </div>
+          <div className="text-[11px] text-text-muted">{formatFileSize(attachment.file_size)}</div>
+        </div>
+        <AudioLines className="h-4 w-4 shrink-0 text-text-muted" />
+      </div>
+    )
   }
 
   // HTML files - show preview button
@@ -436,25 +615,28 @@ export default function AttachmentPreview({
   }
 
   return (
-    <div className="flex items-center gap-3 p-3 bg-muted rounded-lg border border-border mb-2 max-w-full">
-      <span className="text-2xl flex-shrink-0">{icon}</span>
-      <div className="flex-1 min-w-0 overflow-hidden">
-        <div className="font-medium text-sm truncate" title={attachment.filename}>
+    <div className="flex h-[72px] w-60 items-center gap-3 rounded-lg border border-border bg-surface px-3 shadow-sm">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted text-text-secondary">
+        <FileText className="h-5 w-5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium" title={attachment.filename}>
           {attachment.filename}
         </div>
-        <div className="text-xs text-text-muted">
-          {formatFileSize(attachment.file_size)}
-          {showDownload && (
-            <button
-              type="button"
-              onClick={handleDownload}
-              className="ml-2 text-link hover:underline"
-            >
-              {t('attachment.click_to_download')}
-            </button>
-          )}
-        </div>
+        <div className="text-xs text-text-muted">{formatFileSize(attachment.file_size)}</div>
       </div>
+      {showDownload && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={handleDownload}
+          className="h-8 w-8 shrink-0 text-text-muted hover:text-text-primary"
+          title={t('actions.download')}
+        >
+          <Download className="h-4 w-4" />
+        </Button>
+      )}
     </div>
   )
 }

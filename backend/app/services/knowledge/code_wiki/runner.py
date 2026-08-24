@@ -41,6 +41,7 @@ from app.services.knowledge.code_wiki.generation import (
     SOURCE_COMMIT_KEY,
     FailureCode,
     GenerationInFlight,
+    GenerationWikiNotFound,
     finish_generation,
     published_commit,
     record_failure_reason,
@@ -136,6 +137,7 @@ def start_run(
     head_commit: str = "",
     changed_paths: Optional[Sequence[ChangedPath]] = None,
     total_source_files: Optional[int] = None,
+    force_full: bool = False,
 ) -> StartedRun:
     """Start a run for ``knowledge_base`` and hand its instructions to a task.
 
@@ -149,6 +151,7 @@ def start_run(
         changed_paths: Diff since the published commit. ``None`` asks for it to be
             read from the provider alongside the commit.
         total_source_files: Repository size, used by the change-ratio threshold.
+        force_full: Whether an explicit caller requested a fresh full rebuild.
 
     Returns:
         The started run, or a reason why none was needed.
@@ -156,6 +159,7 @@ def start_run(
     Raises:
         CodeWikiRunError: If the wiki cannot be generated, or a run is already going.
         GenerationInFlight: Propagated from the version store.
+        GenerationWikiNotFound: If the wiki is deleted before the run starts.
     """
     source = source_of(knowledge_base)
     team, task_user = _resolve_execution_context(db, knowledge_base, user)
@@ -200,6 +204,7 @@ def start_run(
         head_commit=head_commit,
         changed_paths=changed_paths,
         total_source_files=total_source_files,
+        force_full=force_full,
         # A real foreign key on wiki_generations. Resolved here rather than defaulted
         # to zero: MySQL rejects the insert outright, and SQLite does not enforce it,
         # so a zero passes every test and fails every deployment.
@@ -589,7 +594,7 @@ def start_first_run(user_id: int, knowledge_base_id: int) -> None:
         if knowledge_base is None or user is None:  # pragma: no cover - just committed
             return
         start_run(db, knowledge_base=knowledge_base, user=user)
-    except (CodeWikiRunError, GenerationInFlight) as e:
+    except (CodeWikiRunError, GenerationInFlight, GenerationWikiNotFound) as e:
         logger.warning(
             "[code_wiki] first run not started for kb %s: %s", knowledge_base_id, e
         )

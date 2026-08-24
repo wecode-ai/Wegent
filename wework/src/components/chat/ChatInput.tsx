@@ -33,6 +33,7 @@ import type {
   UnifiedSkill,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
+import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type { CloudProject } from '@/api/deliveries'
 import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
@@ -54,6 +55,7 @@ import {
 import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
 import type { ComposerTextareaHandle } from './composer/ComposerTextarea'
 import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -110,6 +112,7 @@ export interface ProjectWorkControls {
   pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode
   executionModeLocked?: boolean
+  worktreeAvailability?: ProjectWorktreeAvailability
   isGitProject?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
@@ -123,6 +126,8 @@ export interface ProjectWorkControls {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
+  onGenerateBranchName?: (sourceText: string) => Promise<string>
+  branchNameSource?: string
   worktreeBranch?: string | null
   onWorktreeBranchChange?: (branchName: string | null) => void
   // When false, the project trigger renders a static folder icon instead of the
@@ -136,6 +141,7 @@ export interface ChatInputProps {
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
+  onCompositionStart?: () => void
   onCompositionEnd?: () => void
   onSubmit: (
     valueOverride?: string,
@@ -153,6 +159,7 @@ export interface ChatInputProps {
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
+  showExecutionTools?: boolean
   queuedMessages?: QueuedWorkbenchMessage[]
   guidanceMessages?: GuidanceWorkbenchMessage[]
   codeComments?: CodeCommentContext[]
@@ -179,14 +186,16 @@ export interface ChatInputProps {
   cloudSpaceEnabled?: boolean
   onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
-  selectedCloudProjectId?: CloudProject['id']
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
+  contextHeader?: ReactNode
   inputLeadingContext?: ReactNode
   onDismissInputLeadingContext?: () => void
   toolbarLeadingContext?: ReactNode
+  projectWorkBarMiddleContext?: ReactNode
   projectWorkBarTrailingContext?: ReactNode
+  projectWorkBarEndContext?: ReactNode
   modelSelectorOverride?: ReactNode
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
@@ -543,6 +552,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     value,
     onChange,
     onBlur,
+    onCompositionStart,
     onCompositionEnd,
     onSubmit,
     disabled,
@@ -557,6 +567,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     projectChat,
     projectWork,
     showProjectWorkBar = true,
+    showExecutionTools = true,
     queuedMessages = [],
     guidanceMessages = [],
     codeComments = [],
@@ -580,14 +591,16 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     cloudSpaceEnabled,
     onSelectExternalMention,
     onSelectCloudProject,
-    selectedCloudProjectId,
     isStreaming = false,
     onPause,
     showWorkspaceMenu,
+    contextHeader,
     inputLeadingContext,
     onDismissInputLeadingContext,
     toolbarLeadingContext,
+    projectWorkBarMiddleContext,
     projectWorkBarTrailingContext,
+    projectWorkBarEndContext,
     modelSelectorOverride,
     onCompactContext,
     goal,
@@ -618,6 +631,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   useImperativeHandle(
     ref,
     () => ({
+      focus: () => composerRef.current?.focus(),
       getValue: () => composerRef.current?.getValue() ?? value,
       setValue: (nextValue, selectionOffset) =>
         composerRef.current?.setValue(nextValue, selectionOffset),
@@ -631,6 +645,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     const next = buildRefinedPluginPrompt(composerRef.current?.getValue() ?? value, prompt)
     composerRef.current?.setValue(next)
     onChange(next)
+  }
+
+  const handleEditQueuedMessage = (id: string) => {
+    onEditQueuedMessage?.(id)
+    composerRef.current?.focus()
   }
 
   const displayedGoal = visibleRuntimeGoal(goal)
@@ -661,6 +680,13 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     listLocalSkills: async () => [],
     listLocalApps: async () => [],
   }
+  const currentRuntimeProject = projectWork?.runtimeWork?.projects.find(
+    item => runtimeProjectUiId(item.project) === projectWork.currentProject?.id
+  )?.project
+  const projectQuickPhrases =
+    currentRuntimeProject?.source === 'local_project'
+      ? (currentRuntimeProject.aiSettings?.quickPhrases ?? [])
+      : []
   const applyTrialTemplate = (template: PluginPathComponent) => {
     const applyTemplate = controls.onApplyTrialTemplate ?? controls.applyTrialTemplate
     if (!applyTemplate) return
@@ -756,6 +782,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       return
     }
     if (onResumeQueueWithInput) {
+      composerRef.current?.setValue('', 0)
       onChange('')
       void onResumeQueueWithInput(valueOverride, options)
       return
@@ -767,6 +794,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     value,
     onChange,
     onBlur,
+    onCompositionStart,
     onCompositionEnd,
     onSubmit: handleSubmit,
     disabled,
@@ -785,7 +813,6 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     cloudSpaceEnabled,
     onSelectExternalMention,
     onSelectCloudProject,
-    selectedCloudProjectId,
   }
   const errorBanner = error ? (
     <div
@@ -803,7 +830,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
       onCancelQueuedMessage={onCancelQueuedMessage}
       onSendQueuedAsGuidance={onSendQueuedAsGuidance}
       onInterruptAndSendQueuedMessage={onInterruptAndSendQueuedMessage}
-      onEditQueuedMessage={onEditQueuedMessage}
+      onEditQueuedMessage={onEditQueuedMessage ? handleEditQueuedMessage : undefined}
       onReorderQueuedMessages={onReorderQueuedMessages}
       queuePaused={queuePaused}
       onResumeQueue={onResumeQueue}
@@ -858,15 +885,29 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           onApplyRefinedPrompt={applyRefinedPrompt}
           onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
         />
-        {displayedGoal && !goalDraftActive && (
-          <GoalStatusBar
-            goal={displayedGoal}
-            continuing={goalContinuing}
-            onEditGoal={onEditGoal}
-            onPauseGoal={onPauseGoal}
-            onResumeGoal={onResumeGoal}
-            onClearGoal={onClearGoal}
-          />
+        {(contextHeader || (displayedGoal && !goalDraftActive)) && (
+          <div
+            data-testid="composer-context-rail"
+            className={[
+              'mb-2 min-w-0 items-center divide-x divide-border/70 overflow-hidden rounded-xl border border-border/60 bg-muted/45 px-1 [&>*]:min-w-0 [&>*]:overflow-hidden',
+              contextHeader && displayedGoal && !goalDraftActive
+                ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
+                : 'flex',
+            ].join(' ')}
+          >
+            {displayedGoal && !goalDraftActive && (
+              <GoalStatusBar
+                integrated
+                goal={displayedGoal}
+                continuing={goalContinuing}
+                onEditGoal={onEditGoal}
+                onPauseGoal={onPauseGoal}
+                onResumeGoal={onResumeGoal}
+                onClearGoal={onClearGoal}
+              />
+            )}
+            {contextHeader}
+          </div>
         )}
         <ProjectChatComposer
           ref={composerRef}
@@ -925,8 +966,12 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
               onCreateProjectMode: undefined,
             }
           }
+          projectPhrases={projectQuickPhrases}
           showProjectWorkBar={showProjectWorkBar}
+          showExecutionTools={showExecutionTools}
+          projectWorkBarMiddleContext={projectWorkBarMiddleContext}
           projectWorkBarTrailingContext={projectWorkBarTrailingContext}
+          projectWorkBarEndContext={projectWorkBarEndContext}
           modelSelectorOverride={modelSelectorOverride}
           onListLocalSkills={controls.listLocalSkills}
           onListLocalApps={controls.listLocalApps}
@@ -1011,6 +1056,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         isModelSelectionReady={controls.isModelSelectionReady ?? true}
         isStreaming={isStreaming}
         onPause={onPause}
+        projectPhrases={projectQuickPhrases}
       />
       {queueResumeDialog}
       {modelSwitchWarningDialog}

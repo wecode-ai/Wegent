@@ -210,6 +210,7 @@ class ExecutionRequest:
     # === Validation / Sandbox Configuration ===
     validation_params: Optional[dict] = None  # Validation task parameters
     sandbox_metadata: Optional[dict] = None  # Sandbox task metadata
+    runtime_permission_profile: Optional[str] = None
 
     # === Reasoning Configuration ===
     reasoning_config: Optional[dict] = (

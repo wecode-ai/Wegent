@@ -9,16 +9,19 @@ execution table and never creates a local task row.
 """
 
 import uuid
+from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.base_role import BaseRole
-from app.schemas.delivery import LoopItemResponse, LoopItemUpdate
+from app.schemas.delivery import LoopItemCreate, LoopItemResponse, LoopItemUpdate
 from app.schemas.project_chat import (
     LoopItemApproval,
     LoopItemAssign,
@@ -31,6 +34,7 @@ from app.services.loop_items.external_provider import (
     ASSIGNEE_PREFIX,
     external_loop_item_provider,
 )
+from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.project_chat.service import project_chat_service
 
 
@@ -55,8 +59,25 @@ def _make_gitlab_project(db: Session, user: User) -> CloudProject:
 
 
 def _make_bot(
-    db: Session, project: CloudProject, user: User, *, mode: str = "auto"
+    db: Session,
+    project: CloudProject,
+    user: User,
+    *,
+    mode: str = "auto",
+    runtime: str = "codex",
+    wegent_team_id: int | None = None,
 ) -> ProjectChatAgent:
+    device_id = f"cloud-{uuid.uuid4().hex[:10]}"
+    db.add(
+        Kind(
+            kind="Device",
+            name=device_id,
+            namespace="default",
+            user_id=user.id,
+            is_active=True,
+            json={"spec": {"deviceType": "cloud"}},
+        )
+    )
     bot = ProjectChatAgent(
         id=f"B{uuid.uuid4().hex[:10]}",
         cloud_project_id=project.id,
@@ -64,8 +85,10 @@ def _make_bot(
         name="GitLab Bot",
         status="active",
         created_by_user_id=user.id,
+        device_id=device_id if runtime == "codex" else None,
         metadata_json={
-            "runtime": "codex",
+            "runtime": runtime,
+            "wegent_team_id": wegent_team_id,
             "execution_mode": mode,
             "execution_environment": "cloud",
             "visibility": "public",
@@ -114,8 +137,17 @@ def _mock_issue(monkeypatch: pytest.MonkeyPatch) -> None:
         state["issue"] = issue
         return dict(issue)
 
+    def create_issue(_project, title, description, labels):
+        issue = _issue()
+        issue["title"] = title
+        issue["description"] = description
+        issue["labels"] = list(labels)
+        state["issue"] = issue
+        return dict(issue)
+
     monkeypatch.setattr(external_loop_item_provider, "_get_issue", get_issue)
     monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
+    monkeypatch.setattr(external_loop_item_provider, "_create_issue", create_issue)
 
 
 def _active_execution(db: Session, item_id: str) -> LoopItemExecution | None:
@@ -158,6 +190,100 @@ def test_assign_robot_on_gitlab_creates_index_row_and_execution(
     assert execution.agent_id == bot.id
 
 
+def test_assign_wegent_runtime_robot_on_gitlab_keeps_robot_identity(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    team = Kind(
+        kind="Team",
+        name=f"external-team-{uuid.uuid4().hex[:8]}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={},
+    )
+    test_db.add(team)
+    test_db.commit()
+    test_db.refresh(team)
+    _mock_issue(monkeypatch)
+    bot = _make_bot(
+        test_db,
+        project,
+        test_user,
+        runtime="wegent",
+        wegent_team_id=team.id,
+    )
+
+    response = external_loop_item_provider.assign(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        LoopItemAssign(
+            version=1,
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
+    )
+
+    assert response["assignee_team_id"] is None
+    assert response["assignee_agent_id"] == bot.id
+    row = test_db.get(LoopItem, _item_id(project))
+    assert row is not None
+    assert row.assignee_team_id is None
+    assert row.assignee_agent_id == bot.id
+    execution = _active_execution(test_db, _item_id(project))
+    assert execution is not None
+    assert execution.team_id == team.id
+    assert execution.agent_id == bot.id
+    assert execution.executor_type == "project_robot"
+
+
+def test_create_gitlab_item_for_wegent_robot_returns_dispatchable_index(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    team = Kind(
+        kind="Team",
+        name=f"external-team-{uuid.uuid4().hex[:8]}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={},
+    )
+    test_db.add(team)
+    test_db.commit()
+    test_db.refresh(team)
+    _mock_issue(monkeypatch)
+    bot = _make_bot(
+        test_db,
+        project,
+        test_user,
+        runtime="wegent",
+        wegent_team_id=team.id,
+    )
+
+    created = loop_item_provider_router.create(
+        test_db,
+        project,
+        test_user,
+        LoopItemCreate(
+            title="Created and assigned",
+            assignee_agent_id=bot.id,
+        ),
+        automation_context={"run_id": "automation-run-1"},
+        instruction="Handle the external issue",
+    )
+
+    assert created.values["assignee_agent_id"] == bot.id
+    assert created.internal_item is not None
+    assert created.internal_item.assignee_agent_id == bot.id
+    execution = _active_execution(test_db, str(created.values["id"]))
+    assert execution is not None
+    assert execution.team_id == team.id
+    assert execution.agent_id == bot.id
+    assert execution.executor_type == "project_robot"
+
+
 def test_assign_user_on_gitlab_creates_index_row_without_execution(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -187,14 +313,29 @@ def test_assign_user_on_gitlab_creates_index_row_without_execution(
     test_db.commit()
     _mock_issue(monkeypatch)
 
-    response = external_loop_item_provider.assign(
-        test_db,
-        _item_id(project),
-        test_user.id,
-        LoopItemAssign(version=1, assignee_type="user", assignee_id=str(member.id)),
-    )
+    with patch(
+        "app.services.loop_items.external_provider.notify_project_task_assignee"
+    ) as notify:
+        response = external_loop_item_provider.assign(
+            test_db,
+            _item_id(project),
+            test_user.id,
+            LoopItemAssign(
+                version=1,
+                assignee_type="user",
+                assignee_id=str(member.id),
+            ),
+        )
 
     assert response["assignee_user_id"] == member.id
+    notify.assert_called_once_with(
+        user_id=member.id,
+        project_id=str(project.id),
+        project_name=project.name,
+        item_id=_item_id(project),
+        item_title="External task 1",
+        assigner_name=test_user.user_name,
+    )
     row = test_db.get(LoopItem, _item_id(project))
     assert row is not None
     assert row.assignee_user_id == member.id
@@ -218,7 +359,8 @@ def test_external_response_merges_execution_state(
 
     view = external_loop_item_provider.get(test_db, _item_id(project), test_user.id)
     assert view["assignee_agent_id"] == bot.id
-    assert view["execution_state"] == "pending_approval"
+    assert view["execution_state"] == "waiting_approval"
+    assert view["execution_control_state"] == "pending_approval"
     assert isinstance(view["queued_at"], str)
     assert view["can_approve"] is True
     assert view["approval"]["status"] == "pending"
@@ -312,8 +454,9 @@ def test_external_response_keeps_ai_state_after_run_completes(
 
     view = external_loop_item_provider.get(test_db, _item_id(project), test_user.id)
 
-    assert view["execution_state"] == "completed"
-    assert view["ai_state"]["status"] == "completed"
+    assert view["execution_state"] == "succeeded"
+    assert view["execution_control_state"] == "completed"
+    assert view["ai_state"]["status"] == "succeeded"
     assert view["ai_state"]["agent_id"] == bot.id
 
 

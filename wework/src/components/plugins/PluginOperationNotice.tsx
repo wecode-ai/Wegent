@@ -6,6 +6,8 @@ export type PluginOperationNoticeState = {
   kind: 'authorization' | 'success' | 'error'
   message: string
   iconUrl?: string | null
+  actionLabel?: string
+  onAction?: () => void
 }
 
 export function PluginOperationNotice({
@@ -35,7 +37,19 @@ export function PluginOperationNotice({
           <AlertCircle />
         )}
       </span>
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">{notice.message}</span>
+      <span className="min-w-0 flex-1 break-words text-sm font-medium leading-5">
+        {notice.message}
+      </span>
+      {notice.actionLabel && notice.onAction ? (
+        <button
+          type="button"
+          data-testid="plugin-operation-notice-action"
+          className="plugin-operation-notice-action"
+          onClick={notice.onAction}
+        >
+          {notice.actionLabel}
+        </button>
+      ) : null}
       <button
         type="button"
         data-testid="plugin-operation-notice-dismiss"

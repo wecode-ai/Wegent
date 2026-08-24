@@ -182,9 +182,44 @@ spec:
 | `spec.modelSubGroup`   | string | 否   | `spec.modelGroup` 下的二级展示分组 |
 | `spec.modelConfig`     | object | 是   | 模型配置对象                       |
 | `spec.modelConfig.env` | object | 是   | 环境变量配置                       |
+| `spec.modelConfig.visionSidecarModel` | object | 否   | 显式引用处理图片的模型；省略时不启用视觉委托。 |
 | `spec.protocol`        | string | 否   | 上游协议（如 `openai`、`openai-responses`、`claude`）。省略时从 `env.model` 推断。 |
 | `spec.apiFormat`       | string | 否   | 上游 API 格式（如 `responses`、`chat/completions`）。省略时由 `spec.protocol` 推导。 |
 | `spec.isWeworkAvailable` | boolean | 否 | 是否将该模型分发到 wework 桌面客户端。 |
+
+### 视觉委托模型引用
+
+纯文本模型可以在 `modelConfig.visionSidecarModel` 中显式引用另一个能读图的模型。引用必须使用 Backend 授权模型列表返回的完整资源身份和 `apiFormat`。该引用即权威来源：Wework 只校验引用本身的结构，目标模型的存在性与访问权限由 Backend 的 LLM 网关在调用时依据同一组身份 Header 解析和鉴权，因此引用一个未声明 `supportsImage` 或未分发到 wework 的模型同样生效。Wework 不会根据登录状态或模型名称自动选择默认视觉模型。引用结构非法时主模型保持纯文本，不做图片预处理；引用指向的模型不存在或无法读图时，该图片会被替换为明确的失败说明文本，原始图片不会泄漏给纯文本主模型。
+
+Wegent Web 的视觉模型下拉框只列出声明了 `modelCapabilities.supportsImage: true` 的候选模型，因此建议给能读图的模型补齐该字段。若已有引用的目标不在候选列表中，下拉框会保留该引用并标注为当前不可选，保存模型不会丢弃它。
+
+`apiFormat` 必须与被引用模型实际使用的上游协议一致，可取 `openai-responses`、`openai-chat-completions` 或 `anthropic-messages`。多数 Model CRD 只声明 `spec.modelConfig.env.model`，此时协议由该字段推断（`claude` 对应 Anthropic Messages，`openai` 对应 OpenAI Chat Completions）。
+
+```yaml
+spec:
+  protocol: openai-responses
+  apiFormat: responses
+  modelConfig:
+    env:
+      model: openai
+      model_id: deepseek-v4-pro
+      base_url: https://example.com/v1
+      api_key: ${WECODE_USER_API_KEY}
+    visionSidecarModel:
+      modelName: openai-gpt-5.6-luna
+      modelType: public
+      namespace: default
+      resourceUserId: 0
+      apiFormat: openai-responses
+```
+
+| 字段             | 类型    | 必填 | 说明                                                                    |
+| ---------------- | ------- | ---- | ----------------------------------------------------------------------- |
+| `modelName`      | string  | 是   | 被引用 Model 的 `metadata.name`。                                       |
+| `modelType`      | string  | 是   | 资源来源：`public`、`user` 或 `group`。                                 |
+| `namespace`      | string  | 是   | 被引用 Model 的命名空间。                                               |
+| `resourceUserId` | integer | 是   | 被引用 Model 的资源所有者 ID。                                          |
+| `apiFormat`      | string  | 是   | `openai-responses`、`openai-chat-completions` 或 `anthropic-messages`。 |
 
 ### 模型选择器分组
 

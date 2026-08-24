@@ -95,6 +95,7 @@ interface ActiveComposerMenu {
 }
 
 export interface ComposerTextareaHandle {
+  focus: () => void
   getValue: () => string
   setValue: (value: string, selectionOffset?: number) => void
 }
@@ -105,6 +106,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       value,
       onChange,
       onBlur,
+      onCompositionStart,
       onCompositionEnd,
       onSubmit,
       canSend,
@@ -161,6 +163,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     useImperativeHandle(
       ref,
       () => ({
+        focus: () => editorRef.current?.focus(),
         getValue: () => editorRef.current?.getSnapshot().value ?? valueRef.current,
         setValue: (nextValue, selectionOffset = nextValue.length) => {
           valueRef.current = nextValue
@@ -881,11 +884,12 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
             })
           }
         }
+        const triggerEnd = trigger.start + 1 + trigger.query.length
         const replacement = replaceComposerMentionTrigger(
           snapshot.value,
           candidate.reference,
           trigger.start,
-          snapshot.selectionEnd
+          Math.max(snapshot.selectionEnd, triggerEnd)
         )
 
         commitEditorValue(replacement.value, replacement.cursor)
@@ -1233,11 +1237,12 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
 
     const handleCompositionStart = useCallback(() => {
       setIsComposing(true)
+      onCompositionStart?.()
       debugComposerEvent('composition-start', {
         propValue: textMetrics(valueRef.current),
         suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
       })
-    }, [])
+    }, [onCompositionStart])
 
     const handleCompositionEnd = useCallback(() => {
       setIsComposing(false)

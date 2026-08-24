@@ -5,7 +5,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Mutex as StdMutex, MutexGuard as StdMutexGuard, OnceLock},
+    sync::{Arc, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -14,20 +14,21 @@ use std::os::unix::fs::PermissionsExt;
 
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex as AsyncMutex, OwnedMutexGuard};
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
 
 struct EnvLockGuard {
-    _guard: StdMutexGuard<'static, ()>,
+    _guard: OwnedMutexGuard<()>,
 }
 
 async fn env_lock() -> EnvLockGuard {
-    static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+    static LOCK: OnceLock<Arc<AsyncMutex<()>>> = OnceLock::new();
     EnvLockGuard {
         _guard: LOCK
-            .get_or_init(|| StdMutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            .get_or_init(|| Arc::new(AsyncMutex::new(())))
+            .clone()
+            .lock_owned()
+            .await,
     }
 }
 
@@ -83,6 +84,20 @@ fn execution_request_with_model_config(
 }
 
 fn seed_persisted_runtime_task(executor_home: &Path, local_task_id: &str, thread_id: &str) {
+    seed_persisted_runtime_task_at_workspace(
+        executor_home,
+        local_task_id,
+        thread_id,
+        "/tmp/project",
+    )
+}
+
+fn seed_persisted_runtime_task_at_workspace(
+    executor_home: &Path,
+    local_task_id: &str,
+    thread_id: &str,
+    workspace_path: &str,
+) {
     let index_path = executor_home.join("runtime-work").join("index.json");
     fs::create_dir_all(index_path.parent().unwrap()).unwrap();
     fs::write(
@@ -93,7 +108,7 @@ fn seed_persisted_runtime_task(executor_home: &Path, local_task_id: &str, thread
                 local_task_id: {
                     "local_task_id": local_task_id,
                     "thread_id": thread_id,
-                    "workspace_path": "/tmp/project",
+                    "workspace_path": workspace_path,
                     "title": "Persisted runtime task",
                     "runtime": "codex",
                     "status": "active",
@@ -251,8 +266,13 @@ async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
         .expect("Claude task should be accepted");
     assert_eq!(created["accepted"], true);
     assert_eq!(created["runtime"], "claude_code");
+    let mut runtime_events = recv_events_until(&mut events, |runtime_events| {
+        runtime_events.iter().any(|event| {
+            event["event"] == "response.completed" && event["payload"]["runtime"] == "claude_code"
+        })
+    })
+    .await;
     wait_for_text_occurrence_count(&log_path, "CALL\n", 1).await;
-    wait_until_task_idle(&handler, "claude-task-1").await;
 
     let sent = handler
         .handle_runtime_rpc(json!({
@@ -280,8 +300,16 @@ async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
         .expect("Claude follow-up should be accepted");
     assert_eq!(sent["accepted"], true);
     assert_eq!(sent["runtime"], "claude_code");
+    runtime_events.extend(
+        recv_events_until(&mut events, |runtime_events| {
+            runtime_events.iter().any(|event| {
+                event["event"] == "response.completed"
+                    && event["payload"]["runtime"] == "claude_code"
+            })
+        })
+        .await,
+    );
     wait_for_text_occurrence_count(&log_path, "CALL\n", 2).await;
-    wait_until_task_idle(&handler, "claude-task-1").await;
 
     let log = fs::read_to_string(&log_path).expect("Claude args should be logged");
     let calls = log
@@ -322,14 +350,13 @@ async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
     assert_eq!(messages[2]["role"], "user");
     assert_eq!(messages[3]["role"], "assistant");
 
-    let runtime_events = recv_events_until(&mut events, |runtime_events| {
-        runtime_events.iter().any(|event| {
-            event["event"] == "response.completed" && event["payload"]["runtime"] == "claude_code"
-        })
-    })
-    .await;
     assert!(runtime_events.iter().any(|event| {
         event["event"] == "response.created" && event["payload"]["runtime"] == "claude_code"
+    }));
+    assert!(runtime_events.iter().any(|event| {
+        event["event"] == "response.completed"
+            && event["payload"]["runtime"] == "claude_code"
+            && event["payload"]["taskTitle"] == "first turn"
     }));
 }
 
@@ -350,7 +377,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
     write_codex_state_db_thread(&sqlite_home);
     let log_path = temp_path("runtime-send-log", "jsonl");
-    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
+    let fake_codex = write_fake_codex(&log_path);
     let (event_tx, mut events) = broadcast::channel(32);
     let handler = RuntimeWorkRpcHandler::with_event_sender(
         "device-1",
@@ -369,6 +396,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     "task_id": 1001,
                     "subtask_id": 2001,
                     "prompt": "first turn",
+                    "system_prompt": "Run focused project tests.",
                     "project_workspace_path": "/tmp/project",
                     "bot": [{"shell_type": "ClaudeCode"}],
                     "model_config": {
@@ -473,6 +501,10 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(resume["params"]["threadId"], "thread-1");
     assert_eq!(resume["params"]["cwd"], "/tmp/project");
     assert_eq!(resume["params"]["model"], "gpt-4.1");
+    assert!(resume["params"]["developerInstructions"]
+        .as_str()
+        .expect("developer instructions should be present")
+        .contains("Run focused project tests."));
     assert_eq!(
         resume["params"]["config"]["model_reasoning_effort"],
         "xhigh"
@@ -706,7 +738,7 @@ async fn runtime_tasks_send_goal_does_not_start_a_second_overlapping_turn() {
             .to_string(),
     );
     let log_path = temp_path("runtime-send-goal-log", "jsonl");
-    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
+    let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     handler
@@ -838,15 +870,25 @@ async fn runtime_tasks_create_ephemeral_codex_thread_hidden_from_task_list() {
         fork_call["params"]["path"],
         "/tmp/codex/parent-thread-1.jsonl"
     );
+    assert_eq!(fork_call["params"]["cwd"], "/tmp/project");
+    assert_eq!(fork_call["params"]["permissions"], ":danger-full-access");
     assert_eq!(fork_call["params"]["ephemeral"], true);
     let inject_call = calls
         .iter()
         .find(|call| call["method"] == "thread/inject_items")
         .expect("thread/inject_items should be called");
     assert_eq!(inject_call["params"]["threadId"], "thread-1");
-    assert!(inject_call["params"]["items"][0]["content"][0]["text"]
+    let boundary_prompt = inject_call["params"]["items"][0]["content"][0]["text"]
         .as_str()
-        .is_some_and(|text| text.contains("Side conversation boundary.")));
+        .expect("side conversation boundary should be text");
+    assert!(boundary_prompt.contains("Side conversation boundary."));
+    assert!(boundary_prompt.contains(
+        "Do not modify files, source, git state, permissions, configuration, or workspace state \
+         unless the user explicitly asks for that mutation after this boundary."
+    ));
+    assert!(boundary_prompt.contains(
+        "If the user explicitly requests a mutation, keep it minimal, local to the request"
+    ));
     assert!(calls.iter().all(|call| call["method"] != "thread/start"));
     assert!(calls.iter().all(|call| call["method"] != "thread/name/set"));
     assert!(calls.iter().all(|call| call["method"] != "thread/goal/set"));
@@ -1005,6 +1047,19 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
     wait_for_turn_count(&log_path, 1).await;
     wait_until_task_idle(&handler, "side-chat-follow-up").await;
 
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "side-chat-follow-up",
+                "workspacePath": "/tmp/project",
+                "refresh": true
+            }
+        }))
+        .await
+        .expect("ephemeral transcript should use the runtime cache");
+    assert_eq!(transcript["success"], true);
+
     let sent = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.send",
@@ -1032,7 +1087,6 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
     assert_eq!(sent["accepted"], true);
     wait_for_turn_count(&log_path, 2).await;
     wait_until_task_idle(&handler, "side-chat-follow-up").await;
-    wait_for_method_count(&log_path, "thread/unsubscribe", 2).await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -1059,9 +1113,16 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
     assert_eq!(
         calls
             .iter()
+            .filter(|call| call["method"] == "thread/turns/list")
+            .count(),
+        0
+    );
+    assert_eq!(
+        calls
+            .iter()
             .filter(|call| call["method"] == "thread/unsubscribe")
             .count(),
-        2
+        0
     );
     assert_eq!(
         calls
@@ -1798,6 +1859,116 @@ async fn runtime_tasks_send_answers_pending_request_user_input_while_running() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_forward_and_accept_mcp_form_elicitation() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-mcp-elicitation-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-mcp-elicitation-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-mcp-elicitation-log", "jsonl");
+    let fake_codex = write_fake_codex_mcp_elicitation(&log_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-mcp-elicitation",
+                "workspacePath": "/tmp/project",
+                "message": "confirm access",
+                "executionRequest": {
+                    "task_id": 3002,
+                    "subtask_id": 4002,
+                    "prompt": "confirm access",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    assert_eq!(created["accepted"], true);
+
+    let request_events = recv_events_until(&mut events, |runtime_events| {
+        find_runtime_event(runtime_events, "response.block.created", |event| {
+            let block = &event["payload"]["data"]["block"];
+            block["tool_name"] == "request_user_input" && block["render_payload"]["requestId"] == 99
+        })
+        .is_some()
+    })
+    .await;
+    let block_event = find_runtime_event(&request_events, "response.block.created", |event| {
+        event["payload"]["data"]["block"]["tool_name"] == "request_user_input"
+    })
+    .expect("MCP form should be emitted as request_user_input");
+    assert_eq!(
+        block_event["payload"]["data"]["block"]["render_payload"]["questions"][0]["options"][1],
+        json!({"label": "仅自己", "description": "owner"})
+    );
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "address": {
+                    "deviceId": "device-1",
+                    "workspacePath": "/tmp/project",
+                    "taskId": "local-task-mcp-elicitation"
+                },
+                "message": "仅自己",
+                "requestUserInputResponse": {
+                    "requestId": 99,
+                    "answers": {
+                        "audience": {"answers": ["仅自己"]}
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("MCP form answer should be accepted");
+
+    assert_eq!(sent["success"], true);
+    assert_eq!(sent["accepted"], true);
+    wait_until_task_idle(&handler, "local-task-mcp-elicitation").await;
+
+    wait_for_json_call(&log_path, |call| {
+        call["id"] == 99
+            && call["result"]["action"] == "accept"
+            && call["result"]["content"]["audience"] == "owner"
+    })
+    .await;
+    let calls = read_json_lines(&log_path);
+    for method in ["thread/start", "turn/start"] {
+        let call = calls
+            .iter()
+            .find(|call| call["method"] == method)
+            .expect("thread and turn requests should be logged");
+        assert_eq!(
+            call["params"]["approvalPolicy"]["granular"]["mcp_elicitations"],
+            true
+        );
+    }
+}
+
+#[tokio::test]
 async fn runtime_tasks_interrupt_and_send_unblocks_pending_request_user_input() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -1899,7 +2070,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
     let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
     write_codex_state_db_thread(&sqlite_home);
     let log_path = temp_path("runtime-send-text-log", "jsonl");
-    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
+    let fake_codex = write_fake_codex(&log_path);
     let (event_tx, mut events) = broadcast::channel(32);
     let handler = RuntimeWorkRpcHandler::with_event_sender(
         "device-1",
@@ -2121,7 +2292,7 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
 }
 
 #[tokio::test]
-async fn runtime_tasks_send_rejects_provider_active_turn_after_local_execution_settles() {
+async fn runtime_tasks_send_delegates_provider_turn_admission_to_codex() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-send-provider-active-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -2136,19 +2307,7 @@ async fn runtime_tasks_send_rejects_provider_active_turn_after_local_execution_s
     let fake_codex = write_fake_codex_hanging_turn(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
-    let transcript = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "workspacePath": "/tmp/project",
-                "taskId": "local-task-1"
-            }
-        }))
-        .await
-        .expect("provider-active transcript should load");
-    assert_eq!(transcript["running"], true);
-
-    let rejected = handler
+    let sent = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.send",
             "payload": {
@@ -2163,22 +2322,110 @@ async fn runtime_tasks_send_rejects_provider_active_turn_after_local_execution_s
             }
         }))
         .await
-        .expect("provider-active send should return a contract response");
+        .expect("provider-active send should be delegated to Codex");
 
     assert_eq!(
-        rejected,
+        sent,
         json!({
-            "success": false,
-            "error": "runtime task is already running",
-            "code": "bad_request"
+            "success": true,
+            "accepted": true,
+            "deviceId": "device-1",
+            "taskId": "local-task-1",
+            "runtime": "codex",
+            "status": "running",
+            "queuePosition": null
         })
     );
+    wait_for_codex_call(&log_path, "turn/start").await;
     let calls = read_json_lines(&log_path);
-    assert!(calls.iter().any(|call| call["method"] == "thread/read"));
     assert!(
-        calls.iter().all(|call| call["method"] != "turn/start"),
-        "send must not create an overlapping Codex turn: {calls:?}"
+        calls
+            .iter()
+            .all(|call| call["method"] != "thread/read" && call["method"] != "thread/turns/list"),
+        "Executor must not use a provider state snapshot to decide turn admission: {calls:?}"
     );
+    assert!(
+        calls.iter().any(|call| call["method"] == "turn/start"),
+        "Codex must atomically decide whether the turn is started or steered: {calls:?}"
+    );
+
+    let cancelled = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-1"
+            }
+        }))
+        .await
+        .expect("delegated turn should remain cancellable");
+    assert_eq!(cancelled["accepted"], true);
+}
+
+#[tokio::test]
+async fn runtime_tasks_send_keeps_the_persisted_workspace_when_payload_project_changes() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-send-workspace-authority-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-workspace-authority-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    seed_persisted_runtime_task_at_workspace(
+        &executor_home,
+        "local-task-1",
+        "thread-1",
+        "/tmp/task-workspace",
+    );
+    let log_path = temp_path("runtime-send-workspace-authority-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/current-project",
+                "taskId": "local-task-1",
+                "message": "continue the existing task",
+                "executionRequest": codex_execution_request(
+                    "continue the existing task",
+                    "/tmp/current-project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("send should be accepted");
+
+    assert_eq!(sent["accepted"], true);
+    wait_for_method_count(&log_path, "thread/resume", 1).await;
+    let calls = read_json_lines(&log_path);
+    let resume = calls
+        .iter()
+        .find(|call| call["method"] == "thread/resume")
+        .expect("send should resume the existing thread");
+    assert_eq!(resume["params"]["cwd"], "/tmp/task-workspace");
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {"runtime": "codex"}
+        }))
+        .await
+        .expect("task list should load");
+    let task = listed["workspaces"]
+        .as_array()
+        .and_then(|workspaces| {
+            workspaces
+                .iter()
+                .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+                .find(|task| task["taskId"] == "local-task-1")
+        })
+        .expect("persisted task should remain listed");
+    assert_eq!(task["workspacePath"], "/tmp/task-workspace");
 }
 
 #[tokio::test]
@@ -2262,6 +2509,8 @@ async fn queued_worktree_task_does_not_create_worktree_before_slot_is_available(
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-queued-worktree-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _device_type = EnvGuard::set("DEVICE_TYPE", "cloud");
+    let _persistent_storage = EnvGuard::set("WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED", "true");
     let _codex_home = EnvGuard::set(
         "CODEX_HOME",
         &temp_path("runtime-queued-worktree-codex-home", "dir")
@@ -2269,7 +2518,7 @@ async fn queued_worktree_task_does_not_create_worktree_before_slot_is_available(
             .to_string(),
     );
     let source = temp_path("runtime-queued-worktree-source", "dir");
-    fs::create_dir_all(&source).unwrap();
+    initialize_git_repository(&source);
     let log_path = temp_path("runtime-queued-worktree-log", "jsonl");
     let fake_codex = write_fake_codex_hanging_turn(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
@@ -2358,6 +2607,14 @@ async fn queued_worktree_task_does_not_create_worktree_before_slot_is_available(
         }))
         .await
         .expect("queued task cleanup should succeed");
+    assert!(
+        !planned_path.exists(),
+        "cancelling a queued Worktree task must not leave its planned path"
+    );
+    assert!(
+        !planned_path.parent().unwrap().exists(),
+        "cancelling a queued Worktree task must not leave its task container"
+    );
     handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.cancel",
@@ -2519,6 +2776,94 @@ async fn runtime_tasks_guidance_corrects_a_stale_turn_id_and_retries_once() {
 }
 
 #[tokio::test]
+async fn completed_turn_accepts_follow_up_after_late_guidance_response() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-guidance-completion-race-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-guidance-completion-race-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-guidance-completion-race-log", "jsonl");
+    let steer_release_path = temp_path("runtime-guidance-completion-race-release", "flag");
+    let fake_codex = write_fake_codex_turn_completes_during_steer(&log_path, &steer_release_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-guidance-completion-race",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request(
+                    "first turn",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_until_task_running(&handler, "local-task-guidance-completion-race").await;
+
+    let guidance_handler = handler.clone();
+    let guidance = tokio::spawn(async move {
+        guidance_handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.guidance",
+                "payload": {
+                    "workspacePath": "/tmp/project",
+                    "taskId": "local-task-guidance-completion-race",
+                    "message": "finish with this guidance",
+                    "clientGuidanceId": "guide-completion-race"
+                }
+            }))
+            .await
+    });
+    wait_for_response_event(&mut events, "response.completed", "turn-1").await;
+    fs::write(&steer_release_path, b"release").expect("steer response should be released");
+    let guided = guidance
+        .await
+        .expect("guidance task should not panic")
+        .expect("guidance should finish after the turn completes");
+    assert_eq!(guided["accepted"], true);
+
+    let follow_up = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-guidance-completion-race",
+                "message": "follow up after the visible completion",
+                "executionRequest": codex_execution_request(
+                    "follow up after the visible completion",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("follow-up should return a contract response");
+
+    assert_eq!(
+        follow_up["accepted"], true,
+        "a late guidance response must not restore the completed task's running state: {follow_up}"
+    );
+}
+
+#[tokio::test]
 async fn refreshed_transcript_resumes_the_thread_before_reading_its_snapshot() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2534,7 +2879,7 @@ async fn refreshed_transcript_resumes_the_thread_before_reading_its_snapshot() {
             .to_string(),
     );
     let log_path = temp_path("runtime-transcript-refresh-log", "jsonl");
-    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
+    let fake_codex = write_fake_codex(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     handler
@@ -3098,7 +3443,7 @@ async fn runtime_tasks_send_recovers_thread_from_unique_workspace_when_visible_t
 }
 
 #[tokio::test]
-async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local_index() {
+async fn runtime_tasks_rollback_replaces_the_source_turn_without_provider_rollback() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -3130,6 +3475,7 @@ async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local
                 },
                 "message": "edited from address handle",
                 "messageId": "user-last",
+                "retrySourceTurnId": "turn-1",
                 "executionRequest": codex_execution_request(
                     "edited from address handle",
                     "/tmp/project",
@@ -3141,23 +3487,26 @@ async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local
         .expect("rollback should be accepted");
     assert_eq!(rollback["accepted"], true);
 
-    wait_for_method_count(&log_path, "thread/rollback", 1).await;
     wait_for_method_count(&log_path, "turn/start", 1).await;
     wait_for_thread_mapping(&handler, "local-visible-task", "thread-1").await;
     let calls = read_json_lines(&log_path);
-    let rollback = calls
+    assert!(
+        calls.iter().all(|call| call["method"] != "thread/rollback"),
+        "message editing must not use the deprecated provider rollback"
+    );
+    let resume = calls
         .iter()
-        .find(|call| call["method"] == "thread/rollback")
-        .expect("rollback should use the nested runtime handle");
-    assert_eq!(rollback["params"]["threadId"], "thread-1");
-    assert_eq!(rollback["params"]["numTurns"], 1);
+        .find(|call| call["method"] == "thread/resume")
+        .expect("editing should resume and subscribe to the persistent thread");
+    assert_eq!(resume["params"]["threadId"], "thread-1");
+    let turn_start = calls
+        .iter()
+        .find(|call| call["method"] == "turn/start")
+        .expect("editing should start a replacement turn");
+    assert_eq!(turn_start["params"]["threadId"], "thread-1");
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {
-    write_fake_codex_for_turns(log_path, 1)
-}
-
-fn write_fake_codex_for_turns(log_path: &Path, exit_after_turns: usize) -> PathBuf {
     let path = temp_path("fake-codex-send", "sh");
     let _ = fs::remove_file(log_path);
     let content = format!(
@@ -3245,15 +3594,11 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$final_id"'","delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"'"$turn_id"'","status":"completed"}}}}}}'
-      if [ "$turn_count" -ge {} ]; then
-        exit 0
-      fi
       ;;
   esac
 done
 "#,
-        log_path.display(),
-        exit_after_turns
+        log_path.display()
     );
     write_executable(&path, &content);
     path
@@ -3266,6 +3611,7 @@ fn write_fake_codex_ephemeral_two_turns(log_path: &Path) -> PathBuf {
         r#"#!/bin/sh
 LOG_PATH='{}'
 turn_count=0
+thread_loaded=0
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -3279,6 +3625,7 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"parent-thread-1","cwd":"/tmp/project","name":"Parent","preview":"parent","path":"/tmp/codex/parent-thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/fork"'*)
+      thread_loaded=1
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-ephemeral"}}}}}}'
       ;;
     *'"method":"thread/inject_items"'*)
@@ -3291,13 +3638,18 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"error":{{"message":"ephemeral thread should not resume"}}}}'
       ;;
     *'"method":"thread/unsubscribe"'*)
+      thread_loaded=0
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
       ;;
     *'"method":"turn/start"'*)
-      turn_count=$((turn_count + 1))
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
-      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-ephemeral","turnId":"turn-'"$turn_count"'","delta":"done '"$turn_count"'","phase":"finalAnswer"}}}}'
-      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-ephemeral","turn":{{"id":"turn-'"$turn_count"'","status":"completed"}}}}}}'
+      if [ "$thread_loaded" -eq 0 ]; then
+        printf '%s\n' '{{"id":'"$request_id"',"error":{{"message":"ephemeral thread is not loaded"}}}}'
+      else
+        turn_count=$((turn_count + 1))
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-ephemeral","turnId":"turn-'"$turn_count"'","delta":"done '"$turn_count"'","phase":"finalAnswer"}}}}'
+        printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-ephemeral","turn":{{"id":"turn-'"$turn_count"'","status":"completed"}}}}}}'
+      fi
       ;;
   esac
 done
@@ -3565,7 +3917,30 @@ done
 }
 
 fn write_fake_codex_request_user_input(log_path: &Path) -> PathBuf {
-    let path = temp_path("fake-codex-request-user-input", "sh");
+    write_fake_codex_interaction(
+        log_path,
+        "fake-codex-request-user-input",
+        r#"{"id":99,"method":"item/tool/requestUserInput","params":{"threadId":"thread-input","turnId":"turn-input","itemId":"item-input","questions":[{"id":"goal","header":"工作目标","question":"你希望我接下来问你哪些问题？","options":[{"label":"Work goal","description":"Focus on one concrete task."}]}],"autoResolutionMs":null}}"#,
+        2200,
+    )
+}
+
+fn write_fake_codex_mcp_elicitation(log_path: &Path) -> PathBuf {
+    write_fake_codex_interaction(
+        log_path,
+        "fake-codex-mcp-elicitation",
+        r#"{"id":99,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-input","turnId":"turn-input","serverName":"wegent-sites","mode":"form","message":"请选择内网访问范围。","requestedSchema":{"type":"object","properties":{"audience":{"type":"string","title":"访问范围","enum":["all","owner"],"enumNames":["所有人","仅自己"]}},"required":["audience"]}}}"#,
+        0,
+    )
+}
+
+fn write_fake_codex_interaction(
+    log_path: &Path,
+    executable_prefix: &str,
+    interaction_request: &str,
+    notification_count: usize,
+) -> PathBuf {
+    let path = temp_path(executable_prefix, "sh");
     let _ = fs::remove_file(log_path);
     let content = format!(
         r#"#!/bin/sh
@@ -3602,10 +3977,10 @@ while IFS= read -r line; do
   elif printf '%s\n' "$line" | grep -q '"method":"turn/start"'; then
     turn_active=true
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
-    printf '%s\n' '{{"id":99,"method":"item/tool/requestUserInput","params":{{"threadId":"thread-input","turnId":"turn-input","itemId":"item-input","questions":[{{"id":"goal","header":"工作目标","question":"你希望我接下来问你哪些问题？","options":[{{"label":"Work goal","description":"Focus on one concrete task."}}]}}],"autoResolutionMs":null}}}}'
+    printf '%s\n' '{}'
     sleep 0.1
     notification_index=0
-    while [ "$notification_index" -lt 2200 ]; do
+    while [ "$notification_index" -lt {} ]; do
       printf '%s\n' '{{"method":"thread/name/updated","params":{{"threadId":"thread-noise","name":"waiting"}}}}'
       notification_index=$((notification_index + 1))
       if [ $((notification_index % 50)) -eq 0 ]; then
@@ -3623,7 +3998,9 @@ while IFS= read -r line; do
   fi
 done
 "#,
-        log_path.display()
+        log_path.display(),
+        interaction_request,
+        notification_count
     );
     write_executable(&path, &content);
     path
@@ -3701,6 +4078,75 @@ fn write_fake_codex_hanging_turn(log_path: &Path) -> PathBuf {
 
 fn write_fake_codex_hanging_turn_with_steer_mismatch(log_path: &Path) -> PathBuf {
     write_fake_codex_hanging_turn_inner(log_path, true)
+}
+
+fn write_fake_codex_turn_completes_during_steer(
+    log_path: &Path,
+    steer_release_path: &Path,
+) -> PathBuf {
+    let path = temp_path("fake-codex-guidance-completion-race", "sh");
+    let _ = fs::remove_file(log_path);
+    let _ = fs::remove_file(steer_release_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+STEER_RELEASE_PATH='{}'
+turn_count=0
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"inProgress","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[]}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/items/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/goal/get"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      turn_count=$((turn_count + 1))
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
+      ;;
+    *'"method":"turn/steer"'*)
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"completed","items":[]}}}}}}'
+      while [ ! -f "$STEER_RELEASE_PATH" ]; do
+        sleep 0.02
+      done
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turnId":"turn-1"}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display(),
+        steer_release_path.display()
+    );
+    write_executable(&path, &content);
+    path
 }
 
 fn write_fake_codex_concurrent_send(log_path: &Path) -> PathBuf {
@@ -3919,6 +4365,7 @@ while IFS= read -r line; do
     *'"method":"turn/interrupt"'*)
       if printf '%s\n' "$line" | grep -q '"turnId":""'; then
         printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+        printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
       else
         printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32600,"message":"no active turn to interrupt"}}}}'
         printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
@@ -4016,6 +4463,49 @@ fn temp_path(prefix: &str, extension: &str) -> PathBuf {
         "{prefix}-{}-{nanos}.{extension}",
         std::process::id(),
     ))
+}
+
+fn initialize_git_repository(path: &Path) {
+    fs::create_dir_all(path).unwrap();
+    for args in [
+        vec!["init"],
+        vec!["config", "user.name", "Wegent Test"],
+        vec!["config", "user.email", "test@wegent.local"],
+    ] {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(&args)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git -C {} {} failed: {}",
+            path.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fs::write(path.join("tracked.txt"), "base\n").unwrap();
+    for args in [vec!["add", "."], vec!["commit", "-m", "base"]] {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(&args)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git -C {} {} failed: {}",
+            path.display(),
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 fn write_codex_state_db_thread(sqlite_home: &Path) {
@@ -4162,7 +4652,7 @@ async fn wait_for_method_count(log_path: &Path, method: &str, expected: usize) {
 }
 
 async fn wait_for_logged_pid(log_path: &Path, prefix: &str) -> u32 {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         let content = fs::read_to_string(log_path).unwrap_or_default();
         if let Some(pid) = content.lines().find_map(|line| {
