@@ -330,6 +330,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     return requestJson(cloudApi.backendUrl, cloudApi.authToken, pathname, options)
   }
 
+  async function ensureIssueWorkflowVisible(control) {
+    // The task conversation panel keeps the workflow detail hidden
+    // (has-conversation); return to the issue detail before asserting workflow
+    // content so the DAG and stage rows are actually laid out.
+    if (
+      Number(
+        await control
+          .command('getElementCount', '[data-testid="cloud-todo-compact-issue-back"]')
+          .catch(() => '0')
+      ) > 0
+    ) {
+      await control.command('click', '[data-testid="cloud-todo-compact-issue-back"]')
+    }
+  }
+
   const publicApiRequest = (pathname, options) => {
     assert.ok(personalApiKey, 'Personal API key was not prepared')
     return requestJson(cloudApi.backendUrl, personalApiKey, pathname, {
@@ -844,6 +859,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       text: workflowIssue.title,
       timeoutMs: uiTimeoutMs,
     })
+    await ensureIssueWorkflowVisible(control)
     await control.command('waitFor', workflowTaskRow, {
       timeoutMs: uiTimeoutMs,
     })
@@ -880,6 +896,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       text: workflowIssue.title,
       timeoutMs: uiTimeoutMs,
     })
+    await ensureIssueWorkflowVisible(control)
     await control.command('waitFor', workflowTaskRow, {
       timeoutMs: uiTimeoutMs,
     })
