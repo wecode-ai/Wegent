@@ -63,6 +63,7 @@ import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { CodeCommentPreview } from './CodeCommentPreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import { getFileEditDurationsBySourceBlock } from './blocks/fileEditDurations'
 import { getDurationText } from './blocks/processingDuration'
 import { usePersistentProcessingExpansion } from './blocks/processingExpansionState'
 import { isContextCompactionToolName, isGuidanceToolName } from './blocks/toolBlockKinds'
@@ -2021,6 +2022,10 @@ export function AssistantMessage({
     () => getDisplayProcessingBlocks(message.blocks, isCancelled),
     [isCancelled, message.blocks]
   )
+  const fileEditDurationsBySourceBlock = useMemo(
+    () => getFileEditDurationsBySourceBlock(displayBlocks),
+    [displayBlocks]
+  )
   const processingSegments = splitProcessingBlocks(displayBlocks)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
@@ -2091,7 +2096,7 @@ export function AssistantMessage({
         <ToolBlocksDisplay
           key={`${segment.kind}:${index}`}
           blocks={segment.blocks}
-          fileEditDurationBlocks={displayBlocks}
+          fileEditDurationsBySourceBlock={fileEditDurationsBySourceBlock}
           isStreaming={isStreaming}
           startedAt={getProcessingSummaryStartMs(message, segment.blocks, isStreaming)}
           forceExpanded={segment.kind === 'narrative'}
@@ -2148,7 +2153,7 @@ export function AssistantMessage({
               <ToolBlocksDisplay
                 key={`${processingSegment.kind}:${processingIndex}`}
                 blocks={processingSegment.blocks}
-                fileEditDurationBlocks={displayBlocks}
+                fileEditDurationsBySourceBlock={fileEditDurationsBySourceBlock}
                 isStreaming={isStreaming}
                 startedAt={getProcessingSummaryStartMs(
                   message,
