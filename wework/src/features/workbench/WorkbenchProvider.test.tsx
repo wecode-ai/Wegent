@@ -751,6 +751,9 @@ function BootstrapProbe() {
       <button type="button" onClick={() => void workbench.refreshWorkLists()}>
         Refresh work lists
       </button>
+      <button type="button" onClick={() => workbench.projectChat.requestCatalogs?.()}>
+        Load task composer catalogs
+      </button>
     </div>
   )
 }
@@ -2626,6 +2629,118 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
   })
 
+  test('warms Codex composer apps once during workbench startup', async () => {
+    setTauriRuntime()
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') {
+          return { projects: [], chats: [], totalTasks: 0 }
+        }
+        if (method === 'codex.app_server_request') {
+          const request = params as { method?: string }
+          if (request.method === 'plugin/installed') {
+            return { marketplaces: [] }
+          }
+          if (request.method === 'app/list') {
+            return { data: [], nextCursor: null }
+          }
+        }
+        return {}
+      }
+    )
+
+    renderStrictWorkbench(<BootstrapProbe />)
+
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    await waitFor(() =>
+      expect(
+        localExecutorMocks.requestLocalExecutor.mock.calls.filter(
+          ([method, params]) =>
+            method === 'codex.app_server_request' &&
+            (params as { method?: string }).method === 'app/list'
+        )
+      ).toHaveLength(1)
+    )
+    expect(
+      localExecutorMocks.requestLocalExecutor.mock.calls.filter(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'app/list'
+      )
+    ).toHaveLength(1)
+  })
+
+  test('allows retained non-composer workbenches to skip Codex app prewarming', async () => {
+    setTauriRuntime()
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') {
+          return { projects: [], chats: [], totalTasks: 0 }
+        }
+        if (method === 'codex.app_server_request') {
+          const request = params as { method?: string }
+          if (request.method === 'plugin/installed') {
+            return { marketplaces: [] }
+          }
+          if (request.method === 'app/list') {
+            return { data: [], nextCursor: null }
+          }
+        }
+        return {}
+      }
+    )
+
+    render(
+      <StrictMode>
+        <WorkbenchProvider
+          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+          services={createWorkbenchServices()}
+          prewarmComposerApps={false}
+        >
+          <BootstrapProbe />
+        </WorkbenchProvider>
+      </StrictMode>
+    )
+
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    expect(
+      localExecutorMocks.requestLocalExecutor.mock.calls.filter(
+        ([method, params]) =>
+          method === 'codex.app_server_request' &&
+          (params as { method?: string }).method === 'app/list'
+      )
+    ).toHaveLength(0)
+  })
+
+  test('keeps project-space providers ready without loading task composer catalogs', async () => {
+    const services = createWorkbenchServices()
+    const user = userEvent.setup()
+
+    render(
+      <StrictMode>
+        <WorkbenchProvider
+          user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+          services={services}
+          loadTaskComposerCatalogs={false}
+          prewarmComposerApps={false}
+        >
+          <BootstrapProbe />
+        </WorkbenchProvider>
+      </StrictMode>
+    )
+
+    await waitFor(() => expect(screen.getByTestId('startup-ready')).toHaveTextContent('ready'))
+    expect(services.modelApi.listModels).not.toHaveBeenCalled()
+    expect(services.skillApi.listSkills).not.toHaveBeenCalled()
+    expect(services.skillApi.getTeamSkills).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Load task composer catalogs' }))
+
+    await waitFor(() => expect(services.modelApi.listModels).toHaveBeenCalled())
+    await waitFor(() => expect(services.skillApi.listSkills).toHaveBeenCalled())
+    expect(services.skillApi.getTeamSkills).not.toHaveBeenCalled()
+  })
+
   test('does not let a stale bootstrap runtime request overwrite a manual refresh', async () => {
     const bootstrapRuntimeWork = deferred<RuntimeWorkListResponse>()
     const manualRuntimeWork = createRuntimeWork({
@@ -2713,6 +2828,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     renderWorkbench(<RuntimeTaskSkillsProbe />)
 
+    await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() => expect(getComposerApps().map(app => app.id)).toContain('plugin:documents'))
     expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('local-device')
 
@@ -2745,6 +2861,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     renderWorkbench(<RuntimeTaskSkillsProbe />)
 
+    await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() =>
       expect(
         localExecutorMocks.requestLocalExecutor.mock.calls.some(
@@ -7757,7 +7874,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('creates a conversation workspace when sending without a selected project', async () => {
+  test('delegates standalone conversation workspace creation to the runtime', async () => {
     vi.setSystemTime(new Date('2026-06-25T09:30:00.000Z'))
     const localDevice = createDevice({
       device_id: 'device-1',
@@ -7790,19 +7907,17 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('send'))
 
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
-    expect(services.deviceApi.getHomeDirectory).toHaveBeenCalledWith('device-1')
-    const createdWorkspacePath = vi.mocked(services.deviceApi.createDirectory).mock.calls[0]?.[1]
-    expect(createdWorkspacePath).toMatch(
-      /^\/Users\/alice\/Documents\/Codex\/2026-06-25\/ci-[a-z0-9]{8}$/
-    )
+    expect(services.deviceApi.getHomeDirectory).not.toHaveBeenCalled()
+    expect(services.deviceApi.createDirectory).not.toHaveBeenCalled()
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'device-1',
-        workspacePath: createdWorkspacePath,
+        standaloneChatWorkspace: true,
         message: '修复 CI',
       })
     )
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
+    expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('teamId')
     await waitFor(() =>
       expect(runtimeWorkSyncMocks.notifyMainRuntimeWorkChanged).toHaveBeenCalledWith({
         deviceId: 'device-1',
@@ -10961,6 +11076,45 @@ describe('WorkbenchProvider runtime tasks', () => {
     window.dispatchEvent(new Event('wework:plugin-trial-queued'))
 
     await waitFor(() => expect(screen.getByTestId('composer-input')).toHaveTextContent('Documents'))
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+    expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent(
+      String(standaloneChatKey + 1)
+    )
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test('opens a queued plugin trial under its explicit target project', async () => {
+    renderWorkbench(<ProjectSendProbe />)
+    await screen.findByText('open project runtime task')
+    const standaloneChatKey = Number(screen.getByTestId('standalone-chat-key').textContent)
+
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$智能工作台开发助手](plugin://smart-app-builder@wework-personal) ',
+        pluginName: '智能工作台开发助手',
+        openInNewChat: true,
+        targetProject: {
+          id: 7,
+          name: 'Wegent',
+          tasks: [],
+          config: {
+            mode: 'workspace',
+            execution: { targetType: 'local' },
+            workspace: {
+              source: 'local_path',
+              localPath: '/tmp/blank-workbench',
+            },
+          },
+        },
+      })
+    )
+    act(() => window.dispatchEvent(new Event('wework:plugin-trial-queued')))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-input')).toHaveTextContent('智能工作台开发助手')
+    )
     expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
     expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent(

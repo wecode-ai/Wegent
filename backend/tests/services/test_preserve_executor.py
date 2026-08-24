@@ -151,6 +151,27 @@ class CleanupExecutorTestHelpers:
                     ],
                 )
             )
+            stack.enter_context(
+                patch.object(
+                    job_service,
+                    "_get_cleanup_subtasks_for_executors",
+                    new_callable=AsyncMock,
+                    side_effect=lambda _db, executors: [
+                        subtask
+                        for subtask in subtasks
+                        if (subtask.executor_namespace or "", subtask.executor_name)
+                        in executors
+                    ],
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    job_service,
+                    "_archive_workspace",
+                    new_callable=AsyncMock,
+                    return_value=True,
+                )
+            )
             yield
 
 
@@ -268,6 +289,152 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         mock_executor_service.delete_executor_task_async.assert_called_once_with(
             "executor-1", "default"
         )
+
+    async def test_chat_task_archives_before_cleanup(
+        self, job_service: JobService, mock_db: Mock
+    ) -> None:
+        """Test non-code tasks also trigger archive before deleting the executor."""
+        mock_subtask = self._create_mock_subtask(1, 100)
+        mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
+        mock_subtask.updated_at = datetime.now() - timedelta(hours=72)
+
+        with (
+            self._patch_cleanup_scan(job_service, [mock_subtask], {100: mock_task}),
+            patch.object(
+                job_service, "_archive_workspace", new_callable=AsyncMock
+            ) as archive_mock,
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as mock_executor_service,
+            patch("app.services.adapters.executor_job.settings") as mock_settings,
+        ):
+            mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
+            mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
+            mock_executor_service.delete_executor_task_async = AsyncMock(
+                return_value=True
+            )
+
+            await job_service.cleanup_stale_executors(mock_db)
+
+        archive_mock.assert_called_once()
+        mock_executor_service.delete_executor_task_async.assert_called_once_with(
+            "executor-1", "default"
+        )
+
+    async def test_cleanup_archives_all_tasks_sharing_one_executor(
+        self, job_service: JobService, mock_db: Mock
+    ) -> None:
+        """Scheduled cleanup archives every task before deleting a shared executor."""
+        mock_subtask_a = self._create_mock_subtask(1, 100)
+        mock_subtask_b = self._create_mock_subtask(2, 101)
+        mock_task_a = self._create_mock_task_resource(100, 1, preserve_executor=False)
+        mock_task_b = self._create_mock_task_resource(101, 1, preserve_executor=False)
+        mock_subtask_a.updated_at = datetime.now() - timedelta(hours=72)
+        mock_subtask_b.updated_at = datetime.now() - timedelta(hours=72)
+
+        with (
+            self._patch_cleanup_scan(
+                job_service,
+                [mock_subtask_a, mock_subtask_b],
+                {100: mock_task_a, 101: mock_task_b},
+            ),
+            patch.object(
+                job_service, "_archive_workspace", new_callable=AsyncMock
+            ) as archive_mock,
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as mock_executor_service,
+            patch("app.services.adapters.executor_job.settings") as mock_settings,
+        ):
+            mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
+            mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
+            mock_executor_service.delete_executor_task_async = AsyncMock(
+                return_value=True
+            )
+
+            await job_service.cleanup_stale_executors(mock_db)
+
+        assert archive_mock.await_count == 2
+        archived_tasks = {
+            id(call.kwargs["task"]) for call in archive_mock.await_args_list
+        }
+        assert archived_tasks == {id(mock_task_a), id(mock_task_b)}
+        mock_executor_service.delete_executor_task_async.assert_called_once_with(
+            "executor-1", "default"
+        )
+
+    async def test_cleanup_shared_executor_skips_deletion_when_archive_fails(
+        self, job_service: JobService, mock_db: Mock
+    ) -> None:
+        """A failed archive for any task blocks shared executor deletion."""
+        mock_subtask_a = self._create_mock_subtask(1, 100)
+        mock_subtask_b = self._create_mock_subtask(2, 101)
+        mock_task_a = self._create_mock_task_resource(100, 1, preserve_executor=False)
+        mock_task_b = self._create_mock_task_resource(101, 1, preserve_executor=False)
+        mock_subtask_a.updated_at = datetime.now() - timedelta(hours=72)
+        mock_subtask_b.updated_at = datetime.now() - timedelta(hours=72)
+
+        with (
+            self._patch_cleanup_scan(
+                job_service,
+                [mock_subtask_a, mock_subtask_b],
+                {100: mock_task_a, 101: mock_task_b},
+            ),
+            patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                side_effect=[True, False],
+            ),
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as mock_executor_service,
+            patch("app.services.adapters.executor_job.settings") as mock_settings,
+        ):
+            mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
+            mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
+            mock_executor_service.delete_executor_task_async = AsyncMock(
+                return_value=True
+            )
+
+            await job_service.cleanup_stale_executors(mock_db)
+
+        mock_executor_service.delete_executor_task_async.assert_not_called()
+
+    async def test_cleanup_skips_shared_executor_with_filtered_task(
+        self, job_service: JobService, mock_db: Mock
+    ) -> None:
+        """Skip deleting a shared executor when another task was filtered out."""
+        mock_subtask_a = self._create_mock_subtask(1, 100)
+        mock_subtask_b = self._create_mock_subtask(2, 101)
+        mock_task_a = self._create_mock_task_resource(100, 1, preserve_executor=False)
+        mock_subtask_a.updated_at = datetime.now() - timedelta(hours=72)
+        mock_subtask_b.updated_at = datetime.now() - timedelta(hours=72)
+
+        with (
+            self._patch_cleanup_scan(
+                job_service,
+                [mock_subtask_a, mock_subtask_b],
+                {100: mock_task_a},
+            ),
+            patch.object(
+                job_service, "_archive_workspace", new_callable=AsyncMock
+            ) as archive_mock,
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as mock_executor_service,
+            patch("app.services.adapters.executor_job.settings") as mock_settings,
+        ):
+            mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
+            mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
+            mock_executor_service.delete_executor_task_async = AsyncMock(
+                return_value=True
+            )
+
+            await job_service.cleanup_stale_executors(mock_db)
+
+        archive_mock.assert_not_called()
+        mock_executor_service.delete_executor_task_async.assert_not_called()
 
     async def test_cleanup_skips_deletion_when_archive_fails(
         self, job_service, mock_db
@@ -533,6 +700,12 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
 
         with (
             patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(
                 job_service, "_mark_executor_deleted", new_callable=AsyncMock
             ) as mark_deleted,
             patch(
@@ -611,6 +784,12 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
 
         with (
             patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(
                 job_service, "_mark_executor_deleted", new_callable=AsyncMock
             ) as mark_deleted,
             patch(
@@ -672,27 +851,34 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
                 }[task_id],
             ),
             patch.object(
-                job_service, "_cleanup_executor_entries", new_callable=AsyncMock
-            ) as cleanup_entries,
+                job_service,
+                "_get_cleanup_subtasks_for_executors",
+                new_callable=AsyncMock,
+                return_value=[invalid_subtask, valid_subtask],
+            ),
+            patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as archive_mock,
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as mock_executor_service,
             patch("app.services.adapters.executor_job.settings") as mock_settings,
         ):
             mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
             mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
-            cleanup_entries.return_value = {
-                "task_id": 200,
-                "deleted": False,
-                "skipped": True,
-                "reason": "executor_not_found",
-                "executors": [],
-            }
+            mock_executor_service.delete_executor_task_async = AsyncMock(
+                return_value=True
+            )
 
             await job_service.cleanup_stale_executors(mock_db)
 
-        cleanup_entries.assert_called_once_with(
-            db=mock_db,
-            task_id=200,
-            task=valid_task,
-            subtasks=[valid_subtask],
+        archived_tasks = [call.kwargs["task"] for call in archive_mock.await_args_list]
+        assert archived_tasks == [valid_task]
+        mock_executor_service.delete_executor_task_async.assert_called_once_with(
+            "executor-2", "default"
         )
 
     async def test_cleanup_processes_candidates_in_batches(self, job_service, mock_db):
@@ -727,25 +913,27 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
                 }[task_id],
             ),
             patch.object(
-                job_service, "_cleanup_executor_entries", new_callable=AsyncMock
-            ) as cleanup_entries,
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as mock_executor_service,
             patch("app.services.adapters.executor_job.settings") as mock_settings,
         ):
             mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
             mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
-            cleanup_entries.return_value = {
-                "task_id": 100,
-                "deleted": False,
-                "skipped": True,
-                "reason": "executor_not_found",
-                "executors": [],
-            }
+            mock_executor_service.delete_executor_task_async = AsyncMock(
+                return_value=True
+            )
 
             await job_service.cleanup_stale_executors(mock_db)
 
         assert scan_batch.call_count == 3
         assert load_tasks.call_count == 2
-        assert cleanup_entries.call_count == 2
+        assert mock_executor_service.delete_executor_task_async.call_count == 2
 
     @pytest.mark.skip(reason="Test needs to be updated for new cleanup implementation")
     async def test_cleanup_logs_filter_stats_when_no_valid_candidates(
@@ -856,33 +1044,34 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
                 return_value=[valid_subtask],
             ),
             patch.object(
-                job_service, "_cleanup_executor_entries", new_callable=AsyncMock
-            ) as cleanup_entries,
+                job_service,
+                "_get_cleanup_subtasks_for_executors",
+                new_callable=AsyncMock,
+                return_value=[valid_subtask],
+            ),
+            patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(job_service, "_mark_executor_deleted", new_callable=AsyncMock),
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as mock_executor_service,
             patch("app.services.adapters.executor_job.settings") as mock_settings,
         ):
             mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
             mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
-            cleanup_entries.return_value = {
-                "task_id": 200,
-                "deleted": True,
-                "skipped": False,
-                "reason": "executor_deleted",
-                "executors": [
-                    {
-                        "executor_name": "executor-11",
-                        "executor_namespace": "default",
-                    }
-                ],
-            }
+            mock_executor_service.delete_executor_task_async = AsyncMock(
+                return_value=True
+            )
 
             await job_service.cleanup_stale_executors(mock_db)
 
         assert scan_batch.call_count == 11
-        cleanup_entries.assert_called_once_with(
-            db=mock_db,
-            task_id=200,
-            task=valid_task,
-            subtasks=[valid_subtask],
+        mock_executor_service.delete_executor_task_async.assert_called_once_with(
+            "executor-11", "default"
         )
 
     async def test_cleanup_stops_after_reaching_deleted_target(
@@ -985,6 +1174,12 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
                 "_get_cleanup_subtasks_for_task",
                 new_callable=AsyncMock,
                 return_value=[mock_subtask],
+            ),
+            patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
             ),
             patch.object(
                 job_service, "_mark_executor_deleted", new_callable=AsyncMock
@@ -1206,6 +1401,12 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
                 return_value=[subtask_a, subtask_b],
             ),
             patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(
                 job_service, "_mark_executor_deleted", new_callable=AsyncMock
             ) as mark_deleted,
             patch(
@@ -1302,6 +1503,12 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
                 "_get_cleanup_subtasks_for_task",
                 new_callable=AsyncMock,
                 return_value=[subtask],
+            ),
+            patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=True,
             ),
             patch.object(
                 job_service, "_mark_executor_deleted", new_callable=AsyncMock

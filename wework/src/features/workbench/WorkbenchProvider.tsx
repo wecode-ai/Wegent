@@ -190,6 +190,8 @@ export function WorkbenchProvider({
   onStartupReadyChange,
   workspaceTabId,
   consumePluginTrials = true,
+  loadTaskComposerCatalogs = true,
+  prewarmComposerApps = true,
   publishDebugSnapshots = true,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
@@ -299,6 +301,7 @@ export function WorkbenchProvider({
   const localAppsInflightRef = useRef<Promise<LocalDeviceApp[]> | null>(null)
   const localAppsLoadGenerationRef = useRef(0)
   const localAppsRefreshTimerRef = useRef<number | null>(null)
+  const localAppsRequestedRef = useRef(false)
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
     const runtime = getRuntimeConfig()
@@ -581,9 +584,11 @@ export function WorkbenchProvider({
         currentRuntimeTask: null,
         standaloneChatKey: nextStandaloneChatKey,
       })
-      const project = state.currentProject
-        ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
-        : null
+      const project =
+        trial.targetProject ??
+        (state.currentProject
+          ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
+          : null)
 
       if (project) {
         writeLastProjectId(user.id, project.id)
@@ -875,9 +880,15 @@ export function WorkbenchProvider({
       error: message || getBlockedModelSelectionMessage('runtime_family_mismatch', model),
     })
   }, [])
+  const [taskComposerCatalogsRequested, setTaskComposerCatalogsRequested] = useState(false)
+  const taskComposerCatalogsEnabled = loadTaskComposerCatalogs || taskComposerCatalogsRequested
+  const requestTaskComposerCatalogs = useCallback(() => {
+    setTaskComposerCatalogsRequested(true)
+  }, [])
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
     locked: false,
+    enabled: taskComposerCatalogsEnabled,
     scopeKey: projectChatScopeKey,
     persistSelection: !state.currentRuntimeTask && !usesLocalProjectScopedSelection,
     selectionConfig: modelSelectionConfig,
@@ -897,6 +908,7 @@ export function WorkbenchProvider({
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
     locked: isOptionsLocked,
+    enabled: taskComposerCatalogsEnabled,
     scopeKey: projectChatScopeKey,
   })
   const isWorkbenchShellReady = !state.isBootstrapping
@@ -2128,6 +2140,7 @@ export function WorkbenchProvider({
 
   const listLocalApps = useCallback(
     async (options?: { allowEmptySnapshot?: boolean; supersedeInstalledRequest?: boolean }) => {
+      localAppsRequestedRef.current = true
       const cached = localAppsCacheRef.current
       if (cached && cached.expiresAt > Date.now()) {
         return cached.apps
@@ -2249,11 +2262,18 @@ export function WorkbenchProvider({
 
         // Best-effort package logo hydration after the picker is already usable.
         if (isCurrentLoad()) {
-          void loadComposerPluginApps(composerPluginSources, {
-            enrichRelativeLogos: true,
-            marketplaceItems,
-            visiblePluginKeys,
-          })
+          void loadComposerPluginApps(
+            {
+              ...composerPluginSources,
+              // Reuse the warm snapshot; logo hydration must not issue another app/list.
+              listCodexApps: async () => apps,
+            },
+            {
+              enrichRelativeLogos: true,
+              marketplaceItems,
+              visiblePluginKeys,
+            }
+          )
             .then(enriched => {
               if (!isCurrentLoad() || enriched.length === 0) {
                 return
@@ -2317,24 +2337,54 @@ export function WorkbenchProvider({
     ]
   )
 
-  // Invalidate when cloud auth context changes, then warm the composer
-  // plugin cache so the conversation toolbar can paint without waiting for
-  // `/` or a plugin-picker click.
+  const localAppsPrewarmSourceRef = useRef<typeof listLocalApps | null>(null)
+
+  const previousProjectPluginNamesKeyRef = useRef(projectPluginNamesKey)
   useEffect(() => {
+    if (previousProjectPluginNamesKeyRef.current === projectPluginNamesKey) return
+    previousProjectPluginNamesKeyRef.current = projectPluginNamesKey
+    const shouldRefreshApps = localAppsRequestedRef.current
     if (localAppsRefreshTimerRef.current !== null) {
       window.clearTimeout(localAppsRefreshTimerRef.current)
       localAppsRefreshTimerRef.current = null
     }
-    localSkillsCacheRef.current.clear()
     localAppsCacheRef.current = null
     localAppsInflightRef.current = null
     localAppsLoadGenerationRef.current += 1
-    void listLocalApps()
+    if (!shouldRefreshApps) return
+    void listLocalApps({
+      allowEmptySnapshot: true,
+      supersedeInstalledRequest: true,
+    })
+  }, [listLocalApps, projectPluginNamesKey])
+
+  // Warm the shared composer app cache once the startup project context is
+  // stable. Composer controls consume this snapshot instead of issuing their
+  // own mount requests.
+  useEffect(() => {
+    if (
+      prewarmComposerApps &&
+      isWorkbenchShellReady &&
+      localAppsPrewarmSourceRef.current !== listLocalApps
+    ) {
+      localAppsPrewarmSourceRef.current = listLocalApps
+      if (localAppsRefreshTimerRef.current !== null) {
+        window.clearTimeout(localAppsRefreshTimerRef.current)
+        localAppsRefreshTimerRef.current = null
+      }
+      localSkillsCacheRef.current.clear()
+      localAppsCacheRef.current = null
+      localAppsInflightRef.current = null
+      localAppsLoadGenerationRef.current += 1
+      void listLocalApps()
+    }
 
     const clearLocalSkillCache = () => {
+      const shouldRefreshApps = localAppsRequestedRef.current
       localSkillsCacheRef.current.clear()
       localAppsCacheRef.current = null
       localAppsLoadGenerationRef.current += 1
+      if (!shouldRefreshApps) return
       // Keep the composer apps snapshot until a current-generation load replaces
       // or clears it. Clearing here races install→notify and blanks the picker
       // while the refresh is still in flight.
@@ -2358,24 +2408,7 @@ export function WorkbenchProvider({
         localAppsRefreshTimerRef.current = null
       }
     }
-  }, [listLocalApps])
-
-  const previousProjectPluginNamesKeyRef = useRef(projectPluginNamesKey)
-  useEffect(() => {
-    if (previousProjectPluginNamesKeyRef.current === projectPluginNamesKey) return
-    previousProjectPluginNamesKeyRef.current = projectPluginNamesKey
-    if (localAppsRefreshTimerRef.current !== null) {
-      window.clearTimeout(localAppsRefreshTimerRef.current)
-      localAppsRefreshTimerRef.current = null
-    }
-    localAppsCacheRef.current = null
-    localAppsInflightRef.current = null
-    localAppsLoadGenerationRef.current += 1
-    void listLocalApps({
-      allowEmptySnapshot: true,
-      supersedeInstalledRequest: true,
-    })
-  }, [listLocalApps, projectPluginNamesKey])
+  }, [isWorkbenchShellReady, listLocalApps, prewarmComposerApps])
 
   // Plugin market UI resolves package logos into the catalog cache; overlay those
   // onto composer apps when the cache arrives after the warm path.
@@ -2485,6 +2518,7 @@ export function WorkbenchProvider({
       resetAttachmentsForScope: attachmentSelection.resetAttachmentsForScope,
       listLocalSkills,
       listLocalApps,
+      requestCatalogs: requestTaskComposerCatalogs,
     }),
     [
       attachmentSelection.addExistingAttachment,
@@ -2501,6 +2535,7 @@ export function WorkbenchProvider({
       attachmentSelection.stateByScope,
       attachmentSelection.uploadingFiles,
       projectChatScopeKey,
+      requestTaskComposerCatalogs,
       draftInput,
       draftInputByScope,
       composerError,
@@ -2585,6 +2620,7 @@ export function WorkbenchProvider({
       resetAttachmentsForScope: attachmentSelection.resetAttachmentsForScope,
       listLocalSkills,
       listLocalApps,
+      requestCatalogs: requestTaskComposerCatalogs,
     }),
     [
       attachmentSelection.addExistingAttachment,
@@ -2601,6 +2637,7 @@ export function WorkbenchProvider({
       attachmentSelection.stateByScope,
       attachmentSelection.uploadingFiles,
       projectChatScopeKey,
+      requestTaskComposerCatalogs,
       draftInput,
       draftInputByScope,
       composerError,

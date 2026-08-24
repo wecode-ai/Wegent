@@ -8,6 +8,7 @@ interface WorkbenchSkillApi {
 interface UseWorkbenchSkillsOptions {
   api: WorkbenchSkillApi
   locked: boolean
+  enabled?: boolean
   scopeKey?: string
 }
 
@@ -24,6 +25,7 @@ function isSameSkill(left: SkillRef, right: SkillRef): boolean {
 export function useWorkbenchSkills({
   api,
   locked,
+  enabled = true,
   scopeKey = DEFAULT_SKILL_SCOPE_KEY,
 }: UseWorkbenchSkillsOptions) {
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
@@ -36,6 +38,8 @@ export function useWorkbenchSkills({
   )
 
   useEffect(() => {
+    if (!enabled) return
+
     let cancelled = false
 
     async function loadSkills() {
@@ -61,7 +65,7 @@ export function useWorkbenchSkills({
     return () => {
       cancelled = true
     }
-  }, [api])
+  }, [api, enabled])
 
   const selectedSkillNames = useMemo(
     () => selectedSkills.map(skill => skill.name),
@@ -110,13 +114,13 @@ export function useWorkbenchSkills({
   )
 
   return {
-    skills,
+    skills: enabled ? skills : [],
     selectedSkills,
     selectedSkillNames,
     setSelectedSkills,
     setSelectedSkillsForScope,
     toggleSkill,
-    isLoading,
-    error,
+    isLoading: enabled && isLoading,
+    error: enabled ? error : null,
   }
 }

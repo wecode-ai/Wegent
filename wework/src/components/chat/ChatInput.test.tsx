@@ -395,6 +395,37 @@ describe('ChatInput', () => {
     )
   })
 
+  test('uses explicit project quick phrases in an embedded collapsed composer', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        collapseWhenIdle
+        projectPhrases={[
+          {
+            id: 'board-follow-up',
+            title: '继续检查',
+            content: '继续检查当前任务',
+            mode: 'normal',
+          },
+        ]}
+      />
+    )
+
+    const form = screen.getByTestId('project-chat-composer-form')
+    expect(form).toHaveAttribute('data-short-expanded', 'false')
+    await userEvent.click(screen.getByTestId('chat-message-input'))
+    expect(form).toHaveAttribute('data-short-expanded', 'true')
+
+    await userEvent.click(screen.getByTestId('quick-phrase-button'))
+    expect(screen.getByTestId('project-quick-phrase-option-board-follow-up')).toHaveTextContent(
+      '继续检查'
+    )
+  })
+
   test('opens plugin picker from its toolbar button without a separate slash action', async () => {
     render(
       <ChatInput

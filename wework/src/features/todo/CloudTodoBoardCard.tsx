@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import {
   useCallback,
+  useContext,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -22,6 +23,8 @@ import type { CloudLoopItem } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
 import { AssistantThinkingIndicator } from '@/components/chat/AssistantThinkingIndicator'
+import { ChatInput, type ProjectChatControls } from '@/components/chat/ChatInput'
+import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
 import {
   getToolActivityFilePaths,
@@ -34,8 +37,11 @@ import { HoverCard } from '@/components/ui/hover-card'
 import {
   getRuntimeConversationLiveActivitySnapshot,
   getRuntimeConversationMessages,
+  reconcileRuntimeConversationSnapshot,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   runtimeLiveActivityFromSnapshot,
   type RuntimeLiveActivity,
@@ -61,6 +67,7 @@ import {
 import { priorityBadgeClasses } from './todoShared'
 import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
 import { getCurrentWorkflowNode, workflowNodeStatusLabel } from './workflowStagePresentation'
+import type { QuickPhrase } from '@/tauri/appPreferences'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
@@ -223,7 +230,10 @@ export interface CloudTodoBoardTaskBinding {
   running: boolean
   changeRequestTarget?: TaskChangeRequestTarget | null
   finalResponsePreview?: string | null
-  finalResponseLoaded?: boolean
+  conversationLoaded?: boolean
+  conversationMessages?: WorkbenchMessage[]
+  conversationHasMoreBefore?: boolean
+  conversationBeforeCursor?: string | null
 }
 
 interface CloudTodoBoardCardProps {
@@ -241,6 +251,7 @@ interface CloudTodoBoardCardProps {
     binding: CloudTodoBoardTaskBinding,
     snapshot: TaskChangeRequestSnapshot
   ) => Promise<void>
+  onSendMessage?: (binding: CloudTodoBoardTaskBinding, message: string) => Promise<boolean>
 }
 
 export function CloudTodoBoardCard({
@@ -255,6 +266,7 @@ export function CloudTodoBoardCard({
   archiveDisabled = false,
   changeRequestMonitor = null,
   onContinueChangeRequestRepair,
+  onSendMessage,
 }: CloudTodoBoardCardProps) {
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -298,9 +310,12 @@ export function CloudTodoBoardCard({
       testId={`cloud-todo-card-progress-popup-${item.id}`}
       interactive
       openOnFocus
-      estimatedWidth={440}
-      estimatedHeight={360}
-      cardClassName="w-[440px] max-w-[calc(100vw-1rem)]"
+      pinOnInteraction
+      pinOnInteractionSelector="[data-hover-card-pin-region]"
+      closeLabel={t('common.close', '关闭')}
+      estimatedWidth={480}
+      estimatedHeight={620}
+      cardClassName="w-[480px] max-w-[calc(100vw-1rem)]"
       content={
         <RuntimeTaskProgressPopup
           item={item}
@@ -308,6 +323,7 @@ export function CloudTodoBoardCard({
           activeBindingId={hasActiveTask ? (currentTaskBinding?.id ?? null) : null}
           focusedBindingId={hoveredTaskBindingId}
           onFocusBinding={setHoveredTaskBindingId}
+          onSendMessage={onSendMessage}
         />
       }
     >
@@ -556,6 +572,121 @@ function RuntimeTaskCompactActivity({
   )
 }
 
+function RuntimeTaskConversationPreview({
+  itemId,
+  address,
+  initialMessages,
+  fallbackMessages,
+  initialTranscriptLoaded,
+  initialHasMoreBefore,
+  initialBeforeCursor,
+  active,
+}: {
+  itemId: string
+  address: RuntimeTaskAddress
+  initialMessages: WorkbenchMessage[]
+  fallbackMessages: WorkbenchMessage[]
+  initialTranscriptLoaded: boolean
+  initialHasMoreBefore: boolean
+  initialBeforeCursor: string | null
+  active: boolean
+}) {
+  const workbench = useContext(WorkbenchContext)
+  const runtimeMessages = useRuntimeTaskMessages(address)
+  const [historyExpanded, setHistoryExpanded] = useState(false)
+  const [loadingMoreBefore, setLoadingMoreBefore] = useState(false)
+  const [pagination, setPagination] = useState<{
+    hasMoreBefore: boolean
+    beforeCursor: string | null
+  } | null>(null)
+  const messages = useMemo(() => {
+    const loadedMessages = mergeConversationMessages(initialMessages, runtimeMessages)
+    return loadedMessages.length > 0 ? loadedMessages : fallbackMessages
+  }, [fallbackMessages, initialMessages, runtimeMessages])
+  const latestRoundMessages = useMemo(() => latestConversationRound(messages), [messages])
+  const hasHiddenMessages = !historyExpanded && latestRoundMessages.length < messages.length
+  const visibleMessages = historyExpanded ? messages : latestRoundMessages
+  const hasMoreBefore = pagination?.hasMoreBefore ?? initialHasMoreBefore
+  const beforeCursor = pagination?.beforeCursor ?? initialBeforeCursor
+  const awaitingInitialTranscript = !initialTranscriptLoaded
+  const canLoadMoreBefore =
+    awaitingInitialTranscript || hasHiddenMessages || (hasMoreBefore && Boolean(beforeCursor))
+
+  const loadMoreBefore = useCallback(async () => {
+    if (awaitingInitialTranscript) return
+    if (hasHiddenMessages) {
+      setHistoryExpanded(true)
+      return
+    }
+    if (!workbench || !beforeCursor || loadingMoreBefore) return
+
+    setLoadingMoreBefore(true)
+    try {
+      const transcript = await workbench.loadRuntimeTranscriptForPane(address, {
+        limit: 50,
+        beforeCursor,
+      })
+      reconcileRuntimeConversationSnapshot(address, transcript.turns)
+      setPagination({
+        hasMoreBefore: Boolean(transcript.hasMoreBefore),
+        beforeCursor: transcript.beforeCursor ?? null,
+      })
+      setHistoryExpanded(true)
+    } catch (error) {
+      console.warn('[Wework project board] failed to load older task conversation', {
+        address,
+        beforeCursor,
+        error,
+      })
+    } finally {
+      setLoadingMoreBefore(false)
+    }
+  }, [
+    address,
+    awaitingInitialTranscript,
+    beforeCursor,
+    hasHiddenMessages,
+    loadingMoreBefore,
+    workbench,
+  ])
+
+  if (visibleMessages.length === 0 && initialTranscriptLoaded) return null
+
+  return (
+    <div
+      data-testid={`cloud-todo-card-popup-conversation-${itemId}`}
+      className="mt-2 min-h-0 max-h-[min(68vh,42rem)] min-w-0 overflow-hidden"
+    >
+      <ScrollableMessageArea
+        messages={visibleMessages}
+        loading={visibleMessages.length === 0}
+        hasMoreBefore={canLoadMoreBefore}
+        loadingMoreBefore={awaitingInitialTranscript || loadingMoreBefore}
+        onLoadMoreBefore={loadMoreBefore}
+        conversationKey={`cloud-todo-card:${address.deviceId}:${address.taskId}`}
+        scrollTestId={`cloud-todo-card-popup-scroll-${itemId}`}
+        className="max-h-[min(68vh,42rem)] [&_[data-testid=message-turn-navigation]]:!hidden"
+        scrollerClassName="scrollbar-soft max-h-[min(68vh,42rem)]"
+        messageListClassName="w-full gap-4 p-0"
+        isWaitingForAssistant={active}
+        devices={workbench?.state.devices}
+        onLoadFileChangesDiff={
+          workbench
+            ? (subtaskId, fileChanges) =>
+                workbench.loadTurnFileChangesDiff(subtaskId, visibleMessages, fileChanges, address)
+            : undefined
+        }
+        onRevertFileChanges={
+          workbench
+            ? (subtaskId, fileChanges) =>
+                workbench.revertTurnFileChanges(subtaskId, visibleMessages, fileChanges, address)
+            : undefined
+        }
+      />
+    </div>
+  )
+}
+
 function RuntimeTaskProgressSummary({
   item,
   binding,
@@ -564,6 +695,7 @@ function RuntimeTaskProgressSummary({
   changeRequestSnapshot,
   repairingChangeRequest,
   onContinueChangeRequestRepair,
+  onSendMessage,
 }: {
   item: CloudLoopItem
   binding: CloudTodoBoardTaskBinding
@@ -572,6 +704,7 @@ function RuntimeTaskProgressSummary({
   changeRequestSnapshot: TaskChangeRequestSnapshot | null
   repairingChangeRequest: boolean
   onContinueChangeRequestRepair?: () => Promise<void>
+  onSendMessage?: (message: string) => Promise<boolean>
 }) {
   const activityAddress = useMemo<RuntimeTaskAddress | null>(
     () =>
@@ -591,22 +724,55 @@ function RuntimeTaskProgressSummary({
     [binding.device_id, binding.task_id]
   )
   const activity = useRuntimeTaskActivity(activityAddress)
-  const message = useRuntimeTaskLatestAssistantMessage(taskAddress)
+  const liveMessage = useRuntimeTaskLatestAssistantMessage(taskAddress)
   const cachedFinalResponse = useRuntimeTaskFinalResponse(
     item.status === 'in_review' ? taskAddress : null
   )
-  const finalResponseText = binding.finalResponseLoaded
-    ? (binding.finalResponsePreview ?? null)
-    : cachedFinalResponse
+  const prefetchedAssistantMessage = latestAssistantMessage(binding.conversationMessages ?? [])
+  const finalResponseText = binding.finalResponsePreview ?? cachedFinalResponse
   const responseText =
-    activity.active && message?.content?.trim() ? message.content : finalResponseText
-  const responsePreview = responseText
-    ? compact
-      ? latestResponseLine(responseText)
-      : responseText.trim()
-    : null
+    activity.active && liveMessage?.content?.trim()
+      ? liveMessage.content
+      : prefetchedAssistantMessage?.content || finalResponseText
+  const responsePreview = responseText ? latestResponseLine(responseText) : null
   const taskTitle = binding.task_title || binding.task_id
   const showCompactChangeRequest = compact && Boolean(changeRequestSnapshot?.changeRequest)
+  const fallbackConversationMessage = useMemo<WorkbenchMessage | null>(
+    () =>
+      responseText
+        ? {
+            id: `cloud-todo-card:${binding.device_id}:${binding.task_id}:fallback`,
+            role: 'assistant',
+            content: responseText,
+            status: active ? 'streaming' : 'done',
+            createdAt: item.updated_at,
+          }
+        : null,
+    [active, binding.device_id, binding.task_id, item.updated_at, responseText]
+  )
+  const conversationMessage =
+    (active ? liveMessage : prefetchedAssistantMessage) ||
+    prefetchedAssistantMessage ||
+    liveMessage ||
+    fallbackConversationMessage
+  const fallbackConversationMessages = useMemo<WorkbenchMessage[]>(() => {
+    const userContent = item.description?.trim() || item.title.trim()
+    const fallbackUserMessage: WorkbenchMessage = {
+      id: `cloud-todo-card:${binding.device_id}:${binding.task_id}:fallback-user`,
+      role: 'user',
+      content: userContent,
+      status: 'done',
+      createdAt: item.updated_at,
+    }
+    return conversationMessage ? [fallbackUserMessage, conversationMessage] : [fallbackUserMessage]
+  }, [
+    binding.device_id,
+    binding.task_id,
+    conversationMessage,
+    item.description,
+    item.title,
+    item.updated_at,
+  ])
 
   return (
     <div
@@ -652,20 +818,25 @@ function RuntimeTaskProgressSummary({
           responsePreview={responsePreview}
           reserveTrailingAction={showCompactChangeRequest}
         />
+      ) : !compact ? (
+        <RuntimeTaskConversationPreview
+          key={`${taskAddress.deviceId}:${taskAddress.taskId}`}
+          itemId={item.id}
+          address={taskAddress}
+          initialMessages={binding.conversationMessages ?? []}
+          fallbackMessages={fallbackConversationMessages}
+          initialTranscriptLoaded={binding.conversationLoaded === true}
+          initialHasMoreBefore={binding.conversationHasMoreBefore === true}
+          initialBeforeCursor={binding.conversationBeforeCursor ?? null}
+          active={activity.active}
+        />
       ) : responsePreview ? (
         <div
-          data-testid={
-            activity.active
-              ? `cloud-todo-card-response-${item.id}-${binding.id}`
-              : compact
-                ? `cloud-todo-card-final-response-${item.id}`
-                : `cloud-todo-card-progress-response-${item.id}-${binding.id}`
-          }
+          data-testid={`cloud-todo-card-final-response-${item.id}`}
           className={cn(
             'text-xs leading-5 text-text-muted',
-            compact
-              ? cn('h-5 truncate', showCompactChangeRequest && 'pr-7')
-              : 'ml-5 mt-1.5 max-h-60 overflow-y-auto whitespace-pre-wrap break-words border-l border-border/70 pl-2 pr-1'
+            'h-5 truncate',
+            showCompactChangeRequest && 'pr-7'
           )}
         >
           {responsePreview}
@@ -673,8 +844,146 @@ function RuntimeTaskProgressSummary({
       ) : activity.active ? (
         <RuntimeTaskLiveActivity itemId={item.id} activity={activity} />
       ) : null}
+      {!compact && onSendMessage ? (
+        <RuntimeTaskCompactComposer
+          itemId={item.id}
+          bindingId={binding.id}
+          address={taskAddress}
+          onSendMessage={onSendMessage}
+        />
+      ) : null}
     </div>
   )
+}
+
+function RuntimeTaskCompactComposer({
+  itemId,
+  bindingId,
+  address,
+  onSendMessage,
+}: {
+  itemId: string
+  bindingId: number
+  address: RuntimeTaskAddress
+  onSendMessage: (message: string) => Promise<boolean>
+}) {
+  const { t } = useTranslation('common')
+  const composerContext = useRuntimeTaskComposerContext(address)
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async (submittedValue?: string) => {
+    const message = (submittedValue ?? draft).trim()
+    if (!message || sending) return false
+
+    setSending(true)
+    setError(null)
+    try {
+      const accepted = await onSendMessage(message)
+      if (accepted) {
+        setDraft('')
+      } else {
+        setError(t('workbench.project_chat_send_failed'))
+      }
+      return accepted
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('workbench.project_chat_send_failed'))
+      return false
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div
+      data-testid={`cloud-todo-card-popup-composer-${itemId}-${bindingId}`}
+      data-hover-card-pin-region
+      className="task-detail-comment-chat-input mt-2"
+    >
+      <ChatInput
+        value={draft}
+        onChange={setDraft}
+        onSubmit={submit}
+        disabled={sending}
+        error={error}
+        placeholder={t('workbench.task_activity_inline_placeholder')}
+        inputTestId={`cloud-todo-card-popup-input-${itemId}-${bindingId}`}
+        submitButtonTestId={`cloud-todo-card-popup-send-${itemId}-${bindingId}`}
+        variant="desktop"
+        collapseWhenIdle
+        projectChat={composerContext.projectChat}
+        projectPhrases={composerContext.projectPhrases}
+        showProjectWorkBar={false}
+      />
+    </div>
+  )
+}
+
+function useRuntimeTaskComposerContext(address: RuntimeTaskAddress): {
+  projectChat?: ProjectChatControls
+  projectPhrases: QuickPhrase[]
+} {
+  const workbench = useContext(WorkbenchContext)
+
+  return useMemo(() => {
+    if (!workbench) return { projectPhrases: [] }
+
+    const scopeKey = getRuntimeTaskChatScopeKey(address)
+    const controls = workbench.projectChat
+    const attachmentState = controls.attachmentStateByScope[scopeKey] ?? {
+      attachments: [],
+      uploadingFiles: new Map(),
+      errors: new Map(),
+    }
+    const runtimeProject = workbench.state.runtimeWork?.projects.find(project =>
+      project.deviceWorkspaces.some(
+        workspace =>
+          (workspace.deviceId === address.deviceId ||
+            workspace.remoteHostId === address.deviceId) &&
+          workspace.tasks.some(task => task.taskId === address.taskId)
+      )
+    )?.project
+
+    return {
+      projectChat: {
+        scopeKey,
+        models: controls.models,
+        skills: controls.skills,
+        selectedModel: controls.selectedModel,
+        activeModel: controls.activeModel,
+        selectedModelOptions: controls.selectedModelOptions,
+        isModelSelectionReady: controls.isModelSelectionReady,
+        trialTemplates: controls.trialTemplates,
+        trialPluginName: controls.trialPluginName,
+        trialPluginApp: controls.trialPluginApp,
+        hasConversationContext: controls.hasConversationContext,
+        dismissTrialGuide: controls.dismissTrialGuide,
+        applyTrialTemplate: controls.applyTrialTemplate,
+        selectedSkills: controls.selectedSkills,
+        attachments: attachmentState.attachments,
+        uploadingFiles: attachmentState.uploadingFiles,
+        errors: attachmentState.errors,
+        contextUsage: controls.contextUsage,
+        isOptionsLocked: controls.isOptionsLocked,
+        setSelectedModel: controls.setSelectedModel,
+        setSelectedModelAndOptions: controls.setSelectedModelAndOptions,
+        setSelectedModelOption: controls.setSelectedModelOption,
+        getSelectedModel: controls.getSelectedModel,
+        getSelectedModelOptions: controls.getSelectedModelOptions,
+        onBlockedModelSelect: controls.onBlockedModelSelect,
+        toggleSkill: controls.toggleSkill,
+        handleFileSelect: files => controls.handleFileSelectForScope(scopeKey, files),
+        removeAttachment: attachmentId => controls.removeAttachmentForScope(scopeKey, attachmentId),
+        listLocalSkills: controls.listLocalSkills,
+        listLocalApps: controls.listLocalApps,
+      },
+      projectPhrases:
+        runtimeProject?.source === 'local_project'
+          ? (runtimeProject.aiSettings?.quickPhrases ?? [])
+          : [],
+    }
+  }, [address, workbench])
 }
 
 function RuntimeTaskProgressPopup({
@@ -683,12 +992,14 @@ function RuntimeTaskProgressPopup({
   activeBindingId,
   focusedBindingId,
   onFocusBinding,
+  onSendMessage,
 }: {
   item: CloudLoopItem
   bindings: CloudTodoBoardTaskBinding[]
   activeBindingId: number | null
   focusedBindingId: number | null
   onFocusBinding: (bindingId: number | null) => void
+  onSendMessage?: (binding: CloudTodoBoardTaskBinding, message: string) => Promise<boolean>
 }) {
   const { t } = useTranslation('common')
   const visibleBindings = focusedBindingId
@@ -704,11 +1015,11 @@ function RuntimeTaskProgressPopup({
         <div className="text-sm font-medium leading-5 text-text-primary">
           {t('todo.task_progress_details', '当前任务进展')}
         </div>
-        <div className="mt-0.5 text-xs leading-5 text-text-secondary">
-          {focusedBindingId
-            ? t('todo.task_progress_details', '当前任务进展')
-            : `${t('todo.task_progress_details', '当前任务进展')} · ${bindings.length}`}
-        </div>
+        {!focusedBindingId && bindings.length > 1 ? (
+          <div className="mt-0.5 text-xs leading-5 text-text-secondary">
+            {t('todo.task_progress_count', '{{count}} 个任务', { count: bindings.length })}
+          </div>
+        ) : null}
       </div>
       {visibleBindings.length > 0 ? (
         <div data-testid={`cloud-todo-card-progress-list-${item.id}`} className="space-y-1">
@@ -720,7 +1031,7 @@ function RuntimeTaskProgressPopup({
               onMouseLeave={() => onFocusBinding(null)}
               onFocus={() => onFocusBinding(binding.id)}
               onBlur={() => onFocusBinding(null)}
-              className="rounded-lg p-1 transition hover:bg-muted/50"
+              className="p-1"
             >
               <RuntimeTaskProgressSummary
                 item={item}
@@ -729,6 +1040,9 @@ function RuntimeTaskProgressPopup({
                 active={binding.running || binding.id === activeBindingId}
                 changeRequestSnapshot={null}
                 repairingChangeRequest={false}
+                onSendMessage={
+                  onSendMessage ? message => onSendMessage(binding, message) : undefined
+                }
               />
             </div>
           ))}
@@ -795,6 +1109,20 @@ function useRuntimeTaskFinalResponse(address: RuntimeTaskAddress | null): string
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
+function useRuntimeTaskMessages(address: RuntimeTaskAddress): WorkbenchMessage[] {
+  const subscribe = useCallback(
+    (listener: () => void) => subscribeRuntimeConversation(address, listener),
+    [address]
+  )
+  const getSnapshot = useCallback(
+    () => JSON.stringify(getRuntimeConversationMessages(address)),
+    [address]
+  )
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+  return useMemo(() => JSON.parse(snapshot) as WorkbenchMessage[], [snapshot])
+}
+
 function useRuntimeTaskLatestAssistantMessage(
   address: RuntimeTaskAddress | null
 ): WorkbenchMessage | null {
@@ -816,6 +1144,31 @@ function useRuntimeTaskLatestAssistantMessage(
     () => (snapshot ? (JSON.parse(snapshot) as WorkbenchMessage | null) : null),
     [snapshot]
   )
+}
+
+function latestConversationRound(messages: WorkbenchMessage[]): WorkbenchMessage[] {
+  const lastUserIndex = messages.findLastIndex(message => message.role === 'user')
+  if (lastUserIndex >= 0) return messages.slice(lastUserIndex)
+
+  const lastAssistantIndex = messages.findLastIndex(message =>
+    message.role.toLowerCase().startsWith('assistant')
+  )
+  return lastAssistantIndex >= 0 ? messages.slice(lastAssistantIndex) : messages.slice(-1)
+}
+
+function mergeConversationMessages(
+  initialMessages: WorkbenchMessage[],
+  runtimeMessages: WorkbenchMessage[]
+): WorkbenchMessage[] {
+  if (initialMessages.length === 0) return runtimeMessages
+  if (runtimeMessages.length === 0) return initialMessages
+
+  const runtimeById = new Map(runtimeMessages.map(message => [message.id, message]))
+  const initialIds = new Set(initialMessages.map(message => message.id))
+  return [
+    ...initialMessages.map(message => runtimeById.get(message.id) ?? message),
+    ...runtimeMessages.filter(message => !initialIds.has(message.id)),
+  ]
 }
 
 function runtimeToolActivityText(

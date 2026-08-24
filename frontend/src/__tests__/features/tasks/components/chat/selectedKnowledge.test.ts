@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  buildExternalContextId,
   buildDingTalkKnowledgeRef,
   normalizeSelectedExternalKnowledgeRefs,
 } from '@/features/tasks/components/chat/selectedKnowledge'
@@ -144,5 +145,23 @@ describe('normalizeSelectedExternalKnowledgeRefs', () => {
     ] satisfies ExternalKnowledgeRef[]
 
     expect(normalizeSelectedExternalKnowledgeRefs(refs)).toEqual(refs)
+  })
+})
+
+describe('buildExternalContextId', () => {
+  it('distinguishes provider scopes without a descendant policy dimension', () => {
+    const refs = ['organization', 'personal'].map(scope => ({
+      provider: 'dingtalk',
+      mode: 'explicit' as const,
+      scope,
+      id: 'workspace-1',
+      target_type: 'folder' as const,
+      node_id: 'folder-1',
+    }))
+
+    const ids = refs.map(buildExternalContextId)
+
+    expect(new Set(ids).size).toBe(refs.length)
+    expect(ids).toContain('external:dingtalk:explicit:organization:workspace-1:folder:folder-1')
   })
 })

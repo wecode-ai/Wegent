@@ -33,18 +33,17 @@ function normalizeToolName(name: string): string {
   return name.trim().toLowerCase()
 }
 
-function toolNameCandidates(name: string): string[] {
-  const normalized = normalizeToolName(name)
-  const doubleUnderscoreParts = normalized.split('__')
-  const lastDoubleUnderscorePart = doubleUnderscoreParts[doubleUnderscoreParts.length - 1]
-  const dotParts = normalized.split('.')
-  const lastDotPart = dotParts[dotParts.length - 1]
-
-  return Array.from(new Set([normalized, lastDoubleUnderscorePart, lastDotPart]))
-}
-
 function matchesToolName(name: string, names: Set<string>): boolean {
-  return toolNameCandidates(name).some(candidate => names.has(candidate))
+  const normalized = normalizeToolName(name)
+  if (names.has(normalized)) return true
+
+  const doubleUnderscoreIndex = normalized.lastIndexOf('__')
+  if (doubleUnderscoreIndex >= 0 && names.has(normalized.slice(doubleUnderscoreIndex + 2))) {
+    return true
+  }
+
+  const dotIndex = normalized.lastIndexOf('.')
+  return dotIndex >= 0 && names.has(normalized.slice(dotIndex + 1))
 }
 
 export function isCommandToolName(name: string): boolean {
