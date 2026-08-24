@@ -85,6 +85,7 @@ export function AutomationsPage() {
     listGitBranches,
     updateProjectName,
     removeProject,
+    setRuntimeTaskPinned,
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
@@ -517,6 +518,7 @@ export function AutomationsPage() {
           onRefreshDevices={refreshDevices}
           onUpdateProjectName={updateProjectName}
           onRemoveProject={removeProject}
+          onSetRuntimeTaskPinned={setRuntimeTaskPinned}
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}

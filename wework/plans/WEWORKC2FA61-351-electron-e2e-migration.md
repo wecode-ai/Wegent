@@ -76,7 +76,7 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | `cloud-project-creation`          | 主流程                                          | PASSED | `2026-08-22T09-55-33-062Z-74493`，1m 24s |
 | `priority-filter`                 | 主流程                                          | PASSED | `2026-08-22T09-57-05-022Z-81057`，1m 45s |
 | `telemetry-consent`               | 主流程                                          | PASSED | `2026-08-22T10-02-13-752Z-3705`，1m 4s   |
-| `automation-lifecycle`            | 主流程                                          | PASSED | `2026-08-22T10-03-40-790Z-9867`，1m 40s  |
+| `automation-lifecycle`            | 主流程                                          | PASSED | `2026-08-24T04-51-47-113Z-41548`，1m 7s  |
 | `project-automation`              | `project-automation.scenario.mjs`               | PASSED | `2026-08-22T12-11-44-865Z-83917`，1m 37s |
 | `project-assignment-notification` | `project-assignment-notification.scenario.mjs`  | PASSED | `2026-08-22T12-14-53-781Z-97297`，2m 3s  |
 | `offline-local-project-space`     | `offline-local-project-space.scenario.mjs`      | PASSED | `2026-08-22T12-17-27-648Z-10112`，33s    |
