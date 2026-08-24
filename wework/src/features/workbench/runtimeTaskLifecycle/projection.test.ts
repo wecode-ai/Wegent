@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import type { RuntimeTaskSummary } from '@/types/api'
 import {
+  isRuntimePaneTranscriptConfirmedIdle,
   isRuntimeTaskExecutionRunning,
   normalizeRuntimeTaskSummary,
+  projectRuntimePaneTranscript,
   runtimeTaskReconciliationSnapshot,
   shouldReplaceRuntimeTaskProjection,
 } from './projection'
@@ -18,6 +20,52 @@ function task(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSummary {
 }
 
 describe('runtimeTaskProjection', () => {
+  test('confirms idle only when runtime and every turn are terminal', () => {
+    const transcript = projectRuntimePaneTranscript({
+      running: false,
+      messages: [],
+      turns: [
+        {
+          id: 'turn-1',
+          status: 'completed',
+          items: [],
+        },
+      ],
+    })
+
+    expect(isRuntimePaneTranscriptConfirmedIdle(transcript)).toBe(true)
+  })
+
+  test.each(['running', 'in_progress', 'pending', 'streaming'])(
+    'keeps transcript active while a %s runtime turn remains',
+    status => {
+      const transcript = projectRuntimePaneTranscript({
+        running: false,
+        messages: [],
+        turns: [
+          {
+            id: 'turn-1',
+            status,
+            items: [],
+          },
+        ],
+      })
+
+      expect(transcript.turns[0]?.status).toBe('streaming')
+      expect(isRuntimePaneTranscriptConfirmedIdle(transcript)).toBe(false)
+    }
+  )
+
+  test('keeps transcript active while the runtime is running', () => {
+    const transcript = projectRuntimePaneTranscript({
+      running: true,
+      messages: [],
+      turns: [],
+    })
+
+    expect(isRuntimePaneTranscriptConfirmedIdle(transcript)).toBe(false)
+  })
+
   test('derives reconciliation truth through the lifecycle vocabulary', () => {
     expect(
       runtimeTaskReconciliationSnapshot(
