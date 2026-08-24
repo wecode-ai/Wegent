@@ -1863,18 +1863,22 @@ describe('App plugins route', () => {
     expect(window.location.search).toBe('?app_type=smart_app')
   })
 
-  test('hides Smart apps and exits its Applications view while experiments are disabled', async () => {
+  test('keeps Smart apps visible and preserves its experimental badge while experiments are disabled', async () => {
     window.history.pushState({}, '', '/sites?app_type=smart_app')
 
     renderApp()
 
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
-    await waitFor(() => {
-      expect(window.location.pathname).toBe('/sites')
-      expect(window.location.search).toBe('')
-    })
-    expect(screen.queryByTestId('applications-tab-smart-app')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('smart-apps-marketplace-page')).not.toBeInTheDocument()
+    expect(window.location.pathname).toBe('/sites')
+    expect(window.location.search).toBe('?app_type=smart_app')
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('applications-smart-app-experimental-badge')).toHaveTextContent(
+      '实验性'
+    )
+    expect(screen.getByTestId('smart-apps-marketplace-page')).toBeInTheDocument()
   })
 
   test('renders plugin management on direct /plugins/manage visit', async () => {

@@ -16,7 +16,7 @@ If you do not have a package yet, choose **Download example plugin** in the impo
 
 ## Install a Smart app
 
-Smart apps are currently experimental. First enable **Settings → General → Experimental features**. The top-tab **+ → Smart apps** entry and the **Smart apps** tab beside **Sites** and **Mini Programs** in **Applications** then become available. Disabling the toggle hides those entries, closes Smart app tabs, and stops running Smart apps.
+Smart apps continue to display an **Experimental** badge, but their availability and execution no longer depend on **Settings → General → Experimental features**. The top-tab **+ → Smart apps** entry, the **Smart apps** tab beside **Sites** and **Mini Programs** in **Applications**, and pinned or running Smart apps remain available when experimental features are disabled.
 
 Open **+ → Smart apps** from the top tab bar to go directly to **Applications → Smart apps**, or open **Applications** first and switch among **Sites / Mini Programs / Smart apps**. Smart apps have three sections: **Marketplace** discovers and installs official apps and apps shared directly with you; **Installed** binds models and manages local app execution and removal; **My creations** creates, imports, and publishes apps.
 
