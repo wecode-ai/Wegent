@@ -3023,6 +3023,7 @@ export function CloudTodoWorkspace({
         setSelectedItem(locatedItem)
       }
       if (input.createTask) {
+        workbench?.projectChat.requestCatalogs?.()
         setBackgroundTaskItemId(locatedItem.id)
         setTaskComposerRequest({
           workItemId: locatedItem.id,
@@ -4586,6 +4587,7 @@ export function CloudTodoWorkspace({
                   setSelectedItem(locatedChild)
                 }}
                 onCreateTask={async workflowNodeId => {
+                  workbench?.projectChat.requestCatalogs?.()
                   setSelectedTaskBinding(null)
                   setBackgroundTaskItemId(null)
                   let inheritFromTask: RuntimeTaskAddress | null = null
