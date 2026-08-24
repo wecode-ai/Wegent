@@ -209,7 +209,6 @@ interface WorkspaceTabSurfaceProps {
   lifecycleStore: RuntimeTaskLifecycleStore
   nativeWorkbenchKind?: 'task' | 'board'
   prewarmComposerApps?: boolean
-  smartAppsEnabled?: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   services: WorkbenchServices
@@ -223,7 +222,6 @@ export function WorkspaceTabSurface({
   lifecycleStore,
   nativeWorkbenchKind,
   prewarmComposerApps = false,
-  smartAppsEnabled = false,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
   services,
@@ -287,7 +285,7 @@ export function WorkspaceTabSurface({
 
   const workbenchContent = (
     <>
-      {harnessAppInstallationId && smartAppsEnabled ? (
+      {harnessAppInstallationId ? (
         <HarnessAppAutoLauncher installationId={harnessAppInstallationId} />
       ) : null}
       {onOpenWeworkForAppshot && active && !iframe ? (
@@ -550,7 +548,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           lifecycleStore={lifecycleStore}
           nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
           prewarmComposerApps={tab.id === composerPrewarmTabId}
-          smartAppsEnabled={experimentalFeatures.enabled}
           services={services}
           cloudWebUrl={cloudWebUrl}
           onOpenWeworkForAppshot={onOpenWeworkForAppshot}
@@ -659,10 +656,7 @@ function AppShell() {
       isMainWindow && appPreferences?.loaded
         ? appPreferences.preferences.fixedWorkspaceTabs.flatMap(preference => {
             if (preference.kind === 'smart_app') {
-              if (
-                !appPreferences.preferences.experimentalFeaturesEnabled ||
-                !preference.installationId
-              ) {
+              if (!preference.installationId) {
                 return []
               }
               return [

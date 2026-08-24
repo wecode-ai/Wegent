@@ -357,10 +357,18 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         Number(
           await control.command('getElementCount', '[data-testid="workspace-tab-add-smart-app"]')
         ),
-        0,
-        'Smart apps were visible before experimental features were enabled'
+        1,
+        'Smart apps were hidden while experimental features were disabled'
       )
-      await captureScreenshot(control, 'harness-apps-00-experimental-hidden.png', 'body')
+      await control.command(
+        'waitFor',
+        '[data-testid="workspace-tab-add-smart-app-experimental-badge"]',
+        {
+          text: '实验性',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await captureScreenshot(control, 'harness-apps-00-experimental-visible.png', 'body')
       await control.command('click', '[data-testid="workspace-tab-add"]')
 
       await setExperimentalFeatures(control, true, uiTimeoutMs)
@@ -1210,8 +1218,8 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         Number(
           await control.command('getElementCount', '[data-testid="applications-tab-smart-app"]')
         ),
-        0,
-        'Smart apps remained visible in Applications after experimental features were disabled'
+        1,
+        'Smart apps disappeared from Applications after experimental features were disabled'
       )
       await control.command('navigate', 'body', { value: '/' })
       await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
@@ -1222,10 +1230,10 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         Number(
           await control.command('getElementCount', '[data-testid="workspace-tab-add-smart-app"]')
         ),
-        0,
-        'Smart apps remained visible after experimental features were disabled'
+        1,
+        'Smart apps disappeared after experimental features were disabled'
       )
-      await captureScreenshot(control, 'harness-apps-16-experimental-disabled.png', 'body')
+      await captureScreenshot(control, 'harness-apps-16-experimental-visible.png', 'body')
     },
   }
 }
