@@ -1069,7 +1069,10 @@ describe('DesktopWorkbenchLayout', () => {
   }
 
   function DesktopWorkbenchLayout(
-    props: LegacyDesktopWorkbenchLayoutProps & { routeActive?: boolean }
+    props: LegacyDesktopWorkbenchLayoutProps & {
+      routeActive?: boolean
+      surfaceKind?: 'task' | 'board'
+    }
   ) {
     const { authValue, workbenchValue, paneValue, paneSession } = createWorkbenchMocks(props)
     paneSessionMockRef.current = paneSession
@@ -1094,7 +1097,10 @@ describe('DesktopWorkbenchLayout', () => {
           <AuthContext.Provider value={authValue}>
             <WorkbenchContext.Provider value={workbenchValue}>
               <WorkbenchPaneContext.Provider value={paneValue}>
-                <ActualDesktopWorkbenchLayout routeActive={props.routeActive} />
+                <ActualDesktopWorkbenchLayout
+                  routeActive={props.routeActive}
+                  surfaceKind={props.surfaceKind}
+                />
               </WorkbenchPaneContext.Provider>
             </WorkbenchContext.Provider>
           </AuthContext.Provider>
@@ -1593,9 +1599,22 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('cloud-board-loading')).toBeInTheDocument()
-    expect(
-      screen.getByTestId('desktop-workbench-content').closest('[aria-hidden="true"]')
-    ).toHaveStyle({ display: 'none' })
+    expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
+  })
+
+  test('keeps task and board surfaces independent from the active window route', () => {
+    window.history.pushState({}, '', '/todo')
+    const taskView = render(<DesktopWorkbenchLayout {...baseProps} surfaceKind="task" />)
+
+    expect(screen.getByTestId('desktop-workbench-content')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-board-loading')).not.toBeInTheDocument()
+
+    taskView.unmount()
+    window.history.pushState({}, '', '/')
+    render(<DesktopWorkbenchLayout {...baseProps} surfaceKind="board" />)
+
+    expect(screen.getByTestId('cloud-board-loading')).toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
   })
 
   test('returns to the workspace after opening settings from its account menu', async () => {

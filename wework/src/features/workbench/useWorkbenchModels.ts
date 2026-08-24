@@ -25,6 +25,7 @@ interface WorkbenchModelApi {
 interface UseWorkbenchModelsOptions {
   api: WorkbenchModelApi
   locked: boolean
+  enabled?: boolean
   filterModel?: (model: UnifiedModel) => boolean
   scopeKey?: string
   persistSelection?: boolean
@@ -98,6 +99,7 @@ function getSelectionKey(
 export function useWorkbenchModels({
   api,
   locked,
+  enabled = true,
   filterModel,
   scopeKey = DEFAULT_MODEL_SCOPE_KEY,
   persistSelection = true,
@@ -147,10 +149,12 @@ export function useWorkbenchModels({
   )
   const isSelectionReady = useMemo(
     () =>
-      selectionReady &&
-      !isLoading &&
-      (restoredSelectionKeyByScope[scopeKey] === selectionKey || selectionMatchesConfig),
+      !enabled ||
+      (selectionReady &&
+        !isLoading &&
+        (restoredSelectionKeyByScope[scopeKey] === selectionKey || selectionMatchesConfig)),
     [
+      enabled,
       isLoading,
       restoredSelectionKeyByScope,
       scopeKey,
@@ -218,6 +222,8 @@ export function useWorkbenchModels({
   }, [])
 
   useEffect(() => {
+    if (!enabled) return
+
     let cancelled = false
 
     async function loadModels() {
@@ -250,10 +256,10 @@ export function useWorkbenchModels({
       window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
       window.removeEventListener(WORKBENCH_MODELS_CHANGED_EVENT, loadModels)
     }
-  }, [api, filterModel, reconcileSelectedModels])
+  }, [api, enabled, filterModel, reconcileSelectedModels])
 
   useEffect(() => {
-    if (!selectionReady) {
+    if (!enabled || !selectionReady) {
       return
     }
 
@@ -281,6 +287,7 @@ export function useWorkbenchModels({
     }
   }, [
     effectiveSelectionConfig,
+    enabled,
     models,
     restoreSelection,
     restoredSelectionKeyByScope,
@@ -389,7 +396,7 @@ export function useWorkbenchModels({
     setSelectionForScope,
     getSelectedModel,
     getSelectedModelOptions,
-    isLoading,
-    error,
+    isLoading: enabled && isLoading,
+    error: enabled ? error : null,
   }
 }
