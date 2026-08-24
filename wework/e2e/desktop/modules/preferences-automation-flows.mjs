@@ -511,6 +511,9 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
       'click',
       '[data-testid="automation-conversation-mode-option-continue_thread"]'
     )
+    await control.command('waitFor', '[data-testid="automation-target-task-select"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     await control.command('click', '[data-testid="automation-target-task-select"]')
     await waitForSnapshot(
       control,

@@ -28,10 +28,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwebkit2gtk-4.1-dev \
     libxshmfence1 \
     libxss1 \
+    openbox \
     python3 \
     python3-venv \
     redis-server \
     sqlite3 \
+    x11-utils \
     xvfb \
     zstd \
   && curl --proto '=https' --tlsv1.2 -fsSL \
