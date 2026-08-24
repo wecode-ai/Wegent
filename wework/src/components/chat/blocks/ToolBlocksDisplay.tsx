@@ -21,11 +21,7 @@ import {
   type RequestUserInputBlock,
 } from '../requestUserInputMessages'
 import { AssistantThinkingIndicator } from '../AssistantThinkingIndicator'
-import {
-  ToolBlockItem,
-  type FileEditDuration,
-  type FileEditDurationsByBlock,
-} from './ToolBlockItem'
+import { ToolBlockItem, type FileEditDurationsByBlock } from './ToolBlockItem'
 import {
   RequestUserInputCard,
   RequestUserInputSummary,
@@ -49,7 +45,7 @@ import { usePersistentProcessingExpansion } from './processingExpansionState'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
 import { getDurationText } from './processingDuration'
-import { getFileInputPaths, isFileEditToolName } from './toolBlockKinds'
+import { getFileEditDurationsBySourceBlock, getFileEditDurationsForRows } from './fileEditDurations'
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
 type ProcessingDisplayItem =
@@ -62,7 +58,7 @@ type ProcessingDisplayItem =
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
-  fileEditDurationBlocks?: ProcessingBlock[]
+  fileEditDurationsBySourceBlock?: FileEditDurationsByBlock
   isStreaming: boolean
   // Wall-clock epoch ms when the turn started (the assistant turn's
   // created_at). Used as the duration anchor so the elapsed time survives a
@@ -88,7 +84,7 @@ interface ToolBlocksDisplayProps {
 
 export function ToolBlocksDisplay({
   blocks,
-  fileEditDurationBlocks,
+  fileEditDurationsBySourceBlock,
   isStreaming,
   startedAt,
   forceExpanded = false,
@@ -187,9 +183,13 @@ export function ToolBlocksDisplay({
       ),
     [displayItems]
   )
+  const sourceFileEditDurations = useMemo(
+    () => fileEditDurationsBySourceBlock ?? getFileEditDurationsBySourceBlock(blocks),
+    [blocks, fileEditDurationsBySourceBlock]
+  )
   const fileEditDurations = useMemo(
-    () => getFileEditDurations(fileEditDurationBlocks ?? blocks, rows),
-    [blocks, fileEditDurationBlocks, rows]
+    () => getFileEditDurationsForRows(sourceFileEditDurations, rows),
+    [rows, sourceFileEditDurations]
   )
   const hasPlanResponse = blocks.some(block => block.type === 'plan' && block.content.trim())
   const hasRequestUserInput = displayItems.some(item => item.type === 'request_user_input')
@@ -630,74 +630,6 @@ function LiveProcessingPreviewRow({
       stateKey={stateKey}
     />
   )
-}
-
-function getFileEditDurations(
-  blocks: ProcessingBlock[],
-  rows: ProcessingDisplayRow[]
-): FileEditDurationsByBlock {
-  type FileEditActivity = FileEditDuration & {
-    path: string
-    isRunning: boolean
-  }
-  const edits: FileEditActivity[] = []
-  const sourceDurations = new Map<string, ReadonlyMap<string, FileEditDuration>>()
-  const durations = new Map<string, ReadonlyMap<string, FileEditDuration>>()
-
-  blocks.forEach(block => {
-    if (block.type === 'tool' && isFileEditToolName(block.toolName)) {
-      edits.push(
-        ...getFileInputPaths(block).map(path => ({
-          id: block.id,
-          path: normalizeActivityPath(path),
-          startedAt: block.createdAt,
-          completedAt: block.completedAt,
-          isRunning: block.status !== 'done' && block.status !== 'error',
-        }))
-      )
-      return
-    }
-    if (block.type !== 'file_changes') return
-
-    const blockDurations = new Map<string, FileEditDuration>()
-    block.fileChanges.files.forEach(file => {
-      const filePath = normalizeActivityPath(file.path)
-      const matches = edits.filter(
-        edit =>
-          edit.path === filePath ||
-          edit.path.endsWith(`/${filePath}`) ||
-          filePath.endsWith(`/${edit.path}`)
-      )
-      if (matches.length === 0) return
-      const durationMatch = matches.at(-1)
-      if (!durationMatch) return
-      blockDurations.set(file.path, {
-        id: durationMatch.id,
-        startedAt: durationMatch.startedAt,
-        ...(!durationMatch.isRunning && durationMatch.completedAt !== undefined
-          ? { completedAt: durationMatch.completedAt }
-          : {}),
-      })
-    })
-    if (blockDurations.size > 0) sourceDurations.set(block.id, blockDurations)
-  })
-
-  rows.forEach(row => {
-    if (row.type !== 'block' || row.block.type !== 'file_changes') return
-    const blockDurations = new Map<string, FileEditDuration>()
-    row.sourceBlockIds.forEach(sourceBlockId => {
-      sourceDurations.get(sourceBlockId)?.forEach((duration, path) => {
-        blockDurations.set(path, duration)
-      })
-    })
-    if (blockDurations.size > 0) durations.set(row.block.id, blockDurations)
-  })
-
-  return durations
-}
-
-function normalizeActivityPath(path: string): string {
-  return path.replaceAll('\\', '/').replace(/^\.\//, '')
 }
 
 function isProcessingRowRunning(row: ProcessingDisplayRow): boolean {
