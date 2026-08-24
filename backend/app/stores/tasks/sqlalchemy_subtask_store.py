@@ -1017,6 +1017,34 @@ class SqlAlchemySubtaskStore:
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         return query.all()
 
+    def list_cleanup_subtasks_for_executors(
+        self, db: Session, *, executors: list[tuple[str, str]]
+    ) -> list[Subtask]:
+        """Load undeleted subtasks for (namespace, name) executor keys.
+
+        Namespaces are normalized with an empty-string fallback so rows with a
+        NULL executor_namespace still match their executor group.
+        """
+        if not executors:
+            return []
+        normalized_namespace = func.coalesce(Subtask.executor_namespace, "")
+        executor_filter = or_(
+            *[
+                (normalized_namespace == namespace) & (Subtask.executor_name == name)
+                for namespace, name in executors
+            ]
+        )
+        return (
+            db.query(Subtask)
+            .filter(
+                Subtask.executor_name.isnot(None),
+                Subtask.executor_name != "",
+                Subtask.executor_deleted_at == False,
+                executor_filter,
+            )
+            .all()
+        )
+
     def update_status(
         self,
         db: Session,
