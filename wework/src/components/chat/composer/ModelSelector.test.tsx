@@ -247,12 +247,13 @@ describe('ModelSelector desktop layout', () => {
     fireEvent.click(screen.getByTestId('model-selector-button'))
     fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
 
-    expect(await screen.findByTestId('model-selector-submenu')).toHaveStyle({
-      maxHeight: `${WINDOW_INNER_HEIGHT - 64 - 16}px`,
-    })
+    const submenu = await screen.findByTestId('model-selector-submenu')
+    expect(submenu.style.maxHeight).toBe(
+      'min(var(--radix-popover-content-available-height), calc(100vh - 16px))'
+    )
   })
 
-  test('overlays the main menu at full width when neither side has enough room', async () => {
+  test('uses the Codex flyout viewport contract in a narrow viewport', async () => {
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 500,
@@ -332,8 +333,13 @@ describe('ModelSelector desktop layout', () => {
       fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
 
       const submenu = await screen.findByTestId('model-selector-submenu')
-      await waitFor(() => expect(submenu).toHaveStyle({ left: '-32px' }))
-      expect(submenu.style.width).toBe('')
+      await waitFor(() => expect(submenu).toHaveAttribute('data-side', 'left'))
+      expect(submenu).toHaveAttribute('data-align', 'start')
+      expect(submenu.style.width).toBe('280px')
+      expect(submenu.style.maxWidth).toBe(
+        'min(var(--radix-popover-content-available-width), calc(100vw - 16px))'
+      )
+      expect(submenu.parentElement?.parentElement).toBe(document.body)
     } finally {
       HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect
     }

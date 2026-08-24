@@ -1,5 +1,13 @@
 import { Bot, Boxes, CheckSquare2, CloudOff, Columns3, Plus, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type DragEvent, type RefObject } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+  type RefObject,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -12,7 +20,7 @@ import { openWorkspaceTabWindow } from './workspaceWindow'
 import { useWorkspaceTabs } from './workspaceTabsContextValue'
 import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
 
-interface MenuPosition {
+type MenuPosition = CSSProperties & {
   left: number
   top: number
 }

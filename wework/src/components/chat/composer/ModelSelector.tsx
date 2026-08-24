@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Cloud, Search, X } from 'lucide-react'
+import { Check, Cloud, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -20,6 +20,8 @@ import type { UnifiedModel } from '@/types/api'
 import { FastModeIcon } from './FastModeIcon'
 import { ModelAdvancedHeader } from './ModelAdvancedHeader'
 import { ModelAutomaticReasoningOption } from './ModelAutomaticReasoningOption'
+import { ModelSelectorFlyout } from './ModelSelectorFlyout'
+import { ModelSelectorMenuRow } from './ModelSelectorMenuRow'
 import { ModelPowerSlider } from './ModelPowerSlider'
 import { ModelResetDefaultRow } from './ModelResetDefaultRow'
 import { ModelSelectorTrigger } from './ModelSelectorTrigger'
@@ -48,20 +50,16 @@ import {
 } from './model-selector-utils'
 import styles from './ModelSelector.module.css'
 
-const MAIN_MENU_WIDTH = 256
-const SUBMENU_WIDTH = 288
-const SUBMENU_GAP = 0
+const MAIN_MENU_WIDTH = 224
+const MODEL_SUBMENU_WIDTH = 280
+const CONTROL_SUBMENU_MIN_WIDTH = 180
+const SPEED_SUBMENU_WIDTH = 233
 const VIEWPORT_MARGIN = 16
 const DESKTOP_MENU_VIEWPORT_TOP = 64
 const MAIN_MENU_TRIGGER_GAP = 8
 const MAIN_MENU_MAX_HEIGHT = 608
-const SUBMENU_RIGHT_OFFSET = MAIN_MENU_WIDTH + SUBMENU_GAP
 const DESKTOP_HIDDEN_CONTROL_IDS = new Set(['collaborationMode'])
 type DesktopSubmenuTarget = { type: 'models' } | { type: 'control'; id: string } | { type: 'none' }
-
-function getDesktopSubmenuMaxHeight(): number {
-  return Math.max(0, window.innerHeight - DESKTOP_MENU_VIEWPORT_TOP - VIEWPORT_MARGIN)
-}
 
 function getDesktopViewportRightBoundary(): number {
   const shell = document.getElementById('right-workspace-panel-shell')
@@ -70,6 +68,27 @@ function getDesktopViewportRightBoundary(): number {
     if (rect.width > 0) return Math.round(rect.left)
   }
   return window.innerWidth
+}
+
+function getDesktopCollisionPadding() {
+  const viewportRight = getDesktopViewportRightBoundary()
+  return {
+    top: DESKTOP_MENU_VIEWPORT_TOP,
+    right: Math.max(VIEWPORT_MARGIN, window.innerWidth - viewportRight + VIEWPORT_MARGIN),
+    bottom: VIEWPORT_MARGIN,
+    left: VIEWPORT_MARGIN,
+  }
+}
+
+function isDesktopSubmenuTargetActive(
+  current: DesktopSubmenuTarget | null,
+  target: DesktopSubmenuTarget
+): boolean {
+  if (current?.type !== target.type) return false
+  if (current.type === 'control' && target.type === 'control') {
+    return current.id === target.id
+  }
+  return true
 }
 
 function isCloudModel(model: UnifiedModel): boolean {
@@ -104,21 +123,14 @@ export function ModelSelector({
   const buttonRef = useRef<HTMLButtonElement>(null)
   const desktopMenuWrapperRef = useRef<HTMLDivElement>(null)
   const menuPanelRef = useRef<HTMLDivElement>(null)
-  const submenuPanelRef = useRef<HTMLDivElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
-  const modelButtonRef = useRef<HTMLButtonElement>(null)
-  const reasoningButtonRef = useRef<HTMLButtonElement>(null)
-  const speedButtonRef = useRef<HTMLButtonElement>(null)
   const handledOpenSignalRef = useRef<number | undefined>(undefined)
   const [open, setOpen] = useState(false)
   const [mobileQuery, setMobileQuery] = useState('')
   const [desktopMenuTop, setDesktopMenuTop] = useState(0)
   const [desktopMenuLeft, setDesktopMenuLeft] = useState(0)
   const [desktopMenuMaxHeight, setDesktopMenuMaxHeight] = useState(MAIN_MENU_MAX_HEIGHT)
-  const [submenuOffset, setSubmenuOffset] = useState(0)
-  const [submenuLeft, setSubmenuLeft] = useState(SUBMENU_RIGHT_OFFSET)
-  const [submenuWidth, setSubmenuWidth] = useState<number | undefined>()
   const [activeDesktopSubmenu, setActiveDesktopSubmenu] = useState<DesktopSubmenuTarget | null>(
     null
   )
@@ -203,67 +215,6 @@ export function ModelSelector({
     setDesktopMenuLeft(clampedLeft)
     setDesktopMenuMaxHeight(menuHeight)
   }, [menuPlacement])
-  const updateSubmenuLayout = useCallback((target: HTMLElement | null) => {
-    if (!target || !menuPanelRef.current) {
-      setSubmenuOffset(0)
-      setSubmenuLeft(SUBMENU_RIGHT_OFFSET)
-      setSubmenuWidth(undefined)
-      return
-    }
-
-    const menuRect = menuPanelRef.current.getBoundingClientRect()
-    const menuTop = menuRect.top
-    const targetTop = target.getBoundingClientRect().top
-    const preferredOffset = Math.round(targetTop - menuTop)
-    const submenuRect = submenuPanelRef.current?.getBoundingClientRect()
-    const submenuScrollHeight = submenuPanelRef.current?.scrollHeight ?? 0
-    const viewportTop = DESKTOP_MENU_VIEWPORT_TOP
-    const viewportBottom = window.innerHeight - VIEWPORT_MARGIN
-    const maxSubmenuHeight = getDesktopSubmenuMaxHeight()
-    const measuredSubmenuHeight = submenuRect?.height ?? 0
-    const submenuHeight = Math.min(
-      Math.max(measuredSubmenuHeight, submenuScrollHeight),
-      maxSubmenuHeight
-    )
-
-    if (submenuHeight > 0) {
-      const maxOffset = viewportBottom - submenuHeight - menuTop
-      const minOffset = viewportTop - menuTop
-      setSubmenuOffset(Math.round(Math.max(minOffset, Math.min(preferredOffset, maxOffset))))
-    } else {
-      setSubmenuOffset(preferredOffset)
-    }
-
-    const measuredMenuWidth = menuRect.width || MAIN_MENU_WIDTH
-    const measuredSubmenuWidth = submenuRect?.width || SUBMENU_WIDTH
-    const rightSideLeft = measuredMenuWidth + SUBMENU_GAP
-    const viewportWidth = getDesktopViewportRightBoundary()
-
-    const rightSideEdge = menuRect.left + rightSideLeft + measuredSubmenuWidth
-    if (rightSideEdge <= viewportWidth - VIEWPORT_MARGIN) {
-      setSubmenuWidth(undefined)
-      setSubmenuLeft(rightSideLeft)
-      return
-    }
-
-    const leftSideLeft = -(measuredSubmenuWidth + SUBMENU_GAP)
-    if (menuRect.left + leftSideLeft >= VIEWPORT_MARGIN) {
-      setSubmenuWidth(undefined)
-      setSubmenuLeft(leftSideLeft)
-      return
-    }
-
-    const viewportAvailableWidth = Math.max(0, viewportWidth - VIEWPORT_MARGIN * 2)
-    const fittedSubmenuWidth = Math.min(measuredSubmenuWidth, viewportAvailableWidth)
-    const minOverlayLeft = VIEWPORT_MARGIN - menuRect.left
-    const maxOverlayLeft = viewportWidth - VIEWPORT_MARGIN - fittedSubmenuWidth - menuRect.left
-    const alignedOverlayLeft = measuredMenuWidth - fittedSubmenuWidth
-    const overlayLeft = Math.max(minOverlayLeft, Math.min(alignedOverlayLeft, maxOverlayLeft))
-    setSubmenuWidth(
-      fittedSubmenuWidth < measuredSubmenuWidth ? Math.round(fittedSubmenuWidth) : undefined
-    )
-    setSubmenuLeft(Math.round(overlayLeft))
-  }, [])
   const activateControl = useCallback(
     (controlId: string) => {
       setActiveDesktopSubmenu({ type: 'control', id: controlId })
@@ -276,6 +227,15 @@ export function ModelSelector({
   const clearDesktopSubmenu = useCallback(() => {
     setActiveDesktopSubmenu({ type: 'none' })
   }, [setActiveDesktopSubmenu])
+  const setDesktopSubmenuOpen = useCallback(
+    (target: DesktopSubmenuTarget, nextOpen: boolean) => {
+      setActiveDesktopSubmenu(current => {
+        if (nextOpen) return target
+        return isDesktopSubmenuTargetActive(current, target) ? { type: 'none' } : current
+      })
+    },
+    [setActiveDesktopSubmenu]
+  )
   const activateMobileFamily = useCallback(
     (familyId: string) => {
       setActiveFamilyId(current => (current === familyId ? current : familyId))
@@ -300,7 +260,8 @@ export function ModelSelector({
       if (!(target instanceof Node)) return
       if (
         containerRef.current?.contains(target) ||
-        desktopMenuWrapperRef.current?.contains(target)
+        desktopMenuWrapperRef.current?.contains(target) ||
+        (target instanceof Element && target.closest('[data-model-selector-layer="true"]'))
       ) {
         return
       }
@@ -311,23 +272,6 @@ export function ModelSelector({
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
   }, [closeMenu, isMobile, open])
-
-  useLayoutEffect(() => {
-    if (!open) return
-    if (activeDesktopSubmenu?.type === 'models') {
-      updateSubmenuLayout(modelButtonRef.current)
-      return
-    }
-    if (activeDesktopSubmenu?.type === 'control') {
-      const buttonRef =
-        activeDesktopSubmenu.id === 'reasoning'
-          ? reasoningButtonRef.current
-          : speedButtonRef.current
-      updateSubmenuLayout(buttonRef)
-      return
-    }
-    updateSubmenuLayout(null)
-  }, [activeDesktopSubmenu, open, updateSubmenuLayout])
 
   useEffect(() => {
     if (!open || isMobile) return
@@ -407,10 +351,6 @@ export function ModelSelector({
       : null
   const advancedReasoningAvailable = advancedReasoningMode !== null
   const powerViewOpen = advancedOpen && advancedReasoningAvailable
-  const activeControl =
-    activeDesktopSubmenu?.type === 'control'
-      ? desktopControls.find(control => control.id === activeDesktopSubmenu.id)
-      : undefined
 
   useLayoutEffect(() => {
     if (!open || isMobile) return
@@ -516,6 +456,7 @@ export function ModelSelector({
   }
 
   function renderControlMenuItem(control: ModelControlConfig) {
+    const target: DesktopSubmenuTarget = { type: 'control', id: control.id }
     const active =
       activeDesktopSubmenu?.type === 'control' && activeDesktopSubmenu.id === control.id
     const selectedOption = selectedControlOption(control, selectedModelOptions)
@@ -526,28 +467,30 @@ export function ModelSelector({
       : control.defaultValue
 
     return (
-      <button
-        ref={control.id === 'reasoning' ? reasoningButtonRef : speedButtonRef}
+      <ModelSelectorFlyout
         key={control.id}
-        type="button"
-        data-testid={`model-control-menu-${control.id}`}
-        onMouseEnter={() => activateControl(control.id)}
-        onPointerEnter={() => activateControl(control.id)}
-        onFocus={() => activateControl(control.id)}
-        onClick={() => activateControl(control.id)}
-        className={[
-          'flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-normal leading-[18px]',
-          active
-            ? 'bg-muted text-text-primary'
-            : 'text-text-secondary hover:bg-muted hover:text-text-primary',
-        ].join(' ')}
+        open={active}
+        onOpenChange={nextOpen => setDesktopSubmenuOpen(target, nextOpen)}
+        collisionPadding={getDesktopCollisionPadding()}
+        contentStyle={{
+          width: control.id === 'speed' ? SPEED_SUBMENU_WIDTH : undefined,
+          minWidth: CONTROL_SUBMENU_MIN_WIDTH,
+        }}
+        anchor={
+          <ModelSelectorMenuRow
+            active={active}
+            label={control.labelKey ? t(control.labelKey, control.label) : control.label}
+            value={selectedLabel}
+            testId={`model-control-menu-${control.id}`}
+            onActivate={() => activateControl(control.id)}
+          />
+        }
       >
-        <span className="min-w-0 flex-1 truncate">
-          {control.labelKey ? t(control.labelKey, control.label) : control.label}
-        </span>
-        <span className="max-w-24 truncate text-text-muted">{selectedLabel}</span>
-        <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-      </button>
+        {renderControlSection(control, {
+          clearSubmenuOnHover: false,
+          reasoningAsSlider: false,
+        })}
+      </ModelSelectorFlyout>
     )
   }
 
@@ -862,7 +805,8 @@ export function ModelSelector({
           <div
             ref={desktopMenuWrapperRef}
             style={{ left: desktopMenuLeft, top: desktopMenuTop }}
-            className={cn('fixed z-system-popover w-64', menuClassName)}
+            data-model-selector-layer="true"
+            className={cn('fixed z-system-popover w-[224px]', menuClassName)}
           >
             <div
               ref={menuPanelRef}
@@ -870,34 +814,42 @@ export function ModelSelector({
               data-enter-animation="main"
               style={{ maxHeight: desktopMenuMaxHeight }}
               className={cn(
-                'w-64 shrink-0 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
+                'w-[224px] shrink-0 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
                 styles.mainMenu
               )}
             >
               {!powerViewOpen ? (
                 <>
                   <div className="space-y-0.5">
-                    <button
-                      ref={modelButtonRef}
-                      type="button"
-                      data-testid="model-control-menu-model"
-                      onMouseEnter={activateModels}
-                      onPointerEnter={activateModels}
-                      onFocus={activateModels}
-                      onClick={activateModels}
-                      className={cn(
-                        'flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-normal leading-[18px]',
-                        modelRowActive
-                          ? 'bg-muted text-text-primary'
-                          : 'text-text-secondary hover:bg-muted hover:text-text-primary'
-                      )}
+                    <ModelSelectorFlyout
+                      open={modelRowActive}
+                      onOpenChange={nextOpen => setDesktopSubmenuOpen({ type: 'models' }, nextOpen)}
+                      collisionPadding={getDesktopCollisionPadding()}
+                      contentClassName="min-h-48"
+                      contentStyle={{ width: MODEL_SUBMENU_WIDTH }}
+                      anchor={
+                        <ModelSelectorMenuRow
+                          active={modelRowActive}
+                          label={t('workbench.model_version', '模型')}
+                          value={desktopModelLabel}
+                          testId="model-control-menu-model"
+                          onActivate={activateModels}
+                        />
+                      }
                     >
-                      <span className="min-w-0 flex-1 truncate">
-                        {t('workbench.model_version', '模型')}
-                      </span>
-                      <span className="max-w-24 truncate text-text-muted">{desktopModelLabel}</span>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-                    </button>
+                      <div className="space-y-0.5 py-0.5">
+                        {familyGroups.length <= 1
+                          ? renderDesktopModelOptions(desktopModels)
+                          : familyGroups.map(group => (
+                              <div key={group.config.id}>
+                                <div className="px-2 pb-0.5 pt-2 text-xs font-medium leading-4 text-text-muted first:pt-0.5">
+                                  {group.config.label}
+                                </div>
+                                {renderDesktopModelOptions(group.models, true)}
+                              </div>
+                            ))}
+                      </div>
+                    </ModelSelectorFlyout>
                     {desktopReasoningControl ? (
                       renderControlMenuItem(desktopReasoningControl)
                     ) : (
@@ -1000,60 +952,6 @@ export function ModelSelector({
                 </div>
               ) : null}
             </div>
-
-            {activeControl ? (
-              <div
-                key={`control:${activeControl.id}`}
-                ref={submenuPanelRef}
-                data-testid="model-selector-submenu"
-                data-enter-animation="submenu"
-                style={{
-                  top: submenuOffset,
-                  left: submenuLeft,
-                  width: submenuWidth,
-                  maxHeight: getDesktopSubmenuMaxHeight(),
-                }}
-                className={cn(
-                  'absolute w-72 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
-                  styles.submenu
-                )}
-              >
-                {renderControlSection(activeControl, {
-                  clearSubmenuOnHover: false,
-                  reasoningAsSlider: false,
-                })}
-              </div>
-            ) : activeDesktopSubmenu?.type === 'models' ? (
-              <div
-                key="models"
-                ref={submenuPanelRef}
-                data-testid="model-selector-submenu"
-                data-enter-animation="submenu"
-                style={{
-                  top: submenuOffset,
-                  left: submenuLeft,
-                  width: submenuWidth,
-                  maxHeight: getDesktopSubmenuMaxHeight(),
-                }}
-                className={cn(
-                  'absolute min-h-48 w-72 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
-                  styles.submenu
-                )}
-              >
-                <div className="space-y-0.5 py-0.5">
-                  {familyGroups.length <= 1
-                    ? renderDesktopModelOptions(desktopModels)
-                    : familyGroups.map(group => (
-                        <div key={group.config.id}>
-                          <div className="px-2 pb-0.5 pt-2 text-xs font-medium leading-4 text-text-muted first:pt-0.5">
-                            {group.config.label}
-                          </div>
-                          {renderDesktopModelOptions(group.models, true)}
-                        </div>
-                      ))}
-                </div>
-              </div>
-            ) : null}
           </div>,
           document.body
         )}
