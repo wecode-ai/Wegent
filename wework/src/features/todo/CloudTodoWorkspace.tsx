@@ -97,7 +97,6 @@ import {
   completeChangeRequestAutoRepair,
 } from '@/features/workbench/changeRequestStatus'
 import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
-import { runtimeMessagesToWorkbenchMessages } from '@/features/workbench/runtimePaneMessages'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
 import { AITableView } from '@/features/todo/AITableView'
@@ -109,7 +108,6 @@ import type {
   RuntimeWorkListResponse,
   User as UserProfile,
 } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
 import { stopLocalRobotQueueExecution } from './localRobotQueueDispatcher'
@@ -139,10 +137,7 @@ import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { BoardQuickCreate } from './BoardQuickCreate'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
 import { isRuntimeMyWorkItem, runtimeMyWorkItems } from './runtimeMyWork'
-import {
-  finalAssistantTranscriptMessage,
-  finalAssistantTranscriptText,
-} from './runtimeTaskResponsePreview'
+import { finalAssistantTranscriptText } from './runtimeTaskResponsePreview'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { IssueComposer } from './IssueComposer'
@@ -152,6 +147,7 @@ import { associateLoopItemTags, loopItemLocalProject } from '@/api/localProjectA
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } from './todoShared'
 import { AiChatModal } from './AiChatModal'
+import { BackgroundTaskStarter } from './BackgroundTaskStarter'
 import {
   shouldDeferWorkItemMoveUntilTaskCreated,
   shouldPrepareWorkItemTask,
@@ -466,7 +462,6 @@ type SelectedTaskBinding = Pick<
 type TaskComposerRequest = {
   workItemId: string
   initialInput: string
-  autoSubmit: boolean
   backgroundAfterSend: boolean
   workflowNodeId?: string
   inheritFromTask?: RuntimeTaskAddress | null
@@ -1282,7 +1277,6 @@ export function CloudTodoWorkspace({
       {
         signature: string
         text: string | null
-        message: WorkbenchMessage | null
       }
     >
   >({})
@@ -1502,13 +1496,6 @@ export function CloudTodoWorkspace({
                   taskId: binding.task_id,
                 })
               ]?.text ?? null,
-            finalResponseMessage:
-              runtimeFinalResponsePreviews[
-                runtimeConversationKey({
-                  deviceId: binding.device_id,
-                  taskId: binding.task_id,
-                })
-              ]?.message ?? null,
             finalResponseLoaded:
               runtimeConversationKey({
                 deviceId: binding.device_id,
@@ -2493,7 +2480,6 @@ export function CloudTodoWorkspace({
       return
     }
     for (const item of items) {
-      if (item.status !== 'in_review') continue
       for (const binding of itemTaskBindings[item.id] ?? []) {
         const addressKey = runtimeConversationKey({
           deviceId: binding.device_id,
@@ -2526,12 +2512,9 @@ export function CloudTodoWorkspace({
               return
             }
             const text = finalAssistantTranscriptText(transcript)
-            const message = finalAssistantTranscriptMessage({
-              messages: runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
-            })
             setRuntimeFinalResponsePreviews(current => ({
               ...current,
-              [addressKey]: { signature, text, message },
+              [addressKey]: { signature, text },
             }))
           })
           .catch(error => {
@@ -2547,7 +2530,7 @@ export function CloudTodoWorkspace({
             }
             setRuntimeFinalResponsePreviews(current => ({
               ...current,
-              [addressKey]: { signature, text: null, message: null },
+              [addressKey]: { signature, text: null },
             }))
           })
           .finally(() => {
@@ -2688,7 +2671,6 @@ export function CloudTodoWorkspace({
       setTaskComposerRequest({
         workItemId: item.id,
         initialInput: workItemTaskInput(item),
-        autoSubmit: false,
         backgroundAfterSend: true,
       })
       return
@@ -2785,7 +2767,6 @@ export function CloudTodoWorkspace({
         setTaskComposerRequest({
           workItemId: locatedUpdated.id,
           initialInput: workItemTaskInput(locatedUpdated),
-          autoSubmit: column.status === 'in_progress',
           backgroundAfterSend: column.status === 'in_progress',
         })
       } else if (
@@ -2991,10 +2972,10 @@ export function CloudTodoWorkspace({
         setSelectedItem(locatedItem)
       }
       if (input.createTask) {
+        setBackgroundTaskItemId(locatedItem.id)
         setTaskComposerRequest({
           workItemId: locatedItem.id,
           initialInput: workItemTaskInput(locatedItem),
-          autoSubmit: true,
           backgroundAfterSend: true,
         })
       }
@@ -3014,9 +2995,11 @@ export function CloudTodoWorkspace({
   const taskPanelOpen = Boolean(
     selectedItem &&
     aiChatProject &&
+    backgroundTaskItemId !== selectedItem.id &&
     (selectedTaskBinding?.work_item_id === selectedItem.id ||
       taskComposerRequest?.workItemId === selectedItem.id)
   )
+  const taskStartingInBackground = backgroundTaskItemId === selectedItem?.id
   const [issueResourceAttachmentState, setIssueResourceAttachmentState] = useState<{
     itemId: string | null
     attachments: CloudLoopItemAttachment[]
@@ -3063,6 +3046,73 @@ export function CloudTodoWorkspace({
 
   function closeTopPanel() {
     closeIssuePanelStack()
+  }
+
+  async function prepareSelectedItemTask(address: RuntimeTaskAddress) {
+    if (!selectedItem) return
+    const itemApi = apiForProject(selectedItemProject)
+    if (!itemApi) return
+    try {
+      const latest = await itemApi.getLoopItem(selectedItem.id)
+      const workflowNodeId =
+        taskComposerRequest?.workItemId === selectedItem.id
+          ? taskComposerRequest.workflowNodeId
+          : undefined
+      await itemApi.bindTask(latest.id, address, latest.title, workflowNodeId)
+      publishProjectSpaceTaskBindingChanged(address)
+      setBoardRefreshNonce(value => value + 1)
+      return async () => {
+        await itemApi.unbindTask(latest.id, address)
+        publishProjectSpaceTaskBindingChanged(address)
+        setBoardRefreshNonce(value => value + 1)
+      }
+    } catch (cause) {
+      setBoardError(cause instanceof Error ? cause.message : '关联任务与 Issue 失败，请重试')
+      setBoardRefreshNonce(value => value + 1)
+      throw cause
+    }
+  }
+
+  async function handleSelectedItemTaskCreated(
+    _address: RuntimeTaskAddress,
+    localProject: ProjectWithTasks | null
+  ) {
+    if (!selectedItem) return
+    const itemApi = apiForProject(selectedItemProject)
+    if (!itemApi) return
+    try {
+      const latest = await itemApi.getLoopItem(selectedItem.id)
+      const associatedTags =
+        isMyTasksBoard && localProject ? associateLoopItemTags(latest, localProject) : latest.tags
+      const associationChanged =
+        associatedTags.length !== latest.tags.length ||
+        associatedTags.some((tag, index) => tag !== latest.tags[index])
+      const updated =
+        latest.status === 'inbox' || associationChanged
+          ? await itemApi.updateLoopItem(latest.id, {
+              version: latest.version,
+              ...(latest.status === 'inbox' ? { status: 'pending' } : {}),
+              ...(associationChanged ? { tags: associatedTags } : {}),
+            })
+          : latest
+      const locatedUpdated = {
+        ...updated,
+        project_store: selectedItem.project_store,
+      }
+      setItems(current =>
+        current.map(item =>
+          item.id === locatedUpdated.id ? preferNewestLoopItemSnapshot(item, locatedUpdated) : item
+        )
+      )
+      setSelectedItem(current =>
+        current?.id === locatedUpdated.id
+          ? preferNewestLoopItemSnapshot(current, locatedUpdated)
+          : current
+      )
+    } catch (cause) {
+      setBoardError(cause instanceof Error ? cause.message : '关联任务与 Issue 失败，请重试')
+      setBoardRefreshNonce(value => value + 1)
+    }
   }
 
   useEffect(() => {
@@ -4302,7 +4352,7 @@ export function CloudTodoWorkspace({
             className="todo-panel-backdrop"
           />
         ) : null}
-        {selectedItem ? (
+        {selectedItem && !taskStartingInBackground ? (
           <div
             data-testid="cloud-todo-panel-stack"
             data-conversation-open={taskPanelOpen ? 'true' : 'false'}
@@ -4506,11 +4556,12 @@ export function CloudTodoWorkspace({
                       })
                     }
                   }
+                  const backgroundAfterSend = selectedItem.status === 'pending' && !workflowNodeId
+                  setBackgroundTaskItemId(backgroundAfterSend ? selectedItem.id : null)
                   setTaskComposerRequest({
                     workItemId: selectedItem.id,
                     initialInput: workflowNode ? workflowStageTaskInput(workflowNode) : '',
-                    autoSubmit: false,
-                    backgroundAfterSend: selectedItem.status === 'pending' && !workflowNodeId,
+                    backgroundAfterSend,
                     workflowNodeId,
                     inheritFromTask,
                   })
@@ -4688,11 +4739,6 @@ export function CloudTodoWorkspace({
                     ? taskComposerRequest.initialInput
                     : ''
                 }
-                autoSubmitInitialTaskInput={
-                  taskComposerRequest?.workItemId === selectedItem.id
-                    ? taskComposerRequest.autoSubmit
-                    : false
-                }
                 workflowNodeId={
                   taskComposerRequest?.workItemId === selectedItem.id
                     ? taskComposerRequest.workflowNodeId
@@ -4701,94 +4747,58 @@ export function CloudTodoWorkspace({
                 onClose={closeIssuePanelStack}
                 onBack={closeTaskPanel}
                 onAddressChange={address => {
-                  if (
+                  const backgroundAfterSend =
                     taskComposerRequest?.workItemId === selectedItem.id &&
                     taskComposerRequest.backgroundAfterSend
-                  ) {
-                    setBackgroundTaskItemId(selectedItem.id)
+                  if (backgroundAfterSend) {
+                    setBackgroundTaskItemId(null)
+                    setSelectedItem(null)
+                    setSelectedTaskBinding(null)
+                  } else {
+                    setSelectedTaskBinding({
+                      id: -Date.now(),
+                      device_id: address.deviceId,
+                      task_id: address.taskId,
+                      task_title: null,
+                      work_item_id: selectedItem.id,
+                    })
                   }
-                  setSelectedTaskBinding({
-                    id: -Date.now(),
-                    device_id: address.deviceId,
-                    task_id: address.taskId,
-                    task_title: null,
-                    work_item_id: selectedItem.id,
-                  })
                   setTaskComposerRequest(null)
                   setBoardRefreshNonce(value => value + 1)
                 }}
-                prepareTask={async address => {
-                  const itemApi = apiForProject(selectedItemProject)
-                  if (!itemApi) return
-                  try {
-                    const latest = await itemApi.getLoopItem(selectedItem.id)
-                    const workflowNodeId =
-                      taskComposerRequest?.workItemId === selectedItem.id
-                        ? taskComposerRequest.workflowNodeId
-                        : undefined
-                    await itemApi.bindTask(latest.id, address, latest.title, workflowNodeId)
-                    publishProjectSpaceTaskBindingChanged(address)
-                    setBoardRefreshNonce(value => value + 1)
-                    return async () => {
-                      await itemApi.unbindTask(latest.id, address)
-                      publishProjectSpaceTaskBindingChanged(address)
-                      setBoardRefreshNonce(value => value + 1)
-                    }
-                  } catch (cause) {
-                    setBoardError(
-                      cause instanceof Error ? cause.message : '关联任务与 Issue 失败，请重试'
-                    )
-                    setBoardRefreshNonce(value => value + 1)
-                    throw cause
-                  }
-                }}
-                onTaskCreated={async (_address, localProject) => {
-                  const itemApi = apiForProject(selectedItemProject)
-                  if (!itemApi) return
-                  try {
-                    const latest = await itemApi.getLoopItem(selectedItem.id)
-                    const associatedTags =
-                      isMyTasksBoard && localProject
-                        ? associateLoopItemTags(latest, localProject)
-                        : latest.tags
-                    const associationChanged =
-                      associatedTags.length !== latest.tags.length ||
-                      associatedTags.some((tag, index) => tag !== latest.tags[index])
-                    const updated =
-                      latest.status === 'inbox' || associationChanged
-                        ? await itemApi.updateLoopItem(latest.id, {
-                            version: latest.version,
-                            ...(latest.status === 'inbox' ? { status: 'pending' } : {}),
-                            ...(associationChanged ? { tags: associatedTags } : {}),
-                          })
-                        : latest
-                    const locatedUpdated = {
-                      ...updated,
-                      project_store: selectedItem.project_store,
-                    }
-                    setItems(current =>
-                      current.map(item =>
-                        item.id === locatedUpdated.id
-                          ? preferNewestLoopItemSnapshot(item, locatedUpdated)
-                          : item
-                      )
-                    )
-                    setSelectedItem(current =>
-                      current?.id === locatedUpdated.id
-                        ? preferNewestLoopItemSnapshot(current, locatedUpdated)
-                        : current
-                    )
-                  } catch (cause) {
-                    setBoardError(
-                      cause instanceof Error ? cause.message : '关联任务与 Issue 失败，请重试'
-                    )
-                    setBoardRefreshNonce(value => value + 1)
-                  }
-                }}
+                prepareTask={prepareSelectedItemTask}
+                onTaskCreated={handleSelectedItemTaskCreated}
                 onOpenRuntimeTask={onOpenRuntimeTask}
               />
             ) : null}
           </div>
+        ) : null}
+        {selectedItem &&
+        aiChatProject &&
+        taskStartingInBackground &&
+        taskComposerRequest?.workItemId === selectedItem.id ? (
+          <BackgroundTaskStarter
+            project={aiChatProject}
+            localProjects={localProjects}
+            task={selectedItem}
+            input={taskComposerRequest.initialInput}
+            initialLocalProjectId={
+              localProjectIdForItem(selectedItem) ??
+              (isMyTasksBoard ? selectedLocalProject?.id : null)
+            }
+            inheritFromTask={taskComposerRequest.inheritFromTask}
+            workflowNodeId={taskComposerRequest.workflowNodeId}
+            onAddressChange={() => {
+              setBackgroundTaskItemId(null)
+              setSelectedItem(null)
+              setSelectedTaskBinding(null)
+              setTaskComposerRequest(null)
+              setBoardRefreshNonce(value => value + 1)
+            }}
+            prepareTask={prepareSelectedItemTask}
+            onTaskCreated={handleSelectedItemTaskCreated}
+            onError={setBoardError}
+          />
         ) : null}
         {selectedProject && projectAssistantOpen && !selectedItem ? (
           <ProjectSpaceChatSidebar

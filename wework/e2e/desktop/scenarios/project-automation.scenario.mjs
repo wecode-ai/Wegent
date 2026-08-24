@@ -1223,6 +1223,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       }
     )
     const managerExecutionShortcut = `${activeBoard} [data-testid="cloud-todo-workflow-manager-open-execution"]`
+    await control.command('waitFor', managerExecutionShortcut, {
+      text: '查看执行细节',
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('scrollIntoView', managerExecutionShortcut)
     await control.command('waitFor', managerExecutionShortcut, {
       text: '查看执行细节',

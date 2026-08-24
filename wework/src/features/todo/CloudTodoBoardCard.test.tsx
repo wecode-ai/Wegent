@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -54,7 +54,7 @@ const snapshot: TaskChangeRequestSnapshot = {
 }
 
 describe('CloudTodoBoardCard', () => {
-  it('opens the pull request popup toward the card content', async () => {
+  it('renders the pull request popup outside the overflow-hidden board card', async () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(snapshot)
 
     render(
@@ -84,8 +84,175 @@ describe('CloudTodoBoardCard', () => {
 
     await userEvent.click(screen.getByTestId('cloud-todo-card-change-request-WEG-85-85'))
 
-    expect(screen.getByTestId('cloud-todo-card-change-request-WEG-85-85-popover')).toHaveClass(
-      'left-0'
+    const popover = screen.getByTestId('cloud-todo-card-change-request-WEG-85-85-popover')
+    expect(popover.parentElement).toBe(document.body)
+    expect(popover).toHaveClass('fixed', 'z-system-popover')
+  })
+
+  it('aligns the pull request status as a trailing action beside compact progress', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(snapshot)
+
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup',
+            running: false,
+            changeRequestTarget: snapshot.target,
+            finalResponsePreview: '已完成布局修复',
+            finalResponseLoaded: true,
+          },
+        ]}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
     )
+
+    const summary = screen.getByTestId('cloud-todo-card-task-summary-WEG-85-85')
+    const changeRequest = screen.getByTestId('cloud-todo-card-change-request-WEG-85-85')
+    const response = screen.getByTestId('cloud-todo-card-final-response-WEG-85')
+
+    expect(summary).toHaveClass('relative')
+    expect(changeRequest.parentElement?.parentElement).toHaveClass('absolute', 'right-0', 'top-0')
+    expect(response).toHaveClass('h-5', 'truncate', 'pr-7')
+    expect(response).not.toHaveClass('min-h-[60px]', 'border-l', 'pl-2')
+    expect(summary).not.toHaveTextContent('Fix the board popup')
+    expect(screen.getByTestId('cloud-todo-card-tasks-WEG-85')).not.toHaveClass('border-t')
+  })
+
+  it('uses spacing instead of full-width separators between card sections', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup',
+            running: false,
+            finalResponsePreview: '已完成布局修复',
+            finalResponseLoaded: true,
+          },
+        ]}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: true,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    const priority = screen.getByText('普通')
+    expect(priority.parentElement).not.toHaveClass('border-t')
+    expect(screen.getByTestId('cloud-todo-card-tasks-WEG-85')).not.toHaveClass('border-t')
+  })
+
+  it('highlights unread cards and keeps full final content in the hover preview', async () => {
+    render(
+      <CloudTodoBoardCard
+        item={{ ...item, is_unread: true }}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup',
+            running: false,
+            finalResponsePreview:
+              '第一行：完成布局\n第二行：保留工具层级\n第三行：展示完整回复\n第四行：展示验证结果\n第五行：展示提交状态\n第六行：等待确认',
+            finalResponseLoaded: true,
+          },
+        ]}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-card-drop-WEG-85')).toHaveClass(
+      'border-blue-500/15',
+      'bg-blue-500/[0.04]'
+    )
+    expect(screen.getByTestId('cloud-todo-card-final-response-WEG-85')).toHaveTextContent(
+      '第六行：等待确认'
+    )
+
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
+
+    const fullResponse = await screen.findByTestId('cloud-todo-card-progress-response-WEG-85-85')
+    expect(fullResponse).toHaveTextContent('第一行：完成布局')
+    expect(fullResponse).toHaveTextContent('第六行：等待确认')
+    expect(fullResponse).toHaveClass('max-h-60', 'overflow-y-auto', 'whitespace-pre-wrap')
+    expect(fullResponse).not.toHaveClass('line-clamp-3')
+  })
+
+  it('keeps repeated task text out of the card and narrows the full-card hover preview', async () => {
+    render(
+      <CloudTodoBoardCard
+        item={{ ...item, description: 'This description must be hidden from the card' }}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup',
+            running: true,
+            finalResponsePreview: '已定位第一个任务的当前回复',
+          },
+          {
+            id: 86,
+            device_id: 'local',
+            task_id: 'task-86',
+            task_title: 'Verify the hover behavior',
+            running: true,
+            finalResponsePreview: '正在校验第二个任务的运行过程',
+          },
+        ]}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    const card = screen.getByTestId('cloud-todo-card-WEG-85')
+    expect(card).not.toHaveTextContent('This description must be hidden from the card')
+    expect(screen.getByTestId('cloud-todo-card-tasks-WEG-85')).not.toHaveTextContent(
+      'Fix the board popup'
+    )
+
+    fireEvent.mouseEnter(card)
+    const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
+    expect(popup).toHaveTextContent('Fix the board popup')
+    expect(popup).toHaveTextContent('Verify the hover behavior')
+
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-progress-task-WEG-85-86'))
+    expect(screen.queryByText('Fix the board popup')).not.toBeInTheDocument()
+    expect(screen.getByText('Verify the hover behavior')).toBeInTheDocument()
   })
 })

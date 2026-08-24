@@ -2842,6 +2842,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     }
     launch_config
         .config_overrides
+        .extend(super::pnpm_worktree::codex_config_overrides(request));
+    launch_config
+        .config_overrides
         .extend(codex_runtime_default_config_overrides());
     launch_config
         .config_overrides

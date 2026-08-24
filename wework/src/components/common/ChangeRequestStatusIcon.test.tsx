@@ -37,7 +37,43 @@ describe('ChangeRequestStatusIcon', () => {
     )
   })
 
-  it('supports positioning the trigger and opening the popover toward the content area', async () => {
+  it('renders merge queue change requests with yellow icons', () => {
+    const snapshot: TaskChangeRequestSnapshot = {
+      target: {
+        deviceId: 'local',
+        taskId: 'task-48',
+        workspacePath: '/workspace',
+        remoteUrl: 'https://github.com/wecode-ai/Wegent.git',
+        branch: 'feature/pr-status',
+      },
+      changeRequest: {
+        provider: 'github',
+        number: 48,
+        url: 'https://github.com/wecode-ai/Wegent/pull/48',
+        title: 'Wait for merge queue',
+        state: 'open',
+        draft: false,
+        checks: 'pending',
+        mergeability: 'mergeable',
+        mergeQueue: 'queued',
+      },
+      fetchedAt: '2026-08-21T00:00:00Z',
+      stale: false,
+      error: null,
+    }
+
+    render(<ChangeRequestStatusIcon snapshot={snapshot} testId="queued-change-request" />)
+
+    expect(screen.getByTestId('queued-change-request').querySelectorAll('svg')).toHaveLength(2)
+    expect(screen.getByTestId('queued-change-request').querySelectorAll('svg')[0]).toHaveClass(
+      'text-amber-500'
+    )
+    expect(
+      screen.getByTestId('queued-change-request').querySelectorAll('svg')[1].parentElement
+    ).toHaveClass('text-amber-500')
+  })
+
+  it('renders the popover in the document layer so parent overflow cannot clip it', async () => {
     const snapshot: TaskChangeRequestSnapshot = {
       target: {
         deviceId: 'local',
@@ -76,8 +112,9 @@ describe('ChangeRequestStatusIcon', () => {
 
     await userEvent.click(trigger)
 
-    expect(screen.getByTestId('positioned-change-request-popover')).toHaveClass('left-0')
-    expect(screen.getByTestId('positioned-change-request-popover')).not.toHaveClass('right-0')
+    const popover = screen.getByTestId('positioned-change-request-popover')
+    expect(popover.parentElement).toBe(document.body)
+    expect(popover).toHaveClass('fixed', 'z-system-popover')
   })
 
   it('closes the popover on outside pointer down and Escape', async () => {

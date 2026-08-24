@@ -75,6 +75,7 @@ const PLUGIN_MUTATION_LOCK_FILE: &str = "plugin-mutations.lock";
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
 type SharedExecutorInner = Arc<Mutex<LocalExecutorInner>>;
+type SharedExecutorChild = Arc<Mutex<Option<LocalExecutorChild>>>;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -224,7 +225,7 @@ impl Clone for LocalExecutorState {
 
 #[derive(Default)]
 struct LocalExecutorInner {
-    child: Option<LocalExecutorChild>,
+    child: Option<SharedExecutorChild>,
     pending: HashMap<String, PendingSender>,
     backend_connection: Option<LocalExecutorBackendConnection>,
     running: bool,
@@ -458,7 +459,7 @@ pub fn shutdown_local_executor(state: &LocalExecutorState, reason: &str) {
     });
 
     if let Some(child) = child {
-        child.kill();
+        kill_executor_child(child);
     } else {
         audit_local_executor_signal(format!(
             "event=executor_shutdown_no_owned_child sender_pid={} reason={reason}",
@@ -2032,7 +2033,7 @@ fn mark_child_terminated_for_generation(
     inner: &SharedExecutorInner,
     generation: u64,
     message: String,
-) -> Option<LocalExecutorChild> {
+) -> Option<SharedExecutorChild> {
     if let Ok(mut inner) = inner.lock() {
         if inner.generation != generation {
             return None;
@@ -2230,11 +2231,34 @@ fn is_terminal_response_event(event: &str) -> bool {
     )
 }
 
-fn write_request_line(inner: &mut LocalExecutorInner, line: &str) -> Result<(), String> {
-    let Some(child) = inner.child.as_mut() else {
-        return Err("Local executor stdio is not connected".to_string());
-    };
-    child.write(line.as_bytes())
+fn kill_executor_child(child: SharedExecutorChild) {
+    if let Ok(Some(child)) = child.lock().map(|mut child| child.take()) {
+        child.kill();
+    }
+}
+
+fn executor_child_is_running(child: &SharedExecutorChild) -> bool {
+    child
+        .try_lock()
+        .map(|mut child| {
+            child
+                .as_mut()
+                .map(LocalExecutorChild::is_running)
+                .unwrap_or(false)
+        })
+        .unwrap_or(true)
+}
+
+fn write_request_line(child: &SharedExecutorChild, line: &str) -> Result<(), String> {
+    // The state mutex only guards executor metadata. Keeping it out of this
+    // potentially blocking pipe write lets the stdout reader resolve responses.
+    let mut child = child
+        .lock()
+        .map_err(|_| "Failed to lock local executor child".to_string())?;
+    child
+        .as_mut()
+        .ok_or_else(|| "Local executor stdio is not connected".to_string())?
+        .write(line.as_bytes())
 }
 
 fn drain_process_output(
@@ -2261,7 +2285,7 @@ fn register_spawned_child(
         .lock()
         .map_err(|_| "Failed to lock local executor state".to_string())?;
     inner.generation = inner.generation.saturating_add(1);
-    inner.child = Some(child);
+    inner.child = Some(Arc::new(Mutex::new(Some(child))));
     inner.running = true;
     inner.ready = false;
     inner.codex_initialize_elapsed_ms = None;
@@ -2320,7 +2344,7 @@ fn finish_stdio_reader(
     fail_pending_requests_for_generation(state, generation, message);
     if terminate_child {
         if let Some(child) = child {
-            child.kill();
+            kill_executor_child(child);
         }
     }
 }
@@ -2497,7 +2521,7 @@ fn stop_failed_sidecar_start(state: &LocalExecutorState, error: &str) {
         inner.child.take()
     });
     if let Some(child) = child {
-        child.kill();
+        kill_executor_child(child);
     }
     fail_pending_requests(state, error.to_string());
 }
@@ -2545,8 +2569,8 @@ async fn start_executor_if_needed_unlocked(
         if inner.running && inner.ready {
             if inner
                 .child
-                .as_mut()
-                .map(LocalExecutorChild::is_running)
+                .as_ref()
+                .map(executor_child_is_running)
                 .unwrap_or(false)
             {
                 return Ok(());
@@ -2557,7 +2581,7 @@ async fn start_executor_if_needed_unlocked(
         inner.child.take()
     };
     if let Some(child) = child_to_kill {
-        child.kill();
+        kill_executor_child(child);
     }
     if let Err(error) = spawn_sidecar(app, state).await {
         set_executor_error(state, error.clone());
@@ -2612,11 +2636,15 @@ async fn send_executor_request_with_timeout(
         serde_json::to_string(&message).map_err(|error| error.to_string())?
     );
 
-    {
+    let child = {
         let mut inner = state
             .inner
             .lock()
             .map_err(|_| "Failed to lock local executor state".to_string())?;
+        let child = inner
+            .child
+            .clone()
+            .ok_or_else(|| "Local executor stdio is not connected".to_string())?;
         inner.pending.insert(request_id.clone(), sender);
         let pending_count = inner.pending.len();
         if log_request {
@@ -2624,13 +2652,15 @@ async fn send_executor_request_with_timeout(
                 "Local executor IPC request started: request_id={request_id}, method={method}, pending_count={pending_count}"
             );
         }
-        if let Err(error) = write_request_line(&mut inner, &line) {
-            inner.pending.remove(&request_id);
-            log::warn!(
-                "Local executor IPC request write failed: request_id={request_id}, method={method}, error={error}"
-            );
-            return Err(error);
-        }
+        child
+    };
+
+    if let Err(error) = write_request_line(&child, &line) {
+        remove_pending_request(&state.inner, &request_id);
+        log::warn!(
+            "Local executor IPC request write failed: request_id={request_id}, method={method}, error={error}"
+        );
+        return Err(error);
     }
 
     let inner = state.inner.clone();
@@ -7771,7 +7801,7 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
 
     #[cfg(unix)]
     #[test]
-    fn configured_sidecar_kill_stops_grandchild_process_group() {
+    fn shutdown_stops_configured_sidecar_process_group_before_returning() {
         let dir = std::env::temp_dir().join(format!(
             "wework-local-executor-process-group-{}",
             std::process::id()
@@ -7810,18 +7840,28 @@ wait
             .stderr(Stdio::piped());
         configure_managed_process_group(&mut command);
         let child = command.spawn().expect("sidecar should start");
-        let child = LocalExecutorChild::Process(ManagedProcessChild::new(child));
+        let child_pid = child.id();
+        let state = LocalExecutorState::default();
+        register_spawned_child(
+            &state,
+            LocalExecutorChild::Process(ManagedProcessChild::new(child)),
+        )
+        .expect("sidecar should be registered");
         let grandchild_pid = match wait_for_pid_file(&pid_path, Duration::from_secs(10)) {
             Some(pid) => pid,
             None => {
-                child.kill();
+                shutdown_local_executor(&state, "test_cleanup");
                 panic!("grandchild pid");
             }
         };
         let _cleanup = ProcessCleanup::new(grandchild_pid);
 
-        child.kill();
+        shutdown_local_executor(&state, "test_shutdown");
 
+        assert!(
+            !process_alive(child_pid),
+            "sidecar process should be stopped before kill returns"
+        );
         assert!(
             wait_until_dead(grandchild_pid, Duration::from_secs(2)),
             "grandchild process should be stopped when sidecar is killed"

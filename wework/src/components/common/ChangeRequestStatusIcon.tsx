@@ -10,12 +10,14 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   changeRequestVisualStatus,
   type ChangeRequestVisualStatus,
 } from '@/features/workbench/changeRequestStatus'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
 import type { ChangeRequest } from '@/types/environment'
@@ -56,14 +58,14 @@ const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphCo
     badgeClassName: 'text-red-500',
   },
   merge_queue_queued: {
-    mainClassName: 'text-text-secondary',
+    mainClassName: 'text-amber-500',
     badgeIcon: Clock3,
-    badgeClassName: 'text-text-muted',
+    badgeClassName: 'text-amber-500',
   },
   merge_queue_checking: {
-    mainClassName: 'text-text-secondary',
+    mainClassName: 'text-amber-500',
     badgeIcon: Loader2,
-    badgeClassName: 'text-text-muted',
+    badgeClassName: 'text-amber-500',
     badgeIconClassName: 'animate-spin',
   },
   merge_queue_failed: {
@@ -165,13 +167,24 @@ export function ChangeRequestStatusIcon({
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLSpanElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLSpanElement>(null)
   const changeRequest = snapshot?.changeRequest
+  const popoverLayout = useAnchoredPortalMenu(open, triggerRef, popoverRef, {
+    align: popoverAlign === 'left' ? 'start' : 'end',
+    gap: 4,
+  })
 
   useEffect(() => {
     if (!open) return
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!(event.target instanceof Node) || rootRef.current?.contains(event.target)) return
+      if (
+        !(event.target instanceof Node) ||
+        rootRef.current?.contains(event.target) ||
+        popoverRef.current?.contains(event.target)
+      ) {
+        return
+      }
       setOpen(false)
     }
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -196,7 +209,7 @@ export function ChangeRequestStatusIcon({
   return (
     <span
       ref={rootRef}
-      className={cn('relative inline-flex shrink-0', className)}
+      className={cn('inline-flex shrink-0', className)}
       onClick={event => event.stopPropagation()}
     >
       <Tooltip label={`${prefix}${changeRequest.number} · ${label}`}>
@@ -216,60 +229,67 @@ export function ChangeRequestStatusIcon({
           />
         </button>
       </Tooltip>
-      {open ? (
-        <span
-          data-testid={`${testId}-popover`}
-          className={cn(
-            'absolute top-7 z-50 w-64 rounded-xl border border-border bg-popover p-3 text-left shadow-lg',
-            popoverAlign === 'left' ? 'left-0' : 'right-0'
-          )}
-        >
-          <span className="block truncate text-sm font-medium text-text-primary">
-            {prefix}
-            {changeRequest.number} · {changeRequest.title}
-          </span>
-          <span className="mt-1 block text-xs text-text-secondary">{label}</span>
-          {changeRequest.mergeQueueReason ? (
-            <span className="mt-1 line-clamp-3 block text-xs text-text-muted">
-              {changeRequest.mergeQueueReason}
-            </span>
-          ) : null}
-          {snapshot?.stale ? (
-            <span className="mt-1 block text-xs text-amber-600">
-              {t('workbench.change_request_status_stale', '状态可能已过期')}
-            </span>
-          ) : null}
-          <span className="mt-3 flex items-center justify-end gap-2">
-            <button
-              type="button"
-              data-testid={`${testId}-open`}
-              onClick={() => {
-                setOpen(false)
-                void openExternalUrl(changeRequest.url)
+      {open && typeof document !== 'undefined'
+        ? createPortal(
+            <span
+              ref={popoverRef}
+              data-testid={`${testId}-popover`}
+              style={{
+                left: popoverLayout?.left ?? 0,
+                maxHeight: popoverLayout?.maxHeight,
+                top: popoverLayout?.top ?? 0,
+                visibility: popoverLayout ? 'visible' : 'hidden',
               }}
-              className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+              className="fixed z-system-popover w-64 overflow-y-auto rounded-xl border border-border bg-popover p-3 text-left shadow-lg"
             >
-              {t('workbench.change_request_open', '打开 PR')}
-            </button>
-            {onContinueRepair ? (
-              <button
-                type="button"
-                data-testid={`${testId}-repair`}
-                disabled={repairing}
-                onClick={() => {
-                  setOpen(false)
-                  void onContinueRepair()
-                }}
-                className="h-7 rounded-md bg-text-primary px-2 text-xs text-background disabled:opacity-50"
-              >
-                {repairing
-                  ? t('workbench.change_request_repairing', 'AI 修复中')
-                  : t('workbench.change_request_continue_repair', '让 AI 继续修复')}
-              </button>
-            ) : null}
-          </span>
-        </span>
-      ) : null}
+              <span className="block truncate text-sm font-medium text-text-primary">
+                {prefix}
+                {changeRequest.number} · {changeRequest.title}
+              </span>
+              <span className="mt-1 block text-xs text-text-secondary">{label}</span>
+              {changeRequest.mergeQueueReason ? (
+                <span className="mt-1 line-clamp-3 block text-xs text-text-muted">
+                  {changeRequest.mergeQueueReason}
+                </span>
+              ) : null}
+              {snapshot?.stale ? (
+                <span className="mt-1 block text-xs text-amber-600">
+                  {t('workbench.change_request_status_stale', '状态可能已过期')}
+                </span>
+              ) : null}
+              <span className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  data-testid={`${testId}-open`}
+                  onClick={() => {
+                    setOpen(false)
+                    void openExternalUrl(changeRequest.url)
+                  }}
+                  className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                >
+                  {t('workbench.change_request_open', '打开 PR')}
+                </button>
+                {onContinueRepair ? (
+                  <button
+                    type="button"
+                    data-testid={`${testId}-repair`}
+                    disabled={repairing}
+                    onClick={() => {
+                      setOpen(false)
+                      void onContinueRepair()
+                    }}
+                    className="h-7 rounded-md bg-text-primary px-2 text-xs text-background disabled:opacity-50"
+                  >
+                    {repairing
+                      ? t('workbench.change_request_repairing', 'AI 修复中')
+                      : t('workbench.change_request_continue_repair', '让 AI 继续修复')}
+                  </button>
+                ) : null}
+              </span>
+            </span>,
+            document.body
+          )
+        : null}
     </span>
   )
 }

@@ -12,7 +12,6 @@ import {
 import type { CloudLoopItem } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
-import { AssistantMessage } from '@/components/chat/MessageList'
 import { AssistantThinkingIndicator } from '@/components/chat/AssistantThinkingIndicator'
 import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
 import {
@@ -96,14 +95,8 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
         ) : null}
         <span className="line-clamp-1 min-w-0">{item.title}</span>
       </span>
-      {item.description ? (
-        <span className="mt-1 line-clamp-2 text-sm leading-[18px] text-text-secondary">
-          {item.description}
-        </span>
-      ) : null}
-
       {display.showTags && tags.length > 0 ? (
-        <span className="mt-3 flex min-w-0 items-center gap-1.5 overflow-hidden">
+        <span className="mt-2 flex min-w-0 items-center gap-1.5 overflow-hidden">
           {tags.slice(0, 2).map((tag, index) => (
             <span
               key={tag}
@@ -124,7 +117,7 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
       ) : null}
 
       {showFooter ? (
-        <span className="mt-3 flex min-h-6 items-center gap-3 border-t border-border/60 pt-2.5 text-xs text-text-muted">
+        <span className="mt-2.5 flex min-h-6 items-center gap-3 text-xs text-text-muted">
           {display.showPriority ? (
             <span
               className={cn(
@@ -174,7 +167,6 @@ export interface CloudTodoBoardTaskBinding {
   running: boolean
   changeRequestTarget?: TaskChangeRequestTarget | null
   finalResponsePreview?: string | null
-  finalResponseMessage?: WorkbenchMessage | null
   finalResponseLoaded?: boolean
 }
 
@@ -210,8 +202,10 @@ export function CloudTodoBoardCard({
 }: CloudTodoBoardCardProps) {
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [hoveredTaskBindingId, setHoveredTaskBindingId] = useState<number | null>(null)
   const hasActiveTask = isLoopItemExecutionActive(item)
-  const runningTaskBinding = taskBindings.find(binding => binding.running)
+  const runningTaskBindings = taskBindings.filter(binding => binding.running)
+  const runningTaskBinding = runningTaskBindings[0]
   const currentTaskBinding = runningTaskBinding ?? taskBindings[0]
   const changeRequestSnapshot = useTaskChangeRequest(
     changeRequestMonitor,
@@ -225,37 +219,12 @@ export function CloudTodoBoardCard({
       stoppedTaskNeedsAttention(changeRequestSnapshot?.changeRequest ?? null))
   )
   const [repairingChangeRequest, setRepairingChangeRequest] = useState(false)
-  const currentTaskAddress = useMemo<RuntimeTaskAddress | null>(
-    () =>
-      currentTaskBinding
-        ? {
-            deviceId: currentTaskBinding.device_id,
-            taskId: currentTaskBinding.task_id,
-          }
-        : null,
-    [currentTaskBinding]
-  )
-  const currentActivityAddress = useMemo<RuntimeTaskAddress | null>(
-    () =>
-      currentTaskBinding && (currentTaskBinding.running || hasActiveTask)
-        ? {
-            deviceId: currentTaskBinding.device_id,
-            taskId: currentTaskBinding.task_id,
-          }
-        : null,
-    [currentTaskBinding, hasActiveTask]
-  )
-  const currentActivity = useRuntimeTaskActivity(currentActivityAddress)
-  const currentTaskMessage = useRuntimeTaskLatestAssistantMessage(currentTaskAddress)
-  const cachedFinalResponsePreview = useRuntimeTaskFinalResponse(
-    item.status === 'in_review' ? currentTaskAddress : null
-  )
-  const finalResponseText = currentTaskBinding?.finalResponsePreview || cachedFinalResponsePreview
-  const finalResponsePreview = finalResponseText ? latestResponseLine(finalResponseText) : null
-  const finalResponseLoaded =
-    currentTaskBinding?.finalResponseLoaded || cachedFinalResponsePreview !== null
-  const showFinalResponsePreview =
-    item.status === 'in_review' && finalResponseLoaded && Boolean(finalResponsePreview)
+  const progressTaskBindings =
+    runningTaskBindings.length > 0
+      ? runningTaskBindings
+      : showCurrentTask && currentTaskBinding
+        ? [currentTaskBinding]
+        : []
   const {
     attributes,
     listeners,
@@ -269,98 +238,95 @@ export function CloudTodoBoardCard({
   const { isOver, setNodeRef: setDropRef } = useDroppable({ id: `todo-card:${item.id}` })
 
   return (
-    <article
-      ref={node => {
-        setDragRef(node)
-        setDropRef(node)
-      }}
-      data-testid={`cloud-todo-card-drop-${item.id}`}
-      style={{ transform: CSS.Translate.toString(transform) }}
-      className={cn(
-        'group relative h-fit w-full touch-none overflow-hidden rounded-xl border border-border bg-background text-left shadow-sm transition hover:-translate-y-px hover:border-text-primary/15 hover:shadow-md',
-        isDragging && 'opacity-25 shadow-none',
-        isOver && !isDragging && 'border-focus ring-1 ring-focus/50'
-      )}
+    <HoverCard
+      testId={`cloud-todo-card-progress-popup-${item.id}`}
+      interactive
+      openOnFocus
+      estimatedWidth={440}
+      estimatedHeight={360}
+      cardClassName="w-[440px] max-w-[calc(100vw-1rem)]"
+      content={
+        <RuntimeTaskProgressPopup
+          item={item}
+          bindings={progressTaskBindings}
+          activeBindingId={hasActiveTask ? (currentTaskBinding?.id ?? null) : null}
+          focusedBindingId={hoveredTaskBindingId}
+          onFocusBinding={setHoveredTaskBindingId}
+        />
+      }
     >
-      {item.can_edit !== false && !archiveDisabled ? (
-        <div className="absolute right-2 top-2 z-20">
-          <Tooltip label={t('todo.project_actions', '项目操作')} side="bottom" align="end">
-            <button
-              type="button"
-              data-testid={`cloud-todo-card-more-${item.id}`}
-              onClick={event => {
-                event.stopPropagation()
-                setMenuOpen(current => !current)
-              }}
-              className="flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
-              aria-label={t('todo.project_actions', '项目操作')}
-              aria-expanded={menuOpen}
-            >
-              <Ellipsis className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
-          {menuOpen ? (
-            <div
-              data-testid={`cloud-todo-card-menu-${item.id}`}
-              className="absolute right-0 top-8 w-32 rounded-lg border border-border bg-background p-1 shadow-md"
-            >
+      <article
+        ref={node => {
+          setDragRef(node)
+          setDropRef(node)
+        }}
+        data-testid={`cloud-todo-card-drop-${item.id}`}
+        style={{ transform: CSS.Translate.toString(transform) }}
+        className={cn(
+          'group relative h-fit w-full touch-none overflow-hidden rounded-xl border text-left shadow-sm transition hover:-translate-y-px hover:border-text-primary/15 hover:shadow-md',
+          item.is_unread ? 'border-blue-500/15 bg-blue-500/[0.04]' : 'border-border bg-background',
+          isDragging && 'opacity-25 shadow-none',
+          isOver && !isDragging && 'border-focus ring-1 ring-focus/50'
+        )}
+      >
+        {item.can_edit !== false && !archiveDisabled ? (
+          <div className="absolute right-2 top-2 z-20">
+            <Tooltip label={t('todo.project_actions', '项目操作')} side="bottom" align="end">
               <button
                 type="button"
-                data-testid={`cloud-todo-card-archive-${item.id}`}
+                data-testid={`cloud-todo-card-more-${item.id}`}
                 onClick={event => {
                   event.stopPropagation()
-                  setMenuOpen(false)
-                  onArchive()
+                  setMenuOpen(current => !current)
                 }}
-                className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
+                className="flex h-7 w-7 items-center justify-center rounded-md bg-background/90 text-text-muted opacity-0 shadow-sm transition hover:text-text-primary focus:opacity-100 group-hover:opacity-100"
+                aria-label={t('todo.project_actions', '项目操作')}
+                aria-expanded={menuOpen}
               >
-                <Archive className="h-3.5 w-3.5" />
-                归档任务
+                <Ellipsis className="h-3.5 w-3.5" />
               </button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-      <button
-        type="button"
-        data-testid={`cloud-todo-card-${item.id}`}
-        disabled={item.can_view_detail === false}
-        onClick={onClick}
-        className="w-full px-3.5 pb-3 pt-3.5 text-left disabled:cursor-default"
-        {...listeners}
-        {...attributes}
-      >
-        <CloudTodoCardContent item={item} display={display} agentNames={agentNames} />
-      </button>
-
-      {currentTaskBinding && showCurrentTask ? (
-        <HoverCard
-          testId={`cloud-todo-card-progress-popup-${item.id}`}
-          interactive
-          openOnFocus
-          estimatedWidth={360}
-          estimatedHeight={240}
-          cardClassName="w-[360px] max-w-[calc(100vw-1rem)]"
-          content={
-            <RuntimeTaskProgressPopup
-              item={item}
-              binding={currentTaskBinding}
-              activity={currentActivity}
-              message={
-                currentActivity.active
-                  ? currentTaskMessage
-                  : (currentTaskBinding.finalResponseMessage ?? currentTaskMessage)
-              }
-              finalResponseText={finalResponseText}
-            />
-          }
+            </Tooltip>
+            {menuOpen ? (
+              <div
+                data-testid={`cloud-todo-card-menu-${item.id}`}
+                className="absolute right-0 top-8 w-32 rounded-lg border border-border bg-background p-1 shadow-md"
+              >
+                <button
+                  type="button"
+                  data-testid={`cloud-todo-card-archive-${item.id}`}
+                  onClick={event => {
+                    event.stopPropagation()
+                    setMenuOpen(false)
+                    onArchive()
+                  }}
+                  className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
+                >
+                  <Archive className="h-3.5 w-3.5" />
+                  归档任务
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        <button
+          type="button"
+          data-testid={`cloud-todo-card-${item.id}`}
+          disabled={item.can_view_detail === false}
+          onClick={onClick}
+          className="w-full px-3.5 pb-3 pt-3.5 text-left disabled:cursor-default"
+          {...listeners}
+          {...attributes}
         >
+          <CloudTodoCardContent item={item} display={display} agentNames={agentNames} />
+        </button>
+
+        {progressTaskBindings.length > 0 ? (
           <div
             role={onOpenActivity ? 'button' : undefined}
             tabIndex={onOpenActivity ? 0 : undefined}
             aria-label={
               onOpenActivity
-                ? currentTaskBinding.task_title || currentTaskBinding.task_id
+                ? currentTaskBinding?.task_title || currentTaskBinding?.task_id
                 : undefined
             }
             data-testid={`cloud-todo-card-tasks-${item.id}`}
@@ -370,61 +336,40 @@ export function CloudTodoBoardCard({
               event.preventDefault()
               onOpenActivity()
             }}
-            className={cn(
-              'w-full border-t border-border/60 px-3.5 py-2 text-left transition',
-              onOpenActivity
-                ? 'cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/30'
-                : 'cursor-default'
-            )}
+            className="w-full px-3.5 pb-3"
           >
-            <div className="flex min-w-0 items-center gap-2 text-xs text-text-secondary">
-              {changeRequestSnapshot?.changeRequest ? (
-                <ChangeRequestStatusIcon
-                  snapshot={changeRequestSnapshot}
-                  testId={`cloud-todo-card-change-request-${item.id}-${currentTaskBinding.id}`}
-                  popoverAlign="left"
-                  repairing={repairingChangeRequest}
-                  onContinueRepair={
-                    autoRepairStatus(changeRequestSnapshot.changeRequest) &&
-                    onContinueChangeRequestRepair
-                      ? async () => {
-                          setRepairingChangeRequest(true)
-                          try {
-                            await onContinueChangeRequestRepair(
-                              currentTaskBinding,
-                              changeRequestSnapshot
-                            )
-                          } finally {
-                            setRepairingChangeRequest(false)
-                          }
+            {progressTaskBindings.map(binding => (
+              <RuntimeTaskProgressSummary
+                key={binding.id}
+                item={item}
+                binding={binding}
+                compact
+                active={binding.running || (binding.id === currentTaskBinding?.id && hasActiveTask)}
+                changeRequestSnapshot={
+                  binding.id === currentTaskBinding?.id ? changeRequestSnapshot : null
+                }
+                repairingChangeRequest={repairingChangeRequest}
+                onContinueChangeRequestRepair={
+                  binding.id === currentTaskBinding?.id &&
+                  changeRequestSnapshot?.changeRequest &&
+                  autoRepairStatus(changeRequestSnapshot.changeRequest) &&
+                  onContinueChangeRequestRepair
+                    ? async () => {
+                        setRepairingChangeRequest(true)
+                        try {
+                          await onContinueChangeRequestRepair(binding, changeRequestSnapshot!)
+                        } finally {
+                          setRepairingChangeRequest(false)
                         }
-                      : undefined
-                  }
-                />
-              ) : (
-                <ListTodo className="h-3.5 w-3.5" />
-              )}
-              <span
-                data-testid={`cloud-todo-card-task-${item.id}-${currentTaskBinding.id}`}
-                className="min-w-0 flex-1 truncate"
-                title={currentTaskBinding.task_title || currentTaskBinding.task_id}
-              >
-                {showFinalResponsePreview ? (
-                  <span data-testid={`cloud-todo-card-final-response-${item.id}`}>
-                    {finalResponsePreview}
-                  </span>
-                ) : (
-                  currentTaskBinding.task_title || currentTaskBinding.task_id
-                )}
-              </span>
-            </div>
-            {currentActivity.active ? (
-              <RuntimeTaskLiveActivity itemId={item.id} activity={currentActivity} />
-            ) : null}
+                      }
+                    : undefined
+                }
+              />
+            ))}
           </div>
-        </HoverCard>
-      ) : null}
-    </article>
+        ) : null}
+      </article>
+    </HoverCard>
   )
 }
 
@@ -470,7 +415,7 @@ function RuntimeTaskLiveActivity({
         'scrollbar-none min-w-0 overflow-y-auto',
         expanded
           ? 'max-h-44 text-chat text-text-primary'
-          : 'ml-5 mt-1.5 h-5 border-l border-border/70 pl-2 text-xs leading-5 text-text-muted'
+          : 'ml-5 mt-1.5 max-h-15 border-l border-border/70 pl-2 text-xs leading-5 text-text-muted'
       )}
     >
       {expanded ? (
@@ -512,21 +457,187 @@ function RuntimeTaskLiveActivity({
   )
 }
 
-function RuntimeTaskProgressPopup({
+function RuntimeTaskCompactActivity({
+  itemId,
+  activity,
+  responsePreview,
+  reserveTrailingAction,
+}: {
+  itemId: string
+  activity: RuntimeLiveActivity
+  responsePreview: string | null
+  reserveTrailingAction: boolean
+}) {
+  const latestTool = activity.tools.at(-1)
+
+  return (
+    <div data-testid={`cloud-todo-card-activity-${itemId}`} className="min-w-0 text-xs">
+      {responsePreview ? (
+        <div
+          data-testid={`cloud-todo-card-response-${itemId}`}
+          className={cn('h-5 truncate leading-5 text-text-muted', reserveTrailingAction && 'pr-7')}
+        >
+          {responsePreview}
+        </div>
+      ) : activity.thinking ? (
+        <div className={cn('flex h-5 min-w-0 items-center', reserveTrailingAction && 'pr-7')}>
+          <AssistantThinkingIndicator
+            content={activity.thinking}
+            testId={`cloud-todo-card-thinking-${itemId}`}
+            className="text-xs leading-5"
+          />
+        </div>
+      ) : null}
+      {latestTool ? (
+        <div
+          data-testid={`cloud-todo-card-tool-line-${itemId}`}
+          className="ml-2 min-w-0 border-l border-border pl-3 text-text-muted"
+        >
+          <RuntimeTaskToolActivity itemId={itemId} block={latestTool} />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function RuntimeTaskProgressSummary({
   item,
   binding,
-  activity,
-  message,
-  finalResponseText,
+  compact,
+  active,
+  changeRequestSnapshot,
+  repairingChangeRequest,
+  onContinueChangeRequestRepair,
 }: {
   item: CloudLoopItem
   binding: CloudTodoBoardTaskBinding
-  activity: RuntimeLiveActivity
-  message: WorkbenchMessage | null
-  finalResponseText: string | null
+  compact: boolean
+  active: boolean
+  changeRequestSnapshot: TaskChangeRequestSnapshot | null
+  repairingChangeRequest: boolean
+  onContinueChangeRequestRepair?: () => Promise<void>
+}) {
+  const activityAddress = useMemo<RuntimeTaskAddress | null>(
+    () =>
+      active
+        ? {
+            deviceId: binding.device_id,
+            taskId: binding.task_id,
+          }
+        : null,
+    [active, binding.device_id, binding.task_id]
+  )
+  const taskAddress = useMemo<RuntimeTaskAddress>(
+    () => ({
+      deviceId: binding.device_id,
+      taskId: binding.task_id,
+    }),
+    [binding.device_id, binding.task_id]
+  )
+  const activity = useRuntimeTaskActivity(activityAddress)
+  const message = useRuntimeTaskLatestAssistantMessage(taskAddress)
+  const cachedFinalResponse = useRuntimeTaskFinalResponse(
+    item.status === 'in_review' ? taskAddress : null
+  )
+  const finalResponseText = binding.finalResponseLoaded
+    ? (binding.finalResponsePreview ?? null)
+    : cachedFinalResponse
+  const responseText =
+    activity.active && message?.content?.trim() ? message.content : finalResponseText
+  const responsePreview = responseText
+    ? compact
+      ? latestResponseLine(responseText)
+      : responseText.trim()
+    : null
+  const taskTitle = binding.task_title || binding.task_id
+  const showCompactChangeRequest = compact && Boolean(changeRequestSnapshot?.changeRequest)
+
+  return (
+    <div
+      data-testid={`cloud-todo-card-task-summary-${item.id}-${binding.id}`}
+      className={cn('min-w-0 text-left', compact && 'relative rounded-md px-1 py-0.5')}
+    >
+      {showCompactChangeRequest ? (
+        <ChangeRequestStatusIcon
+          snapshot={changeRequestSnapshot}
+          testId={`cloud-todo-card-change-request-${item.id}-${binding.id}`}
+          className="absolute right-0 top-0 z-10"
+          popoverAlign="left"
+          repairing={repairingChangeRequest}
+          onContinueRepair={onContinueChangeRequestRepair}
+        />
+      ) : null}
+      {!compact ? (
+        <div className="flex min-w-0 items-center gap-2 text-xs text-text-secondary">
+          {changeRequestSnapshot?.changeRequest ? (
+            <ChangeRequestStatusIcon
+              snapshot={changeRequestSnapshot}
+              testId={`cloud-todo-card-change-request-${item.id}-${binding.id}`}
+              popoverAlign="left"
+              repairing={repairingChangeRequest}
+              onContinueRepair={onContinueChangeRequestRepair}
+            />
+          ) : (
+            <ListTodo className="h-3.5 w-3.5" />
+          )}
+          <span
+            data-testid={`cloud-todo-card-task-${item.id}-${binding.id}`}
+            className="min-w-0 flex-1 truncate"
+            title={taskTitle}
+          >
+            {taskTitle}
+          </span>
+        </div>
+      ) : null}
+      {compact && activity.active ? (
+        <RuntimeTaskCompactActivity
+          itemId={item.id}
+          activity={activity}
+          responsePreview={responsePreview}
+          reserveTrailingAction={showCompactChangeRequest}
+        />
+      ) : responsePreview ? (
+        <div
+          data-testid={
+            activity.active
+              ? `cloud-todo-card-response-${item.id}-${binding.id}`
+              : compact
+                ? `cloud-todo-card-final-response-${item.id}`
+                : `cloud-todo-card-progress-response-${item.id}-${binding.id}`
+          }
+          className={cn(
+            'text-xs leading-5 text-text-muted',
+            compact
+              ? cn('h-5 truncate', showCompactChangeRequest && 'pr-7')
+              : 'ml-5 mt-1.5 max-h-60 overflow-y-auto whitespace-pre-wrap break-words border-l border-border/70 pl-2 pr-1'
+          )}
+        >
+          {responsePreview}
+        </div>
+      ) : activity.active ? (
+        <RuntimeTaskLiveActivity itemId={item.id} activity={activity} />
+      ) : null}
+    </div>
+  )
+}
+
+function RuntimeTaskProgressPopup({
+  item,
+  bindings,
+  activeBindingId,
+  focusedBindingId,
+  onFocusBinding,
+}: {
+  item: CloudLoopItem
+  bindings: CloudTodoBoardTaskBinding[]
+  activeBindingId: number | null
+  focusedBindingId: number | null
+  onFocusBinding: (bindingId: number | null) => void
 }) {
   const { t } = useTranslation('common')
-  const taskTitle = binding.task_title || binding.task_id
+  const visibleBindings = focusedBindingId
+    ? bindings.filter(binding => binding.id === focusedBindingId)
+    : bindings
 
   return (
     <div
@@ -537,23 +648,35 @@ function RuntimeTaskProgressPopup({
         <div className="text-sm font-medium leading-5 text-text-primary">
           {t('todo.task_progress_details', '当前任务进展')}
         </div>
-        <div className="mt-0.5 line-clamp-2 text-xs leading-5 text-text-secondary">{taskTitle}</div>
+        <div className="mt-0.5 text-xs leading-5 text-text-secondary">
+          {focusedBindingId
+            ? t('todo.task_progress_details', '当前任务进展')
+            : `${t('todo.task_progress_details', '当前任务进展')} · ${bindings.length}`}
+        </div>
       </div>
-      {message ? (
-        <RuntimeTaskMessage itemId={item.id} message={message} />
-      ) : activity.active ? (
-        <RuntimeTaskLiveActivity itemId={item.id} activity={activity} expanded />
-      ) : finalResponseText ? (
-        <RuntimeTaskMessage
-          itemId={item.id}
-          message={{
-            id: `board-progress-${item.id}`,
-            role: 'assistant',
-            content: finalResponseText,
-            status: 'done',
-            createdAt: '',
-          }}
-        />
+      {visibleBindings.length > 0 ? (
+        <div data-testid={`cloud-todo-card-progress-list-${item.id}`} className="space-y-1">
+          {visibleBindings.map(binding => (
+            <div
+              key={binding.id}
+              data-testid={`cloud-todo-card-progress-task-${item.id}-${binding.id}`}
+              onMouseEnter={() => onFocusBinding(binding.id)}
+              onMouseLeave={() => onFocusBinding(null)}
+              onFocus={() => onFocusBinding(binding.id)}
+              onBlur={() => onFocusBinding(null)}
+              className="rounded-lg p-1 transition hover:bg-muted/50"
+            >
+              <RuntimeTaskProgressSummary
+                item={item}
+                binding={binding}
+                compact={false}
+                active={binding.running || binding.id === activeBindingId}
+                changeRequestSnapshot={null}
+                repairingChangeRequest={false}
+              />
+            </div>
+          ))}
+        </div>
       ) : (
         <p
           data-testid={`cloud-todo-card-progress-empty-${item.id}`}
@@ -562,29 +685,6 @@ function RuntimeTaskProgressPopup({
           {t('todo.task_progress_empty', '暂无任务进展详情')}
         </p>
       )}
-    </div>
-  )
-}
-
-function RuntimeTaskMessage({ itemId, message }: { itemId: string; message: WorkbenchMessage }) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-
-  useLayoutEffect(() => {
-    const scrollArea = scrollRef.current
-    if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
-  }, [message])
-
-  return (
-    <div
-      ref={scrollRef}
-      data-testid={`cloud-todo-card-progress-response-${itemId}`}
-      className="max-h-56 min-w-0 overscroll-contain overflow-y-auto"
-    >
-      <AssistantMessage
-        message={message}
-        conversationKey={`cloud-todo-card:${itemId}:progress-popup`}
-        devices={[]}
-      />
     </div>
   )
 }
