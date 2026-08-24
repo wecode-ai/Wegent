@@ -12,6 +12,8 @@ import pytest
 from app.services.execution.agents.video.recovery import (
     STALE_THRESHOLD_SECONDS,
     _is_polling_context_stale,
+    _recover_video_jobs_sync,
+    recover_video_jobs,
     recover_video_jobs_after_stale_delay,
 )
 
@@ -42,6 +44,18 @@ def test_polling_context_fresh_before_threshold() -> None:
         now,
         subtask_id=1,
     )
+
+
+@pytest.mark.asyncio
+async def test_recovery_runs_blocking_work_in_thread() -> None:
+    with patch(
+        "app.services.execution.agents.video.recovery.asyncio.to_thread",
+        new=AsyncMock(return_value=3),
+    ) as to_thread:
+        recovered_count = await recover_video_jobs()
+
+    to_thread.assert_awaited_once_with(_recover_video_jobs_sync)
+    assert recovered_count == 3
 
 
 @pytest.mark.asyncio

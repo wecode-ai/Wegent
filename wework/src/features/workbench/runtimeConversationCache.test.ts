@@ -24,6 +24,7 @@ import {
   markRuntimeConversationGuidanceInterrupted,
   optimisticallyInterruptRuntimeConversation,
   removeOptimisticRuntimeConversationGuidance,
+  reconcileRuntimeConversationQueueAfterTransportReplacement,
   markRuntimeConversationAssistantStarted,
   runtimeConversationSnapshotSettlesLatestTurn,
   subscribeRuntimeConversation,
@@ -117,6 +118,7 @@ describe('runtimeConversationCache', () => {
         content: 'first queued message',
         status: 'sending',
         deliveryMode: 'message',
+        awaitingTurnStart: true,
         createdAt: '2026-08-09T00:00:00.000Z',
       },
       {
@@ -134,6 +136,71 @@ describe('runtimeConversationCache', () => {
         id: 'next-message',
         status: 'queued',
       }),
+    ])
+  })
+
+  test('keeps an unaccepted queued send when an unrelated runtime turn starts', () => {
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'in-flight-message',
+        content: 'message awaiting executor acceptance',
+        status: 'sending',
+        deliveryMode: 'message',
+        awaitingTurnStart: false,
+        createdAt: '2026-08-09T00:00:00.000Z',
+      },
+    ])
+
+    settleRuntimeConversationAcceptedMessage(address)
+
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([
+      expect.objectContaining({
+        id: 'in-flight-message',
+        status: 'sending',
+      }),
+    ])
+  })
+
+  test('requeues an interrupted send and removes a send already present after transport replacement', () => {
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'accepted-message',
+        content: 'already accepted',
+        status: 'sending',
+        deliveryMode: 'message',
+        awaitingTurnStart: true,
+        createdAt: '2026-08-21T00:00:00.000Z',
+      },
+      {
+        id: 'interrupted-message',
+        content: 'retry after replacement',
+        status: 'sending',
+        deliveryMode: 'message',
+        awaitingTurnStart: false,
+        createdAt: '2026-08-21T00:00:01.000Z',
+      },
+    ])
+
+    reconcileRuntimeConversationQueueAfterTransportReplacement(address, [
+      {
+        id: 'turn-1',
+        status: 'done',
+        clientUserMessageId: 'accepted-message',
+        items: [],
+      },
+    ])
+
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([
+      {
+        id: 'interrupted-message',
+        content: 'retry after replacement',
+        status: 'queued',
+        createdAt: '2026-08-21T00:00:01.000Z',
+        deliveryMode: undefined,
+        awaitingTurnStart: undefined,
+        error: undefined,
+        notice: undefined,
+      },
     ])
   })
 

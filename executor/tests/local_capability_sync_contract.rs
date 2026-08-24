@@ -18,9 +18,9 @@ use wegent_executor::{
     config::device::{ConnectionConfig, DeviceConfig},
     local::capabilities::{
         default_manifest_path, get_project_id, is_project_task,
-        restore_enabled_claude_plugin_cache, CapabilityPackageProvider, CapabilityPluginRuntime,
-        CapabilitySyncError, CapabilitySyncHandler, GlobalCapabilityReporter,
-        GlobalCapabilityStore, ManagedCapabilityManifest, PluginSyncSpec, SkillSyncSpec,
+        restore_enabled_claude_plugin_cache, CapabilityPackageProvider, CapabilitySyncError,
+        CapabilitySyncHandler, GlobalCapabilityReporter, GlobalCapabilityStore,
+        ManagedCapabilityManifest, SkillSyncSpec,
     },
     protocol::ExecutionRequest,
 };
@@ -822,34 +822,51 @@ async fn plugin_sync_accepts_a_pure_codex_plugin_package() {
 }
 
 #[tokio::test]
-async fn plugin_sync_uses_codex_app_server_runtime_as_install_and_uninstall_authority() {
-    let temp = TempRoot::new("capability-sync-app-server");
+async fn plugin_sync_installs_and_uninstalls_all_wework_cloud_sources_locally() {
+    let temp = TempRoot::new("capability-sync-local-cloud-plugins");
     let skills_dir = temp.path().join("skills");
     let plugins_dir = temp.path().join(".claude/plugins");
     let codex_plugins_dir = temp.path().join(".codex/plugins");
     let store_dir = temp.path().join("store");
     let manifest_path = temp.path().join("capabilities.json");
-    let gitlab_package = zip_bytes(&[(
-        "gitlab/.codex-plugin/plugin.json",
-        r#"{"name":"gitlab","version":"1.0.0"}"#,
+    fs::create_dir_all(codex_plugins_dir.parent().unwrap()).unwrap();
+    fs::write(
+        codex_plugins_dir.parent().unwrap().join("config.toml"),
+        r#"[features]
+apps = true
+
+[plugins."github@openai-curated"]
+enabled = true
+
+[plugins."draft@wework-personal"]
+enabled = true
+"#,
+    )
+    .unwrap();
+    let enterprise_package = zip_bytes(&[(
+        "enterprise/.codex-plugin/plugin.json",
+        r#"{"name":"enterprise","version":"1.0.0"}"#,
     )]);
-    let github_package = zip_bytes(&[(
-        "github/.codex-plugin/plugin.json",
-        r#"{"name":"github","version":"2.0.0"}"#,
+    let public_package = zip_bytes(&[(
+        "public/.codex-plugin/plugin.json",
+        r#"{"name":"public","version":"2.0.0"}"#,
     )]);
-    let gitlab_checksum = sha256_hex(&gitlab_package);
-    let github_checksum = sha256_hex(&github_package);
+    let personal_package = zip_bytes(&[(
+        "personal/.codex-plugin/plugin.json",
+        r#"{"name":"personal","version":"3.0.0"}"#,
+    )]);
+    let enterprise_checksum = sha256_hex(&enterprise_package);
+    let public_checksum = sha256_hex(&public_package);
+    let personal_checksum = sha256_hex(&personal_package);
     let provider = StaticPackageProvider::default()
-        .with_plugin("https://objects/gitlab.zip", gitlab_package)
-        .with_plugin("https://objects/github.zip", github_package);
-    let runtime = RecordingPluginRuntime::default();
-    let calls = runtime.calls.clone();
+        .with_plugin("/api/plugins/installed/20/download", enterprise_package)
+        .with_plugin("/api/plugins/installed/21/download", public_package)
+        .with_plugin("/api/plugins/installed/22/download", personal_package);
     let store = GlobalCapabilityStore::new(manifest_path.clone(), skills_dir)
         .with_plugins_dir(plugins_dir.clone())
         .with_codex_plugins_dir(codex_plugins_dir.clone())
         .with_store_dir(store_dir);
-    let handler = CapabilitySyncHandler::with_package_provider("token", store, provider)
-        .with_plugin_runtime(runtime);
+    let handler = CapabilitySyncHandler::with_package_provider("token", store.clone(), provider);
 
     let installed = handler
         .apply_sync(json!({
@@ -858,20 +875,28 @@ async fn plugin_sync_uses_codex_app_server_runtime_as_install_and_uninstall_auth
             "plugins": [
                 {
                     "installed_plugin_id": 20,
-                    "name": "gitlab",
+                    "name": "enterprise",
                     "marketplace": "wegent",
                     "version": "1.0.0",
-                    "download_path": "https://objects/gitlab.zip",
-                    "checksum": gitlab_checksum
+                    "download_path": "/api/plugins/installed/20/download",
+                    "checksum": enterprise_checksum.clone()
                 },
                 {
                     "installed_plugin_id": 21,
-                    "name": "github",
-                    "marketplace": "wegent",
+                    "name": "public",
+                    "marketplace": "wework",
                     "enabled": false,
                     "version": "2.0.0",
-                    "download_path": "https://objects/github.zip",
-                    "checksum": github_checksum
+                    "download_path": "/api/plugins/installed/21/download",
+                    "checksum": public_checksum.clone()
+                },
+                {
+                    "installed_plugin_id": 22,
+                    "name": "personal",
+                    "marketplace": "wegent",
+                    "version": "3.0.0",
+                    "download_path": "/api/plugins/installed/22/download",
+                    "checksum": personal_checksum.clone()
                 }
             ],
             "mcps": [],
@@ -880,83 +905,95 @@ async fn plugin_sync_uses_codex_app_server_runtime_as_install_and_uninstall_auth
         .unwrap();
 
     assert_eq!(installed["success"], true);
+    for path in [
+        codex_plugins_dir.join("cache/wegent/enterprise/1.0.0"),
+        codex_plugins_dir.join("cache/wework/public/2.0.0"),
+        codex_plugins_dir.join("cache/wegent/personal/3.0.0"),
+    ] {
+        assert!(path.join(".codex-plugin/plugin.json").is_file());
+    }
+    let manifest = read_json(&manifest_path);
+    assert!(manifest["plugins"]["enterprise@wegent"]
+        .get("install_authority")
+        .is_none());
+    assert_eq!(manifest["plugins"]["public@wework"]["enabled"], false);
+    let config_path = codex_plugins_dir.parent().unwrap().join("config.toml");
+    let codex_config = read_toml(&config_path);
     assert_eq!(
-        calls.lock().unwrap().as_slice(),
-        &[
-            format!(
-                "install:gitlab:true:{}",
-                plugins_dir
-                    .join("marketplaces/wegent/.agents/plugins/marketplace.json")
-                    .display()
-            ),
-            format!(
-                "install:github:false:{}",
-                plugins_dir
-                    .join("marketplaces/wegent/.agents/plugins/marketplace.json")
-                    .display()
-            ),
-        ]
-    );
-    assert!(!codex_plugins_dir.join("gitlab-wegent").exists());
-    assert_eq!(
-        read_json(&manifest_path)["plugins"]["gitlab@wegent"]["install_authority"],
-        "codex_app_server"
+        codex_config["plugins"]["enterprise@wegent"]["enabled"].as_bool(),
+        Some(true)
     );
     assert_eq!(
-        read_json(&manifest_path)["plugins"]["github@wegent"]["enabled"],
-        false
+        codex_config["plugins"]["public@wework"]["enabled"].as_bool(),
+        Some(false)
     );
     assert_eq!(
-        read_json(plugins_dir.join("marketplaces/wegent/.claude-plugin/marketplace.json"))
-            ["plugins"],
-        json!([
-            {
-                "description": "",
-                "name": "gitlab",
-                "source": "./plugins/gitlab-wegent",
-                "version": "1.0.0"
-            },
-            {
-                "description": "",
-                "name": "github",
-                "source": "./plugins/github-wegent",
-                "version": "2.0.0"
-            }
-        ])
-    );
-    assert_eq!(
-        read_json(plugins_dir.join("marketplaces/wegent/.agents/plugins/marketplace.json")),
-        json!({
-            "name": "wegent",
-            "interface": {"displayName": "Wegent"},
-            "plugins": [
-                {
-                    "name": "gitlab",
-                    "source": {
-                        "source": "local",
-                        "path": "./plugins/gitlab-wegent"
-                    },
-                    "policy": {
-                        "installation": "AVAILABLE",
-                        "authentication": "ON_INSTALL"
-                    }
-                },
-                {
-                    "name": "github",
-                    "source": {
-                        "source": "local",
-                        "path": "./plugins/github-wegent"
-                    },
-                    "policy": {
-                        "installation": "AVAILABLE",
-                        "authentication": "ON_INSTALL"
-                    }
-                }
-            ]
-        })
+        codex_config["plugins"]["personal@wegent"]["enabled"].as_bool(),
+        Some(true)
     );
 
-    handler
+    let enterprise_update_package = zip_bytes(&[
+        (
+            "enterprise/.codex-plugin/plugin.json",
+            r#"{"name":"enterprise","version":"1.1.0"}"#,
+        ),
+        ("enterprise/version.txt", "1.1.0"),
+    ]);
+    let enterprise_update_checksum = sha256_hex(&enterprise_update_package);
+    let update_handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store,
+        StaticPackageProvider::default().with_plugin(
+            "/api/plugins/installed/20/download",
+            enterprise_update_package,
+        ),
+    );
+    let updated = update_handler
+        .apply_sync(json!({
+            "mode": "replace",
+            "skills": [],
+            "plugins": [
+                {
+                    "installed_plugin_id": 20,
+                    "name": "enterprise",
+                    "marketplace": "wegent",
+                    "version": "1.1.0",
+                    "download_path": "/api/plugins/installed/20/download",
+                    "checksum": enterprise_update_checksum
+                },
+                {
+                    "installed_plugin_id": 21,
+                    "name": "public",
+                    "marketplace": "wework",
+                    "enabled": false,
+                    "version": "2.0.0",
+                    "download_path": "/api/plugins/installed/21/download",
+                    "checksum": public_checksum
+                },
+                {
+                    "installed_plugin_id": 22,
+                    "name": "personal",
+                    "marketplace": "wegent",
+                    "version": "3.0.0",
+                    "download_path": "/api/plugins/installed/22/download",
+                    "checksum": personal_checksum
+                }
+            ],
+            "mcps": [],
+        }))
+        .await
+        .unwrap();
+    assert_eq!(updated["success"], true);
+    assert!(!codex_plugins_dir
+        .join("cache/wegent/enterprise/1.0.0")
+        .exists());
+    assert_eq!(
+        fs::read_to_string(codex_plugins_dir.join("cache/wegent/enterprise/1.1.0/version.txt"))
+            .unwrap(),
+        "1.1.0"
+    );
+
+    update_handler
         .apply_sync(json!({
             "mode": "replace",
             "skills": [],
@@ -965,9 +1002,178 @@ async fn plugin_sync_uses_codex_app_server_runtime_as_install_and_uninstall_auth
         }))
         .await
         .unwrap();
-    let calls = calls.lock().unwrap();
-    assert!(calls.contains(&"uninstall:gitlab:wegent".to_owned()));
-    assert!(calls.contains(&"uninstall:github:wegent".to_owned()));
+    assert!(!codex_plugins_dir
+        .join("cache/wegent/enterprise/1.1.0")
+        .exists());
+    assert!(!codex_plugins_dir.join("cache/wework/public/2.0.0").exists());
+    assert!(!codex_plugins_dir
+        .join("cache/wegent/personal/3.0.0")
+        .exists());
+    let codex_config = read_toml(config_path);
+    assert!(codex_config["plugins"].get("enterprise@wegent").is_none());
+    assert!(codex_config["plugins"].get("public@wework").is_none());
+    assert!(codex_config["plugins"].get("personal@wegent").is_none());
+    assert!(codex_config["marketplaces"].get("wegent").is_none());
+    assert!(codex_config["marketplaces"].get("wework").is_none());
+    assert_eq!(codex_config["features"]["apps"].as_bool(), Some(true));
+    assert_eq!(
+        codex_config["plugins"]["github@openai-curated"]["enabled"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        codex_config["plugins"]["draft@wework-personal"]["enabled"].as_bool(),
+        Some(true)
+    );
+}
+
+#[tokio::test]
+async fn cloud_plugin_update_and_removal_restore_local_state_when_codex_config_is_invalid() {
+    let temp = TempRoot::new("capability-sync-plugin-transaction");
+    let plugins_dir = temp.path().join(".claude/plugins");
+    let codex_plugins_dir = temp.path().join(".codex/plugins");
+    let store_dir = temp.path().join("store");
+    let manifest_path = temp.path().join("capabilities.json");
+    let config_path = codex_plugins_dir.parent().unwrap().join("config.toml");
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, "[features]\napps = true\n").unwrap();
+    let version_one = zip_bytes(&[
+        (
+            "enterprise/.codex-plugin/plugin.json",
+            r#"{"name":"enterprise","version":"1.0.0"}"#,
+        ),
+        ("enterprise/version.txt", "1.0.0"),
+    ]);
+    let version_one_checksum = sha256_hex(&version_one);
+    let store =
+        GlobalCapabilityStore::new(manifest_path.clone(), temp.path().join(".claude/skills"))
+            .with_plugins_dir(plugins_dir.clone())
+            .with_codex_plugins_dir(codex_plugins_dir.clone())
+            .with_store_dir(store_dir.clone());
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store.clone(),
+        StaticPackageProvider::default()
+            .with_plugin("/api/plugins/installed/20/download", version_one),
+    );
+    handler
+        .apply_sync(json!({
+            "mode": "replace",
+            "skills": [],
+            "plugins": [{
+                "installed_plugin_id": 20,
+                "name": "enterprise",
+                "marketplace": "wegent",
+                "version": "1.0.0",
+                "download_path": "/api/plugins/installed/20/download",
+                "checksum": version_one_checksum.clone()
+            }],
+            "mcps": [],
+        }))
+        .await
+        .unwrap();
+
+    let runtime_one = plugins_dir.join("cache/wegent/enterprise/1.0.0");
+    let codex_runtime_one = codex_plugins_dir.join("cache/wegent/enterprise/1.0.0");
+    let store_one = store_dir.join("plugins/20-wegent-enterprise-1.0.0");
+    let installed_before = fs::read_to_string(plugins_dir.join("installed_plugins.json")).unwrap();
+    let settings_before =
+        fs::read_to_string(plugins_dir.parent().unwrap().join("settings.json")).unwrap();
+    let invalid_config = "[plugins.\"broken\"\nenabled = true\n";
+    fs::write(&config_path, invalid_config).unwrap();
+
+    let replacement = zip_bytes(&[
+        (
+            "enterprise/.codex-plugin/plugin.json",
+            r#"{"name":"enterprise","version":"1.0.0"}"#,
+        ),
+        ("enterprise/version.txt", "replacement"),
+    ]);
+    let replacement_checksum = sha256_hex(&replacement);
+    let failing_handler = CapabilitySyncHandler::with_package_provider(
+        "token",
+        store,
+        StaticPackageProvider::default()
+            .with_plugin("/api/plugins/installed/20/download", replacement),
+    );
+    let update = failing_handler
+        .apply_sync(json!({
+            "mode": "replace",
+            "skills": [],
+            "plugins": [{
+                "installed_plugin_id": 20,
+                "name": "enterprise",
+                "marketplace": "wegent",
+                "version": "1.0.0",
+                "download_path": "/api/plugins/installed/20/download",
+                "checksum": replacement_checksum
+            }],
+            "mcps": [],
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(update["success"], false);
+    assert_eq!(update["plugins"][0]["status"], "failed");
+    assert!(update["plugins"][0]["error"]
+        .as_str()
+        .unwrap()
+        .contains("Invalid Codex config"));
+    assert_eq!(
+        fs::read_to_string(runtime_one.join("version.txt")).unwrap(),
+        "1.0.0"
+    );
+    assert_eq!(
+        fs::read_to_string(codex_runtime_one.join("version.txt")).unwrap(),
+        "1.0.0"
+    );
+    assert_eq!(
+        fs::read_to_string(store_one.join("version.txt")).unwrap(),
+        "1.0.0"
+    );
+    assert_eq!(
+        read_json(&manifest_path)["plugins"]["enterprise@wegent"]["version"],
+        "1.0.0"
+    );
+    assert_eq!(
+        read_json(&manifest_path)["plugins"]["enterprise@wegent"]["checksum"],
+        version_one_checksum
+    );
+    assert_eq!(
+        fs::read_to_string(plugins_dir.join("installed_plugins.json")).unwrap(),
+        installed_before
+    );
+    assert_eq!(
+        fs::read_to_string(plugins_dir.parent().unwrap().join("settings.json")).unwrap(),
+        settings_before
+    );
+    assert_eq!(fs::read_to_string(&config_path).unwrap(), invalid_config);
+
+    let remove_error = failing_handler
+        .apply_sync(json!({
+            "mode": "replace",
+            "skills": [],
+            "plugins": [],
+            "mcps": [],
+        }))
+        .await
+        .unwrap_err();
+
+    assert!(remove_error.to_string().contains("Invalid Codex config"));
+    assert!(runtime_one.is_dir());
+    assert!(codex_runtime_one.is_dir());
+    assert!(store_one.is_dir());
+    assert!(read_json(&manifest_path)["plugins"]
+        .get("enterprise@wegent")
+        .is_some());
+    assert_eq!(
+        fs::read_to_string(plugins_dir.join("installed_plugins.json")).unwrap(),
+        installed_before
+    );
+    assert_eq!(
+        fs::read_to_string(plugins_dir.parent().unwrap().join("settings.json")).unwrap(),
+        settings_before
+    );
+    assert_eq!(fs::read_to_string(config_path).unwrap(), invalid_config);
 }
 
 #[tokio::test]
@@ -1600,8 +1806,8 @@ enabled = true
         codex_config["plugins"]["superpowers@wegent"]["enabled"].as_bool(),
         Some(true)
     );
-    // Reconciliation never rewrites the complete Codex config. App Server owns
-    // plugin config mutations so concurrent policy writes cannot be lost.
+    // Reconciliation updates only its active plugin and preserves unrelated
+    // local, personal, and OpenAI plugin configuration.
     assert_eq!(
         codex_config["plugins"]["dingtalk@wegent"]["enabled"].as_bool(),
         Some(true)
@@ -1876,39 +2082,6 @@ fn global_capability_helpers_match_project_and_device_config_contract() {
     );
     let handler = CapabilitySyncHandler::from_device_config(&device, store);
     assert_eq!(handler.auth_token(), "device-config-token");
-}
-
-#[derive(Clone, Default)]
-struct RecordingPluginRuntime {
-    calls: Arc<Mutex<Vec<String>>>,
-}
-
-impl CapabilityPluginRuntime for RecordingPluginRuntime {
-    fn install_plugin<'a>(
-        &'a self,
-        spec: &'a PluginSyncSpec,
-        marketplace_path: &'a Path,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
-        self.calls.lock().unwrap().push(format!(
-            "install:{}:{}:{}",
-            spec.name,
-            spec.enabled,
-            marketplace_path.display()
-        ));
-        Box::pin(std::future::ready(Ok(())))
-    }
-
-    fn uninstall_plugin<'a>(
-        &'a self,
-        name: &'a str,
-        marketplace: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CapabilitySyncError>> + Send + 'a>> {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(format!("uninstall:{name}:{marketplace}"));
-        Box::pin(std::future::ready(Ok(())))
-    }
 }
 
 #[derive(Default)]

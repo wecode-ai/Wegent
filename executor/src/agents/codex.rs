@@ -100,7 +100,8 @@ pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空
 - `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
 - For the current bound Issue, call `get_current_context` first. To read its description or attachments, use `get_board_item`, then `list_item_attachments`, then `read_item_attachment`.
 - Use `list_board_items` to list a project's tasks and `search_board_items` for text or structured task searches. Use the matching project-space tool for reads and writes instead of querying local files, executor logs, or backend storage directly.
-- For AI-managed board automation, use `get_board_item` for the current item, `get_assignment_candidates` for eligible members and robots, and `assign_board_item` only after choosing a candidate from that result."#;
+- For AI-managed board automation, act as the board steward, not a task executor. Use `get_board_item` for the current Issue, `get_assignment_candidates` for eligible members and robots, then call `submit_workflow_plan` with independently verifiable child tasks. The platform binds the active planning scope; do not discover, guess, or send `stage_id`. Do not assign the original Issue or execute its work yourself.
+- For a child task created by an AI-managed workflow, complete the assigned work and call `report_workflow_outcome` with `passed` or `needs_rework` plus concise evidence before finishing."#;
 
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
@@ -121,7 +122,9 @@ mod plugin_skills;
 use diagnostics::{json_scalar_field, json_string_field};
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
-pub(crate) use home::{executor_home, select_wework_codex_user_instructions, wework_codex_home};
+pub(crate) use home::{
+    executor_home, replace_config, select_wework_codex_user_instructions, wework_codex_home,
+};
 use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
 
@@ -2835,6 +2838,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     if let Some(cargo_target_override) = super::cargo_cache::codex_config_override(request) {
         launch_config.config_overrides.push(cargo_target_override);
     }
+    launch_config
+        .config_overrides
+        .extend(super::pnpm_worktree::codex_config_overrides(request));
     launch_config
         .config_overrides
         .extend(codex_runtime_default_config_overrides());

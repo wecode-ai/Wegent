@@ -45,7 +45,11 @@ const DESKTOP_CONTROL_SERVER_PORT = readOptionalPort(
 )
 const MODEL_PROTOCOL_MATRIX_TIMEOUT_MS = 120_000
 const COMPOSER_READY_STABILITY_MS = 750
-const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = DEFAULT_STEP_TIMEOUT_MS
+const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = readPositiveTimeout(
+  process.env.WEWORK_E2E_CONTROL_DELIVERY_TIMEOUT_MS,
+  30_000,
+  'WEWORK_E2E_CONTROL_DELIVERY_TIMEOUT_MS'
+)
 const DESKTOP_CONTROL_RESULT_GRACE_MS = 5_000
 const QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS = 120_000
 
@@ -541,7 +545,6 @@ const CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT =
 const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_URL =
   'https://desktop-e2e-startup-probe.invalid/marketplace.git'
-const STARTUP_NETWORK_PROBE_REQUEST_PATTERN = /desktop-e2e-startup-probe\.invalid/i
 const AUTOMATION_NAME = 'Desktop E2E automation'
 const AUTOMATION_PROMPT = 'WEWORK_DESKTOP_E2E_AUTOMATION: report the current workspace status.'
 const AUTOMATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_AUTOMATION_COMPLETE'
@@ -1004,29 +1007,16 @@ class BlockingNetworkProxy {
     throw new Error('Codex did not reach the blocking network proxy')
   }
 
-  async waitForRequestMatchingAfter(requestCount, pattern, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < timeoutMs) {
-      const request = this.requests.slice(requestCount).find(candidate => pattern.test(candidate))
-      if (request) return request
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
-    }
-    const observedRequests = this.requests.slice(requestCount)
-    throw new Error(
-      `Codex did not send a startup request matching ${pattern}; observed=${JSON.stringify(observedRequests)}`
-    )
-  }
-
-  requestCount() {
-    return this.requests.length
-  }
-
   release() {
     if (this.released) return
     this.released = true
     for (const socket of this.sockets) {
       socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
     }
+  }
+
+  block() {
+    this.released = false
   }
 
   async stop() {
@@ -1201,21 +1191,11 @@ async function visibleModelOptionId(control, targetOptionIds, providerId) {
   for (const targetOptionId of targetOptionIds) {
     const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`
     await control.command('scrollIntoView', targetSelector).catch(() => undefined)
-    const metrics = await control
-      .command('getElementMetrics', targetSelector)
-      .then(value => JSON.parse(value))
-      .catch(() => [])
-    if (
-      metrics.some(
-        metric =>
-          metric.width > 0 &&
-          metric.height > 0 &&
-          metric.bottom > 0 &&
-          metric.right > 0 &&
-          metric.top < 720 &&
-          metric.left < 1280
-      )
-    ) {
+    const visibleCount = await control
+      .command('getElementCount', targetSelector, { visible: true })
+      .then(value => Number(value))
+      .catch(() => 0)
+    if (visibleCount > 0) {
       return targetOptionId
     }
   }
@@ -1255,15 +1235,23 @@ function hasModelOption(menu, targetOptionIds) {
   return targetOptionIds.some(targetOptionId => menu.testIds.includes(targetOptionId))
 }
 
+async function hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId) {
+  if (!expectedProviderId) return hasModelOption(menu, targetOptionIds)
+  return Boolean(await visibleModelOptionId(control, targetOptionIds, expectedProviderId))
+}
+
 async function ensureModelOptionVisible(
   control,
   modelIds,
-  modelSelectorButton = '[data-testid="model-selector-button"]'
+  modelSelectorButton = '[data-testid="model-selector-button"]',
+  expectedProviderId = expectedModelProviderId(modelIds)
 ) {
   const targetOptionIds = modelOptionIdCandidates(modelIds)
+  let reloadedLocalModels = false
   for (let attempt = 0; attempt < 8; attempt += 1) {
     let menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (hasModelOption(menu, targetOptionIds)) return menu
+    if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
+      return menu
     if (menu.testIds.includes('model-control-menu-model')) {
       await control
         .command('hover', '[data-testid="model-control-menu-model"]', {
@@ -1288,13 +1276,20 @@ async function ensureModelOptionVisible(
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (hasModelOption(menu, targetOptionIds)) return menu
-    if (await revealGroupedModelOption(control, targetOptionIds)) {
+    if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
+      return menu
+    if (await revealGroupedModelOption(control, targetOptionIds, expectedProviderId)) {
       return JSON.parse(await control.command('snapshot', 'body'))
+    }
+    if (expectedProviderId && !reloadedLocalModels) {
+      await control.command('dispatchLocalModelSettingsChanged', '')
+      reloadedLocalModels = true
     }
   }
 
-  throw new Error(`Model options ${targetOptionIds.join(', ')} did not become visible`)
+  throw new Error(
+    `Model options ${targetOptionIds.join(', ')} did not become visible${expectedProviderId ? ` for provider ${expectedProviderId}` : ''}`
+  )
 }
 
 async function confirmLocalProjectName(control, name) {
@@ -1376,7 +1371,7 @@ async function selectE2EModel(
     return
   }
 
-  await ensureModelOptionVisible(control, modelIds, modelSelectorButton)
+  await ensureModelOptionVisible(control, modelIds, modelSelectorButton, expectedProviderId)
   const targetOptionIds = modelOptionIdCandidates(modelIds)
   let targetOptionId = await visibleModelOptionId(control, targetOptionIds, expectedProviderId)
   if (!targetOptionId) {
@@ -1778,7 +1773,6 @@ export {
   CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
   STARTUP_NETWORK_PROBE_MARKETPLACE_NAME,
   STARTUP_NETWORK_PROBE_MARKETPLACE_URL,
-  STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
   AUTOMATION_NAME,
   AUTOMATION_PROMPT,
   AUTOMATION_COMPLETION_TEXT,

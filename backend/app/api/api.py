@@ -47,6 +47,7 @@ from app.api.endpoints import (
     sites,
     skill_identity,
     skill_market,
+    smart_apps,
     subtasks,
     system_skills,
     tables,
@@ -324,6 +325,7 @@ api_router.include_router(
 )
 api_router.include_router(installed_mcps.router, prefix="/mcps", tags=["mcps"])
 api_router.include_router(installed_plugins.router, prefix="/plugins", tags=["plugins"])
+api_router.include_router(smart_apps.router, prefix="/smart-apps", tags=["smart-apps"])
 api_router.include_router(
     local_executor.router, prefix="/local-executor", tags=["local-executor"]
 )

@@ -145,6 +145,15 @@ export interface CloudLoopItem {
       | 'task_started'
       | 'delivery'
       | 'status_removed'
+      | 'workflow_plan_approved'
+      | 'workflow_task_progress'
+      | 'workflow_outcome_passed'
+      | 'workflow_outcome_needs_rework'
+      | 'workflow_review_approved'
+      | 'workflow_stage_advanced'
+      | 'workflow_replanned'
+      | 'workflow_paused'
+      | 'workflow_resumed'
     by_user_id: number | null
     at: string
   }>
@@ -390,6 +399,7 @@ export interface ProjectWorkflowDefinition {
   stage_mode?: IssueStageMode
   advancement_policy?: IssueAdvancementPolicy
   coordinator_prompt?: string
+  approval_policy?: 'required' | 'automatic'
   ai_automation_rule_id?: string | null
   nodes: WorkflowNodeDefinition[]
 }
@@ -417,8 +427,73 @@ export interface IssueWorkflowInstance {
   stage_mode?: IssueStageMode
   advancement_policy?: IssueAdvancementPolicy
   coordinator_prompt?: string
+  approval_policy?: 'required' | 'automatic'
   ai_automation_rule_id?: string | null
+  orchestration_status?:
+    | 'idle'
+    | 'planning'
+    | 'awaiting_approval'
+    | 'dispatching'
+    | 'running'
+    | 'awaiting_review'
+    | 'paused'
+    | 'completed'
+    | 'failed'
+  active_run_id?: string | null
+  active_plan_version?: number | null
+  current_stage_id?: string | null
   nodes: WorkflowNodeInstance[]
+}
+
+export type WorkflowPlanStatus =
+  | 'idle'
+  | 'planning'
+  | 'awaiting_approval'
+  | 'dispatching'
+  | 'running'
+  | 'awaiting_review'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+
+export interface WorkflowPlanItem {
+  id: string
+  client_key: string
+  stage_id: string
+  title: string
+  description: string
+  assignee_type: 'user' | 'agent' | 'team'
+  assignee_id: string
+  assignee_name: string
+  rationale: string
+  task_id?: string | null
+  task_status?: CloudLoopItem['status'] | null
+  outcome_verdict?: 'passed' | 'needs_rework' | null
+  outcome_summary?: string
+  status: 'proposed' | 'materialized' | 'superseded'
+}
+
+export interface WorkflowManagerRun {
+  id: string
+  status: string
+  model?: string | null
+  execution_environment?: string | null
+  device_id?: string | null
+  recent_activity: string
+  error?: string | null
+  updated_at: string
+}
+
+export interface WorkflowPlan {
+  run_id: string
+  issue_id: string
+  stage_id: string
+  plan_version: number
+  approval_policy: 'required' | 'automatic'
+  status: WorkflowPlanStatus
+  summary: string
+  items: WorkflowPlanItem[]
+  manager_run?: WorkflowManagerRun | null
 }
 
 export interface CloudProjectFile {
@@ -473,6 +548,7 @@ export interface LoopItemTaskBinding {
   task_title: string | null
   backend_task_id: number | null
   workflow_node_id?: string | null
+  binding_type?: 'system' | 'user'
   linked_at: string
 }
 
@@ -509,7 +585,13 @@ export interface CloudMyWorkItem extends CloudLoopItem {
 export const DEFAULT_WORK_ITEM_PROJECT_KEY = 'WORK'
 export const DEFAULT_WORK_ITEM_PROJECT_ID = 'default-work-items'
 
-type TaskExecutionStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'archived'
+export type TaskExecutionStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'archived'
 
 export function isDefaultWorkItemProject(project: CloudProject | null | undefined): boolean {
   return (
@@ -521,20 +603,23 @@ export function isDefaultWorkItemProject(project: CloudProject | null | undefine
 
 export function nextTaskTrackingStatus(
   itemStatus: CloudLoopItem['status'],
-  executionStatus: TaskExecutionStatus,
-  options: { completeOnSuccess?: boolean } = {}
+  executionStatus: TaskExecutionStatus
 ): CloudLoopItem['status'] | null {
-  if (
-    executionStatus === 'running' &&
-    (itemStatus === 'inbox' ||
-      itemStatus === 'pending' ||
-      itemStatus === 'in_review' ||
-      (options.completeOnSuccess && itemStatus === 'completed'))
-  ) {
+  if (executionStatus === 'queued' && itemStatus !== 'pending') {
+    return 'pending'
+  }
+  if (executionStatus === 'running' && itemStatus !== 'in_progress') {
     return 'in_progress'
   }
-  if (executionStatus === 'succeeded' && itemStatus === 'in_progress') {
-    return options.completeOnSuccess ? 'completed' : 'in_review'
+  if (executionStatus === 'succeeded' && itemStatus !== 'completed') {
+    return 'in_review'
+  }
+  if (
+    (executionStatus === 'failed' || executionStatus === 'cancelled') &&
+    itemStatus !== 'completed' &&
+    itemStatus !== 'in_review'
+  ) {
+    return 'in_review'
   }
   if (executionStatus === 'archived' && itemStatus !== 'completed') return 'completed'
   return null
@@ -772,6 +857,24 @@ export function createDeliveryApi(client: HttpClient) {
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
     },
+    getWorkflowPlan(itemId: string): Promise<WorkflowPlan | null> {
+      return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan`)
+    },
+    approveWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/approve`, {})
+    },
+    approveWorkflowReview(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/review`, {})
+    },
+    pauseWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/pause`, {})
+    },
+    resumeWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/resume`, {})
+    },
+    replanWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/replan`, {})
+    },
     markLoopItemRead(itemId: string): Promise<CloudLoopItem> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`)
     },
@@ -998,7 +1101,7 @@ export function createDeliveryApi(client: HttpClient) {
           (await api.createLoopItem(projectId, {
             title: taskTitle,
             description,
-            status: 'pending',
+            status: String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID ? 'inbox' : 'pending',
           }))
         pendingTrackedItems.set(trackingKey, item)
         await api.bindTask(item.id, task, taskTitle)
@@ -1020,7 +1123,7 @@ export function createDeliveryApi(client: HttpClient) {
         }
         if (!context.loop_item_id) return null
         const item = context.loop_item ?? (await api.getLoopItem(context.loop_item_id))
-        if (item.workflow && context.workflow_node_id) {
+        if (executionStatus !== 'queued' && item.workflow && context.workflow_node_id) {
           return client.patch('/v1/runtime-tasks/cloud-context/status', {
             ...task,
             status: executionStatus,
@@ -1030,9 +1133,7 @@ export function createDeliveryApi(client: HttpClient) {
           const bindings = await api.listTaskBindings(item.id)
           if (bindings.length > 1) return item
         }
-        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus, {
-          completeOnSuccess: isDefaultWorkItemProject(context.project),
-        })
+        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus)
         return nextStatus
           ? api.updateLoopItem(item.id, {
               version: item.version,

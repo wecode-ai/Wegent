@@ -1,0 +1,56 @@
+name: Documentation improvement / 文档改进
+description: Report missing, incorrect, or unclear documentation / 反馈缺失、错误或不清晰的文档
+title: "[Docs] "
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checks / 提交前检查
+      options:
+        - label: I checked the current English and Chinese documentation where applicable. / 如适用，我已检查当前中英文文档。
+          required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Documentation location / 文档位置
+      description: Link the page or provide the repository path. / 请提供页面链接或仓库内文件路径。
+      placeholder: e.g. docs/zh/getting-started/installation.md
+    validations:
+      required: true
+
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Type of improvement / 改进类型
+      options:
+        - Incorrect or outdated information / 信息错误或过时
+        - Missing documentation / 缺少文档
+        - Unclear instructions or examples / 说明或示例不清晰
+        - English and Chinese content are inconsistent / 中英文内容不一致
+        - Broken link or formatting / 链接或格式问题
+        - Other / 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Current problem / 当前问题
+      description: Quote only the minimum necessary text and explain why it is wrong or unclear. / 仅引用必要的最短内容，并说明错误或不清晰之处。
+    validations:
+      required: true
+
+  - type: textarea
+    id: improvement
+    attributes:
+      label: Suggested improvement / 建议改进
+      description: Describe the information, example, or structure that would resolve the problem. / 描述能够解决问题的信息、示例或结构调整。
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context / 补充信息
+      description: Add screenshots, references, or related issues if helpful. / 可补充截图、参考资料或相关 Issue。

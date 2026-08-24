@@ -8,6 +8,7 @@ import type {
   RuntimeProjectAiSettings,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
+  RuntimeTaskPinRequest,
   RuntimeProjectWork,
   RuntimeWorkListResponse,
   Team,
@@ -26,6 +27,7 @@ import {
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
   updateRuntimeWorkTask,
+  updateRuntimeWorkTaskPinned,
   updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
 import {
@@ -156,6 +158,10 @@ export type WorkbenchAction =
       type: 'runtime_task_title_updated'
       address: RuntimeTaskAddress
       title: string
+    }
+  | {
+      type: 'runtime_task_pinned_updated'
+      request: RuntimeTaskPinRequest
     }
   | {
       type: 'runtime_task_supervisor_updated'
@@ -1057,33 +1063,9 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       }
     }
     case 'runtime_task_pin_changed': {
-      if (!state.runtimeWork) return state
-      const updateWorkspace = (
-        workspace: RuntimeDeviceWorkspace,
-        deviceId = workspace.deviceId
-      ) => {
-        if (deviceId !== action.deviceId) return workspace
-        let changed = false
-        const tasks = workspace.tasks.map(task => {
-          const threadId = task.threadId || (task.runtime === 'codex' ? task.taskId : null)
-          if (threadId !== action.threadId || Boolean(task.pinned) === action.pinned) return task
-          changed = true
-          return { ...task, pinned: action.pinned }
-        })
-        return changed ? { ...workspace, tasks } : workspace
-      }
       return {
         ...state,
-        runtimeWork: {
-          ...state.runtimeWork,
-          projects: state.runtimeWork.projects.map(project => ({
-            ...project,
-            deviceWorkspaces: project.deviceWorkspaces.map(workspace =>
-              updateWorkspace(workspace, project.project.stateDeviceId ?? workspace.deviceId)
-            ),
-          })),
-          chats: state.runtimeWork.chats.map(workspace => updateWorkspace(workspace)),
-        },
+        runtimeWork: updateRuntimeWorkTaskPinned(state.runtimeWork, action),
       }
     }
     case 'device_status_changed': {
@@ -1331,6 +1313,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: updateRuntimeWorkTaskTitle(state.runtimeWork, action.address, action.title),
+      }
+    case 'runtime_task_pinned_updated':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTaskPinned(state.runtimeWork, action.request),
       }
     case 'runtime_task_supervisor_updated':
       return {

@@ -162,6 +162,17 @@ test('login test', async ({ page }) => {
 5. **Wait Strategies**: Use proper wait strategies instead of fixed timeouts
 6. **Coverage**: Enable coverage for integration and critical path tests
 
+When a test only requires the document to be interactive, pass the readiness
+contract directly to navigation:
+
+```typescript
+await page.goto('/chat', { waitUntil: 'domcontentloaded' })
+```
+
+Do not call `page.goto()` with its default `load` wait and then call
+`waitForLoadState('domcontentloaded')`. The second wait cannot run if a
+non-critical resource keeps the `load` event pending.
+
 ## Debugging
 
 ### Visual Debugging

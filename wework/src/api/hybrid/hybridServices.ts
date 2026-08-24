@@ -1,7 +1,10 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { invoke } from '@tauri-apps/api/core'
 import { info as writeInfoLog } from '@tauri-apps/plugin-log'
-import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
+import {
+  createCloudRuntimeIpcClient,
+  RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS,
+} from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import {
   createAutomationApiFromIpc,
@@ -28,7 +31,6 @@ import {
   mergeRuntimeWorkLists as mergeRuntimeWorkPair,
 } from '@/features/workbench/workbenchCloudStatus'
 import { supportsCloudExecution } from '@/features/cloud-connection/modelExecution'
-import { resolveCloudVisionSidecarReference } from '@/features/workbench/runtimeModelSelection'
 import type {
   Attachment,
   ArchivedConversationItem,
@@ -141,22 +143,8 @@ function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
   return models
 }
 
-function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
-  const compatibleModels = models.filter(supportsCloudExecution)
-  return compatibleModels.map(model => {
-    const config = recordValue(model.config)
-    if (!Object.hasOwn(config, 'visionSidecarModel')) return model
-    const visionSidecarModel = resolveCloudVisionSidecarReference(
-      config.visionSidecarModel,
-      compatibleModels
-    )
-    if (visionSidecarModel) {
-      return { ...model, config: { ...config, visionSidecarModel } }
-    }
-    const sanitizedConfig = { ...config }
-    delete sanitizedConfig.visionSidecarModel
-    return { ...model, config: sanitizedConfig }
-  })
+function cloudExecutableModels(models: UnifiedModel[]): UnifiedModel[] {
+  return models.filter(supportsCloudExecution)
 }
 
 function normalizedModelId(model: UnifiedModel): string {
@@ -401,7 +389,7 @@ export function createHybridWorkbenchServices(
         void writeInfoLog(
           `[Wework] Cloud model catalog loaded ${JSON.stringify(modelCatalogLog)}`
         ).catch(() => undefined)
-        rememberedCloudModels = annotateCloudModels(response.data)
+        rememberedCloudModels = cloudExecutableModels(response.data)
         cloudModelsLoaded = true
         notifyWorkbenchModelsChanged()
       })
@@ -466,7 +454,15 @@ export function createHybridWorkbenchServices(
     const cached = cloudRuntimeApis.get(logicalDeviceId)
     if (cached) return cached
     const api = createRuntimeWorkApiFromIpc(
-      (method, params) => cloudRuntimeIpc.request(method, params, logicalDeviceId),
+      (method, params) =>
+        method === 'runtime.tasks.transcript'
+          ? cloudRuntimeIpc.request(
+              method,
+              params,
+              logicalDeviceId,
+              RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS
+            )
+          : cloudRuntimeIpc.request(method, params, logicalDeviceId),
       async () => logicalDeviceId,
       {
         resolveDeviceId: async data => cloudDeviceIdFromData(data) ?? logicalDeviceId,
@@ -1288,6 +1284,7 @@ export function createHybridWorkbenchServices(
 
   return {
     ...cloudServices,
+    branchNameApi: localServices.branchNameApi,
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
     localProjectChatAgentApi: localServices.localProjectChatAgentApi,

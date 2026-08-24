@@ -562,6 +562,13 @@ impl TaskRuntime {
         self.local_store.list_task_bindings(item_id)
     }
 
+    pub fn list_task_bindings_batch(
+        &self,
+        item_ids: &[String],
+    ) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
+        self.local_store.list_task_bindings_batch(item_ids)
+    }
+
     pub fn list_chat_agents(&self, project_id: &str) -> Result<Vec<ChatAgent>, TaskRuntimeError> {
         self.local_store.list_chat_agents(project_id)
     }
@@ -783,8 +790,30 @@ impl TaskRuntime {
         self.local_store.find_task_binding(device_id, task_id)
     }
 
-    pub fn unbind_task(&self, device_id: &str, task_id: &str) -> Result<(), TaskRuntimeError> {
-        self.local_store.unbind_task(device_id, task_id)
+    pub fn find_system_task_binding(
+        &self,
+        device_id: &str,
+        task_id: &str,
+    ) -> Result<TaskBinding, TaskRuntimeError> {
+        self.local_store
+            .find_system_task_binding(device_id, task_id)
+    }
+
+    pub fn find_user_task_binding(
+        &self,
+        device_id: &str,
+        task_id: &str,
+    ) -> Result<TaskBinding, TaskRuntimeError> {
+        self.local_store.find_user_task_binding(device_id, task_id)
+    }
+
+    pub fn unbind_task(
+        &self,
+        device_id: &str,
+        task_id: &str,
+        item_id: Option<&str>,
+    ) -> Result<(), TaskRuntimeError> {
+        self.local_store.unbind_task(device_id, task_id, item_id)
     }
 
     pub fn list_project_files(

@@ -31,6 +31,7 @@ const EMPTY_STORE_SNAPSHOT: RuntimeTaskLifecycleStoreSnapshot = {
 const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'subscribe',
   'getSnapshot',
+  'getCurrentTask',
   'getTask',
   'selectTask',
 ])
@@ -62,6 +63,11 @@ export class RuntimeTaskLifecycleStore {
   }
 
   getSnapshot = (): RuntimeTaskLifecycleStoreSnapshot => this.snapshot
+
+  getCurrentTask(): RuntimeTaskLifecycleSnapshot | null {
+    if (!this.currentTaskKey) return null
+    return this.snapshot.tasks.get(this.currentTaskKey) ?? null
+  }
 
   getTask(address: RuntimeTaskAddress | null | undefined): RuntimeTaskLifecycleSnapshot | null {
     if (!address) return null
@@ -103,7 +109,7 @@ export class RuntimeTaskLifecycleStore {
     const currentSnapshot = this.getTask(address)
     if (
       expectedSnapshot !== undefined &&
-      lifecycleTransitionChanged(expectedSnapshot, currentSnapshot)
+      runtimeTaskLifecycleTransitionChanged(expectedSnapshot, currentSnapshot)
     ) {
       return false
     }
@@ -154,6 +160,7 @@ export class RuntimeTaskLifecycleStore {
     ) {
       const currentTurnId = this.getTask(address)?.turn.id
       if (currentTurnId && terminalTurn?.id === currentTurnId) {
+        this.executorSettled(address)
         this.turnSettled(address, currentTurnId, terminalTurnOutcome(terminalTurn.status))
       }
       return
@@ -322,6 +329,22 @@ export class RuntimeTaskLifecycleStore {
     const eventChanged = machine.dispatch(canonicalEvent)
     let changed = eventChanged
     const next = machine.getSnapshot()
+    if (
+      canonicalEvent.type === 'turn_settled' &&
+      previous.task?.running === true &&
+      import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1'
+    ) {
+      console.info('[Wework] Runtime turn settled before executor became idle', {
+        deviceId: canonicalAddress.deviceId,
+        taskId: canonicalAddress.taskId,
+        turnId: canonicalEvent.turnId ?? previous.turn.id,
+        previousExecutionPhase: previous.execution.phase,
+        nextExecutionPhase: next.execution.phase,
+        previousTurnPhase: previous.turn.phase,
+        nextTurnPhase: next.turn.phase,
+        executorSnapshotRunning: previous.task.running,
+      })
+    }
     if (
       wasRunning &&
       !next.derived.isRunning &&
@@ -530,7 +553,7 @@ export function createRuntimeTaskLifecycleOwnershipView(
   })
 }
 
-function lifecycleTransitionChanged(
+export function runtimeTaskLifecycleTransitionChanged(
   expected: RuntimeTaskLifecycleSnapshot | null,
   current: RuntimeTaskLifecycleSnapshot | null
 ): boolean {
@@ -540,8 +563,21 @@ function lifecycleTransitionChanged(
     expected.turn.phase !== current.turn.phase ||
     expected.turn.id !== current.turn.id ||
     expected.turn.outcome !== current.turn.outcome ||
-    expected.goalStatus !== current.goalStatus
+    expected.goalStatus !== current.goalStatus ||
+    expected.continuable !== current.continuable
   )
+}
+
+export function consumeRuntimeTaskLifecycleBlock(
+  blockedSnapshots: Map<string, RuntimeTaskLifecycleSnapshot | null>,
+  key: string,
+  current: RuntimeTaskLifecycleSnapshot | null
+): boolean {
+  if (!blockedSnapshots.has(key)) return true
+  const blocked = blockedSnapshots.get(key) ?? null
+  if (!runtimeTaskLifecycleTransitionChanged(blocked, current)) return false
+  blockedSnapshots.delete(key)
+  return true
 }
 
 function isTerminalTurnStatus(status: string | null | undefined): boolean {
