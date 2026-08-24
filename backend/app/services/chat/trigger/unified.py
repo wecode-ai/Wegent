@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from app.api.ws.chat_namespace import ChatNamespace
+    from app.models.subtask_context import SubtaskContext
     from app.services.execution.emitters import ResultEmitter
     from shared.models.execution import ExecutionRequest
 
@@ -1174,7 +1175,7 @@ async def _process_contexts(
     user_id: int,
     *,
     preload_selected_kb_skill: bool = True,
-    current_contexts: Optional[List[Any]] = None,
+    current_contexts: Optional[List["SubtaskContext"]] = None,
 ) -> "ExecutionRequest":
     """Process contexts (attachments, knowledge bases, etc.) for the request.
 

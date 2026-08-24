@@ -662,6 +662,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             SimpleNamespace(
                 context_type=ContextType.KNOWLEDGE_BASE.value,
                 status=ContextStatus.READY.value,
+                name="产品知识",
                 type_data={"knowledge_id": 1408},
             ),
             SimpleNamespace(

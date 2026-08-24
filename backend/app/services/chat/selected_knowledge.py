@@ -7,14 +7,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from fastapi import HTTPException
 
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
-from app.models.subtask_context import ContextStatus, ContextType
+from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
 from app.services.mcp_provider_registry import get_mcp_service_by_skill_name
 from shared.models.knowledge import (
@@ -60,7 +60,7 @@ def apply_selected_knowledge_context(
     request: "ExecutionRequest",
     task: "TaskResource",
     *,
-    current_contexts: Iterable[Any] = (),
+    current_contexts: Sequence[SubtaskContext] = (),
 ) -> list[str]:
     """Attach the selected-knowledge prompt and deterministic provider skills."""
     current_contexts = tuple(current_contexts)
@@ -202,7 +202,7 @@ def build_selected_knowledge_context(
     request: "ExecutionRequest",
     task: "TaskResource",
     *,
-    current_contexts: Iterable[Any] = (),
+    current_contexts: Sequence[SubtaskContext] = (),
 ) -> SelectedKnowledgeContext:
     """Resolve explicit message contexts over inherited task knowledge refs."""
     current_contexts = tuple(current_contexts)
@@ -338,26 +338,24 @@ def _routing_topics(
     return list(topics) if isinstance(topics, (list, tuple)) else []
 
 
-def has_explicit_knowledge_context(contexts: Iterable[Any]) -> bool:
+def has_explicit_knowledge_context(contexts: Sequence[SubtaskContext]) -> bool:
     """Return whether this turn explicitly selected any knowledge source."""
     explicit_types = {
         ContextType.KNOWLEDGE_BASE.value,
         ContextType.SELECTED_DOCUMENTS.value,
         ContextType.EXTERNAL_KNOWLEDGE.value,
     }
-    return any(
-        getattr(context, "context_type", None) in explicit_types for context in contexts
-    )
+    return any(context.context_type in explicit_types for context in contexts)
 
 
 def _explicit_context_keys(
-    contexts: Iterable[Any],
+    contexts: Sequence[SubtaskContext],
 ) -> set[tuple[str, str]]:
     """Return source identities explicitly addressed by this turn."""
     keys: set[tuple[str, str]] = set()
     for context in contexts:
-        context_type = getattr(context, "context_type", None)
-        data = getattr(context, "type_data", None)
+        context_type = context.context_type
+        data = context.type_data
         if not isinstance(data, dict):
             continue
         if context_type in {
@@ -394,7 +392,9 @@ def has_usable_wegent_scope(
     return False
 
 
-def has_supported_explicit_external_context(contexts: Iterable[Any]) -> bool:
+def has_supported_explicit_external_context(
+    contexts: Sequence[SubtaskContext],
+) -> bool:
     """Return whether this turn has an external source with a native adapter."""
     return bool(_build_external_refs_from_values(_current_external_values(contexts)))
 
@@ -404,10 +404,10 @@ def has_supported_external_refs(values: Iterable[Any]) -> bool:
     return bool(_build_external_refs_from_values(values))
 
 
-def has_explicit_external_context(contexts: Iterable[Any]) -> bool:
+def has_explicit_external_context(contexts: Sequence[SubtaskContext]) -> bool:
     """Return whether this turn explicitly selected an external source."""
     return any(
-        getattr(context, "context_type", None) == ContextType.EXTERNAL_KNOWLEDGE.value
+        context.context_type == ContextType.EXTERNAL_KNOWLEDGE.value
         for context in contexts
     )
 
@@ -417,7 +417,7 @@ def should_prepare_provider_native_knowledge(
     knowledge_base_ids: Iterable[Any],
     knowledge_base_scopes: Iterable[Any],
     access_mode: str,
-    current_contexts: Iterable[Any],
+    current_contexts: Sequence[SubtaskContext],
     external_refs: Iterable[Any] = (),
     preload_selected_kb_skill: bool,
     shell_type: str,
@@ -444,12 +444,12 @@ def should_prepare_provider_native_knowledge(
 def _build_current_explicit_refs(
     db: "Session",
     *,
-    current_contexts: Iterable[Any],
+    current_contexts: Sequence[SubtaskContext],
 ) -> list[SelectedKnowledgeRef]:
     ready_contexts = [
         context
         for context in current_contexts
-        if getattr(context, "status", None) == ContextStatus.READY.value
+        if context.status == ContextStatus.READY.value
     ]
     wegent_refs = _build_current_wegent_refs(db, ready_contexts)
     return [
@@ -458,33 +458,34 @@ def _build_current_explicit_refs(
     ]
 
 
-def _current_external_values(contexts: Iterable[Any]) -> list[dict[str, Any]]:
+def _current_external_values(
+    contexts: Sequence[SubtaskContext],
+) -> list[dict[str, Any]]:
     return [
         {
             **context.type_data,
-            "name": context.type_data.get("name") or getattr(context, "name", None),
+            "name": context.type_data.get("name") or context.name,
         }
         for context in contexts
-        if getattr(context, "status", None) == ContextStatus.READY.value
-        and getattr(context, "context_type", None)
-        == ContextType.EXTERNAL_KNOWLEDGE.value
-        and isinstance(getattr(context, "type_data", None), dict)
+        if context.status == ContextStatus.READY.value
+        and context.context_type == ContextType.EXTERNAL_KNOWLEDGE.value
+        and isinstance(context.type_data, dict)
     ]
 
 
 def _build_current_wegent_refs(
     db: "Session",
-    contexts: Iterable[Any],
+    contexts: Sequence[SubtaskContext],
 ) -> list[SelectedKnowledgeRef]:
     refs: list[SelectedKnowledgeRef] = []
     for context in contexts:
-        context_type = str(getattr(context, "context_type", None) or "")
+        context_type = str(context.context_type or "")
         if context_type not in {
             ContextType.KNOWLEDGE_BASE.value,
             ContextType.SELECTED_DOCUMENTS.value,
         }:
             continue
-        data = getattr(context, "type_data", None)
+        data = context.type_data
         if not isinstance(data, dict):
             continue
         kb_id = _current_wegent_kb_id(context_type, data)
@@ -518,7 +519,7 @@ def _build_current_wegent_refs(
                 knowledge_base_name=(
                     ""
                     if context_type == ContextType.SELECTED_DOCUMENTS.value
-                    else str(getattr(context, "name", None) or kb_id)
+                    else str(context.name or kb_id)
                 ),
                 resources=resources,
             )
@@ -744,7 +745,9 @@ def _build_external_refs_from_values(
     return result
 
 
-def _validate_explicit_external_contexts(contexts: Iterable[Any]) -> None:
+def _validate_explicit_external_contexts(
+    contexts: Sequence[SubtaskContext],
+) -> None:
     """Reject explicit external selections that cannot be consumed completely."""
     for value in _current_external_values(contexts):
         provider = str(value.get("provider") or "").strip().lower()
@@ -781,7 +784,9 @@ def _validate_explicit_external_contexts(contexts: Iterable[Any]) -> None:
             )
 
 
-def validate_explicit_knowledge_contexts(contexts: Iterable[Any]) -> None:
+def validate_explicit_knowledge_contexts(
+    contexts: Sequence[SubtaskContext],
+) -> None:
     """Reject explicit knowledge selections that are not ready or identifiable."""
     explicit_types = {
         ContextType.KNOWLEDGE_BASE.value,
@@ -789,17 +794,17 @@ def validate_explicit_knowledge_contexts(contexts: Iterable[Any]) -> None:
         ContextType.EXTERNAL_KNOWLEDGE.value,
     }
     for context in contexts:
-        context_type = getattr(context, "context_type", None)
+        context_type = context.context_type
         if context_type not in explicit_types:
             continue
-        status = getattr(context, "status", None)
+        status = context.status
         if status != ContextStatus.READY.value:
             _raise_invalid_selection_error(
                 f"Selected knowledge source is not ready: {status or '<missing>'}"
             )
         if context_type == ContextType.EXTERNAL_KNOWLEDGE.value:
             continue
-        data = getattr(context, "type_data", None)
+        data = context.type_data
         if (
             not isinstance(data, dict)
             or _current_wegent_kb_id(str(context_type), data) is None
