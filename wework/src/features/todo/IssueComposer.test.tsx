@@ -83,8 +83,13 @@ async function replaceIssueDescription(value: string) {
   const user = userEvent.setup()
   const editor = screen.getByTestId('workspace-issue-description')
   await user.click(editor)
-  await user.keyboard('{Control>}a{/Control}{Backspace}')
-  await waitFor(() => expect(editor).toHaveTextContent(''))
+  const selection = window.getSelection()
+  const range = document.createRange()
+  range.selectNodeContents(editor)
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  await user.keyboard('{Backspace}')
+  await waitFor(() => expect(editor).not.toHaveTextContent(/\S/))
   if (value) {
     fireEvent.paste(editor, {
       clipboardData: {
@@ -771,5 +776,25 @@ describe('IssueComposer', () => {
 
     fireEvent.click(screen.getByTestId('workspace-issue-composer'))
     expect(onCancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('accepts typing immediately after opening a task composer popup', async () => {
+    const user = userEvent.setup()
+    render(
+      <IssueComposer
+        projects={[workItemProject]}
+        initialBoardKey="backend:1"
+        initialStartExecution
+        presentation="popup"
+        onCancel={vi.fn()}
+        onCreate={vi.fn()}
+      />
+    )
+
+    const input = screen.getByTestId('workspace-issue-input')
+    await waitFor(() => expect(input).toHaveFocus())
+    await user.keyboard('无需再次点击')
+
+    expect(input).toHaveTextContent('无需再次点击')
   })
 })

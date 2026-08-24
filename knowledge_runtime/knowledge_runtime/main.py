@@ -12,11 +12,12 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-
 from knowledge_runtime.api.router import router
 from knowledge_runtime.config import get_settings
 from knowledge_runtime.core.logging import setup_logging
 from knowledge_runtime.middleware.auth import require_internal_service_token_configured
+
+from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
 from shared.models import RemoteRagError
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,31 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(EmbeddingDimensionMismatchError)
+async def embedding_dimension_mismatch_handler(
+    request: Request,
+    exc: EmbeddingDimensionMismatchError,
+) -> JSONResponse:
+    """Return a stable error for deterministic embedding dimension mismatches."""
+    logger.error(
+        "Embedding dimension mismatch for %s: model=%s expected=%s actual=%s",
+        request.url.path,
+        exc.model,
+        exc.expected,
+        exc.actual,
+    )
+    error_response = RemoteRagError(
+        code=exc.code,
+        message=str(exc),
+        retryable=exc.retryable,
+        details=exc.details,
+    )
+    return JSONResponse(
+        status_code=422,
+        content=error_response.model_dump(mode="json"),
+    )
 
 
 @app.exception_handler(Exception)

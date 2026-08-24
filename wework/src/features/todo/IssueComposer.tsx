@@ -330,7 +330,7 @@ export function IssueComposer({
     const previousFocus = document.activeElement as HTMLElement | null
     const frame = window.requestAnimationFrame(() => {
       const focusTarget = panelRef.current?.querySelector<HTMLElement>(
-        '[data-testid="workspace-issue-input"], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        '[data-testid="workspace-issue-input"]'
       )
       focusTarget?.focus()
     })

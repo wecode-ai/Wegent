@@ -182,6 +182,41 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
+  test('generates a branch name with the title model in an isolated ephemeral request', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.text.generate') {
+        return { content: 'fix/login-redirect' }
+      }
+      return {}
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      user: { id: 9, user_name: 'hongyu9', email: 'hongyu9@example.com' },
+    })
+
+    await expect(
+      services.branchNameApi?.generateBranchName({
+        sourceText: '修复登录回调',
+        deviceId: 'local-device',
+        modelId: 'gpt-5.6-sol',
+        modelType: 'runtime',
+        modelOptions: { reasoning: 'low' },
+      })
+    ).resolves.toBe('fix/login-redirect')
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.text.generate')?.[1]
+    expect(payload.executionRequest).toMatchObject({
+      ephemeral: true,
+      enable_tools: false,
+      enable_deep_thinking: false,
+      model_config: expect.objectContaining({ reasoning: { effort: 'low' } }),
+    })
+    expect(payload.executionRequest).not.toHaveProperty('workspace_project')
+    expect(payload.executionRequest.prompt).toContain('修复登录回调')
+  })
+
   test('registers harness models through the executor Messages proxy', async () => {
     const config = saveLocalModelConfig({
       id: 'harness-model',
@@ -455,7 +490,7 @@ describe('createLocalAppServices', () => {
     })
   })
 
-  test('deduplicates catalog reconciliation across local service instances', async () => {
+  test('deduplicates catalog reconciliation across local transport wrappers', async () => {
     const catalogEntry = createDefaultLocalModelCatalogEntry({
       id: 'pending-model',
       displayName: 'Pending model',
@@ -474,10 +509,16 @@ describe('createLocalAppServices', () => {
     const restart = new Promise<{ restarted: boolean }>(resolve => {
       resolveRestart = resolve
     })
-    const request = vi.fn().mockImplementation(async (method: string) => {
+    const transport = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.codex.app_server.restart') return restart
       return {}
     })
+    const firstRequest = vi.fn((method: string, params?: Record<string, unknown>) =>
+      transport(method, params)
+    )
+    const secondRequest = vi.fn((method: string, params?: Record<string, unknown>) =>
+      transport(method, params)
+    )
     const ensure = vi.fn().mockResolvedValue({
       running: true,
       ready: true,
@@ -485,12 +526,20 @@ describe('createLocalAppServices', () => {
       version: '1.9.0',
       runtimeInstanceId: 'runtime-1',
     })
-    const firstServices = createLocalAppServices({ ensure, request, subscribe: vi.fn() })
-    const secondServices = createLocalAppServices({ ensure, request, subscribe: vi.fn() })
+    const firstServices = createLocalAppServices({
+      ensure,
+      request: firstRequest,
+      subscribe: vi.fn(),
+    })
+    const secondServices = createLocalAppServices({
+      ensure,
+      request: secondRequest,
+      subscribe: vi.fn(),
+    })
 
     const firstDevices = firstServices.deviceApi.listDevices()
     await vi.waitFor(() =>
-      expect(request).toHaveBeenCalledWith('runtime.codex.app_server.restart', { ifIdle: true })
+      expect(transport).toHaveBeenCalledWith('runtime.codex.app_server.restart', { ifIdle: true })
     )
     const secondDevices = secondServices.deviceApi.listDevices()
     let secondResolved = false
@@ -500,15 +549,98 @@ describe('createLocalAppServices', () => {
     await Promise.resolve()
 
     expect(
-      request.mock.calls.filter(([method]) => method === 'runtime.codex.catalog.custom.write')
+      transport.mock.calls.filter(([method]) => method === 'runtime.codex.catalog.custom.write')
     ).toHaveLength(1)
     expect(
-      request.mock.calls.filter(([method]) => method === 'runtime.codex.app_server.restart')
+      transport.mock.calls.filter(([method]) => method === 'runtime.codex.app_server.restart')
     ).toHaveLength(1)
     expect(secondResolved).toBe(false)
 
     resolveRestart?.({ restarted: true })
     await Promise.all([firstDevices, secondDevices])
+  })
+
+  test('serializes catalog reconciliation while the runtime identity becomes available', async () => {
+    const firstCatalogEntry = createDefaultLocalModelCatalogEntry({
+      id: 'first-pending-model',
+      displayName: 'First pending model',
+      toolProfile: 'native',
+    })
+    saveLocalModelConfig({
+      id: 'first-pending-model',
+      displayName: 'First pending model',
+      modelId: 'first-pending-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogEntry: firstCatalogEntry,
+      codexCatalogModelId: String(firstCatalogEntry.slug),
+      catalogReady: false,
+    })
+    const restartResolvers: Array<(value: { restarted: boolean }) => void> = []
+    let activeRestarts = 0
+    let maxActiveRestarts = 0
+    const transport = vi.fn().mockImplementation(async (method: string) => {
+      if (method !== 'runtime.codex.app_server.restart') return {}
+      activeRestarts += 1
+      maxActiveRestarts = Math.max(maxActiveRestarts, activeRestarts)
+      return new Promise<{ restarted: boolean }>(resolve => {
+        restartResolvers.push(value => {
+          activeRestarts -= 1
+          resolve(value)
+        })
+      })
+    })
+    const firstServices = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        version: '1.9.0',
+      }),
+      request: transport,
+      subscribe: vi.fn(),
+    })
+    const secondServices = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        version: '1.9.0',
+        runtimeInstanceId: 'runtime-1',
+      }),
+      request: transport,
+      subscribe: vi.fn(),
+    })
+
+    const firstDevices = firstServices.deviceApi.listDevices()
+    await vi.waitFor(() => expect(restartResolvers).toHaveLength(1))
+
+    const secondCatalogEntry = createDefaultLocalModelCatalogEntry({
+      id: 'second-pending-model',
+      displayName: 'Second pending model',
+      toolProfile: 'native',
+    })
+    saveLocalModelConfig({
+      id: 'second-pending-model',
+      displayName: 'Second pending model',
+      modelId: 'second-pending-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogEntry: secondCatalogEntry,
+      codexCatalogModelId: String(secondCatalogEntry.slug),
+      catalogReady: false,
+    })
+    const secondDevices = secondServices.deviceApi.listDevices()
+    await Promise.resolve()
+
+    expect(restartResolvers).toHaveLength(1)
+    restartResolvers[0]?.({ restarted: true })
+    await vi.waitFor(() => expect(restartResolvers).toHaveLength(2))
+    restartResolvers[1]?.({ restarted: true })
+    await Promise.all([firstDevices, secondDevices])
+
+    expect(maxActiveRestarts).toBe(1)
+    expect(
+      transport.mock.calls.filter(([method]) => method === 'runtime.codex.catalog.custom.write')
+    ).toHaveLength(2)
   })
 
   test('accepts an already loaded catalog model when an idle restart is unavailable', async () => {
@@ -2831,6 +2963,88 @@ describe('createLocalAppServices', () => {
         },
       })
     )
+  })
+
+  test('drives a non-Responses cloud vision sidecar through the same gateway route', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-anthropic-sidecar',
+      runtime: 'codex',
+      message: 'describe the image',
+      title: 'Text-only primary with Anthropic sidecar',
+      modelId: 'text-only-primary',
+      modelType: 'public',
+      modelOptions: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '0',
+        weworkCloudVisionSidecar:
+          '{"modelName":"kimi-k2.5-vision","modelType":"public","namespace":"default","resourceUserId":0,"apiFormat":"anthropic-messages"}',
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config.vision_sidecar).toEqual({
+      enabled: true,
+      request_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy/responses',
+      api_format: 'anthropic-messages',
+      api_key: 'cloud-login-token',
+      model_id: 'kimi-k2.5-vision',
+      default_headers: {
+        'X-Wegent-Model-Type': 'public',
+        'X-Wegent-Model-Namespace': 'default',
+        'X-Wegent-Model-User-Id': '0',
+        'X-Wegent-Upstream-Header-wecode-executor': 'codex',
+        'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
+      },
+      max_descriptions_per_turn: 8,
+      timeout_ms: 45000,
+    })
+  })
+
+  test('rejects a cloud vision sidecar reference that is not a supported protocol', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await expect(
+      services.runtimeWorkApi?.createRuntimeTask({
+        teamId: 0,
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-bad-sidecar',
+        runtime: 'codex',
+        message: 'describe the image',
+        title: 'Bad sidecar',
+        modelId: 'text-only-primary',
+        modelType: 'public',
+        modelOptions: {
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '0',
+          weworkCloudVisionSidecar:
+            '{"modelName":"vision","modelType":"public","namespace":"default","resourceUserId":0,"apiFormat":"gemini-generate-content"}',
+        },
+      })
+    ).rejects.toThrow('Cloud vision sidecar reference is invalid')
   })
 
   test('does not configure cloud vision delegation without an explicit reference', async () => {

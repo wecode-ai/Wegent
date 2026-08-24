@@ -2,7 +2,7 @@ import { ArrowUpRight, Check, ChevronDown, LayoutDashboard, ListChecks, X } from
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import { useAnchoredPortalMenu } from '@/components/chat/composer/useAnchoredPortalMenu'
+import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
 import { useOutsideClick } from '@/components/chat/composer/useOutsideClick'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { useTranslation } from '@/hooks/useTranslation'

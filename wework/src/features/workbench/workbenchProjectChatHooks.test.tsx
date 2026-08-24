@@ -78,6 +78,50 @@ describe('workbench project chat hooks', () => {
     await waitFor(() => expect(result.current.models).toEqual([codexModel, localModel]))
   })
 
+  test('ignores an older model reload that settles after the latest request', async () => {
+    const initialModel: UnifiedModel = { name: 'initial-model', type: 'runtime' }
+    const recoveredModel: UnifiedModel = { name: 'recovered-model', type: 'runtime' }
+    let rejectStaleReload: ((reason: Error) => void) | undefined
+    let resolveRecoveredReload: ((value: { data: UnifiedModel[] }) => void) | undefined
+    const staleReload = new Promise<{ data: UnifiedModel[] }>((_resolve, reject) => {
+      rejectStaleReload = reject
+    })
+    const recoveredReload = new Promise<{ data: UnifiedModel[] }>(resolve => {
+      resolveRecoveredReload = resolve
+    })
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [initialModel] })
+        .mockReturnValueOnce(staleReload)
+        .mockReturnValueOnce(recoveredReload),
+    }
+    const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
+
+    await waitFor(() => expect(result.current.models).toEqual([initialModel]))
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+    await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(3))
+
+    await act(async () => {
+      rejectStaleReload?.(new Error('stale reload failed'))
+      await staleReload.catch(() => undefined)
+    })
+    expect(result.current.models).toEqual([initialModel])
+    expect(result.current.isLoading).toBe(true)
+    expect(result.current.error).toBeNull()
+
+    await act(async () => {
+      resolveRecoveredReload?.({ data: [recoveredModel] })
+      await recoveredReload
+    })
+    await waitFor(() => expect(result.current.models).toEqual([recoveredModel]))
+    expect(result.current.isLoading).toBe(false)
+    expect(result.current.error).toBeNull()
+  })
+
   test('refreshes the selected model metadata while preserving supported options', async () => {
     const originalModel: UnifiedModel = {
       name: 'local-model:api-sol',

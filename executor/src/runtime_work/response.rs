@@ -928,6 +928,8 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
             | "cachedMessages"
             | "cached_message"
             | "cached_messages"
+            | "completedTranscriptMessages"
+            | "transcriptSnapshotMessages"
     )
 }
 
@@ -1020,6 +1022,21 @@ pub(super) fn codex_thread_in_progress_turn_id(thread: &Value) -> Option<String>
             string_field(turn, "status").is_some_and(|status| runtime_status_is_running(&status))
         })
         .and_then(|turn| string_field(turn, "id"))
+}
+
+pub(super) fn codex_thread_terminal_task_status(thread: &Value) -> Option<&'static str> {
+    let status = thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .and_then(|turns| turns.last())
+        .and_then(|turn| string_field(turn, "status"))?;
+    match status.replace(['_', '-'], "").to_ascii_lowercase().as_str() {
+        "inprogress" | "running" | "active" => None,
+        "interrupted" | "cancelled" | "canceled" | "aborted" => Some("cancelled"),
+        "failed" | "error" => Some("failed"),
+        "completed" | "done" => Some("done"),
+        _ => None,
+    }
 }
 
 fn normalize_codex_turn_status(status: String) -> String {

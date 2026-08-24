@@ -5,6 +5,27 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn generate_text(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let mut request = execution_request(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
+        request.ephemeral = true;
+        let turn = self
+            .codex_app_server
+            .run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
+            .await
+            .map_err(|error| AppIpcError::new("model_transport_failed", error))?;
+        match turn.outcome {
+            ExecutionOutcome::Completed { content } => Ok(json!({"content": content})),
+            ExecutionOutcome::Failed { message } => {
+                Err(AppIpcError::new("model_request_failed", message))
+            }
+            outcome => Err(AppIpcError::new(
+                "model_request_incomplete",
+                format!("text generation did not complete: {outcome:?}"),
+            )),
+        }
+    }
+
     pub(super) async fn generate_friendly_title(
         &self,
         payload: Value,
@@ -929,37 +950,101 @@ impl RuntimeWorkRpcHandler {
             && !self
                 .local_task_link(&local_task_id)
                 .is_some_and(|link| link.ephemeral);
-        self.resolve_pending_request_user_input_for_stop(&local_task_id);
-        if !self.abort_active_turn(&local_task_id).await {
-            return Ok(json!({
-                "success": false,
-                "accepted": false,
-                "taskId": local_task_id,
-                "runtime": "codex",
-                "error": "runtime turn did not stop within timeout",
-                "code": "interrupt_timeout",
-            }));
-        }
-        if check_provider_turn {
-            let thread_id = runtime_session_id_from_payload(&payload).or_else(|| {
+        let thread_id = if check_provider_turn {
+            runtime_session_id_from_payload(&payload).or_else(|| {
                 self.local_task_link(&local_task_id)
                     .as_ref()
                     .and_then(runtime_session_id_from_link)
-            });
-            if let Some(thread_id) = thread_id {
-                if !self.interrupt_provider_active_turn(&thread_id).await {
-                    return Ok(json!({
-                        "success": false,
-                        "accepted": false,
-                        "taskId": local_task_id,
-                        "runtime": "codex",
-                        "error": "runtime turn did not stop within timeout",
-                        "code": "interrupt_timeout",
-                    }));
-                }
+            })
+        } else {
+            None
+        };
+        let had_active_local_execution = self.is_active_local_task(&local_task_id);
+        self.resolve_pending_request_user_input_for_stop(&local_task_id);
+        if let Some(thread_id) = thread_id.as_deref() {
+            if self
+                .settle_local_execution_from_terminal_codex_turn(
+                    &local_task_id,
+                    thread_id,
+                    "interrupt_and_send_provider_terminal",
+                    PROVIDER_STATE_RECONCILIATION_TIMEOUT,
+                )
+                .await
+            {
+                return self.send_message_after_local_checks(payload).await;
             }
         }
+        let local_stop = self.abort_active_turn(&local_task_id);
+        let provider_stop = async {
+            match (had_active_local_execution, thread_id.as_deref()) {
+                (false, Some(thread_id)) => tokio::time::timeout(
+                    Duration::from_secs(10),
+                    self.interrupt_provider_active_turn(thread_id),
+                )
+                .await
+                .unwrap_or(false),
+                _ => true,
+            }
+        };
+        let (local_stopped, provider_stopped) = tokio::join!(local_stop, provider_stop);
+        if !local_stopped {
+            self.force_settle_local_task_execution(
+                &local_task_id,
+                thread_id,
+                "cancelled",
+                "interrupt_and_send_timeout",
+            );
+        }
+        if !provider_stopped {
+            log_executor_event(
+                "runtime work provider interrupt cleanup pending",
+                &[("local_task_id", local_task_id.clone())],
+            );
+        }
         self.send_message_after_local_checks(payload).await
+    }
+
+    async fn settle_local_execution_from_terminal_codex_turn(
+        &self,
+        local_task_id: &str,
+        thread_id: &str,
+        reason: &str,
+        timeout: Duration,
+    ) -> bool {
+        let thread =
+            match tokio::time::timeout(timeout, self.read_codex_recent_turns(thread_id)).await {
+                Ok(Ok(thread)) => thread,
+                Ok(Err(error)) => {
+                    log_executor_event(
+                        "runtime work provider state read failed during reconciliation",
+                        &[
+                            ("local_task_id", local_task_id.to_owned()),
+                            ("thread_id", thread_id.to_owned()),
+                            ("error", error),
+                        ],
+                    );
+                    return false;
+                }
+                Err(_) => {
+                    log_executor_event(
+                        "runtime work provider state read timed out during reconciliation",
+                        &[
+                            ("local_task_id", local_task_id.to_owned()),
+                            ("thread_id", thread_id.to_owned()),
+                        ],
+                    );
+                    return false;
+                }
+            };
+        let Some(status) = codex_thread_terminal_task_status(&thread) else {
+            return false;
+        };
+        self.force_settle_local_task_execution(
+            local_task_id,
+            Some(thread_id.to_owned()),
+            status,
+            reason,
+        )
     }
 
     async fn interrupt_provider_active_turn(&self, thread_id: &str) -> bool {
@@ -1379,6 +1464,15 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn cancel_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.cancel_task_with_timeout(payload, Duration::from_secs(10))
+            .await
+    }
+
+    pub(super) async fn cancel_task_with_timeout(
+        &self,
+        payload: Value,
+        stop_timeout: Duration,
+    ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let link = self
@@ -1388,6 +1482,11 @@ impl RuntimeWorkRpcHandler {
                 link.completed_at = Some(link.updated_at);
             })
             .or_else(|| self.local_task_link(&local_task_id));
+        let thread_id = link.as_ref().and_then(runtime_session_id_from_link);
+        let is_codex = link
+            .as_ref()
+            .map_or(true, |link| link.runtime.eq_ignore_ascii_case("codex"));
+        let had_active_local_execution = self.is_active_local_task(&local_task_id);
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
         if self.remove_queued_turn(&local_task_id).await? {
             return Ok(match link {
@@ -1411,24 +1510,64 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if !self.abort_active_turn(&local_task_id).await {
-            return Ok(json!({
-                "success": false,
-                "accepted": false,
-                "taskId": local_task_id,
-                "runtime": "codex",
-                "error": "runtime task did not stop within timeout",
-                "code": "cancel_timeout",
-            }));
+        if is_codex {
+            if let Some(thread_id) = thread_id.as_deref() {
+                if self
+                    .settle_local_execution_from_terminal_codex_turn(
+                        &local_task_id,
+                        thread_id,
+                        "cancel_provider_terminal",
+                        PROVIDER_STATE_RECONCILIATION_TIMEOUT.min(stop_timeout),
+                    )
+                    .await
+                {
+                    return Ok(match self.local_task_link(&local_task_id).or(link) {
+                        Some(link) => task_action_success(&link),
+                        None => json!({
+                            "success": true,
+                            "accepted": true,
+                            "taskId": local_task_id,
+                            "runtime": "codex",
+                        }),
+                    });
+                }
+            }
         }
+        let local_stop = self.abort_active_turn_with_timeout(&local_task_id, stop_timeout);
+        let provider_stop = async {
+            match (is_codex, had_active_local_execution, thread_id.as_deref()) {
+                (true, false, Some(thread_id)) => tokio::time::timeout(
+                    stop_timeout,
+                    self.interrupt_provider_active_turn(thread_id),
+                )
+                .await
+                .unwrap_or(false),
+                _ => true,
+            }
+        };
+        let (local_stopped, provider_stopped) = tokio::join!(local_stop, provider_stop);
+        if !local_stopped {
+            self.force_settle_local_task_execution(
+                &local_task_id,
+                thread_id,
+                "cancelled",
+                "cancel_timeout",
+            );
+        }
+        let cleanup_pending = !local_stopped || !provider_stopped;
 
-        Ok(match link {
-            Some(link) => task_action_success(&link),
+        Ok(match self.local_task_link(&local_task_id).or(link) {
+            Some(link) => {
+                let mut response = task_action_success(&link);
+                response["cleanupPending"] = Value::Bool(cleanup_pending);
+                response
+            }
             None => json!({
                 "success": true,
                 "accepted": true,
                 "taskId": local_task_id,
                 "runtime": "codex",
+                "cleanupPending": cleanup_pending,
             }),
         })
     }
@@ -1587,6 +1726,7 @@ impl RuntimeWorkRpcHandler {
         let updated = self.store.update_task(local_task_id, |link| {
             if link.thread_id.as_deref() != Some(thread_id) {
                 clear_completed_transcript_messages(&mut link.runtime_handle);
+                clear_transcript_snapshot_messages(&mut link.runtime_handle);
             }
             link.thread_id = Some(thread_id.to_owned());
             clear_runtime_handle_messages(&mut link.runtime_handle);

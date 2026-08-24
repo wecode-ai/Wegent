@@ -5,8 +5,12 @@ mod cloud_authorization_window;
 mod desktop_capture;
 mod diagram_image;
 mod embedded_browser;
+#[cfg(all(target_os = "macos", debug_assertions, not(wework_release_build)))]
+mod embedded_browser_devtools;
 #[cfg(target_os = "macos")]
 mod embedded_browser_tls;
+#[cfg(target_os = "macos")]
+mod embedded_browser_web_security;
 mod execution_environments;
 #[cfg(desktop)]
 mod feedback;
@@ -588,6 +592,10 @@ struct AppPreferences {
     show_main_window_on_launch: bool,
     #[serde(default = "default_workspace_tab")]
     default_workspace_tab: String,
+    #[serde(default)]
+    fixed_workspace_tabs: Vec<FixedWorkspaceTabPreference>,
+    #[serde(default)]
+    startup_workspace_tab_id: String,
     #[serde(default = "default_true")]
     system_drag_enabled: bool,
     #[serde(default = "default_true")]
@@ -645,6 +653,33 @@ struct AppPreferences {
     quick_phrases: Vec<QuickPhrase>,
     #[serde(default = "default_local_harness_preferences")]
     local_harnesses: Vec<LocalHarnessPreference>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FixedWorkspaceTabPreference {
+    id: String,
+    kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    installation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+}
+
+fn default_fixed_workspace_tabs() -> Vec<FixedWorkspaceTabPreference> {
+    ["task", "board", "agent"]
+        .into_iter()
+        .map(|kind| FixedWorkspaceTabPreference {
+            id: format!("fixed-{kind}"),
+            kind: kind.to_string(),
+            installation_id: None,
+            title: None,
+        })
+        .collect()
+}
+
+fn default_startup_workspace_tab_id() -> String {
+    "fixed-task".to_string()
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -818,6 +853,8 @@ impl Default for AppPreferences {
             close_to_tray_enabled: true,
             show_main_window_on_launch: true,
             default_workspace_tab: default_workspace_tab(),
+            fixed_workspace_tabs: default_fixed_workspace_tabs(),
+            startup_workspace_tab_id: default_startup_workspace_tab_id(),
             system_drag_enabled: true,
             prevent_sleep_while_tasks_running: true,
             close_to_tray_hint_seen: false,
@@ -879,6 +916,8 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     default_workspace_tab: Option<String>,
+    fixed_workspace_tabs: Option<Vec<FixedWorkspaceTabPreference>>,
+    startup_workspace_tab_id: Option<String>,
     system_drag_enabled: Option<bool>,
     prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
@@ -1252,6 +1291,33 @@ fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences 
     ) {
         preferences.default_workspace_tab = default_workspace_tab();
     }
+    let mut seen_fixed_tab_ids = std::collections::HashSet::new();
+    preferences.fixed_workspace_tabs.retain_mut(|tab| {
+        tab.id = tab.id.trim().to_string();
+        tab.kind = tab.kind.trim().to_string();
+        tab.installation_id = tab.installation_id.take().and_then(normalized_non_empty);
+        tab.title = tab.title.take().and_then(normalized_non_empty);
+        !tab.id.is_empty()
+            && seen_fixed_tab_ids.insert(tab.id.clone())
+            && matches!(tab.kind.as_str(), "task" | "board" | "agent" | "smart_app")
+            && (tab.kind != "smart_app" || tab.installation_id.is_some())
+    });
+    if preferences.fixed_workspace_tabs.is_empty() {
+        preferences.fixed_workspace_tabs = default_fixed_workspace_tabs();
+        preferences.startup_workspace_tab_id =
+            format!("fixed-{}", preferences.default_workspace_tab);
+    }
+    if !preferences
+        .fixed_workspace_tabs
+        .iter()
+        .any(|tab| tab.id == preferences.startup_workspace_tab_id)
+    {
+        preferences.startup_workspace_tab_id = preferences
+            .fixed_workspace_tabs
+            .first()
+            .map(|tab| tab.id.clone())
+            .unwrap_or_else(default_startup_workspace_tab_id);
+    }
     preferences.context_compaction_threshold =
         preferences.context_compaction_threshold.clamp(1, 100);
     if !matches!(preferences.supervisor_interval_seconds, 10 | 30 | 60 | 300) {
@@ -1533,6 +1599,12 @@ fn update_app_preferences(
     if let Some(value) = patch.default_workspace_tab {
         preferences.default_workspace_tab = value;
     }
+    if let Some(value) = patch.fixed_workspace_tabs {
+        preferences.fixed_workspace_tabs = value;
+    }
+    if let Some(value) = patch.startup_workspace_tab_id {
+        preferences.startup_workspace_tab_id = value;
+    }
     if let Some(value) = patch.system_drag_enabled {
         preferences.system_drag_enabled = value;
     }
@@ -1640,6 +1712,8 @@ struct AppPreferences {
     close_to_tray_enabled: bool,
     show_main_window_on_launch: bool,
     default_workspace_tab: String,
+    fixed_workspace_tabs: Vec<FixedWorkspaceTabPreference>,
+    startup_workspace_tab_id: String,
     system_drag_enabled: bool,
     prevent_sleep_while_tasks_running: bool,
     close_to_tray_hint_seen: bool,
@@ -1678,6 +1752,8 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     default_workspace_tab: Option<String>,
+    fixed_workspace_tabs: Option<Vec<FixedWorkspaceTabPreference>>,
+    startup_workspace_tab_id: Option<String>,
     system_drag_enabled: Option<bool>,
     prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
@@ -1716,6 +1792,8 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         close_to_tray_enabled: true,
         show_main_window_on_launch: true,
         default_workspace_tab: "task".to_string(),
+        fixed_workspace_tabs: default_fixed_workspace_tabs(),
+        startup_workspace_tab_id: default_startup_workspace_tab_id(),
         system_drag_enabled: true,
         prevent_sleep_while_tasks_running: true,
         close_to_tray_hint_seen: false,
@@ -1761,6 +1839,13 @@ fn update_app_preferences(
             .default_workspace_tab
             .filter(|value| matches!(value.as_str(), "task" | "board" | "agent"))
             .unwrap_or_else(|| "task".to_string()),
+        fixed_workspace_tabs: patch
+            .fixed_workspace_tabs
+            .filter(|tabs| !tabs.is_empty())
+            .unwrap_or_else(default_fixed_workspace_tabs),
+        startup_workspace_tab_id: patch
+            .startup_workspace_tab_id
+            .unwrap_or_else(default_startup_workspace_tab_id),
         system_drag_enabled: patch.system_drag_enabled.unwrap_or(true),
         prevent_sleep_while_tasks_running: patch.prevent_sleep_while_tasks_running.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
@@ -5217,10 +5302,14 @@ pub fn run() {
             embedded_browser::embedded_browser_set_agent_control_paused,
             embedded_browser::embedded_browser_set_zoom,
             embedded_browser::embedded_browser_set_bounds,
+            embedded_browser::embedded_browser_verify_detached_inspector_for_e2e,
             execution_environments::install_execution_environment,
             execution_environments::list_execution_environments,
             execution_environments::remove_execution_environment,
             harness_apps::delete_harness_app,
+            harness_apps::download_harness_app_package,
+            harness_apps::export_harness_app_package,
+            harness_apps::upload_harness_app_package,
             harness_apps::install_harness_app,
             harness_apps::list_harness_apps,
             harness_apps::preview_harness_app,

@@ -32,6 +32,8 @@ import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
 import type {
   Attachment,
+  ModelOptions,
+  ModelType,
   ProjectDeviceSessionResponse,
   RuntimeProjectPluginRef,
   User,
@@ -183,6 +185,15 @@ export interface WorkbenchServices {
     unregisterContext: (token: string) => Promise<void>
   }
   workspaceSessionApi?: WorkspaceSessionApi
+  branchNameApi?: {
+    generateBranchName: (data: {
+      sourceText: string
+      deviceId?: string | null
+      modelId: string
+      modelType?: ModelType | null
+      modelOptions?: ModelOptions
+    }) => Promise<string>
+  }
   chatStream: ReturnType<typeof createChatStream>
   cloudBackgroundApi?: {
     listTeams?: ReturnType<typeof createTeamApi>['listTeams']

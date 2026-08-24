@@ -13,7 +13,7 @@ import type {
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
-import { buildRuntimeTaskRoute, isSettingsRoute, navigateTo } from '@/lib/navigation'
+import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
@@ -63,6 +63,7 @@ import {
   getWorkbenchPaneKey,
   type WorkbenchPaneIdentity,
 } from './workbenchPaneIdentity'
+import { openProjectSpaceRuntimeTaskInTab } from './projectSpaceRuntimeTaskNavigation'
 import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
@@ -528,15 +529,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
   const openProjectSpaceRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
-      await openRuntimeTaskOutsideHarness(address)
-      if (!workspaceTabs) return
-      const contentRoute = buildRuntimeTaskRoute(address)
-      const taskTab = workspaceTabs.tabs.find(tab => tab.kind === 'task')
-      if (taskTab) {
-        workspaceTabs.selectTab(taskTab.id, { contentRoute })
-        return
-      }
-      workspaceTabs.openTab('task', { contentRoute })
+      await openProjectSpaceRuntimeTaskInTab(address, workspaceTabs, openRuntimeTaskOutsideHarness)
     },
     [openRuntimeTaskOutsideHarness, workspaceTabs]
   )
@@ -1073,6 +1066,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 onCreateDeviceDirectory={onCreateDeviceDirectory}
                 onCloneGitRepository={onCloneGitRepository}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                onArchiveRuntimeTask={onArchiveRuntimeTask}
                 onOpenSettings={options => openSettings(options, '/todo')}
                 onLogout={onLogout}
                 activeProjectRef={

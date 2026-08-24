@@ -1474,6 +1474,27 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
 }
 
 #[test]
+fn codex_worktree_launch_config_sets_pnpm_environment() {
+    let request = ExecutionRequest {
+        workspace_source: Some("git_worktree".to_owned()),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+
+    assert_eq!(
+        params["config"]["shell_environment_policy.set.PNPM_CONFIG_IGNORE_SCRIPTS"],
+        "true"
+    );
+    assert_eq!(
+        params["config"]["shell_environment_policy.set.PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE"],
+        "true"
+    );
+}
+
+#[test]
 fn turn_start_params_refreshes_task_identity_shell_environment() {
     let request = ExecutionRequest {
         task_id: "task-525".to_owned(),

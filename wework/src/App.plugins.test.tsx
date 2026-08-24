@@ -95,6 +95,7 @@ const mockViewport = vi.hoisted(() => ({
 }))
 
 const workbenchValue: WorkbenchContextValue = {
+  services: {},
   state: {
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
     projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
@@ -1836,6 +1837,29 @@ describe('App plugins route', () => {
       'aria-current',
       'page'
     )
+  })
+
+  test('returns to the Smart apps marketplace after visiting My workbench and Mini Programs', async () => {
+    window.history.pushState({}, '', '/sites')
+
+    renderApp()
+    await updateAppPreferences({ experimentalFeaturesEnabled: true })
+
+    await userEvent.click(await screen.findByTestId('applications-tab-smart-app'))
+    await userEvent.click(await screen.findByTestId('smart-apps-section-owned'))
+    expect(await screen.findByTestId('smart-apps-owned-page')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('applications-tab-miniapp'))
+    expect(window.location.search).toBe('?app_type=miniapp')
+
+    await userEvent.click(screen.getByTestId('applications-tab-smart-app'))
+
+    expect(await screen.findByTestId('smart-apps-marketplace-page')).toBeInTheDocument()
+    expect(screen.getByTestId('smart-apps-section-marketplace')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(window.location.search).toBe('?app_type=smart_app')
   })
 
   test('hides Smart apps and exits its Applications view while experiments are disabled', async () => {

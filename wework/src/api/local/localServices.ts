@@ -176,6 +176,7 @@ import {
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
   CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
   CLOUD_MODEL_VISION_SIDECAR_OPTION,
+  parseCloudVisionSidecarReference,
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 
@@ -378,10 +379,11 @@ interface CatalogReconciliationTracker {
   key: string
 }
 
-const catalogReconciliationTrackers = new WeakMap<
-  LocalExecutorRequest,
-  CatalogReconciliationTracker
->()
+let catalogReconciliationTracker: CatalogReconciliationTracker = {
+  attemptedAt: 0,
+  inFlight: null,
+  key: '',
+}
 let runtimeChatStreams = new WeakMap<
   LocalExecutorSubscribe,
   WeakMap<LocalExecutorRequest, ReturnType<typeof createRuntimeChatStream>>
@@ -389,6 +391,11 @@ let runtimeChatStreams = new WeakMap<
 
 export function resetLocalRuntimeChatStreamsForTests(): void {
   runtimeChatStreams = new WeakMap()
+  catalogReconciliationTracker = {
+    attemptedAt: 0,
+    inFlight: null,
+    key: '',
+  }
 }
 
 function getRuntimeChatStream(
@@ -410,19 +417,11 @@ function getRuntimeChatStream(
 const CATALOG_IDLE_RESTART_RETRY_DELAY_MS = 100
 const CATALOG_IDLE_RESTART_MAX_ATTEMPTS = 20
 
-function catalogReconciliationTracker(request: LocalExecutorRequest): CatalogReconciliationTracker {
-  const existing = catalogReconciliationTrackers.get(request)
-  if (existing) return existing
-  const tracker = { attemptedAt: 0, inFlight: null, key: '' }
-  catalogReconciliationTrackers.set(request, tracker)
-  return tracker
-}
-
 async function reconcilePendingLocalModelCatalog(
   request: LocalExecutorRequest,
   runtimeInstanceId?: string
 ): Promise<void> {
-  const tracker = catalogReconciliationTracker(request)
+  const tracker = catalogReconciliationTracker
   if (tracker.inFlight) {
     try {
       await tracker.inFlight
@@ -955,45 +954,29 @@ function cloudVisionSidecarConfig(
   const raw = modelOptions?.[CLOUD_MODEL_VISION_SIDECAR_OPTION]
   if (!raw) return null
 
-  let sidecar: Record<string, unknown>
+  let parsed: unknown
   try {
-    const parsed = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('Cloud vision sidecar reference is invalid')
-    }
-    sidecar = parsed as Record<string, unknown>
+    parsed = JSON.parse(raw)
   } catch (error) {
     throw new Error('Cloud vision sidecar reference is invalid', { cause: error })
   }
-
-  const modelName = stringValue(sidecar.modelName)
-  const modelType = stringValue(sidecar.modelType)
-  const namespace = stringValue(sidecar.namespace)
-  const resourceUserId = sidecar.resourceUserId
-  const apiFormat = stringValue(sidecar.apiFormat)
-  if (
-    !modelName ||
-    !isCloudModelType(modelType) ||
-    !namespace ||
-    typeof resourceUserId !== 'number' ||
-    !Number.isInteger(resourceUserId) ||
-    resourceUserId < 0 ||
-    !apiFormat ||
-    !['openai-responses', 'openai-chat-completions', 'anthropic-messages'].includes(apiFormat)
-  ) {
-    throw new Error('Cloud vision sidecar reference is incomplete')
+  const sidecar = parseCloudVisionSidecarReference(parsed)
+  if (!sidecar) {
+    throw new Error('Cloud vision sidecar reference is invalid')
   }
 
   return {
     enabled: true,
+    // The backend LLM gateway exposes a single protocol-agnostic route and picks the
+    // upstream endpoint from the referenced Model CRD, so every api_format posts here.
     request_url: `${cloudModelGateway.baseUrl.replace(/\/+$/, '')}/responses`,
-    api_format: apiFormat,
+    api_format: sidecar.apiFormat,
     api_key: cloudModelGateway.apiKey,
-    model_id: modelName,
+    model_id: sidecar.modelName,
     default_headers: {
-      'X-Wegent-Model-Type': modelType,
-      'X-Wegent-Model-Namespace': namespace,
-      'X-Wegent-Model-User-Id': String(resourceUserId),
+      'X-Wegent-Model-Type': sidecar.modelType,
+      'X-Wegent-Model-Namespace': sidecar.namespace,
+      'X-Wegent-Model-User-Id': String(sidecar.resourceUserId),
       'X-Wegent-Upstream-Header-wecode-executor': wecodeExecutorForRuntime(runtime),
       'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
     },
@@ -3477,6 +3460,47 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       }
     },
   }
+  const branchNameApi: NonNullable<WorkbenchServices['branchNameApi']> = {
+    async generateBranchName(data) {
+      const deviceId = data.deviceId?.trim() || (await getLocalDeviceId())
+      if (!(await runtimeWorkApi.prepareRuntimeModel({ deviceId, modelId: data.modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
+      const sourceText = data.sourceText.trim()
+      if (!sourceText) {
+        throw new Error(i18n.t('workbench.environment_branch_generate_source_required'))
+      }
+      const executionRequest = buildLocalRuntimeExecutionRequest({
+        taskId: `branch-name-${createRuntimeTurnSeed()}`,
+        runtime: 'codex',
+        title: 'Generate Git branch name',
+        message: [
+          'Generate a concise Git branch name for the work described below.',
+          'Output only the branch name. Use lowercase ASCII letters, digits, hyphens, and one conventional prefix such as feature/, fix/, refactor/, docs/, test/, or chore/.',
+          'Do not use spaces, quotes, punctuation, explanations, or Markdown. Keep it under 48 characters.',
+          '',
+          `Work: ${sourceText}`,
+        ].join('\n'),
+        turnSeed: createRuntimeTurnSeed(),
+        modelId: data.modelId,
+        modelType: data.modelType,
+        modelOptions: data.modelOptions,
+        cloudModelGateway: deps.cloudModelGateway,
+        localDeviceId: deviceId,
+        workspaceSource: 'local_path',
+        newSession: true,
+        ephemeral: true,
+        requireLocalCodexCatalog: true,
+        user: deps.user ?? getLocalUser(),
+      })
+      executionRequest.enable_tools = false
+      executionRequest.enable_deep_thinking = false
+      const response = await request<{ content?: string }>('runtime.text.generate', {
+        executionRequest,
+      })
+      return response.content?.trim() ?? ''
+    },
+  }
 
   return {
     teamApi,
@@ -3562,6 +3586,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     },
     runtimeWorkApi,
     pluginApi: projectPluginApi,
+    branchNameApi,
     automationApi,
     attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({

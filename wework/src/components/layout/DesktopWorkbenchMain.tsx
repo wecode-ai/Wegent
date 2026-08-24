@@ -220,6 +220,11 @@ import {
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
 import { WorktreeCreationStatus } from './WorktreeCreationStatus'
 import { isWorktreeCreationPending } from './worktreeCreationState'
+import {
+  resolveAutomaticModel,
+  selectedModelExecutionFields,
+} from '@/features/workbench/runtimeModelSelection'
+import { titleModelForGeneration } from '@/features/workbench/useWorkbenchRuntimeMessaging'
 
 let legacyEmbeddedBrowserOpenRequestSequence = 0
 
@@ -1648,6 +1653,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ) === index
     )
   }, [effectiveWorkspaceTarget, projectFileWorkspaceTargets])
+  const soleProjectWorkspaceTarget =
+    projectFileWorkspaceTargets.length === 1 ? projectFileWorkspaceTargets[0] : null
   const composerWorkspaceTarget =
     workspaceTarget ??
     (activeDeviceId && state.standaloneWorkspacePath
@@ -1657,6 +1664,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           source: 'runtime' as const,
         }
       : null) ??
+    soleProjectWorkspaceTarget ??
     (activeDeviceId && soleActiveDeviceWorkspacePath
       ? {
           deviceId: activeDeviceId,
@@ -2590,10 +2598,62 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       retryFailedMessageAfterModelSelect,
     ]
   )
-  const emptyProjectWork = useMemo(
-    () => ({ ...paneProjectWork, projectMenuOpenSignal, projectMenuAnchorElement }),
-    [paneProjectWork, projectMenuAnchorElement, projectMenuOpenSignal]
+  const branchNameApi = services?.branchNameApi
+  const generateBranchName = useCallback(
+    async (sourceText: string) => {
+      if (!branchNameApi) {
+        throw new Error(t('workbench.environment_branch_generate_failed'))
+      }
+      const selectedModel =
+        projectChat.getSelectedModel?.() ??
+        projectChat.selectedModel ??
+        resolveAutomaticModel(projectChat.models)
+      const selectedOptions =
+        projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+      const executionModel = selectedModelExecutionFields(selectedModel, selectedOptions)
+      const generationModel =
+        titleModelForGeneration(appPreferences?.preferences, projectChat.models, executionModel) ??
+        (executionModel.modelId
+          ? {
+              modelId: executionModel.modelId,
+              modelType: executionModel.modelType,
+              modelOptions: executionModel.modelOptions,
+            }
+          : null)
+      console.info('[Wework] Branch name generation model resolved', {
+        selectedModel: selectedModel?.name ?? null,
+        configuredTitleModel: appPreferences?.preferences.friendlyTaskTitleModel?.modelName ?? null,
+        generationModel: generationModel?.modelId ?? null,
+        availableModelCount: projectChat.models.length,
+      })
+      if (!generationModel) {
+        throw new Error(t('workbench.environment_branch_generate_model_unavailable'))
+      }
+      return branchNameApi.generateBranchName({
+        sourceText,
+        deviceId: currentRuntimeTask?.deviceId ?? composerWorkspaceTarget?.deviceId,
+        ...generationModel,
+      })
+    },
+    [
+      appPreferences?.preferences,
+      composerWorkspaceTarget?.deviceId,
+      currentRuntimeTask?.deviceId,
+      projectChat,
+      branchNameApi,
+      t,
+    ]
   )
+  const branchNameProjectWork = {
+    ...paneProjectWork,
+    onGenerateBranchName: branchNameApi ? generateBranchName : undefined,
+    branchNameSource: workbenchTitle ?? undefined,
+  }
+  const emptyProjectWork = {
+    ...branchNameProjectWork,
+    projectMenuOpenSignal,
+    projectMenuAnchorElement,
+  }
   const popoutComposerPlaceholder = getPopoutComposerPlaceholder(
     currentProject?.name,
     paneProjectWork.executionMode
@@ -3397,6 +3457,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onListEnvironmentBranches={listEnvironmentBranches}
       onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
       onCreateEnvironmentBranch={createEnvironmentBranch}
+      onGenerateEnvironmentBranch={branchNameApi ? generateBranchName : undefined}
+      environmentBranchNameSource={workbenchTitle ?? undefined}
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
       onDeliver={
         experimentalFeaturesEnabled &&
@@ -3971,7 +4033,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     )}
                                     variant="desktop"
                                     projectChat={projectChatWithModelSelectorSignal}
-                                    projectWork={paneProjectWork}
+                                    projectWork={branchNameProjectWork}
                                     showProjectWorkBar={false}
                                     queuedMessages={paneQueuedMessages}
                                     guidanceMessages={paneGuidanceMessages}

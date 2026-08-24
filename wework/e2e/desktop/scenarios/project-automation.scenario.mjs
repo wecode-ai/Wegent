@@ -516,6 +516,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('waitFor', `${activeBoard} [data-testid="workspace-issue-input"]`, {
       timeoutMs: uiTimeoutMs,
     })
+    assert.equal(
+      Number(
+        await control.command(
+          'getElementCount',
+          `${activeBoard} [data-testid="workspace-issue-input"] .composer-empty-caret`
+        )
+      ),
+      0,
+      'The empty board task composer replaced its native caret with a widget'
+    )
     await control.command('fill', `${activeBoard} [data-testid="workspace-issue-input"]`, {
       value: '真实后端智能体看板任务',
     })
@@ -659,6 +669,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(persistedAiWorkflowProject.workflow_definition.approval_policy, 'automatic')
 
     await control.command('click', '[data-testid="project-workflow-mode-workflow"]')
+    await control.command('waitFor', '[data-testid="project-workflow-empty-add"]', {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('click', '[data-testid="project-workflow-empty-add"]')
     await control.command('fill', '[data-testid="project-workflow-stage-name-stage-1"]', {
       value: '真实后端开发阶段',
@@ -834,8 +847,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     )
     const workflowBinding = workflowBindings.find(binding => binding.workflow_node_id === 'stage-1')
     assert.ok(workflowBinding)
-    const workflowTaskRow = `[data-testid="cloud-todo-open-workflow-task-stage-1-${workflowBinding.id}"]`
+    const workflowTaskRow = `${activeBoard} [data-testid="cloud-todo-open-workflow-task-stage-1-${workflowBinding.id}"]`
     await control.command('click', '[data-testid="ai-chat-modal-close"]')
+    const workflowIssueCard = `${activeBoard} [data-testid="cloud-todo-card-${workflowIssue.id}"]`
+    await control.command('waitFor', workflowIssueCard, {
+      text: workflowIssue.title,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', workflowIssueCard, { visible: true })
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
+      text: workflowIssue.title,
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('waitFor', workflowTaskRow, {
       timeoutMs: uiTimeoutMs,
     })
@@ -862,7 +886,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       visible: true,
     })
-    const workflowIssueCard = `${activeBoard} [data-testid="cloud-todo-card-${workflowIssue.id}"]`
     await control.command('waitFor', workflowIssueCard, {
       text: workflowIssue.title,
       timeoutMs: uiTimeoutMs,
@@ -1227,6 +1250,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       }
     )
     const managerExecutionShortcut = `${activeBoard} [data-testid="cloud-todo-workflow-manager-open-execution"]`
+    await control.command('waitFor', managerExecutionShortcut, {
+      text: '查看执行细节',
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('scrollIntoView', managerExecutionShortcut)
     await control.command('waitFor', managerExecutionShortcut, {
       text: '查看执行细节',
@@ -1999,6 +2026,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: uiTimeoutMs,
       })
       const activeBoard = '[data-workspace-tab-content][aria-hidden="false"]'
+      const reloadActiveBoard = async errorMessage => {
+        const readyCount = control.readyCount
+        await control.command('reloadMainWindow', 'body')
+        await withTimeout(control.awaitReadyAfter(readyCount), uiTimeoutMs * 3, errorMessage)
+        await control.command(
+          'waitFor',
+          `${activeBoard} [data-testid="cloud-project-board-view"]`,
+          {
+            timeoutMs: uiTimeoutMs,
+            visible: true,
+          }
+        )
+      }
       await control.command('click', `${activeBoard} [data-testid="cloud-project-settings"]`)
       await control.command('waitFor', `${activeBoard} [data-testid="project-space-settings"]`, {
         timeoutMs: uiTimeoutMs,
@@ -2188,6 +2228,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'click',
         `${activeWorkflow} [data-testid="project-workflow-mode-workflow"]`
       )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-empty-add"]`,
+        { timeoutMs: uiTimeoutMs }
+      )
       await control.command('click', `${activeWorkflow} [data-testid="project-workflow-empty-add"]`)
       await control.command(
         'waitFor',
@@ -2234,6 +2279,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         insertedStageSnapshot.testIds.includes('project-workflow-insert-after-stage-1'),
         false,
         'Insertion controls remained visible on an unselected workflow stage'
+      )
+      await control.command(
+        'waitFor',
+        `${activeWorkflow} [data-testid="project-workflow-edge-stage-1-stage-2"]`,
+        { timeoutMs: uiTimeoutMs }
       )
       await control.command(
         'press',
@@ -2578,17 +2628,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           ),
         },
       }
-      const readyCountBeforeChildTaskReload = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await withTimeout(
-        control.awaitReadyAfter(readyCountBeforeChildTaskReload),
-        uiTimeoutMs * 3,
+      await reloadActiveBoard(
         'The project board did not reconnect after adding the workflow child task'
       )
-      await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
         visible: true,
       })
@@ -2661,6 +2703,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         `${activeBoard} [data-testid="cloud-todo-workflow-action-stage-3"]`,
         {
           text: '等待前置任务',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeBoard} [data-testid="cloud-todo-workflow-node-stage-1"]`,
+        {
           timeoutMs: uiTimeoutMs,
           visible: true,
         }
@@ -2775,11 +2825,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           updated_at: '2026-08-20T10:00:00Z',
         },
       }
-      let readyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await withTimeout(
-        control.awaitReadyAfter(readyCount),
-        uiTimeoutMs * 3,
+      await reloadActiveBoard(
         'The project board did not reconnect for AI manager projection verification'
       )
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
@@ -2836,11 +2882,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           error: null,
         },
       }
-      readyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await withTimeout(
-        control.awaitReadyAfter(readyCount),
-        uiTimeoutMs * 3,
+      await reloadActiveBoard(
         'The project board did not reconnect for workflow approval verification'
       )
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
@@ -2900,11 +2942,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           status: 'materialized',
         })),
       }
-      readyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await withTimeout(
-        control.awaitReadyAfter(readyCount),
-        uiTimeoutMs * 3,
+      await reloadActiveBoard(
         'The project board did not reconnect for workflow running verification'
       )
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
@@ -2963,11 +3001,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           error: 'AI manager finished without submitting a workflow plan.',
         },
       }
-      readyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await withTimeout(
-        control.awaitReadyAfter(readyCount),
-        uiTimeoutMs * 3,
+      await reloadActiveBoard(
         'The project board did not reconnect for manager conflict verification'
       )
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
@@ -3052,11 +3086,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           },
         ],
       }
-      readyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await withTimeout(
-        control.awaitReadyAfter(readyCount),
-        uiTimeoutMs * 3,
+      await reloadActiveBoard(
         'The project board did not reconnect for workflow history verification'
       )
       await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
