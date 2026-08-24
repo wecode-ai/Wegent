@@ -1,7 +1,10 @@
+import type { DndContextProps, DragEndEvent } from '@dnd-kit/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   applyRuntimeConversationAction,
@@ -21,6 +24,30 @@ const telemetryMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/telemetry/client', () => telemetryMocks)
+
+vi.mock('@dnd-kit/core', async importOriginal => {
+  const actual = await importOriginal<typeof import('@dnd-kit/core')>()
+  const ActualDndContext = actual.DndContext
+  return {
+    ...actual,
+    DndContext: ({ children, ...props }: DndContextProps) => (
+      <ActualDndContext {...props}>
+        {children}
+        <button
+          type="button"
+          hidden
+          data-testid="mock-dnd-drag-to-pending"
+          onClick={() =>
+            props.onDragEnd?.({
+              active: { id: item.id },
+              over: { id: 'todo-column:pending' },
+            } as DragEndEvent)
+          }
+        />
+      </ActualDndContext>
+    ),
+  }
+})
 
 vi.mock('./ProjectSpaceChatSidebar', () => ({
   ProjectSpaceChatSidebar: ({
@@ -3250,6 +3277,35 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-panel-stack')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail-dismiss-layer')).not.toBeInTheDocument()
+  })
+
+  it('requests task catalogs before opening the composer for a dragged issue', async () => {
+    const inboxItem = { ...item, status: 'inbox' as const }
+    const requestCatalogs = vi.fn()
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [inboxItem] }))
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
+    const workbench = {
+      projectChat: { requestCatalogs },
+    } as unknown as WorkbenchContextValue
+
+    render(
+      <WorkbenchContext.Provider value={workbench}>
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={workbenchServices}
+        />
+      </WorkbenchContext.Provider>
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+
+    fireEvent.click(screen.getByTestId('mock-dnd-drag-to-pending'))
+
+    await waitFor(() => expect(requestCatalogs).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', inboxItem.id)
   })
 
   it('binds a human workflow task without inventing an automation queue state', async () => {

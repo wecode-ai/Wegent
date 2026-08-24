@@ -181,6 +181,7 @@ function WorkbenchPageLayout({
   return shouldUseMobileWorkbenchLayout({
     isMobileViewport,
     isTauri,
+    surfaceKind,
   }) ? (
     <MobileWorkbenchLayout />
   ) : (

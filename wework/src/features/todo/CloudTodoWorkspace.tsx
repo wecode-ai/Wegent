@@ -1131,6 +1131,10 @@ export function CloudTodoWorkspace({
   const [projectAssistantOpen, setProjectAssistantOpen] = useState(false)
   const [selectedTaskBinding, setSelectedTaskBinding] = useState<SelectedTaskBinding | null>(null)
   const [taskComposerRequest, setTaskComposerRequest] = useState<TaskComposerRequest | null>(null)
+  const openTaskComposer = (request: TaskComposerRequest) => {
+    workbench?.projectChat.requestCatalogs?.()
+    setTaskComposerRequest(request)
+  }
   const [aitableFields, setAitableFields] = useState<AITableField[]>([])
   const [aitableGroupFieldId, setAitableGroupFieldId] = useState('')
   const [aitableGroupFilter, setAitableGroupFilter] = useState('')
@@ -2719,7 +2723,7 @@ export function CloudTodoWorkspace({
       setSelectedTaskBinding(null)
       setSelectedItem(item)
       setBackgroundTaskItemId(null)
-      setTaskComposerRequest({
+      openTaskComposer({
         workItemId: item.id,
         initialInput: workItemTaskInput(item),
         backgroundAfterSend: true,
@@ -2815,7 +2819,7 @@ export function CloudTodoWorkspace({
         setSelectedTaskBinding(null)
         setSelectedItem(locatedUpdated)
         setBackgroundTaskItemId(column.status === 'in_progress' ? locatedUpdated.id : null)
-        setTaskComposerRequest({
+        openTaskComposer({
           workItemId: locatedUpdated.id,
           initialInput: workItemTaskInput(locatedUpdated),
           backgroundAfterSend: column.status === 'in_progress',
@@ -3023,9 +3027,8 @@ export function CloudTodoWorkspace({
         setSelectedItem(locatedItem)
       }
       if (input.createTask) {
-        workbench?.projectChat.requestCatalogs?.()
         setBackgroundTaskItemId(locatedItem.id)
-        setTaskComposerRequest({
+        openTaskComposer({
           workItemId: locatedItem.id,
           initialInput: workItemTaskInput(locatedItem),
           backgroundAfterSend: true,
@@ -4587,7 +4590,6 @@ export function CloudTodoWorkspace({
                   setSelectedItem(locatedChild)
                 }}
                 onCreateTask={async workflowNodeId => {
-                  workbench?.projectChat.requestCatalogs?.()
                   setSelectedTaskBinding(null)
                   setBackgroundTaskItemId(null)
                   let inheritFromTask: RuntimeTaskAddress | null = null
@@ -4611,7 +4613,7 @@ export function CloudTodoWorkspace({
                   }
                   const backgroundAfterSend = selectedItem.status === 'pending' && !workflowNodeId
                   setBackgroundTaskItemId(backgroundAfterSend ? selectedItem.id : null)
-                  setTaskComposerRequest({
+                  openTaskComposer({
                     workItemId: selectedItem.id,
                     initialInput: workflowNode ? workflowStageTaskInput(workflowNode) : '',
                     backgroundAfterSend,
