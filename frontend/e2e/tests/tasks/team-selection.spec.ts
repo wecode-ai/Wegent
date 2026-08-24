@@ -441,17 +441,15 @@ test.describe('Team Selection', () => {
     })
 
     test('should handle rapid task switching without crash', async ({ page }) => {
-      await page.goto('/chat')
-      await page.waitForLoadState('domcontentloaded')
+      await page.goto('/chat', { waitUntil: 'domcontentloaded' })
 
       // Simulate rapid task switching
-      await page.goto('/chat?taskId=1')
-      await page.goto('/chat?taskId=2')
-      await page.goto('/chat?taskId=3')
-      await page.goto('/chat')
+      await page.goto('/chat?taskId=1', { waitUntil: 'domcontentloaded' })
+      await page.goto('/chat?taskId=2', { waitUntil: 'domcontentloaded' })
+      await page.goto('/chat?taskId=3', { waitUntil: 'domcontentloaded' })
+      await page.goto('/chat', { waitUntil: 'domcontentloaded' })
 
       // Page should not crash
-      await page.waitForLoadState('domcontentloaded')
       const pageLoaded = await page.title()
       expect(pageLoaded).toBeTruthy()
     })

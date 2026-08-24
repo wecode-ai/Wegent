@@ -354,7 +354,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
       [
         expect.objectContaining({
           type: 'external_knowledge',
-          id: 'external:fake-provider:explicit:lib-1',
+          id: 'external:fake-provider:explicit:organization:lib-1:knowledge_base:source',
           name: 'Fake Lib',
           ref: {
             provider: FAKE_PROVIDER,
@@ -422,7 +422,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
         expect.objectContaining({
-          id: 'external:fake-provider:explicit:lib-1',
+          id: 'external:fake-provider:explicit:organization:lib-1:knowledge_base:source',
         }),
       ])
     )
@@ -435,7 +435,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
         expect.objectContaining({
-          id: 'external:fake-provider:explicit:lib-1:document:document:doc-2',
+          id: 'external:fake-provider:explicit:organization:lib-1:document:document:doc-2',
           ref: expect.objectContaining({
             name: 'Fake Lib',
             target_type: 'document',
@@ -451,7 +451,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
         expect.objectContaining({
-          id: 'external:fake-provider:explicit:lib-1',
+          id: 'external:fake-provider:explicit:organization:lib-1:knowledge_base:source',
           ref: expect.not.objectContaining({ target_type: 'document' }),
         }),
       ])

@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
+import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const DEFAULT_OPEN_DELAY_MS = 450
@@ -13,6 +22,9 @@ interface HoverCardProps {
   testId: string
   interactive?: boolean
   openOnFocus?: boolean
+  pinOnInteraction?: boolean
+  pinOnInteractionSelector?: string
+  closeLabel?: string
   cardClassName?: string
   estimatedWidth?: number
   estimatedHeight?: number
@@ -63,6 +75,9 @@ export function HoverCard({
   testId,
   interactive = false,
   openOnFocus = false,
+  pinOnInteraction = false,
+  pinOnInteractionSelector,
+  closeLabel = 'Close',
   cardClassName,
   estimatedWidth = 310,
   estimatedHeight = 220,
@@ -71,7 +86,10 @@ export function HoverCard({
   const cardRef = useRef<HTMLDivElement>(null)
   const openTimerRef = useRef<number | null>(null)
   const closeTimerRef = useRef<number | null>(null)
+  const focusWithinRef = useRef(false)
+  const pinnedRef = useRef(false)
   const [position, setPosition] = useState<HoverCardPosition | null>(null)
+  const [pinned, setPinned] = useState(false)
 
   const clearTimers = useCallback(() => {
     if (openTimerRef.current !== null) {
@@ -86,6 +104,9 @@ export function HoverCard({
 
   const close = useCallback(() => {
     clearTimers()
+    focusWithinRef.current = false
+    pinnedRef.current = false
+    setPinned(false)
     setPosition(null)
   }, [clearTimers])
 
@@ -105,6 +126,7 @@ export function HoverCard({
   }, [clearTimers, open])
 
   const scheduleClose = useCallback(() => {
+    if (pinnedRef.current) return
     if (!interactive) {
       close()
       return
@@ -124,6 +146,47 @@ export function HoverCard({
       closeTimerRef.current = null
     }
   }, [])
+
+  const pin = useCallback(() => {
+    if (!pinOnInteraction) return
+    pinnedRef.current = true
+    setPinned(true)
+    keepOpen()
+  }, [keepOpen, pinOnInteraction])
+
+  const shouldPinInteraction = useCallback(
+    (target: EventTarget | null) =>
+      pinOnInteraction &&
+      target instanceof Element &&
+      (!pinOnInteractionSelector || Boolean(target.closest(pinOnInteractionSelector))),
+    [pinOnInteraction, pinOnInteractionSelector]
+  )
+
+  const handleFocusCapture = useCallback(
+    (event: FocusEvent<HTMLDivElement>) => {
+      if (
+        shouldPinInteraction(event.target) &&
+        event.target instanceof Node &&
+        !anchorRef.current?.contains(event.target)
+      ) {
+        pin()
+      }
+      focusWithinRef.current = true
+      if (openOnFocus) {
+        open()
+        return
+      }
+      keepOpen()
+    },
+    [keepOpen, open, openOnFocus, pin, shouldPinInteraction]
+  )
+
+  const handleBlurCapture = useCallback(() => {
+    focusWithinRef.current = false
+    window.queueMicrotask(() => {
+      if (!focusWithinRef.current) scheduleClose()
+    })
+  }, [scheduleClose])
 
   useEffect(
     () => () => {
@@ -152,6 +215,10 @@ export function HoverCard({
     if (!position) return
 
     const handlePointerMove = (event: PointerEvent) => {
+      if (focusWithinRef.current || pinnedRef.current) {
+        keepOpen()
+        return
+      }
       const path = event.composedPath()
       if (path.includes(anchorRef.current as EventTarget)) {
         keepOpen()
@@ -167,6 +234,7 @@ export function HoverCard({
       if (event.key === 'Escape') close()
     }
     const handleScroll = (event: Event) => {
+      if (focusWithinRef.current || pinnedRef.current) return
       if (
         event.target instanceof Node &&
         (anchorRef.current?.contains(event.target) || cardRef.current?.contains(event.target))
@@ -193,10 +261,38 @@ export function HoverCard({
       ref={anchorRef}
       onMouseEnter={scheduleOpen}
       onMouseLeave={scheduleClose}
-      onFocusCapture={openOnFocus ? open : undefined}
-      onBlurCapture={openOnFocus ? scheduleClose : undefined}
-      onPointerDownCapture={close}
-      onContextMenuCapture={close}
+      onFocusCapture={interactive || openOnFocus ? handleFocusCapture : undefined}
+      onBlurCapture={interactive || openOnFocus ? handleBlurCapture : undefined}
+      onPointerMoveCapture={interactive ? keepOpen : undefined}
+      onPointerDownCapture={event => {
+        if (interactive) {
+          if (event.target instanceof Node && anchorRef.current?.contains(event.target)) {
+            close()
+            return
+          }
+          if (
+            shouldPinInteraction(event.target) &&
+            event.target instanceof Node &&
+            !anchorRef.current?.contains(event.target)
+          ) {
+            pin()
+          }
+          keepOpen()
+          return
+        }
+        close()
+      }}
+      onContextMenuCapture={event => {
+        if (interactive) {
+          if (event.target instanceof Node && anchorRef.current?.contains(event.target)) {
+            close()
+            return
+          }
+          keepOpen()
+          return
+        }
+        close()
+      }}
     >
       {children}
       {position &&
@@ -208,14 +304,28 @@ export function HoverCard({
             style={position}
             onMouseEnter={interactive ? keepOpen : undefined}
             onMouseLeave={interactive ? scheduleClose : undefined}
-            onFocusCapture={interactive ? keepOpen : undefined}
-            onBlurCapture={interactive ? scheduleClose : undefined}
             className={cn(
-              'fixed z-[78] max-h-[calc(100vh-1rem)] overflow-y-auto rounded-xl border border-border bg-background p-3 text-xs text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+              'fixed z-[78] max-h-[calc(100vh-1rem)] overflow-x-hidden overflow-y-auto rounded-xl border border-border bg-background p-3 text-xs text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
               interactive ? 'pointer-events-auto' : 'pointer-events-none',
+              pinned && 'pr-10',
               cardClassName
             )}
           >
+            {pinned ? (
+              <button
+                type="button"
+                data-testid={`${testId}-close`}
+                onPointerDown={event => event.stopPropagation()}
+                onClick={event => {
+                  event.stopPropagation()
+                  close()
+                }}
+                aria-label={closeLabel}
+                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition hover:bg-muted hover:text-text-primary"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            ) : null}
             {content}
           </div>,
           document.body

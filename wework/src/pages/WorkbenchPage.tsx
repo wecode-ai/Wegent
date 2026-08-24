@@ -25,10 +25,17 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 
 interface WorkbenchPageProps {
   routeActive?: boolean
+  surfaceKind?: 'task' | 'board'
 }
 
-export function WorkbenchPage({ routeActive = true }: WorkbenchPageProps) {
-  const isMobileViewport = useIsMobile()
+export function WorkbenchPage({ routeActive = true, surfaceKind }: WorkbenchPageProps) {
+  if (surfaceKind === 'board') {
+    return <WorkbenchPageLayout routeActive={routeActive} surfaceKind="board" />
+  }
+  return <TaskWorkbenchPage routeActive={routeActive} surfaceKind={surfaceKind} />
+}
+
+function TaskWorkbenchPage({ routeActive = true, surfaceKind }: WorkbenchPageProps) {
   const isTauri = isTauriRuntime()
   const cloudConnection = useOptionalCloudConnection()
   const { state, runtimeTaskReminders } = useWorkbench()
@@ -44,6 +51,7 @@ export function WorkbenchPage({ routeActive = true }: WorkbenchPageProps) {
   const showTrayCodexUsage = trayUsageEnabled && codexUsage.status === 'available'
   const showTrayWegentUsage =
     trayWegentUsageEnabled && cloudConnection.isConnected && wegentUsage.status === 'available'
+  const taskSurfaceActive = routeActive
   const trayUsageTitle = buildTrayUsageTitle({
     codex: showTrayCodexUsage ? codexUsage.trayTitle : null,
     compactCodex: showTrayCodexUsage ? compactCodexTrayTitle(codexUsage) : null,
@@ -81,14 +89,15 @@ export function WorkbenchPage({ routeActive = true }: WorkbenchPageProps) {
   ])
 
   useEffect(() => {
+    if (!taskSurfaceActive) return
     syncTrayMenuState(trayMenuTaskGroups, undefined, {
       title: trayUsageTitle,
       tooltip: trayTooltip,
     })
-  }, [trayMenuTaskGroups, trayTooltip, trayUsageTitle])
+  }, [taskSurfaceActive, trayMenuTaskGroups, trayTooltip, trayUsageTitle])
 
   useEffect(() => {
-    if (!isTauri) {
+    if (!isTauri || !taskSurfaceActive) {
       return
     }
 
@@ -113,10 +122,10 @@ export function WorkbenchPage({ routeActive = true }: WorkbenchPageProps) {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [isTauri])
+  }, [isTauri, taskSurfaceActive])
 
   useEffect(() => {
-    if (!isTauri || !cloudConnection.isConnected) {
+    if (!isTauri || !cloudConnection.isConnected || !taskSurfaceActive) {
       return
     }
 
@@ -151,12 +160,32 @@ export function WorkbenchPage({ routeActive = true }: WorkbenchPageProps) {
     cloudConnection.serviceKey,
     cloudConnection.token,
     isTauri,
+    taskSurfaceActive,
   ])
 
-  return shouldUseMobileWorkbenchLayout({ isMobileViewport, isTauri }) ? (
+  return (
+    <WorkbenchPageLayout routeActive={routeActive} surfaceKind={surfaceKind} isTauri={isTauri} />
+  )
+}
+
+interface WorkbenchPageLayoutProps extends WorkbenchPageProps {
+  isTauri?: boolean
+}
+
+function WorkbenchPageLayout({
+  routeActive = true,
+  surfaceKind,
+  isTauri = isTauriRuntime(),
+}: WorkbenchPageLayoutProps) {
+  const isMobileViewport = useIsMobile()
+  return shouldUseMobileWorkbenchLayout({
+    isMobileViewport,
+    isTauri,
+    surfaceKind,
+  }) ? (
     <MobileWorkbenchLayout />
   ) : (
-    <DesktopWorkbenchLayout routeActive={routeActive} />
+    <DesktopWorkbenchLayout routeActive={routeActive} surfaceKind={surfaceKind} />
   )
 }
 

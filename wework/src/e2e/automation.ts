@@ -1887,6 +1887,7 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
       }
       const command = (await response.json()) as DesktopControlCommand
       await postDesktopControlStarted(url, command, clientId)
+      commandRequest = pollForCommand()
       try {
         const value = await executeDesktopControlCommand(command)
         await postDesktopControlResult(url, { id: command.id, clientId, ok: true, value })
@@ -1906,7 +1907,6 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
           error: error instanceof Error ? error.message : String(error),
         })
       }
-      commandRequest = pollForCommand()
     } catch (error) {
       console.error('[Wework] Desktop E2E control client failed:', error)
       await waitForDesktopControlTick()
