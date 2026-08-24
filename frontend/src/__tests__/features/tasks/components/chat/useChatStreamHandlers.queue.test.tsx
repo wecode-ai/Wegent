@@ -186,6 +186,38 @@ describe('useChatStreamHandlers queue integration', () => {
     expect(mockResetContexts).toHaveBeenCalled()
   })
 
+  it('sends an interactive form answer immediately instead of queueing it', async () => {
+    const { result } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage('formatted answer', {
+        interactiveFormAnswer: {
+          type: 'interactive_form_question',
+          tool_use_id: 'form-tool',
+          task_id: 42,
+          subtask_id: 77,
+          success: true,
+          status: 'answered',
+          answers: { style: '电影感' },
+        },
+      })
+    })
+
+    expect(result.current.queuedMessages).toEqual([])
+    expect(mockContextSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'formatted answer',
+        interactive_form_answer: expect.objectContaining({
+          tool_use_id: 'form-tool',
+          message: 'formatted answer',
+        }),
+      }),
+      expect.objectContaining({
+        pendingUserMessage: 'formatted answer',
+      })
+    )
+  })
+
   it('returns a cancelled queued follow-up to the input before it is dispatched', async () => {
     const { result, rerender } = renderQueueableHook()
 

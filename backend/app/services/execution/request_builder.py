@@ -47,6 +47,9 @@ from app.stores.tasks import task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
 from shared.utils.url_util import domains_match
+from wecode.video.api.skill_context import (
+    inject_generation_into_public_skills,
+)
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
@@ -166,6 +169,7 @@ class TaskRequestBuilder:
         use_secondary_model_for_generation_chat: bool = True,
         team_member_prompt: Optional[str] = None,
         web_runtime_guidance: bool = False,
+        user_generation: Optional[dict[str, Any]] = None,
     ) -> ExecutionRequest:
         """Build ExecutionRequest from database models.
 
@@ -324,6 +328,12 @@ class TaskRequestBuilder:
                 user_preload_skills=user_preload_skills,
                 user_available_skills=user_available_skills,
             )
+        )
+        inject_generation_into_public_skills(
+            resolved_skills=resolved_skills,
+            team_user_id=team.user_id,
+            generation=user_generation,
+            prompt=message if isinstance(message, str) else None,
         )
         preload_skill_refs = {
             name: skill_refs[name]

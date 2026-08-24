@@ -23,7 +23,7 @@ from app.services.execution.agents.video.image_staging import (
     VideoImageStagingBackend,
     register_video_image_staging_backend,
 )
-from wecode.config.video_image_staging_config import (
+from wecode.video.config.image_staging import (
     VideoImageStagingSettings,
     video_image_staging_settings,
 )

@@ -32,6 +32,7 @@ from app.schemas.subtask_context import (
 )
 from app.services.attachment.external_storage import (
     find_external_attachment_storage_adapter,
+    resolve_external_attachment_playback,
 )
 from app.services.attachment.parser import (
     DocumentParseError,
@@ -1011,7 +1012,7 @@ class ContextService:
         Shared helper for both real-time send and HTTP history recovery paths.
         It does not return protocol-specific message blocks.
 
-        Video URL resolution is mandatory. A missing fid or failed URL resolution
+        Video URL resolution is mandatory. A missing media reference or failed URL resolution
         raises VideoAttachmentResolutionError so the chat request can fail explicitly
         instead of silently sending metadata.
 
@@ -1030,18 +1031,31 @@ class ContextService:
             )
             return None
 
-        metadata_header, metadata_text, fid = self.build_video_metadata_text(context)
+        metadata_header, metadata_text, media_reference = (
+            self.build_video_metadata_text(context)
+        )
         filename = context.original_filename or "video"
         attachment_id = context.id
         mime_type = context.mime_type or "video/mp4"
 
         logger.info(
             f"[build_video_content_from_attachment] Processing video: id={attachment_id}, "
-            f"filename={filename}, fid={fid}"
+            f"filename={filename}, media_reference={media_reference}"
         )
 
-        user = db.query(User).filter(User.id == context.user_id).first()
-        video_url = weibo_media_service.get_download_url(fid, user=user)
+        type_data = context.type_data or {}
+        fid = type_data.get("fid")
+        if fid:
+            user = db.query(User).filter(User.id == context.user_id).first()
+            video_url = weibo_media_service.get_download_url(fid, user=user)
+            resolved_mime_type = mime_type
+        else:
+            playback = resolve_external_attachment_playback(
+                type_data=type_data,
+                user_id=context.user_id,
+            )
+            video_url = playback.url if playback else None
+            resolved_mime_type = playback.media_type if playback else mime_type
         if not video_url:
             raise VideoAttachmentResolutionError(
                 f"Failed to resolve video URL for attachment {attachment_id}"
@@ -1054,7 +1068,7 @@ class ContextService:
 
         return VideoAttachmentPayload(
             video_url=video_url,
-            mime_type=mime_type,
+            mime_type=resolved_mime_type,
             metadata_header=metadata_header,
             metadata_text=metadata_text,
         )
@@ -1066,15 +1080,23 @@ class ContextService:
         metadata_header = self.build_video_attachment_header(context)
 
         type_data = context.type_data or {}
-        fid = type_data.get("fid")
-        if not fid:
+        reference_name = "fid"
+        media_reference = type_data.get("fid")
+        if not media_reference:
+            for metadata_key in ("weibo_video_upload", "video_metadata"):
+                metadata = type_data.get(metadata_key)
+                if isinstance(metadata, dict) and metadata.get("media_id"):
+                    reference_name = "media_id"
+                    media_reference = metadata["media_id"]
+                    break
+        if not media_reference:
             raise VideoAttachmentResolutionError(
-                f"Video attachment {context.id} is missing fid"
+                f"Video attachment {context.id} is missing a media reference"
             )
 
         metadata_text = f"{metadata_header}\n"
-        metadata_text += json.dumps({"fid": fid})
-        return metadata_header, metadata_text, fid
+        metadata_text += json.dumps({reference_name: media_reference})
+        return metadata_header, metadata_text, media_reference
 
     def build_video_history_metadata_text(self, context: SubtaskContext) -> str:
         """Build video history metadata without requiring model-readable video input."""

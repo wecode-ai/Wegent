@@ -1116,7 +1116,7 @@ export function useChatStreamHandlers({
         sendOptions
       )
 
-      if (canQueueMessage && activeTaskId) {
+      if (canQueueMessage && activeTaskId && !sendOptions?.interactiveFormAnswer) {
         const mergeTarget = [...activeTaskQueue]
           .reverse()
           .find(queuedMessage => queuedMessage.status === 'queued')

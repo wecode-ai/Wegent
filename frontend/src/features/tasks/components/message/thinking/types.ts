@@ -303,9 +303,9 @@ export type MessageBlock =
   | ErrorBlock
   | VideoBlock
   | ImageBlock
+  | CardBlock
   | PromptOptimizationBlock
   | SubscriptionPreviewBlockType
-  | CardBlock
 
 /**
  * Type guard for TextBlock

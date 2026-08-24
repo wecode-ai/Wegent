@@ -2,16 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CardBlock } from '@/features/tasks/components/message/thinking/types'
 import { getCardComponent } from './registry'
+import type { CardRendererProps } from './types'
 
-export function CardRenderer({
-  block,
-  onChatButtonClick,
-}: {
-  block: CardBlock
-  onChatButtonClick?: (message: string) => void | Promise<void>
-}) {
+export function CardRenderer({ block, taskId, subtaskId, onChatButtonClick }: CardRendererProps) {
   const Component = getCardComponent(block.card_type)
-  return Component ? <Component block={block} onChatButtonClick={onChatButtonClick} /> : null
+  return Component ? (
+    <Component
+      block={block}
+      taskId={taskId}
+      subtaskId={subtaskId}
+      onChatButtonClick={onChatButtonClick}
+    />
+  ) : null
 }

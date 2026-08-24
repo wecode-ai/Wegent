@@ -13,3 +13,10 @@ const cardRegistry: Record<string, ComponentType<CardRendererProps>> = {
 export function getCardComponent(cardType: string): ComponentType<CardRendererProps> | null {
   return cardRegistry[cardType] ?? null
 }
+
+export function registerCardComponent(
+  cardType: string,
+  component: ComponentType<CardRendererProps>
+): void {
+  cardRegistry[cardType] = component
+}

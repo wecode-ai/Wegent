@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from wecode.config.video_image_staging_config import VideoImageStagingSettings
-from wecode.service.video_image_staging import OssVideoImageStagingBackend
+from wecode.video.config.image_staging import VideoImageStagingSettings
+from wecode.video.services.image_staging import OssVideoImageStagingBackend
 
 
 class _FakeRedisClient:

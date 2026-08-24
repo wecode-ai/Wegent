@@ -395,6 +395,7 @@ function ChatAreaContent({
     disabled: !usesVideoModel,
     modelCategoryType: 'video',
   })
+  const selectVideoModelByKey = videoModelSelection.selectModelByKey
 
   // Image model selection state - only enabled for image mode
   // Uses unified useModelSelection hook with modelCategoryType='image'
@@ -938,9 +939,9 @@ function ChatAreaContent({
         })
         return
       }
-      videoModelSelection.selectModelByKey(`${model.name}:${model.type || ''}`)
+      selectVideoModelByKey(`${model.name}:${model.type || ''}`)
     },
-    [chatState.attachmentState.attachments, t, toast, videoModelSelection.selectModelByKey]
+    [chatState.attachmentState.attachments, selectVideoModelByKey, t, toast]
   )
 
   const hasVideoAttachment = useMemo(() => {

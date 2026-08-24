@@ -105,6 +105,7 @@ jest.mock('@/features/tasks/components/message/thinking/MixedContentView', () =>
   default: (props: {
     blocks?: Array<{ type: string; content?: string }>
     hideToolDetails?: boolean
+    onAskUserSubmit?: unknown
   }) => {
     mockMixedContentView(props)
     return <div data-testid="mixed-content-view" />
@@ -332,6 +333,45 @@ describe('MessageBubble', () => {
     rerender(<MessageBubble {...props} onSaveToKnowledge={jest.fn()} />)
 
     expect(mockBubbleTools).not.toHaveBeenCalled()
+  })
+
+  it('re-renders an interactive block when its submit callback changes', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      subtaskStatus: 'RUNNING',
+      status: 'streaming',
+      result: {
+        blocks: [
+          {
+            id: 'interactive-form',
+            type: 'tool',
+            status: 'done',
+            tool_name: 'interactive_form_question',
+            tool_use_id: 'interactive-form',
+          },
+        ],
+      },
+    }
+    const firstSubmit = jest.fn()
+    const latestSubmit = jest.fn()
+    const props = {
+      msg,
+      index: 0,
+      selectedTaskDetail: null,
+      selectedTeam: makeTeam(),
+      theme: 'light' as const,
+      t,
+    }
+    const { rerender } = render(<MessageBubble {...props} onAskUserSubmit={firstSubmit} />)
+
+    mockMixedContentView.mockClear()
+    rerender(<MessageBubble {...props} onAskUserSubmit={latestSubmit} />)
+
+    expect(mockMixedContentView).toHaveBeenCalledWith(
+      expect.objectContaining({ onAskUserSubmit: latestSubmit })
+    )
   })
 
   it('preserves Deep Research citation links in regular messages', () => {

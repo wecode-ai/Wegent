@@ -119,6 +119,7 @@ from app.api.endpoints.internal import (
     tables_router,
     workspace_archives_router,
 )
+from wecode.video.api.router import router as aigc_video_router
 
 # RAG internal router is conditionally imported based on STANDALONE_MODE
 if not settings.STANDALONE_MODE:
@@ -240,6 +241,7 @@ api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
 api_router.include_router(
     model_runtime.router, prefix="/model-runtime", tags=["model-runtime"]
 )
+api_router.include_router(aigc_video_router, prefix="/aigc-video", tags=["aigc-video"])
 api_router.include_router(retrievers.router, prefix="/retrievers", tags=["retrievers"])
 api_router.include_router(
     wiki.internal_router, prefix="/internal/wiki", tags=["wiki-internal"]

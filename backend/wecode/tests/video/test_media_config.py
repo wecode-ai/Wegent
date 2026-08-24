@@ -4,7 +4,7 @@
 
 import pytest
 
-from wecode.config.video_media_config import VideoMediaSettings
+from wecode.video.config.media import VideoMediaSettings
 
 
 def test_playback_config_does_not_require_fileplatform_url() -> None:

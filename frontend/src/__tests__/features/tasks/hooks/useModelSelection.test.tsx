@@ -521,6 +521,30 @@ describe('useModelSelection', () => {
     )
   })
 
+  it('restores a persisted task model that arrives after initial task rendering', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    const modelLoad = mockDeferredModelsLoad([mockModel, mockAdvancedModel])
+    const { result, rerender } = renderHook(
+      ({ taskModelId }: { taskModelId?: string }) =>
+        useModelSelection({
+          teamId: 1,
+          taskId: 100,
+          taskModelId,
+          selectedTeam: mockTeam,
+        }),
+      { initialProps: { taskModelId: undefined as string | undefined } }
+    )
+
+    await modelLoad.resolve()
+    expect(result.current.selectedModel).toBeNull()
+
+    rerender({ taskModelId: mockAdvancedModel.name })
+
+    await waitFor(() => {
+      expect(result.current.selectedModel).toEqual(expect.objectContaining(mockAdvancedModel))
+    })
+  })
+
   it('shows advanced models when every compatible model is advanced', async () => {
     ;(getCompatibleProviderFromAgentType as jest.Mock).mockReturnValue(['openai'])
     ;(modelApis.getUnifiedModels as jest.Mock).mockReset()

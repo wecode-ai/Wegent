@@ -759,6 +759,14 @@
     "duration_auto": "智能时长",
     "resolution_section": "分辨率"
   },
+  "asyncCards": {
+    "loading": "正在加载卡片...",
+    "pleaseWait": "任务处理中，请稍候",
+    "failed": "异步任务执行失败",
+    "videoTitle": "创意视频",
+    "viewDetails": "查看详情",
+    "panelDescription": "查看当前结果，并继续下一阶段的视频创作"
+  },
   "image": {
     "title": "图片生成",
     "model_selector": "选择图片模型",

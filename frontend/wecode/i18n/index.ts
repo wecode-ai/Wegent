@@ -11,13 +11,14 @@
 
 import i18next from 'i18next'
 import { loadWecodeKnowledgeExtensions } from '@wecode/extensions/knowledge'
+import '@wecode/features/video/cardRegistry'
 
 // Supported languages (must match main setup.ts)
 const supportedLanguages = ['en', 'zh-CN']
 
 // Wecode-specific namespaces that have extension translations
 // Note: evaluation namespace is in src/i18n/locales/, not here
-const wecodeNamespaces = ['devices', 'wecode', 'knowledge']
+const wecodeNamespaces = ['devices', 'wecode', 'knowledge', 'video']
 
 /**
  * Load and register wecode translations into i18next

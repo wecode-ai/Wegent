@@ -253,6 +253,22 @@ const MixedContentView = memo(function MixedContentView({
       )
       const mapped = nestedBlocks
         .map(block => {
+          const featureRenderer = blockRendererRegistry.findRenderer(block)
+          if (featureRenderer && block.type !== 'tool') {
+            return {
+              type: 'custom' as const,
+              blockId: block.id,
+              render: () =>
+                featureRenderer.render({
+                  block,
+                  isLastBlock: false,
+                  taskId,
+                  subtaskId,
+                  currentMessageIndex,
+                  onSendMessage: onCardChatButtonClick,
+                }),
+            }
+          }
           if (block.type === 'text') {
             // CRITICAL FIX: When page refreshes during streaming, block.content may be empty
             // but the actual content is in the `content` prop (from cached_content).
@@ -423,7 +439,15 @@ const MixedContentView = memo(function MixedContentView({
               return {
                 type: 'custom' as const,
                 blockId: block.id,
-                render: () => customRenderer.render({ block, isLastBlock: false }),
+                render: () =>
+                  customRenderer.render({
+                    block,
+                    isLastBlock: false,
+                    taskId,
+                    subtaskId,
+                    currentMessageIndex,
+                    onSendMessage: onCardChatButtonClick,
+                  }),
               }
             }
             return {
@@ -557,7 +581,16 @@ const MixedContentView = memo(function MixedContentView({
     }
 
     return items
-  }, [blocks, thinking, content, toolMap, taskId, subtaskId])
+  }, [
+    blocks,
+    thinking,
+    content,
+    toolMap,
+    taskId,
+    subtaskId,
+    currentMessageIndex,
+    onCardChatButtonClick,
+  ])
 
   // Check if we should show "Processing..." indicator
   const shouldShowProcessing = useMemo(() => {
@@ -738,6 +771,8 @@ const MixedContentView = memo(function MixedContentView({
             <CardRenderer
               key={item.blockId}
               block={item.data}
+              taskId={taskId}
+              subtaskId={subtaskId}
               onChatButtonClick={onCardChatButtonClick}
             />
           )

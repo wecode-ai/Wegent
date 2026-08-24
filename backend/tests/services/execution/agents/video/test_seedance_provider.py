@@ -4,7 +4,7 @@
 
 import pytest
 
-import wecode.service.video_generation_extension  # noqa: F401
+import wecode.video.services.generation_extension  # noqa: F401
 from app.services.execution.agents.video.providers import get_video_provider
 from app.services.execution.agents.video.providers.seedance import (
     SeedanceProvider,

@@ -6,6 +6,8 @@ import type { CardBlock } from '@/features/tasks/components/message/thinking/typ
 
 export interface CardRendererProps {
   block: CardBlock
+  taskId?: number
+  subtaskId?: number
   onChatButtonClick?: (message: string) => void | Promise<void>
 }
 

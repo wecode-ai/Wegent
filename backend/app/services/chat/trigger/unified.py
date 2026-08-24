@@ -46,6 +46,10 @@ from shared.codex_model_catalog import (
     codex_catalog_model_id_for_upstream,
     codex_catalog_model_id_from_config,
 )
+from wecode.video.api.skill_context import (
+    filter_prior_user_attachments,
+    inherit_attachment_media_into_generation,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -927,6 +931,23 @@ async def build_execution_request(
             override_model_name = None
             force_override = False
 
+        user_generation = None
+        if payload is not None:
+            generate_params = getattr(payload, "generate_params", None)
+            if generate_params:
+                user_generation = generate_params.model_dump(exclude_none=True)
+        if user_subtask_id:
+            task_attachments = filter_prior_user_attachments(
+                context_service.get_attachments_by_task(db, task.id),
+                current_subtask_id=user_subtask_id,
+                user_id=user.id,
+            )
+            user_generation = inherit_attachment_media_into_generation(
+                user_generation,
+                context_service.get_attachments_by_subtask(db, user_subtask_id),
+                task_attachments,
+            )
+
         request = builder.build(
             subtask=assistant_subtask,
             task=task,
@@ -946,6 +967,7 @@ async def build_execution_request(
             web_runtime_guidance=web_runtime_guidance,
             runtime_model_config=runtime_model_config,
             include_wework_space_mcp=include_wework_space_mcp,
+            user_generation=user_generation,
         )
         request.device_id = device_id or request.device_id
         # Task spec is the runtime source of truth. Message-level external

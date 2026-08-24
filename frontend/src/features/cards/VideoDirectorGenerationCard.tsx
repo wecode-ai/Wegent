@@ -16,6 +16,10 @@ import type {
   VideoDirectorCardPreview,
 } from './types'
 
+interface VideoDirectorGenerationCardProps extends CardRendererProps {
+  onDetailOpen?: (url: string) => void
+}
+
 export function safeCardUrl(value?: string): string | null {
   if (!value) return null
   try {
@@ -26,7 +30,11 @@ export function safeCardUrl(value?: string): string | null {
   }
 }
 
-export function VideoDirectorGenerationCard({ block, onChatButtonClick }: CardRendererProps) {
+export function VideoDirectorGenerationCard({
+  block,
+  onChatButtonClick,
+  onDetailOpen,
+}: VideoDirectorGenerationCardProps) {
   const { t } = useTranslation('chat')
   const [pendingButtonId, setPendingButtonId] = useState<string | null>(null)
   const card = block.card_data as VideoDirectorCardData
@@ -157,19 +165,29 @@ export function VideoDirectorGenerationCard({ block, onChatButtonClick }: CardRe
                 </a>
               </Button>
             ))}
-            {showDetailLink && (
-              <Button asChild size="sm">
-                <a
-                  href={detailUrl || undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
+            {showDetailLink &&
+              (onDetailOpen ? (
+                <Button
+                  size="sm"
+                  onClick={() => detailUrl && onDetailOpen(detailUrl)}
                   data-testid="card-video-director-detail"
                 >
                   {t('cards.video_director.view_detail')}
                   <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                </a>
-              </Button>
-            )}
+                </Button>
+              ) : (
+                <Button asChild size="sm">
+                  <a
+                    href={detailUrl || undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-testid="card-video-director-detail"
+                  >
+                    {t('cards.video_director.view_detail')}
+                    <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                  </a>
+                </Button>
+              ))}
           </div>
         )}
       </div>

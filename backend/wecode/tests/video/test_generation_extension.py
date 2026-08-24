@@ -8,12 +8,12 @@ from app.services.execution.agents.video.extensions import (
     VideoResultOverride,
     VideoStatusOverride,
 )
-from wecode.service.video_generation_extension import (
+from wecode.video.services.generation_extension import (
     WeiboMediaAttachmentPlaybackResolver,
     WeiboMediaAttachmentStorageAdapter,
     WeiboVideoGenerationExtension,
 )
-from wecode.service.video_media_platform import PlaybackInfo, UploadedMedia
+from wecode.video.services.media_platform import PlaybackInfo, UploadedMedia
 
 
 def test_builds_seedance_media_id_content_blocks() -> None:
@@ -113,7 +113,7 @@ def test_weibo_result_does_not_fall_back_when_playback_is_disabled(
     extension = WeiboVideoGenerationExtension()
     result = MagicMock(metadata={"weibo_hosted": True, "media_id": "media-1"})
     monkeypatch.setattr(
-        "wecode.service.video_generation_extension.video_media_settings."
+        "wecode.video.services.generation_extension.video_media_settings."
         "WEIBO_IMAGE_HOSTING_ENABLED",
         False,
     )
@@ -135,7 +135,7 @@ def test_reference_upload_persists_weibo_storage_shape(monkeypatch) -> None:
     adapter = WeiboMediaAttachmentStorageAdapter()
     upload_kwargs = {}
     monkeypatch.setattr(
-        "wecode.service.video_generation_extension.video_media_settings."
+        "wecode.video.services.generation_extension.video_media_settings."
         "WEIBO_MEDIA_UPLOAD_DEFAULT_UID",
         "default-upload-uid",
     )
@@ -148,7 +148,7 @@ def test_reference_upload_persists_weibo_storage_shape(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "wecode.service.video_generation_extension.upload_media",
+        "wecode.video.services.generation_extension.upload_media",
         fake_upload_media,
     )
 
@@ -171,33 +171,35 @@ def test_reference_upload_persists_weibo_storage_shape(monkeypatch) -> None:
     }
 
 
-def test_reference_storage_only_handles_video_generation_materials(monkeypatch) -> None:
+def test_reference_storage_handles_chat_and_video_generation_media(monkeypatch) -> None:
     adapter = WeiboMediaAttachmentStorageAdapter()
     monkeypatch.setattr(
-        "wecode.service.video_generation_extension.video_media_settings."
+        "wecode.video.services.generation_extension.video_media_settings."
         "WEIBO_IMAGE_HOSTING_ENABLED",
         True,
     )
     monkeypatch.setattr(
-        "wecode.service.video_generation_extension.video_media_settings."
+        "wecode.video.services.generation_extension.video_media_settings."
         "WEIBO_FILEPLATFORM_URL",
         "https://file-platform.example.com",
     )
 
     assert adapter.supports("video/mp4", "video_reference") is True
     assert adapter.supports("audio/mpeg", "video_reference") is True
-    assert adapter.supports("video/mp4", "default") is False
+    assert adapter.supports("video/mp4", "default") is True
+    assert adapter.supports("audio/mpeg", "default") is True
+    assert adapter.supports("image/png", "default") is False
 
 
 def test_resolves_uploaded_video_to_fresh_playback_url(monkeypatch) -> None:
     resolver = WeiboMediaAttachmentPlaybackResolver()
     monkeypatch.setattr(
-        "wecode.service.video_generation_extension.video_media_settings."
+        "wecode.video.services.generation_extension.video_media_settings."
         "WEIBO_MEDIA_UPLOAD_DEFAULT_UID",
         "1234567890",
     )
     monkeypatch.setattr(
-        "wecode.service.video_generation_extension.fetch_playback",
+        "wecode.video.services.generation_extension.fetch_playback",
         lambda media_ids, uid: {
             "media-1": PlaybackInfo(url="http://cdn.example.com/video.mp4")
         },
@@ -216,12 +218,12 @@ def test_resolves_uploaded_video_to_fresh_playback_url(monkeypatch) -> None:
 def test_resolves_uploaded_audio_to_fresh_playback_url(monkeypatch) -> None:
     resolver = WeiboMediaAttachmentPlaybackResolver()
     monkeypatch.setattr(
-        "wecode.service.video_generation_extension.video_media_settings."
+        "wecode.video.services.generation_extension.video_media_settings."
         "WEIBO_MEDIA_UPLOAD_DEFAULT_UID",
         "1234567890",
     )
     monkeypatch.setattr(
-        "wecode.service.video_generation_extension.fetch_playback",
+        "wecode.video.services.generation_extension.fetch_playback",
         lambda media_ids, uid: {
             "media-2": PlaybackInfo(url="https://cdn.example.com/audio.mp3")
         },
@@ -240,7 +242,7 @@ def test_resolves_uploaded_audio_to_fresh_playback_url(monkeypatch) -> None:
 def test_refresh_result_replaces_expired_url(monkeypatch) -> None:
     extension = WeiboVideoGenerationExtension()
     monkeypatch.setattr(
-        "wecode.service.video_generation_extension.video_media_settings."
+        "wecode.video.services.generation_extension.video_media_settings."
         "WEIBO_MEDIA_UPLOAD_DEFAULT_UID",
         "1234567890",
     )
@@ -253,7 +255,7 @@ def test_refresh_result_replaces_expired_url(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(
-        "wecode.service.video_generation_extension.sign_urls",
+        "wecode.video.services.generation_extension.sign_urls",
         fake_sign_urls,
     )
     task = {

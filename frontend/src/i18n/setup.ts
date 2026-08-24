@@ -11,9 +11,11 @@ export const supportedLanguages = ['en', 'zh-CN']
 const wecodeTranslationLoaders = {
   en: {
     wecode: () => import('@wecode/i18n/locales/en/wecode.json'),
+    video: () => import('@wecode/i18n/locales/en/video.json'),
   },
   'zh-CN': {
     wecode: () => import('@wecode/i18n/locales/zh-CN/wecode.json'),
+    video: () => import('@wecode/i18n/locales/zh-CN/video.json'),
   },
 } as const
 
@@ -63,6 +65,7 @@ async function loadTranslations() {
     'subscription',
     'wecode',
     'resource-library',
+    'video',
   ]
 
   for (const lng of supportedLanguages) {

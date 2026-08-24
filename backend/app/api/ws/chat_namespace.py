@@ -886,6 +886,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "model_display_name": payload.generate_params.model_display_name,
                     "generation_mode_id": payload.generate_params.generation_mode_id,
                     "size": payload.generate_params.size,
+                    "model": payload.generate_params.model,
                 }
 
             execution_workspace = None
@@ -1553,7 +1554,28 @@ class ChatNamespace(socketio.AsyncNamespace):
         except Exception as e:
             from sqlalchemy.exc import SQLAlchemyError
 
+            from shared.utils.error_classifier import (
+                classify_error,
+                format_error_message,
+            )
+
             logger.error(f"[WS] chat:retry exception: {e}", exc_info=True)
+            try:
+                await _finalize_failed_ai_trigger(
+                    task_id=payload.task_id,
+                    assistant_subtask_id=dispatch_args_or_error["assistant_subtask"].id,
+                    error_message=format_error_message(e),
+                    error_code=classify_error(e),
+                )
+            except Exception as finalize_error:
+                logger.error(
+                    "[WS] chat:retry failed to persist trigger error: "
+                    "task_id=%s, subtask_id=%s, error=%s",
+                    payload.task_id,
+                    dispatch_args_or_error["assistant_subtask"].id,
+                    finalize_error,
+                    exc_info=True,
+                )
             if isinstance(e, SQLAlchemyError):
                 return {"error": "Database error occurred"}
             return {"error": f"Internal server error: {str(e)}"}

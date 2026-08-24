@@ -278,7 +278,7 @@ export class TaskStateMachine {
       : this.getSyncAfterMessageIdBeforeSubtask(this.state.runtime.activeStreamSubtaskId)
     this.applyTaskLifecycleStatus(server.task_status, server.status_updated_at ?? undefined)
 
-    const shouldJoinOrResume = this.shouldJoinOrResume(server)
+    const shouldJoinOrResume = this.shouldJoinOrResume(server, reason)
     this.recordRuntimeVerification(server)
 
     if (shouldJoinOrResume) {
@@ -468,7 +468,15 @@ export class TaskStateMachine {
     }
   }
 
-  private shouldJoinOrResume(server: TaskRuntimeVerifyResult): boolean {
+  private shouldJoinOrResume(
+    server: TaskRuntimeVerifyResult,
+    reason: TaskRecoveryReason
+  ): boolean {
+    // Socket.IO room membership is connection-scoped. A reconnect always needs
+    // a fresh task:join, including for terminal chat tasks whose async cards may
+    // still be progressing after the assistant response has completed.
+    if (reason === 'websocket-reconnect') return true
+
     const serverUpdatedAt = server.status_updated_at ?? undefined
     if (serverUpdatedAt && this.state.runtime.messagesSyncedUpdatedAt !== serverUpdatedAt) {
       return true

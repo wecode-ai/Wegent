@@ -552,6 +552,40 @@ class TestStripForeignReasoningBlocks:
             for b in content
         )
 
+    def test_kimi_target_filters_empty_assistant_string(self):
+        """Deferred tool turns must not leave an empty assistant message."""
+        messages = [
+            {"role": "user", "content": "create a video"},
+            {"role": "assistant", "content": ""},
+            {"role": "user", "content": "form answer"},
+        ]
+
+        result = strip_foreign_reasoning_blocks(
+            messages, "openai", target_model_id="moonshot-kimi-k2.6"
+        )
+
+        assert result == [messages[0], messages[2]]
+
+    def test_kimi_target_keeps_empty_assistant_tool_call(self):
+        """An empty assistant tool-call envelope is valid and must be retained."""
+        tool_message = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": "{}"},
+                }
+            ],
+        }
+
+        result = strip_foreign_reasoning_blocks(
+            [tool_message], "openai", target_model_id="moonshot-kimi-k2.6"
+        )
+
+        assert result == [tool_message]
+
     # ---- Fix 1: raw Responses API format recognition ----
 
     def test_openai_same_provider_raw_format_preserves_text_id(self):
