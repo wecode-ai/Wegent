@@ -102,16 +102,8 @@ jest.mock('@/contexts/DeviceContext', () => ({
 jest.mock('@/components/ui/dropdown', () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DropdownMenuItem: ({
-    children,
-    onClick,
-    className,
-  }: {
-    children: React.ReactNode
-    onClick?: React.MouseEventHandler<HTMLButtonElement>
-    className?: string
-  }) => (
-    <button type="button" className={className} onClick={onClick}>
+  DropdownMenuItem: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button type="button" {...props}>
       {children}
     </button>
   ),
@@ -159,6 +151,11 @@ jest.mock('@/features/projects/components/DraggableProjectTask', () => ({
   DraggableProjectTask: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 
+jest.mock('@/features/projects/components/ProjectCreateDialog', () => ({
+  ProjectCreateDialog: ({ open, mode }: { open: boolean; mode?: 'group' | 'workspace' }) =>
+    open ? <div data-testid="project-create-dialog-mode">{mode}</div> : null,
+}))
+
 jest.mock('@/components/common/TaskInlineRename', () => ({
   TaskInlineRename: () => <input aria-label="rename task" />,
 }))
@@ -196,6 +193,21 @@ describe('project sidebar behavior', () => {
 
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.getByText('workspace-project')).toBeInTheDocument()
+  })
+
+  test('opens project and group creation from the shared create menu', () => {
+    render(<ProjectSection onTaskSelect={jest.fn()} />)
+
+    expect(screen.getByTestId('create-workspace-project-menu-item')).toHaveTextContent(
+      'workspaceCreate.title'
+    )
+    expect(screen.getByTestId('create-group-button')).toHaveTextContent('create.title')
+
+    fireEvent.click(screen.getByTestId('create-group-button'))
+    expect(screen.getByTestId('project-create-dialog-mode')).toHaveTextContent('group')
+
+    fireEvent.click(screen.getByTestId('create-workspace-project-menu-item'))
+    expect(screen.getByTestId('project-create-dialog-mode')).toHaveTextContent('workspace')
   })
 
   test('shows the new conversation shortcut only for projects with a workspace path', () => {

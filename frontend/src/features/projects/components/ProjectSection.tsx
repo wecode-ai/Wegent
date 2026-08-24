@@ -42,16 +42,14 @@ import { taskApis } from '@/apis/tasks'
 import {
   canImportOrdinaryTaskToProject,
   canStartProjectConversation,
-  isPathlessProject,
   isWorkspaceProject,
 } from '../utils/projectClassification'
 
 interface ProjectSectionProps {
   onTaskSelect?: () => void
-  variant?: 'all' | 'group' | 'workspace'
 }
 
-export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSectionProps) {
+export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
   const { t } = useTranslation('projects')
   const router = useRouter()
   const {
@@ -64,9 +62,6 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
     refreshProjects,
   } = useProjectContext()
   const { selectTask } = useTaskSession()
-  const isWorkspaceSection = variant === 'workspace'
-  const isGroupSection = variant === 'group'
-  const isUnifiedSection = variant === 'all'
 
   const handleNewConversation = useCallback(
     (project: ProjectWithTasks) => {
@@ -84,27 +79,21 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
     },
     [setSelectedProjectTaskId, selectTask, router, onTaskSelect]
   )
-  const visibleProjects = projects.filter(project => {
-    if (isWorkspaceSection) {
-      return isWorkspaceProject(project)
-    }
-    if (isGroupSection) {
-      return isPathlessProject(project)
-    }
-    return true
-  })
-
   // Dialog states
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [createDialogMode, setCreateDialogMode] = useState<'group' | 'workspace'>('workspace')
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [selectedProject, setSelectedProject] = useState<ProjectWithTasks | null>(null)
 
   // Section collapsed state
   const [sectionCollapsed, setSectionCollapsed] = useState(true)
-  const sectionTitle = t(
-    isUnifiedSection || isWorkspaceSection ? 'workspaceSection.title' : 'section.title'
-  )
+  const sectionTitle = t('workspaceSection.title')
+
+  const handleOpenCreateDialog = (mode: 'group' | 'workspace') => {
+    setCreateDialogMode(mode)
+    setCreateDialogOpen(true)
+  }
 
   const handleEditProject = (project: ProjectWithTasks) => {
     setSelectedProject(project)
@@ -160,22 +149,35 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
             <ChevronUp className="h-3.5 w-3.5 flex-shrink-0" />
           )}
         </button>
-        <Button
-          data-testid={
-            isUnifiedSection || isWorkspaceSection
-              ? 'create-workspace-project-button'
-              : 'create-group-button'
-          }
-          variant="ghost"
-          size="sm"
-          className="ml-1 h-5 w-5 p-0 text-text-muted hover:text-text-primary transition-colors rounded"
-          onClick={() => setCreateDialogOpen(true)}
-          title={t(
-            isUnifiedSection || isWorkspaceSection ? 'workspaceCreate.title' : 'create.title'
-          )}
-        >
-          <FolderPlus className="w-3.5 h-3.5" />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              data-testid="create-workspace-project-button"
+              variant="ghost"
+              size="sm"
+              className="ml-1 h-5 w-5 p-0 text-text-muted hover:text-text-primary transition-colors rounded"
+              title={t('createMenu.title')}
+            >
+              <FolderPlus className="w-3.5 h-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-36">
+            <DropdownMenuItem
+              data-testid="create-workspace-project-menu-item"
+              onClick={() => handleOpenCreateDialog('workspace')}
+            >
+              <FolderPlus className="w-3.5 h-3.5 mr-2" />
+              {t('workspaceCreate.title')}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-testid="create-group-button"
+              onClick={() => handleOpenCreateDialog('group')}
+            >
+              <Folder className="w-3.5 h-3.5 mr-2" />
+              {t('create.title')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Project List */}
@@ -183,14 +185,10 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
         <div className="mt-1 space-y-0.5" data-testid="project-section-list">
           {isLoading ? (
             <div className="px-4 py-2 text-xs text-text-muted">{t('common:loading')}</div>
-          ) : visibleProjects.length === 0 ? (
-            <div className="px-4 py-2 text-xs text-text-muted">
-              {t(
-                isUnifiedSection || isWorkspaceSection ? 'workspaceSection.empty' : 'section.empty'
-              )}
-            </div>
+          ) : projects.length === 0 ? (
+            <div className="px-4 py-2 text-xs text-text-muted">{t('workspaceSection.empty')}</div>
           ) : (
-            visibleProjects.map(project => (
+            projects.map(project => (
               <DroppableProject
                 key={project.id}
                 projectId={project.id}
@@ -220,7 +218,7 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
       <ProjectCreateDialog
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
-        mode={isUnifiedSection || isWorkspaceSection ? 'workspace' : 'group'}
+        mode={createDialogMode}
       />
       <ProjectEditDialog
         open={editDialogOpen}
