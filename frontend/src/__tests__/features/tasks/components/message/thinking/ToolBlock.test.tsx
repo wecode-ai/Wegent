@@ -116,15 +116,15 @@ describe('ToolBlock', () => {
 
   it('preserves other MCP list tool names', () => {
     const tool = blockToToolPair({
-      id: 'tool-list-nodes',
+      id: 'tool-list-resources',
       type: 'tool',
-      tool_use_id: 'tool-list-nodes',
-      tool_name: 'list_nodes',
+      tool_use_id: 'tool-list-resources',
+      tool_name: 'list_resources',
       tool_protocol: 'mcp',
       status: 'done',
     })
 
-    expect(tool.toolName).toBe('list_nodes')
+    expect(tool.toolName).toBe('list_resources')
   })
 
   it('continues normalizing non-MCP list tools', () => {

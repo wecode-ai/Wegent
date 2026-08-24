@@ -167,6 +167,33 @@ class TestWebSocketResultEmitter:
             }
 
     @pytest.mark.asyncio
+    async def test_tool_start_preserves_mcp_protocol_in_created_block(self):
+        """MCP tool starts should retain their protocol in the live block."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+
+            emitter = WebSocketResultEmitter(task_id=1, subtask_id=2)
+            event = ExecutionEvent.create(
+                EventType.TOOL_START,
+                task_id=1,
+                subtask_id=2,
+                tool_name="list_resources",
+                tool_use_id="tool-list-resources",
+                data={"tool_protocol": "mcp_call"},
+            )
+
+            await emitter.emit(event)
+
+            block = mock_ws.emit_block_created.await_args.kwargs["block"]
+            assert block["tool_name"] == "list_resources"
+            assert block["tool_protocol"] == "mcp_call"
+
+    @pytest.mark.asyncio
     async def test_tool_result_emits_interactive_form_render_payload(self):
         """Interactive form tool results should update the real tool block with render payload."""
         from app.services.execution.emitters import WebSocketResultEmitter
