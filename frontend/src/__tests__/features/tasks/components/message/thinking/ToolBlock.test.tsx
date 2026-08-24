@@ -6,6 +6,7 @@ import '@testing-library/jest-dom'
 import { render, screen } from '@testing-library/react'
 import { ToolBlock } from '@/features/tasks/components/message/thinking/components/ToolBlock'
 import type { ToolPair } from '@/features/tasks/components/message/thinking/types'
+import { blockToToolPair } from '@/features/tasks/components/message/thinking/utils/blockToToolPair'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -89,5 +90,53 @@ describe('ToolBlock', () => {
     )
 
     expect(screen.getByText('加载技能 weibo-tools')).toBeInTheDocument()
+  })
+
+  it('preserves MCP tool identity instead of rendering list tools as file glob', () => {
+    const tool = blockToToolPair({
+      id: 'tool-list-documents',
+      type: 'tool',
+      tool_use_id: 'tool-list-documents',
+      tool_name: 'wegent_kb_list_documents',
+      tool_protocol: 'mcp_call',
+      server_label: 'wegent-knowledge',
+      status: 'done',
+      tool_input: { knowledge_base_id: 1 },
+      tool_output: JSON.stringify({ total: 5, returned_count: 5, items: [] }),
+    })
+
+    expect(tool.toolName).toBe('wegent_kb_list_documents')
+
+    render(<ToolBlock tool={tool} defaultExpanded />)
+
+    expect(screen.getByText('wegent_kb_list_documents')).toBeInTheDocument()
+    expect(screen.queryByText('thinking.tools.glob')).not.toBeInTheDocument()
+    expect(screen.queryByText('Files (1)')).not.toBeInTheDocument()
+  })
+
+  it('preserves other MCP list tool names', () => {
+    const tool = blockToToolPair({
+      id: 'tool-list-nodes',
+      type: 'tool',
+      tool_use_id: 'tool-list-nodes',
+      tool_name: 'list_nodes',
+      tool_protocol: 'mcp',
+      status: 'done',
+    })
+
+    expect(tool.toolName).toBe('list_nodes')
+  })
+
+  it('continues normalizing non-MCP list tools', () => {
+    const tool = blockToToolPair({
+      id: 'tool-list-files',
+      type: 'tool',
+      tool_use_id: 'tool-list-files',
+      tool_name: 'sandbox_list_files',
+      tool_protocol: 'function_call',
+      status: 'done',
+    })
+
+    expect(tool.toolName).toBe('Glob')
   })
 })
