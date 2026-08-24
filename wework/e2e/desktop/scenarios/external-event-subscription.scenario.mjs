@@ -345,10 +345,37 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       value: ISSUE_TITLE,
     })
     await control.command('click', `${activeBoard} [data-testid="workspace-issue-submit"]`)
-    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
-      text: ISSUE_TITLE,
-      timeoutMs: uiTimeoutMs * 2,
-    })
+    const createdIssue = await issueByTitle(String(cloudProject.id), ISSUE_TITLE)
+    // Task-backed Issues start their task in the background: the starter
+    // reports the runtime address, closes the panel and navigates away from the
+    // board once, which unmounts the project board. Re-enter the board, select
+    // the project again, and open the detail from the card until that
+    // transition settles and the detail stays open.
+    const projectSelector = `${activeBoard} [data-testid="cloud-sidebar-project-${String(cloudProject.id)}"]`
+    const createdIssueCard = `${activeBoard} [data-testid="cloud-todo-card-${createdIssue.id}"]`
+    const detailTitle = `${activeBoard} [data-testid="cloud-todo-detail-title"]`
+    const deadline = Date.now() + uiTimeoutMs * 3
+    for (;;) {
+      await control.command('navigate', 'body', { value: '/todo' })
+      if (Number(await control.command('getElementCount', projectSelector).catch(() => '0')) > 0) {
+        await control.command('click', projectSelector, { visible: true }).catch(() => undefined)
+      }
+      if (Number(await control.command('getElementCount', createdIssueCard).catch(() => '0')) > 0) {
+        await control.command('click', createdIssueCard, { visible: true }).catch(() => undefined)
+      }
+      try {
+        await control.command('waitFor', detailTitle, {
+          text: ISSUE_TITLE,
+          stableMs: 1500,
+          timeoutMs: 4000,
+        })
+        break
+      } catch (error) {
+        if (Date.now() > deadline) throw error
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+    return createdIssue
   }
 
   return {
@@ -539,9 +566,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       })
 
       await verifyWorkflowEditor(control, activeBoard, projectId)
-      await createIssueThroughUi(control, activeBoard)
-
-      issue = await issueByTitle(projectId, ISSUE_TITLE)
+      issue = await createIssueThroughUi(control, activeBoard)
       const initialStatuses = nodeStatuses(issue)
       assert.ok(
         ['ready', 'queued', 'running'].includes(initialStatuses['stage-1']),
