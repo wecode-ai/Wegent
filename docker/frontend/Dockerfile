@@ -9,6 +9,7 @@ WORKDIR /app
 
 # Copy dependency files and postinstall scripts
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
 COPY frontend/package.json ./frontend/package.json
 COPY frontend/scripts ./frontend/scripts

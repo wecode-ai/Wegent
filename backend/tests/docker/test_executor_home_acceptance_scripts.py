@@ -368,6 +368,9 @@ def test_acceptance_scripts_are_valid_shell_and_cover_required_lifecycle():
         "initialize_runtime_identity",
         "Docker volume identity changed",
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true",
+        "executor-rpc-probe.py",
+        "executor-persistence-json.py",
+        '--mount "type=bind,src=$SCRIPT_DIR,dst=$PROBE_TARGET_DIR,readonly"',
     ):
         assert required_contract in docker_script
 
