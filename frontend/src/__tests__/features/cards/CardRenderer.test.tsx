@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { CardBlock } from '@wegent/chat-core'
 import { CardRenderer } from '@/features/cards/CardRenderer'
 import { getCardComponent } from '@/features/cards/registry'
@@ -112,5 +112,66 @@ describe('CardRenderer', () => {
     expect(screen.getByTestId('card-video-director-error')).toHaveTextContent('生成失败')
     expect(screen.queryByTestId('card-video-director-detail')).not.toBeInTheDocument()
     expect(safeCardUrl('javascript:alert(1)')).toBeNull()
+  })
+
+  it('keeps the workflow detail link when another public link button exists', () => {
+    render(
+      <CardRenderer
+        block={buildCard({
+          status: 'done',
+          card_status: 'populated',
+          card_data: {
+            link: 'https://workflow.example.com/tasks/1',
+            buttons: [
+              {
+                button_id: 'download',
+                button_name: '下载',
+                button_type: 'link',
+                url: 'https://cdn.example.com/video.mp4',
+              },
+            ],
+          },
+          card_preview_data: {},
+        })}
+      />
+    )
+
+    expect(screen.getByTestId('card-video-director-button-0')).toHaveAttribute(
+      'href',
+      'https://cdn.example.com/video.mp4'
+    )
+    expect(screen.getByTestId('card-video-director-detail')).toHaveAttribute(
+      'href',
+      'https://workflow.example.com/tasks/1'
+    )
+  })
+
+  it('sends chat button names through the card action callback', async () => {
+    const onChatButtonClick = jest.fn().mockResolvedValue(undefined)
+    render(
+      <CardRenderer
+        block={buildCard({
+          status: 'done',
+          card_status: 'populated',
+          card_data: {
+            buttons: [
+              {
+                button_id: 'generate-entities',
+                button_name: '生成主体',
+                button_type: 'chat',
+              },
+            ],
+          },
+          card_preview_data: {},
+        })}
+        onChatButtonClick={onChatButtonClick}
+      />
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('card-video-director-chat-button-0'))
+    })
+
+    expect(onChatButtonClick).toHaveBeenCalledWith('生成主体')
   })
 })

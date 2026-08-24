@@ -2,19 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Team } from '@/types/api'
+import type { TaskType, Team } from '@/types/api'
 
 export function teamUsesModeSpecCategory(team: Team | null | undefined, category: string): boolean {
   return Boolean(team?.mode_spec?.allowedModelCategories?.includes(category))
 }
 
-export function teamUsesWorkflowManagedVideo(team: Team | null | undefined): boolean {
-  return team?.mode_spec?.workflowManagedVideo === true
+export function teamHidesVideoParam(
+  team: Team | null | undefined,
+  param: 'duration' | 'ratio' | 'resolution'
+): boolean {
+  return team?.mode_spec?.hiddenVideoParams?.includes(param) === true
 }
 
-export function resolveBotRuntimeModel<T>(
-  team: Team | null | undefined,
-  frontendModel: T | null
-): T | null {
-  return teamUsesWorkflowManagedVideo(team) ? null : frontendModel
+export function usesVideoReferenceStorage(
+  taskType: TaskType,
+  team: Team | null | undefined
+): boolean {
+  return taskType === 'video' || teamUsesModeSpecCategory(team, 'video')
 }

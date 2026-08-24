@@ -112,6 +112,8 @@ export interface Bot {
   skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
   preload_skill_refs?: Record<string, SkillRefMeta>
+  secondary_model_name?: string | null
+  secondary_model_namespace?: string | null
   is_active: boolean
   created_at: string
   updated_at: string
@@ -199,7 +201,7 @@ export interface Team {
   bind_mode?: TaskType[] // Allowed modes for this team
   mode_spec?: {
     allowedModelCategories: string[]
-    workflowManagedVideo?: boolean
+    hiddenVideoParams?: string[]
   } | null
   icon?: string // Icon ID from preset icon library
   display_config?: TeamDisplayConfig

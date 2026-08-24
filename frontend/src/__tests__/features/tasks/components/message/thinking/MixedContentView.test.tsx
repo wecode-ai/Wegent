@@ -118,6 +118,46 @@ describe('MixedContentView', () => {
     expect(screen.getByText('三幕式创意短片')).toBeInTheDocument()
   })
 
+  it('routes card chat buttons through the message callback', async () => {
+    const onCardChatButtonClick = jest.fn().mockResolvedValue(undefined)
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        taskStatus="COMPLETED"
+        theme="light"
+        onCardChatButtonClick={onCardChatButtonClick}
+        blocks={[
+          {
+            id: 'card-1',
+            type: 'card',
+            status: 'done',
+            card_id: 'card-1',
+            card_type: 'video_director_generation',
+            card_status: 'populated',
+            card_preview_data: {},
+            card_data: {
+              buttons: [
+                {
+                  button_id: 'generate-entities',
+                  button_name: '生成主体',
+                  button_type: 'chat',
+                },
+              ],
+            },
+            card_error: null,
+          },
+        ]}
+      />
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('card-video-director-chat-button-0'))
+    })
+
+    expect(onCardChatButtonClick).toHaveBeenCalledWith('生成主体')
+  })
+
   it('renders the image generation placeholder while the task is running', () => {
     render(
       <MixedContentView

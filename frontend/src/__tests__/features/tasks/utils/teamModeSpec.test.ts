@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  resolveBotRuntimeModel,
+  teamHidesVideoParam,
   teamUsesModeSpecCategory,
-  teamUsesWorkflowManagedVideo,
+  usesVideoReferenceStorage,
 } from '@/features/tasks/utils/teamModeSpec'
 import type { Team } from '@/types/api'
 
@@ -14,18 +14,26 @@ const minuteVideoTeam = {
   name: 'workflow-video-team',
   mode_spec: {
     allowedModelCategories: ['video'],
-    workflowManagedVideo: true,
+    hiddenVideoParams: ['duration'],
   },
-} as Team
+} as unknown as Team
 
 describe('teamModeSpec', () => {
   it('exposes only the configured video category', () => {
     expect(teamUsesModeSpecCategory(minuteVideoTeam, 'video')).toBe(true)
     expect(teamUsesModeSpecCategory(minuteVideoTeam, 'llm')).toBe(false)
+    expect(teamUsesModeSpecCategory(minuteVideoTeam, 'image')).toBe(false)
   })
 
-  it('keeps the Bot runtime model under backend control', () => {
-    expect(teamUsesWorkflowManagedVideo(minuteVideoTeam)).toBe(true)
-    expect(resolveBotRuntimeModel(minuteVideoTeam, { name: 'frontend-llm' })).toBeNull()
+  it('hides only the workflow-owned duration parameter', () => {
+    expect(teamHidesVideoParam(minuteVideoTeam, 'duration')).toBe(true)
+    expect(teamHidesVideoParam(minuteVideoTeam, 'ratio')).toBe(false)
+    expect(teamHidesVideoParam(minuteVideoTeam, 'resolution')).toBe(false)
+  })
+
+  it('uses video reference storage for video-capable chat teams', () => {
+    expect(usesVideoReferenceStorage('chat', minuteVideoTeam)).toBe(true)
+    expect(usesVideoReferenceStorage('chat', null)).toBe(false)
+    expect(usesVideoReferenceStorage('video', null)).toBe(true)
   })
 })

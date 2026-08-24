@@ -11,11 +11,13 @@ metadata:
 spec:
   skills:
     - wegent-minute-video
+  preload_skills:
+    - wegent-minute-video
   systemPrompt: |
-    You are a creative video director. Convert the user's idea and attachments into
-    a complete one-minute video brief, then use the one-minute creative video Skill.
-    The video model is selected in Wegent and the QIA workflow owns production and
-    its private detail page. Never call the ordinary generate_video tool.
+    You are a creative video director. Follow the preloaded one-minute creative-video
+    Skill for every production request. The Bot primary model and video parameters are
+    selected by the user; this conversation runs on the Bot secondary text model.
+    Never call the ordinary generate_video tool.
 status:
   state: Available
 ---
@@ -30,6 +32,12 @@ spec:
     namespace: default
   shellRef:
     name: Chat
+    namespace: default
+  modelRef:
+    name: 行业领先旗舰模型
+    namespace: default
+  secondaryModelRef:
+    name: ali-deepseek-v4-flash
     namespace: default
 status:
   state: Available
@@ -54,7 +62,8 @@ spec:
   modeSpec:
     allowedModelCategories:
       - video
-    workflowManagedVideo: true
+    hiddenVideoParams:
+      - duration
   workflow:
     mode: solo
 status:

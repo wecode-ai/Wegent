@@ -59,12 +59,16 @@ STREAM_TERMINAL_EVENT_TYPES = {
 }
 
 
-def _workflow_video_job_owns_status(result: Optional[Dict[str, Any]]) -> bool:
-    """Return whether an external workflow owns the subtask terminal status."""
+def _async_card_job_owns_status(result: Optional[Dict[str, Any]]) -> bool:
+    """Return whether an asynchronous card poll owns the terminal status."""
     if not isinstance(result, dict):
         return False
     video_job = result.get("video_job")
-    return isinstance(video_job, dict) and bool(video_job.get("workflow_type"))
+    return (
+        isinstance(video_job, dict)
+        and bool(video_job.get("card_type"))
+        and bool(video_job.get("query_url"))
+    )
 
 
 @dataclass
@@ -521,7 +525,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 status="COMPLETED",
                 result=result,
             )
-            if _workflow_video_job_owns_status(final_result):
+            if _async_card_job_owns_status(final_result):
                 await persist_result_without_status(self._subtask_id, final_result)
                 self._status_updated = True
                 self._terminal_event_deferred = True
@@ -577,7 +581,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 error_message=error_message,
                 error_code=error_code,
             )
-            if _workflow_video_job_owns_status(result):
+            if _async_card_job_owns_status(result):
                 await persist_result_without_status(self._subtask_id, result)
                 self._status_updated = True
                 self._terminal_event_deferred = True

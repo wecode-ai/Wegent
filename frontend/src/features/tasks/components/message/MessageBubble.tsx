@@ -1578,6 +1578,7 @@ const MessageBubble = memo(
                         subtaskId={msg.subtaskId}
                         currentMessageIndex={index}
                         onAskUserSubmit={onAskUserSubmit}
+                        onCardChatButtonClick={onSendMessage}
                         hideToolDetails={hideToolDetails}
                       />
                       {!showFinalAnswerOnly && (

@@ -9,6 +9,8 @@ import logging
 import time
 from typing import Any, Optional
 
+from app.utils.client_payload_sanitizer import sanitize_client_payload
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,7 +32,7 @@ def emit_chat_event_from_celery(
                 {
                     "method": "emit",
                     "event": event_name,
-                    "data": [payload],
+                    "data": [sanitize_client_payload(payload)],
                     "namespace": "/chat",
                     "room": f"task:{task_id}",
                 }

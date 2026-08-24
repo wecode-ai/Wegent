@@ -535,15 +535,15 @@ class TeamInputPlaceholder(LocalizedInputPlaceholder):
 
 
 class ModeSpec(BaseModel):
-    """Media model selectors exposed without replacing the Bot runtime model."""
+    """Model selectors exposed for specialized task modes."""
 
     allowedModelCategories: List[ModelCategoryType] = Field(
         default_factory=list,
         description="Model categories available for user selection.",
     )
-    workflowManagedVideo: bool = Field(
-        default=False,
-        description="Whether a Skill workflow owns video generation parameters.",
+    hiddenVideoParams: Optional[List[str]] = Field(
+        default=None,
+        description="Video parameters owned by the workflow and hidden from users.",
     )
 
 

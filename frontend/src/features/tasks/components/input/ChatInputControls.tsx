@@ -168,6 +168,7 @@ export interface ChatInputControlsProps {
   onVideoGenerationModeChange?: (modeId: string) => void
   materialAccept?: string
   showVideoControlsInChat?: boolean
+  hideDurationSelector?: boolean
 
   // Image mode props (only used when taskType === 'image')
   selectedImageModel?: Model | null
@@ -290,6 +291,7 @@ export function ChatInputControls({
   onVideoGenerationModeChange,
   materialAccept,
   showVideoControlsInChat = false,
+  hideDurationSelector = false,
   // Image mode props
   selectedImageModel,
   onImageModelChange,
@@ -482,6 +484,18 @@ export function ChatInputControls({
         onVideoModelChange={onVideoModelChange}
         isVideoModelsLoading={isVideoModelsLoading}
         showVideoControlsInChat={showVideoControlsInChat}
+        selectedResolution={selectedResolution}
+        onResolutionChange={onResolutionChange}
+        availableResolutions={availableResolutions}
+        resolutionOptions={resolutionOptions}
+        selectedRatio={selectedRatio}
+        onRatioChange={onRatioChange}
+        availableRatios={availableRatios}
+        ratioOptions={ratioOptions}
+        selectedDuration={selectedDuration}
+        onDurationChange={onDurationChange}
+        availableDurations={availableDurations}
+        hideDurationSelector={hideDurationSelector}
       />
     )
   }
@@ -524,7 +538,7 @@ export function ChatInputControls({
         {/* Video Mode Controls - show when taskType is 'video' */}
         {isVideoMode && (
           <>
-            {taskType === 'video' && onVideoGenerationModeChange && (
+            {onVideoGenerationModeChange && (
               <VideoGenerationModeSelector
                 modes={videoGenerationModes}
                 value={selectedVideoGenerationMode}
@@ -547,7 +561,7 @@ export function ChatInputControls({
             )}
 
             {/* Unified Video Settings Popover (ratio + duration + resolution) */}
-            {taskType === 'video' && onResolutionChange && onRatioChange && onDurationChange && (
+            {onResolutionChange && onRatioChange && onDurationChange && (
               <VideoSettingsPopover
                 selectedRatio={selectedRatio}
                 onRatioChange={onRatioChange}
@@ -561,6 +575,7 @@ export function ChatInputControls({
                 availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
                 resolutionOptions={resolutionOptions}
                 disabled={isStreaming}
+                showDuration={!hideDurationSelector}
               />
             )}
           </>

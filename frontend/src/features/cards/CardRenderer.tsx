@@ -5,7 +5,13 @@
 import type { CardBlock } from '@/features/tasks/components/message/thinking/types'
 import { getCardComponent } from './registry'
 
-export function CardRenderer({ block }: { block: CardBlock }) {
+export function CardRenderer({
+  block,
+  onChatButtonClick,
+}: {
+  block: CardBlock
+  onChatButtonClick?: (message: string) => void | Promise<void>
+}) {
   const Component = getCardComponent(block.card_type)
-  return Component ? <Component block={block} /> : null
+  return Component ? <Component block={block} onChatButtonClick={onChatButtonClick} /> : null
 }

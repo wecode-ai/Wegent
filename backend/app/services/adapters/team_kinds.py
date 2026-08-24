@@ -33,6 +33,7 @@ from app.schemas.kind import (
     Bot,
     Ghost,
     Model,
+    ModeSpec,
     Shell,
     Task,
     Team,
@@ -246,6 +247,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         bind_mode = getattr(obj_in, "bind_mode", None)
         if bind_mode is not None:
             spec["bind_mode"] = bind_mode
+
+        mode_spec = getattr(obj_in, "mode_spec", None)
+        if mode_spec is not None:
+            spec["modeSpec"] = mode_spec.model_dump(mode="json", exclude_none=True)
 
         # Handle description - get from obj_in directly
         description = getattr(obj_in, "description", None)
@@ -1439,6 +1444,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Handle bind_mode update - directly from update_data (not from workflow)
         if "bind_mode" in update_data:
             team_crd.spec.bind_mode = update_data["bind_mode"]
+
+        if "mode_spec" in update_data:
+            mode_spec = update_data["mode_spec"]
+            team_crd.spec.modeSpec = (
+                ModeSpec.model_validate(mode_spec) if mode_spec else None
+            )
 
         # Handle description update
         if "description" in update_data:

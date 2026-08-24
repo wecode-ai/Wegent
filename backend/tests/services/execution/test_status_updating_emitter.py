@@ -11,14 +11,15 @@ from shared.models import EventType, ExecutionEvent
 
 
 @pytest.mark.asyncio
-async def test_done_defers_terminal_status_to_video_workflow() -> None:
+async def test_done_defers_terminal_status_to_async_card_poll() -> None:
     from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 
     wrapped = AsyncMock()
     emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
-    workflow_result = {
+    card_result = {
         "video_job": {
-            "workflow_type": "example_workflow",
+            "card_type": "video_director_generation",
+            "query_url": "https://workflow.example.com/task/1",
             "status": "polling",
         },
         "blocks": [],
@@ -27,7 +28,7 @@ async def test_done_defers_terminal_status_to_video_workflow() -> None:
     with (
         patch(
             "app.services.execution.emitters.status_updating.collect_completed_result",
-            new=AsyncMock(return_value=workflow_result),
+            new=AsyncMock(return_value=card_result),
         ),
         patch(
             "app.services.execution.emitters.status_updating."
@@ -44,22 +45,23 @@ async def test_done_defers_terminal_status_to_video_workflow() -> None:
     ):
         result = await emitter._update_status_completed({"value": ""})
 
-    assert result == workflow_result
-    persist_result.assert_awaited_once_with(202, workflow_result)
+    assert result == card_result
+    persist_result.assert_awaited_once_with(202, card_result)
     persist_completed.assert_not_awaited()
     publish.assert_not_awaited()
     assert emitter._terminal_event_deferred is True
 
 
 @pytest.mark.asyncio
-async def test_runtime_error_does_not_override_terminal_video_workflow() -> None:
+async def test_runtime_error_does_not_override_terminal_async_card_poll() -> None:
     from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 
     wrapped = AsyncMock()
     emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
-    workflow_result = {
+    card_result = {
         "video_job": {
-            "workflow_type": "example_workflow",
+            "card_type": "video_director_generation",
+            "query_url": "https://workflow.example.com/task/1",
             "status": "failed",
         },
         "blocks": [],
@@ -68,7 +70,7 @@ async def test_runtime_error_does_not_override_terminal_video_workflow() -> None
     with (
         patch(
             "app.services.execution.emitters.status_updating.collect_completed_result",
-            new=AsyncMock(return_value=workflow_result),
+            new=AsyncMock(return_value=card_result),
         ),
         patch(
             "app.services.execution.emitters.status_updating."
@@ -85,22 +87,23 @@ async def test_runtime_error_does_not_override_terminal_video_workflow() -> None
     ):
         result = await emitter._update_status_failed("runtime failed")
 
-    assert result == workflow_result
-    persist_result.assert_awaited_once_with(202, workflow_result)
+    assert result == card_result
+    persist_result.assert_awaited_once_with(202, card_result)
     persist_completed.assert_not_awaited()
     publish.assert_not_awaited()
     assert emitter._terminal_event_deferred is True
 
 
 @pytest.mark.asyncio
-async def test_done_event_is_not_forwarded_when_video_workflow_owns_status() -> None:
+async def test_done_event_is_not_forwarded_when_async_card_poll_owns_status() -> None:
     from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 
     wrapped = AsyncMock()
     emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
-    workflow_result = {
+    card_result = {
         "video_job": {
-            "workflow_type": "example_workflow",
+            "card_type": "video_director_generation",
+            "query_url": "https://workflow.example.com/task/1",
             "status": "polling",
         },
         "blocks": [],
@@ -114,7 +117,7 @@ async def test_done_event_is_not_forwarded_when_video_workflow_owns_status() -> 
     with (
         patch(
             "app.services.execution.emitters.status_updating.collect_completed_result",
-            new=AsyncMock(return_value=workflow_result),
+            new=AsyncMock(return_value=card_result),
         ),
         patch(
             "app.services.execution.emitters.status_updating."

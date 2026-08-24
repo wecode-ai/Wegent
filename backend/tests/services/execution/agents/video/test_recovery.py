@@ -79,16 +79,18 @@ async def test_delayed_recovery_runs_second_pass() -> None:
     assert recovered_count == 2
 
 
-def test_recovery_requeues_external_workflow_with_existing_video_poller() -> None:
+def test_recovery_requeues_async_card_with_existing_video_poller() -> None:
     subtask = SimpleNamespace(
         id=2,
         task_id=1,
         message_id=3,
         result={
             "video_job": {
-                "job_id": "workflow-1",
-                "workflow_type": "example_workflow",
+                "job_id": "https://workflow.example.com/task/1",
                 "query_url": "https://workflow.example.com/task/1",
+                "card_type": "video_director_generation",
+                "preview_title": "视频生成中...",
+                "progress_text": "正在生成",
                 "status": "polling",
                 "video_block_id": "card-1",
                 "poll_count": 4,
@@ -120,8 +122,10 @@ def test_recovery_requeues_external_workflow_with_existing_video_poller() -> Non
         recovered = _do_recover_video_jobs()
 
     assert recovered == 1
-    assert dispatch.call_args.kwargs["workflow_type"] == "example_workflow"
-    assert dispatch.call_args.kwargs["workflow_context"] == {
-        "query_url": "https://workflow.example.com/task/1"
+    assert dispatch.call_args.kwargs["card_context"] == {
+        "query_url": "https://workflow.example.com/task/1",
+        "card_type": "video_director_generation",
+        "preview_title": "视频生成中...",
+        "progress_text": "正在生成",
     }
     assert dispatch.call_args.kwargs["poll_count"] == 4

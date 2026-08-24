@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from app.services.execution.agents.generation_context import (
     GenerationContext,
     resolve_generation_model,
+    resolve_named_generation_model,
 )
 
 
@@ -132,5 +133,42 @@ def test_resolve_generation_model_rejects_unavailable_configured_default() -> No
             )
         else:
             raise AssertionError("Expected unavailable default model to fail")
+
+    build_request.assert_not_called()
+
+
+def test_resolve_named_generation_model_rejects_unavailable_selection() -> None:
+    context = GenerationContext(
+        user=MagicMock(),
+        task=MagicMock(),
+        subtask=MagicMock(),
+        team=MagicMock(),
+        model_config={"modelType": "llm"},
+    )
+
+    with (
+        patch(
+            "app.services.execution.agents.generation_context."
+            "model_aggregation_service.list_available_models",
+            return_value=[{"name": "available-video-model", "type": "public"}],
+        ),
+        patch(
+            "app.services.execution.agents.generation_context._build_request"
+        ) as build_request,
+    ):
+        try:
+            resolve_named_generation_model(
+                db=MagicMock(),
+                context=context,
+                prompt="animate",
+                model_name="missing-video-model",
+                model_type="video",
+            )
+        except ValueError as exc:
+            assert str(exc) == (
+                "Selected video model 'missing-video-model' is not available"
+            )
+        else:
+            raise AssertionError("Expected unavailable selected model to fail")
 
     build_request.assert_not_called()

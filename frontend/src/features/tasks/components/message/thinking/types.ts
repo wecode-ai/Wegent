@@ -283,7 +283,7 @@ export interface SubscriptionPreviewBlockType extends BaseBlock {
 }
 
 /**
- * Generic JSON-backed card block.
+ * Generic data-backed card block.
  *
  * Card renderers are selected by card_type. The payload remains data-only;
  * renderers must not execute arbitrary markup or scripts from card_data.

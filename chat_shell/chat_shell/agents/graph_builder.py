@@ -1222,6 +1222,9 @@ class LangGraphAgentBuilder:
         # All tools = base tools + all skill tools (for execution)
         # This ensures all tools are available for execution when model calls them
         all_tools = base_tools + all_skill_tools
+        executor_tool_names = {
+            tool.name for tool in all_tools if getattr(tool, "name", None)
+        }
 
         llm = self.llm
 
@@ -1240,6 +1243,20 @@ class LangGraphAgentBuilder:
 
             # Combine base tools with available skill tools
             selected_tools = base_tools + available_skill_tools
+            selected_tool_names = {
+                tool.name for tool in selected_tools if getattr(tool, "name", None)
+            }
+            missing_executor_tools = sorted(selected_tool_names - executor_tool_names)
+            if missing_executor_tools:
+                logger.warning(
+                    "[configure_model] Model-bound tools are missing from the "
+                    "LangGraph executor registry: missing=%s loaded_skills=%s "
+                    "model_tool_count=%d executor_tool_count=%d",
+                    missing_executor_tools,
+                    sorted(load_skill_tool.get_loaded_skills()),
+                    len(selected_tool_names),
+                    len(executor_tool_names),
+                )
 
             logger.debug(
                 "[configure_model] Selected %d tools: base=%d, skill=%d, loaded_skills=%s",

@@ -81,6 +81,12 @@ def _wrap_build_method(original_method: Callable) -> Callable:
         # Call the original method
         result = original_method(self, *args, **kwargs)
 
+        from wecode.service.minute_video_skill_config import (
+            inject_minute_video_skill_config,
+        )
+
+        inject_minute_video_skill_config(self.db, result)
+
         # Check if model_config.api_key contains the placeholder
         if result.model_config and isinstance(result.model_config, dict):
             api_key = result.model_config.get("api_key", "")

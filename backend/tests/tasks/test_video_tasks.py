@@ -7,15 +7,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from celery.exceptions import Ignore, Retry
 
+from app.services.execution.agents.video.async_card import AsyncCardSnapshot
 from app.services.execution.agents.video.extensions import PreparedVideoArtifact
 from app.services.execution.agents.video.providers.base import VideoJobResult
-from app.services.execution.agents.video.workflows.base import VideoWorkflowSnapshot
 from app.tasks.video_tasks import (
     POLL_INTERVAL_SECONDS,
     _estimate_polling_progress,
     _handle_completion,
     _merge_video_job_result,
-    _poll_video_workflow,
+    _poll_async_card,
     dispatch_video_polling_task,
 )
 from app.tasks.video_websocket import emit_video_chunk, emit_video_error
@@ -277,22 +277,81 @@ def test_merge_video_job_result_persists_card_block() -> None:
     assert result["video_job"]["job_id"] == "workflow-1"
 
 
-def test_workflow_poll_completion_persists_populated_card() -> None:
-    snapshot = VideoWorkflowSnapshot(
+def test_merge_video_job_result_preserves_incremental_card_data() -> None:
+    current = {
+        "video_job": {
+            "job_id": "https://qia.example.com/task/1",
+            "video_block_id": "card-1",
+        },
+        "blocks": [
+            {
+                "id": "card-1",
+                "type": "card",
+                "status": "streaming",
+                "card_id": "card-1",
+                "card_type": "video_director_generation",
+                "card_status": "partial_ready",
+                "card_data": {
+                    "title": "分镜已生成",
+                    "link": "https://qia.example.com/detail/1",
+                },
+                "card_preview_data": {
+                    "progress": 60,
+                    "progress_text": "分镜已生成",
+                },
+                "card_error": None,
+                "timestamp": 1000,
+            }
+        ],
+    }
+    updated_block = {
+        "id": "card-1",
+        "type": "card",
+        "status": "pending",
+        "card_id": "card-1",
+        "card_type": "video_director_generation",
+        "card_status": "pending",
+        "card_data": {},
+        "card_preview_data": {
+            "progress": 70,
+            "progress_text": "正在生成视频",
+        },
+        "card_error": None,
+        "timestamp": 2000,
+    }
+
+    result = _merge_video_job_result(
+        current,
+        {"status": "polling", "progress": 70},
+        updated_block,
+    )
+
+    block = result["blocks"][0]
+    assert block["card_data"] == {
+        "title": "分镜已生成",
+        "link": "https://qia.example.com/detail/1",
+    }
+    assert block["card_preview_data"] == {
+        "progress": 70,
+        "progress_text": "正在生成视频",
+    }
+    assert block["timestamp"] == 1000
+
+
+def test_async_card_poll_completion_persists_populated_card() -> None:
+    snapshot = AsyncCardSnapshot(
         status="completed",
         progress=100,
         progress_text="",
         card={"video_url": "https://cdn.example.com/video.mp4"},
         error=None,
     )
-    workflow = MagicMock()
-    workflow.get_status = AsyncMock(return_value=snapshot)
 
     with (
         patch(
-            "app.services.execution.agents.video.workflows."
-            "get_video_workflow_client",
-            return_value=workflow,
+            "app.services.execution.agents.video.async_card."
+            "fetch_async_card_snapshot",
+            new=AsyncMock(return_value=snapshot),
         ),
         patch("app.tasks.video_tasks._check_cancellation_sync", return_value=False),
         patch("app.tasks.video_tasks._update_subtask_video_job_sync") as persist,
@@ -300,7 +359,7 @@ def test_workflow_poll_completion_persists_populated_card() -> None:
         patch("app.tasks.video_tasks._update_task_status_after_subtask"),
         patch("app.tasks.video_websocket.emit_card_done") as emit_done,
     ):
-        result = _poll_video_workflow(
+        result = _poll_async_card(
             celery_task=MagicMock(),
             subtask_id=2,
             task_id=1,
@@ -313,8 +372,10 @@ def test_workflow_poll_completion_persists_populated_card() -> None:
             intent_result=None,
             poll_count=1,
             last_progress=0,
-            workflow_type="example_workflow",
-            workflow_context={"query_url": "https://workflow.example.com/task/1"},
+            card_context={
+                "query_url": "https://workflow.example.com/task/1",
+                "card_type": "video_director_generation",
+            },
             request_id="request-1",
         )
 
@@ -325,31 +386,28 @@ def test_workflow_poll_completion_persists_populated_card() -> None:
     emit_done.assert_called_once()
 
 
-def test_workflow_poll_partial_ready_persists_progress_before_retry() -> None:
-    workflow = MagicMock()
-    workflow.get_status = AsyncMock(
-        return_value=VideoWorkflowSnapshot(
-            status="partial_ready",
-            progress=62,
-            progress_text="分镜已完成",
-            card={"link": "https://workflow.example.com/task/1"},
-        )
+def test_async_card_poll_partial_ready_persists_progress_before_retry() -> None:
+    snapshot = AsyncCardSnapshot(
+        status="partial_ready",
+        progress=62,
+        progress_text="分镜已完成",
+        card={"link": "https://workflow.example.com/task/1"},
     )
     celery_task = MagicMock()
     celery_task.retry.side_effect = Retry()
 
     with (
         patch(
-            "app.services.execution.agents.video.workflows."
-            "get_video_workflow_client",
-            return_value=workflow,
+            "app.services.execution.agents.video.async_card."
+            "fetch_async_card_snapshot",
+            new=AsyncMock(return_value=snapshot),
         ),
         patch("app.tasks.video_tasks._check_cancellation_sync", return_value=False),
         patch("app.tasks.video_tasks._update_subtask_video_job_sync") as persist,
         patch("app.tasks.video_websocket.emit_card_updated") as emit,
     ):
         with pytest.raises(Retry):
-            _poll_video_workflow(
+            _poll_async_card(
                 celery_task=celery_task,
                 subtask_id=2,
                 task_id=1,
@@ -362,8 +420,10 @@ def test_workflow_poll_partial_ready_persists_progress_before_retry() -> None:
                 intent_result=None,
                 poll_count=1,
                 last_progress=0,
-                workflow_type="example_workflow",
-                workflow_context={"query_url": "https://workflow.example.com/task/1"},
+                card_context={
+                    "query_url": "https://workflow.example.com/task/1",
+                    "card_type": "video_director_generation",
+                },
                 request_id="request-1",
             )
 
@@ -377,7 +437,7 @@ def test_workflow_poll_partial_ready_persists_progress_before_retry() -> None:
     [
         (
             False,
-            VideoWorkflowSnapshot(
+            AsyncCardSnapshot(
                 status="failed",
                 progress=30,
                 error="Workflow failed",
@@ -388,35 +448,32 @@ def test_workflow_poll_partial_ready_persists_progress_before_retry() -> None:
         ),
         (
             True,
-            VideoWorkflowSnapshot(status="processing", progress=30),
+            AsyncCardSnapshot(status="processing", progress=30),
             100,
             "CANCELLED",
             "Video generation cancelled",
         ),
         (
             False,
-            VideoWorkflowSnapshot(status="processing", progress=30),
+            AsyncCardSnapshot(status="processing", progress=30),
             1,
             "FAILED",
             "Video generation timed out",
         ),
     ],
 )
-def test_workflow_poll_terminal_states(
+def test_async_card_poll_terminal_states(
     cancelled,
     snapshot,
     max_polls,
     expected_status,
     expected_error,
 ) -> None:
-    workflow = MagicMock()
-    workflow.get_status = AsyncMock(return_value=snapshot)
-
     with (
         patch(
-            "app.services.execution.agents.video.workflows."
-            "get_video_workflow_client",
-            return_value=workflow,
+            "app.services.execution.agents.video.async_card."
+            "fetch_async_card_snapshot",
+            new=AsyncMock(return_value=snapshot),
         ),
         patch(
             "app.tasks.video_tasks._check_cancellation_sync",
@@ -431,7 +488,7 @@ def test_workflow_poll_terminal_states(
         patch("app.tasks.video_websocket.emit_card_updated"),
     ):
         with pytest.raises(Ignore):
-            _poll_video_workflow(
+            _poll_async_card(
                 celery_task=MagicMock(),
                 subtask_id=2,
                 task_id=1,
@@ -444,8 +501,10 @@ def test_workflow_poll_terminal_states(
                 intent_result=None,
                 poll_count=1,
                 last_progress=30,
-                workflow_type="example_workflow",
-                workflow_context={"query_url": "https://workflow.example.com/task/1"},
+                card_context={
+                    "query_url": "https://workflow.example.com/task/1",
+                    "card_type": "video_director_generation",
+                },
                 request_id="request-1",
             )
 

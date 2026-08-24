@@ -44,7 +44,9 @@ import { publicResourceApis } from '@/apis/publicResources'
 import {
   buildPublicTeamJson,
   buildPublicTeamUpdateData,
+  type PublicTeamModeSpec,
   resolvePublicTeamName,
+  syncPublicTeamVideoModeSpec,
 } from '../utils/publicTeamPayload'
 
 // Import sub-components from settings
@@ -102,6 +104,7 @@ function parseTeamJson(json: Record<string, unknown>): {
   requiresWorkspace: boolean | null
   inputPlaceholder: TeamInputPlaceholder
   mode: TeamMode
+  modeSpec: PublicTeamModeSpec | null
   members: {
     botName: string
     botPrompt: string
@@ -125,6 +128,18 @@ function parseTeamJson(json: Record<string, unknown>): {
         ? (spec.inputPlaceholder as TeamInputPlaceholder)
         : {}
     const mode = (spec?.collaborationModel as TeamMode) || 'solo'
+    const rawModeSpec =
+      spec?.modeSpec && typeof spec.modeSpec === 'object'
+        ? (spec.modeSpec as Record<string, unknown>)
+        : null
+    const modeSpec = rawModeSpec
+      ? {
+          ...rawModeSpec,
+          allowedModelCategories: Array.isArray(rawModeSpec.allowedModelCategories)
+            ? (rawModeSpec.allowedModelCategories as string[])
+            : [],
+        }
+      : null
 
     const rawMembers = (spec?.members as Array<Record<string, unknown>>) || []
     const members = rawMembers.map(m => ({
@@ -144,6 +159,7 @@ function parseTeamJson(json: Record<string, unknown>): {
       requiresWorkspace,
       inputPlaceholder,
       mode,
+      modeSpec,
       members,
     }
   } catch {
@@ -175,6 +191,7 @@ export default function PublicTeamEditDialog({
   const [icon, setIcon] = useState<string | null>(null)
   const [requiresWorkspace, setRequiresWorkspace] = useState<boolean | null>(true)
   const [inputPlaceholder, setInputPlaceholder] = useState<TeamInputPlaceholder>({})
+  const [modeSpec, setModeSpec] = useState<PublicTeamModeSpec | null>(null)
 
   // Bot selection state
   const [selectedBotKeys, setSelectedBotKeys] = useState<React.Key[]>([])
@@ -310,6 +327,7 @@ export default function PublicTeamEditDialog({
         setRequiresWorkspace(parsed.requiresWorkspace)
         setInputPlaceholder(parsed.inputPlaceholder)
         setMode(parsed.mode)
+        setModeSpec(parsed.modeSpec)
 
         // Map member bot names to bot IDs
         const memberBotNames = parsed.members.map(m => m.botName)
@@ -366,6 +384,7 @@ export default function PublicTeamEditDialog({
       setIcon(null)
       setRequiresWorkspace(true)
       setInputPlaceholder({})
+      setModeSpec(null)
       setMode('solo')
       setSelectedBotKeys([])
       setLeaderBotId(null)
@@ -592,6 +611,7 @@ export default function PublicTeamEditDialog({
       requiresWorkspace,
       inputPlaceholder: normalizeInputPlaceholder(inputPlaceholder),
       mode,
+      modeSpec,
       members,
     })
 
@@ -606,6 +626,7 @@ export default function PublicTeamEditDialog({
     requiresWorkspace,
     inputPlaceholder,
     mode,
+    modeSpec,
     leaderBotId,
     selectedBotKeys,
     unsavedPrompts,
@@ -634,6 +655,7 @@ export default function PublicTeamEditDialog({
     setRequiresWorkspace(parsed.requiresWorkspace)
     setInputPlaceholder(parsed.inputPlaceholder)
     setMode(parsed.mode)
+    setModeSpec(parsed.modeSpec)
 
     // Map member bot names to bot IDs
     const botIds = parsed.members
@@ -734,6 +756,16 @@ export default function PublicTeamEditDialog({
             return
           }
 
+          const botData = botEditRef.current.getBotData()
+          if (!botData) {
+            setSaving(false)
+            return
+          }
+          const effectiveModeSpec = syncPublicTeamVideoModeSpec(
+            modeSpec,
+            botData.model_category_type === 'video'
+          )
+
           const savedBotId = await botEditRef.current.saveBot()
           if (savedBotId === null) {
             setSaving(false)
@@ -764,6 +796,7 @@ export default function PublicTeamEditDialog({
             requiresWorkspace,
             inputPlaceholder: normalizeInputPlaceholder(inputPlaceholder),
             mode,
+            modeSpec: effectiveModeSpec,
             members: [
               {
                 botName: savedBot.name,
@@ -773,6 +806,7 @@ export default function PublicTeamEditDialog({
               },
             ],
           })
+          setModeSpec(effectiveModeSpec)
         } else {
           // Non-solo mode - require leaderBotId
           if (leaderBotId == null) {
@@ -840,6 +874,7 @@ export default function PublicTeamEditDialog({
             requiresWorkspace,
             inputPlaceholder: normalizeInputPlaceholder(inputPlaceholder),
             mode,
+            modeSpec,
             members,
           })
         }
@@ -922,10 +957,20 @@ export default function PublicTeamEditDialog({
       icon: icon || undefined,
       requires_workspace: requiresWorkspace ?? true,
       inputPlaceholder,
+      mode_spec: modeSpec,
     }
-  }, [editingTeam, mode, bindMode, icon, requiresWorkspace, inputPlaceholder])
+  }, [editingTeam, mode, bindMode, icon, requiresWorkspace, inputPlaceholder, modeSpec])
 
   const leaderOptions = useMemo(() => filteredBots, [filteredBots])
+  const primaryModelCategory = useMemo(
+    () =>
+      modeSpec?.allowedModelCategories?.includes('video')
+        ? 'video'
+        : getModelCategoryTypeForBindMode(bindMode),
+    [bindMode, modeSpec?.allowedModelCategories]
+  )
+  const allowGenerationPrimaryModel =
+    mode === 'solo' && bindMode.includes('chat') && primaryModelCategory !== 'video'
 
   return (
     <>
@@ -1013,7 +1058,8 @@ export default function PublicTeamEditDialog({
                     allowedAgentsForMode={allowedAgentsForMode}
                     botEditRef={botEditRef}
                     scope="public"
-                    modelCategoryType={getModelCategoryTypeForBindMode(bindMode)}
+                    modelCategoryType={primaryModelCategory}
+                    allowGenerationPrimaryModel={allowGenerationPrimaryModel}
                     requireConfirmationMap={requireConfirmationMap}
                     setRequireConfirmationMap={setRequireConfirmationMap}
                     contextPassingMap={contextPassingMap}

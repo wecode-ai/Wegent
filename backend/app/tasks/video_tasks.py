@@ -72,8 +72,7 @@ def dispatch_video_polling_task(
     intent_result: Optional[Dict[str, Any]] = None,
     poll_count: int = 0,
     last_progress: int = 0,
-    workflow_type: Optional[str] = None,
-    workflow_context: Optional[Dict[str, Any]] = None,
+    card_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Dispatch a video polling Celery task with a fixed task_id.
@@ -94,6 +93,7 @@ def dispatch_video_polling_task(
         intent_result: Intent analysis result
         poll_count: Current poll count
         last_progress: Last progress value
+        card_context: External CardBlock polling metadata
 
     Returns:
         Celery task ID
@@ -121,8 +121,7 @@ def dispatch_video_polling_task(
             "intent_result": intent_result,
             "poll_count": poll_count,
             "last_progress": last_progress,
-            "workflow_type": workflow_type,
-            "workflow_context": workflow_context,
+            "card_context": card_context,
             "request_id": request_id,
         },
         task_id=celery_task_id,
@@ -231,7 +230,32 @@ def _merge_video_job_result(
         if existing_block is None:
             blocks.append(block)
         else:
-            blocks[blocks.index(existing_block)] = block
+            persisted_block = dict(existing_block)
+            persisted_block.update(block)
+            if existing_block.get("type") == "card" and block.get("type") == "card":
+                existing_card_data = existing_block.get("card_data")
+                updated_card_data = block.get("card_data")
+                persisted_block["card_data"] = {
+                    **(
+                        existing_card_data
+                        if isinstance(existing_card_data, dict)
+                        else {}
+                    ),
+                    **(
+                        updated_card_data if isinstance(updated_card_data, dict) else {}
+                    ),
+                }
+                existing_preview = existing_block.get("card_preview_data")
+                updated_preview = block.get("card_preview_data")
+                persisted_block["card_preview_data"] = {
+                    **(existing_preview if isinstance(existing_preview, dict) else {}),
+                    **(updated_preview if isinstance(updated_preview, dict) else {}),
+                }
+                persisted_block["timestamp"] = existing_block.get(
+                    "timestamp",
+                    block.get("timestamp"),
+                )
+            blocks[blocks.index(existing_block)] = persisted_block
         result["blocks"] = blocks
         return result
 
@@ -362,8 +386,7 @@ def poll_video_job(
     intent_result: Optional[Dict[str, Any]] = None,
     poll_count: int = 0,
     last_progress: int = 0,
-    workflow_type: Optional[str] = None,
-    workflow_context: Optional[Dict[str, Any]] = None,
+    card_context: Optional[Dict[str, Any]] = None,
     request_id: Optional[str] = None,
 ):
     """
@@ -412,8 +435,8 @@ def poll_video_job(
         f"poll_count={poll_count}/{MAX_POLL_COUNT}"
     )
 
-    if workflow_type:
-        return _poll_video_workflow(
+    if card_context:
+        return _poll_async_card(
             celery_task=self,
             subtask_id=subtask_id,
             task_id=task_id,
@@ -426,8 +449,7 @@ def poll_video_job(
             intent_result=intent_result,
             poll_count=poll_count,
             last_progress=last_progress,
-            workflow_type=workflow_type,
-            workflow_context=workflow_context or {},
+            card_context=card_context,
             request_id=request_id,
         )
 
@@ -560,8 +582,7 @@ def poll_video_job(
                 "intent_result": intent_result,
                 "poll_count": poll_count,
                 "last_progress": current_progress,
-                "workflow_type": workflow_type,
-                "workflow_context": workflow_context,
+                "card_context": card_context,
                 "request_id": request_id,
             },
         )
@@ -608,7 +629,7 @@ def poll_video_job(
         raise Ignore()
 
 
-def _poll_video_workflow(
+def _poll_async_card(
     *,
     celery_task,
     subtask_id: int,
@@ -622,19 +643,14 @@ def _poll_video_workflow(
     intent_result: Optional[Dict[str, Any]],
     poll_count: int,
     last_progress: int,
-    workflow_type: str,
-    workflow_context: Dict[str, Any],
+    card_context: Dict[str, Any],
     request_id: str,
 ):
-    """Poll an external workflow through the shared durable video task."""
-    from app.services.execution.agents.video.workflow_service import (
-        build_video_director_card_block,
-    )
-    from app.services.execution.agents.video.workflows import (
-        get_video_workflow_client,
-    )
-    from app.services.execution.agents.video.workflows.base import (
-        VideoWorkflowSnapshot,
+    """Poll an external CardBlock through the shared durable video task."""
+    from app.services.execution.agents.video.async_card import (
+        AsyncCardSnapshot,
+        build_async_card_block,
+        fetch_async_card_snapshot,
     )
     from app.tasks.video_websocket import (
         emit_card_cancelled,
@@ -644,20 +660,28 @@ def _poll_video_workflow(
     )
     from shared.utils.error_classifier import format_error_message
 
-    query_url = workflow_context.get("query_url")
+    query_url = str(card_context.get("query_url") or "")
+    card_type = str(card_context.get("card_type") or "")
+    preview_title = str(card_context.get("preview_title") or "视频生成中...")
+    default_progress_text = str(card_context.get("progress_text") or "正在生成，请稍候")
 
     def persist_snapshot(
-        snapshot: VideoWorkflowSnapshot,
+        snapshot: AsyncCardSnapshot,
         job_status: str = "polling",
     ) -> Dict[str, Any]:
-        block = build_video_director_card_block(
+        block = build_async_card_block(
             block_id=video_block_id,
+            card_type=card_type,
             snapshot=snapshot,
+            preview_title=preview_title,
+            default_progress_text=default_progress_text,
         )
         video_job_data = {
             "job_id": job_id,
-            "workflow_type": workflow_type,
             "query_url": query_url,
+            "card_type": card_type,
+            "preview_title": preview_title,
+            "progress_text": default_progress_text,
             "status": job_status,
             "progress": snapshot.progress,
             "video_block_id": video_block_id,
@@ -669,7 +693,7 @@ def _poll_video_workflow(
         return block
 
     def fail(error_message: str, progress: int) -> None:
-        snapshot = VideoWorkflowSnapshot(
+        snapshot = AsyncCardSnapshot(
             status="failed",
             progress=progress,
             error=error_message,
@@ -685,7 +709,7 @@ def _poll_video_workflow(
         _update_task_status_after_subtask(task_id)
 
     if _check_cancellation_sync(subtask_id):
-        snapshot = VideoWorkflowSnapshot(
+        snapshot = AsyncCardSnapshot(
             status="failed",
             progress=last_progress,
             error="Video generation cancelled",
@@ -702,8 +726,7 @@ def _poll_video_workflow(
         raise Ignore()
 
     try:
-        workflow = get_video_workflow_client(workflow_type)
-        snapshot = _run_async(workflow.get_status(query_url))
+        snapshot = _run_async(fetch_async_card_snapshot(query_url))
         block = persist_snapshot(
             snapshot,
             "completed" if snapshot.is_completed else "polling",
@@ -743,8 +766,7 @@ def _poll_video_workflow(
                 "intent_result": intent_result,
                 "poll_count": poll_count,
                 "last_progress": snapshot.progress,
-                "workflow_type": workflow_type,
-                "workflow_context": workflow_context,
+                "card_context": card_context,
                 "request_id": request_id,
             },
         )
@@ -775,8 +797,7 @@ def _poll_video_workflow(
                     "intent_result": intent_result,
                     "poll_count": poll_count,
                     "last_progress": last_progress,
-                    "workflow_type": workflow_type,
-                    "workflow_context": workflow_context,
+                    "card_context": card_context,
                     "request_id": request_id,
                 },
             )

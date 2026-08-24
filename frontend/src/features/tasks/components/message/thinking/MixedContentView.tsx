@@ -130,6 +130,8 @@ interface MixedContentViewProps {
     formattedMessage: string,
     answer: InteractiveFormAnswerPayload
   ) => void
+  /** Send a follow-up message from an interactive card button. */
+  onCardChatButtonClick?: (message: string) => void | Promise<void>
   /** Optional override for the running processing indicator text */
   processingMessage?: string
   /** Hide tool input/output details and parameter previews */
@@ -216,6 +218,7 @@ const MixedContentView = memo(function MixedContentView({
   subtaskId,
   currentMessageIndex,
   onAskUserSubmit,
+  onCardChatButtonClick,
   processingMessage,
   hideToolDetails = false,
 }: MixedContentViewProps) {
@@ -731,7 +734,13 @@ const MixedContentView = memo(function MixedContentView({
             </div>
           )
         } else if (item.type === 'card') {
-          return <CardRenderer key={item.blockId} block={item.data} />
+          return (
+            <CardRenderer
+              key={item.blockId}
+              block={item.data}
+              onChatButtonClick={onCardChatButtonClick}
+            />
+          )
         } else if (item.type === 'guidance') {
           return <GuidanceBlock key={item.blockId} block={item.data} />
         } else if (item.type === 'subagent') {

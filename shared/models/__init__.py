@@ -39,6 +39,7 @@ from .attachment_sync import (
 from .blocks import (
     BlockStatus,
     BlockType,
+    CardBlock,
     MessageBlock,
     SubagentBlock,
     TextBlock,
@@ -46,6 +47,7 @@ from .blocks import (
     block_from_dict,
     blocks_from_list,
     blocks_to_list,
+    create_card_block,
     create_text_block,
     create_tool_block,
 )
@@ -203,11 +205,13 @@ __all__ = [
     "BlockStatus",
     "ToolBlock",
     "TextBlock",
+    "CardBlock",
     "MessageBlock",
     "SubagentBlock",
     "block_from_dict",
     "blocks_from_list",
     "blocks_to_list",
+    "create_card_block",
     "create_tool_block",
     "create_text_block",
     # Splitter config

@@ -86,6 +86,7 @@ from app.services.chat.trigger import (
 )
 from app.services.chat.wework_task_defaults import apply_wework_task_defaults
 from app.services.task_fork_history import task_fork_history_resolver
+from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.context import (
     set_request_context,
@@ -1992,7 +1993,7 @@ def _fetch_subtasks_for_task_join(
                     "message_id": st.message_id,
                     "role": st.role.value,
                     "prompt": extract_display_prompt(st.prompt),
-                    "result": st.result,
+                    "result": sanitize_client_payload(st.result),
                     "status": st.status.value,
                     "progress": st.progress,
                     "created_at": (

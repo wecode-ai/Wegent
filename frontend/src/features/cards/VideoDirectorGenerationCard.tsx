@@ -4,11 +4,17 @@
 
 'use client'
 
+import { useState } from 'react'
 import { ExternalLink, Film, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { CardRendererProps, VideoDirectorCardData, VideoDirectorCardPreview } from './types'
+import type {
+  CardRendererProps,
+  VideoDirectorCardButton,
+  VideoDirectorCardData,
+  VideoDirectorCardPreview,
+} from './types'
 
 export function safeCardUrl(value?: string): string | null {
   if (!value) return null
@@ -20,8 +26,9 @@ export function safeCardUrl(value?: string): string | null {
   }
 }
 
-export function VideoDirectorGenerationCard({ block }: CardRendererProps) {
+export function VideoDirectorGenerationCard({ block, onChatButtonClick }: CardRendererProps) {
   const { t } = useTranslation('chat')
+  const [pendingButtonId, setPendingButtonId] = useState<string | null>(null)
   const card = block.card_data as VideoDirectorCardData
   const preview = block.card_preview_data as VideoDirectorCardPreview
   const isFailed = block.card_status === 'error'
@@ -37,6 +44,26 @@ export function VideoDirectorGenerationCard({ block }: CardRendererProps) {
       href: safeCardUrl(button.url || button.link),
     }))
     .filter(button => button.button_type === 'link' && button.href)
+  const chatButtons = onChatButtonClick
+    ? (card.buttons || []).filter(
+        button => button.button_type === 'chat' && Boolean(button.button_name?.trim())
+      )
+    : []
+  const showDetailLink =
+    detailUrl !== null && !linkButtons.some(button => button.href === detailUrl)
+
+  const handleChatButtonClick = async (button: VideoDirectorCardButton, index: number) => {
+    const message = button.button_name?.trim()
+    if (!message || !onChatButtonClick || pendingButtonId) return
+
+    const buttonId = button.button_id || `chat-${index}`
+    setPendingButtonId(buttonId)
+    try {
+      await onChatButtonClick(message)
+    } finally {
+      setPendingButtonId(null)
+    }
+  }
 
   return (
     <div
@@ -99,8 +126,24 @@ export function VideoDirectorGenerationCard({ block }: CardRendererProps) {
           </p>
         )}
 
-        {(detailUrl || linkButtons.length > 0) && (
+        {(showDetailLink || linkButtons.length > 0 || chatButtons.length > 0) && (
           <div className="flex flex-wrap gap-2">
+            {chatButtons.map((button, index) => {
+              const buttonId = button.button_id || `chat-${index}`
+              const isPending = pendingButtonId === buttonId
+              return (
+                <Button
+                  key={buttonId}
+                  size="sm"
+                  disabled={pendingButtonId !== null}
+                  onClick={() => void handleChatButtonClick(button, index)}
+                  data-testid={`card-video-director-chat-button-${index}`}
+                >
+                  {isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                  {button.button_name}
+                </Button>
+              )
+            })}
             {linkButtons.map((button, index) => (
               <Button key={button.button_id || `${button.button_name}-${index}`} asChild size="sm">
                 <a
@@ -114,10 +157,10 @@ export function VideoDirectorGenerationCard({ block }: CardRendererProps) {
                 </a>
               </Button>
             ))}
-            {detailUrl && linkButtons.length === 0 && (
+            {showDetailLink && (
               <Button asChild size="sm">
                 <a
-                  href={detailUrl}
+                  href={detailUrl || undefined}
                   target="_blank"
                   rel="noopener noreferrer"
                   data-testid="card-video-director-detail"
