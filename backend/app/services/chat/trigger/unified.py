@@ -1103,45 +1103,59 @@ async def build_execution_request(
             )
         request.external_knowledge_refs = inherited_external_refs
 
-        if context_subtask_id:
-            preload_selected_kb_skill = (
-                task_labels.get("source") != KNOWLEDGE_ARTIFACT_SOURCE
+        from app.services.chat.selected_knowledge import (
+            SUPPORTED_PROVIDER_NATIVE_SHELLS,
+            activate_provider_native_knowledge,
+            apply_selected_knowledge_context,
+            build_inherited_selected_knowledge_refs,
+            build_selected_knowledge_context,
+            validate_explicit_knowledge_contexts,
+        )
+
+        is_knowledge_artifact = task_labels.get("source") == KNOWLEDGE_ARTIFACT_SOURCE
+        supports_provider_native = (
+            not is_knowledge_artifact
+            and _request_shell_type(request) in SUPPORTED_PROVIDER_NATIVE_SHELLS
+        )
+        selected_knowledge_context = None
+        if supports_provider_native:
+            inherited_refs = build_inherited_selected_knowledge_refs(
+                db,
+                task,
+                user.id,
+                external_refs=inherited_external_refs,
             )
+            selected_knowledge_context = build_selected_knowledge_context(
+                db,
+                request,
+                task,
+                current_contexts=current_contexts,
+                inherited_refs=inherited_refs,
+                user_id=user.id,
+            )
+        elif not is_knowledge_artifact:
+            validate_explicit_knowledge_contexts(current_contexts)
+        should_apply_provider_native = bool(
+            selected_knowledge_context and selected_knowledge_context.refs
+        )
+
+        if context_subtask_id:
             request = await _process_contexts(
                 db,
                 request,
                 context_subtask_id,
                 user.id,
-                preload_selected_kb_skill=preload_selected_kb_skill,
+                prepare_provider_native_knowledge=should_apply_provider_native,
                 current_contexts=current_contexts,
             )
 
-        from app.services.chat.selected_knowledge import (
-            activate_provider_native_knowledge,
-            apply_selected_knowledge_context,
-            should_prepare_provider_native_knowledge,
-            validate_explicit_knowledge_contexts,
-        )
-
         provider_skills = []
-        is_knowledge_artifact = task_labels.get("source") == KNOWLEDGE_ARTIFACT_SOURCE
-        if not is_knowledge_artifact:
-            validate_explicit_knowledge_contexts(current_contexts)
-        should_apply_provider_native = should_prepare_provider_native_knowledge(
-            knowledge_base_ids=request.knowledge_base_ids,
-            knowledge_base_scopes=request.knowledge_base_scopes,
-            access_mode=request.kb_tool_access_mode,
-            current_contexts=current_contexts,
-            external_refs=request.external_knowledge_refs or (),
-            preload_selected_kb_skill=not is_knowledge_artifact,
-            shell_type=_request_shell_type(request),
-        )
         if should_apply_provider_native:
             provider_skills = apply_selected_knowledge_context(
                 db,
                 request,
                 task,
-                current_contexts=current_contexts,
+                context=selected_knowledge_context,
             )
         unresolved_provider_skills = [
             skill_name
@@ -1174,7 +1188,7 @@ async def _process_contexts(
     user_subtask_id: int,
     user_id: int,
     *,
-    preload_selected_kb_skill: bool = True,
+    prepare_provider_native_knowledge: bool = False,
     current_contexts: Optional[List["SubtaskContext"]] = None,
 ) -> "ExecutionRequest":
     """Process contexts (attachments, knowledge bases, etc.) for the request.
@@ -1184,8 +1198,8 @@ async def _process_contexts(
         request: ExecutionRequest to enhance
         user_subtask_id: User subtask ID for context retrieval
         user_id: User ID for context retrieval
-        preload_selected_kb_skill: Whether a selected knowledge base should preload
-            the knowledge-management skill (default: True)
+        prepare_provider_native_knowledge: Whether the resolved knowledge context
+            should suppress the legacy KB prompt.
 
     Returns:
         Enhanced ExecutionRequest with context information
@@ -1216,20 +1230,6 @@ async def _process_contexts(
     # computed inside _prepare_kb_tools_from_contexts and surfaced here - no extra
     # DB queries needed.
     request.prompt = ctx.final_message
-    from app.services.chat.selected_knowledge import (
-        has_usable_wegent_scope,
-        should_prepare_provider_native_knowledge,
-    )
-
-    prepare_provider_native_knowledge = should_prepare_provider_native_knowledge(
-        knowledge_base_ids=ctx.kb.knowledge_base_ids,
-        knowledge_base_scopes=ctx.kb.knowledge_base_scopes,
-        access_mode=ctx.kb.kb_tool_access_mode,
-        current_contexts=current_contexts or (),
-        external_refs=request.external_knowledge_refs or (),
-        preload_selected_kb_skill=preload_selected_kb_skill,
-        shell_type=_request_shell_type(request),
-    )
     request.system_prompt = (
         base_system_prompt
         if prepare_provider_native_knowledge

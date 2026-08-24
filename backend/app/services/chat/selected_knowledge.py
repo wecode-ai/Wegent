@@ -61,15 +61,17 @@ def apply_selected_knowledge_context(
     task: "TaskResource",
     *,
     current_contexts: Sequence[SubtaskContext] = (),
+    context: SelectedKnowledgeContext | None = None,
 ) -> list[str]:
     """Attach the selected-knowledge prompt and deterministic provider skills."""
     current_contexts = tuple(current_contexts)
-    context = build_selected_knowledge_context(
-        db,
-        request,
-        task,
-        current_contexts=current_contexts,
-    )
+    if context is None:
+        context = build_selected_knowledge_context(
+            db,
+            request,
+            task,
+            current_contexts=current_contexts,
+        )
     if not context.refs:
         request.selected_knowledge_prompt = ""
         request.provider_native_knowledge = False
@@ -197,18 +199,53 @@ def build_selected_knowledge_refs(
     return list(context.refs)
 
 
+def build_inherited_selected_knowledge_refs(
+    db: "Session",
+    task: "TaskResource",
+    user_id: int,
+    *,
+    external_refs: Iterable[Any] = (),
+) -> list[SelectedKnowledgeRef]:
+    """Build task-bound and agent-default refs from their persisted sources."""
+    from app.services.chat.task_default_knowledge_bases import (
+        resolve_task_default_knowledge_base_ids,
+    )
+
+    task_json: dict[str, Any] = task.json if isinstance(task.json, dict) else {}
+    raw_spec = task_json.get("spec")
+    spec: dict[str, Any] = raw_spec if isinstance(raw_spec, dict) else {}
+    persisted_ids = [
+        *_index_refs_by_integer_id(spec.get("knowledgeBaseRefs")),
+        *_index_refs_by_integer_id(spec.get("knowledgeBaseScopes")),
+    ]
+    default_ids = resolve_task_default_knowledge_base_ids(db, task.id, user_id)
+    selected_ids = list(dict.fromkeys([*persisted_ids, *default_ids]))
+    refs = [
+        *_build_wegent_refs_for_ids(db, task, selected_ids),
+        *_build_external_refs_from_values(external_refs),
+    ]
+    context = resolve_selected_knowledge_context(task_refs=refs, explicit_refs=())
+    return list(context.refs)
+
+
 def build_selected_knowledge_context(
     db: "Session",
     request: "ExecutionRequest",
     task: "TaskResource",
     *,
     current_contexts: Sequence[SubtaskContext] = (),
+    inherited_refs: Sequence[SelectedKnowledgeRef] | None = None,
+    user_id: int | None = None,
 ) -> SelectedKnowledgeContext:
     """Resolve explicit message contexts over inherited task knowledge refs."""
     current_contexts = tuple(current_contexts)
     validate_explicit_knowledge_contexts(current_contexts)
     _validate_explicit_external_contexts(current_contexts)
-    task_refs = build_selected_knowledge_refs(db, request, task)
+    task_refs = (
+        list(inherited_refs)
+        if inherited_refs is not None
+        else (build_selected_knowledge_refs(db, request, task))
+    )
     explicit_refs = _build_current_explicit_refs(
         db,
         current_contexts=current_contexts,
@@ -224,8 +261,35 @@ def build_selected_knowledge_context(
     context = resolve_selected_knowledge_context(task_refs, explicit_refs)
     if has_explicit_knowledge_context(current_contexts):
         context = replace(context, evidence_required=True)
-    context = _filter_native_refs(context, request.kb_tool_access_mode)
+    access_mode = request.kb_tool_access_mode
+    if user_id is not None:
+        access_mode = _resolve_effective_wegent_access_mode(db, context, user_id)
+    context = _filter_native_refs(context, access_mode)
     return _enrich_wegent_routing_metadata(db, context)
+
+
+def _resolve_effective_wegent_access_mode(
+    db: "Session",
+    context: SelectedKnowledgeContext,
+    user_id: int,
+) -> str:
+    """Resolve tool exposure against every effective internal source."""
+    from app.services.knowledge.knowledge_access_policy import (
+        get_knowledge_base_tool_access_mode_by_ids,
+    )
+
+    knowledge_base_ids = [
+        knowledge_base_id
+        for ref in context.refs
+        if ref.provider == "wegent"
+        and (knowledge_base_id := _positive_int(ref.knowledge_base_id)) is not None
+    ]
+    access_mode, _ = get_knowledge_base_tool_access_mode_by_ids(
+        db,
+        user_id,
+        knowledge_base_ids,
+    )
+    return access_mode
 
 
 def _filter_native_refs(
@@ -375,72 +439,6 @@ def _explicit_context_keys(
     return keys
 
 
-def has_usable_wegent_scope(
-    knowledge_base_ids: Iterable[Any] | None,
-    scopes: Iterable[Any] | None,
-) -> bool:
-    """Return whether at least one selected Wegent scope is usable."""
-    scope_by_id = {
-        str(getattr(scope, "knowledge_base_id", "")): scope for scope in scopes or ()
-    }
-    for knowledge_base_id in knowledge_base_ids or ():
-        scope = scope_by_id.get(str(knowledge_base_id))
-        if scope is None or not bool(getattr(scope, "scope_restricted", False)):
-            return True
-        if list(getattr(scope, "document_ids", None) or []):
-            return True
-    return False
-
-
-def has_supported_explicit_external_context(
-    contexts: Sequence[SubtaskContext],
-) -> bool:
-    """Return whether this turn has an external source with a native adapter."""
-    return bool(_build_external_refs_from_values(_current_external_values(contexts)))
-
-
-def has_supported_external_refs(values: Iterable[Any]) -> bool:
-    """Return whether persisted external refs contain a native adapter."""
-    return bool(_build_external_refs_from_values(values))
-
-
-def has_explicit_external_context(contexts: Sequence[SubtaskContext]) -> bool:
-    """Return whether this turn explicitly selected an external source."""
-    return any(
-        context.context_type == ContextType.EXTERNAL_KNOWLEDGE.value
-        for context in contexts
-    )
-
-
-def should_prepare_provider_native_knowledge(
-    *,
-    knowledge_base_ids: Iterable[Any],
-    knowledge_base_scopes: Iterable[Any],
-    access_mode: str,
-    current_contexts: Sequence[SubtaskContext],
-    external_refs: Iterable[Any] = (),
-    preload_selected_kb_skill: bool,
-    shell_type: str,
-) -> bool:
-    """Decide once whether context processing should suppress the legacy KB path."""
-    if (
-        not preload_selected_kb_skill
-        or shell_type not in SUPPORTED_PROVIDER_NATIVE_SHELLS
-    ):
-        return False
-    if has_explicit_external_context(current_contexts) or has_supported_external_refs(
-        external_refs
-    ):
-        return True
-    if access_mode == KnowledgeBaseToolAccessMode.RESTRICTED_SEARCH_ONLY:
-        return False
-    has_wegent_source = has_usable_wegent_scope(
-        knowledge_base_ids,
-        knowledge_base_scopes,
-    )
-    return has_wegent_source
-
-
 def _build_current_explicit_refs(
     db: "Session",
     *,
@@ -542,7 +540,27 @@ def _build_wegent_refs(
     request: "ExecutionRequest",
     task: "TaskResource",
 ) -> list[SelectedKnowledgeRef]:
-    selected_ids = set(_int_values(request.knowledge_base_ids))
+    selected_ids = _int_values(request.knowledge_base_ids)
+    return _build_wegent_refs_for_ids(
+        db,
+        task,
+        selected_ids,
+        request_scopes=request.knowledge_base_scopes,
+        prefer_request_scope=_is_knowledge_workbench_task(
+            task.json if isinstance(task.json, dict) else {}
+        ),
+    )
+
+
+def _build_wegent_refs_for_ids(
+    db: "Session",
+    task: "TaskResource",
+    selected_ids: Iterable[Any],
+    *,
+    request_scopes: Iterable[Any] = (),
+    prefer_request_scope: bool = False,
+) -> list[SelectedKnowledgeRef]:
+    selected_ids = set(_int_values(list(selected_ids)))
     if not selected_ids:
         return []
 
@@ -563,8 +581,6 @@ def _build_wegent_refs(
     spec: dict[str, Any] = raw_spec if isinstance(raw_spec, dict) else {}
     kb_refs = _index_refs_by_integer_id(spec.get("knowledgeBaseRefs"))
     scope_refs = _index_refs_by_integer_id(spec.get("knowledgeBaseScopes"))
-    prefer_request_scope = _is_knowledge_workbench_task(task_json)
-
     result: list[SelectedKnowledgeRef] = []
     for kb_id in sorted(selected_ids):
         scope = scope_refs.get(kb_id) or {}
@@ -574,9 +590,9 @@ def _build_wegent_refs(
             folder_ids,
             document_ids,
         ) = _resolve_wegent_scope(
-            request,
             kb_id,
             scope,
+            request_scopes=request_scopes,
             prefer_request_scope=prefer_request_scope,
         )
         if not scope_restricted:
@@ -663,14 +679,14 @@ def _load_wegent_resources(
 
 
 def _resolve_wegent_scope(
-    request: "ExecutionRequest",
     kb_id: int,
     persisted_scope: dict[str, Any],
     *,
+    request_scopes: Iterable[Any],
     prefer_request_scope: bool,
 ) -> tuple[bool, list[int], list[int]]:
     if prefer_request_scope:
-        for request_scope in request.knowledge_base_scopes or []:
+        for request_scope in request_scopes:
             if request_scope.knowledge_base_id != kb_id:
                 continue
             return (

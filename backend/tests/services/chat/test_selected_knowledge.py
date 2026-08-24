@@ -19,7 +19,6 @@ from app.services.chat.selected_knowledge import (
     apply_selected_knowledge_context,
     build_selected_knowledge_refs,
     register_provider_skill,
-    should_prepare_provider_native_knowledge,
 )
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
 from app.services.knowledge.task_knowledge_base_service import (
@@ -710,82 +709,9 @@ def test_empty_wegent_scope_keeps_other_valid_wegent_scope() -> None:
         SimpleNamespace(json={"spec": {}}),
         current_contexts=contexts,
     )
-    should_prepare = should_prepare_provider_native_knowledge(
-        knowledge_base_ids=[12, 13],
-        knowledge_base_scopes=[
-            KnowledgeBaseScope(
-                knowledge_base_id=12,
-                scope_restricted=True,
-                document_ids=[],
-            ),
-            KnowledgeBaseScope(
-                knowledge_base_id=13,
-                scope_restricted=True,
-                document_ids=[9],
-            ),
-        ],
-        access_mode="full",
-        current_contexts=contexts,
-        preload_selected_kb_skill=True,
-        shell_type="Chat",
-    )
-
     assert skills == ["wegent-knowledge"]
     assert 'knowledge_base_id="12"' not in request.selected_knowledge_prompt
     assert 'knowledge_base_id="13"' in request.selected_knowledge_prompt
-    assert should_prepare is True
-
-
-def test_restricted_wegent_does_not_disable_explicit_external_provider() -> None:
-    contexts = [
-        SimpleNamespace(
-            context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
-            status=ContextStatus.READY.value,
-            name="钉钉文档",
-            type_data={
-                "provider": "dingtalk",
-                "mode": "explicit",
-                "id": "space-1",
-            },
-        )
-    ]
-
-    should_prepare = should_prepare_provider_native_knowledge(
-        knowledge_base_ids=[12],
-        knowledge_base_scopes=[
-            KnowledgeBaseScope(
-                knowledge_base_id=12,
-                scope_restricted=True,
-                document_ids=[9],
-            )
-        ],
-        access_mode="restricted_search_only",
-        current_contexts=contexts,
-        preload_selected_kb_skill=True,
-        shell_type="Chat",
-    )
-
-    assert should_prepare is True
-
-
-def test_task_external_source_enables_provider_native_without_wegent() -> None:
-    should_prepare = should_prepare_provider_native_knowledge(
-        knowledge_base_ids=[],
-        knowledge_base_scopes=[],
-        access_mode="full",
-        current_contexts=[],
-        external_refs=[
-            {
-                "provider": "dingtalk",
-                "mode": "explicit",
-                "id": "space-1",
-            }
-        ],
-        preload_selected_kb_skill=True,
-        shell_type="Chat",
-    )
-
-    assert should_prepare is True
 
 
 def test_restricted_wegent_is_excluded_from_final_native_context() -> None:

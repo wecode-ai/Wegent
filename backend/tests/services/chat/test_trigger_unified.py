@@ -15,6 +15,8 @@ from shared.models.knowledge import (
     KnowledgeBaseScope,
     KnowledgeBaseToolAccessMode,
     KnowledgeBaseToolsResult,
+    SelectedKnowledgeContext,
+    SelectedKnowledgeRef,
 )
 
 
@@ -191,7 +193,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             user_subtask_id,
             user_id,
             *,
-            preload_selected_kb_skill=True,
+            prepare_provider_native_knowledge=True,
             current_contexts=None,
         ):
             return request
@@ -475,7 +477,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                         request_from_builder,
                         123,
                         7,
-                        preload_selected_kb_skill=True,
+                        prepare_provider_native_knowledge=False,
                         current_contexts=ANY,
                     )
 
@@ -530,7 +532,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             request_from_builder,
             123,
             7,
-            preload_selected_kb_skill=False,
+            prepare_provider_native_knowledge=False,
             current_contexts=ANY,
         )
 
@@ -723,7 +725,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             user_subtask_id,
             user_id,
             *,
-            preload_selected_kb_skill=True,
+            prepare_provider_native_knowledge=True,
             current_contexts=None,
         ):
             request.knowledge_base_ids = [1408]
@@ -825,6 +827,15 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder.build.return_value = request_from_builder
         mock_builder.resolve_request_preload_skills.return_value = resolved_request
         mock_builder._get_bot_for_subtask.return_value = MagicMock()
+        selected_context = SelectedKnowledgeContext(
+            refs=(
+                SelectedKnowledgeRef(
+                    provider="wegent",
+                    knowledge_base_id="1408",
+                    knowledge_base_name="产品知识",
+                ),
+            )
+        )
 
         async def _process_contexts_with_selected_kb(
             db,
@@ -832,7 +843,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             user_subtask_id,
             user_id,
             *,
-            preload_selected_kb_skill=True,
+            prepare_provider_native_knowledge=True,
             current_contexts=None,
         ):
             request.knowledge_base_ids = [1408]
@@ -852,14 +863,30 @@ class TestBuildExecutionRequestUserSubtaskId:
             with patch(
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
-                with patch.object(
-                    trigger_unified,
-                    "_process_contexts",
-                    new=AsyncMock(side_effect=_process_contexts_with_selected_kb),
+                with (
+                    patch.object(
+                        trigger_unified,
+                        "_process_contexts",
+                        new=AsyncMock(side_effect=_process_contexts_with_selected_kb),
+                    ),
+                    patch(
+                        "app.services.chat.selected_knowledge."
+                        "build_inherited_selected_knowledge_refs",
+                        return_value=[],
+                    ),
+                    patch(
+                        "app.services.chat.selected_knowledge."
+                        "build_selected_knowledge_context",
+                        return_value=selected_context,
+                    ),
                 ):
                     task = MagicMock()
                     task.id = 1273
-                    task.json = {}
+                    task.json = {
+                        "spec": {
+                            "knowledgeBaseRefs": [{"id": 1408, "name": "产品知识"}]
+                        }
+                    }
 
                     assistant_subtask = MagicMock()
                     assistant_subtask.id = 1709
@@ -919,7 +946,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             user_subtask_id,
             user_id,
             *,
-            preload_selected_kb_skill=True,
+            prepare_provider_native_knowledge=True,
             current_contexts=None,
         ):
             request.knowledge_base_ids = [12]
@@ -1078,6 +1105,7 @@ class TestProcessContextsAttachments:
                     request=request,
                     user_subtask_id=1,
                     user_id=7,
+                    prepare_provider_native_knowledge=True,
                     current_contexts=current_contexts,
                 )
 
@@ -1268,6 +1296,7 @@ class TestProcessContextsAttachments:
                     request=request,
                     user_subtask_id=1696,
                     user_id=2,
+                    prepare_provider_native_knowledge=True,
                 )
 
         assert result.knowledge_base_ids == [1408]
@@ -1322,7 +1351,7 @@ class TestProcessContextsAttachments:
                     request=request,
                     user_subtask_id=1696,
                     user_id=2,
-                    preload_selected_kb_skill=False,
+                    prepare_provider_native_knowledge=False,
                 )
 
         assert result.knowledge_base_scopes == [scope]
