@@ -1094,14 +1094,7 @@ async def build_execution_request(
         if context_subtask_id:
             current_contexts = context_service.get_by_subtask(db, context_subtask_id)
 
-        from app.services.chat.selected_knowledge import (
-            select_inherited_external_refs,
-        )
-
-        inherited_external_refs = select_inherited_external_refs(
-            task_refs,
-            current_contexts,
-        )
+        inherited_external_refs = list(task_refs)
         if inherited_external_refs:
             validate_external_knowledge_refs(
                 inherited_external_refs,

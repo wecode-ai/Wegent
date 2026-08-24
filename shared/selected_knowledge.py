@@ -19,12 +19,48 @@ def resolve_selected_knowledge_context(
     task_refs: Iterable[SelectedKnowledgeRef],
     explicit_refs: Iterable[SelectedKnowledgeRef],
 ) -> SelectedKnowledgeContext:
-    """Prefer this turn's explicit refs, otherwise use task-level refs."""
-    normalized_explicit_refs = tuple(explicit_refs)
-    source_refs = normalized_explicit_refs or tuple(task_refs)
+    """Merge task refs while letting this turn override the same source."""
+    merged_refs = list(_merge_refs(task_refs))
+    indexes = {_ref_key(ref): index for index, ref in enumerate(merged_refs)}
+    normalized_explicit_refs = _merge_refs(explicit_refs)
+    for explicit_ref in normalized_explicit_refs:
+        key = _ref_key(explicit_ref)
+        index = indexes.get(key)
+        if index is None:
+            indexes[key] = len(merged_refs)
+            merged_refs.append(explicit_ref)
+            continue
+        merged_refs[index] = _overlay_explicit_ref(merged_refs[index], explicit_ref)
     return SelectedKnowledgeContext(
-        refs=_merge_refs(source_refs),
+        refs=tuple(merged_refs),
         evidence_required=bool(normalized_explicit_refs),
+    )
+
+
+def _ref_key(ref: SelectedKnowledgeRef) -> tuple[str, str]:
+    return ref.provider, ref.knowledge_base_id
+
+
+def _overlay_explicit_ref(
+    task_ref: SelectedKnowledgeRef,
+    explicit_ref: SelectedKnowledgeRef,
+) -> SelectedKnowledgeRef:
+    """Keep task metadata while the explicit ref owns the effective scope."""
+    return SelectedKnowledgeRef(
+        provider=explicit_ref.provider,
+        knowledge_base_id=explicit_ref.knowledge_base_id,
+        knowledge_base_name=(
+            explicit_ref.knowledge_base_name or task_ref.knowledge_base_name
+        ),
+        resources=explicit_ref.resources,
+        routing_summary=explicit_ref.routing_summary or task_ref.routing_summary,
+        routing_topics=_merge_topics(
+            explicit_ref.routing_topics,
+            task_ref.routing_topics,
+        ),
+        retrieval_capabilities=(
+            explicit_ref.retrieval_capabilities or task_ref.retrieval_capabilities
+        ),
     )
 
 
@@ -33,7 +69,7 @@ def _merge_refs(
 ) -> tuple[SelectedKnowledgeRef, ...]:
     merged: dict[tuple[str, str], SelectedKnowledgeRef] = {}
     for ref in refs:
-        key = (ref.provider, ref.knowledge_base_id)
+        key = _ref_key(ref)
         current = merged.get(key)
         if current is None:
             merged[key] = ref

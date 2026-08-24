@@ -19,16 +19,35 @@ def _ref(
     )
 
 
-def test_explicit_refs_replace_all_task_refs() -> None:
+def test_explicit_refs_merge_with_unrelated_task_refs() -> None:
     context = resolve_selected_knowledge_context(
         task_refs=[_ref("wegent", "default-a"), _ref("dingtalk", "default-b")],
         explicit_refs=[_ref("dingtalk", "selected-c")],
     )
 
     assert [(ref.provider, ref.knowledge_base_id) for ref in context.refs] == [
-        ("dingtalk", "selected-c")
+        ("wegent", "default-a"),
+        ("dingtalk", "default-b"),
+        ("dingtalk", "selected-c"),
     ]
     assert context.evidence_required is True
+
+
+def test_explicit_ref_replaces_task_scope_for_same_knowledge_base() -> None:
+    default_document = SelectedKnowledgeResource(
+        scope_type="document",
+        resource_id="default-doc",
+    )
+    selected_document = SelectedKnowledgeResource(
+        scope_type="document",
+        resource_id="selected-doc",
+    )
+    context = resolve_selected_knowledge_context(
+        task_refs=[_ref("wegent", "kb-1", default_document)],
+        explicit_refs=[_ref("wegent", "kb-1", selected_document)],
+    )
+
+    assert context.refs[0].resources == (selected_document,)
 
 
 def test_task_refs_are_used_without_explicit_selection() -> None:

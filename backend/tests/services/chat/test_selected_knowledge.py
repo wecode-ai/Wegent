@@ -19,7 +19,6 @@ from app.services.chat.selected_knowledge import (
     apply_selected_knowledge_context,
     build_selected_knowledge_refs,
     register_provider_skill,
-    select_inherited_external_refs,
     should_prepare_provider_native_knowledge,
 )
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
@@ -76,41 +75,6 @@ def test_register_provider_skill_rejects_empty_names(
 ) -> None:
     with pytest.raises(ValueError, match="must not be empty"):
         register_provider_skill(provider_id, skill_name)
-
-
-def test_explicit_context_skips_inherited_external_refs() -> None:
-    task_refs = [
-        {
-            "provider": "dingtalk",
-            "mode": "explicit",
-            "id": "stale-space",
-        }
-    ]
-    contexts = [
-        SimpleNamespace(
-            context_type=ContextType.KNOWLEDGE_BASE.value,
-            status=ContextStatus.READY.value,
-            type_data={"knowledge_id": 12},
-        )
-    ]
-
-    refs = select_inherited_external_refs(task_refs, contexts)
-
-    assert refs == []
-
-
-def test_task_external_refs_remain_without_explicit_context() -> None:
-    task_refs = [
-        {
-            "provider": "dingtalk",
-            "mode": "explicit",
-            "id": "task-space",
-        }
-    ]
-
-    refs = select_inherited_external_refs(task_refs, [])
-
-    assert refs == task_refs
 
 
 def test_apply_selected_knowledge_context_deduplicates_provider_skills(
@@ -267,7 +231,7 @@ def test_selected_wegent_source_includes_bounded_routing_metadata(
         current_contexts=current_contexts,
     )
 
-    assert captured_ids == [13]
+    assert captured_ids == [12, 13]
     assert 'knowledge_base_id="13"' in request.selected_knowledge_prompt
     assert 'knowledge_base_name="产品发布知识库"' in (request.selected_knowledge_prompt)
     assert "Selected Documents" not in request.selected_knowledge_prompt
@@ -275,7 +239,7 @@ def test_selected_wegent_source_includes_bounded_routing_metadata(
     assert 'routing_topics="产品, 发布, 流程, 权限, 协作"' in (
         request.selected_knowledge_prompt
     )
-    assert 'knowledge_base_id="12"' not in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="12"' in request.selected_knowledge_prompt
 
 
 def test_manual_routing_summary_is_available_without_completed_auto_summary(
@@ -344,7 +308,7 @@ def test_incomplete_auto_summary_is_not_used_for_routing(
     assert "routing_topics=" not in request.selected_knowledge_prompt
 
 
-def test_current_external_selection_replaces_all_task_knowledge(
+def test_current_external_selection_merges_with_task_knowledge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setitem(PROVIDER_SKILLS, "demo", "demo-knowledge")
@@ -385,12 +349,12 @@ def test_current_external_selection_replaces_all_task_knowledge(
         MagicMock(), request, task, current_contexts=current_contexts
     )
 
-    assert skills == ["demo-knowledge"]
+    assert skills == ["wegent-knowledge", "dingtalk-docs", "demo-knowledge"]
     assert 'provider="demo"' in request.selected_knowledge_prompt
     assert 'knowledge_base_id="selected-space"' in request.selected_knowledge_prompt
     assert 'knowledge_base_name="本轮空间"' in request.selected_knowledge_prompt
-    assert 'knowledge_base_id="12"' not in request.selected_knowledge_prompt
-    assert 'knowledge_base_id="task-space"' not in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="12"' in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="task-space"' in request.selected_knowledge_prompt
     assert "explicitly selected by the user" in request.selected_knowledge_prompt
 
 
@@ -581,7 +545,7 @@ def test_invalid_explicit_wegent_id_returns_invalid_selection_error(
     assert exc_info.value.status_code == 400
 
 
-def test_current_wegent_document_selection_replaces_all_task_refs() -> None:
+def test_current_wegent_selection_overrides_same_kb_and_keeps_others() -> None:
     task = SimpleNamespace(
         json={"spec": {"knowledgeBaseRefs": [{"id": 12, "name": "默认知识"}]}}
     )
@@ -610,14 +574,13 @@ def test_current_wegent_document_selection_replaces_all_task_refs() -> None:
         _KnowledgeMetadataDB(), request, task, current_contexts=current_contexts
     )
 
-    assert skills == ["wegent-knowledge"]
+    assert skills == ["wegent-knowledge", "dingtalk-docs"]
     assert 'provider="wegent"' in request.selected_knowledge_prompt
     assert 'knowledge_base_id="13"' in request.selected_knowledge_prompt
     assert 'resource_id="9"' in request.selected_knowledge_prompt
     assert "Selected Documents" not in request.selected_knowledge_prompt
-    assert "knowledge_base_name" not in request.selected_knowledge_prompt
-    assert 'knowledge_base_id="12"' not in request.selected_knowledge_prompt
-    assert 'knowledge_base_id="task-space"' not in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="12"' in request.selected_knowledge_prompt
+    assert 'knowledge_base_id="task-space"' in request.selected_knowledge_prompt
 
 
 def test_current_wegent_subscope_does_not_restore_task_whole_scope() -> None:

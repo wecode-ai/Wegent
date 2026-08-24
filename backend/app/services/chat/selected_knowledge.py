@@ -213,14 +213,17 @@ def build_selected_knowledge_context(
         db,
         current_contexts=current_contexts,
     )
+    explicit_keys = {(ref.provider, ref.knowledge_base_id) for ref in explicit_refs}
+    empty_explicit_keys = _explicit_context_keys(current_contexts) - explicit_keys
+    if empty_explicit_keys:
+        task_refs = [
+            ref
+            for ref in task_refs
+            if (ref.provider, ref.knowledge_base_id) not in empty_explicit_keys
+        ]
+    context = resolve_selected_knowledge_context(task_refs, explicit_refs)
     if has_explicit_knowledge_context(current_contexts):
-        resolved = resolve_selected_knowledge_context((), explicit_refs)
-        context = SelectedKnowledgeContext(
-            refs=resolved.refs,
-            evidence_required=True,
-        )
-    else:
-        context = resolve_selected_knowledge_context(task_refs, explicit_refs)
+        context = replace(context, evidence_required=True)
     context = _filter_native_refs(context, request.kb_tool_access_mode)
     return _enrich_wegent_routing_metadata(db, context)
 
@@ -347,14 +350,31 @@ def has_explicit_knowledge_context(contexts: Iterable[Any]) -> bool:
     )
 
 
-def select_inherited_external_refs(
-    task_refs: Iterable[dict[str, Any]],
-    current_contexts: Iterable[Any],
-) -> list[dict[str, Any]]:
-    """Return Task refs only when this turn has no explicit knowledge selection."""
-    if has_explicit_knowledge_context(current_contexts):
-        return []
-    return list(task_refs)
+def _explicit_context_keys(
+    contexts: Iterable[Any],
+) -> set[tuple[str, str]]:
+    """Return source identities explicitly addressed by this turn."""
+    keys: set[tuple[str, str]] = set()
+    for context in contexts:
+        context_type = getattr(context, "context_type", None)
+        data = getattr(context, "type_data", None)
+        if not isinstance(data, dict):
+            continue
+        if context_type in {
+            ContextType.KNOWLEDGE_BASE.value,
+            ContextType.SELECTED_DOCUMENTS.value,
+        }:
+            kb_id = _current_wegent_kb_id(str(context_type), data)
+            if kb_id is not None:
+                keys.add(("wegent", str(kb_id)))
+            continue
+        if context_type != ContextType.EXTERNAL_KNOWLEDGE.value:
+            continue
+        provider = str(data.get("provider") or "").strip().lower()
+        kb_id = str(data.get("id") or "").strip()
+        if provider and kb_id:
+            keys.add((provider, kb_id))
+    return keys
 
 
 def has_usable_wegent_scope(
