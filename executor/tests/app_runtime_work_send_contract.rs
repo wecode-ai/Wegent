@@ -957,7 +957,9 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_and_rejects_missi
         .expect("completed turn should fork");
     assert_eq!(forked["accepted"], true);
     assert_eq!(forked["source"]["taskId"], "source-task-1");
+    assert_eq!(forked["source"]["workspacePath"], "/tmp/project");
     assert_eq!(forked["target"]["taskId"], "thread-fork-1");
+    assert_eq!(forked["target"]["workspacePath"], "/tmp/project");
 
     let listed = handler
         .handle_runtime_rpc(json!({"method": "runtime.tasks.list", "payload": {}}))

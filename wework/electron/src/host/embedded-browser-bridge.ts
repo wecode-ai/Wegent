@@ -290,7 +290,8 @@ export class EmbeddedBrowserBridge {
     request: BrowserBridgeRequest
   ): Promise<{ ok: true }> {
     const url = requiredString(request.url, 'url')
-    if (!this.browser.has(label)) {
+    let resolvedLabel = label
+    if (!this.browser.has(resolvedLabel)) {
       this.browser.requestOpen({
         id: `agent-open-${Date.now()}-${randomBytes(6).toString('hex')}`,
         url,
@@ -301,10 +302,17 @@ export class EmbeddedBrowserBridge {
         parentLabel: null,
         browserSessionId: request.browserSessionId ?? null,
       })
-      await waitFor(() => this.browser.has(label), request.timeoutMs ?? OPEN_TIMEOUT_MS)
+      await waitFor(() => {
+        const activeLabel = this.browser.activeLabel(baseLabel)
+        if (this.browser.has(activeLabel)) {
+          resolvedLabel = activeLabel
+          return true
+        }
+        return this.browser.has(resolvedLabel)
+      }, request.timeoutMs ?? OPEN_TIMEOUT_MS)
     }
-    const state = this.browser.state(label)
-    if (state.url !== url) await this.browser.navigate(label, url)
+    const state = this.browser.state(resolvedLabel)
+    if (state.url !== url) await this.browser.navigate(resolvedLabel, url)
     return { ok: true }
   }
 

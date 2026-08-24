@@ -268,8 +268,16 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({
             "success": true,
             "accepted": true,
-            "source": {"deviceId": self.device_id, "taskId": source.local_task_id},
-            "target": {"deviceId": self.device_id, "taskId": local_task_id},
+            "source": {
+                "deviceId": self.device_id,
+                "taskId": source.local_task_id,
+                "workspacePath": source.workspace_path,
+            },
+            "target": {
+                "deviceId": self.device_id,
+                "taskId": local_task_id,
+                "workspacePath": source.workspace_path,
+            },
             "runtime": "codex",
         }))
     }

@@ -124,6 +124,59 @@ describe('EmbeddedBrowserBridge', () => {
     expect(browser.navigate).toHaveBeenCalledWith('workspace-browser-2', 'https://example.test/')
   })
 
+  test('follows an active browser label published after the open request', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const browser = fakeBrowser()
+    browser.activeLabel
+      .mockReturnValueOnce('workspace-browser')
+      .mockReturnValue('workspace-browser-blank-0')
+    browser.has.mockImplementation(label => label === 'workspace-browser-blank-0')
+    browser.state.mockReturnValue({
+      label: 'workspace-browser-blank-0',
+      nativeLabel: 'workspace-browser-blank-0',
+      title: null,
+      url: 'about:blank',
+      isLoading: false,
+      navigationError: null,
+    })
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    const runtimePath = await bridge.start()
+    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
+      address: string
+      token: string
+    }
+
+    const response = await fetch(`http://${identity.address}/browser`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${identity.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'open',
+        label: 'workspace-browser',
+        url: 'https://example.test/',
+      }),
+    })
+
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      data: { ok: true },
+    })
+    expect(browser.requestOpen).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseLabel: 'workspace-browser',
+        targetLabel: 'workspace-browser',
+        source: 'agent',
+      })
+    )
+    expect(browser.navigate).toHaveBeenCalledWith(
+      'workspace-browser-blank-0',
+      'https://example.test/'
+    )
+  })
+
   test('accepts the final page URL after navigation redirects', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
     const browser = fakeBrowser()

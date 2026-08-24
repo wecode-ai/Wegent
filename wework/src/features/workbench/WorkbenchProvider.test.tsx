@@ -1,6 +1,14 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createContext, StrictMode, useContext, useEffect, useState } from 'react'
+import {
+  createContext,
+  StrictMode,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LOCAL_USER } from '@/api/local/localSession'
@@ -771,6 +779,39 @@ function RuntimeTaskPinProbe() {
         }
       >
         unpin runtime task
+      </button>
+    </div>
+  )
+}
+
+function RuntimeTaskPinDuringRefreshProbe() {
+  const workbench = useWorkbench()
+  const pinRequestedRef = useRef(false)
+  const task = workbench.state.runtimeWork?.projects[0]?.deviceWorkspaces[0]?.tasks[0]
+  const automationTaskIds = buildAutomationTaskOptions(workbench.state.runtimeWork).map(
+    option => option.address.taskId
+  )
+
+  useLayoutEffect(() => {
+    if (!task || task.pinned || pinRequestedRef.current) return
+    pinRequestedRef.current = true
+    void workbench.setRuntimeTaskPinned({
+      deviceId: 'state-device',
+      threadId: 'thread-a',
+      pinned: true,
+    })
+  }, [task, workbench])
+
+  return (
+    <div>
+      <span data-testid="runtime-task-pin-state">{task?.pinned ? 'pinned' : 'unpinned'}</span>
+      <span data-testid="automation-task-options">{automationTaskIds.join('|') || 'none'}</span>
+      <button
+        type="button"
+        data-testid="refresh-runtime-work"
+        onClick={() => void workbench.refreshWorkLists()}
+      >
+        refresh runtime work
       </button>
     </div>
   )
@@ -2278,6 +2319,65 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
     expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('pinned')
     expect(screen.getByTestId('automation-task-options')).toHaveTextContent('runtime-a')
+  })
+
+  test('pins a task exposed by refresh before the rendered runtime-work ref synchronizes', async () => {
+    const pinRequest = deferred<void>()
+    const refreshedRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: {
+            key: 'local:/workspace/project-alpha',
+            name: 'Wegent',
+            stateDeviceId: 'state-device',
+          },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              workspacePath: '/workspace/project-alpha',
+              available: true,
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  threadId: 'thread-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Fresh automation target',
+                  runtime: 'codex',
+                  pinned: false,
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(createRuntimeWork({ projects: [], chats: [], totalTasks: 0 }))
+        .mockResolvedValue(refreshedRuntimeWork),
+      setRuntimeTaskPinned: vi.fn(() => pinRequest.promise),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeTaskPinDuringRefreshProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('refresh-runtime-work')).toBeInTheDocument())
+    await userEvent.click(screen.getByTestId('refresh-runtime-work'))
+
+    await waitFor(() => expect(runtimeWorkApi.setRuntimeTaskPinned).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('pinned')
+    expect(screen.getByTestId('automation-task-options')).toHaveTextContent('runtime-a')
+
+    await act(async () => {
+      pinRequest.resolve()
+      await pinRequest.promise
+    })
   })
 
   test('rolls back a project task pin when executor persistence fails', async () => {
