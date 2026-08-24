@@ -154,6 +154,7 @@ export interface ChatInputProps {
   disabledReason?: string
   placeholder?: string
   inputTestId?: string
+  nativeEmptyCaret?: boolean
   submitButtonTestId?: string
   variant?: 'compact' | 'desktop'
   projectChat?: ProjectChatControls
@@ -562,6 +563,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     disabledReason,
     placeholder,
     inputTestId,
+    nativeEmptyCaret = false,
     submitButtonTestId,
     variant = 'compact',
     projectChat,
@@ -802,6 +804,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
     inputTestId,
+    nativeEmptyCaret,
     submitButtonTestId,
     onOpenSkillFile,
     workspaceTarget,

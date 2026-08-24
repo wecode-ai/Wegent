@@ -1466,6 +1466,63 @@ describe('WorkspaceBrowserPanel', () => {
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.test/')
   })
 
+  test('accepts later bridge navigation after an external open settles', async () => {
+    let handlePageStateChange!: (pageState: {
+      label: string
+      nativeLabel: string
+      title: string | null
+      url: string | null
+      isLoading: boolean
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
+    mockBrowserHostRect()
+    embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValueOnce({
+      nativeLabel: 'workspace-browser-native-1',
+      title: null,
+      url: 'about:blank',
+    })
+    render(
+      <WorkspaceBrowserPanel
+        active
+        openRequest={{
+          id: 'test-bridge-navigation',
+          baseLabel: 'workspace-browser',
+          source: 'agent',
+          disposition: 'current-tab',
+          label: 'workspace-browser',
+          url: 'https://first.example.test/',
+        }}
+      />
+    )
+
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'First',
+        url: 'https://first.example.test/',
+        isLoading: false,
+      })
+    })
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Second',
+        url: 'https://second.example.test/',
+        isLoading: false,
+      })
+    })
+
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue(
+      'https://second.example.test/'
+    )
+  })
+
   test('uses the submitted URL when reopening after an external open request', async () => {
     mockBrowserHostRect()
     let handleClose!: (event: { label: string; nativeLabel: string }) => void
@@ -2926,12 +2983,32 @@ describe('WorkspaceBrowserPanel', () => {
         'workspace-browser'
       )
     })
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics).toHaveBeenLastCalledWith(
+        { width: 390, height: 844 },
+        'workspace-browser'
+      )
+    })
+    expect(
+      embeddedBrowserMocks.setEmbeddedBrowserBounds.mock.invocationCallOrder.at(-1)
+    ).toBeLessThan(embeddedBrowserMocks.setEmbeddedBrowserZoom.mock.invocationCallOrder.at(-1) ?? 0)
+    expect(
+      embeddedBrowserMocks.setEmbeddedBrowserZoom.mock.invocationCallOrder.at(-1)
+    ).toBeLessThan(
+      embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics.mock.invocationCallOrder.at(-1) ?? 0
+    )
 
     fireEvent.click(screen.getByTestId('workspace-browser-device-rotate-button'))
     await waitFor(() => {
       expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
         { x: 500, y: 178, width: 400, height: 185 },
         true,
+        'workspace-browser'
+      )
+    })
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserDeviceMetrics).toHaveBeenLastCalledWith(
+        { width: 844, height: 390 },
         'workspace-browser'
       )
     })

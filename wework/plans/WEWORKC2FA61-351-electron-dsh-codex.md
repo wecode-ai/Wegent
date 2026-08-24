@@ -1793,7 +1793,7 @@ WP-150 退出证据：
 
 ## 25. 中断恢复记录
 
-最后更新：2026-08-23。
+最后更新：2026-08-24。
 
 WP-140 已完成，WP-150 图形证据待补，WP-210 功能对照并行进行。已删除 Electron
 产品级多 View/Tab 管理，完成
@@ -1805,13 +1805,19 @@ Workbench 资产不携带它们。`WorkbenchRuntimeManager` 已实现每 Tab 独
 `terminal.*` 已删除。最终 macOS 包只含 rc.2/rc.8；包内 Node、executor、
 Host、App、terminal 的真实联合 verifier 已通过。Electron 本地工作区文件、
 附件分块写入、窗口控制、标题栏拖拽、通知和快捷键已迁入 desktop-neutral 主路径。
-右侧工作区新增 better-sidebar 兼容注册表和每 pane controller；扩展 Tab 使用原
-Wework launcher、标签栏、面板尺寸和持久化状态，并通过聚焦单测验证注册、定向
-路由、打开、渲染和关闭。
-最后成功验证为 Electron 40 项测试、DSH/metadata 26 项测试、前端终端相关
-33 项测试、本地工作区相关 90 项测试，以及包含最新功能迁移后的稳定 Core
-fingerprint `41702384…`。下一位执行者继续清理剩余 Tauri-only 功能，并在可用的真实 Electron
-图形会话运行
-`pnpm --dir wework/electron verify:core-ui <runtime-root> <executor-binary>`；
-通过前不得把 WP-150 标为 `DONE`。projection plugin 和 Agent provider 仍在
-WP-210 业务 service 完成后实施。
+右侧工作区已发布通用 `ctx.wework.extensions` 注册表和每 pane controller；
+`wework.workspace.sidebar.tab` 是第一个正式 extension point。better-sidebar
+仅通过兼容适配器转投该注册表；扩展 Tab 使用原 Wework launcher、标签栏、面板
+尺寸和持久化状态，并通过聚焦单测验证注册、定向路由、打开、渲染和关闭。
+
+Core DSH 的终端 SSE 已改为单连接多路分发。此前每个 terminal view 分别建立
+output/exit 两条从 `after=0` 开始的流，打开第二个终端会重放 harness 全部历史并
+阻塞 Renderer；现在所有 terminal view 共享一条带全局 cursor 的事件流，各自再
+用 snapshot 建立 session 状态。真实 Electron `local-harness` 场景已完整通过
+OpenCode、Kimi Code、Claude Code、会话恢复、右侧工作区和底部 Terminal，证据
+目录为 `2026-08-24T00-00-46-823Z-96548`。
+
+最新聚焦验证为前端 137 项、Electron 8 项、前后端 TypeScript 检查，以及真实
+Electron `workspace-tabs`、`browser-multi-tabs`、`local-harness` 三条核心流程。
+下一位执行者继续依据 CI 新证据修复剩余 Electron 迁移问题；不得通过修改旧 E2E
+断言或重试掩盖产品缺陷。

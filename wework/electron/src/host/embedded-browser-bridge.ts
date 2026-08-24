@@ -271,6 +271,9 @@ export class EmbeddedBrowserBridge {
       case 'waitFor':
         return this.waitForCondition(label, request)
       case 'screenshot':
+        if (!embeddedBrowserScreenshotAvailable()) {
+          throw new Error('Embedded browser screenshots are currently supported on macOS only')
+        }
         return this.screenshot(label)
       case 'nativeInputProbe':
         return nativeInputProbe(request)
@@ -485,6 +488,7 @@ function expressionScript(expression: string): string {
 }
 
 function browserCapabilities(): Record<string, unknown> {
+  const screenshotAvailable = embeddedBrowserScreenshotAvailable()
   return {
     kind: 'browser.capabilities',
     backend: 'electron-webcontentsview',
@@ -530,11 +534,15 @@ function browserCapabilities(): Record<string, unknown> {
       ],
     },
     screenshot: {
-      viewport: true,
-      primaryBackend: 'electron-capture-page',
+      viewport: screenshotAvailable,
+      primaryBackend: screenshotAvailable ? 'electron-capture-page' : null,
       fallbackBackend: null,
     },
   }
+}
+
+export function embeddedBrowserScreenshotAvailable(platform = process.platform): boolean {
+  return platform === 'darwin'
 }
 
 function isObservableAction(action: string): boolean {

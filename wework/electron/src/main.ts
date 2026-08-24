@@ -628,6 +628,13 @@ async function configureDesktopRuntime(): Promise<void> {
       runtimeRoot,
       environment,
       runtimeHost: smartAppRuntimeHost,
+      ensureWorkbenchRuntime:
+        app.isPackaged && !process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
+          ? async () => {
+              const paths = packagedHarnessRuntimePaths()
+              await materializeBundledRuntimes(paths.resources, paths.cache, ['workbench'])
+            }
+          : undefined,
     })
   }
   desktopRuntime = new DesktopRuntime({
@@ -795,8 +802,9 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     ? configuredRuntimeRoot
     : app.isPackaged
       ? await materializeBundledRuntimes(
-          join(resourcesRoot, 'harness-runtime'),
-          join(app.getPath('userData'), 'managed-runtimes', 'dsh')
+          packagedHarnessRuntimePaths().resources,
+          packagedHarnessRuntimePaths().cache,
+          ['core']
         )
       : developmentRuntimeRoot
   const executorName = process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
@@ -821,6 +829,13 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
         ? { WEWORK_EXECUTOR_PATH: packagedExecutor }
         : {}),
     ...(nodePath === process.execPath ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+  }
+}
+
+function packagedHarnessRuntimePaths(): { resources: string; cache: string } {
+  return {
+    resources: join(process.resourcesPath, 'harness-runtime'),
+    cache: join(app.getPath('userData'), 'managed-runtimes', 'dsh'),
   }
 }
 

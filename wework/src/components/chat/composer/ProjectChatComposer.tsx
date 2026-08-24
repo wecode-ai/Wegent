@@ -61,6 +61,7 @@ interface ProjectChatComposerProps {
   disabledReason?: string
   placeholder: string
   inputTestId?: string
+  nativeEmptyCaret?: boolean
   submitButtonTestId?: string
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
@@ -139,6 +140,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       disabledReason,
       placeholder,
       inputTestId,
+      nativeEmptyCaret,
       submitButtonTestId,
       models,
       selectedModel,
@@ -442,6 +444,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           <ComposerTextarea
             ref={composerRef}
             testId={inputTestId}
+            nativeEmptyCaret={nativeEmptyCaret}
             textareaRef={textareaRef}
             value={value}
             onChange={handleComposerChange}

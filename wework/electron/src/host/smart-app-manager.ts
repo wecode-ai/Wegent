@@ -64,6 +64,7 @@ export interface SmartAppManagerOptions {
   runtimeRoot: string
   environment: NodeJS.ProcessEnv
   runtimeHost: () => SmartAppRuntimeHost | null
+  ensureWorkbenchRuntime?: () => Promise<void>
 }
 
 export class SmartAppManager {
@@ -229,6 +230,7 @@ export class SmartAppManager {
       }
       const port = await freePort()
       try {
+        await this.options.ensureWorkbenchRuntime?.()
         const prepared = await prepareWorkbenchDshLaunch({
           runtimeRoot: this.options.runtimeRoot,
           dataDirectory: this.options.dataDirectory,

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
+import { ElectronEmbeddedBrowserView } from '@/components/layout/workspace-panels/ElectronEmbeddedBrowserView'
 import {
   closeEmbeddedBrowser,
   evalEmbeddedBrowserJson,
@@ -8,7 +9,7 @@ import {
   setEmbeddedBrowserBounds,
   type EmbeddedBrowserBounds,
 } from '@/lib/embedded-browser'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 
 interface AppIframeProps {
   active?: boolean
@@ -95,6 +96,7 @@ export function AppIframe({
   workspaceTabId,
 }: AppIframeProps) {
   const native = isDesktopRuntime()
+  const electron = isElectronRuntime()
   const hostRef = useRef<HTMLDivElement>(null)
   const onReadyRef = useRef(onReady)
   const openedRef = useRef(false)
@@ -321,6 +323,14 @@ export function AppIframe({
       data-workspace-tab-id={workspaceTabId}
       data-src={src}
     >
+      {electron && (
+        <ElectronEmbeddedBrowserView
+          active={active}
+          interactionBlocked={false}
+          label={label}
+          visualRect={null}
+        />
+      )}
       {loading && !error && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />

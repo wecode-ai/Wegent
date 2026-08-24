@@ -16,9 +16,12 @@ interface RuntimeCatalog {
   runtimes: RuntimeDescriptor[]
 }
 
+export type BundledRuntimeRole = 'core' | 'workbench'
+
 export async function materializeBundledRuntimes(
   resourceRoot: string,
-  cacheRoot: string
+  cacheRoot: string,
+  roles: readonly BundledRuntimeRole[] = ['core', 'workbench']
 ): Promise<string> {
   const catalog = JSON.parse(
     await readFile(join(resolve(resourceRoot), 'runtimes.json'), 'utf8')
@@ -27,8 +30,21 @@ export async function materializeBundledRuntimes(
   if (runtimes.length !== 2) {
     throw new Error('Bundled Electron runtime catalog must contain Core and Workbench runtimes')
   }
+  const requestedRoles = new Set(roles)
+  if (
+    requestedRoles.size !== roles.length ||
+    roles.some(role => !['core', 'workbench'].includes(role))
+  ) {
+    throw new Error('Bundled Electron runtime roles are invalid')
+  }
+  const selectedRuntimes = runtimes.filter(runtime =>
+    requestedRoles.has(runtime.role as BundledRuntimeRole)
+  )
+  if (selectedRuntimes.length !== requestedRoles.size) {
+    throw new Error('Bundled Electron runtime catalog is missing a requested runtime')
+  }
   await mkdir(cacheRoot, { recursive: true, mode: 0o700 })
-  for (const runtime of runtimes) {
+  for (const runtime of selectedRuntimes) {
     await materializeRuntime(resourceRoot, cacheRoot, runtime)
   }
   await writeFile(join(cacheRoot, 'runtimes.json'), `${JSON.stringify({ runtimes }, null, 2)}\n`, {

@@ -1,6 +1,6 @@
 # Electron `ai:verify` 与桌面 E2E 迁移台账
 
-更新日期：2026-08-23
+更新日期：2026-08-24
 
 ## 目标
 
@@ -72,7 +72,7 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | --------------------------------- | ----------------------------------------------- | ------ | ---------------------------------------- |
 | `remote-device-onboarding`        | 主流程                                          | PASSED | `2026-08-23T11-01-42-989Z-43550`         |
 | `cloud-space-mention`             | `cloud-space-mention.scenario.mjs`              | PASSED | `2026-08-23T12-37-09-540Z-33570`         |
-| `workspace-tabs`                  | 主流程                                          | PASSED | `2026-08-22T12-57-04-048Z-38785`，1m 44s |
+| `workspace-tabs`                  | 主流程                                          | PASSED | `2026-08-23T23-22-38-708Z-91703`，1m 42s |
 | `cloud-project-creation`          | 主流程                                          | PASSED | `2026-08-22T09-55-33-062Z-74493`，1m 24s |
 | `priority-filter`                 | 主流程                                          | PASSED | `2026-08-22T09-57-05-022Z-81057`，1m 45s |
 | `telemetry-consent`               | 主流程                                          | PASSED | `2026-08-22T10-02-13-752Z-3705`，1m 4s   |
@@ -110,9 +110,9 @@ WEWORK_E2E_EXECUTOR_BIN=/absolute/path/to/wegent-executor \
 | `change-request-status`           | `change-request-status.scenario.mjs`            | PASSED | `2026-08-23T05-10-17-721Z-12207`，32s    |
 | `claude-runtime`                  | `claude-runtime.scenario.mjs`                   | PASSED | `2026-08-23T05-27-56-087Z-49057`，1m 35s |
 | `local-file-preview`              | `local-file-preview.scenario.mjs`               | PASSED | `2026-08-23T06-23-06-401Z-96018`，24s    |
-| `local-harness`                   | `local-terminal.scenario.mjs`                   | PASSED | `2026-08-23T07-27-58-073Z-72292`，42s    |
+| `local-harness`                   | `local-terminal.scenario.mjs`                   | PASSED | `2026-08-24T00-00-46-823Z-96548`         |
 | `harness-apps`                    | `harness-apps.scenario.mjs`                     | PASSED | `2026-08-23T13-40-39-648Z-29751`         |
-| `browser-multi-tabs`              | `embedded-browser-multi-tabs.scenario.mjs`      | PASSED | `2026-08-23T08-50-53-603Z-10432`，34s    |
+| `browser-multi-tabs`              | `embedded-browser-multi-tabs.scenario.mjs`      | PASSED | `2026-08-23T23-29-45-242Z-85991`，1m 13s |
 | `embedded-browser`                | `embedded-browser-agent.scenario.mjs`           | PASSED | `2026-08-23T10-11-23-405Z-45839`，55s    |
 | `browser-toolbar-actions`         | `embedded-browser-toolbar-actions.scenario.mjs` | PASSED | `2026-08-23T10-59-55-871Z-36223`，22s    |
 

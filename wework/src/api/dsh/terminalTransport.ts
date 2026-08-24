@@ -2,6 +2,10 @@ const TERMINAL_BASE_PATH = '/wework/terminal/v1'
 
 let terminalEventSuspensionDepth = 0
 let suspendedTerminalEventDeliveries: Array<() => void> = []
+let terminalEventCursor = 0
+let terminalEventSource: EventSource | null = null
+let terminalEventReconnectTimer: number | null = null
+const terminalEventListeners = new Set<(event: DshTerminalEventEnvelope) => void>()
 
 export interface DshTerminalEventEnvelope {
   protocolVersion: number
@@ -55,48 +59,56 @@ export async function requestDshTerminal<T>(
 export function subscribeDshTerminalEvents(
   listener: (event: DshTerminalEventEnvelope) => void
 ): () => void {
-  let cursor = 0
-  let source: EventSource | null = null
+  terminalEventListeners.add(listener)
+  connectDshTerminalEventSource()
   let closed = false
-  let reconnectTimer: number | null = null
-
-  const connect = () => {
+  return () => {
     if (closed) return
-    source = new EventSource(
-      `${TERMINAL_BASE_PATH}/events?after=${encodeURIComponent(String(cursor))}`
-    )
-    source.onmessage = message => {
-      const event = JSON.parse(message.data) as DshTerminalEventEnvelope
-      if (
-        event.protocolVersion !== 1 ||
-        !Number.isSafeInteger(event.sequence) ||
-        typeof event.event !== 'string'
-      ) {
-        return
-      }
-      cursor = Math.max(cursor, event.sequence)
-      const deliver = () => {
-        if (!closed) listener(event)
-      }
-      if (terminalEventSuspensionDepth > 0) {
-        suspendedTerminalEventDeliveries.push(deliver)
-      } else {
-        deliver()
-      }
+    closed = true
+    terminalEventListeners.delete(listener)
+    if (terminalEventListeners.size > 0) return
+    if (terminalEventReconnectTimer !== null) {
+      window.clearTimeout(terminalEventReconnectTimer)
+      terminalEventReconnectTimer = null
     }
-    source.onerror = () => {
-      source?.close()
-      source = null
-      if (!closed) reconnectTimer = window.setTimeout(connect, 500)
+    terminalEventSource?.close()
+    terminalEventSource = null
+  }
+}
+
+function connectDshTerminalEventSource(): void {
+  if (terminalEventSource || terminalEventListeners.size === 0) return
+  terminalEventSource = new EventSource(
+    `${TERMINAL_BASE_PATH}/events?after=${encodeURIComponent(String(terminalEventCursor))}`
+  )
+  terminalEventSource.onmessage = message => {
+    const event = JSON.parse(message.data) as DshTerminalEventEnvelope
+    if (
+      event.protocolVersion !== 1 ||
+      !Number.isSafeInteger(event.sequence) ||
+      typeof event.event !== 'string'
+    ) {
+      return
+    }
+    terminalEventCursor = Math.max(terminalEventCursor, event.sequence)
+    const deliver = () => {
+      terminalEventListeners.forEach(activeListener => activeListener(event))
+    }
+    if (terminalEventSuspensionDepth > 0) {
+      suspendedTerminalEventDeliveries.push(deliver)
+    } else {
+      deliver()
     }
   }
-
-  connect()
-  return () => {
-    closed = true
-    if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
-    source?.close()
-    source = null
+  terminalEventSource.onerror = () => {
+    terminalEventSource?.close()
+    terminalEventSource = null
+    if (terminalEventListeners.size > 0) {
+      terminalEventReconnectTimer = window.setTimeout(() => {
+        terminalEventReconnectTimer = null
+        connectDshTerminalEventSource()
+      }, 500)
+    }
   }
 }
 
@@ -112,6 +124,20 @@ export function suspendDshTerminalEventDelivery(): () => void {
     suspendedTerminalEventDeliveries = []
     deliveries.forEach(deliver => deliver())
   }
+}
+
+export function resetDshTerminalTransportForTests(): void {
+  if (!import.meta.env.MODE.includes('test')) return
+  terminalEventSource?.close()
+  terminalEventSource = null
+  if (terminalEventReconnectTimer !== null) {
+    window.clearTimeout(terminalEventReconnectTimer)
+    terminalEventReconnectTimer = null
+  }
+  terminalEventListeners.clear()
+  terminalEventCursor = 0
+  terminalEventSuspensionDepth = 0
+  suspendedTerminalEventDeliveries = []
 }
 
 function transportError(status: number, body: DshTerminalErrorBody): DshTerminalTransportError {

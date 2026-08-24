@@ -81,6 +81,7 @@ interface ComposerProseMirrorEditorProps {
   rows: number
   textareaRef: RefObject<HTMLElement | null>
   className: string
+  nativeEmptyCaret?: boolean
 }
 
 const EXTERNAL_VALUE_META = 'composer-external-value'
@@ -162,9 +163,10 @@ export const ComposerProseMirrorEditor = forwardRef<
                   !state.selection.empty ||
                   !state.selection.$head.parent.isTextblock ||
                   state.selection.$head.parent.content.size > 0 ||
-                  // WKWebView needs the only empty text position to remain native
-                  // so programmatic focus can start a text input session.
-                  (!isElectronRuntime() &&
+                  // WKWebView and explicitly native composers need the only
+                  // empty text position to remain native so programmatic focus
+                  // can start a platform text input session.
+                  ((!isElectronRuntime() || callbacksRef.current.nativeEmptyCaret) &&
                     state.doc.childCount === 1 &&
                     state.doc.firstChild?.content.size === 0)
                 ) {

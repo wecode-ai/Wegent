@@ -224,6 +224,10 @@ export class EmbeddedBrowserManager {
     const normalizedUrl = validBrowserUrl(url)
     entry.requestedUrl = normalizedUrl
     await this.load(entry, normalizedUrl)
+    // Browser lifecycle events are not guaranteed to reach the renderer when
+    // a preserved panel is hidden and shown again. Publish the authoritative
+    // post-navigation state so bridge-driven navigation always updates its UI.
+    this.emitPageState(entry)
   }
 
   reload(label: string): void {

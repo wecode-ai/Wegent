@@ -749,6 +749,9 @@ export function WorkspaceBrowserTabPanel({
         setOriginalViewHeld(false)
         void evalEmbeddedBrowser('window.__WEWORK_BROWSER_ANNOTATION__?.suspend?.() ?? true', label)
       }
+      if (nextUrl && pendingNavigationUrlRef.current === nextUrl) {
+        pendingNavigationUrlRef.current = null
+      }
       updatePageUrl(nextUrl)
       if (nextUrl) {
         onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
@@ -833,10 +836,6 @@ export function WorkspaceBrowserTabPanel({
             ? current
             : nextVisualRect
         )
-        await setEmbeddedBrowserDeviceMetrics(
-          { width: deviceState.width, height: deviceState.height },
-          label
-        )
         await setEmbeddedBrowserBounds(placement.webviewBounds, nativeVisible, label)
       } else {
         deviceFitScaleRef.current = 1
@@ -849,6 +848,14 @@ export function WorkspaceBrowserTabPanel({
       await setEmbeddedBrowserZoom(nativeZoomScale, label).catch(error => {
         console.error('Failed to apply embedded browser zoom:', error)
       })
+      // Electron applies zoom to the CSS viewport. Reassert device metrics
+      // after zoom so window.innerWidth/innerHeight remain the selected preset.
+      if (placement) {
+        await setEmbeddedBrowserDeviceMetrics(
+          { width: deviceState.width, height: deviceState.height },
+          label
+        )
+      }
     },
     [active, electronRuntime, embeddedBrowserAvailable, label, navigationError]
   )
@@ -1153,6 +1160,9 @@ export function WorkspaceBrowserTabPanel({
       ) {
         logBrowserAnnotation('exit annotation mode for internal desktop page', { label })
         exitAnnotationMode()
+      }
+      if (!pageState.isLoading && nextUrl && pendingNavigationUrlRef.current === nextUrl) {
+        pendingNavigationUrlRef.current = null
       }
       updatePageUrl(nextUrl)
       if (nextUrl) {

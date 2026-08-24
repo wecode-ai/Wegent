@@ -13,7 +13,7 @@ afterEach(async () => {
 })
 
 describe('materializeBundledRuntimes', () => {
-  test('extracts only the declared Core and Workbench archives', async () => {
+  test('extracts only requested runtimes while retaining the complete catalog', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-runtime-materializer-'))
     roots.push(root)
     const resources = join(root, 'resources')
@@ -26,10 +26,18 @@ describe('materializeBundledRuntimes', () => {
       JSON.stringify({ runtimes: [core, workbench] })
     )
 
-    await expect(materializeBundledRuntimes(resources, cache)).resolves.toBe(cache)
+    await expect(materializeBundledRuntimes(resources, cache, ['core'])).resolves.toBe(cache)
     await expect(
       readFile(join(cache, core.sourceFingerprint, 'runtime.json'), 'utf8')
     ).resolves.toContain('"role":"core"')
+    await expect(
+      readFile(join(cache, workbench.sourceFingerprint, 'runtime.json'), 'utf8')
+    ).rejects.toThrow()
+    await expect(readFile(join(cache, 'runtimes.json'), 'utf8')).resolves.toContain(
+      workbench.sourceFingerprint
+    )
+
+    await expect(materializeBundledRuntimes(resources, cache, ['workbench'])).resolves.toBe(cache)
     await expect(
       readFile(join(cache, workbench.sourceFingerprint, 'runtime.json'), 'utf8')
     ).resolves.toContain('"role":"workbench"')
@@ -38,6 +46,24 @@ describe('materializeBundledRuntimes', () => {
     await materializeBundledRuntimes(resources, cache)
     expect((await stat(join(cache, core.sourceFingerprint, 'runtime.json'))).ino).toBe(
       coreMetadata.ino
+    )
+  })
+
+  test('rejects duplicate runtime role requests', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-runtime-materializer-'))
+    roots.push(root)
+    const resources = join(root, 'resources')
+    const cache = join(root, 'cache')
+    await mkdir(resources)
+    const core = await runtimeArchive(resources, 'core', '0.1.1-rc.2', 'a')
+    const workbench = await runtimeArchive(resources, 'workbench', '0.1.0-rc.8', 'b')
+    await writeFile(
+      join(resources, 'runtimes.json'),
+      JSON.stringify({ runtimes: [core, workbench] })
+    )
+
+    await expect(materializeBundledRuntimes(resources, cache, ['core', 'core'])).rejects.toThrow(
+      'Bundled Electron runtime roles are invalid'
     )
   })
 })

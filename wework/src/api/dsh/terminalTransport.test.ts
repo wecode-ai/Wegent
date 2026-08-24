@@ -1,12 +1,14 @@
 import {
   DshTerminalTransportError,
   requestDshTerminal,
+  resetDshTerminalTransportForTests,
   subscribeDshTerminalEvents,
   suspendDshTerminalEventDelivery,
 } from './terminalTransport'
 
 describe('DSH terminal transport', () => {
   afterEach(() => {
+    resetDshTerminalTransportForTests()
     vi.unstubAllGlobals()
   })
 
@@ -99,6 +101,41 @@ describe('DSH terminal transport', () => {
     expect(listener).toHaveBeenCalledTimes(1)
 
     unsubscribe()
+    expect(sources[0].closed).toBe(true)
+  })
+
+  test('multiplexes terminal listeners over one event stream', () => {
+    const sources: FakeEventSource[] = []
+    vi.stubGlobal(
+      'EventSource',
+      class extends FakeEventSource {
+        constructor(url: string) {
+          super(url)
+          sources.push(this)
+        }
+      }
+    )
+    const firstListener = vi.fn()
+    const secondListener = vi.fn()
+    const unsubscribeFirst = subscribeDshTerminalEvents(firstListener)
+    const unsubscribeSecond = subscribeDshTerminalEvents(secondListener)
+
+    expect(sources).toHaveLength(1)
+    sources[0].onmessage?.({
+      data: JSON.stringify({
+        protocolVersion: 1,
+        sequence: 8,
+        emittedAt: '2026-08-23T00:00:00.000Z',
+        event: 'terminal.output',
+        payload: { session_id: 'terminal-1', sequence: 2, data: 'working' },
+      }),
+    } as MessageEvent)
+    expect(firstListener).toHaveBeenCalledTimes(1)
+    expect(secondListener).toHaveBeenCalledTimes(1)
+
+    unsubscribeFirst()
+    expect(sources[0].closed).toBe(false)
+    unsubscribeSecond()
     expect(sources[0].closed).toBe(true)
   })
 

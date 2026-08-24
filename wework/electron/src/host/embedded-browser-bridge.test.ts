@@ -2,7 +2,10 @@ import { mkdtemp, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { EmbeddedBrowserBridge } from './embedded-browser-bridge.js'
+import {
+  EmbeddedBrowserBridge,
+  embeddedBrowserScreenshotAvailable,
+} from './embedded-browser-bridge.js'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 
 const bridges: EmbeddedBrowserBridge[] = []
@@ -12,6 +15,12 @@ afterEach(async () => {
 })
 
 describe('EmbeddedBrowserBridge', () => {
+  test('limits viewport screenshots to macOS', () => {
+    expect(embeddedBrowserScreenshotAvailable('darwin')).toBe(true)
+    expect(embeddedBrowserScreenshotAvailable('linux')).toBe(false)
+    expect(embeddedBrowserScreenshotAvailable('win32')).toBe(false)
+  })
+
   test('publishes an authenticated runtime identity and rejects invalid tokens', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
     const browser = fakeBrowser()

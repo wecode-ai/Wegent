@@ -16,6 +16,7 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
 }))
 const runtimeMocks = vi.hoisted(() => ({
   isDesktopRuntime: vi.fn(() => false),
+  isElectronRuntime: vi.fn(() => false),
 }))
 
 vi.mock('@/lib/embedded-browser', () => embeddedBrowserMocks)
@@ -24,6 +25,7 @@ vi.mock('@/lib/runtime-environment', () => runtimeMocks)
 describe('AppIframe', () => {
   beforeEach(() => {
     runtimeMocks.isDesktopRuntime.mockReturnValue(false)
+    runtimeMocks.isElectronRuntime.mockReturnValue(false)
     embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
     embeddedBrowserMocks.evalEmbeddedBrowserJson.mockReset()
     embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue(true)
@@ -143,6 +145,44 @@ describe('AppIframe', () => {
       )
     )
     expect(container.querySelector('iframe')).toBeNull()
+    boundsSpy.mockRestore()
+  })
+
+  test('creates the Electron webview host before opening the native app', async () => {
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
+    runtimeMocks.isElectronRuntime.mockReturnValue(true)
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 620,
+      height: 600,
+      left: 10,
+      right: 810,
+      top: 20,
+      width: 800,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    })
+
+    render(
+      <AppIframe
+        appKey="wegent"
+        src="http://localhost:3000"
+        title="Wegent"
+        workspaceTabId="fixed-agent"
+      />
+    )
+
+    const webview = document.querySelector('webview')
+    expect(webview).toHaveAttribute('data-wework-browser-label', 'app-wegent-fixed-agent')
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'http://localhost:3000',
+        { x: 10, y: 20, width: 800, height: 600 },
+        'app-wegent-fixed-agent',
+        false,
+        true
+      )
+    )
     boundsSpy.mockRestore()
   })
 
