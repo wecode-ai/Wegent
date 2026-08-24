@@ -602,7 +602,6 @@ jobs:
     if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
     runs-on: macos-14
     timeout-minutes: 45
-    env:
 
     steps:
       - name: Checkout code
