@@ -325,6 +325,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
+        with:
+          setup-toolchain: "false"
+
       - name: Restore local harness CLIs
         if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')
         id: local-harness-clis-cache
@@ -404,6 +409,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
+        with:
+          setup-toolchain: "false"
 
       - name: Download shared Wework desktop E2E build
         uses: actions/download-artifact@v4
