@@ -87,6 +87,58 @@ class _AgentBuilder:
         self.all_tools = [tool_instance]
 
 
+def test_extract_card_result_supports_mcp_text_content():
+    result = _extract_card_result(
+        [{"type": "text", "text": '{"id":"card-abc","card_type":"video"}'}]
+    )
+
+    assert result == {"id": "card-abc", "card_type": "video"}
+
+
+@pytest.mark.asyncio
+async def test_async_video_card_tool_emits_card_block(monkeypatch):
+    emitter = AsyncMock()
+    tool = SimpleNamespace(
+        name="create_async_video_card",
+        _wegent_tool_protocol="mcp",
+        _wegent_mcp_server_label="wegent-cards",
+    )
+    agent_builder = _AgentBuilder(tool)
+    agent_builder.tool_registry = {"create_async_video_card": tool}
+    state = _State()
+    pending = []
+
+    def run_immediately(coro):
+        pending.append(asyncio.create_task(coro))
+
+    monkeypatch.setattr("chat_shell.tools.events._run_async", run_immediately)
+    handler = create_tool_event_handler(state, emitter, agent_builder)
+    handler(
+        "tool_end",
+        {
+            "run_id": "card-run",
+            "tool_use_id": "card-call",
+            "name": "create_async_video_card",
+            "data": {
+                "input": {},
+                "output": {
+                    "id": "card-abc",
+                    "card_type": "video_director_generation",
+                    "status": "pending",
+                    "data": {},
+                    "preview_data": {"title": "生成中"},
+                },
+            },
+        },
+    )
+    await asyncio.gather(*pending)
+
+    emitter.block_created.assert_awaited_once()
+    assert state.blocks[0]["id"] == "card-abc"
+    assert state.blocks[0]["type"] == "card"
+    assert state.blocks[0]["card_status"] == "pending"
+
+
 def test_extract_retrieval_summary_preserves_provider_source_pairs():
     output = {
         "source_summaries": [

@@ -8,7 +8,20 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from app.core import yaml_init
 from app.core.yaml_init import apply_skills_from_directory
+
+
+def test_additional_init_data_directories_are_deduplicated(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(yaml_init, "_additional_init_data_directories", [])
+
+    yaml_init.register_additional_init_data_directory(tmp_path)
+    yaml_init.register_additional_init_data_directory(tmp_path)
+
+    assert yaml_init._additional_init_data_directories == [tmp_path.resolve()]
 
 
 def _write_skill(tmp_path: Path, version: str) -> None:

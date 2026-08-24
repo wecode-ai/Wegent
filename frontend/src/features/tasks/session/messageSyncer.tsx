@@ -110,6 +110,8 @@ export interface ChatMessageRequest {
     duration?: number
     /** Model name for video/image generation */
     model?: string
+    /** Display name for the selected media model */
+    model_display_name?: string
     /** Model-declared video generation mode */
     generation_mode_id?: string
     /** Image dimensions selected at generation time */
@@ -413,13 +415,7 @@ export function useMessageSyncer({
 
       const machine = getMachineForTask(taskId)
       if (machine) {
-        machine.handleChatChunk(
-          subtask_id,
-          '',
-          { blocks: [block as MessageBlock] },
-          undefined,
-          undefined
-        )
+        machine.handleChatBlockUpdated(subtask_id, block as MessageBlock)
       }
     },
     [getMachineForTask]
@@ -440,15 +436,17 @@ export function useMessageSyncer({
         tool_input,
         parent_tool_use_id,
         render_payload,
+        card_id,
+        card_type,
+        card_data,
+        card_status,
+        card_error,
+        card_preview_data,
         argument_status,
         output,
         summary,
         children,
         status,
-        card_status,
-        card_data,
-        card_preview_data,
-        card_error,
       } = data
 
       if (!taskId) {
@@ -461,27 +459,29 @@ export function useMessageSyncer({
         status === 'running' ? 'pending' : (status as MessageBlock['status'] | undefined)
 
       // Build partial block update
-      const blockUpdate: Partial<MessageBlock> = {
+      const blockUpdate: Partial<MessageBlock> & { id: string } = {
         id: block_id,
         ...(content !== undefined && { content }),
         ...(tool_output !== undefined && { tool_output }),
         ...(tool_input !== undefined && { tool_input }),
         ...(parent_tool_use_id !== undefined && { parent_tool_use_id }),
         ...(render_payload !== undefined && { render_payload }),
+        ...(card_id !== undefined && { card_id }),
+        ...(card_type !== undefined && { card_type }),
+        ...(card_data !== undefined && { card_data }),
+        ...(card_status !== undefined && { card_status }),
+        ...(card_error !== undefined && { card_error }),
+        ...(card_preview_data !== undefined && { card_preview_data }),
         ...(argument_status !== undefined && { argument_status }),
         ...(output !== undefined && { output }),
         ...(summary !== undefined && { summary }),
         ...(children !== undefined && { children }),
         ...(mappedStatus !== undefined && { status: mappedStatus }),
-        ...(card_status !== undefined && { card_status }),
-        ...(card_data !== undefined && { card_data }),
-        ...(card_preview_data !== undefined && { card_preview_data }),
-        ...(card_error !== undefined && { card_error }),
       }
 
       const machine = getMachineForTask(taskId)
       if (machine) {
-        machine.handleChatBlockUpdated(subtask_id, block_id, blockUpdate)
+        machine.handleChatBlockUpdated(subtask_id, blockUpdate)
       }
     },
     [getMachineForTask]
@@ -691,26 +691,16 @@ export function useMessageSyncer({
       })
 
       // Create user message
-      const hasVideoGenerationParams = Boolean(
-        request.generate_params &&
-        (request.task_type === 'video' ||
-          request.generate_params.resolution ||
-          request.generate_params.ratio ||
-          request.generate_params.duration)
-      )
-
-      // Keep video settings on the optimistic message for both dedicated video tasks
-      // and chat agents that expose video generation through modeSpec.
-      const videoConfig =
-        hasVideoGenerationParams && request.generate_params
-          ? {
-              model: request.generate_params.model,
-              resolution: request.generate_params.resolution,
-              ratio: request.generate_params.ratio,
-              duration: request.generate_params.duration,
-              generation_mode_id: request.generate_params.generation_mode_id,
-            }
-          : undefined
+      const videoConfig = request.generate_params?.model
+        ? {
+            model: request.generate_params.model,
+            model_display_name: request.generate_params.model_display_name,
+            resolution: request.generate_params.resolution,
+            ratio: request.generate_params.ratio,
+            duration: request.generate_params.duration,
+            generation_mode_id: request.generate_params.generation_mode_id,
+          }
+        : undefined
 
       const userMessage: UnifiedMessage = {
         id: userMessageId,

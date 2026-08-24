@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { nestMessageBlocks, type MessageBlock } from '../message-blocks'
+import type { MessageBlock } from '../message-blocks'
 import { mergeBlocksForDone, mergeStreamingBlocks } from './TaskStateMachine.blockMerging'
 import { generateMessageId, mergeChunkContent } from './TaskStateMachine.messageUtils'
 import type {
@@ -205,29 +205,32 @@ export function reduceChatBlockUpdatedEvent({
   const existingMessage = state.messages.get(aiMessageId)
   if (!existingMessage) return state
 
-  const existingBlocks = existingMessage.result?.blocks ?? []
-  const hasTargetBlock = existingBlocks.some(block => {
-    if (block.id === event.blockId) return true
-    return block.type === 'subagent'
-      ? (block.children ?? []).some(child => child.id === event.blockId)
-      : false
-  })
-  if (!hasTargetBlock) return state
+  const existingBlocks = existingMessage.result?.blocks || []
+  const existingIndex = existingBlocks.findIndex(block => block.id === event.block.id)
+  if (existingIndex < 0 && !event.block.type) return state
 
-  const updatedBlock = {
-    id: event.blockId,
-    ...event.updates,
-  } as MessageBlock
-  const blocks = nestMessageBlocks([...existingBlocks, updatedBlock])
-  const newMessages = new Map(state.messages)
-  newMessages.set(aiMessageId, {
+  const blocks = [...existingBlocks]
+  if (existingIndex >= 0) {
+    blocks[existingIndex] = {
+      ...blocks[existingIndex],
+      ...event.block,
+    } as MessageBlock
+  } else {
+    blocks.push(event.block as MessageBlock)
+  }
+
+  const messages = new Map(state.messages)
+  messages.set(aiMessageId, {
     ...existingMessage,
     result: {
       ...existingMessage.result,
       blocks,
     },
   })
-  return { ...state, messages: newMessages }
+  return {
+    ...state,
+    messages,
+  }
 }
 
 export function reduceChatDoneEvent({

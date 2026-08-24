@@ -72,6 +72,7 @@ def dispatch_video_polling_task(
     intent_result: Optional[Dict[str, Any]] = None,
     poll_count: int = 0,
     last_progress: int = 0,
+    card_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Dispatch a video polling Celery task with a fixed task_id.
@@ -92,6 +93,7 @@ def dispatch_video_polling_task(
         intent_result: Intent analysis result
         poll_count: Current poll count
         last_progress: Last progress value
+        card_context: External CardBlock polling metadata
 
     Returns:
         Celery task ID
@@ -119,6 +121,7 @@ def dispatch_video_polling_task(
             "intent_result": intent_result,
             "poll_count": poll_count,
             "last_progress": last_progress,
+            "card_context": card_context,
             "request_id": request_id,
         },
         task_id=celery_task_id,
@@ -165,6 +168,7 @@ def _check_cancellation_sync(subtask_id: int) -> bool:
 def _update_subtask_video_job_sync(
     subtask_id: int,
     video_job_data: Dict[str, Any],
+    block: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Update subtask.result.video_job in database.
@@ -181,7 +185,7 @@ def _update_subtask_video_job_sync(
         if not subtask:
             raise ValueError(f"Subtask {subtask_id} not found")
 
-        result = _merge_video_job_result(subtask.result, video_job_data)
+        result = _merge_video_job_result(subtask.result, video_job_data, block)
         subtask_store.update_result(db, subtask=subtask, result=result)
         db.commit()
 
@@ -197,6 +201,7 @@ def _update_subtask_video_job_sync(
 def _merge_video_job_result(
     current_result: Optional[Dict[str, Any]],
     video_job_data: Dict[str, Any],
+    block: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Persist recovery metadata and a refresh-safe video placeholder block."""
     result = dict(current_result or {})
@@ -221,6 +226,39 @@ def _merge_video_job_result(
         ),
         None,
     )
+    if block is not None:
+        if existing_block is None:
+            blocks.append(block)
+        else:
+            persisted_block = dict(existing_block)
+            persisted_block.update(block)
+            if existing_block.get("type") == "card" and block.get("type") == "card":
+                existing_card_data = existing_block.get("card_data")
+                updated_card_data = block.get("card_data")
+                persisted_block["card_data"] = {
+                    **(
+                        existing_card_data
+                        if isinstance(existing_card_data, dict)
+                        else {}
+                    ),
+                    **(
+                        updated_card_data if isinstance(updated_card_data, dict) else {}
+                    ),
+                }
+                existing_preview = existing_block.get("card_preview_data")
+                updated_preview = block.get("card_preview_data")
+                persisted_block["card_preview_data"] = {
+                    **(existing_preview if isinstance(existing_preview, dict) else {}),
+                    **(updated_preview if isinstance(updated_preview, dict) else {}),
+                }
+                persisted_block["timestamp"] = existing_block.get(
+                    "timestamp",
+                    block.get("timestamp"),
+                )
+            blocks[blocks.index(existing_block)] = persisted_block
+        result["blocks"] = blocks
+        return result
+
     placeholder = {
         "id": block_id,
         "type": "video",
@@ -249,9 +287,10 @@ def _merge_video_job_result(
 def update_subtask_video_job(
     subtask_id: int,
     video_job_data: Dict[str, Any],
+    block: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Persist video polling context for recovery."""
-    _update_subtask_video_job_sync(subtask_id, video_job_data)
+    _update_subtask_video_job_sync(subtask_id, video_job_data, block)
 
 
 def fail_video_generation_start(subtask_id: int, error: str) -> None:
@@ -347,6 +386,7 @@ def poll_video_job(
     intent_result: Optional[Dict[str, Any]] = None,
     poll_count: int = 0,
     last_progress: int = 0,
+    card_context: Optional[Dict[str, Any]] = None,
     request_id: Optional[str] = None,
 ):
     """
@@ -394,6 +434,24 @@ def poll_video_job(
         f"[video_tasks] Polling job: job_id={job_id}, subtask_id={subtask_id}, "
         f"poll_count={poll_count}/{MAX_POLL_COUNT}"
     )
+
+    if card_context:
+        return _poll_async_card(
+            celery_task=self,
+            subtask_id=subtask_id,
+            task_id=task_id,
+            user_id=user_id,
+            job_id=job_id,
+            provider_protocol=provider_protocol,
+            video_block_id=video_block_id,
+            model_config=model_config,
+            message_id=message_id,
+            intent_result=intent_result,
+            poll_count=poll_count,
+            last_progress=last_progress,
+            card_context=card_context,
+            request_id=request_id,
+        )
 
     # Check cancellation
     if _check_cancellation_sync(subtask_id):
@@ -524,6 +582,7 @@ def poll_video_job(
                 "intent_result": intent_result,
                 "poll_count": poll_count,
                 "last_progress": current_progress,
+                "card_context": card_context,
                 "request_id": request_id,
             },
         )
@@ -567,6 +626,182 @@ def poll_video_job(
         _update_subtask_status_sync(subtask_id, "FAILED", error=error_message)
         _update_task_status_after_subtask(task_id)
 
+        raise Ignore()
+
+
+def _poll_async_card(
+    *,
+    celery_task,
+    subtask_id: int,
+    task_id: int,
+    user_id: int,
+    job_id: str,
+    provider_protocol: str,
+    video_block_id: str,
+    model_config: Dict[str, Any],
+    message_id: Optional[int],
+    intent_result: Optional[Dict[str, Any]],
+    poll_count: int,
+    last_progress: int,
+    card_context: Dict[str, Any],
+    request_id: str,
+):
+    """Poll an external CardBlock through the shared durable video task."""
+    from app.services.execution.agents.video.async_card import (
+        AsyncCardSnapshot,
+        build_async_card_block,
+        fetch_async_card_snapshot,
+    )
+    from app.tasks.video_websocket import (
+        emit_card_cancelled,
+        emit_card_done,
+        emit_card_error,
+        emit_card_updated,
+    )
+    from shared.utils.error_classifier import format_error_message
+
+    query_url = str(card_context.get("query_url") or "")
+    card_type = str(card_context.get("card_type") or "")
+    preview_title = str(card_context.get("preview_title") or "视频生成中...")
+    default_progress_text = str(card_context.get("progress_text") or "正在生成，请稍候")
+
+    def persist_snapshot(
+        snapshot: AsyncCardSnapshot,
+        job_status: str = "polling",
+    ) -> Dict[str, Any]:
+        block = build_async_card_block(
+            block_id=video_block_id,
+            card_type=card_type,
+            snapshot=snapshot,
+            preview_title=preview_title,
+            default_progress_text=default_progress_text,
+        )
+        video_job_data = {
+            "job_id": job_id,
+            "query_url": query_url,
+            "card_type": card_type,
+            "preview_title": preview_title,
+            "progress_text": default_progress_text,
+            "status": job_status,
+            "progress": snapshot.progress,
+            "video_block_id": video_block_id,
+            "started_at": None,
+            "last_poll_at": datetime.now(timezone.utc).isoformat(),
+            "poll_count": poll_count,
+        }
+        _update_subtask_video_job_sync(subtask_id, video_job_data, block)
+        return block
+
+    def fail(error_message: str, progress: int) -> None:
+        snapshot = AsyncCardSnapshot(
+            status="failed",
+            progress=progress,
+            error=error_message,
+        )
+        block = persist_snapshot(snapshot, "failed")
+        emit_card_error(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            message_id=message_id,
+            block=block,
+        )
+        _update_subtask_status_sync(subtask_id, "FAILED", error=error_message)
+        _update_task_status_after_subtask(task_id)
+
+    if _check_cancellation_sync(subtask_id):
+        snapshot = AsyncCardSnapshot(
+            status="failed",
+            progress=last_progress,
+            error="Video generation cancelled",
+        )
+        block = persist_snapshot(snapshot, "cancelled")
+        emit_card_cancelled(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            message_id=message_id,
+            block=block,
+        )
+        _update_subtask_status_sync(subtask_id, "CANCELLED")
+        _update_task_status_after_subtask(task_id)
+        raise Ignore()
+
+    try:
+        snapshot = _run_async(fetch_async_card_snapshot(query_url))
+        block = persist_snapshot(
+            snapshot,
+            "completed" if snapshot.is_completed else "polling",
+        )
+
+        if snapshot.is_completed:
+            emit_card_done(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                block=block,
+            )
+            _update_subtask_status_sync(subtask_id, "COMPLETED")
+            _update_task_status_after_subtask(task_id)
+            return {"status": "completed", "job_id": job_id}
+
+        if snapshot.is_failed:
+            fail(snapshot.error or "Video generation failed", snapshot.progress)
+            raise Ignore()
+
+        emit_card_updated(task_id=task_id, subtask_id=subtask_id, block=block)
+        if poll_count >= MAX_POLL_COUNT:
+            fail("Video generation timed out", snapshot.progress)
+            raise Ignore()
+
+        raise celery_task.retry(
+            countdown=POLL_INTERVAL_SECONDS,
+            kwargs={
+                "subtask_id": subtask_id,
+                "task_id": task_id,
+                "user_id": user_id,
+                "job_id": job_id,
+                "provider_protocol": provider_protocol,
+                "video_block_id": video_block_id,
+                "model_config": model_config,
+                "message_id": message_id,
+                "intent_result": intent_result,
+                "poll_count": poll_count,
+                "last_progress": snapshot.progress,
+                "card_context": card_context,
+                "request_id": request_id,
+            },
+        )
+    except Ignore:
+        raise
+    except Retry:
+        raise
+    except celery_task.MaxRetriesExceededError:
+        fail(
+            "Video generation timed out after maximum retries",
+            last_progress,
+        )
+        raise Ignore()
+    except Exception as exc:
+        error_message = format_error_message(exc)
+        if poll_count < MAX_POLL_COUNT:
+            raise celery_task.retry(
+                countdown=POLL_INTERVAL_SECONDS,
+                kwargs={
+                    "subtask_id": subtask_id,
+                    "task_id": task_id,
+                    "user_id": user_id,
+                    "job_id": job_id,
+                    "provider_protocol": provider_protocol,
+                    "video_block_id": video_block_id,
+                    "model_config": model_config,
+                    "message_id": message_id,
+                    "intent_result": intent_result,
+                    "poll_count": poll_count,
+                    "last_progress": last_progress,
+                    "card_context": card_context,
+                    "request_id": request_id,
+                },
+            )
+        fail(error_message, last_progress)
         raise Ignore()
 
 

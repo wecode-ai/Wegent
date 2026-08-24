@@ -2,4 +2,4 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Internal video provider implementations."""
+"""One-minute creative-video Skill package."""

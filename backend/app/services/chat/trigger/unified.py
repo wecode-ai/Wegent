@@ -41,6 +41,7 @@ from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     user_runtime_config_service,
 )
+from app.services.video_generation_params import apply_video_generation_params
 from shared.codex_model_catalog import (
     codex_catalog_model_id_for_upstream,
     codex_catalog_model_id_from_config,
@@ -1039,63 +1040,10 @@ async def build_execution_request(
         if payload is not None:
             generate_params = getattr(payload, "generate_params", None)
             if generate_params and request.model_config.get("modelType") == "video":
-                video_config = request.model_config.get("videoConfig") or {}
-                capabilities = video_config.get("capabilities") or {}
-
-                if generate_params.resolution:
-                    allowed_resolutions = [
-                        r.get("value") or r.get("label")
-                        for r in (capabilities.get("resolutions") or [])
-                    ]
-                    if (
-                        allowed_resolutions
-                        and generate_params.resolution not in allowed_resolutions
-                    ):
-                        raise ValueError(
-                            f"Unsupported resolution '{generate_params.resolution}', "
-                            f"allowed: {allowed_resolutions}"
-                        )
-                    video_config["resolution"] = generate_params.resolution
-
-                if generate_params.ratio:
-                    allowed_ratios = [
-                        r.get("value")
-                        for r in (capabilities.get("aspect_ratios") or [])
-                    ]
-                    if allowed_ratios and generate_params.ratio not in allowed_ratios:
-                        raise ValueError(
-                            f"Unsupported aspect ratio '{generate_params.ratio}', "
-                            f"allowed: {allowed_ratios}"
-                        )
-                    video_config["ratio"] = generate_params.ratio
-
-                if generate_params.duration:
-                    allowed_durations = capabilities.get("durations_sec") or []
-                    if (
-                        allowed_durations
-                        and generate_params.duration not in allowed_durations
-                    ):
-                        raise ValueError(
-                            f"Unsupported duration {generate_params.duration}s, "
-                            f"allowed: {allowed_durations}"
-                        )
-                    video_config["duration"] = generate_params.duration
-
-                request.model_config["videoConfig"] = video_config
-                if generate_params.generation_mode_id:
-                    modes = capabilities.get("generation_modes") or []
-                    allowed_mode_ids = [mode.get("id") for mode in modes]
-                    if (
-                        allowed_mode_ids
-                        and generate_params.generation_mode_id not in allowed_mode_ids
-                    ):
-                        raise ValueError(
-                            "Unsupported video generation mode "
-                            f"'{generate_params.generation_mode_id}'"
-                        )
-                    request.model_config["generation_mode_id"] = (
-                        generate_params.generation_mode_id
-                    )
+                apply_video_generation_params(
+                    request.model_config,
+                    generate_params,
+                )
             elif generate_params and request.model_config.get("modelType") == "image":
                 _apply_image_generation_params(request.model_config, generate_params)
             if generate_params:

@@ -112,6 +112,8 @@ export interface Bot {
   skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
   preload_skill_refs?: Record<string, SkillRefMeta>
+  secondary_model_name?: string | null
+  secondary_model_namespace?: string | null
   is_active: boolean
   created_at: string
   updated_at: string
@@ -167,13 +169,6 @@ export interface TeamInputPlaceholder extends LocalizedInputPlaceholder {
   desktop?: LocalizedInputPlaceholder | null
 }
 
-export interface TeamAllowedModel {
-  name: string
-  type?: string | null
-  namespace?: string | null
-  modelCategoryType?: string | null
-}
-
 // Shell Types
 export interface Shell {
   id: number
@@ -208,7 +203,6 @@ export interface Team {
     allowedModelCategories: string[]
     hiddenVideoParams?: string[]
   } | null
-  allowed_models?: TeamAllowedModel[] | null
   icon?: string // Icon ID from preset icon library
   display_config?: TeamDisplayConfig
   quick_phrases?: string[] // Launcher phrases that prefill the chat input
@@ -421,7 +415,6 @@ export interface SubtaskResult {
     resolution?: string
     ratio?: string
     duration?: number
-    generation_mode_id?: string
   }
   [key: string]: unknown
 }

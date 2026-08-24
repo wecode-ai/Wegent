@@ -535,19 +535,16 @@ class TeamInputPlaceholder(LocalizedInputPlaceholder):
 
 
 class ModeSpec(BaseModel):
-    """Model categories exposed by a Team independently of its bind mode."""
+    """Model selectors exposed for specialized task modes."""
 
-    allowedModelCategories: List[ModelCategoryType]
-    hiddenVideoParams: Optional[List[str]] = None
-
-
-class TeamAllowedModel(BaseModel):
-    """Model reference allowed by a Team-level selector."""
-
-    name: str
-    type: Optional[str] = None
-    namespace: Optional[str] = None
-    modelCategoryType: Optional[ModelCategoryType] = None
+    allowedModelCategories: List[ModelCategoryType] = Field(
+        default_factory=list,
+        description="Model categories available for user selection.",
+    )
+    hiddenVideoParams: Optional[List[str]] = Field(
+        default=None,
+        description="Video parameters owned by the workflow and hidden from users.",
+    )
 
 
 class TeamSpec(QuickPhraseMixin):
@@ -556,8 +553,10 @@ class TeamSpec(QuickPhraseMixin):
     members: List[TeamMember]
     collaborationModel: str  # solo、pipeline、route、coordinate、collaborate
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
-    modeSpec: Optional[ModeSpec] = None
-    allowedModels: Optional[List[TeamAllowedModel]] = None
+    modeSpec: Optional[ModeSpec] = Field(
+        default=None,
+        description="Optional media selectors exposed while retaining chat execution.",
+    )
     description: Optional[str] = None  # Team description
     icon: Optional[str] = None  # Icon ID from preset icon library
     displayConfig: TeamDisplayConfig = Field(default_factory=TeamDisplayConfig)

@@ -293,18 +293,18 @@ export interface ChatBlock {
   summary?: string
   children?: ChatBlock[]
   render_payload?: unknown
+  card_id?: string
+  card_type?: string
+  card_data?: Record<string, unknown>
+  card_status?: 'pending' | 'partial_ready' | 'populated' | 'error' | 'expired'
+  card_error?: string | null
+  card_preview_data?: Record<string, unknown>
   guidance_id?: string
   loop_index?: number
   applied_at?: string
   argument_status?: 'streaming' | 'done'
   status?: 'generating_arguments' | 'pending' | 'streaming' | 'invoking' | 'done' | 'error'
   timestamp?: number
-  card_id?: string
-  card_type?: string
-  card_status?: 'pending' | 'partial_ready' | 'populated' | 'error' | 'expired'
-  card_data?: Record<string, unknown>
-  card_preview_data?: Record<string, unknown>
-  card_error?: string
 }
 
 export interface ChatStartPayload {
@@ -474,6 +474,12 @@ export interface ChatBlockUpdatedPayload {
   tool_input?: Record<string, unknown>
   parent_tool_use_id?: string
   render_payload?: unknown
+  card_id?: string
+  card_type?: string
+  card_data?: Record<string, unknown>
+  card_status?: 'pending' | 'partial_ready' | 'populated' | 'error' | 'expired'
+  card_error?: string | null
+  card_preview_data?: Record<string, unknown>
   argument_status?: 'streaming' | 'done'
   output?: string
   summary?: string
@@ -482,10 +488,6 @@ export interface ChatBlockUpdatedPayload {
   loop_index?: number
   applied_at?: string
   status?: ChatBlock['status'] | 'running'
-  card_status?: ChatBlock['card_status']
-  card_data?: Record<string, unknown>
-  card_preview_data?: Record<string, unknown>
-  card_error?: string
 }
 
 export interface ChatGuidanceQueuedPayload {

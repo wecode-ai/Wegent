@@ -166,6 +166,7 @@ class TaskRequestBuilder:
         override_model_name: Optional[str] = None,
         force_override: bool = False,
         runtime_model_config: Optional[dict[str, Any]] = None,
+        use_secondary_model_for_generation_chat: bool = True,
         team_member_prompt: Optional[str] = None,
         web_runtime_guidance: bool = False,
         user_generation: Optional[dict[str, Any]] = None,
@@ -198,6 +199,8 @@ class TaskRequestBuilder:
             override_model_name: Optional model name to override bot's model
             force_override: If True, override takes highest priority
             runtime_model_config: Optional already-resolved runtime model config
+            use_secondary_model_for_generation_chat: Whether video/image Chat tasks
+                should execute with the Bot's secondary text model
             team_member_prompt: Optional additional prompt from team member
             web_runtime_guidance: Whether to inject Wegent web UI runtime guidance
 
@@ -241,6 +244,7 @@ class TaskRequestBuilder:
         user_info = self._build_user_info(user, git_domain)
 
         # Get model config with full resolution (decryption, placeholder replacement)
+        model_resolution: dict[str, bool] = {}
         model_config = self._get_model_config(
             bot=bot,
             user_id=user.id,
@@ -252,6 +256,8 @@ class TaskRequestBuilder:
             team_name=team.name,
             team_namespace=team.namespace,
             runtime_model_config=runtime_model_config,
+            use_secondary_model_for_chat=use_secondary_model_for_generation_chat,
+            resolution_meta=model_resolution,
         )
 
         # Get base system prompt from Ghost
@@ -343,7 +349,11 @@ class TaskRequestBuilder:
             user_id=user.id,
             override_model_name=override_model_name,
             force_override=force_override,
-            runtime_model_config=runtime_model_config,
+            runtime_model_config=(
+                model_config
+                if model_resolution.get("used_secondary_model")
+                else runtime_model_config
+            ),
         )
 
         # Get collaboration model
@@ -945,6 +955,8 @@ class TaskRequestBuilder:
         team_name: str = "",
         team_namespace: str | None = None,
         runtime_model_config: dict[str, Any] | None = None,
+        use_secondary_model_for_chat: bool = False,
+        resolution_meta: dict[str, bool] | None = None,
     ) -> dict[str, Any]:
         """Get model configuration for the bot.
 
@@ -966,6 +978,9 @@ class TaskRequestBuilder:
             team_name: Team (agent) name for identity header placeholder replacement
             team_namespace: Team (agent) namespace for identity header replacement
             runtime_model_config: Optional already-resolved runtime model config
+            use_secondary_model_for_chat: Whether a video/image Chat agent should
+                use its secondary text model.
+            resolution_meta: Optional result metadata for the caller.
 
         Returns:
             Model configuration dictionary
@@ -1011,10 +1026,10 @@ class TaskRequestBuilder:
             task_data=task_data,
         )
 
-        # Handle secondaryModelRef for generation models (video and image).
-        # When modelType is 'video' or 'image', resolve secondary model for intent analysis
-        # used in multi-turn follow-up generation.
-        if model_config.get("modelType") in ("video", "image"):
+        model_type = str(model_config.get("modelType") or "llm").lower()
+        # Generation Bots bind the generation model as modelRef. Chat orchestration
+        # uses secondaryModelRef for reasoning and Skill invocation when configured.
+        if model_type in ("video", "image"):
             secondary_model_config = self._get_secondary_model_config(
                 bot=bot,
                 user_id=user_id,
@@ -1025,7 +1040,25 @@ class TaskRequestBuilder:
                 team_namespace=team_namespace,
             )
             if secondary_model_config:
+                if (
+                    str(secondary_model_config.get("modelType") or "llm").lower()
+                    != "llm"
+                ):
+                    raise ValueError(
+                        "The secondary model for a generation agent must be an LLM"
+                    )
+                if use_secondary_model_for_chat:
+                    if resolution_meta is not None:
+                        resolution_meta["used_secondary_model"] = True
+                    return secondary_model_config
+
+                # Tool execution retains the primary generation model and exposes
+                # the secondary LLM to intent-analysis helpers.
                 model_config["secondary_model_config"] = secondary_model_config
+            elif use_secondary_model_for_chat:
+                raise ValueError(
+                    "A video/image Chat agent requires an LLM secondary model"
+                )
 
         return model_config
 

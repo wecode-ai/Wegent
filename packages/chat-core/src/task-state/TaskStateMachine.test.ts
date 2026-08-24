@@ -20,6 +20,44 @@ function createRuntimeActions(overrides: Partial<TaskStateMachineDeps> = {}): Ta
 }
 
 describe('TaskStateMachine', () => {
+  it('applies card progress updates after the text stream is done', () => {
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+    machine.handleChatStart(7, 'Chat', 1)
+    machine.handleChatChunk(7, '', {
+      blocks: [
+        {
+          id: 'card-1',
+          type: 'card',
+          status: 'pending',
+          card_id: 'card-1',
+          card_type: 'video_director_generation',
+          card_status: 'pending',
+          card_data: {},
+          card_preview_data: { progress: 10 },
+          card_error: null,
+        },
+      ],
+    })
+    machine.handleChatDone(7, '')
+
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      status: 'streaming',
+      card_status: 'partial_ready',
+      card_preview_data: { progress: 65 },
+    })
+
+    const message = machine.getState().messages.get('ai-7')
+    const card = message?.result?.blocks?.[0]
+    expect(message?.status).toBe('completed')
+    expect(card).toMatchObject({
+      id: 'card-1',
+      type: 'card',
+      card_status: 'partial_ready',
+      card_preview_data: { progress: 65 },
+    })
+  })
+
   it('stores reasoning chunks as chronological thinking blocks', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: vi.fn(),
@@ -86,45 +124,6 @@ describe('TaskStateMachine', () => {
     machine.handleChatStart(42, 'Chat', 7, 'Planner Bot')
 
     expect(machine.getState().messages.get('ai-42')?.botName).toBe('Planner Bot')
-  })
-
-  it('applies asynchronous card updates after the assistant stream completes', () => {
-    const machine = new TaskStateMachine(100, {
-      joinTask: vi.fn(),
-      isConnected: () => true,
-    })
-    machine.handleChatStart(42, 'Chat', 7)
-    machine.handleChatChunk(42, '', {
-      blocks: [
-        {
-          id: 'card-1',
-          type: 'card',
-          card_id: '1',
-          card_type: 'video_director_generation',
-          card_status: 'pending',
-          card_data: {},
-          card_preview_data: { progress: 0 },
-          status: 'done',
-        },
-      ],
-    })
-    machine.handleChatDone(42, 'Working')
-
-    machine.handleChatBlockUpdated(42, 'card-1', {
-      card_status: 'populated',
-      card_data: { title: 'Ready' },
-      card_preview_data: { progress: 100 },
-    })
-
-    expect(machine.getState().messages.get('ai-42')?.result?.blocks).toContainEqual(
-      expect.objectContaining({
-        id: 'card-1',
-        type: 'card',
-        card_status: 'populated',
-        card_data: { title: 'Ready' },
-        card_preview_data: { progress: 100 },
-      })
-    )
   })
 
   it('nests child agent blocks under their parent subagent block', () => {

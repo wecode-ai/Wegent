@@ -109,7 +109,7 @@ export interface CardBlock extends BaseBlock {
   card_status: CardStatus;
   card_data: Record<string, unknown>;
   card_preview_data?: Record<string, unknown>;
-  card_error?: string;
+  card_error?: string | null;
 }
 
 export interface PromptChangeItem {

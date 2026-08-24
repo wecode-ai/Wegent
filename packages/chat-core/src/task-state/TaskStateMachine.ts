@@ -11,8 +11,8 @@
 import type { TaskDetail, TaskDetailSubtask, TaskStatus as ApiTaskStatus } from '../api-types'
 import type { MessageBlock } from '../message-blocks'
 import {
-  reduceChatBlockUpdatedEvent,
   reduceChatCancelledEvent,
+  reduceChatBlockUpdatedEvent,
   reduceChatChunkEvent,
   reduceChatDoneEvent,
   reduceChatErrorEvent,
@@ -347,16 +347,6 @@ export class TaskStateMachine {
     this.dispatch({ type: 'CHAT_CHUNK', subtaskId, content, offset, result, sources, blockId })
   }
 
-  /** Handle a block update even after the assistant stream has completed. */
-  handleChatBlockUpdated(subtaskId: number, blockId: string, updates: Partial<MessageBlock>): void {
-    this.dispatch({
-      type: 'CHAT_BLOCK_UPDATED',
-      subtaskId,
-      blockId,
-      updates,
-    })
-  }
-
   /**
    * Handle chat:done event
    */
@@ -379,6 +369,13 @@ export class TaskStateMachine {
       hasError,
       errorMessage,
     })
+  }
+
+  /**
+   * Update a data block without changing the message or runtime lifecycle.
+   */
+  handleChatBlockUpdated(subtaskId: number, block: Partial<MessageBlock> & { id: string }): void {
+    this.dispatch({ type: 'CHAT_BLOCK_UPDATED', subtaskId, block })
   }
 
   /**
@@ -759,16 +756,16 @@ export class TaskStateMachine {
         break
       }
 
-      case 'CHAT_BLOCK_UPDATED':
-        this.state = reduceChatBlockUpdatedEvent({
+      case 'CHAT_DONE':
+        this.state = reduceChatDoneEvent({
           state: this.state,
           event,
           deriveRuntimeState: runtime => this.deriveRuntimeState(runtime),
         })
         break
 
-      case 'CHAT_DONE':
-        this.state = reduceChatDoneEvent({
+      case 'CHAT_BLOCK_UPDATED':
+        this.state = reduceChatBlockUpdatedEvent({
           state: this.state,
           event,
           deriveRuntimeState: runtime => this.deriveRuntimeState(runtime),

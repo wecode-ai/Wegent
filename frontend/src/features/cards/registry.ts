@@ -2,16 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AsyncCardComponent } from './types'
+import type { ComponentType } from 'react'
+import type { CardRendererProps } from './types'
+import { VideoDirectorGenerationCard } from './VideoDirectorGenerationCard'
 
-const cardRegistry: Record<string, () => Promise<{ default: AsyncCardComponent }>> = {
-  video_director_generation: () => import('@wecode/features/video/aigc_video/AigcVideoCard'),
-  video_short_generation: () =>
-    import('@wecode/features/video/aigc_video/VideoShortGenerationCard'),
+const cardRegistry: Record<string, ComponentType<CardRendererProps>> = {
+  video_director_generation: VideoDirectorGenerationCard,
 }
 
-export async function loadAsyncCardComponent(cardType: string): Promise<AsyncCardComponent | null> {
-  const loader = cardRegistry[cardType]
-  if (!loader) return null
-  return (await loader()).default
+export function getCardComponent(cardType: string): ComponentType<CardRendererProps> | null {
+  return cardRegistry[cardType] ?? null
+}
+
+export function registerCardComponent(
+  cardType: string,
+  component: ComponentType<CardRendererProps>
+): void {
+  cardRegistry[cardType] = component
 }

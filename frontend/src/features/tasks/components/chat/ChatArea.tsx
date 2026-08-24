@@ -109,7 +109,7 @@ import {
   isVideoExtension,
 } from '@/apis/attachments'
 import type { AttachmentTypeLimits } from '@/hooks/useMultiAttachment'
-import { teamHidesVideoParam, teamUsesModeSpecCategory } from '@wecode/features/video/teamModeSpec'
+import { teamHidesVideoParam, teamUsesModeSpecCategory } from '@/features/tasks/utils/teamModeSpec'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -367,33 +367,35 @@ function ChatAreaContent({
     maxAttachmentsByType: mediaAttachmentLimits.maxByType,
     validateAttachmentFile: validateAttachmentFileProxy,
   })
-  const showVideoModelSelectorInChat = teamUsesModeSpecCategory(chatState.selectedTeam, 'video')
+  const isModeSpecVideo =
+    taskType === 'chat' && teamUsesModeSpecCategory(chatState.selectedTeam, 'video')
   const hideVideoDuration = teamHidesVideoParam(chatState.selectedTeam, 'duration')
-  const persistedVideoModel = useMemo(() => {
-    if (!taskState?.messages) return undefined
-
-    let latestModel: string | undefined
-    let latestTimestamp = -1
-    taskState.messages.forEach(message => {
-      const model = message.result?.video_config?.model
-      if (message.type === 'user' && model && message.timestamp >= latestTimestamp) {
-        latestModel = model
-        latestTimestamp = message.timestamp
+  const usesVideoModel = taskType === 'video' || isModeSpecVideo
+  const taskVideoModelId = useMemo(() => {
+    const messages = taskState?.messages
+    if (!messages) return null
+    const userMessages = Array.from(messages.values()).filter(message => message.type === 'user')
+    for (let index = userMessages.length - 1; index >= 0; index -= 1) {
+      const result = userMessages[index].result as { video_config?: { model?: string } } | undefined
+      if (result?.video_config?.model) {
+        return result.video_config.model
       }
-    })
-    return latestModel
+    }
+    return null
   }, [taskState?.messages])
 
-  // Video model selection state - only enabled for video mode
+  // A Chat Team with video mode selects the Bot's video model while the
+  // backend runs planning on the Bot's secondary LLM.
   // Uses unified useModelSelection hook with modelCategoryType='video'
   const videoModelSelection = useModelSelection({
     teamId: chatState.selectedTeam?.id ?? null,
     taskId: effectiveTaskId ?? null,
-    taskModelId: persistedVideoModel,
+    taskModelId: taskVideoModelId,
     selectedTeam: chatState.selectedTeam,
-    disabled: taskType !== 'video',
+    disabled: !usesVideoModel,
     modelCategoryType: 'video',
   })
+  const selectVideoModelByKey = videoModelSelection.selectModelByKey
 
   // Image model selection state - only enabled for image mode
   // Uses unified useModelSelection hook with modelCategoryType='image'
@@ -470,12 +472,13 @@ function ChatAreaContent({
     if (taskType === 'image') {
       return imageCapabilities?.max_reference_images ?? imageConfig?.max_reference_images
     }
-    if (taskType === 'video') {
+    if (usesVideoModel) {
       return videoMaterialLimits.total ?? videoConfig?.max_reference_images
     }
     return undefined
   }, [
     taskType,
+    usesVideoModel,
     imageCapabilities?.max_reference_images,
     imageConfig?.max_reference_images,
     videoMaterialLimits.total,
@@ -483,14 +486,14 @@ function ChatAreaContent({
   ])
 
   const maxAttachmentsByType = useMemo(() => {
-    if (taskType !== 'video') return undefined
+    if (!usesVideoModel) return undefined
     return {
       image: videoMaterialLimits.image,
       imageWithVideo: videoCapabilities?.max_reference_images_with_video,
       video: videoMaterialLimits.video,
       audio: videoMaterialLimits.audio,
     }
-  }, [taskType, videoCapabilities?.max_reference_images_with_video, videoMaterialLimits])
+  }, [usesVideoModel, videoCapabilities?.max_reference_images_with_video, videoMaterialLimits])
 
   const videoImageMaterialAccept = useMemo(
     () => formatsToAcceptString(videoCapabilities?.image_formats, 'image/*'),
@@ -503,7 +506,7 @@ function ChatAreaContent({
 
   const materialAccept = useMemo(() => {
     if (taskType === 'image') return imageMaterialAccept
-    if (taskType !== 'video') return undefined
+    if (!usesVideoModel) return undefined
     const isKeyframeMode =
       activeVideoGenerationMode?.id === 'first_last_frame' ||
       activeVideoGenerationMode?.id === 'keyframe'
@@ -530,6 +533,7 @@ function ChatAreaContent({
     activeVideoGenerationMode,
     imageMaterialAccept,
     taskType,
+    usesVideoModel,
     videoCapabilities,
     videoImageMaterialAccept,
   ])
@@ -563,7 +567,7 @@ function ChatAreaContent({
         }
         return null
       }
-      if (taskType !== 'video' || !videoCapabilities) return null
+      if (!usesVideoModel || !videoCapabilities) return null
       const isImage = isImageExtension(extension)
       const isVideo = isVideoExtension(extension)
       const isAudio = isAudioExtension(extension)
@@ -815,6 +819,7 @@ function ChatAreaContent({
       imageReferenceFormats,
       t,
       taskType,
+      usesVideoModel,
       videoCapabilities,
     ]
   )
@@ -934,9 +939,9 @@ function ChatAreaContent({
         })
         return
       }
-      videoModelSelection.selectModelByKey(`${model.name}:${model.type || ''}`)
+      selectVideoModelByKey(`${model.name}:${model.type || ''}`)
     },
-    [chatState.attachmentState.attachments, t, toast, videoModelSelection.selectModelByKey]
+    [chatState.attachmentState.attachments, selectVideoModelByKey, t, toast]
   )
 
   const hasVideoAttachment = useMemo(() => {
@@ -1316,11 +1321,14 @@ function ChatAreaContent({
   // For video/image mode, use respective model selection; otherwise use regular model selection
   // This ensures the correct model is passed to the backend for routing
   const effectiveSelectedModel = useMemo(() => {
-    if (effectiveTaskType === 'video') return videoModelSelection.selectedModel
+    if (effectiveTaskType === 'video' || isModeSpecVideo) {
+      return videoModelSelection.selectedModel
+    }
     if (effectiveTaskType === 'image') return imageModelSelection.selectedModel
     return chatState.selectedModel
   }, [
     effectiveTaskType,
+    isModeSpecVideo,
     videoModelSelection.selectedModel,
     imageModelSelection.selectedModel,
     chatState.selectedModel,
@@ -1329,12 +1337,22 @@ function ChatAreaContent({
   // Build generate params for video/image generation tasks
   // Include model name for display in user message bubble
   const generateParams = useMemo(() => {
-    if (effectiveTaskType === 'video' || showVideoModelSelectorInChat) {
+    if (isModeSpecVideo) {
       return {
         resolution: selectedResolution,
         ratio: selectedRatio,
-        ...(!hideVideoDuration ? { duration: selectedDuration } : {}),
         model: videoModelSelection.selectedModel?.name,
+        model_display_name: videoModelSelection.selectedModel?.displayName,
+        generation_mode_id: selectedVideoGenerationMode,
+      }
+    }
+    if (effectiveTaskType === 'video') {
+      return {
+        resolution: selectedResolution,
+        ratio: selectedRatio,
+        duration: selectedDuration,
+        model: videoModelSelection.selectedModel?.name,
+        model_display_name: videoModelSelection.selectedModel?.displayName,
         generation_mode_id: selectedVideoGenerationMode,
       }
     }
@@ -1347,14 +1365,14 @@ function ChatAreaContent({
     return undefined
   }, [
     effectiveTaskType,
-    hideVideoDuration,
-    showVideoModelSelectorInChat,
+    isModeSpecVideo,
     selectedResolution,
     selectedRatio,
     selectedDuration,
     selectedVideoGenerationMode,
     selectedImageSize,
     videoModelSelection.selectedModel?.name,
+    videoModelSelection.selectedModel?.displayName,
     imageModelSelection.selectedModel?.name,
   ])
 
@@ -1482,11 +1500,9 @@ function ChatAreaContent({
     // OpenClaw devices handle model on device side, no model selection required
     if (hideSelectors) return false
     // Video mode uses video model selection, not regular model selection
-    if (effectiveTaskType === 'video') {
-      // In video mode, we need a video model selected
+    if (effectiveTaskType === 'video' || isModeSpecVideo) {
       return !videoModelSelection.selectedModel
     }
-    if (showVideoModelSelectorInChat && !videoModelSelection.selectedModel) return true
     // Image mode uses image model selection
     if (effectiveTaskType === 'image') {
       // In image mode, we need an image model selected
@@ -1500,8 +1516,8 @@ function ChatAreaContent({
     chatState.selectedTeam,
     chatState.selectedModel,
     effectiveTaskType,
+    isModeSpecVideo,
     hideSelectors,
-    showVideoModelSelectorInChat,
     videoModelSelection.selectedModel,
     imageModelSelection.selectedModel,
   ])
@@ -1527,7 +1543,7 @@ function ChatAreaContent({
     if (!chatState.isAttachmentReadyToSend) {
       return t('generate.material_errors.attachment_uploading')
     }
-    if (effectiveTaskType !== 'video') return null
+    if (effectiveTaskType !== 'video' && !isModeSpecVideo) return null
 
     if (
       (activeVideoGenerationMode?.id === 'first_last_frame' ||
@@ -1558,6 +1574,7 @@ function ChatAreaContent({
     effectiveTaskType,
     generationAttachmentCounts.image,
     generationAttachmentCounts.material,
+    isModeSpecVideo,
     isModelSelectionRequired,
     t,
     videoCapabilities?.image_input_required,
@@ -2530,6 +2547,8 @@ function ChatAreaContent({
     selectedVideoModel: videoModelSelection.selectedModel,
     onVideoModelChange: handleVideoModelChange,
     isVideoModelsLoading: videoModelSelection.isLoading,
+    showVideoControlsInChat: isModeSpecVideo,
+    hideDurationSelector: hideVideoDuration,
     selectedResolution,
     onResolutionChange: setSelectedResolution,
     availableResolutions,

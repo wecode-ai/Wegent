@@ -59,7 +59,6 @@ celery_app = Celery(
         "app.tasks.project_automation_tasks",
         "app.tasks.plugin_marketplace_tasks",
         "app.tasks.video_tasks",
-        "wecode.video.api.tasks",
     ],
 )
 

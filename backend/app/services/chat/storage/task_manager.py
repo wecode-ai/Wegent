@@ -750,18 +750,15 @@ async def create_task_and_subtasks(
     else:
         bot_ids = get_bot_ids_from_team(db, team)
 
-    # Persist user-selected generation parameters for display and skill context.
+    # Persist user-selected generation parameters for display and retry.
     video_config = None
     image_config = None
-    team_spec = team.json.get("spec", {}) if isinstance(team.json, dict) else {}
-    mode_spec = team_spec.get("modeSpec") or {}
-    allows_chat_video = "video" in (mode_spec.get("allowedModelCategories") or [])
     if params.generate_params and (
-        params.task_type == "video"
-        or (params.task_type in {"chat", "task"} and allows_chat_video)
+        params.task_type == "video" or params.generate_params.get("model")
     ):
         video_config = {
             "model": params.generate_params.get("model") or params.model_id,
+            "model_display_name": params.generate_params.get("model_display_name"),
             "resolution": params.generate_params.get("resolution"),
             "ratio": params.generate_params.get("ratio"),
             "duration": params.generate_params.get("duration"),

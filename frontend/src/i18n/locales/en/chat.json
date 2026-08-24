@@ -114,6 +114,14 @@
     "reconnecting": "Reconnecting... (attempt {{count}})",
     "reconnected": "Reconnected"
   },
+  "cards": {
+    "video_director": {
+      "title": "Video generation",
+      "processing": "Creating your video",
+      "failed": "Video generation failed",
+      "view_detail": "View details"
+    }
+  },
   "messages": {
     "assistant": "AI Assistant",
     "system": "System",

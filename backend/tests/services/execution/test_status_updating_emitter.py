@@ -11,6 +11,126 @@ from shared.models import EventType, ExecutionEvent
 
 
 @pytest.mark.asyncio
+async def test_done_defers_terminal_status_to_async_card_poll() -> None:
+    from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    card_result = {
+        "video_job": {
+            "card_type": "video_director_generation",
+            "query_url": "https://workflow.example.com/task/1",
+            "status": "polling",
+        },
+        "blocks": [],
+    }
+
+    with (
+        patch(
+            "app.services.execution.emitters.status_updating.collect_completed_result",
+            new=AsyncMock(return_value=card_result),
+        ),
+        patch(
+            "app.services.execution.emitters.status_updating."
+            "persist_result_without_status",
+            new=AsyncMock(),
+        ) as persist_result,
+        patch(
+            "app.services.execution.emitters.status_updating.persist_completed_result",
+            new=AsyncMock(),
+        ) as persist_completed,
+        patch.object(
+            emitter, "_publish_task_completed_event", new=AsyncMock()
+        ) as publish,
+    ):
+        result = await emitter._update_status_completed({"value": ""})
+
+    assert result == card_result
+    persist_result.assert_awaited_once_with(202, card_result)
+    persist_completed.assert_not_awaited()
+    publish.assert_not_awaited()
+    assert emitter._terminal_event_deferred is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_error_does_not_override_terminal_async_card_poll() -> None:
+    from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    card_result = {
+        "video_job": {
+            "card_type": "video_director_generation",
+            "query_url": "https://workflow.example.com/task/1",
+            "status": "failed",
+        },
+        "blocks": [],
+    }
+
+    with (
+        patch(
+            "app.services.execution.emitters.status_updating.collect_completed_result",
+            new=AsyncMock(return_value=card_result),
+        ),
+        patch(
+            "app.services.execution.emitters.status_updating."
+            "persist_result_without_status",
+            new=AsyncMock(),
+        ) as persist_result,
+        patch(
+            "app.services.execution.emitters.status_updating.persist_completed_result",
+            new=AsyncMock(),
+        ) as persist_completed,
+        patch.object(
+            emitter, "_publish_task_completed_event", new=AsyncMock()
+        ) as publish,
+    ):
+        result = await emitter._update_status_failed("runtime failed")
+
+    assert result == card_result
+    persist_result.assert_awaited_once_with(202, card_result)
+    persist_completed.assert_not_awaited()
+    publish.assert_not_awaited()
+    assert emitter._terminal_event_deferred is True
+
+
+@pytest.mark.asyncio
+async def test_done_event_is_not_forwarded_when_async_card_poll_owns_status() -> None:
+    from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    card_result = {
+        "video_job": {
+            "card_type": "video_director_generation",
+            "query_url": "https://workflow.example.com/task/1",
+            "status": "polling",
+        },
+        "blocks": [],
+    }
+    done = ExecutionEvent(
+        type=EventType.DONE.value,
+        task_id=101,
+        subtask_id=202,
+    )
+
+    with (
+        patch(
+            "app.services.execution.emitters.status_updating.collect_completed_result",
+            new=AsyncMock(return_value=card_result),
+        ),
+        patch(
+            "app.services.execution.emitters.status_updating."
+            "persist_result_without_status",
+            new=AsyncMock(),
+        ),
+    ):
+        await emitter.emit(done)
+
+    wrapped.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_chunk_events_batch_storage_without_blocking_forward(monkeypatch):
     """Streaming chunks should forward immediately and persist as a batch."""
     from app.services.chat.storage.session import StreamContentType

@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: minute-video-ghost
+  namespace: default
+spec:
+  skills:
+    - wegent-minute-video
+  preload_skills:
+    - wegent-minute-video
+  systemPrompt: |
+    You are a creative video director. Follow the preloaded one-minute creative-video
+    Skill for every production request. The Bot primary model and video parameters are
+    selected by the user; this conversation runs on the Bot secondary text model.
+    Never call the ordinary generate_video tool.
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: minute-video-bot
+  namespace: default
+spec:
+  ghostRef:
+    name: minute-video-ghost
+    namespace: default
+  shellRef:
+    name: Chat
+    namespace: default
+  modelRef:
+    name: 行业领先旗舰模型
+    namespace: default
+  secondaryModelRef:
+    name: ali-deepseek-v4-flash
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: minute-video-team
+  displayName: 1分钟创意视频
+  namespace: default
+spec:
+  description: 使用 QIA 工作流策划并生成一分钟创意视频。
+  members:
+    - role: leader
+      botRef:
+        name: minute-video-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: solo
+  bind_mode:
+    - chat
+  modeSpec:
+    allowedModelCategories:
+      - video
+    hiddenVideoParams:
+      - duration
+  workflow:
+    mode: solo
+status:
+  state: Available

@@ -2,14 +2,40 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ComponentType } from 'react'
 import type { CardBlock } from '@/features/tasks/components/message/thinking/types'
 
-export interface AsyncCardComponentProps {
-  card: CardBlock
+export interface CardRendererProps {
+  block: CardBlock
   taskId?: number
   subtaskId?: number
-  onSendMessage?: (content: string) => void
+  onChatButtonClick?: (message: string) => void | Promise<void>
 }
 
-export type AsyncCardComponent = ComponentType<AsyncCardComponentProps>
+export interface VideoDirectorCardButton {
+  button_id?: string
+  button_name?: string
+  button_type?: string
+  url?: string
+  link?: string
+}
+
+export interface VideoDirectorCardData {
+  title?: string
+  created_time?: string
+  link?: string
+  preview_type?: string
+  preview_content?: {
+    text?: string
+  }
+  buttons?: VideoDirectorCardButton[]
+  video_url?: string
+  cover_url?: string
+}
+
+export interface VideoDirectorCardPreview {
+  progress?: number
+  progress_text?: string
+  title?: string
+  video_url?: string
+  cover_url?: string
+}

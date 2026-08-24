@@ -34,9 +34,9 @@ import {
 } from '../../subscription/SubscriptionPreviewCard'
 import { blockToToolPair } from './utils/blockToToolPair'
 import { resolveGeneratedImageDisplayLayout } from '@/features/tasks/utils/imageDisplaySize'
+import { CardRenderer } from '@/features/cards/CardRenderer'
 // Import to register prompt optimization block renderer
 import '@/features/prompt-optimization/block-renderer'
-import '@/features/cards/block-renderer'
 
 const normalizeForComparison = (value: string): string =>
   value.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '')
@@ -130,12 +130,12 @@ interface MixedContentViewProps {
     formattedMessage: string,
     answer: InteractiveFormAnswerPayload
   ) => void
+  /** Send a follow-up message from an interactive card button. */
+  onCardChatButtonClick?: (message: string) => void | Promise<void>
   /** Optional override for the running processing indicator text */
   processingMessage?: string
   /** Hide tool input/output details and parameter previews */
   hideToolDetails?: boolean
-  /** Send a follow-up message from an interactive content block. */
-  onSendMessage?: (content: string) => void
 }
 
 const MEDIA_COMPLETION_MESSAGES = new Set([
@@ -218,9 +218,9 @@ const MixedContentView = memo(function MixedContentView({
   subtaskId,
   currentMessageIndex,
   onAskUserSubmit,
+  onCardChatButtonClick,
   processingMessage,
   hideToolDetails = false,
-  onSendMessage,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
   const isTerminalFailure = ['FAILED', 'CANCELLED'].includes(taskStatus?.toUpperCase() || '')
@@ -265,7 +265,7 @@ const MixedContentView = memo(function MixedContentView({
                   taskId,
                   subtaskId,
                   currentMessageIndex,
-                  onSendMessage,
+                  onSendMessage: onCardChatButtonClick,
                 }),
             }
           }
@@ -335,6 +335,12 @@ const MixedContentView = memo(function MixedContentView({
               data: block as unknown as SubscriptionPreviewBlock,
               blockId: block.id,
               status: block.status,
+            }
+          } else if (block.type === 'card') {
+            return {
+              type: 'card' as const,
+              data: block,
+              blockId: block.id,
             }
           } else if (block.type === 'guidance') {
             return {
@@ -440,7 +446,7 @@ const MixedContentView = memo(function MixedContentView({
                     taskId,
                     subtaskId,
                     currentMessageIndex,
-                    onSendMessage,
+                    onSendMessage: onCardChatButtonClick,
                   }),
               }
             }
@@ -575,7 +581,16 @@ const MixedContentView = memo(function MixedContentView({
     }
 
     return items
-  }, [blocks, thinking, content, toolMap, taskId, subtaskId, currentMessageIndex, onSendMessage])
+  }, [
+    blocks,
+    thinking,
+    content,
+    toolMap,
+    taskId,
+    subtaskId,
+    currentMessageIndex,
+    onCardChatButtonClick,
+  ])
 
   // Check if we should show "Processing..." indicator
   const shouldShowProcessing = useMemo(() => {
@@ -750,6 +765,16 @@ const MixedContentView = memo(function MixedContentView({
             <div key={item.blockId} className="pb-4">
               <SubscriptionPreviewCard data={item.data} />
             </div>
+          )
+        } else if (item.type === 'card') {
+          return (
+            <CardRenderer
+              key={item.blockId}
+              block={item.data}
+              taskId={taskId}
+              subtaskId={subtaskId}
+              onChatButtonClick={onCardChatButtonClick}
+            />
           )
         } else if (item.type === 'guidance') {
           return <GuidanceBlock key={item.blockId} block={item.data} />

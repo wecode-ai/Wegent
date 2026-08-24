@@ -263,17 +263,12 @@ export function useModelSelection({
     return getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
   }, [modelCategoryType, selectedTeam?.agent_type])
 
-  /** Resolve Team-level whitelist first, then fall back to Bot configuration. */
+  /** Get allowed_models whitelist from the first bot's agent_config */
   const allowedModels = useMemo(() => {
-    const teamAllowedModels = (selectedTeam?.allowed_models ?? []).filter(
-      model => !model.modelCategoryType || model.modelCategoryType === modelCategoryType
-    )
-    if (teamAllowedModels.length > 0) return teamAllowedModels
-
     const firstBot = selectedTeam?.bots?.[0]?.bot
     if (!firstBot?.agent_config) return []
     return getAllowedModelsFromConfig(firstBot.agent_config as Record<string, unknown>)
-  }, [modelCategoryType, selectedTeam])
+  }, [selectedTeam])
 
   const boundDefaultModel = useMemo((): Model | null => {
     const configuredModels = (selectedTeam?.bots ?? [])
@@ -315,15 +310,8 @@ export function useModelSelection({
     }
     // Apply allowed_models whitelist filter if configured
     if (allowedModels.length > 0) {
-      result = result.filter(model =>
-        allowedModels.some(
-          allowed =>
-            allowed.name === model.name &&
-            (!allowed.namespace ||
-              allowed.namespace === 'default' ||
-              allowed.namespace === model.namespace)
-        )
-      )
+      const allowedNames = new Set(allowedModels.map(m => m.name))
+      result = result.filter(m => allowedNames.has(m.name))
     }
     if (requireVideoInput) {
       result = result.filter(

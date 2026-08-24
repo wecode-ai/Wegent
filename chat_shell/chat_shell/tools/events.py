@@ -19,8 +19,7 @@ from chat_shell.tools.deferred_input import (
     DeferredUserInputExit,
     is_deferred_user_input_result,
 )
-from shared.models import ResponsesAPIEmitter
-from shared.models.blocks import create_card_block
+from shared.models import ResponsesAPIEmitter, create_card_block
 from shared.telemetry.context.large_data import log_large_attribute
 from shared.telemetry.decorators import add_span_event
 from shared.utils.tool_arguments import sanitize_tool_arguments
@@ -299,7 +298,28 @@ def _handle_tool_end(
     # Check for MCP silent_exit marker in tool output
     _check_silent_exit_marker(state, tool_name, serializable_output)
     is_deferred_user_input = False
-    if is_deferred_user_input_result(serializable_output):
+    deferred_result_detected = is_deferred_user_input_result(serializable_output)
+    if "interactive_form_question" in tool_name:
+        output_keys = (
+            sorted(serializable_output.keys())
+            if isinstance(serializable_output, dict)
+            else []
+        )
+        list_item_types = (
+            [type(item).__name__ for item in serializable_output[:5]]
+            if isinstance(serializable_output, list)
+            else []
+        )
+        logger.info(
+            "[InteractiveFormDiagnostic] tool_end output_type=%s output_keys=%s "
+            "list_item_types=%s output_length=%d deferred_detected=%s",
+            type(serializable_output).__name__,
+            output_keys,
+            list_item_types,
+            len(output_str),
+            deferred_result_detected,
+        )
+    if deferred_result_detected:
         is_deferred_user_input = True
         state.is_deferred_user_input = True
         state.deferred_user_input_tool_use_id = tool_use_id
@@ -442,7 +462,7 @@ def _parse_json_object(value: Any) -> dict[str, Any] | None:
 
 
 def _extract_card_result(value: Any) -> dict[str, Any] | None:
-    """Extract a card entity from plain and MCP text-content outputs."""
+    """Extract a card result from plain and MCP text-content outputs."""
     parsed = _parse_json_object(value)
     if parsed is not None:
         return parsed
@@ -466,26 +486,52 @@ def _emit_card_block(
     tool_name: str,
     tool_output: Any,
 ) -> None:
-    """Render a card tool result immediately through the common block stream."""
+    """Publish a card MCP result through the current chat response stream."""
     if not tool_name.endswith("create_async_video_card"):
         return
     card = _extract_card_result(tool_output)
-    if not card or "id" not in card or card.get("error"):
+    if not card or card.get("error"):
         return
+
+    card_id = card.get("id") or card.get("card_id")
+    if not card_id:
+        return
+    card_status = str(card.get("status") or card.get("card_status") or "populated")
+    if card_status == "polling":
+        card_status = "pending"
     block = create_card_block(
-        card_id=card["id"],
+        card_id=card_id,
         card_type=str(card.get("card_type") or "unknown"),
-        card_data=card.get("data") if isinstance(card.get("data"), dict) else {},
-        card_status=str(card.get("status") or "populated"),
+        card_data=(
+            card.get("data")
+            if isinstance(card.get("data"), dict)
+            else (
+                card.get("card_data") if isinstance(card.get("card_data"), dict) else {}
+            )
+        ),
+        card_status=card_status,
         card_preview_data=(
             card.get("preview_data")
             if isinstance(card.get("preview_data"), dict)
-            else None
+            else (
+                card.get("card_preview_data")
+                if isinstance(card.get("card_preview_data"), dict)
+                else {}
+            )
+        ),
+        card_error=(
+            str(card["card_error"]) if card.get("card_error") is not None else None
         ),
     )
     _run_async(emitter.block_created(block))
     if hasattr(state, "add_block"):
         state.add_block(block)
+    logger.info(
+        "[TOOL_END] Emitted CardBlock: card_id=%s card_type=%s card_status=%s",
+        block["card_id"],
+        block["card_type"],
+        block["card_status"],
+    )
 
 
 def _extract_sources(tool_name: str, tool_output: Any) -> list[dict[str, Any]]:

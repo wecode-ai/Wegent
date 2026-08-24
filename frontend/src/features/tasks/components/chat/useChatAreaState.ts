@@ -33,10 +33,10 @@ import { userApis } from '@/apis/user'
 import { correctionApis } from '@/apis/correction'
 import { saveLastRepo } from '@/utils/userPreferences'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
-import { usesVideoReferenceStorage } from '@wecode/features/video/teamModeSpec'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { isChatShell } from '../../service/attachmentService'
 import { teamRequiresWorkspace } from '../../service/messageService'
+import { usesVideoReferenceStorage } from '../../utils/teamModeSpec'
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
 
@@ -233,7 +233,6 @@ export function useChatAreaState({
   // Team state
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false)
-  const shouldUseVideoReferenceStorage = usesVideoReferenceStorage(taskType, selectedTeam)
 
   // Track if user is using default team or manually selected one
   const [isUsingDefaultTeam, setIsUsingDefaultTeam] = useState(true)
@@ -331,7 +330,9 @@ export function useChatAreaState({
     showTruncationToast: isChatShell(selectedTeam),
     maxByType: maxAttachmentsByType,
     validateFile: validateAttachmentFile,
-    storagePurpose: shouldUseVideoReferenceStorage ? 'video_reference' : 'default',
+    storagePurpose: usesVideoReferenceStorage(taskType, selectedTeam)
+      ? 'video_reference'
+      : 'default',
   })
 
   // Refs for random indices (stable across taskType changes)

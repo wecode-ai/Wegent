@@ -35,6 +35,23 @@ def test_retry_restores_image_generation_size() -> None:
     assert params.size == "1512x648"
 
 
+def test_retry_restores_workflow_video_model_without_text_model_override() -> None:
+    user_subtask = SimpleNamespace(
+        result={
+            "video_config": {
+                "model": "seedance-2",
+                "model_display_name": "Seedance 2",
+            }
+        }
+    )
+
+    params = chat_namespace._get_retry_generate_params(user_subtask)
+
+    assert params is not None
+    assert params.model == "seedance-2"
+    assert params.model_display_name == "Seedance 2"
+
+
 class _RetryDbMock:
     """Mock DB that records whether the retry session was released."""
 

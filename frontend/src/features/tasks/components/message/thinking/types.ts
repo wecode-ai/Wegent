@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import type { CardBlock as SharedCardBlock } from '@wegent/chat-core'
+
 /**
  * Thinking step structure from backend
  */
@@ -210,19 +212,6 @@ export interface ImageBlock extends BaseBlock {
   content?: string // Progress message
 }
 
-export type CardStatus = 'pending' | 'partial_ready' | 'populated' | 'error' | 'expired'
-
-/** Generic asynchronous card block. Feature modules own card_data rendering. */
-export interface CardBlock extends BaseBlock {
-  type: 'card'
-  card_id: string
-  card_type: string
-  card_status: CardStatus
-  card_data: Record<string, unknown>
-  card_preview_data?: Record<string, unknown>
-  card_error?: string
-}
-
 /**
  * Prompt change item for optimization block
  */
@@ -292,6 +281,14 @@ export interface SubscriptionPreviewBlockType extends BaseBlock {
   config: SubscriptionPreviewConfig
   created_at: string
 }
+
+/**
+ * Generic data-backed card block.
+ *
+ * Card renderers are selected by card_type. The payload remains data-only;
+ * renderers must not execute arbitrary markup or scripts from card_data.
+ */
+export type CardBlock = SharedCardBlock
 
 /**
  * Union type of all message block types.

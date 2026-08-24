@@ -27,6 +27,14 @@ from app.services.admin_password_bootstrap import (
 from app.services.k_batch import batch_service
 
 logger = logging.getLogger(__name__)
+_additional_init_data_directories: list[Path] = []
+
+
+def register_additional_init_data_directory(directory: Path) -> None:
+    """Register an optional resource directory supplied by an extension."""
+    resolved = directory.resolve()
+    if resolved not in _additional_init_data_directories:
+        _additional_init_data_directories.append(resolved)
 
 
 def _is_newer_skill_version(existing: Any, candidate_version: Any) -> bool:
@@ -242,14 +250,14 @@ def apply_public_resources(
     db: Session, resources: List[Dict[str, Any]], force: bool = False
 ) -> List[Dict[str, Any]]:
     """
-    Apply public resources (Model, Shell, Ghost, Bot, Team, Template) to the kinds table (user_id=0).
+    Apply public resources (Shell, Ghost, Bot, Team, Template) to the kinds table (user_id=0).
     Only creates new resources, skips existing ones (create-only mode).
 
     Template resources use namespace='system' while other resources use namespace from metadata.
 
     Args:
         db: Database session
-        resources: List of resource documents (Model, Shell, Ghost, Bot, Team, Template)
+        resources: List of resource documents (Shell, Ghost, Bot, Team, Template)
         force: If True, delete existing resources and recreate them
 
     Returns:
@@ -262,7 +270,7 @@ def apply_public_resources(
     from app.models.kind import Kind
 
     # Supported public resource kinds
-    supported_kinds = {"Model", "Shell", "Ghost", "Bot", "Team", "Template"}
+    supported_kinds = {"Shell", "Ghost", "Bot", "Team", "Template"}
 
     results = []
     created_count = 0
@@ -561,8 +569,8 @@ def scan_and_apply_yaml_directory(
     """
     Scan a directory for YAML files and apply all resources as PUBLIC (user_id=0).
 
-    All resources (Model, Shell, Ghost, Bot, Team, Template) from init_data are created
-    as public resources so they can be accessed by all users.
+    All resources (Shell, Ghost, Bot, Team) from init_data are created as public
+    resources so they can be accessed by all users.
 
     Args:
         user_id: User ID (kept for API compatibility, not used for resource creation)
@@ -612,7 +620,7 @@ def scan_and_apply_yaml_directory(
             kind = doc.get("kind")
             metadata = doc.get("metadata", {})
 
-            # All resources (Model, Shell, Ghost, Bot, Team, Template) are now public
+            # All resources (Shell, Ghost, Bot, Team) are now public
             public_resources.append(doc)
             logger.info(f"  Added public resource: {kind}/{metadata.get('name')}")
 
@@ -634,11 +642,10 @@ def scan_and_apply_yaml_directory(
         )
         logger.info(f"Skills applied: {len(skill_results)} results")
 
-    # Apply all public resources (Model, Shell, Ghost, Bot, Team, Template)
-    # Order matters: Model -> Shell -> Ghost -> Bot -> Team -> Template (due to references)
+    # Apply all public resources (Shell, Ghost, Bot, Team, Template)
+    # Order matters: Shell -> Ghost -> Bot -> Team -> Template (due to references)
     # Sort resources by kind to ensure correct order
     kind_order = {"Shell": 0, "Ghost": 1, "Bot": 2, "Team": 3, "Template": 4}
-    kind_order["Model"] = -1
     sorted_resources = sorted(
         public_resources, key=lambda r: kind_order.get(r.get("kind"), 99)
     )
@@ -674,8 +681,8 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
     Main entry point for YAML initialization.
     Scans the configured directory and applies all YAML resources as PUBLIC (user_id=0).
 
-    All resources (Model, Shell, Ghost, Bot, Team, Template, Skill) from init_data are
-    created as public resources so they can be accessed by all users.
+    All resources (Shell, Ghost, Bot, Team, Skill) from init_data are created as public
+    resources so they can be accessed by all users.
 
     Note: Distributed locking is now handled by the caller (main.py) using a unified
     startup lock that covers both Alembic migrations and YAML initialization.
@@ -729,12 +736,40 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
         else:
             logger.warning(f"Relative path does not exist: {relative_dir}")
 
-    logger.info(f"Scanning initialization directory: {init_dir}")
+    init_directories = [init_dir, *_additional_init_data_directories]
+    logger.info(f"Scanning initialization directories: {init_directories}")
 
     try:
-        # Apply all public resources (Model, Shell, Ghost, Bot, Team, Template, Skill)
+        # Apply all public resources (Shell, Ghost, Bot, Team, Skill)
         # All resources are now public (user_id=0) and accessible by all users
-        summary = scan_and_apply_yaml_directory(user_id, init_dir, db, force=force)
+        summaries = [
+            scan_and_apply_yaml_directory(user_id, directory, db, force=force)
+            for directory in init_directories
+        ]
+        if len(summaries) == 1:
+            summary = summaries[0]
+        else:
+            summary = {
+                "status": (
+                    "error"
+                    if any(item.get("status") == "error" for item in summaries)
+                    else "completed"
+                ),
+                "directories": summaries,
+                "resources_total": sum(
+                    item.get("resources_total", 0) for item in summaries
+                ),
+                "resources_applied": sum(
+                    item.get("resources_applied", 0) for item in summaries
+                ),
+                "resources_failed": sum(
+                    item.get("resources_failed", 0) for item in summaries
+                ),
+                "public_resources": sum(
+                    item.get("public_resources", 0) for item in summaries
+                ),
+                "skills": sum(item.get("skills", 0) for item in summaries),
+            }
 
         logger.info(f"YAML initialization completed: {summary}")
         return summary

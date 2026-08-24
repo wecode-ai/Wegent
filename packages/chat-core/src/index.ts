@@ -10,7 +10,7 @@ export type {
   TeamDisplayConfig,
 } from './api-types'
 export { nestMessageBlocks } from './message-blocks'
-export type { MessageBlock, MessageBlockStatus } from './message-blocks'
+export type { CardBlock, MessageBlock, MessageBlockStatus } from './message-blocks'
 export {
   getLatestThinkingContent,
   isGenericTaskStatusError,

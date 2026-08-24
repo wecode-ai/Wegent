@@ -39,6 +39,7 @@ from .attachment_sync import (
 from .blocks import (
     BlockStatus,
     BlockType,
+    CardBlock,
     MessageBlock,
     SubagentBlock,
     TextBlock,
@@ -204,6 +205,7 @@ __all__ = [
     "BlockStatus",
     "ToolBlock",
     "TextBlock",
+    "CardBlock",
     "MessageBlock",
     "SubagentBlock",
     "block_from_dict",

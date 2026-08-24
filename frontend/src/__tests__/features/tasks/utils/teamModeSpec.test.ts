@@ -1,0 +1,39 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  teamHidesVideoParam,
+  teamUsesModeSpecCategory,
+  usesVideoReferenceStorage,
+} from '@/features/tasks/utils/teamModeSpec'
+import type { Team } from '@/types/api'
+
+const minuteVideoTeam = {
+  id: 1,
+  name: 'workflow-video-team',
+  mode_spec: {
+    allowedModelCategories: ['video'],
+    hiddenVideoParams: ['duration'],
+  },
+} as unknown as Team
+
+describe('teamModeSpec', () => {
+  it('exposes only the configured video category', () => {
+    expect(teamUsesModeSpecCategory(minuteVideoTeam, 'video')).toBe(true)
+    expect(teamUsesModeSpecCategory(minuteVideoTeam, 'llm')).toBe(false)
+    expect(teamUsesModeSpecCategory(minuteVideoTeam, 'image')).toBe(false)
+  })
+
+  it('hides only the workflow-owned duration parameter', () => {
+    expect(teamHidesVideoParam(minuteVideoTeam, 'duration')).toBe(true)
+    expect(teamHidesVideoParam(minuteVideoTeam, 'ratio')).toBe(false)
+    expect(teamHidesVideoParam(minuteVideoTeam, 'resolution')).toBe(false)
+  })
+
+  it('uses video reference storage for video-capable chat teams', () => {
+    expect(usesVideoReferenceStorage('chat', minuteVideoTeam)).toBe(true)
+    expect(usesVideoReferenceStorage('chat', null)).toBe(false)
+    expect(usesVideoReferenceStorage('video', null)).toBe(true)
+  })
+})

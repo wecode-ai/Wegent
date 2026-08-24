@@ -4,61 +4,58 @@
 
 'use client'
 
-import { ChevronRight, Clock3, FileVideo, Loader2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
-import { Progress } from '@/components/ui/progress'
-import type { AsyncCardComponentProps } from '@/features/cards/types'
+import {
+  safeCardUrl,
+  VideoDirectorGenerationCard,
+} from '@/features/cards/VideoDirectorGenerationCard'
+import type { CardRendererProps } from '@/features/cards/types'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AigcVideoPanel } from './AigcVideoPanel'
 import { parseAigcVideoCardData, type AigcVideoButton } from './types'
 
-function progressValue(value: unknown): number {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 0
-}
-
-export default function AigcVideoCard({ card, taskId, onSendMessage }: AsyncCardComponentProps) {
+export default function AigcVideoCard({
+  block: card,
+  taskId,
+  onChatButtonClick,
+}: CardRendererProps) {
   const { t } = useTranslation('video')
   const { theme } = useTheme()
   const [panelOpen, setPanelOpen] = useState(false)
   const [submitting, setSubmitting] = useState<string | null>(null)
   const previousStatusRef = useRef(card.card_status)
   const data = parseAigcVideoCardData(card.card_data || {})
-  const preview = card.card_preview_data || {}
-  const progress = progressValue(preview.progress)
-  const pending = card.card_status === 'pending'
-  const partial = card.card_status === 'partial_ready'
-  const title = data.title || String(preview.title || t('card.title'))
-  const progressText = data.progress_text || String(preview.progress_text || '')
+  const title = data.title || String(card.card_preview_data?.title || t('card.title'))
   const previewText = data.preview_content?.text || ''
   const buttons = Array.isArray(data.buttons) ? data.buttons : []
+  const detailUrl = safeCardUrl(data.link)
 
   useEffect(() => {
     const previous = previousStatusRef.current
     if (
       previous === 'pending' &&
       (card.card_status === 'partial_ready' || card.card_status === 'populated') &&
-      data.link &&
+      detailUrl &&
       !document.querySelector('[data-wegent-panel]')
     ) {
       setPanelOpen(true)
     }
     previousStatusRef.current = card.card_status
-  }, [card.card_status, data.link])
+  }, [card.card_status, detailUrl])
 
   const handleButton = async (button: AigcVideoButton) => {
     const buttonId = button.button_id || button.button_name
     if (button.button_type === 'link') {
-      setPanelOpen(true)
+      if (detailUrl) setPanelOpen(true)
       return
     }
-    if (!onSendMessage) return
+    if (!onChatButtonClick) return
     setSubmitting(buttonId)
     try {
-      onSendMessage(button.prompt || button.button_name)
+      await onChatButtonClick(button.prompt || button.button_name)
     } finally {
       setSubmitting(null)
     }
@@ -68,105 +65,30 @@ export default function AigcVideoCard({ card, taskId, onSendMessage }: AsyncCard
   const finalVideoButton =
     chatButtons.find(button => /最终|合成|final/i.test(button.button_name)) ?? chatButtons.at(-1)
 
-  if (pending) {
-    return (
-      <div
-        className="w-full max-w-[342px] rounded-lg border border-border bg-surface p-4"
-        data-testid={`aigc-video-card-${card.card_id}`}
-      >
-        <div className="flex items-center gap-3">
-          <Loader2 className="h-5 w-5 shrink-0 animate-spin text-primary" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">{title}</div>
-            <Progress value={progress} className="mt-2 h-1.5" />
-            <div className="mt-1 text-xs text-text-secondary">
-              {progressText || t('card.processing')} {progress}%
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <>
-      <article
-        className={`w-full max-w-[342px] overflow-hidden rounded-lg border border-border bg-surface ${
-          data.link ? 'cursor-pointer transition-colors hover:bg-muted/30' : ''
-        }`}
-        onClick={() => data.link && setPanelOpen(true)}
-        data-testid={`aigc-video-card-${card.card_id}`}
-      >
-        {partial ? (
-          <div className="border-b border-border px-4 py-2">
-            <div className="flex items-center gap-2 text-xs text-text-secondary">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              <span className="min-w-0 flex-1 truncate">
-                {progressText || t('card.processing')}
-              </span>
-              <span>{progress}%</span>
-            </div>
-            <Progress value={progress} className="mt-2 h-1" />
-          </div>
-        ) : null}
-        <div className="flex min-h-[72px] items-center gap-3 p-4">
-          <div className="rounded-lg bg-primary/10 p-2 text-primary">
-            <FileVideo className="h-5 w-5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">{title}</div>
-            {data.created_time ? (
-              <div className="mt-1 flex items-center gap-1 text-xs text-text-secondary">
-                <Clock3 className="h-3.5 w-3.5" />
-                {new Date(data.created_time).toLocaleString()}
-              </div>
-            ) : null}
-          </div>
-          {data.link ? (
-            <div className="flex items-center gap-1 text-xs text-text-secondary">
-              {t('card.viewEdit')}
-              <ChevronRight className="h-4 w-4" />
-            </div>
-          ) : null}
-        </div>
-      </article>
-
-      {!partial && buttons.length > 0 ? (
-        <div className="mt-2 flex max-w-[342px] flex-wrap gap-2">
-          {buttons.map(button => {
-            const buttonId = button.button_id || button.button_name
-            return (
-              <Button
-                key={buttonId}
-                variant="outline"
-                size="sm"
-                disabled={submitting === buttonId}
-                onClick={() => void handleButton(button)}
-                data-testid={`aigc-video-card-action-${buttonId}`}
-              >
-                {submitting === buttonId ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                {button.button_name}
-              </Button>
-            )
-          })}
-        </div>
-      ) : null}
+      <VideoDirectorGenerationCard
+        block={card}
+        taskId={taskId}
+        onChatButtonClick={onChatButtonClick}
+        onDetailOpen={() => setPanelOpen(true)}
+      />
 
       <AigcVideoPanel
         open={panelOpen}
-        link={data.link}
+        link={detailUrl || undefined}
         title={title}
         fallbackTaskId={taskId}
         onClose={() => setPanelOpen(false)}
         onContinue={
-          onSendMessage
+          onChatButtonClick
             ? buttonName => {
                 setPanelOpen(false)
                 const button =
                   buttons.find(candidate => candidate.button_name === buttonName) ??
                   finalVideoButton
                 const message = button?.prompt || buttonName || button?.button_name
-                if (message) onSendMessage(message)
+                if (message) void onChatButtonClick(message)
               }
             : undefined
         }
