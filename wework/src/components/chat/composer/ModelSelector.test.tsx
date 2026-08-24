@@ -12,6 +12,11 @@ vi.mock('@/hooks/useConfiguredKeybinding', () => ({
   useConfiguredKeybinding: configuredKeybindingMock,
 }))
 
+const embeddedBrowserOcclusionMock = vi.hoisted(() => vi.fn())
+vi.mock('@/hooks/useEmbeddedBrowserOcclusion', () => ({
+  useEmbeddedBrowserOcclusion: embeddedBrowserOcclusionMock,
+}))
+
 const modelExecutionMock = vi.hoisted(() => ({
   supportsResponsesApi: vi.fn().mockReturnValue(false),
 }))
@@ -24,12 +29,13 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 
 import { ModelSelector } from './ModelSelector'
+import { getDesktopModelSelectorCollisionPadding } from './model-selector-layout'
 
 const SHELL_LEFT = 800
 const WINDOW_INNER_WIDTH = 1200
 const WINDOW_INNER_HEIGHT = 900
 
-function createShellElement(options?: { hidden?: boolean }): HTMLDivElement {
+function createShellElement(options?: { hidden?: boolean; left?: number }): HTMLDivElement {
   const shell = document.createElement('div')
   shell.id = 'right-workspace-panel-shell'
   shell.setAttribute('data-testid', 'right-workspace-panel-shell')
@@ -38,15 +44,16 @@ function createShellElement(options?: { hidden?: boolean }): HTMLDivElement {
   } else {
     shell.setAttribute('aria-hidden', 'false')
   }
+  const shellLeft = options?.left ?? SHELL_LEFT
   shell.getBoundingClientRect = () =>
     ({
       top: 0,
-      left: options?.hidden ? WINDOW_INNER_WIDTH : SHELL_LEFT,
+      left: options?.hidden ? WINDOW_INNER_WIDTH : shellLeft,
       right: WINDOW_INNER_WIDTH,
       bottom: WINDOW_INNER_HEIGHT,
-      width: options?.hidden ? 0 : WINDOW_INNER_WIDTH - SHELL_LEFT,
+      width: options?.hidden ? 0 : WINDOW_INNER_WIDTH - shellLeft,
       height: WINDOW_INNER_HEIGHT,
-      x: options?.hidden ? WINDOW_INNER_WIDTH : SHELL_LEFT,
+      x: options?.hidden ? WINDOW_INNER_WIDTH : shellLeft,
       y: 0,
       toJSON: () => {},
     }) as DOMRect
@@ -101,6 +108,7 @@ describe('ModelSelector desktop layout', () => {
   beforeEach(() => {
     isMobileMock.mockReturnValue(false)
     configuredKeybindingMock.mockReturnValue(null)
+    embeddedBrowserOcclusionMock.mockClear()
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: WINDOW_INNER_WIDTH,
@@ -343,6 +351,39 @@ describe('ModelSelector desktop layout', () => {
     } finally {
       HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect
     }
+  })
+
+  test('uses the full viewport for Codex flyouts over a narrow browser split', async () => {
+    createShellElement({ left: 430 })
+
+    expect(getDesktopModelSelectorCollisionPadding()).toEqual({
+      top: 64,
+      right: 16,
+      bottom: 16,
+      left: 16,
+    })
+
+    render(
+      <ModelSelector
+        models={[SAMPLE_MODEL]}
+        selectedModel={SAMPLE_MODEL}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
+
+    const submenu = await screen.findByTestId('model-selector-submenu')
+    expect(submenu.style.width).toBe('280px')
+    expect(submenu).toHaveAttribute('data-embedded-browser-occlusion')
+    expect(embeddedBrowserOcclusionMock).toHaveBeenLastCalledWith('model-selector-flyout', true)
+
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    expect(embeddedBrowserOcclusionMock).toHaveBeenLastCalledWith('model-selector-flyout', false)
   })
 
   test('caps the trigger width when maxClosedWidth is provided', () => {

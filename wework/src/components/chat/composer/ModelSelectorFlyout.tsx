@@ -30,6 +30,7 @@ export function ModelSelectorFlyout({
       <Popover.Portal>
         <Popover.Content
           data-model-selector-layer="true"
+          data-embedded-browser-occlusion
           data-testid="model-selector-submenu"
           data-enter-animation="submenu"
           side="right"

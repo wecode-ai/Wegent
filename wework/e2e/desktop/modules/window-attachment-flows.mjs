@@ -153,6 +153,11 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`,
     'The right workspace panel'
   )
+  const browserHostMetrics = await getSingleElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-native-view"]`,
+    'The embedded browser host'
+  )
   assert.ok(
     modelSubmenuMetrics.top >= 64 && modelSubmenuMetrics.bottom <= viewportMetrics.bottom - 16,
     `The narrow-pane model submenu exceeded the desktop viewport: ${JSON.stringify({
@@ -163,12 +168,26 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   assert.ok(
     modelSubmenuMetrics.clientWidth >= 280 &&
       modelSubmenuMetrics.left >= 16 &&
-      modelSubmenuMetrics.right <= rightPanelMetrics.left - 16,
-    `The narrow-pane model submenu was compressed or crossed into the browser: ${JSON.stringify({
-      modelSubmenuMetrics,
-      rightPanelMetrics,
-    })}`
+      modelSubmenuMetrics.right <= viewportMetrics.right - 16 &&
+      modelSubmenuMetrics.right > rightPanelMetrics.left &&
+      modelSubmenuMetrics.right > browserHostMetrics.left &&
+      modelSubmenuMetrics.left < browserHostMetrics.right &&
+      modelSubmenuMetrics.bottom > browserHostMetrics.top &&
+      modelSubmenuMetrics.top < browserHostMetrics.bottom,
+    `The narrow-pane model submenu was compressed instead of using the browser overlay: ${JSON.stringify(
+      {
+        browserHostMetrics,
+        modelSubmenuMetrics,
+        rightPanelMetrics,
+      }
+    )}`
   )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-occlusion-snapshot"]`,
+    { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await captureVerificationScreenshot(control, 'model-switch-browser-picker-open.png')
   const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}"]`
   await control.command('waitFor', officialModelSelector, {
     text: PROVIDER_SWITCH_OFFICIAL_LABEL,

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useConfiguredKeybinding } from '@/hooks/useConfiguredKeybinding'
+import { useEmbeddedBrowserOcclusion } from '@/hooks/useEmbeddedBrowserOcclusion'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import {
   type ModelControlConfig,
@@ -32,6 +33,11 @@ import {
   useMobileModelSelectorFocus,
 } from './model-selector-mobile-utils'
 import {
+  getDesktopModelSelectorCollisionPadding,
+  MODEL_SELECTOR_VIEWPORT_MARGIN,
+  MODEL_SELECTOR_VIEWPORT_TOP,
+} from './model-selector-layout'
+import {
   MODEL_SELECTOR_VIEW_CHANGED_EVENT,
   readModelSelectorPowerViewPreference,
   writeModelSelectorPowerViewPreference,
@@ -54,8 +60,6 @@ const MAIN_MENU_WIDTH = 224
 const MODEL_SUBMENU_WIDTH = 280
 const CONTROL_SUBMENU_MIN_WIDTH = 180
 const SPEED_SUBMENU_WIDTH = 233
-const VIEWPORT_MARGIN = 16
-const DESKTOP_MENU_VIEWPORT_TOP = 64
 const MAIN_MENU_TRIGGER_GAP = 8
 const MAIN_MENU_MAX_HEIGHT = 608
 const DESKTOP_HIDDEN_CONTROL_IDS = new Set(['collaborationMode'])
@@ -68,16 +72,6 @@ function getDesktopViewportRightBoundary(): number {
     if (rect.width > 0) return Math.round(rect.left)
   }
   return window.innerWidth
-}
-
-function getDesktopCollisionPadding() {
-  const viewportRight = getDesktopViewportRightBoundary()
-  return {
-    top: DESKTOP_MENU_VIEWPORT_TOP,
-    right: Math.max(VIEWPORT_MARGIN, window.innerWidth - viewportRight + VIEWPORT_MARGIN),
-    bottom: VIEWPORT_MARGIN,
-    left: VIEWPORT_MARGIN,
-  }
 }
 
 function isDesktopSubmenuTargetActive(
@@ -138,6 +132,10 @@ export function ModelSelector({
   const [powerSliderInteracting, setPowerSliderInteracting] = useState(false)
   const modelSelectorShortcut = useConfiguredKeybinding(TOGGLE_MODEL_SELECTOR_COMMAND)
   const reportedOpenRef = useRef(open)
+  const desktopFlyoutOpen =
+    open && !isMobile && activeDesktopSubmenu !== null && activeDesktopSubmenu.type !== 'none'
+
+  useEmbeddedBrowserOcclusion('model-selector-flyout', desktopFlyoutOpen)
 
   useEffect(() => {
     if (reportedOpenRef.current === open) return
@@ -191,8 +189,8 @@ export function ModelSelector({
     const menuPanel = menuPanelRef.current
     if (!button || !menuPanel) return
 
-    const viewportTop = DESKTOP_MENU_VIEWPORT_TOP
-    const viewportBottom = window.innerHeight - VIEWPORT_MARGIN
+    const viewportTop = MODEL_SELECTOR_VIEWPORT_TOP
+    const viewportBottom = window.innerHeight - MODEL_SELECTOR_VIEWPORT_MARGIN
     const maxAvailableHeight = Math.max(0, viewportBottom - viewportTop)
     const measuredHeight = menuPanel.getBoundingClientRect().height
     const contentHeight = menuPanel.scrollHeight
@@ -207,9 +205,11 @@ export function ModelSelector({
     const clampedTop = Math.round(Math.max(viewportTop, Math.min(preferredTop, maxTop)))
     const menuWidth = menuPanel.getBoundingClientRect().width || MAIN_MENU_WIDTH
     const viewportRight = getDesktopViewportRightBoundary()
-    const maxLeft = viewportRight - VIEWPORT_MARGIN - menuWidth
+    const maxLeft = viewportRight - MODEL_SELECTOR_VIEWPORT_MARGIN - menuWidth
     const preferredLeft = buttonRect.right - menuWidth
-    const clampedLeft = Math.round(Math.max(VIEWPORT_MARGIN, Math.min(preferredLeft, maxLeft)))
+    const clampedLeft = Math.round(
+      Math.max(MODEL_SELECTOR_VIEWPORT_MARGIN, Math.min(preferredLeft, maxLeft))
+    )
 
     setDesktopMenuTop(clampedTop)
     setDesktopMenuLeft(clampedLeft)
@@ -471,7 +471,7 @@ export function ModelSelector({
         key={control.id}
         open={active}
         onOpenChange={nextOpen => setDesktopSubmenuOpen(target, nextOpen)}
-        collisionPadding={getDesktopCollisionPadding()}
+        collisionPadding={getDesktopModelSelectorCollisionPadding()}
         contentStyle={{
           width: control.id === 'speed' ? SPEED_SUBMENU_WIDTH : undefined,
           minWidth: CONTROL_SUBMENU_MIN_WIDTH,
@@ -806,6 +806,7 @@ export function ModelSelector({
             ref={desktopMenuWrapperRef}
             style={{ left: desktopMenuLeft, top: desktopMenuTop }}
             data-model-selector-layer="true"
+            data-embedded-browser-occlusion
             className={cn('fixed z-system-popover w-[224px]', menuClassName)}
           >
             <div
@@ -824,7 +825,7 @@ export function ModelSelector({
                     <ModelSelectorFlyout
                       open={modelRowActive}
                       onOpenChange={nextOpen => setDesktopSubmenuOpen({ type: 'models' }, nextOpen)}
-                      collisionPadding={getDesktopCollisionPadding()}
+                      collisionPadding={getDesktopModelSelectorCollisionPadding()}
                       contentClassName="min-h-48"
                       contentStyle={{ width: MODEL_SUBMENU_WIDTH }}
                       anchor={
