@@ -83,6 +83,15 @@ class RuntimeTaskAddress(BaseModel):
     )
 
 
+class RuntimeTaskStatusReplayRequest(BaseModel):
+    """Request a Runtime to replay authoritative status for selected tasks."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: str = Field(..., alias="deviceId", min_length=1)
+    task_ids: list[str] = Field(..., alias="taskIds", min_length=1, max_length=200)
+
+
 class RuntimeModelSelection(BaseModel):
     """Model selection persisted with a device-local runtime task."""
 
@@ -203,6 +212,10 @@ class LocalTaskSummary(BaseModel):
         alias="runtimeHandle",
         exclude=True,
     )
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
     queue_position: Optional[int] = Field(default=None, alias="queuePosition", ge=1)
     git_info: Optional[dict[str, Any]] = Field(default=None, alias="gitInfo")
     parent: Optional[RuntimeTaskAddressRef] = None
@@ -220,6 +233,23 @@ class LocalTaskSummary(BaseModel):
     pinned_order: Optional[int] = Field(default=None, alias="pinnedOrder")
     sidebar_order: Optional[int] = Field(default=None, alias="sidebarOrder")
     status: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def project_safe_runtime_identity(cls, value: Any) -> Any:
+        """Expose model identity without returning the private runtime handle."""
+
+        if not isinstance(value, dict):
+            return value
+        if value.get("modelSelection") or value.get("model_selection"):
+            return value
+        handle = value.get("runtimeHandle") or value.get("runtime_handle")
+        if not isinstance(handle, dict):
+            return value
+        selection = handle.get("modelSelection") or handle.get("model_selection")
+        if not isinstance(selection, dict):
+            return value
+        return {**value, "modelSelection": selection}
 
 
 class DeviceWorkspaceUpsert(BaseModel):
@@ -958,6 +988,16 @@ class RuntimeTaskCreateRequest(BaseModel):
         alias="additionalContext",
         validation_alias=AliasChoices("additionalContext", "additional_context"),
     )
+
+    @model_validator(mode="after")
+    def validate_v2_intent_boundary(self) -> "RuntimeTaskCreateRequest":
+        """Keep materialized provider configuration out of producer V2 intent."""
+
+        if self.schema_version == 2 and self.runtime_model_config is not None:
+            raise ValueError(
+                "RuntimeTaskCreateRequest V2 cannot carry materialized modelConfig"
+            )
+        return self
 
 
 class RuntimeTaskCreatePayload(BaseModel):

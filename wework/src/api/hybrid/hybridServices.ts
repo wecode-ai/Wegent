@@ -791,6 +791,9 @@ export function createHybridWorkbenchServices(
     async listRuntimeWork(requestOptions) {
       return listLocalRuntimeWork(requestOptions?.signal)
     },
+    replayRuntimeTaskStatuses(data) {
+      return runtimeApiForDevice(data.deviceId).then(api => api.replayRuntimeTaskStatuses(data))
+    },
     getKeybindings() {
       return localServices.runtimeWorkApi!.getKeybindings()
     },

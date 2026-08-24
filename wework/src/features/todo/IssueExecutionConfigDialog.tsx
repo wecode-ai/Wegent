@@ -156,6 +156,26 @@ export function IssueExecutionConfigDialog({
     setSaving(true)
     setError(null)
     try {
+      const configs = workflow
+        ? [
+            workflow.execution_config,
+            ...workflow.nodes
+              .filter(node => node.execution_config_override)
+              .map(node => node.execution_config),
+          ].filter((config): config is WorkflowExecutionConfig => Boolean(config))
+        : [executionConfig]
+      console.info('[runtime-v2] issue execution configuration confirmed', {
+        itemId: item.id,
+        selections: configs.map(config => ({
+          agentId: config.agent_id,
+          runtimeProfileId: config.runtime_profile_id,
+          deviceId: config.execution_device_id,
+          model: config.model,
+          modelType: config.model_type,
+          workspaceBinding: config.workspace_binding,
+          runtimePermissionMode: config.runtime_permission_mode,
+        })),
+      })
       await onConfirm(workflow ? { workflow } : { execution_config: executionConfig })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))

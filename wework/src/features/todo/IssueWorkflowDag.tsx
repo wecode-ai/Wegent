@@ -34,6 +34,11 @@ import {
   type WorkflowDeliverableDraft,
 } from './WorkflowStageCompletionDialog'
 import { workflowDeliverableTypeLabel } from './workflowDeliverables'
+import {
+  getCurrentWorkflowNode,
+  isWorkflowNodeCompleted,
+  workflowNodeStatusLabel,
+} from './workflowStagePresentation'
 
 interface WorkflowTaskBinding {
   id: number
@@ -77,47 +82,10 @@ type RuntimeStageFlowNode = Node<RuntimeStageNodeData, 'runtimeStage'>
 
 const NODE_WIDTH = 208
 const NODE_HEIGHT = 112
-const CURRENT_STAGE_STATUS_PRIORITY: WorkflowNodeInstance['status'][] = [
-  'running',
-  'awaiting_approval',
-  'awaiting_deliverables',
-  'changes_requested',
-  'failed',
-  'queued',
-  'ready',
-]
 const CURRENT_STAGE_FIT_VIEW_OPTIONS = {
   padding: 0.25,
   maxZoom: 1,
 } as const
-
-function getCurrentWorkflowNodeId(nodes: WorkflowNodeInstance[]): string | null {
-  for (const status of CURRENT_STAGE_STATUS_PRIORITY) {
-    const currentNode = nodes.find(node => node.status === status)
-    if (currentNode) return currentNode.id
-  }
-
-  const lastCompletedNode = nodes.findLast(node =>
-    ['completed', 'forced_completed'].includes(node.status)
-  )
-  return lastCompletedNode?.id ?? nodes[0]?.id ?? null
-}
-
-function workflowNodeStatusLabel(
-  t: (key: string) => string,
-  status: WorkflowNodeInstance['status']
-): string {
-  if (status === 'blocked') return t('todo.workflow_node_blocked')
-  if (status === 'ready') return t('todo.workflow_node_ready')
-  if (status === 'queued') return t('todo.workflow_node_queued')
-  if (status === 'running') return t('todo.workflow_node_running')
-  if (status === 'awaiting_approval') return t('todo.workflow_node_awaiting_approval')
-  if (status === 'awaiting_deliverables') return t('todo.workflow_node_awaiting_deliverables')
-  if (status === 'changes_requested') return t('todo.workflow_node_changes_requested')
-  if (status === 'completed') return t('todo.workflow_node_completed')
-  if (status === 'forced_completed') return t('todo.workflow_node_forced_completed')
-  return t('todo.workflow_node_failed')
-}
 
 function workflowTaskStatusLabel(t: (key: string) => string, status?: string): string {
   if (status === 'running') return t('todo.workflow_task_status_running')
@@ -126,10 +94,6 @@ function workflowTaskStatusLabel(t: (key: string) => string, status?: string): s
   if (status === 'cancelled') return t('todo.workflow_task_status_cancelled')
   if (status === 'archived') return t('todo.workflow_task_status_archived')
   return t('todo.workflow_task_status_pending')
-}
-
-function isWorkflowNodeCompleted(status: WorkflowNodeInstance['status']): boolean {
-  return status === 'completed' || status === 'forced_completed'
 }
 
 function requirementDelivery(
@@ -227,7 +191,7 @@ export function IssueWorkflowDag({
   } | null>(null)
   const graphContainerRef = useRef<HTMLDivElement | null>(null)
   const flowInstanceRef = useRef<ReactFlowInstance<RuntimeStageFlowNode, Edge> | null>(null)
-  const currentStageId = useMemo(() => getCurrentWorkflowNodeId(nodes), [nodes])
+  const currentStageId = useMemo(() => getCurrentWorkflowNode(nodes)?.id ?? null, [nodes])
   const effectiveSelectedStageId =
     stageSelection?.currentStageId === currentStageId &&
     nodes.some(stage => stage.id === stageSelection.stageId)

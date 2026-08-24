@@ -60,6 +60,37 @@ class IssueWorkflowStartService:
             return await self._start_ai(db, item, project, workflow, user_id)
         return await self._start_ready_stages(db, item, workflow, user_id)
 
+    async def continue_ready_stages(
+        self,
+        db: Session,
+        *,
+        item: LoopItem,
+        user_id: int,
+        stage_ids: set[str],
+    ) -> int:
+        """Dispatch newly unblocked robot stages in a preset workflow."""
+
+        workflow = self._workflow(item)
+        if workflow is None or workflow.advancement_policy == "ai":
+            return 0
+        return await self._start_ready_stages(
+            db,
+            item,
+            workflow,
+            user_id,
+            stage_ids=stage_ids,
+        )
+
+    def ready_robot_stage_ids(self, item: LoopItem) -> set[str]:
+        workflow = self._workflow(item)
+        if workflow is None or workflow.advancement_policy == "ai":
+            return set()
+        return {
+            node.id
+            for node in workflow.nodes
+            if node.status == "ready" and node.execution_mode == "robot"
+        }
+
     @staticmethod
     def _workflow(item: LoopItem) -> IssueWorkflowInstance | None:
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
@@ -144,9 +175,13 @@ class IssueWorkflowStartService:
         item: LoopItem,
         workflow: IssueWorkflowInstance,
         user_id: int,
+        *,
+        stage_ids: set[str] | None = None,
     ) -> int:
         started = 0
         for node in workflow.nodes:
+            if stage_ids is not None and node.id not in stage_ids:
+                continue
             execution_config = workflow.execution_config_for(node)
             logger.info(
                 "[issue-workflow-start] node item=%s node=%s status=%s mode=%s "

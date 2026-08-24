@@ -3,6 +3,7 @@ import type { ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import {
   applySharedChangeRequestSnapshot,
+  resolveEnvironmentExecutionDeviceId,
   resolveSelectedWorkspaceProject,
 } from './useWorkbenchPaneEnvironment'
 
@@ -37,6 +38,22 @@ describe('resolveSelectedWorkspaceProject', () => {
         projects: [persistedProject],
       })
     ).toBe(persistedProject)
+  })
+})
+
+describe('resolveEnvironmentExecutionDeviceId', () => {
+  test('keeps the task executor identity when workspace access uses a local host', () => {
+    expect(
+      resolveEnvironmentExecutionDeviceId(
+        { deviceId: 'cloud-device' },
+        {
+          deviceId: 'local-device',
+          path: '/workspace',
+          source: 'runtime',
+          workspaceSource: 'remote',
+        }
+      )
+    ).toBe('cloud-device')
   })
 })
 

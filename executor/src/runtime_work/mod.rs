@@ -17,6 +17,7 @@ mod remote_projects;
 mod response;
 mod runtime_handle_messages;
 mod store;
+mod task_create_contract;
 mod transcript;
 mod transcript_page;
 mod util;

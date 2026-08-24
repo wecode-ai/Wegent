@@ -4,12 +4,20 @@
 """Runtime boundaries for manual assignment and AI-managed assignment."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.project_automation_domain import assignment_mode, manager_type
-from app.services.project_automation_execution import ProjectAutomationExecution
+from app.services.project_automation_domain import (
+    ProjectAutomationEvent,
+    assignment_mode,
+    manager_type,
+)
+from app.services.project_automation_execution import (
+    ProjectAutomationExecution,
+    ProjectAutomationProcessor,
+    project_automation_execution,
+)
 
 
 @pytest.mark.parametrize("value", [{}, {"action": "automatic"}])
@@ -48,6 +56,52 @@ def _dispatch_objects(configuration: dict[str, object]):
         owner if model.__name__ == "User" else project
     )
     return db, owner, project, rule, run
+
+
+@pytest.mark.asyncio
+async def test_event_processing_wakes_cloud_executor_after_dispatch(monkeypatch):
+    rule = SimpleNamespace(
+        id="rule-1",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+        },
+    )
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="",
+        task_title="",
+        metadata_json={},
+    )
+    query = MagicMock()
+    query.filter.return_value = query
+    query.all.return_value = [rule]
+    db = MagicMock()
+    db.query.return_value = query
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
+
+    with patch(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        new=AsyncMock(),
+    ) as wake:
+        dispatched = await processor.process(
+            db,
+            ProjectAutomationEvent(
+                event_type="task.created",
+                project_id="project-1",
+                subject_id="task-1",
+                source="local",
+                actor_user_id=7,
+                payload={"title": "Wake immediately"},
+            ),
+        )
+
+    assert dispatched == 1
+    dispatch.assert_awaited_once_with(db, rule, run)
+    wake.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
@@ -123,6 +177,64 @@ async def test_wegent_agent_is_only_a_manager_transport(monkeypatch):
     wegent.assert_awaited_once()
     assign.assert_not_called()
     custom.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_wegent_manager_dispatch_reads_team_from_manager_config(monkeypatch):
+    service = ProjectAutomationExecution()
+    db = MagicMock()
+    owner = SimpleNamespace(id=7)
+    project = SimpleNamespace(id="project-1")
+    rule = SimpleNamespace(
+        id="rule-1",
+        title="Assign new task",
+        metadata_json={
+            "action": "ai_assign",
+            "manager": {"type": "wegent", "wegent_team_id": 42},
+        },
+    )
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="task-1",
+        status="pending",
+        version=1,
+        backend_task_id=0,
+    )
+    activity = SimpleNamespace(message_id="message-1")
+    refreshed_activity = SimpleNamespace(metadata_json={}, status="pending")
+    db.get.return_value = run
+    db.query.return_value.filter.return_value.one.return_value = refreshed_activity
+    monkeypatch.setattr(service, "_managed_prompt", MagicMock(return_value="prompt"))
+
+    with (
+        patch(
+            "app.services.project_automation_execution.runnable_wegent_team",
+            return_value=SimpleNamespace(id=42),
+        ) as resolve_team,
+        patch(
+            "app.services.project_automation_managed_execution."
+            "project_automation_managed_execution_service.dispatch",
+            new=AsyncMock(return_value=SimpleNamespace(task_id=101, subtask_id=202)),
+        ),
+        patch(
+            "app.services.project_automation_execution.project_chat_service.to_view",
+            return_value=MagicMock(model_dump=MagicMock(return_value={})),
+        ),
+        patch("app.services.project_automation_execution.push_project_chat_message"),
+    ):
+        await service._dispatch_wegent_manager(
+            db,
+            owner=owner,
+            project=project,
+            rule=rule,
+            run=run,
+            activity=activity,
+            context={},
+        )
+
+    resolve_team.assert_called_once_with(db, owner.id, 42)
+    assert run.backend_task_id == 101
+    assert run.status == "queued"
 
 
 def test_manager_prompt_is_minimal_visible_assignment_input():

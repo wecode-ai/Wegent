@@ -465,6 +465,23 @@ export function ProjectWorkflowEditor({
     },
     [updateDefinition, value.nodes]
   )
+  const saveDeliverables = useCallback(
+    (
+      nodeId: string,
+      requirements: NonNullable<WorkflowNodeDefinition['required_deliverables']>
+    ) => {
+      if (!value.nodes.some(node => node.id === nodeId)) return
+      const nextDefinition = {
+        ...value,
+        nodes: value.nodes.map(node =>
+          node.id === nodeId ? { ...node, required_deliverables: requirements } : node
+        ),
+      }
+      onChange(nextDefinition)
+      void onSave(nextDefinition)
+    },
+    [onChange, onSave, value]
+  )
   const addNode = () => {
     const id = nextNodeId(value.nodes)
     const stageNumber = Number(id.replace('stage-', ''))
@@ -1101,33 +1118,54 @@ export function ProjectWorkflowEditor({
                           className="mt-2 max-h-60 divide-y divide-border overflow-y-auto overscroll-contain rounded-lg border border-border"
                         >
                           {(selectedNode.required_deliverables ?? []).map(requirement => (
-                            <button
-                              key={requirement.id}
-                              type="button"
-                              data-testid={`project-workflow-deliverable-${requirement.id}`}
-                              onClick={() =>
-                                setDeliverableDialog({
-                                  nodeId: selectedNode.id,
-                                  requirements: (selectedNode.required_deliverables ?? []).map(
-                                    valueRequirement => ({ ...valueRequirement })
-                                  ),
-                                })
-                              }
-                              className="flex min-h-12 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
-                            >
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-medium text-text-primary">
-                                  {requirement.name}
+                            <div key={requirement.id} className="flex min-h-12 items-stretch">
+                              <button
+                                type="button"
+                                data-testid={`project-workflow-deliverable-${requirement.id}`}
+                                onClick={() =>
+                                  setDeliverableDialog({
+                                    nodeId: selectedNode.id,
+                                    requirements: (selectedNode.required_deliverables ?? []).map(
+                                      valueRequirement => ({ ...valueRequirement })
+                                    ),
+                                  })
+                                }
+                                className="flex min-h-12 min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left transition hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+                              >
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-sm font-medium text-text-primary">
+                                    {requirement.name}
+                                  </span>
+                                  <span className="mt-0.5 block truncate text-xs text-text-muted">
+                                    {requirement.description ||
+                                      t('todo.workflow_deliverable_no_description', '暂无验收说明')}
+                                  </span>
                                 </span>
-                                <span className="mt-0.5 block truncate text-xs text-text-muted">
-                                  {requirement.description ||
-                                    t('todo.workflow_deliverable_no_description', '暂无验收说明')}
+                                <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                                  {workflowDeliverableTypeLabel(requirement.value_type, t)}
                                 </span>
-                              </span>
-                              <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
-                                {workflowDeliverableTypeLabel(requirement.value_type, t)}
-                              </span>
-                            </button>
+                              </button>
+                              <button
+                                type="button"
+                                data-testid={`project-workflow-remove-deliverable-${requirement.id}`}
+                                aria-label={t(
+                                  'todo.workflow_remove_named_deliverable',
+                                  '删除交付物 {{name}}',
+                                  { name: requirement.name }
+                                )}
+                                onClick={() =>
+                                  saveDeliverables(
+                                    selectedNode.id,
+                                    (selectedNode.required_deliverables ?? []).filter(
+                                      valueRequirement => valueRequirement.id !== requirement.id
+                                    )
+                                  )
+                                }
+                                className="flex w-10 shrink-0 items-center justify-center text-text-muted transition hover:bg-muted hover:text-red-600 focus-visible:bg-muted focus-visible:text-red-600 focus-visible:outline-none"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           ))}
                         </div>
                       ) : (
@@ -1431,22 +1469,12 @@ export function ProjectWorkflowEditor({
           requirements={deliverableDialog.requirements ?? []}
           onClose={() => setDeliverableDialog(null)}
           onSave={requirements => {
-            const node = value.nodes.find(valueNode => valueNode.id === deliverableDialog.nodeId)
-            if (!node) {
+            if (!value.nodes.some(node => node.id === deliverableDialog.nodeId)) {
               setDeliverableDialog(null)
               return
             }
-            const nextDefinition = {
-              ...value,
-              nodes: value.nodes.map(valueNode =>
-                valueNode.id === node.id
-                  ? { ...valueNode, required_deliverables: requirements }
-                  : valueNode
-              ),
-            }
-            onChange(nextDefinition)
+            saveDeliverables(deliverableDialog.nodeId, requirements)
             setDeliverableDialog(null)
-            void onSave(nextDefinition)
           }}
         />
       ) : null}

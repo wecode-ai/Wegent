@@ -157,6 +157,8 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
         "default_runtime_profile_id": metadata.get(BOT_RUNTIME_PROFILE_ID_KEY),
         "plugins": metadata.get(BOT_PLUGINS_KEY, []),
         "model": metadata.get("model"),
+        "model_type": metadata.get("model_type"),
+        "model_options": metadata.get("model_options", {}),
         "execution_prompt": metadata.get("system_prompt", ""),
         "max_concurrent_executions": bot_max_concurrent_executions(row),
         "workspace_policy": bot_workspace_policy(row),
@@ -266,6 +268,8 @@ class ProjectChatService:
             "runtime": request.runtime,
             BOT_WEGENT_TEAM_ID_KEY: request.wegent_team_id,
             "model": request.model,
+            "model_type": request.model_type,
+            "model_options": request.model_options,
             "system_prompt": request.system_prompt,
             BOT_VISIBILITY_KEY: request.visibility,
             BOT_EXECUTION_ENVIRONMENT_KEY: request.execution_environment,
@@ -372,6 +376,10 @@ class ProjectChatService:
                 row.device_id = request.execution_device_id
             if "model" in request.model_fields_set:
                 metadata["model"] = request.model
+            if "model_type" in request.model_fields_set:
+                metadata["model_type"] = request.model_type
+            if "model_options" in request.model_fields_set:
+                metadata["model_options"] = request.model_options or {}
             if "execution_environment" in request.model_fields_set:
                 metadata[BOT_EXECUTION_ENVIRONMENT_KEY] = request.execution_environment
             environment = str(
@@ -1970,6 +1978,16 @@ class ProjectChatService:
                 else None
             ),
             model=config.get("model") if isinstance(config.get("model"), str) else None,
+            model_type=(
+                config.get("model_type")
+                if config.get("model_type") in {"public", "user", "group", "runtime"}
+                else None
+            ),
+            model_options=(
+                dict(config["model_options"])
+                if isinstance(config.get("model_options"), dict)
+                else {}
+            ),
             system_prompt=(
                 config.get("execution_prompt")
                 if isinstance(config.get("execution_prompt"), str)

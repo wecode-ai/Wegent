@@ -14,11 +14,15 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.ws.device_namespace import _project_chat_runtime_event_sync
+from app.api.ws.device_namespace import (
+    _execution_runtime_event_sync,
+    _project_chat_runtime_event_sync,
+)
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    LoopItemTaskBinding,
     ProjectAutomationRun,
     ProjectChatAgent,
     loop_datetime_is_unset,
@@ -2135,6 +2139,297 @@ def test_device_runtime_projection_invalidates_only_material_issue_changes(
     assert published_events == [
         (task.id, "runtime_execution_status"),
     ]
+
+
+def test_device_runtime_event_projects_bound_workflow_task_status(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-RUNTIME-WORKFLOW-1",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Runtime workflow projection",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "advancement_policy": "manual",
+                "stage_mode": "dag",
+                "nodes": [
+                    {
+                        "id": "implement",
+                        "name": "Implement",
+                        "execution_mode": "robot",
+                        "depends_on": [],
+                        "required": True,
+                        "status": "running",
+                    },
+                    {
+                        "id": "verify",
+                        "name": "Verify",
+                        "execution_mode": "robot",
+                        "depends_on": ["implement"],
+                        "required": True,
+                        "status": "blocked",
+                    },
+                ],
+            }
+        },
+    )
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(project.id),
+        loop_item_id=task.id,
+        task_user_id=test_user.id,
+        device_id="local-device",
+        task_id="codex-queue-workflow-1",
+        linked_by_user_id=test_user.id,
+        metadata_json={"workflow_node_id": "implement"},
+    )
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="local",
+        execution_device_id="local-device",
+        status="running",
+        runtime_device_id="local-device",
+        runtime_task_id="codex-queue-workflow-1",
+    )
+    test_db.add_all([task, binding, execution])
+    test_db.commit()
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        try:
+            yield test_db
+            test_db.commit()
+        except Exception:
+            test_db.rollback()
+            raise
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    continuation = _execution_runtime_event_sync(
+        "local-device",
+        "codex-queue-workflow-1",
+        "runtime.task.completed",
+        {
+            "taskId": "codex-queue-workflow-1",
+            "eventSeq": 1,
+            "status": "completed",
+            "data": {"value": "Done"},
+        },
+    )
+
+    test_db.refresh(task)
+    test_db.refresh(execution)
+    node, next_node = task.metadata_json["workflow"]["nodes"]
+    assert execution.status == "completed"
+    assert node["status"] == "completed"
+    assert node["task_statuses"]["local-device:codex-queue-workflow-1"] == "succeeded"
+    assert next_node["status"] == "ready"
+    assert continuation == {
+        "item_id": task.id,
+        "user_id": test_user.id,
+        "stage_ids": ["verify"],
+    }
+
+
+def test_streaming_runtime_event_does_not_project_workflow_status(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-RUNTIME-STREAM-1",
+        cloud_project_id=project.id,
+        sequence_number=3,
+        title="Ignore streaming workflow projection",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "advancement_policy": "manual",
+                "stage_mode": "dag",
+                "nodes": [
+                    {
+                        "id": "implement",
+                        "name": "Implement",
+                        "execution_mode": "robot",
+                        "depends_on": [],
+                        "required": True,
+                        "status": "running",
+                    }
+                ],
+            }
+        },
+    )
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(project.id),
+        loop_item_id=task.id,
+        task_user_id=test_user.id,
+        device_id="local-device",
+        task_id="codex-queue-stream-1",
+        linked_by_user_id=test_user.id,
+        metadata_json={"workflow_node_id": "implement"},
+    )
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="local",
+        execution_device_id="local-device",
+        status="running",
+        runtime_device_id="local-device",
+        runtime_task_id="codex-queue-stream-1",
+    )
+    test_db.add_all([task, binding, execution])
+    test_db.commit()
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        try:
+            yield test_db
+            test_db.commit()
+        except Exception:
+            test_db.rollback()
+            raise
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    continuation = _execution_runtime_event_sync(
+        "local-device",
+        "codex-queue-stream-1",
+        "response.block.updated",
+        {
+            "taskId": "codex-queue-stream-1",
+            "eventSeq": 1,
+            "data": {"delta": "token"},
+        },
+    )
+
+    test_db.refresh(task)
+    test_db.refresh(execution)
+    node = task.metadata_json["workflow"]["nodes"][0]
+    assert continuation is None
+    assert execution.last_event_seq == 1
+    assert "task_statuses" not in node
+
+
+def test_manual_runtime_event_projects_workflow_without_execution_row(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-MANUAL-RUNTIME-WORKFLOW-1",
+        cloud_project_id=project.id,
+        sequence_number=3,
+        title="Manual runtime workflow projection",
+        description="",
+        status="pending",
+        priority="none",
+        sort_order=0,
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "advancement_policy": "manual",
+                "stage_mode": "dag",
+                "nodes": [
+                    {
+                        "id": "manual-stage",
+                        "name": "Manual stage",
+                        "execution_mode": "human",
+                        "depends_on": [],
+                        "required": True,
+                        "status": "ready",
+                    }
+                ],
+            }
+        },
+    )
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(project.id),
+        loop_item_id=task.id,
+        task_user_id=test_user.id,
+        device_id="local-device",
+        task_id="runtime-manual-1",
+        linked_by_user_id=test_user.id,
+        metadata_json={"workflow_node_id": "manual-stage"},
+    )
+    test_db.add_all([task, binding])
+    test_db.commit()
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        try:
+            yield test_db
+            test_db.commit()
+        except Exception:
+            test_db.rollback()
+            raise
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    started = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.created",
+            "payload": {
+                "taskId": "runtime-manual-1",
+                "eventSeq": 1,
+                "data": {},
+            },
+        },
+        test_user.id,
+    )
+
+    test_db.refresh(task)
+    node = task.metadata_json["workflow"]["nodes"][0]
+    assert node["status"] == "running"
+    assert node["task_statuses"]["local-device:runtime-manual-1"] == "running"
+    assert started is not None
+    assert started["message"] is None
+
+    _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": "runtime-manual-1",
+                "eventSeq": 2,
+                "data": {"value": "Done"},
+            },
+        },
+        test_user.id,
+    )
+
+    test_db.refresh(task)
+    node = task.metadata_json["workflow"]["nodes"][0]
+    assert node["status"] == "awaiting_approval"
+    assert node["task_statuses"]["local-device:runtime-manual-1"] == "succeeded"
 
 
 def test_execution_truth_rejection_blocks_project_chat_projection(

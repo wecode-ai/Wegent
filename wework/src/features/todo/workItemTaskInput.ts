@@ -34,12 +34,17 @@ export function workflowStageTaskInput(stage: WorkflowNodeInstance): string {
 }
 
 export function shouldPrepareWorkItemTask(
-  item: Pick<CloudLoopItem, 'parent_id' | 'status' | 'workflow'>,
+  item: Pick<
+    CloudLoopItem,
+    'assignee_agent_id' | 'assignee_team_id' | 'parent_id' | 'status' | 'workflow'
+  >,
   targetStatus: TaskEntryStatus,
   taskBindingCount: number
 ): boolean {
   return (
     isSelfManagedWorkItem(item) &&
+    !item.assignee_agent_id &&
+    !item.assignee_team_id &&
     item.parent_id === null &&
     item.status !== targetStatus &&
     taskBindingCount === 0
@@ -47,7 +52,10 @@ export function shouldPrepareWorkItemTask(
 }
 
 export function shouldDeferWorkItemMoveUntilTaskCreated(
-  item: Pick<CloudLoopItem, 'parent_id' | 'status' | 'workflow'>,
+  item: Pick<
+    CloudLoopItem,
+    'assignee_agent_id' | 'assignee_team_id' | 'parent_id' | 'status' | 'workflow'
+  >,
   targetStatus: TaskEntryStatus,
   taskBindingCount: number
 ): boolean {

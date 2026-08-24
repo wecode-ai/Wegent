@@ -264,6 +264,17 @@ export interface RuntimeTaskAddress {
   runtimeHandle?: Record<string, unknown> | null
 }
 
+export interface RuntimeTaskStatusReplayRequest {
+  deviceId: string
+  taskIds: string[]
+}
+
+export interface RuntimeTaskStatusReplayResponse {
+  success: boolean
+  replayedTaskIds: string[]
+  missingTaskIds: string[]
+}
+
 export type RuntimeAdditionalContextKind = 'application' | 'untrusted'
 
 export interface RuntimeAdditionalContextEntry {

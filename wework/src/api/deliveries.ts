@@ -2,7 +2,17 @@ import { invoke } from '@tauri-apps/api/core'
 import { ApiError, type HttpClient } from './http'
 import type { ProjectChatAgent } from './projectChatAgents'
 import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
-import type { Attachment, RuntimeTaskAddress } from '@/types/api'
+import type {
+  Attachment,
+  ModelType,
+  RuntimeAdditionalContext,
+  RuntimeGoalCreateInput,
+  RuntimeProjectPluginRef,
+  RuntimeSupervisorCreateInput,
+  RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
+  SkillRef,
+} from '@/types/api'
 
 import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
@@ -393,7 +403,19 @@ export interface WorkflowExecutionConfig {
   runtime_profile_id: string | null
   execution_device_id: string | null
   model: string | null
+  model_type: ModelType | null
+  model_options: Record<string, string>
   workspace_binding: ProjectChatWorkspaceBindingInput | null
+  runtime_permission_mode?: RuntimeTaskCreateRequest['runtimePermissionMode'] | null
+  execution?: RuntimeTaskCreateRequest['execution'] | null
+  initial_goal?: RuntimeGoalCreateInput | null
+  initial_supervisor?: RuntimeSupervisorCreateInput | null
+  additional_skills?: SkillRef[] | null
+  attachment_ids?: number[] | null
+  attachments?: Attachment[] | null
+  project_plugins?: RuntimeProjectPluginRef[] | null
+  additional_context?: RuntimeAdditionalContext | null
+  ephemeral?: boolean | null
 }
 
 export interface WorkflowNodeDefinition {
@@ -1144,20 +1166,50 @@ export function createDeliveryApi(client: HttpClient) {
       executionStatus: TaskExecutionStatus
     ): Promise<CloudLoopItem | null> {
       return enqueueTaskTrackingMutation(task, async () => {
+        console.info('[IssueTaskStatusSync] status update requested', {
+          deviceId: task.deviceId,
+          taskId: task.taskId,
+          executionStatus,
+        })
         let context: CloudTaskContext
         try {
           context = await api.findCloudContextForTask(task)
         } catch (error) {
-          if (error instanceof ApiError && error.status === 404) return null
+          if (error instanceof ApiError && error.status === 404) {
+            console.warn('[IssueTaskStatusSync] task binding not found', {
+              deviceId: task.deviceId,
+              taskId: task.taskId,
+              executionStatus,
+            })
+            return null
+          }
           throw error
         }
+        console.info('[IssueTaskStatusSync] task binding resolved', {
+          deviceId: task.deviceId,
+          taskId: task.taskId,
+          executionStatus,
+          loopItemId: context.loop_item_id,
+          workflowNodeId: context.workflow_node_id,
+        })
         if (!context.loop_item_id) return null
         const item = context.loop_item ?? (await api.getLoopItem(context.loop_item_id))
         if (executionStatus !== 'queued' && item.workflow && context.workflow_node_id) {
-          return client.patch('/v1/runtime-tasks/cloud-context/status', {
-            ...task,
-            status: executionStatus,
+          const updated = await client.patch<CloudLoopItem>(
+            '/v1/runtime-tasks/cloud-context/status',
+            {
+              ...task,
+              status: executionStatus,
+            }
+          )
+          console.info('[IssueTaskStatusSync] workflow task status persisted', {
+            deviceId: task.deviceId,
+            taskId: task.taskId,
+            executionStatus,
+            loopItemId: updated.id,
+            workflowNodeId: context.workflow_node_id,
           })
+          return updated
         }
         if (executionStatus === 'succeeded') {
           const bindings = await api.listTaskBindings(item.id)

@@ -97,6 +97,18 @@ vi.mock('./AiChatModal', () => ({
       >
         打开完整任务
       </button>
+      <button
+        type="button"
+        data-testid="mock-update-runtime-address"
+        onClick={() =>
+          onAddressChange?.({
+            deviceId: initialAddress?.deviceId ?? 'local-device',
+            taskId: initialAddress?.taskId ?? 'runtime-created',
+          })
+        }
+      >
+        更新 Runtime 地址
+      </button>
       {onBack ? (
         <button type="button" data-testid="ai-chat-modal-back" onClick={onBack}>
           返回 Issue
@@ -247,6 +259,33 @@ describe('shouldPrepareWorkItemTask', () => {
     expect(shouldPrepareWorkItemTask(presetWorkflowIssue, 'pending', 0)).toBe(false)
     expect(isSelfManagedWorkItem(aiManagedIssue)).toBe(false)
     expect(shouldPrepareWorkItemTask(aiManagedIssue, 'pending', 0)).toBe(false)
+  })
+
+  it('lets robot and team assignments own Runtime task creation', () => {
+    expect(
+      shouldPrepareWorkItemTask(
+        {
+          parent_id: null,
+          status: 'inbox',
+          assignee_agent_id: 'agent-cloud',
+          assignee_team_id: null,
+        },
+        'in_progress',
+        0
+      )
+    ).toBe(false)
+    expect(
+      shouldPrepareWorkItemTask(
+        {
+          parent_id: null,
+          status: 'inbox',
+          assignee_agent_id: null,
+          assignee_team_id: 88001,
+        },
+        'in_progress',
+        0
+      )
+    ).toBe(false)
   })
 
   it('treats legacy workflows with stages as preset orchestration', () => {
@@ -1326,6 +1365,14 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('ai-chat-modal-back'))
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('cloud-todo-open-task-conversation-1'))
+    await userEvent.click(screen.getByTestId('mock-update-runtime-address'))
+    await userEvent.click(screen.getByTestId('ai-chat-modal-back'))
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
+      'data-conversation-open',
+      'false'
+    )
     await userEvent.click(await screen.findByTestId('cloud-todo-open-task-conversation-1'))
     await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
@@ -2634,7 +2681,7 @@ describe('CloudTodoWorkspace', () => {
     )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
     await userEvent.click(
-      await screen.findByTestId('cloud-project-chat-agent-model-option-gpt-5-codex')
+      await screen.findByTestId('cloud-project-chat-agent-model-option-runtime:gpt-5-codex')
     )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
 
@@ -2713,7 +2760,7 @@ describe('CloudTodoWorkspace', () => {
     )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
     await userEvent.click(
-      await screen.findByTestId('cloud-project-chat-agent-model-option-gpt-5-codex')
+      await screen.findByTestId('cloud-project-chat-agent-model-option-runtime:gpt-5-codex')
     )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
     await waitFor(() =>

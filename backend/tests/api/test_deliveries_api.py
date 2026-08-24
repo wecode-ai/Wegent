@@ -954,7 +954,14 @@ def test_workflow_task_binding_requires_a_ready_non_automated_stage(
     test_db: Session,
     test_token: str,
     delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    continue_ready_stages = AsyncMock(return_value=0)
+    monkeypatch.setattr(
+        deliveries_endpoint.issue_workflow_start_service,
+        "continue_ready_stages",
+        continue_ready_stages,
+    )
     delivery_project.metadata_json = {
         **(delivery_project.metadata_json or {}),
         "workflow_definition": {
@@ -1087,6 +1094,7 @@ def test_workflow_task_binding_requires_a_ready_non_automated_stage(
     assert (
         completed_node["task_statuses"]["local-device:correction-task"] == "succeeded"
     )
+    continue_ready_stages.assert_not_awaited()
 
     stored_item = test_db.get(LoopItem, item["id"])
     assert stored_item is not None

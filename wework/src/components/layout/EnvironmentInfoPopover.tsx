@@ -38,6 +38,7 @@ import {
   findWorkbenchDevice,
   getExecutorOfflineDeviceId,
   getWorkbenchDeviceUnavailableDisplayName,
+  isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import type { DeviceInfo, RuntimeSupervisorState } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -127,7 +128,8 @@ export function EnvironmentInfoPopover({
   const copiedWorkspacePathTimeoutRef = useRef<number | null>(null)
   const additions = info.additions || '+0'
   const deletions = info.deletions || '-0'
-  const device = info.deviceId ? findWorkbenchDevice(devices, info.deviceId) : undefined
+  const executionDeviceId = info.executionDeviceId ?? info.deviceId
+  const device = executionDeviceId ? findWorkbenchDevice(devices, executionDeviceId) : undefined
   const deviceName = device?.name?.trim() || ''
   const executionLabel =
     info.executionTarget === 'cloud'
@@ -137,7 +139,7 @@ export function EnvironmentInfoPopover({
   const deviceLabel = t('workbench.environment_device')
   const deviceDisplayName = deviceName || t('workbench.environment_device_unknown')
   const executorDisplayName =
-    info.executionTarget === 'cloud'
+    info.executionTarget === 'cloud' && !isWorkbenchDeviceOnline(device ?? null)
       ? getWorkbenchDeviceUnavailableDisplayName(device ?? null) || deviceDisplayName
       : deviceDisplayName
   const ExecutorIcon = info.executionTarget === 'cloud' ? Cloud : Laptop

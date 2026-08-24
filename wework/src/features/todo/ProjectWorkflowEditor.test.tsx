@@ -421,6 +421,60 @@ describe('ProjectWorkflowEditor', () => {
     })
   })
 
+  test('deletes a deliverable directly from the compact list', () => {
+    const onChange = vi.fn()
+    const onSave = vi.fn()
+    const workflowWithDeliverables: ProjectWorkflowDefinition = {
+      ...workflow,
+      nodes: [
+        {
+          ...workflow.nodes[0],
+          required_deliverables: [
+            {
+              id: 'backend-wiki',
+              name: '后端 Wiki',
+              description: '接口说明',
+              value_type: 'url',
+              file_constraints: null,
+            },
+            {
+              id: 'backend-code',
+              name: '后端代码',
+              description: '',
+              value_type: 'code_snapshot',
+              file_constraints: null,
+            },
+          ],
+        },
+        workflow.nodes[1],
+      ],
+    }
+    render(
+      <ProjectWorkflowEditor
+        value={workflowWithDeliverables}
+        busy={false}
+        onChange={onChange}
+        onSave={onSave}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-remove-deliverable-backend-wiki'))
+
+    const expectedDefinition: ProjectWorkflowDefinition = {
+      ...workflowWithDeliverables,
+      nodes: [
+        {
+          ...workflowWithDeliverables.nodes[0],
+          required_deliverables: [workflowWithDeliverables.nodes[0].required_deliverables![1]],
+        },
+        workflowWithDeliverables.nodes[1],
+      ],
+    }
+    expect(screen.queryByTestId('workflow-deliverable-requirements-dialog')).not.toBeInTheDocument()
+    expect(onChange).toHaveBeenCalledWith(expectedDefinition)
+    expect(onSave).toHaveBeenCalledWith(expectedDefinition)
+  })
+
   test('keeps the three orchestration choices as one dimension', () => {
     const onChange = vi.fn()
     render(

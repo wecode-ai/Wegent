@@ -35,6 +35,13 @@ const PROJECT_CHAT_REMOTE_MODEL_LABEL = 'Project Chat Remote Codex'
 const TEAM_ID = 88001
 const FIRST_CONTINUATION_PROMPT = '确认继续执行'
 const QUEUED_CONTINUATION_PROMPT = '补充检查排队消息'
+const MOONSHOT_OVERRIDE_ISSUE_TITLE = 'Issue 临时云端 Moonshot 覆盖本地 GPT'
+const MOONSHOT_OVERRIDE_FOLLOW_UP =
+  'WEWORK_PROJECT_AUTOMATION_MOONSHOT_FOLLOW_UP: verify immutable task model routing.'
+const MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION =
+  'WEWORK_PROJECT_AUTOMATION_MOONSHOT_FOLLOW_UP_COMPLETE'
+const CLOUD_MODEL_UPSTREAM_ID = 'desktop-e2e-public-upstream-model'
+const CLOUD_MODEL_DISPLAY_LABEL = `公网:${CLOUD_MODEL_UPSTREAM_ID}`
 
 const PROJECT = {
   id: PROJECT_ID,
@@ -248,6 +255,13 @@ async function waitForValue(read, predicate, message, timeoutMs) {
   assert.fail(`${message}; last value: ${JSON.stringify(value)}`)
 }
 
+function runtimeWorkTasks(runtimeWork) {
+  return [
+    ...(runtimeWork.projects ?? []).flatMap(project => project.deviceWorkspaces ?? []),
+    ...(runtimeWork.chats ?? []),
+  ].flatMap(workspace => workspace.tasks ?? [])
+}
+
 function assertExecutionTruthContract(execution) {
   assert.equal(execution.runtimeTaskId, `codex-queue-${execution.id}`)
   assert.ok(execution.attemptNo >= 1)
@@ -323,10 +337,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   let cloudApi = null
   let cloudProject = null
   let cloudAgent = null
+  let cloudRuntimeProfile = null
+  let localDefaultAgent = null
   let wegentAgent = null
   let cloudTeam = null
   let personalApiKey = null
   let managerToolCalls = 0
+  const upstreamResponseRequests = []
   let uiProject = { ...PROJECT }
   let nextBoardItemSequence = 201
   let orchestratedItemId = null
@@ -369,7 +386,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     ]
   }
 
-  async function waitForCompletedExecution(projectId, taskId, executorType) {
+  async function waitForCompletedExecution(
+    projectId,
+    taskId,
+    executorType,
+    timeoutMs = uiTimeoutMs * 3
+  ) {
     const execution = await waitForValue(
       () => allExecutions(projectId),
       items =>
@@ -380,7 +402,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
             item.status === 'completed'
         ),
       `${executorType} execution for ${taskId} did not reach completed`,
-      uiTimeoutMs * 3
+      timeoutMs
     ).then(items =>
       items.find(
         item =>
@@ -427,15 +449,48 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       team => Number(team.id) === Number(cloudTeam?.id)
     )
     assert.ok(boardTeam?.id, 'Real backend has no runnable Wegent Team fixture')
-    await waitForValue(
+    const deviceResponse = await waitForValue(
       () => cloudRequest('/api/devices'),
       response =>
         response.items?.some(
           device => device.device_id === CLOUD_DEVICE_ID && device.status === 'online'
+        ) &&
+        response.items?.some(
+          device =>
+            device.device_id !== CLOUD_DEVICE_ID &&
+            ['local', 'app'].includes(device.device_type) &&
+            device.status === 'online'
         ),
-      'Cloud execution device did not register before project automation verification',
+      'Local and cloud execution devices did not register before project automation verification',
       uiTimeoutMs
     )
+    const localDefaultDevice = deviceResponse.items.find(
+      device =>
+        device.device_id !== CLOUD_DEVICE_ID &&
+        ['local', 'app'].includes(device.device_type) &&
+        device.status === 'online'
+    )
+    const cloudExecutionDevice = deviceResponse.items.find(
+      device => device.device_id === CLOUD_DEVICE_ID
+    )
+    assert.ok(localDefaultDevice?.device_id, 'Real Wework local executor fixture is missing')
+    assert.ok(cloudExecutionDevice?.device_id, 'Real Wework cloud executor fixture is missing')
+    cloudRuntimeProfile = await cloudRequest('/api/v1/runtime-profiles', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Project automation cloud Runtime',
+        executionEnvironment: 'cloud',
+        executionDeviceId: CLOUD_DEVICE_ID,
+        model: CLOUD_MODEL_NAME,
+        modelType: 'public',
+        modelOptions: {
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '0',
+          weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        },
+        workspacePolicy: 'project',
+      }),
+    })
     cloudAgent = await cloudRequest(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
       method: 'POST',
       body: JSON.stringify({
@@ -449,6 +504,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         executionMode: 'auto',
         executionDeviceId: CLOUD_DEVICE_ID,
         localProjectId: null,
+      }),
+    })
+    localDefaultAgent = await cloudRequest(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Local GPT default · Moonshot override regression',
+        runtime: 'codex',
+        model: DEFAULT_MODEL_ID,
+        modelType: 'runtime',
+        modelOptions: { reasoningEffort: 'high' },
+        systemPrompt: '',
+        capabilityDescription:
+          'Defaults to the local GPT runtime so the Issue override must remain authoritative.',
+        visibility: 'creator_admin',
+        executionEnvironment: 'local',
+        executionMode: 'auto',
+        executionDeviceId: localDefaultDevice.device_id,
+        workspaceBinding: { type: 'standalone' },
       }),
     })
     wegentAgent = await cloudRequest(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
@@ -470,6 +543,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       CLOUD_DEVICE_ID,
       'Cloud robot response lost its persisted execution device'
     )
+    assert.equal(localDefaultAgent.executionEnvironment, 'local')
+    assert.equal(localDefaultAgent.executionDeviceId, localDefaultDevice.device_id)
+    assert.equal(localDefaultAgent.model, DEFAULT_MODEL_ID)
+    assert.equal(localDefaultAgent.modelType, 'runtime')
     const workflowManagerRule = await cloudRequest(
       `/api/v1/cloud-projects/${projectId}/automations`,
       {
@@ -482,9 +559,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           eventConfig: {},
           assignmentMode: 'ai_managed',
           managerType: 'custom',
-          model: CLOUD_MODEL_NAME,
-          executionEnvironment: 'cloud',
-          executionDeviceId: CLOUD_DEVICE_ID,
+          runtimeSource: 'fixed_profile',
+          runtimeProfileId: cloudRuntimeProfile.id,
           enabled: false,
         }),
       }
@@ -505,6 +581,333 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     const projectSelector = `${activeBoard} [data-testid="cloud-sidebar-project-${projectId}"]`
     await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
     await control.command('click', projectSelector)
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      visible: true,
+    })
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-add"]`, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+
+    const moonshotOverrideIssue = await publicApiRequest(
+      `/api/v1/cloud-projects/${projectId}/loop-items`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: MOONSHOT_OVERRIDE_ISSUE_TITLE,
+          description:
+            'The robot defaults to a local GPT runtime. This Issue must execute on the cloud public Moonshot fixture and preserve that identity for follow-up messages.',
+          status: 'inbox',
+          priority: 'high',
+          tags: ['runtime-v2-model-override'],
+          assignee_agent_id: localDefaultAgent.id,
+          execution_config: {
+            agent_id: localDefaultAgent.id,
+            runtime_profile_id: null,
+            execution_device_id: null,
+            model: null,
+            model_type: null,
+            model_options: {},
+            workspace_binding: { type: 'standalone' },
+          },
+        }),
+      }
+    )
+    assert.equal(moonshotOverrideIssue.assignee_agent_id, localDefaultAgent.id)
+    assert.equal(
+      moonshotOverrideIssue.execution_config?.execution_device_id,
+      null,
+      'The Issue fixture unexpectedly persisted a resolved execution device'
+    )
+    assert.equal(
+      moonshotOverrideIssue.execution_config?.model,
+      null,
+      'The Issue fixture unexpectedly persisted a resolved model'
+    )
+
+    const readyCountBeforeMoonshotOverrideReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeMoonshotOverrideReload),
+      uiTimeoutMs * 3,
+      'The project board did not reconnect for the Moonshot override regression'
+    )
+    await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
+    await control.command('click', projectSelector)
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      visible: true,
+    })
+    const moonshotOverrideCard = `${activeBoard} [data-testid="cloud-todo-card-${moonshotOverrideIssue.id}"]`
+    await control.command('waitFor', moonshotOverrideCard, {
+      text: MOONSHOT_OVERRIDE_ISSUE_TITLE,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('drag', moonshotOverrideCard, {
+      target: `${activeBoard} [data-testid="cloud-todo-column-dropzone-in_progress"]`,
+    })
+    await control.command('waitFor', '[data-testid="issue-execution-config-dialog"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+
+    const executionConfigFields = '[data-testid="issue-execution-config-fields"]'
+    const executionAgent = `${executionConfigFields} [data-testid="issue-execution-config-fields-agent"]`
+    const executionDevice = `${executionConfigFields} [data-testid="issue-execution-config-fields-device"]`
+    const executionModel = `${executionConfigFields} [data-testid="issue-execution-config-fields-model"]`
+    const executionProject = `${executionConfigFields} [data-testid="issue-execution-config-fields-project"]`
+    await control.command('waitFor', executionAgent, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    assert.equal(
+      await control.command('getValue', executionAgent),
+      localDefaultAgent.id,
+      'The execution dialog lost the robot preset identity'
+    )
+    assert.equal(
+      await control.command('getValue', executionDevice),
+      localDefaultDevice.device_id,
+      'The execution dialog did not expose the robot local-device default'
+    )
+    assert.equal(
+      await control.command('getValue', executionModel),
+      `runtime:${DEFAULT_MODEL_ID}`,
+      'The execution dialog did not expose the robot GPT default'
+    )
+    await control.command('fill', executionDevice, { value: CLOUD_DEVICE_ID })
+    await control.command('fill', executionModel, { value: `public:${CLOUD_MODEL_NAME}` })
+    await control.command('fill', executionProject, { value: 'standalone' })
+    const initialUpstreamRequestOffset = upstreamResponseRequests.length
+    await control.command('clickWhenEnabled', '[data-testid="issue-execution-config-confirm"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+
+    const persistedMoonshotIssue = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`),
+      response => {
+        const item = (response.items ?? []).find(
+          candidate => candidate.id === moonshotOverrideIssue.id
+        )
+        return (
+          item?.status === 'in_progress' &&
+          item.execution_config?.agent_id === localDefaultAgent.id &&
+          item.execution_config?.execution_device_id === CLOUD_DEVICE_ID &&
+          item.execution_config?.model === CLOUD_MODEL_NAME &&
+          item.execution_config?.model_type === 'public' &&
+          item.execution_config?.workspace_binding?.type === 'standalone'
+        )
+      },
+      'The Issue-owned cloud Moonshot execution snapshot was not persisted',
+      uiTimeoutMs
+    ).then(response => response.items.find(candidate => candidate.id === moonshotOverrideIssue.id))
+    assert.equal(persistedMoonshotIssue.execution_config.model, CLOUD_MODEL_NAME)
+
+    const moonshotExecution = await waitForCompletedExecution(
+      projectId,
+      moonshotOverrideIssue.id,
+      'project_robot'
+    )
+    assert.equal(moonshotExecution.agentId, localDefaultAgent.id)
+    assert.equal(
+      moonshotExecution.executionDeviceId,
+      CLOUD_DEVICE_ID,
+      'The queue execution reverted to the robot local-device default'
+    )
+    assert.equal(
+      moonshotExecution.runtimeDeviceId,
+      CLOUD_DEVICE_ID,
+      'The Runtime task was not created on the selected cloud device'
+    )
+    assert.ok(moonshotExecution.runtimeTaskId, 'The cloud execution did not expose a Runtime task')
+
+    const moonshotIssueBindings = await waitForValue(
+      () => cloudRequest(`/api/v1/loop-items/${moonshotOverrideIssue.id}/tasks`),
+      bindings =>
+        bindings.find(
+          binding =>
+            binding.device_id === CLOUD_DEVICE_ID &&
+            binding.task_id === moonshotExecution.runtimeTaskId
+        ),
+      'The ordinary Issue execution was not persisted as an Issue task',
+      uiTimeoutMs
+    )
+    const moonshotIssueBinding = moonshotIssueBindings.find(
+      binding =>
+        binding.device_id === CLOUD_DEVICE_ID && binding.task_id === moonshotExecution.runtimeTaskId
+    )
+    assert.equal(
+      moonshotIssueBinding.workflow_node_id,
+      null,
+      'The ordinary Issue task was incorrectly assigned to a workflow stage'
+    )
+
+    const initialMoonshotRequests = await waitForValue(
+      () => Promise.resolve(upstreamResponseRequests.slice(initialUpstreamRequestOffset)),
+      requests =>
+        requests.some(
+          request =>
+            request.model === CLOUD_MODEL_UPSTREAM_ID &&
+            JSON.stringify(request).includes(`task_id: ${moonshotOverrideIssue.id}`)
+        ),
+      'The Issue execution did not reach the selected Moonshot model service',
+      uiTimeoutMs
+    )
+    const initialIssueRequests = initialMoonshotRequests.filter(request =>
+      JSON.stringify(request).includes(`task_id: ${moonshotOverrideIssue.id}`)
+    )
+    assert.ok(initialIssueRequests.length > 0, 'The Issue produced no correlated upstream request')
+    assert.ok(
+      initialIssueRequests.every(request => request.model === CLOUD_MODEL_UPSTREAM_ID),
+      'The Issue produced a duplicate request through a model other than Moonshot'
+    )
+
+    const runtimeWork = await waitForValue(
+      () => cloudRequest('/api/runtime-work'),
+      response =>
+        runtimeWorkTasks(response).find(task => task.taskId === moonshotExecution.runtimeTaskId),
+      'The cloud Runtime task was not projected into Wework',
+      uiTimeoutMs
+    )
+    const projectedMoonshotTask = runtimeWorkTasks(runtimeWork).find(
+      task => task.taskId === moonshotExecution.runtimeTaskId
+    )
+    const runtimeTasksForIssue = runtimeWorkTasks(runtimeWork).filter(
+      task => task.title === MOONSHOT_OVERRIDE_ISSUE_TITLE
+    )
+    assert.equal(runtimeTasksForIssue.length, 1, 'The Issue created more than one Runtime task')
+    assert.equal(projectedMoonshotTask.modelSelection?.modelName, CLOUD_MODEL_NAME)
+    assert.equal(projectedMoonshotTask.modelSelection?.modelType, 'public')
+    assert.equal(
+      Object.hasOwn(projectedMoonshotTask, 'runtimeHandle'),
+      false,
+      'The private Runtime handle escaped the cloud projection boundary'
+    )
+
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const moonshotTaskRow = `[data-testid="runtime-local-task-row-${moonshotExecution.runtimeTaskId}"]`
+    const moonshotTaskProjectPanel = `[data-testid^="project-local-tasks-panel-"]:has(${moonshotTaskRow})`
+    await control.command('waitFor', moonshotTaskProjectPanel, {
+      timeoutMs: uiTimeoutMs,
+    })
+    if (
+      Number(
+        await control.command('getElementCount', `${moonshotTaskProjectPanel}[aria-hidden="true"]`)
+      ) > 0
+    ) {
+      const panelTestId = await control.command('getAttribute', moonshotTaskProjectPanel, {
+        value: 'data-testid',
+      })
+      const runtimeProjectId = panelTestId.replace('project-local-tasks-panel-', '')
+      await control.command(
+        'click',
+        `[data-testid="project-row-${runtimeProjectId}"] [data-testid="project-item-button"]`,
+        { visible: true }
+      )
+    }
+    await control.command('scrollIntoView', moonshotTaskRow)
+    await control.command('waitFor', moonshotTaskRow, {
+      timeoutMs: uiTimeoutMs * 2,
+      visible: true,
+    })
+    await control.command('click', moonshotTaskRow, { visible: true })
+    await control.command('waitFor', '[data-testid="model-selector-button"]', {
+      text: CLOUD_MODEL_DISPLAY_LABEL,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    assert.equal(
+      await control.command('getText', '[data-testid="model-selector-button"]', {
+        visible: true,
+      }),
+      CLOUD_MODEL_DISPLAY_LABEL,
+      'The existing task composer displayed the global GPT model instead of Moonshot'
+    )
+
+    if (
+      Number(
+        await control.command('getElementCount', '[data-testid="environment-device-button"]', {
+          visible: true,
+        })
+      ) === 0
+    ) {
+      await control.command('click', '[data-testid="environment-info-button"]', {
+        visible: true,
+      })
+    }
+    await control.command('waitFor', '[data-testid="environment-device-button"]', {
+      text: cloudExecutionDevice.name || CLOUD_DEVICE_ID,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const executionDeviceText = await control.command(
+      'getText',
+      '[data-testid="environment-device-button"]',
+      { visible: true }
+    )
+    assert.ok(
+      executionDeviceText.includes(cloudExecutionDevice.name || CLOUD_DEVICE_ID),
+      `The environment popover displayed the workspace host instead of the cloud execution device: ${executionDeviceText}`
+    )
+    assert.equal(
+      executionDeviceText.includes('Local Executor'),
+      false,
+      'The cloud task was mislabeled as Local Executor'
+    )
+    await control.command('click', '[data-testid="environment-info-button"]', {
+      visible: true,
+    })
+
+    const taskComposer = '[data-testid="chat-message-input"]'
+    await control.command('waitFor', taskComposer, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const followUpRequestOffset = upstreamResponseRequests.length
+    await control.command('fill', taskComposer, {
+      value: MOONSHOT_OVERRIDE_FOLLOW_UP,
+      visible: true,
+    })
+    await control.command('press', taskComposer, { key: 'Enter', visible: true })
+    const followUpMoonshotRequests = await waitForValue(
+      () => Promise.resolve(upstreamResponseRequests.slice(followUpRequestOffset)),
+      requests =>
+        requests.some(request => JSON.stringify(request).includes(MOONSHOT_OVERRIDE_FOLLOW_UP)),
+      'The existing task follow-up did not reach the selected Moonshot model service',
+      uiTimeoutMs
+    )
+    const followUpMoonshotRequest = followUpMoonshotRequests.find(request =>
+      JSON.stringify(request).includes(MOONSHOT_OVERRIDE_FOLLOW_UP)
+    )
+    assert.equal(
+      followUpMoonshotRequest.model,
+      CLOUD_MODEL_UPSTREAM_ID,
+      'The existing task follow-up reverted to the global GPT model'
+    )
+    await control.command('waitFor', '[data-testid="assistant-message-content"]', {
+      text: MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]', {
+      visible: true,
+    })
+    await control.command('waitFor', projectSelector, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', projectSelector, { visible: true })
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       visible: true,
     })
@@ -642,8 +1045,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       }
     )
     await control.command('click', `${activeBoard} [data-testid="cloud-project-automation-view"]`)
+    await control.command(
+      'scrollIntoView',
+      `${activeBoard} [data-testid="project-automation-rules"]`
+    )
     await control.command('waitFor', `${activeBoard} [data-testid="project-automation-rules"]`, {
       timeoutMs: uiTimeoutMs,
+      visible: true,
     })
 
     await control.command('click', '[data-testid="project-workflow-mode-ai"]')
@@ -774,7 +1182,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       testId.startsWith('project-selected-icon-')
     )
     const selectedProjectId = selectedProjectTestId?.slice('project-selected-icon-'.length)
-    const targetProjectTestId = projectMenuSnapshot.testIds.find(
+    const targetProjectCandidates = projectMenuSnapshot.testIds.filter(
       testId =>
         testId.startsWith('project-option-') &&
         testId !== `project-option-${selectedProjectId ?? ''}` &&
@@ -782,19 +1190,27 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           `project-bind-workspace-${testId.slice('project-option-'.length)}`
         )
     )
+    let targetProjectTestId = null
+    let selectedTargetProjectName = null
+    for (const testId of targetProjectCandidates) {
+      const projectText = await control.command(
+        'getText',
+        `[data-testid="ai-chat-modal"] [data-testid="${testId}"]`,
+        { visible: true }
+      )
+      const projectName = ['project-automation-primary', 'project-automation-secondary'].find(
+        name => projectText.includes(name)
+      )
+      if (projectName) {
+        targetProjectTestId = testId
+        selectedTargetProjectName = projectName
+        break
+      }
+    }
     assert.ok(
       targetProjectTestId,
       'Issue task composer requires another runtime project for project-switch regression coverage'
     )
-    const targetProjectText = await control.command(
-      'getText',
-      `[data-testid="ai-chat-modal"] [data-testid="${targetProjectTestId}"]`,
-      { visible: true }
-    )
-    const selectedTargetProjectName = [
-      'project-automation-primary',
-      'project-automation-secondary',
-    ].find(name => targetProjectText.includes(name))
     assert.ok(selectedTargetProjectName, 'Unable to resolve the target runtime project name')
     await control.command(
       'click',
@@ -848,14 +1264,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     const workflowBinding = workflowBindings.find(binding => binding.workflow_node_id === 'stage-1')
     assert.ok(workflowBinding)
     const workflowTaskRow = `${activeBoard} [data-testid="cloud-todo-open-workflow-task-stage-1-${workflowBinding.id}"]`
-    await control.command('click', '[data-testid="ai-chat-modal-close"]')
-    const workflowIssueCard = `${activeBoard} [data-testid="cloud-todo-card-${workflowIssue.id}"]`
-    await control.command('waitFor', workflowIssueCard, {
-      text: workflowIssue.title,
+    const workflowTaskPanelBack = `${activeBoard} [data-testid="cloud-todo-compact-issue-back"]`
+    await control.command('waitFor', workflowTaskPanelBack, {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    await control.command('click', workflowIssueCard, { visible: true })
+    await control.command('click', workflowTaskPanelBack, { visible: true })
+    await control.command(
+      'waitFor',
+      `${activeBoard} [data-testid="cloud-todo-panel-stack"][data-conversation-open="false"]`,
+      {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      }
+    )
     await control.command('waitFor', `${activeBoard} [data-testid="cloud-todo-detail-title"]`, {
       text: workflowIssue.title,
       timeoutMs: uiTimeoutMs,
@@ -886,6 +1308,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       visible: true,
     })
+    const workflowIssueCard = `${activeBoard} [data-testid="cloud-todo-card-${workflowIssue.id}"]`
     await control.command('waitFor', workflowIssueCard, {
       text: workflowIssue.title,
       timeoutMs: uiTimeoutMs,
@@ -907,11 +1330,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('click', `${activeBoard} [data-testid="cloud-todo-detail-close"]`, {
       visible: true,
     })
+    await waitForValue(
+      async () => JSON.parse(await control.command('snapshot', activeBoard)),
+      snapshot =>
+        !snapshot.testIds.includes('cloud-todo-workflow-dag') &&
+        !snapshot.testIds.some(testId => testId.startsWith('cloud-todo-workflow-node-')),
+      'Workflow nodes remained mounted after closing the Issue detail panel',
+      uiTimeoutMs
+    )
     await control.command('click', `${activeBoard} [data-testid="cloud-project-automation-view"]`, {
       visible: true,
     })
+    await control.command(
+      'scrollIntoView',
+      `${activeBoard} [data-testid="project-automation-rules"]`
+    )
     await control.command('waitFor', `${activeBoard} [data-testid="project-automation-rules"]`, {
       timeoutMs: uiTimeoutMs,
+      visible: true,
     })
 
     await control.command('click', '[data-testid="project-automation-create"]')
@@ -953,6 +1389,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('waitFor', '[data-testid="project-automation-manager-type"]', {
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('click', '[data-testid="project-automation-runtime-profile"]')
+    await control.command(
+      'click',
+      `[data-testid="project-automation-runtime-profile-option-${cloudRuntimeProfile.id}"]`
+    )
     await captureScreenshot(control, 'project-automation-02-ai-managed-dialog.png')
     await control.command('click', '[data-testid="project-automation-save"]')
     const managedRule = await waitForValue(
@@ -964,11 +1405,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(managedRule.assignmentMode, 'ai_managed')
     assert.equal(managedRule.managerType, 'custom')
     assert.equal(managedRule.agentId, null)
-    assert.ok(managedRule.model, 'AI-managed automation must persist a model')
-    assert.ok(
-      managedRule.executionDeviceId,
-      'AI-managed automation must persist an execution device'
+    assert.equal(managedRule.runtimeSource, 'fixed_profile')
+    assert.equal(
+      managedRule.runtimeProfileId,
+      cloudRuntimeProfile.id,
+      'AI-managed automation did not persist the selected Runtime profile'
     )
+    assert.equal(managedRule.model, null)
+    assert.equal(managedRule.executionDeviceId, null)
     await control.command('waitFor', `[data-testid="project-automation-rule-${managedRule.id}"]`, {
       timeoutMs: uiTimeoutMs,
     })
@@ -1049,6 +1493,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('getValue', concurrencySelector, { visible: true }),
       '1',
       'Robot concurrency did not default to one'
+    )
+    await control.command(
+      'scrollIntoView',
+      '[data-testid="cloud-project-chat-agent-workspace-policy"]'
     )
     await control.command('waitFor', '[data-testid="cloud-project-chat-agent-workspace-policy"]', {
       text: '使用项目工作区',
@@ -1168,9 +1616,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       eventConfig: { tags: ['api-e2e'] },
       assignmentMode: 'ai_managed',
       managerType: 'custom',
-      model: CLOUD_MODEL_NAME,
-      executionEnvironment: 'cloud',
-      executionDeviceId: CLOUD_DEVICE_ID,
+      runtimeSource: 'fixed_profile',
+      runtimeProfileId: cloudRuntimeProfile.id,
       enabled: true,
     })
     const customToolCallsBefore = managerToolCalls
@@ -1191,7 +1638,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     const customRobotExecution = await waitForCompletedExecution(
       projectId,
       customChildTask.id,
-      'project_robot'
+      'project_robot',
+      uiTimeoutMs * 6
     )
     assert.equal(customManagerExecution.automationRunId, customManagerRun.id)
     assert.equal(customRobotExecution.automationRunId, customManagerRun.id)
@@ -1273,7 +1721,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       text: '自定义 AI 调度员',
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('scrollIntoView', customManagerCard)
+    await control.command(
+      'scrollToBottomAsUser',
+      `${activeBoard} [data-testid="cloud-todo-detail-scroll"]`
+    )
     await control.command('waitFor', customManagerCard, {
       text: '自定义 AI 调度员',
       timeoutMs: uiTimeoutMs,
@@ -1297,7 +1748,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The custom manager did not append a distinct reply to its comment thread',
       uiTimeoutMs * 3
     )
-    await control.command('scrollIntoView', customManagerCard)
+    await control.command(
+      'scrollToBottomAsUser',
+      `${activeBoard} [data-testid="cloud-todo-detail-scroll"]`
+    )
     const managerExecutionsAfterReply = await allExecutions(projectId)
     assert.equal(
       managerExecutionsAfterReply.filter(
@@ -1383,6 +1837,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
   }
 
   return {
+    requiresCloudEnvironment: true,
+
     async prepareCloud({ authToken, backendUrl }) {
       cloudApi = { authToken, backendUrl }
       const createdKey = await requestJson(backendUrl, authToken, '/api/api-keys', {
@@ -1449,6 +1905,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         const payload = await readJson(request)
         const responseId = `project-automation-real-${Date.now()}`
         const serialized = JSON.stringify(payload)
+        upstreamResponseRequests.push(payload)
         const writeEvents = events => {
           response.writeHead(200, {
             'content-type': 'text/event-stream; charset=utf-8',
@@ -1477,6 +1934,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           response.end(
             createSse([assistantMessage('首条追加执行已完成。'), responseCompleted(responseId)])
           )
+          return true
+        }
+        if (serialized.includes(MOONSHOT_OVERRIDE_FOLLOW_UP)) {
+          writeEvents([
+            responseCreated(responseId),
+            assistantMessage(MOONSHOT_OVERRIDE_FOLLOW_UP_COMPLETION),
+            responseCompleted(responseId),
+          ])
           return true
         }
         if (serialized.includes('请确认当前分派结果')) {
@@ -1510,12 +1975,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           const candidatesCallId = 'project-automation-read-candidates'
           const searchSubmitCallId = 'project-automation-search-submit-plan'
           const submitCallId = 'project-automation-submit-workflow-plan'
-          const directManagerToolPrefix = 'wegent-wework-space_'
           const requestManagerTool = ({ toolName, argumentsValue, searchCallId, toolCallId }) => {
+            const advertisedToolNames = new Set(
+              (Array.isArray(payload.tools) ? payload.tools : [])
+                .map(tool => tool?.name ?? tool?.function?.name)
+                .filter(Boolean)
+            )
+            const directToolName = [
+              `wework_space__${toolName}`,
+              `wegent-wework-space_${toolName}`,
+            ].find(candidate => advertisedToolNames.has(candidate))
             const selection = mcpToolRequestEvents(payload, {
               toolName,
               argumentsValue,
-              directToolName: `${directManagerToolPrefix}${toolName}`,
+              directToolName,
               searchCallId,
               toolCallId,
             })
@@ -2211,6 +2684,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         visible: true,
       })
       const activeWorkflow = `${activeBoard} [data-testid="project-workflow-editor"]`
+      await control.command(
+        'scrollIntoView',
+        `${activeBoard} [data-testid="project-automation-rules"]`
+      )
       await control.command('waitFor', `${activeBoard} [data-testid="project-automation-rules"]`, {
         timeoutMs: uiTimeoutMs,
         visible: true,
@@ -2380,11 +2857,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'scrollIntoView',
         '[data-testid="project-workflow-stage-automation-stage-1"]'
       )
-      await control.command(
-        'click',
-        '[data-testid="project-workflow-stage-automation-stage-1"]',
-        { visible: true }
-      )
+      await control.command('click', '[data-testid="project-workflow-stage-automation-stage-1"]', {
+        visible: true,
+      })
       await control.command(
         'click',
         `[data-testid="project-workflow-stage-automation-stage-1-option-${AGENT_ID}"]`,
@@ -2406,16 +2881,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         false,
         'Robot defaults must not be repeated as a workflow Runtime selector'
       )
-      await control.command(
-        'click',
-        '[data-testid="project-workflow-stage-automation-stage-1"]',
-        { visible: true }
-      )
-      await control.command(
-        'click',
-        '[data-testid="project-workflow-stage-create-robot"]',
-        { visible: true }
-      )
+      await control.command('click', '[data-testid="project-workflow-stage-automation-stage-1"]', {
+        visible: true,
+      })
+      await control.command('click', '[data-testid="project-workflow-stage-create-robot"]', {
+        visible: true,
+      })
       await control.command('waitFor', '[data-testid="cloud-project-chat-agent-editor"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,
@@ -3116,11 +3587,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }
       )
       await captureScreenshot(control, 'project-automation-00-ai-workflow-history.png')
-      await control.command(
-        'click',
-        `${activeBoard} [data-testid="cloud-todo-detail-close"]`,
-        { visible: true }
-      )
+      await control.command('click', `${activeBoard} [data-testid="cloud-todo-detail-close"]`, {
+        visible: true,
+      })
       await control.command(
         'waitFor',
         `${activeBoard} [data-testid="cloud-project-automation-view"]`,
@@ -3144,13 +3613,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'scrollIntoView',
         `${activeBoard} [data-testid="project-automation-create"]`
       )
-      await control.command(
-        'click',
-        `${activeBoard} [data-testid="project-automation-create"]`,
-        {
-          visible: true,
-        }
-      )
+      await control.command('click', `${activeBoard} [data-testid="project-automation-create"]`, {
+        visible: true,
+      })
       await control.command('fill', '[data-testid="project-automation-name"]', {
         value: '凌晨回归扫描',
         visible: true,
@@ -3179,9 +3644,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           visible: true,
         }
       )
-      const scheduledAutomation = createdPayloads.find(
-        payload => payload.name === '凌晨回归扫描'
-      )
+      const scheduledAutomation = createdPayloads.find(payload => payload.name === '凌晨回归扫描')
       assert.equal(scheduledAutomation?.assignmentMode, 'manual')
       assert.equal(scheduledAutomation?.managerType, null)
       assert.equal(scheduledAutomation?.agentId, AGENT_ID)
@@ -3215,11 +3678,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'scrollIntoView',
         `${activeBoard} [data-testid="project-automation-create"]`
       )
-      await control.command(
-        'click',
-        `${activeBoard} [data-testid="project-automation-create"]`,
-        { visible: true }
-      )
+      await control.command('click', `${activeBoard} [data-testid="project-automation-create"]`, {
+        visible: true,
+      })
       await control.command('fill', '[data-testid="project-automation-name"]', {
         value: '新任务 AI 分配',
       })
@@ -3238,9 +3699,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         '[data-testid="project-automation-rule-automation-rule-managed"]',
         { timeoutMs: uiTimeoutMs }
       )
-      const managedAutomation = createdPayloads.find(
-        payload => payload.name === '新任务 AI 分配'
-      )
+      const managedAutomation = createdPayloads.find(payload => payload.name === '新任务 AI 分配')
       assert.equal(managedAutomation?.assignmentMode, 'ai_managed')
       assert.equal(managedAutomation?.managerType, 'custom')
       assert.equal(managedAutomation?.agentId, null)

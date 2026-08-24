@@ -624,12 +624,15 @@ class ProjectAutomationService:
             "runtime_subject_user_id": runtime_subject_user_id,
             "execution_device_id": execution_config.execution_device_id,
             "model": execution_config.model,
+            "model_type": execution_config.model_type,
+            "model_options": execution_config.model_options,
             "workspace_binding": (
                 workspace_binding.model_dump(mode="json", by_alias=True)
                 if workspace_binding
                 else None
             ),
             "workflow_stage_input": run_metadata.get("workflow_stage_input"),
+            **execution_config.runtime_request_options(),
         }
         execution = loop_item_execution_service.enqueue_generic_robot(
             db,
@@ -639,6 +642,8 @@ class ProjectAutomationService:
             runtime_profile=runtime_profile,
             execution_device_id=execution_config.execution_device_id,
             model=execution_config.model,
+            model_type=execution_config.model_type,
+            model_options=execution_config.model_options,
             assigner_user_id=user_id,
             priority=item.priority or "medium",
             automation_context=context,

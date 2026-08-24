@@ -56,6 +56,41 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
     assert_eq!(active_task_ids, HashSet::from(["active-1", "active-2"]));
 }
 
+#[tokio::test]
+async fn task_status_replay_emits_one_current_status_event_per_requested_task() {
+    let root = temp_runtime_work_index_path("task-status-replay");
+    let (event_tx, mut event_rx) = broadcast::channel(4);
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(root.clone());
+    let mut completed = RuntimeTaskLink::new_pending(
+        "task-completed".to_owned(),
+        "/tmp/project".to_owned(),
+        "Completed task".to_owned(),
+    );
+    completed.status = "done".to_owned();
+    completed.running = false;
+    completed.completed_at = Some(1_787_563_200_000);
+    handler.upsert_local_task(completed);
+
+    let response = handler
+        .replay_task_statuses(json!({
+            "taskIds": ["task-completed", "task-missing"],
+        }))
+        .await
+        .expect("status replay should succeed");
+    let event = event_rx
+        .recv()
+        .await
+        .expect("status event should be emitted");
+
+    assert_eq!(response["replayedTaskIds"], json!(["task-completed"]));
+    assert_eq!(response["missingTaskIds"], json!(["task-missing"]));
+    assert_eq!(event["event"], "response.completed");
+    assert_eq!(event["payload"]["taskId"], "task-completed");
+    assert_eq!(event["payload"]["data"]["replayed"], true);
+    let _ = fs::remove_file(root);
+}
+
 #[test]
 fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");

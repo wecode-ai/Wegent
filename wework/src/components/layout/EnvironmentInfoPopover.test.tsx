@@ -50,6 +50,49 @@ describe('EnvironmentInfoPopover', () => {
     expect(popover).not.toHaveTextContent('9562a3b4-61a3-4217-9655-0341b231eb06')
   })
 
+  test('shows the task executor instead of the workspace access device', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'cloud',
+          executionDeviceId: 'cloud-device',
+          deviceId: 'local-device',
+        }}
+        devices={[
+          {
+            id: 1,
+            device_id: 'local-device',
+            name: 'Local Executor',
+            status: 'online',
+            is_default: true,
+            device_type: 'local',
+          },
+          {
+            id: 2,
+            device_id: 'cloud-device',
+            name: 'Cloud Verify Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'cloud',
+            client_ip: '127.0.0.1',
+          },
+        ]}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('environment-device-button')).toHaveTextContent('Cloud Verify Device')
+    expect(screen.getByTestId('environment-device-button')).not.toHaveTextContent('Local Executor')
+  })
+
   test('delegates open state to the app shell without writing browser storage', async () => {
     const popoverContainer = document.createElement('div')
     document.body.appendChild(popoverContainer)

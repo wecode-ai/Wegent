@@ -586,4 +586,35 @@ describe('AiChatModal', () => {
     await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
     expect(onClose).toHaveBeenCalledOnce()
   })
+
+  it('notifies the parent only once when a new task address becomes available', () => {
+    const onAddressChange = vi.fn()
+
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        embedded
+        open
+        onClose={vi.fn()}
+        onAddressChange={onAddressChange}
+      />
+    )
+
+    act(() => {
+      mocks.lastOnAddressChange?.({ deviceId: 'cloud-device', taskId: 'runtime-1' })
+      mocks.lastOnAddressChange?.({
+        deviceId: 'cloud-device',
+        taskId: 'runtime-1',
+        threadId: 'thread-1',
+      })
+    })
+
+    expect(onAddressChange).toHaveBeenCalledOnce()
+    expect(onAddressChange).toHaveBeenCalledWith({
+      deviceId: 'cloud-device',
+      taskId: 'runtime-1',
+    })
+  })
 })

@@ -3,6 +3,7 @@ import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { RuntimeProfile } from '@/api/runtimeProfiles'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import type { ProjectWithTasks } from '@/types/api'
 import type { UnifiedModel } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
@@ -36,6 +37,7 @@ export function WorkflowExecutionConfigFields({
       ? String(value.workspace_binding.projectId)
       : 'standalone'
   const complete = workflowExecutionConfigComplete(value)
+  const selectedModelKey = value.model ? `${value.model_type ?? ''}:${value.model}` : ''
 
   return (
     <div
@@ -99,16 +101,40 @@ export function WorkflowExecutionConfigFields({
         {t('todo.workflow_execution_model', '模型')}
         <select
           data-testid={`${testId}-model`}
-          value={value.model ?? ''}
-          onChange={event => onChange({ ...value, model: event.target.value || null })}
+          value={selectedModelKey}
+          onChange={event => {
+            const selectedModel = models.find(
+              model => `${model.type}:${model.name}` === event.target.value
+            )
+            if (!selectedModel) {
+              onChange({
+                ...value,
+                model: null,
+                model_type: null,
+                model_options: {},
+              })
+              return
+            }
+            const execution = selectedModelExecutionFields(selectedModel, {})
+            onChange({
+              ...value,
+              model: execution.modelId ?? null,
+              model_type: execution.modelType ?? null,
+              model_options: execution.modelOptions ?? {},
+            })
+          }}
           className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
         >
           <option value="">{t('todo.workflow_execution_model_empty', '运行时填写模型')}</option>
-          {value.model && !models.some(model => model.name === value.model) ? (
-            <option value={value.model}>{value.model}</option>
+          {value.model &&
+          !models.some(
+            model =>
+              model.name === value.model && (!value.model_type || model.type === value.model_type)
+          ) ? (
+            <option value={selectedModelKey}>{value.model}</option>
           ) : null}
           {models.map(model => (
-            <option key={`${model.type}:${model.name}`} value={model.name}>
+            <option key={`${model.type}:${model.name}`} value={`${model.type}:${model.name}`}>
               {model.displayName || model.name}
             </option>
           ))}

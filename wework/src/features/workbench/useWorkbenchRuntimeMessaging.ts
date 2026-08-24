@@ -68,7 +68,6 @@ import type { WorkbenchAction } from './workbenchReducer'
 import {
   EMPTY_MESSAGE_TASK_TITLE,
   buildRuntimeTaskTitle,
-  createConversationWorkspace,
   createRuntimeTaskId,
   createRuntimeTaskIdFromSeed,
   findProjectDeviceWorkspace,
@@ -915,6 +914,7 @@ export function useWorkbenchRuntimeMessaging({
         | 'deviceWorkspaceId'
         | 'deviceId'
         | 'workspacePath'
+        | 'standaloneChatWorkspace'
         | 'runtimeProjectKey'
         | 'runtimeProjectName'
         | 'runtimeWorkspaceRoots'
@@ -946,48 +946,14 @@ export function useWorkbenchRuntimeMessaging({
         }
         runtimeTaskTarget = workspaceBinding
       } else {
-        let workspacePath = state.standaloneWorkspacePath
-        if (!workspacePath && activeDeviceId) {
-          try {
-            logRuntimeTaskLaunchTiming('standalone-workspace-started', launchStartedAt, {
-              taskId,
-              clientUserMessageId: clientUserMessageId ?? null,
-              deviceId: activeDeviceId,
-            })
-            workspacePath = await createConversationWorkspace(
-              executorClient.commands,
-              activeDeviceId,
-              displayMessage,
-              taskId
-            )
-            logRuntimeTaskLaunchTiming('standalone-workspace-resolved', launchStartedAt, {
-              taskId,
-              clientUserMessageId: clientUserMessageId ?? null,
-              deviceId: activeDeviceId,
-            })
-          } catch (error) {
-            logRuntimeTaskLaunchTiming('standalone-workspace-failed', launchStartedAt, {
-              taskId,
-              clientUserMessageId: clientUserMessageId ?? null,
-              deviceId: activeDeviceId,
-              error: runtimeLaunchErrorName(error),
-            })
-            reportSendBlocked(
-              error instanceof Error ? error.message : '创建对话工作区失败',
-              undefined,
-              options
-            )
-            return false
-          }
-        }
-        if (!activeDeviceId || !workspacePath) {
-          reportSendBlocked('请选择项目或打开设备工作区后再发送', undefined, options)
+        if (!activeDeviceId) {
+          reportSendBlocked('请选择设备后再发送', undefined, options)
           return false
         }
         optimisticDeviceId = activeDeviceId
         runtimeTaskTarget = {
           deviceId: activeDeviceId,
-          workspacePath,
+          standaloneChatWorkspace: true,
         }
       }
 
@@ -1495,7 +1461,6 @@ export function useWorkbenchRuntimeMessaging({
       state.projects,
       state.runtimeWork,
       state.selectedDeviceWorkspaceId,
-      state.standaloneWorkspacePath,
     ]
   )
 

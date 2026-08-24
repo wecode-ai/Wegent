@@ -83,6 +83,13 @@ export function applySharedChangeRequestSnapshot(
   }
 }
 
+export function resolveEnvironmentExecutionDeviceId(
+  currentRuntimeTask: { deviceId: string } | null,
+  workspaceTarget: WorkspaceTarget | null
+): string | undefined {
+  return currentRuntimeTask?.deviceId || workspaceTarget?.deviceId
+}
+
 export function useWorkbenchPaneEnvironment({
   pane,
   projectWork,
@@ -468,10 +475,17 @@ export function useWorkbenchPaneEnvironment({
             devicesRef.current,
             latestActiveWorkspaceTarget?.deviceId ?? info.deviceId
           )
+          const executionDeviceId = resolveEnvironmentExecutionDeviceId(
+            currentRuntimeTask,
+            latestActiveWorkspaceTarget
+          )
+          const executionDevice = findWorkbenchDevice(devicesRef.current, executionDeviceId)
           logLoad(loading ? 'partial_published' : 'completed', {
             branchName: info.branchName,
             changeRequestState: info.changeRequest?.state,
             changeRequestNumber: info.changeRequest?.changeRequest?.number,
+            executionDeviceId,
+            workspaceDeviceId: actualDevice?.device_id,
           })
           setEnvironmentInfo(current => {
             const preserveCurrentFields =
@@ -490,10 +504,11 @@ export function useWorkbenchPaneEnvironment({
                 ? { changeRequest: current.changeRequest }
                 : {}),
               workspaceRoots,
-              executionTarget: actualDevice
-                ? isCloudDevice(actualDevice)
+              executionDeviceId,
+              executionTarget: executionDevice
+                ? isCloudDevice(executionDevice)
                   ? 'cloud'
-                  : isRemoteDevice(actualDevice)
+                  : isRemoteDevice(executionDevice)
                     ? 'remote'
                     : 'local'
                 : info.executionTarget,
@@ -528,6 +543,7 @@ export function useWorkbenchPaneEnvironment({
     [
       activeWorkspaceTarget?.deviceId,
       activeWorkspaceTarget?.path,
+      currentRuntimeTask,
       environmentWorkspaceReady,
       loadEnvironmentInfo,
       workspaceRoots,

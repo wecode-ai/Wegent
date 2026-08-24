@@ -111,14 +111,14 @@ def test_device_pull_claims_and_fences_cloud_execution(
                 queued=0,
             ),
         ),
-        patch.object(
-            loop_item_execution_service,
-            "_materialize_backend_request",
-            return_value=True,
-        ),
         patch(
-            "app.services.chat.trigger.unified.build_wework_runtime_model_config",
-            return_value={"model_id": "test-model"},
+            "app.services.loop_item_executions.device_pull."
+            "loop_item_execution_service.build_runtime_payload",
+            return_value={
+                "executionRequest": {
+                    "prompt": "Build the calculator.",
+                }
+            },
         ),
     ):
         result = _claim_cloud_execution(

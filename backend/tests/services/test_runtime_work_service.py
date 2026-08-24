@@ -628,11 +628,22 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
                     "workspacePath": "/repo/Wegent",
                     "tasks": [
                         {
-                            "taskId": "codex-1",
+                            "taskId": "codex-queue-293",
                             "workspacePath": "/repo/Wegent",
                             "title": "Fix reconnect",
                             "runtime": "codex",
                             "workspaceKind": "workspace",
+                            "runtimeHandle": {
+                                "threadId": "private-thread",
+                                "modelSelection": {
+                                    "modelName": "moonshot-kimi-k2.7-code-highspeed",
+                                    "modelType": "public",
+                                    "options": {
+                                        "weworkCloudModelNamespace": "default",
+                                        "weworkCloudModelResourceUserId": "0",
+                                    },
+                                },
+                            },
                             "createdAt": "2026-06-20T01:00:00Z",
                             "updatedAt": "2026-06-20T02:00:00Z",
                             "running": False,
@@ -705,7 +716,19 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
     assert response.projects[0].device_workspaces[0].id is None
     assert response.projects[0].device_workspaces[0].project_id is None
     assert response.projects[0].device_workspaces[0].mapped is True
-    assert response.projects[0].device_workspaces[0].tasks[0].local_task_id == "codex-1"
+    cloud_task = response.projects[0].device_workspaces[0].tasks[0]
+    assert cloud_task.local_task_id == "codex-queue-293"
+    assert cloud_task.model_selection is not None
+    assert cloud_task.model_selection.model_name == (
+        "moonshot-kimi-k2.7-code-highspeed"
+    )
+    serialized_cloud_task = response.model_dump(by_alias=True)["projects"][0][
+        "deviceWorkspaces"
+    ][0]["tasks"][0]
+    assert "runtimeHandle" not in serialized_cloud_task
+    assert serialized_cloud_task["modelSelection"]["modelName"] == (
+        "moonshot-kimi-k2.7-code-highspeed"
+    )
     claude_task = response.projects[1].device_workspaces[0].tasks[0]
     assert claude_task.created_at == 1781924400000
     assert claude_task.updated_at == 1781928000000
@@ -4471,6 +4494,77 @@ def test_build_runtime_send_execution_request_uses_complete_create_request(
     assert execution_request.device_id == "device-1"
     assert execution_request.prompt.endswith("continue")
     assert "terminal output" in execution_request.prompt
+
+
+def test_compile_runtime_task_create_materializes_attachment_ids_once(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    attachment = SubtaskContext(
+        subtask_id=0,
+        user_id=test_user.id,
+        context_type=ContextType.ATTACHMENT.value,
+        name="requirements.md",
+        status=ContextStatus.READY.value,
+        type_data={
+            "original_filename": "requirements.md",
+            "file_extension": ".md",
+            "file_size": 2048,
+            "mime_type": "text/markdown",
+        },
+    )
+    test_db.add(attachment)
+    test_db.commit()
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+
+    compiled = runtime_work_service.compile_runtime_task_create(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=2,
+            deviceId="cloud-device",
+            workspacePath="/repo/Wegent",
+            runtime="codex",
+            message="Use the requirement",
+            attachmentIds=[attachment.id],
+            attachments=[
+                {
+                    "id": attachment.id,
+                    "original_filename": "stale-name.md",
+                },
+                {
+                    "id": "external-1",
+                    "original_filename": "external.txt",
+                },
+            ],
+        ),
+    )
+
+    expected = [
+        {
+            "id": attachment.id,
+            "original_filename": "requirements.md",
+            "mime_type": "text/markdown",
+            "file_size": 2048,
+            "subtask_id": 0,
+            "file_extension": ".md",
+        },
+        {
+            "id": "external-1",
+            "original_filename": "external.txt",
+        },
+    ]
+    assert compiled.payload["attachments"] == expected
+    assert compiled.payload["executionRequest"]["attachments"] == expected
 
 
 def test_build_runtime_send_execution_request_preserves_selected_model_and_catalog(

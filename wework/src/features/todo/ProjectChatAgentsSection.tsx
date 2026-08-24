@@ -28,7 +28,8 @@ import { SectionTitle, SettingsGroup, SettingsRow } from '@/components/common/Se
 import { useTranslation } from '@/hooks/useTranslation'
 import { isSupportedModelFamily } from '@/lib/model-ui'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
-import type { UnifiedModel } from '@/types/api'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
+import type { ModelOptions, ModelType, UnifiedModel } from '@/types/api'
 import type { Team } from '@/types/api'
 import { CloudTodoModal } from './CloudTodoModal'
 
@@ -56,6 +57,10 @@ function executionEnvironmentForDevice(device: { device_type?: string } | undefi
 function executionDeviceLabel(device: { device_id: string; name?: string }) {
   const name = device.name?.trim()
   return name && name !== device.device_id ? `${name} · ${device.device_id}` : device.device_id
+}
+
+function modelSelectionKey(modelName: string, modelType: ModelType | null | undefined) {
+  return `${modelType ?? ''}:${modelName}`
 }
 
 function resolveExecutionDevice(
@@ -146,6 +151,8 @@ export function ProjectChatAgentsSection({
   const [editingChatAgent, setEditingChatAgent] = useState<ProjectChatAgent | null>(null)
   const [agentName, setAgentName] = useState('')
   const [agentModel, setAgentModel] = useState('')
+  const [agentModelType, setAgentModelType] = useState<ModelType | null>(null)
+  const [agentModelOptions, setAgentModelOptions] = useState<ModelOptions>({})
   const [agentSystemPrompt, setAgentSystemPrompt] = useState('')
   const [agentCapabilityDescription, setAgentCapabilityDescription] = useState('')
   const [agentVisibility, setAgentVisibility] =
@@ -471,6 +478,8 @@ export function ProjectChatAgentsSection({
       setEditingChatAgent(null)
       setAgentName(template?.name ?? t('workbench.project_chat_new_agent'))
       setAgentModel('')
+      setAgentModelType(null)
+      setAgentModelOptions({})
       setAgentSystemPrompt(template?.systemPrompt ?? '')
       setAgentCapabilityDescription(template?.capabilityDescription ?? '')
       setAgentVisibility('creator_admin')
@@ -542,6 +551,8 @@ export function ProjectChatAgentsSection({
     setEditingChatAgent(agent)
     setAgentName(agent.name)
     setAgentModel(agent.model ?? '')
+    setAgentModelType(agent.modelType ?? null)
+    setAgentModelOptions(agent.modelOptions ?? {})
     setAgentSystemPrompt(agent.systemPrompt)
     setAgentCapabilityDescription(agent.capabilityDescription ?? '')
     setAgentVisibility(agent.visibility)
@@ -647,6 +658,8 @@ export function ProjectChatAgentsSection({
           runtime: agentRuntime,
           wegentTeamId: agentWegentTeamId === '' ? null : agentWegentTeamId,
           model: agentRuntime === 'codex' ? agentModel.trim() || null : null,
+          modelType: agentRuntime === 'codex' ? agentModelType : null,
+          modelOptions: agentRuntime === 'codex' ? agentModelOptions : {},
           systemPrompt: agentSystemPrompt,
           capabilityDescription: agentCapabilityDescription.trim(),
           visibility: agentVisibility,
@@ -676,6 +689,8 @@ export function ProjectChatAgentsSection({
           runtime: agentRuntime,
           wegentTeamId: agentWegentTeamId === '' ? null : agentWegentTeamId,
           model: agentRuntime === 'codex' ? agentModel.trim() || null : null,
+          modelType: agentRuntime === 'codex' ? agentModelType : null,
+          modelOptions: agentRuntime === 'codex' ? agentModelOptions : {},
           systemPrompt: agentSystemPrompt,
           capabilityDescription: agentCapabilityDescription.trim(),
           visibility: agentVisibility,
@@ -1040,6 +1055,8 @@ export function ProjectChatAgentsSection({
                           setAgentExecutionDeviceId('')
                           setAgentLocalProjectId('')
                           setAgentModel('')
+                          setAgentModelType(null)
+                          setAgentModelOptions({})
                           return
                         }
                         setAgentRuntime('codex')
@@ -1105,13 +1122,17 @@ export function ProjectChatAgentsSection({
                                   item => item.id === agentRuntimeProfileId
                                 ) ?? visibleRuntimeProfiles[0]
                               setAgentRuntimeProfileId(profile?.id ?? '')
-                              if (profile?.model) setAgentModel(profile.model)
+                              setAgentModel(profile?.model ?? '')
+                              setAgentModelType(profile?.modelType ?? null)
+                              setAgentModelOptions(profile?.modelOptions ?? {})
                               setAgentLocalProjectId('')
                               setAgentDeviceWorkspaceId('')
                               return
                             }
                             setAgentRuntimeProfileId('')
                             setAgentModel('')
+                            setAgentModelType(null)
+                            setAgentModelOptions({})
                             const device =
                               executionDevices.find(
                                 item => item.device_id === agentExecutionDeviceId
@@ -1158,7 +1179,9 @@ export function ProjectChatAgentsSection({
                                 const profile = visibleRuntimeProfiles.find(
                                   item => item.id === value
                                 )
-                                if (profile?.model) setAgentModel(profile.model)
+                                setAgentModel(profile?.model ?? '')
+                                setAgentModelType(profile?.modelType ?? null)
+                                setAgentModelOptions(profile?.modelOptions ?? {})
                               }}
                               options={visibleRuntimeProfiles.map(profile => ({
                                 value: profile.id,
@@ -1200,13 +1223,18 @@ export function ProjectChatAgentsSection({
                                 agentExecutionEnvironmentRef.current = environment
                                 setAgentDeviceWorkspaceId('')
                                 setAgentWorkspacePolicy('project')
-                                setAgentModel(current => {
-                                  if (!current || environment === 'local') return current
+                                if (agentModel && environment === 'cloud') {
                                   const model = availableModels.find(
-                                    candidate => candidate.name === current
+                                    candidate =>
+                                      candidate.name === agentModel &&
+                                      (!agentModelType || candidate.type === agentModelType)
                                   )
-                                  return model?.type === 'runtime' ? '' : current
-                                })
+                                  if (model?.type === 'runtime') {
+                                    setAgentModel('')
+                                    setAgentModelType(null)
+                                    setAgentModelOptions({})
+                                  }
+                                }
                                 // The bound project must have a workspace on the new device.
                                 setAgentLocalProjectId(current => {
                                   if (current === '' || environment === 'local') return current
@@ -1367,17 +1395,40 @@ export function ProjectChatAgentsSection({
                     >
                       <MenuSelect
                         testId="cloud-project-chat-agent-model"
-                        value={agentModel}
+                        value={agentModel ? modelSelectionKey(agentModel, agentModelType) : ''}
                         pill
                         placeholder={t('workbench.project_chat_agent_model_placeholder')}
-                        onChange={setAgentModel}
+                        onChange={value => {
+                          const selected = environmentModels.find(
+                            model => modelSelectionKey(model.name, model.type) === value
+                          )
+                          if (!selected) {
+                            setAgentModel('')
+                            setAgentModelType(null)
+                            setAgentModelOptions({})
+                            return
+                          }
+                          const execution = selectedModelExecutionFields(selected, {})
+                          setAgentModel(execution.modelId ?? '')
+                          setAgentModelType(execution.modelType ?? null)
+                          setAgentModelOptions(execution.modelOptions ?? {})
+                        }}
                         options={[
                           ...(agentModel &&
-                          !environmentModels.some(model => model.name === agentModel)
-                            ? [{ value: agentModel, label: agentModel }]
+                          !environmentModels.some(
+                            model =>
+                              model.name === agentModel &&
+                              (!agentModelType || model.type === agentModelType)
+                          )
+                            ? [
+                                {
+                                  value: modelSelectionKey(agentModel, agentModelType),
+                                  label: agentModel,
+                                },
+                              ]
                             : []),
                           ...environmentModels.map(model => ({
-                            value: model.name,
+                            value: modelSelectionKey(model.name, model.type),
                             label: model.displayName ?? model.name,
                           })),
                         ]}

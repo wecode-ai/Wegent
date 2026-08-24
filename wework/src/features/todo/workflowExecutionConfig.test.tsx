@@ -6,6 +6,7 @@ import { CloudTodoCardContent } from './CloudTodoBoardCard'
 import {
   effectiveWorkflowNodeExecutionConfig,
   itemNeedsExecutionConfiguration,
+  mergeWorkflowExecutionConfig,
   resolveWorkflowExecutionConfig,
   workflowExecutionConfigComplete,
   workflowNeedsExecutionConfiguration,
@@ -85,12 +86,52 @@ describe('workflow execution configuration', () => {
       runtime_profile_id: null,
       execution_device_id: 'device-1',
       model: 'custom-model',
+      model_type: null,
+      model_options: {},
       workspace_binding: {
         type: 'device_project',
         deviceId: 'device-1',
         runtimeProjectKey: 'project-1',
       },
     })
+  })
+
+  it('preserves every explicit V2 execution capability when merging an Issue override', () => {
+    const override = {
+      agent_id: 'agent-1',
+      runtime_profile_id: null,
+      execution_device_id: 'cloud-device',
+      model: 'moonshot-kimi-k2.7-code-highspeed',
+      model_type: 'public' as const,
+      model_options: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '0',
+      },
+      workspace_binding: { type: 'standalone' as const },
+      runtime_permission_mode: 'plan' as const,
+      execution: { mode: 'git_worktree' as const, baseBranch: 'main' },
+      initial_goal: { objective: 'Finish V2', tokenBudget: 2000 },
+      initial_supervisor: {
+        mode: 'suggest' as const,
+        instructions: 'Review architecture',
+        modelSelection: {
+          modelName: 'moonshot-kimi-k2.7-code-highspeed',
+          modelType: 'public' as const,
+          options: {},
+        },
+        intervalSeconds: 30 as const,
+      },
+      additional_skills: [{ name: 'architecture-review' }],
+      attachment_ids: [11],
+      attachments: [{ name: 'architecture.png', mimeType: 'image/png', content: 'base64' }],
+      project_plugins: [{ id: 'plugin-1', name: 'Plugin One' }],
+      additional_context: {
+        issue: { kind: 'application' as const, value: 'WEG-1' },
+      },
+      ephemeral: true,
+    }
+
+    expect(mergeWorkflowExecutionConfig(completeConfig, override)).toEqual(override)
   })
 
   it('merges node overrides with the shared robot configuration', () => {

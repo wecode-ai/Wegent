@@ -1511,13 +1511,11 @@ class LoopItemService:
         item_id: str,
         values: LoopItemTaskBind,
         user_id: int,
-        stage_snapshot: dict[str, Any],
+        stage_snapshot: dict[str, Any] | None = None,
         commit: bool = True,
     ) -> LoopItemTaskBinding:
-        """Bind a trusted queued execution to its workflow stage."""
+        """Bind a trusted Issue execution, optionally to its workflow stage."""
 
-        if not values.workflow_node_id:
-            raise ValueError("Workflow execution binding requires a stage")
         return self._bind_task(
             db,
             item_id=item_id,

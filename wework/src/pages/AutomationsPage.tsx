@@ -138,7 +138,7 @@ export function AutomationsPage() {
       if (shouldSelectInitialAutomation && response.items[0]) {
         setSelectedAutomationId(response.items[0].id)
         setEditing(response.items[0])
-        setDraft(automationDraftFromAutomation(response.items[0]))
+        setDraft(automationDraftFromAutomation(response.items[0], state.runtimeWork))
         setDirty(false)
       }
       setError(null)
@@ -151,7 +151,7 @@ export function AutomationsPage() {
     } finally {
       setLoading(false)
     }
-  }, [automationApi, t])
+  }, [automationApi, state.runtimeWork, t])
 
   const loadRuns = useCallback(
     async (automationId: string) => {
@@ -266,7 +266,7 @@ export function AutomationsPage() {
   const selectAutomation = (automation: Automation) => {
     setSelectedAutomationId(automation.id)
     setEditing(automation)
-    setDraft(automationDraftFromAutomation(automation))
+    setDraft(automationDraftFromAutomation(automation, state.runtimeWork))
     setDirty(false)
   }
 
@@ -313,10 +313,16 @@ export function AutomationsPage() {
     if (!draft.deviceId) {
       throw new Error(t('workbench.automation_target_required', '请选择设备'))
     }
+    const projectTarget =
+      draft.conversationMode === 'independent'
+        ? buildAutomationProjectOptions(state.runtimeWork?.projects ?? [], draft.deviceId).find(
+            option => option.workspacePath === draft.workspacePath
+          )?.target
+        : null
     const taskRequest: RuntimeTaskCreateRequest = {
       schemaVersion: 2,
       deviceId: draft.deviceId,
-      ...automationWorkspaceTarget(draft.workspacePath),
+      ...automationWorkspaceTarget(projectTarget),
       runtime: 'codex',
       message: draft.prompt.trim(),
       title: draft.name.trim(),

@@ -323,11 +323,18 @@ def find_runtime_task_cloud_context(
     "/runtime-tasks/cloud-context/status",
     response_model=LoopItemResponse | None,
 )
-def update_runtime_task_cloud_status(
+async def update_runtime_task_cloud_status(
     values: RuntimeTaskStatusUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse | None:
+    current_item = loop_item_service.find_for_runtime_task(
+        db,
+        current_user.id,
+        values.device_id,
+        values.task_id,
+    )
+    ready_before = issue_workflow_start_service.ready_robot_stage_ids(current_item)
     item = update_workflow_task_status(
         db,
         user_id=current_user.id,
@@ -339,6 +346,18 @@ def update_runtime_task_cloud_status(
         return None
     db.commit()
     db.refresh(item)
+    newly_ready = (
+        issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
+    )
+    if newly_ready:
+        started = await issue_workflow_start_service.continue_ready_stages(
+            db,
+            item=item,
+            user_id=current_user.id,
+            stage_ids=newly_ready,
+        )
+        if started:
+            db.refresh(item)
     publish_loop_item_changed(
         db,
         item=item,
@@ -1210,18 +1229,34 @@ def discard_delivery_draft(
 
 
 @router.post("/deliveries/{delivery_id}/finalize", response_model=DeliveryResponse)
-def finalize_delivery(
+async def finalize_delivery(
     delivery_id: str,
     values: DeliveryFinalize | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DeliveryResponse:
+    draft = delivery_service.get_delivery(db, delivery_id, current_user.id)
+    item = loop_item_service.get(db, draft.loop_item_id, current_user.id)
+    ready_before = issue_workflow_start_service.ready_robot_stage_ids(item)
     delivery = delivery_service.finalize(
         db,
         delivery_id,
         current_user.id,
         values or DeliveryFinalize(),
     )
+    db.refresh(item)
+    newly_ready = (
+        issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
+    )
+    if newly_ready:
+        started = await issue_workflow_start_service.continue_ready_stages(
+            db,
+            item=item,
+            user_id=current_user.id,
+            stage_ids=newly_ready,
+        )
+        if started:
+            db.refresh(delivery)
     return _delivery_response(db, delivery)
 
 

@@ -9,6 +9,10 @@ from typing import Any, Literal, Mapping
 from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.project_chat import ProjectChatWorkspaceBinding
+from app.schemas.runtime_work import (
+    RuntimeGoalCreateInput,
+    RuntimeSupervisorCreateInput,
+)
 
 WorkflowContextSource = Literal["final_result", "deliveries", "activity"]
 WorkflowOrchestrationStatus = Literal[
@@ -62,7 +66,28 @@ class WorkflowExecutionConfig(BaseModel):
     runtime_profile_id: str | None = Field(default=None, max_length=64)
     execution_device_id: str | None = Field(default=None, max_length=100)
     model: str | None = Field(default=None, max_length=255)
+    model_type: Literal["public", "user", "group", "runtime"] | None = None
+    model_options: dict[str, str] = Field(default_factory=dict)
     workspace_binding: ProjectChatWorkspaceBinding | None = None
+    runtime_permission_mode: (
+        Literal[
+            "default",
+            "acceptEdits",
+            "plan",
+            "auto",
+            "bypassPermissions",
+        ]
+        | None
+    ) = None
+    execution: dict[str, Any] | None = None
+    initial_goal: RuntimeGoalCreateInput | None = None
+    initial_supervisor: RuntimeSupervisorCreateInput | None = None
+    additional_skills: list[Any] | None = None
+    attachment_ids: list[int] | None = None
+    attachments: list[dict[str, Any]] | None = None
+    project_plugins: list[dict[str, Any]] | None = None
+    additional_context: dict[str, dict[str, Any]] | None = None
+    ephemeral: bool | None = None
 
     @model_validator(mode="after")
     def normalize_values(self) -> "WorkflowExecutionConfig":
@@ -86,6 +111,7 @@ class WorkflowExecutionConfig(BaseModel):
     def merged_with(
         self, override: "WorkflowExecutionConfig"
     ) -> "WorkflowExecutionConfig":
+        model_overridden = bool(override.model)
         return WorkflowExecutionConfig(
             agent_id=override.agent_id or self.agent_id,
             runtime_profile_id=(override.runtime_profile_id or self.runtime_profile_id),
@@ -93,8 +119,70 @@ class WorkflowExecutionConfig(BaseModel):
                 override.execution_device_id or self.execution_device_id
             ),
             model=override.model or self.model,
+            model_type=(override.model_type if model_overridden else self.model_type),
+            model_options=(
+                override.model_options if model_overridden else self.model_options
+            ),
             workspace_binding=override.workspace_binding or self.workspace_binding,
+            runtime_permission_mode=(
+                override.runtime_permission_mode or self.runtime_permission_mode
+            ),
+            execution=override.execution or self.execution,
+            initial_goal=override.initial_goal or self.initial_goal,
+            initial_supervisor=override.initial_supervisor or self.initial_supervisor,
+            additional_skills=(
+                override.additional_skills
+                if override.additional_skills is not None
+                else self.additional_skills
+            ),
+            attachment_ids=(
+                override.attachment_ids
+                if override.attachment_ids is not None
+                else self.attachment_ids
+            ),
+            attachments=(
+                override.attachments
+                if override.attachments is not None
+                else self.attachments
+            ),
+            project_plugins=(
+                override.project_plugins
+                if override.project_plugins is not None
+                else self.project_plugins
+            ),
+            additional_context=(
+                override.additional_context
+                if override.additional_context is not None
+                else self.additional_context
+            ),
+            ephemeral=(
+                override.ephemeral if override.ephemeral is not None else self.ephemeral
+            ),
         )
+
+    def runtime_request_options(self) -> dict[str, Any]:
+        """Return only producer-facing RuntimeTaskCreateRequest capabilities."""
+
+        return {
+            "runtime_permission_mode": self.runtime_permission_mode,
+            "execution": self.execution,
+            "initial_goal": (
+                self.initial_goal.model_dump(by_alias=True)
+                if self.initial_goal is not None
+                else None
+            ),
+            "initial_supervisor": (
+                self.initial_supervisor.model_dump(by_alias=True)
+                if self.initial_supervisor is not None
+                else None
+            ),
+            "additional_skills": self.additional_skills,
+            "attachment_ids": self.attachment_ids,
+            "attachments": self.attachments,
+            "project_plugins": self.project_plugins,
+            "additional_context": self.additional_context,
+            "ephemeral": self.ephemeral,
+        }
 
 
 class DeliverableFileConstraints(BaseModel):

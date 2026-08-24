@@ -294,6 +294,10 @@ impl RuntimeWorkRpcHandler {
                 format!("runtime task create schemaVersion {schema_version} is unsupported"),
             ));
         }
+        if schema_version == 2 {
+            crate::runtime_work::task_create_contract::validate_runtime_task_create_v2(&payload)
+                .map_err(|error| AppIpcError::new("invalid_request", error))?;
+        }
         let runtime = string_field(&payload, "runtime").unwrap_or_else(|| "codex".to_owned());
         if !is_codex_runtime(&runtime) && !is_claude_runtime(&runtime) {
             return Err(AppIpcError::new(
@@ -317,6 +321,38 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         set_runtime_task_title(&mut request, &title);
+        log_executor_event(
+            "runtime task create identity",
+            &[
+                ("task_id", local_task_id.clone()),
+                ("schema_version", schema_version.to_string()),
+                ("device_id", self.device_id.clone()),
+                (
+                    "selected_model",
+                    string_field(&payload, "modelId")
+                        .or_else(|| string_field(&payload, "model_id"))
+                        .unwrap_or_default(),
+                ),
+                (
+                    "selected_model_type",
+                    string_field(&payload, "modelType")
+                        .or_else(|| string_field(&payload, "model_type"))
+                        .unwrap_or_default(),
+                ),
+                (
+                    "upstream_model",
+                    string_field(&request.model_config, "model_id")
+                        .or_else(|| string_field(&request.model_config, "model"))
+                        .unwrap_or_default(),
+                ),
+                (
+                    "upstream_protocol",
+                    string_field(&request.model_config, "protocol")
+                        .or_else(|| string_field(&request.model_config, "api_format"))
+                        .unwrap_or_default(),
+                ),
+            ],
+        );
         if is_codex_runtime(&runtime) {
             if let (Some(project_key), Some(project_name)) = (
                 request.runtime_project_key.as_deref(),
@@ -387,13 +423,15 @@ impl RuntimeWorkRpcHandler {
                     })
             })
             .or_else(|| {
-                id_field(&payload, "local_project_id")
-                    .and_then(|value| value.parse::<u64>().ok())
-                    .and_then(|project_id| {
-                        CodexGlobalProjectIndex::load()
-                            .project_for_ui_id(&self.device_id, project_id)
-                            .map(|project| project.workspace_path.clone())
-                    })
+                (schema_version == 1).then(|| {
+                    id_field(&payload, "local_project_id")
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .and_then(|project_id| {
+                            CodexGlobalProjectIndex::load()
+                                .project_for_ui_id(&self.device_id, project_id)
+                                .map(|project| project.workspace_path.clone())
+                        })
+                })?
             })
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
             .ok_or_else(|| {

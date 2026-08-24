@@ -1310,12 +1310,45 @@ describe('createLocalAppServices', () => {
   })
 
   test('passes stable device project bindings to the local Runtime compiler', async () => {
-    const request = vi.fn().mockResolvedValue({
-      accepted: true,
-      deviceId: 'device-uuid',
-      taskId: 'task-1',
-      workspacePath: '/Users/me/project',
-      runtime: 'codex',
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.list') {
+        return {
+          projects: [
+            {
+              project: {
+                key: 'product',
+                id: 7,
+                name: 'Product',
+                kind: 'local',
+                source: 'local_project',
+                roots: [{ path: '/Users/me/project' }],
+              },
+              deviceWorkspaces: [
+                {
+                  id: 9,
+                  projectId: 7,
+                  deviceId: 'device-uuid',
+                  deviceName: 'Local Executor',
+                  deviceStatus: 'online',
+                  workspacePath: '/Users/me/project',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 0,
+        }
+      }
+      return {
+        accepted: true,
+        deviceId: 'device-uuid',
+        taskId: 'task-1',
+        workspacePath: '/Users/me/project',
+        runtime: 'codex',
+      }
     })
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
@@ -1339,10 +1372,208 @@ describe('createLocalAppServices', () => {
         deviceId: 'device-uuid',
         runtimeProjectKey: 'product',
         runtimeProjectName: 'Product',
+        workspacePath: '/Users/me/project',
         message: 'hello',
       })
     )
-    expect(request.mock.calls[0][1]).not.toHaveProperty('workspacePath')
+  })
+
+  test('resolves a backend project binding inside the Local Compiler', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.list') {
+        return {
+          projects: [
+            {
+              project: {
+                key: 'local-project',
+                id: 7,
+                name: 'Local project',
+                kind: 'local',
+                source: 'local_project',
+                roots: [{ path: '/Users/me/project' }],
+              },
+              deviceWorkspaces: [
+                {
+                  id: 9,
+                  projectId: 7,
+                  deviceId: 'device-uuid',
+                  deviceName: 'Local Executor',
+                  deviceStatus: 'online',
+                  workspacePath: '/Users/me/project',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 0,
+        }
+      }
+      return {
+        accepted: true,
+        deviceId: 'device-uuid',
+        taskId: 'task-1',
+        workspacePath: '/Users/me/project',
+        runtime: 'codex',
+      }
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      schemaVersion: 2,
+      taskId: 'task-1',
+      deviceId: 'local-device',
+      projectId: 7,
+      runtime: 'codex',
+      message: 'hello',
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    expect(createPayload).toEqual(
+      expect.objectContaining({
+        schemaVersion: 2,
+        projectId: 7,
+        workspacePath: '/Users/me/project',
+      })
+    )
+  })
+
+  test('resolves an inherited task workspace inside the Local Compiler', async () => {
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.list') {
+        return {
+          projects: [
+            {
+              project: {
+                key: 'local-project',
+                id: 7,
+                name: 'Local project',
+                kind: 'local',
+                source: 'local_project',
+                roots: [{ path: '/Users/me/project' }],
+              },
+              deviceWorkspaces: [
+                {
+                  id: 9,
+                  projectId: 7,
+                  deviceId: 'device-uuid',
+                  deviceName: 'Local Executor',
+                  deviceStatus: 'online',
+                  workspacePath: '/Users/me/project',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'source-task',
+                      title: 'Source',
+                      runtime: 'codex',
+                      workspacePath: '/Users/me/project/.worktrees/source',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        }
+      }
+      return {
+        accepted: true,
+        deviceId: 'device-uuid',
+        taskId: 'task-2',
+        workspacePath: '/Users/me/project/.worktrees/source',
+        runtime: 'codex',
+      }
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      schemaVersion: 2,
+      taskId: 'task-2',
+      deviceId: 'local-device',
+      workspaceSourceTask: {
+        deviceId: 'device-uuid',
+        taskId: 'source-task',
+      },
+      runtime: 'codex',
+      message: 'continue',
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    expect(createPayload).toEqual(
+      expect.objectContaining({
+        workspacePath: '/Users/me/project/.worktrees/source',
+        workspaceSourceTask: {
+          deviceId: 'device-uuid',
+          taskId: 'source-task',
+        },
+      })
+    )
+  })
+
+  test('creates a standalone conversation workspace inside the Local Compiler', async () => {
+    const request = vi
+      .fn()
+      .mockImplementation(async (method: string, data: Record<string, unknown>) => {
+        if (method === 'device.execute_command' && data.command_key === 'home_dir') {
+          return { success: true, stdout: '/Users/me', stderr: '', exit_code: 0 }
+        }
+        if (method === 'device.execute_command' && data.command_key === 'mkdir_p') {
+          return { success: true, stdout: '', stderr: '', exit_code: 0 }
+        }
+        if (method === 'runtime.tasks.create') {
+          return {
+            accepted: true,
+            deviceId: 'device-uuid',
+            taskId: 'task-standalone',
+            workspacePath: data.workspacePath,
+            runtime: 'codex',
+          }
+        }
+        return {}
+      })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const response = await services.runtimeWorkApi?.createRuntimeTask({
+      schemaVersion: 2,
+      taskId: 'task-standalone',
+      deviceId: 'local-device',
+      standaloneChatWorkspace: true,
+      runtime: 'codex',
+      message: 'standalone task',
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    expect(createPayload.workspacePath).toContain('/Users/me/Documents/Codex/')
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'mkdir_p',
+      args: [createPayload.workspacePath],
+      timeout_seconds: 15,
+      max_output_bytes: 4096,
+    })
+    expect(response?.workspacePath).toBe(createPayload.workspacePath)
   })
 
   test('persists projectless automations as standalone chat workspaces', async () => {
@@ -1404,6 +1635,96 @@ describe('createLocalAppServices', () => {
     const automationPayload = request.mock.calls[0]?.[1]?.automation.taskPayload
     expect(automationPayload).not.toHaveProperty('workspacePath')
     expect(automationPayload.executionRequest).not.toHaveProperty('project_workspace_path')
+  })
+
+  test('persists stable automation intent and compiles its project binding', async () => {
+    const request = vi
+      .fn()
+      .mockImplementation(async (method: string, data: Record<string, unknown>) => {
+        if (method === 'runtime.tasks.list') {
+          return {
+            projects: [
+              {
+                project: {
+                  key: 'product',
+                  id: 7,
+                  name: 'Product',
+                  kind: 'local',
+                  source: 'local_project',
+                  roots: [{ path: '/Users/me/product' }],
+                },
+                deviceWorkspaces: [
+                  {
+                    id: 9,
+                    projectId: null,
+                    deviceId: 'device-uuid',
+                    deviceName: 'Local Executor',
+                    deviceStatus: 'online',
+                    workspacePath: '/Users/me/product',
+                    mapped: true,
+                    available: true,
+                    tasks: [],
+                  },
+                ],
+              },
+            ],
+            chats: [],
+            totalTasks: 0,
+          }
+        }
+        if (method === 'runtime.automations.create') {
+          return { automation: data.automation }
+        }
+        return {}
+      })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.automationApi?.createAutomation({
+      source: 'local',
+      name: 'Bound automation',
+      prompt: 'Inspect the project',
+      schedule: { type: 'interval', value: 1, unit: 'hours' },
+      timezone: 'Asia/Shanghai',
+      enabled: true,
+      conversationMode: 'independent',
+      notificationPolicy: 'attention_only',
+      taskRequest: {
+        schemaVersion: 2,
+        deviceId: 'local-device',
+        runtimeProjectKey: 'product',
+        runtimeProjectName: 'Product',
+        runtimeWorkspaceRoots: ['/Users/me/product'],
+        runtime: 'codex',
+        message: 'Inspect the project',
+      },
+    })
+
+    const automation = request.mock.calls.find(
+      ([method]) => method === 'runtime.automations.create'
+    )?.[1].automation
+    expect(automation.notificationPolicy).toBe('attention_only')
+    expect(automation.taskRequest).toEqual(
+      expect.objectContaining({
+        schemaVersion: 2,
+        deviceId: 'local-device',
+        runtimeProjectKey: 'product',
+        runtimeProjectName: 'Product',
+        runtimeWorkspaceRoots: ['/Users/me/product'],
+      })
+    )
+    expect(automation.taskRequest).not.toHaveProperty('workspacePath')
+    expect(automation.taskPayload).toEqual(
+      expect.objectContaining({
+        schemaVersion: 2,
+        deviceId: 'local-device',
+        runtimeProjectKey: 'product',
+        workspacePath: '/Users/me/product',
+      })
+    )
   })
 
   test('defers git worktree creation to the local runtime scheduler', async () => {

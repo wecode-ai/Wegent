@@ -65,6 +65,8 @@ import type {
   RuntimeTaskQueueReorderRequest,
   RuntimeTaskQueueReorderResponse,
   RuntimeTaskRenameRequest,
+  RuntimeTaskStatusReplayRequest,
+  RuntimeTaskStatusReplayResponse,
   RuntimeSettings,
   RuntimeSendRequest,
   RuntimeSendResponse,
@@ -125,6 +127,7 @@ import {
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { buildConversationWorkspacePath } from '@/lib/runtime-conversation-workspace'
 import {
   runtimePermissionMode,
   runtimePermissionProfile,
@@ -1660,6 +1663,114 @@ async function prepareLocalRuntimeWorkspace(
   }
 }
 
+async function resolveLocalRuntimeTaskWorkspace(
+  data: RuntimeTaskCreateRequest,
+  localDeviceId: string,
+  requestWithLocalDevice: RequestWithLocalDevice,
+  adaptListResponse: (response: unknown, deviceId: string) => RuntimeWorkListResponse,
+  createStandaloneWorkspace = true
+): Promise<RuntimeTaskCreateRequest> {
+  if (runtimeWorkspacePath(data)) return data
+
+  const needsRuntimeWork =
+    data.projectId != null ||
+    data.deviceWorkspaceId != null ||
+    Boolean(data.runtimeProjectKey) ||
+    Boolean(data.workspaceSourceTask)
+  let runtimeWork: RuntimeWorkListResponse | null = null
+  if (needsRuntimeWork) {
+    const response = await requestWithLocalDevice<unknown, Record<string, never>>(
+      'runtime.tasks.list',
+      {}
+    )
+    runtimeWork = adaptListResponse(response, localDeviceId)
+  }
+
+  if (data.workspaceSourceTask) {
+    if (data.workspaceSourceTask.deviceId !== localDeviceId) {
+      throw new Error('Inherited workflow workspace belongs to another device')
+    }
+    const workspaces = [
+      ...(runtimeWork?.projects.flatMap(project => project.deviceWorkspaces) ?? []),
+      ...(runtimeWork?.chats ?? []),
+    ]
+    for (const workspace of workspaces) {
+      const sourceTask = workspace.tasks.find(
+        candidate => candidate.taskId === data.workspaceSourceTask?.taskId
+      )
+      if (sourceTask) {
+        return {
+          ...data,
+          workspacePath: sourceTask.workspacePath || workspace.workspacePath,
+        }
+      }
+    }
+    throw new Error('Inherited workflow workspace is unavailable')
+  }
+
+  const projects = runtimeWork?.projects ?? []
+  const selectedProject = projects.find(project => {
+    if (data.projectId != null && project.project.id === data.projectId) return true
+    return Boolean(data.runtimeProjectKey && project.project.key === data.runtimeProjectKey)
+  })
+  const selectedWorkspace =
+    selectedProject?.deviceWorkspaces.find(
+      workspace =>
+        workspace.deviceId === localDeviceId &&
+        workspace.available &&
+        (data.deviceWorkspaceId == null || workspace.id === data.deviceWorkspaceId)
+    ) ??
+    projects
+      .flatMap(project => project.deviceWorkspaces)
+      .find(
+        workspace =>
+          data.deviceWorkspaceId != null &&
+          workspace.id === data.deviceWorkspaceId &&
+          workspace.deviceId === localDeviceId &&
+          workspace.available
+      )
+  if (selectedWorkspace) {
+    return { ...data, workspacePath: selectedWorkspace.workspacePath }
+  }
+  const rootPath = selectedProject?.project.roots?.[0]?.path
+  if (rootPath) return { ...data, workspacePath: rootPath }
+  if (data.projectId != null || data.deviceWorkspaceId != null || data.runtimeProjectKey) {
+    const binding =
+      data.projectId != null
+        ? `project ${data.projectId}`
+        : data.deviceWorkspaceId != null
+          ? `workspace ${data.deviceWorkspaceId}`
+          : `project '${data.runtimeProjectKey}'`
+    throw new Error(`Bound local ${binding} is unavailable on device ${localDeviceId}`)
+  }
+
+  if (!data.standaloneChatWorkspace || !createStandaloneWorkspace) return data
+  const taskId = data.taskId ?? createRuntimeExecutionIds(data)[0]
+  const home = await executeLocalDeviceCommand(
+    requestWithLocalDevice,
+    {
+      deviceId: localDeviceId,
+      command_key: 'home_dir',
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    },
+    'Failed to resolve home directory'
+  )
+  const workspacePath = buildConversationWorkspacePath(commandText(home), data.message, taskId)
+  await executeLocalDeviceCommand(
+    requestWithLocalDevice,
+    {
+      deviceId: localDeviceId,
+      command_key: 'mkdir_p',
+      args: [workspacePath],
+      timeout_seconds: 15,
+      max_output_bytes: 4096,
+    },
+    'Failed to create conversation workspace'
+  )
+  return { ...data, workspacePath }
+}
+
 async function createLocalRuntimeTaskPayload(
   data: RuntimeTaskCreateRequest,
   localDeviceId: string,
@@ -2434,6 +2545,11 @@ export function createRuntimeWorkApiFromIpc(
 
   return {
     prepareRuntimeModel,
+    replayRuntimeTaskStatuses(
+      data: RuntimeTaskStatusReplayRequest
+    ): Promise<RuntimeTaskStatusReplayResponse> {
+      return requestWithLocalDevice('runtime.tasks.status.replay', data)
+    },
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
       const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()
@@ -2869,22 +2985,33 @@ export function createRuntimeWorkApiFromIpc(
         runtime: data.runtime,
       })
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      const resolvedData = await resolveLocalRuntimeTaskWorkspace(
+        data,
+        localDeviceId,
+        requestWithLocalDevice,
+        adaptListResponse
+      )
       logRuntimeTaskCreateStage('local-device-resolved', {
-        taskId: data.taskId ?? null,
+        taskId: resolvedData.taskId ?? null,
         requestedDeviceId: data.deviceId ?? null,
         deviceId: localDeviceId,
         elapsedMs: Date.now() - startedAt,
       })
-      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+      if (
+        !(await prepareRuntimeModel({
+          deviceId: localDeviceId,
+          modelId: resolvedData.modelId,
+        }))
+      ) {
         throw modelCatalogSyncCancelled()
       }
       logRuntimeTaskCreateStage('local-primary-model-prepared', {
-        taskId: data.taskId ?? null,
+        taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
-        modelId: data.modelId ?? null,
+        modelId: resolvedData.modelId ?? null,
         elapsedMs: Date.now() - startedAt,
       })
-      const supervisorModelId = data.initialSupervisor?.modelSelection?.modelName
+      const supervisorModelId = resolvedData.initialSupervisor?.modelSelection?.modelName
       if (
         supervisorModelId &&
         !(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: supervisorModelId }))
@@ -2892,13 +3019,13 @@ export function createRuntimeWorkApiFromIpc(
         throw modelCatalogSyncCancelled()
       }
       logRuntimeTaskCreateStage('local-supervisor-model-prepared', {
-        taskId: data.taskId ?? null,
+        taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
         supervisorModelId: supervisorModelId ?? null,
         elapsedMs: Date.now() - startedAt,
       })
       const payload = await createLocalRuntimeTaskPayload(
-        data,
+        resolvedData,
         localDeviceId,
         requestWithLocalDevice,
         options.cloudModelGateway,
@@ -2906,18 +3033,18 @@ export function createRuntimeWorkApiFromIpc(
         requireLocalCodexCatalog
       )
       logRuntimeTaskCreateStage('local-payload-built', {
-        taskId: data.taskId ?? null,
+        taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
         elapsedMs: Date.now() - startedAt,
       })
-      debugLocalRuntimeCreatePayload(data, payload)
-      logLocalIssueRuntimeContext('create-payload-built', data, payload)
+      debugLocalRuntimeCreatePayload(resolvedData, payload)
+      logLocalIssueRuntimeContext('create-payload-built', resolvedData, payload)
       const executionRequest = recordValue(payload.executionRequest)
       console.info('[Wework] Friendly task title request', {
-        taskId: data.taskId,
-        enabled: Boolean(data.friendlyTitle),
+        taskId: resolvedData.taskId,
+        enabled: Boolean(resolvedData.friendlyTitle),
         executionRequestIncluded: Boolean(payload.friendlyTitleExecutionRequest),
-        modelId: data.friendlyTitle?.modelId ?? null,
+        modelId: resolvedData.friendlyTitle?.modelId ?? null,
       })
       console.info('[Wework] Local runtime execution identity', {
         taskId: stringValue(executionRequest.task_id),
@@ -2925,7 +3052,7 @@ export function createRuntimeWorkApiFromIpc(
         userName: stringValue(executionRequest.user_name),
       })
       logRuntimeTaskCreateStage('local-rpc-dispatched', {
-        taskId: data.taskId ?? null,
+        taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
         method: 'runtime.tasks.create',
         elapsedMs: Date.now() - startedAt,
@@ -2936,7 +3063,7 @@ export function createRuntimeWorkApiFromIpc(
         localDeviceId
       )
       logRuntimeTaskCreateStage('local-rpc-resolved', {
-        taskId: data.taskId ?? null,
+        taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
         elapsedMs: Date.now() - startedAt,
         accepted: response.accepted ?? true,
@@ -2946,12 +3073,12 @@ export function createRuntimeWorkApiFromIpc(
         stringValue(responseRecord.workspacePath) ??
         stringValue(responseRecord.workspace_path) ??
         stringValue(payload.workspacePath) ??
-        requiredRuntimeWorkspacePath(data)
+        requiredRuntimeWorkspacePath(resolvedData)
       const taskId =
         stringValue(responseRecord.taskId) ??
         stringValue(responseRecord.task_id) ??
         stringValue(executionRequest.task_id) ??
-        createRuntimeExecutionIds(data)[0]
+        createRuntimeExecutionIds(resolvedData)[0]
       const runtimeHandle = recordValue(
         responseRecord.runtimeHandle ?? responseRecord.runtime_handle
       )
@@ -2961,7 +3088,7 @@ export function createRuntimeWorkApiFromIpc(
         deviceId: localDeviceId,
         taskId,
         workspacePath,
-        runtime: response.runtime ?? data.runtime,
+        runtime: response.runtime ?? resolvedData.runtime,
         ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
       }
     },
@@ -3077,10 +3204,23 @@ export function createAutomationApiFromIpc(
   const resolveDeviceId =
     options.resolveDeviceId ??
     (async (data?: Record<string, unknown>) => stringValue(data?.deviceId) ?? LOCAL_DEVICE_ID)
+  const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
 
   const prepareAutomation = async (data: AutomationMutation) => {
     const localDeviceId = await resolveDeviceId(
       data.taskRequest as unknown as Record<string, unknown>
+    )
+    const taskRequest: RuntimeTaskCreateRequest = {
+      ...data.taskRequest,
+      schemaVersion: 2,
+      deviceId: localDeviceId,
+    }
+    const resolvedTaskRequest = await resolveLocalRuntimeTaskWorkspace(
+      taskRequest,
+      localDeviceId,
+      requestWithLocalDevice,
+      adaptListResponse,
+      false
     )
     const continuationRequest =
       data.conversationMode === 'continue_thread' && data.continuationPayload
@@ -3088,8 +3228,8 @@ export function createAutomationApiFromIpc(
         : null
     const modelIds = new Set(
       [
-        data.taskRequest.modelId,
-        data.taskRequest.initialSupervisor?.modelSelection?.modelName,
+        taskRequest.modelId,
+        taskRequest.initialSupervisor?.modelSelection?.modelName,
         continuationRequest?.modelId,
       ].filter((modelId): modelId is string => Boolean(modelId))
     )
@@ -3099,7 +3239,7 @@ export function createAutomationApiFromIpc(
       }
     }
     const taskPayload = await createLocalRuntimeTaskPayload(
-      data.taskRequest,
+      resolvedTaskRequest,
       localDeviceId,
       requestWithLocalDevice,
       options.cloudModelGateway,
@@ -3125,6 +3265,8 @@ export function createAutomationApiFromIpc(
       timezone: data.timezone,
       enabled: data.enabled,
       conversationMode: data.conversationMode,
+      notificationPolicy: data.notificationPolicy,
+      taskRequest,
       taskPayload,
       continuationPayload,
     }

@@ -47,6 +47,7 @@ import type {
   Delivery,
   DeliveryDetail,
   IssueWorkflowInstance,
+  LoopItemTaskBinding,
   WorkflowPlan,
 } from '@/api/deliveries'
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
@@ -705,16 +706,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
   const [selectedDelivery, setSelectedDelivery] = useState<DeliveryDetail | null>(null)
-  const [tasks, setTasks] = useState<
-    Array<{
-      id: number
-      device_id: string
-      task_id: string
-      task_title: string | null
-      workflow_node_id?: string | null
-      linked_at?: string
-    }>
-  >([])
+  const [tasks, setTasks] = useState<LoopItemTaskBinding[]>([])
   const [attachments, setAttachments] = useState<CloudLoopItemAttachment[]>([])
   const [collaborators, setCollaborators] = useState<CloudLoopItemCollaborator[]>([])
   const [projectMembers, setProjectMembers] = useState<CloudProjectMember[]>([])
@@ -767,6 +759,10 @@ export function TodoEditor(props: TodoEditorProps) {
     () => (workflowDraft ? reconcileIssueWorkflowForTaskBindings(workflowDraft, tasks) : null),
     [workflowDraft, tasks]
   )
+  const refreshTaskBindings = useCallback(async () => {
+    if (editItemId == null) return
+    setTasks(await api.listTaskBindings(editItemId))
+  }, [api, editItemId])
 
   useEffect(() => {
     const node = detailScrollRef.current
@@ -1352,6 +1348,9 @@ export function TodoEditor(props: TodoEditorProps) {
         workflowManagerRunId={workflowManager?.id}
         onWorkflowManagerExecutionChange={registerWorkflowManagerExecution}
         onWorkflowManagerFinished={refreshWorkflowPlan}
+        taskBindings={tasks}
+        onOpenTask={props.onOpenTaskConversation}
+        onRefreshTaskBindings={refreshTaskBindings}
         linear
       />
     ) : null
@@ -1815,12 +1814,13 @@ export function TodoEditor(props: TodoEditorProps) {
             twoColumn
               ? workspacePanel
                 ? 'grid grid-cols-1 overflow-hidden bg-background'
-                : 'grid grid-cols-1 overflow-y-auto bg-background md:grid-cols-[minmax(0,1fr)_320px] md:overflow-visible'
+                : 'grid grid-cols-1 overflow-y-auto bg-background md:grid-cols-[minmax(0,1fr)_320px] md:overflow-hidden'
               : 'overflow-y-auto'
           )}
         >
           <div
             ref={twoColumn ? detailScrollRef : undefined}
+            data-testid={twoColumn ? 'cloud-todo-detail-scroll' : undefined}
             className={cn(
               'pb-6 pt-2.5',
               twoColumn ? 'task-detail-left md:min-h-0' : 'px-14',

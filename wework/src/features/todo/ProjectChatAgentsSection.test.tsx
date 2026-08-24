@@ -17,6 +17,7 @@ const project = {
 } as unknown as CloudProject
 
 const MODEL_NAME = 'gpt-5-codex'
+const RUNTIME_MODEL_OPTION_TEST_ID = `cloud-project-chat-agent-model-option-runtime:${MODEL_NAME}`
 
 function runtimeProfile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
   return {
@@ -296,9 +297,7 @@ describe('ProjectChatAgentsSection', () => {
       '擅长前端交互与可访问性实现'
     )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
-    await userEvent.click(
-      await screen.findByTestId(`cloud-project-chat-agent-model-option-${MODEL_NAME}`)
-    )
+    await userEvent.click(await screen.findByTestId(RUNTIME_MODEL_OPTION_TEST_ID))
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
     await waitFor(() =>
       expect(mock.create).toHaveBeenCalledWith(
@@ -320,9 +319,7 @@ describe('ProjectChatAgentsSection', () => {
       await screen.findByTestId('cloud-project-chat-agent-plugin-github@openai')
     )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
-    await userEvent.click(
-      await screen.findByTestId(`cloud-project-chat-agent-model-option-${MODEL_NAME}`)
-    )
+    await userEvent.click(await screen.findByTestId(RUNTIME_MODEL_OPTION_TEST_ID))
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
 
     await waitFor(() => expect(mock.pluginApi?.listPlugins).toHaveBeenCalledWith('local-device'))
@@ -363,9 +360,7 @@ describe('ProjectChatAgentsSection', () => {
 
     await screen.findByTestId('cloud-project-chat-agent-editor')
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
-    await userEvent.click(
-      await screen.findByTestId(`cloud-project-chat-agent-model-option-${MODEL_NAME}`)
-    )
+    await userEvent.click(await screen.findByTestId(RUNTIME_MODEL_OPTION_TEST_ID))
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
 
     await waitFor(() =>
@@ -422,9 +417,7 @@ describe('ProjectChatAgentsSection', () => {
       screen.getByTestId('cloud-project-chat-agent-device-option-device-app-two')
     )
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
-    await userEvent.click(
-      await screen.findByTestId(`cloud-project-chat-agent-model-option-${MODEL_NAME}`)
-    )
+    await userEvent.click(await screen.findByTestId(RUNTIME_MODEL_OPTION_TEST_ID))
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
 
     await waitFor(() =>
@@ -556,9 +549,7 @@ describe('ProjectChatAgentsSection', () => {
 
     await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
-    await userEvent.click(
-      await screen.findByTestId('cloud-project-chat-agent-model-option-gpt-5-codex')
-    )
+    await userEvent.click(await screen.findByTestId(RUNTIME_MODEL_OPTION_TEST_ID))
 
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-device'))
     await userEvent.click(
@@ -570,11 +561,9 @@ describe('ProjectChatAgentsSection', () => {
 
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
     expect(
-      await screen.findByTestId('cloud-project-chat-agent-model-option-kimi-k2')
+      await screen.findByTestId('cloud-project-chat-agent-model-option-public:kimi-k2')
     ).toBeInTheDocument()
-    expect(
-      screen.queryByTestId('cloud-project-chat-agent-model-option-gpt-5-codex')
-    ).not.toBeInTheDocument()
+    expect(screen.queryByTestId(RUNTIME_MODEL_OPTION_TEST_ID)).not.toBeInTheDocument()
   })
 
   it('lists only projects with a workspace on the selected cloud device', async () => {
@@ -830,9 +819,7 @@ describe('ProjectChatAgentsSection', () => {
     )
 
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
-    await userEvent.click(
-      await screen.findByTestId(`cloud-project-chat-agent-model-option-${MODEL_NAME}`)
-    )
+    await userEvent.click(await screen.findByTestId(RUNTIME_MODEL_OPTION_TEST_ID))
     await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
 
     await waitFor(() =>

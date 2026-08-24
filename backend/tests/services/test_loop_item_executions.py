@@ -4,6 +4,7 @@
 
 """Focused contracts for robot queue execution records (claim/capacity/lease)."""
 
+import json
 import uuid
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1353,6 +1354,11 @@ def test_recovery_scan_repairs_terminal_automation_projection(
         execution_device_id="cloud-device-1",
         priority="medium",
         automation_context={"run_id": str(run.id)},
+        runtime_selection={
+            "model": "test-model",
+            "model_type": None,
+            "model_options": {},
+        },
     )
     assert execution.team_id == 0
     assert execution.backend_task_id == 0
@@ -1734,6 +1740,46 @@ def test_approve_reject_only_creator(test_db: Session, test_user: User) -> None:
     assert approved.approval_status == "approved"
 
 
+def test_approve_accepts_complete_issue_runtime_without_profile(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user, mode="manual_approval")
+    item = _make_item(test_db, project, test_user)
+    _ensure_device(test_db, test_user, "cloud-device-1")
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="cloud",
+        execution_device_id="cloud-device-1",
+        priority="medium",
+        automation_context={
+            "runtime_source": "issue_snapshot",
+            "execution_device_id": "cloud-device-1",
+            "model": "test-model",
+            "model_type": "runtime",
+            "model_options": {},
+            "workspace_binding": {"type": "standalone"},
+        },
+    )
+    test_db.commit()
+
+    assert execution.status == "pending_approval"
+    assert execution.runtime_selection["runtime_profile_id"] is None
+    assert execution.runtime_selection["model"] == "test-model"
+
+    approved = loop_item_execution_service.approve(
+        test_db, execution_id=execution.id, user_id=test_user.id
+    )
+
+    assert approved.status == "queued"
+    assert approved.execution_note == ""
+    assert approved.approval_status == "approved"
+
+
 def test_claimed_run_builds_runtime_payload_for_executor(
     test_db: Session, test_user: User
 ) -> None:
@@ -1780,6 +1826,9 @@ def test_claimed_run_builds_runtime_payload_for_executor(
         "runtime_source": "agent_default",
         "runtime_profile_id": bot.metadata_json["default_runtime_profile_id"],
         "runtime_profile_version": 1,
+        "model": "test-model",
+        "model_type": None,
+        "model_options": {},
         "workspace_policy": "project",
     }
 
@@ -1830,6 +1879,7 @@ def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
+    _ensure_device(test_db, test_user, "local-device", "local")
     code_project = Project(
         user_id=test_user.id,
         name="Bound code project",
@@ -1847,7 +1897,7 @@ def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project
         model="test-model",
         local_project_id=code_project.id,
     )
-    payload = profile.build_runtime_payload(
+    request = profile.build_runtime_request(
         test_db,
         execution_id=91,
         runtime_task_id="runtime-task-1",
@@ -1865,10 +1915,10 @@ def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project
             "rule_id": "rule-1",
             "event": {"type": "task.created"},
         },
-        materialize_execution_request=False,
+        execution_device_id="local-device",
     )
+    payload = request.model_dump(by_alias=True, exclude_none=True)
 
-    assert payload["local_project_id"] == code_project.id
     assert payload["projectId"] == code_project.id
     assert payload["standaloneChatWorkspace"] is False
     assert "executionRequest" not in payload
@@ -1891,7 +1941,7 @@ def test_inline_workflow_execution_uses_standalone_conversation_workspace(
         workspace_binding_override={"type": "standalone"},
     )
 
-    payload = profile.build_runtime_payload(
+    request = profile.build_runtime_request(
         test_db,
         execution_id=92,
         runtime_task_id="runtime-task-standalone",
@@ -1916,8 +1966,8 @@ def test_inline_workflow_execution_uses_standalone_conversation_workspace(
             }
         },
         execution_device_id="local-device",
-        materialize_execution_request=False,
     )
+    payload = request.model_dump(by_alias=True, exclude_none=True)
 
     assert payload["standaloneChatWorkspace"] is True
     assert "projectId" not in payload
@@ -1928,6 +1978,7 @@ def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
+    _ensure_device(test_db, test_user, "local-device", "local")
     code_project = Project(
         user_id=test_user.id,
         name="Git code project",
@@ -1949,7 +2000,7 @@ def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
         workspace_policy="git_worktree",
     )
 
-    payload = profile.build_runtime_payload(
+    request = profile.build_runtime_request(
         test_db,
         execution_id=92,
         runtime_task_id="runtime-task-worktree",
@@ -1963,8 +2014,9 @@ def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
         ),
         cloud_project_id=str(project.id),
         origin_context={},
-        materialize_execution_request=False,
+        execution_device_id="local-device",
     )
+    payload = request.model_dump(by_alias=True, exclude_none=True)
 
     assert payload["execution"] == {"workspace": {"source": "git_worktree"}}
 
@@ -2002,6 +2054,212 @@ def test_claim_binds_canonical_runtime_identity(
     assert payload["executionRequest"]["subtask_id"] == (
         f"codex-queue-{claimed.id}-assistant"
     )
+
+
+def test_issue_cloud_moonshot_intent_overrides_local_robot_default_immutably(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user, title="Use issue runtime")
+    _ensure_device(test_db, test_user, "local-device", "local")
+    _ensure_device(test_db, test_user, "cloud-device-1", "cloud")
+    local_profile = RuntimeProfile(
+        user_id=test_user.id,
+        created_by_user_id=test_user.id,
+        updated_by_user_id=test_user.id,
+        name="Robot local default",
+        title="Robot local default",
+        device_id="local-device",
+        metadata_json={
+            "execution_environment": "local",
+            "model": "gpt-5.6-sol",
+            "model_type": "runtime",
+            "model_options": {"collaborationMode": "default"},
+            "workspace_policy": "project",
+        },
+    )
+    test_db.add(local_profile)
+    test_db.flush()
+    bot = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Local-default robot",
+        name="Local-default robot",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "runtime": "codex",
+            "execution_mode": "auto",
+            "default_runtime_profile_id": local_profile.id,
+            "model": "gpt-5.6-sol",
+            "model_type": "runtime",
+            "model_options": {"collaborationMode": "default"},
+            "visibility": "public",
+        },
+    )
+    test_db.add(bot)
+    test_db.flush()
+
+    moonshot_options = {
+        "weworkCloudModelNamespace": "default",
+        "weworkCloudModelResourceUserId": "0",
+        "weworkCloudModelUpstreamApiFormat": "anthropic-messages",
+        "collaborationMode": "default",
+        "permissionMode": "workspace-write",
+    }
+    runtime_capabilities = {
+        "runtime_permission_mode": "plan",
+        "execution": {
+            "workspace": {
+                "source": "local_path",
+            }
+        },
+        "initial_goal": {
+            "objective": "Finish the Issue with verified tests",
+            "status": "active",
+            "tokenBudget": 100_000,
+        },
+        "initial_supervisor": {
+            "mode": "suggest",
+            "instructions": "Prevent model or device drift",
+            "modelSelection": {
+                "modelName": "moonshot-kimi-k2.7-code-highspeed",
+                "modelType": "public",
+                "options": moonshot_options,
+            },
+            "intervalSeconds": 60,
+        },
+        "additional_skills": [{"name": "project-space"}],
+        "attachments": [
+            {
+                "id": "issue-requirements",
+                "original_filename": "requirements.md",
+            }
+        ],
+        "project_plugins": [
+            {
+                "id": "github@openai",
+                "pluginName": "github",
+                "marketplaceId": "openai",
+            }
+        ],
+        "additional_context": {
+            "workflowStageInput": {
+                "kind": "application",
+                "value": "Implement and verify the selected Issue",
+            }
+        },
+        "ephemeral": True,
+    }
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="local",
+        execution_device_id="local-device",
+        priority="medium",
+        automation_context={
+            "runtime_source": "issue_snapshot",
+            "execution_device_id": "cloud-device-1",
+            "model": "moonshot-kimi-k2.7-code-highspeed",
+            "model_type": "public",
+            "model_options": moonshot_options,
+            "workspace_binding": {"type": "standalone"},
+            **runtime_capabilities,
+        },
+    )
+
+    assert execution.execution_environment == "cloud"
+    assert execution.execution_device_id == "cloud-device-1"
+    assert execution.runtime_selection["model"] == ("moonshot-kimi-k2.7-code-highspeed")
+    assert execution.runtime_selection["model_type"] == "public"
+    assert execution.runtime_request["schemaVersion"] == 2
+    assert execution.runtime_request["deviceId"] == "cloud-device-1"
+    assert execution.runtime_request["modelId"] == ("moonshot-kimi-k2.7-code-highspeed")
+    assert execution.runtime_request["modelType"] == "public"
+    assert execution.runtime_request["modelOptions"] == moonshot_options
+    assert execution.runtime_request["runtimePermissionMode"] == "plan"
+    assert execution.runtime_request["execution"] == runtime_capabilities["execution"]
+    assert (
+        execution.runtime_request["initialGoal"] == runtime_capabilities["initial_goal"]
+    )
+    assert execution.runtime_request["initialSupervisor"] == (
+        runtime_capabilities["initial_supervisor"]
+    )
+    assert execution.runtime_request["additionalSkills"] == (
+        runtime_capabilities["additional_skills"]
+    )
+    assert (
+        execution.runtime_request["attachments"] == runtime_capabilities["attachments"]
+    )
+    assert execution.runtime_request["projectPlugins"] == (
+        runtime_capabilities["project_plugins"]
+    )
+    assert execution.runtime_request["additionalContext"] == (
+        runtime_capabilities["additional_context"]
+    )
+    assert execution.runtime_request["ephemeral"] is True
+    assert "modelConfig" not in execution.runtime_request
+
+    local_profile.metadata_json = {
+        **dict(local_profile.metadata_json or {}),
+        "model": "changed-local-default",
+    }
+    bot.metadata_json = {
+        **dict(bot.metadata_json or {}),
+        "model": "changed-bot-default",
+    }
+    test_db.flush()
+
+    model_config = {
+        "model": "openai",
+        "model_id": "moonshot-kimi-k2.7-code-highspeed",
+        "api_format": "responses",
+        "protocol": "openai-responses",
+        "base_url": "https://gateway.example.com",
+        "api_key": "dispatch-only-secret",
+        "upstream_api_format": "anthropic-messages",
+    }
+    with patch(
+        "app.services.chat.trigger.unified._build_cloud_gateway_model_config",
+        return_value=model_config,
+    ) as compile_model:
+        payload = loop_item_execution_service.build_runtime_payload(
+            test_db,
+            execution=execution,
+        )
+
+    compile_model.assert_called_once()
+    assert payload["modelId"] == "moonshot-kimi-k2.7-code-highspeed"
+    assert payload["modelType"] == "public"
+    assert payload["runtimePermissionMode"] == "plan"
+    assert payload["execution"] == runtime_capabilities["execution"]
+    assert payload["initialGoal"] == runtime_capabilities["initial_goal"]
+    assert payload["initialSupervisor"] == runtime_capabilities["initial_supervisor"]
+    assert payload["attachments"] == runtime_capabilities["attachments"]
+    assert payload["projectPlugins"] == runtime_capabilities["project_plugins"]
+    assert payload["additionalContext"] == runtime_capabilities["additional_context"]
+    assert payload["ephemeral"] is True
+    assert payload["executionRequest"]["model_config"]["model_id"] == (
+        "moonshot-kimi-k2.7-code-highspeed"
+    )
+    assert payload["executionRequest"]["runtime_permission_profile"] == ":workspace"
+    assert payload["executionRequest"]["claude_permission_mode"] == "plan"
+    assert (
+        payload["executionRequest"]["attachments"]
+        == runtime_capabilities["attachments"]
+    )
+    assert payload["executionRequest"]["project_plugin_ids"] == ["github@openai"]
+    assert payload["executionRequest"]["ephemeral"] is True
+    assert (
+        "Implement and verify the selected Issue"
+        in payload["executionRequest"]["prompt"]
+    )
+    assert "gpt-5.6-sol" not in json.dumps(payload)
+    assert "dispatch-only-secret" not in execution.execution_payload
 
 
 def test_open_execution_activity_is_idempotent_and_opens_exactly_one_message(
@@ -2440,7 +2698,7 @@ def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
     item = _make_item(test_db, project, test_user, title="Deploy")
     profile = WeworkExecutionProfile.for_project_robot(bot)
 
-    payload = profile.build_runtime_payload(
+    request = profile.build_runtime_request(
         test_db,
         execution_id=253,
         runtime_task_id="codex-queue-253",
@@ -2475,8 +2733,8 @@ def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
             }
         },
         execution_device_id="cloud-device-1",
-        materialize_execution_request=False,
     )
+    payload = request.model_dump(by_alias=True, exclude_none=True)
 
     assert f"task_id: {item.id}" in payload["message"]
     assert "task_id: previous-runtime-task" not in payload["message"]
@@ -2900,8 +3158,50 @@ def test_mark_start_requested_preserves_claimed_state(
     assert second.status == "queued"
 
 
-def test_mark_start_requested_binds_automated_stage_runtime_task(
+def test_mark_start_requested_binds_issue_runtime_task_without_workflow_stage(
     test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    assert claimed is not None and claimed.id == execution.id
+
+    assert (
+        loop_item_execution_service.mark_start_requested(
+            test_db, execution_ids=[claimed.id]
+        )
+        == 1
+    )
+
+    binding = (
+        test_db.query(LoopItemTaskBinding)
+        .filter(
+            LoopItemTaskBinding.loop_item_id == item.id,
+            LoopItemTaskBinding.task_id == claimed.runtime_task_id,
+        )
+        .one()
+    )
+    assert binding.device_id == "cloud-device-1"
+    assert binding.task_title == item.title
+    assert binding.workflow_node_id is None
+
+
+@pytest.mark.parametrize("executor_type", ["project_robot", "generic_robot"])
+def test_mark_start_requested_binds_workflow_stage_runtime_task(
+    test_db: Session, test_user: User, executor_type: str
 ) -> None:
     project = _make_project(test_db, test_user)
     bot = _make_bot(test_db, project, test_user)
@@ -2967,6 +3267,25 @@ def test_mark_start_requested_binds_automated_stage_runtime_task(
         test_user,
         automation_context={"run_id": str(run.id)},
     )
+    if executor_type == "generic_robot":
+        intent = execution.execution_intent
+        execution.execution_payload = (
+            loop_item_execution_service._serialize_execution_intent(
+                runtime_selection={
+                    **dict(intent.get("runtime_selection") or {}),
+                    "executor_kind": "generic_robot",
+                },
+                origin_context=dict(intent.get("origin_context") or {}),
+                runtime_request=(
+                    dict(intent["runtime_request"])
+                    if isinstance(intent.get("runtime_request"), dict)
+                    else None
+                ),
+            )
+        )
+        test_db.commit()
+        test_db.refresh(execution)
+    assert execution.executor_type == executor_type
     claimed = loop_item_execution_service.claim(
         test_db,
         agent_id=bot.id,
@@ -3532,17 +3851,10 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
         runtime_active_task_ids=set(),
     )
     assert claimed is not None
-    with (
-        patch.object(
-            loop_item_execution_service,
-            "_materialize_backend_request",
-            return_value=True,
-        ),
-        patch(
-            "app.services.chat.trigger.unified.build_wework_runtime_model_config",
-            return_value=full_config,
-        ) as resolve_model,
-    ):
+    with patch(
+        "app.services.chat.trigger.unified.build_wework_runtime_model_config",
+        return_value=full_config,
+    ) as resolve_model:
         payload = loop_item_execution_service.build_runtime_payload(
             test_db, execution=claimed
         )
@@ -3550,22 +3862,15 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
     model_config = payload["executionRequest"]["model_config"]
     assert model_config == full_config
     assert payload["executionRequest"]["enable_deep_thinking"] is False
-    assert payload["modelId"] == "wework-gpt-5.6-sol"
+    assert payload["modelId"] == "wecode-moonshot-kimi-k2.7-code-highspeed(公网)"
     assert model_config["base_url"] == "https://gateway.example.com"
     assert model_config["model_id"] == "moonshot-kimi-k2.7-code-highspeed"
     assert model_config["upstream_api_format"] == "anthropic-messages"
 
     rotated_config = {**full_config, "api_key": "sk-rotated-at-dispatch"}
-    with (
-        patch.object(
-            loop_item_execution_service,
-            "_materialize_backend_request",
-            return_value=True,
-        ),
-        patch(
-            "app.services.chat.trigger.unified.build_wework_runtime_model_config",
-            return_value=rotated_config,
-        ),
+    with patch(
+        "app.services.chat.trigger.unified.build_wework_runtime_model_config",
+        return_value=rotated_config,
     ):
         rebuilt = loop_item_execution_service.build_runtime_payload(
             test_db, execution=claimed
@@ -3800,7 +4105,7 @@ def test_public_cloud_model_uses_backend_gateway_config(
     assert model_config["upstream_api_format"] == "anthropic-messages"
     assert model_config["codex_catalog_model_id"] == "wework-kimi-k2-7"
     assert model_config["codex_responses_compat_proxy"] is True
-    assert payload["modelId"] == "wework-kimi-k2-7"
+    assert payload["modelId"] == "public-cloud-model"
     assert payload["executionRequest"]["enable_deep_thinking"] is False
 
 
@@ -3951,12 +4256,14 @@ def test_waiting_execution_can_select_owned_runtime_once(
 
     assert selected.status == "queued"
     assert selected.runtime_selection == {
-        "runtime_source": "agent_default",
+        "runtime_source": "selected",
         "runtime_profile_id": profile["id"],
         "runtime_profile_version": 1,
+        "model": "test-model",
+        "model_type": None,
+        "model_options": {},
         "workspace_policy": "project",
     }
-    assert "model" not in selected.runtime_selection
     assert "execution_device_id" not in selected.runtime_selection
     with pytest.raises(HTTPException) as conflict:
         runtime_profile_service.select_execution(
@@ -3967,6 +4274,58 @@ def test_waiting_execution_can_select_owned_runtime_once(
             version=initial_version,
         )
     assert conflict.value.status_code == 409
+
+
+def test_runtime_profile_rejects_incomplete_cloud_model_identity(
+    test_db: Session, test_user: User
+) -> None:
+    _ensure_device(test_db, test_user, "cloud-device-1")
+
+    with pytest.raises(HTTPException) as exc_info:
+        runtime_profile_service.create(
+            test_db,
+            test_user.id,
+            RuntimeProfileCreate(
+                name="Incomplete cloud Runtime",
+                execution_environment="cloud",
+                execution_device_id="cloud-device-1",
+                model="moonshot-model",
+                model_type="public",
+                model_options={},
+                workspace_policy="project",
+            ),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "Cloud model identity is incomplete"
+
+
+def test_runtime_profile_preserves_complete_cloud_model_identity(
+    test_db: Session, test_user: User
+) -> None:
+    _ensure_device(test_db, test_user, "cloud-device-1")
+    model_options = {
+        "weworkCloudModelNamespace": "default",
+        "weworkCloudModelResourceUserId": "0",
+        "weworkCloudModelUpstreamApiFormat": "openai-responses",
+    }
+
+    profile = runtime_profile_service.create(
+        test_db,
+        test_user.id,
+        RuntimeProfileCreate(
+            name="Moonshot cloud Runtime",
+            execution_environment="cloud",
+            execution_device_id="cloud-device-1",
+            model="moonshot-model",
+            model_type="public",
+            model_options=model_options,
+            workspace_policy="project",
+        ),
+    )
+
+    assert profile["model_type"] == "public"
+    assert profile["model_options"] == model_options
 
 
 def test_runtime_catalog_excludes_internal_migration_profiles(
@@ -4286,6 +4645,11 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
             "trigger": "task_created",
             "event": {"type": "task.created", "task_id": item.id},
             "activity_message_id": message_id,
+        },
+        runtime_selection={
+            "model": "test-model",
+            "model_type": None,
+            "model_options": {},
         },
     )
     activity.metadata_json = {
@@ -5064,6 +5428,11 @@ def test_cancel_queued_execution_closes_linked_activity_without_runtime_device(
         automation_context={
             "run_id": str(run.id),
             "activity_message_id": message_id,
+        },
+        runtime_selection={
+            "model": "test-model",
+            "model_type": None,
+            "model_options": {},
         },
     )
     activity.metadata_json = {

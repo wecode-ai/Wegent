@@ -1163,11 +1163,24 @@ export function createLocalDeliveryApi(
     },
     async updateTaskTrackingStatus(task: RuntimeTaskAddress, executionStatus: TaskExecutionStatus) {
       return enqueueTaskTrackingMutation(task, async () => {
+        console.info('[IssueTaskStatusSync] local status update requested', {
+          deviceId: task.deviceId,
+          taskId: task.taskId,
+          executionStatus,
+        })
         let context: CloudTaskContext
         try {
-          const binding = await request<LocalTaskBindingRecord>('runtime_tasks.system_context', {
+          const binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
             device_id: task.deviceId,
             task_id: task.taskId,
+          })
+          console.info('[IssueTaskStatusSync] local task binding resolved', {
+            deviceId: task.deviceId,
+            taskId: task.taskId,
+            executionStatus,
+            bindingType: binding.binding_type,
+            loopItemId: binding.loop_item_id,
+            workflowNodeId: binding.workflow_node_id,
           })
           const projectRecords = await request<LocalLoopItemRecord[]>('projects.list')
           const projectRecord = projectRecords.find(
@@ -1180,7 +1193,13 @@ export function createLocalDeliveryApi(
             project: localProject(projectRecord),
             loop_item: binding.loop_item_id ? await api.getLoopItem(binding.loop_item_id) : null,
           }
-        } catch {
+        } catch (error) {
+          console.warn('[IssueTaskStatusSync] local task binding lookup failed', {
+            deviceId: task.deviceId,
+            taskId: task.taskId,
+            executionStatus,
+            error: error instanceof Error ? error.message : String(error),
+          })
           return null
         }
         if (!context.loop_item_id || !context.loop_item) return null
@@ -1200,11 +1219,19 @@ export function createLocalDeliveryApi(
               `${task.deviceId}:${task.taskId}`,
               stageTaskIds
             )
-            return api.updateLoopItem(current.id, {
+            const updated = await api.updateLoopItem(current.id, {
               version: current.version,
               workflow,
               status: workflowBoardStatus(workflow),
             })
+            console.info('[IssueTaskStatusSync] local workflow task status persisted', {
+              deviceId: task.deviceId,
+              taskId: task.taskId,
+              executionStatus,
+              loopItemId: updated.id,
+              workflowNodeId: context.workflow_node_id,
+            })
+            return updated
           })
         }
         if (executionStatus === 'succeeded') {
@@ -1221,7 +1248,7 @@ export function createLocalDeliveryApi(
       return enqueueTaskTrackingMutation(task, async () => {
         let binding: LocalTaskBindingRecord
         try {
-          binding = await request<LocalTaskBindingRecord>('runtime_tasks.system_context', {
+          binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
             device_id: task.deviceId,
             task_id: task.taskId,
           })

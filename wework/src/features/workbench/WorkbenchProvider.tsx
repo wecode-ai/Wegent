@@ -461,9 +461,8 @@ export function WorkbenchProvider({
       const executionStatus =
         lifecycle.turn.outcome ?? (lifecycle.derived.isRunning ? 'running' : null)
       if (!executionStatus) continue
-      const signature = executionStatus
-      if (trackingStatusSignaturesRef.current.get(key) === signature) continue
-      trackingStatusSignaturesRef.current.set(key, signature)
+      if (trackingStatusSignaturesRef.current.get(key) === executionStatus) continue
+      trackingStatusSignaturesRef.current.set(key, executionStatus)
       void trackingApi
         .updateTaskTrackingStatus(lifecycle.address, executionStatus)
         .then(result => {

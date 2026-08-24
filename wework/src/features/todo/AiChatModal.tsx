@@ -8,7 +8,7 @@ import {
   Undo2,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
@@ -105,6 +105,7 @@ export function AiChatModal({
   const [currentAddress, setCurrentAddress] = useState<RuntimeTaskAddress | null>(
     () => initialAddress ?? storedLastAddress(storageKey)
   )
+  const notifiedInitialAddressRef = useRef(Boolean(initialAddress))
   // Compose a fresh temporary task (panel remounts without a saved address)
   // or return to the current conversation. The panel only reads the address on
   // mount, so explicit toggles bump the remount key; creating a new runtime
@@ -199,7 +200,10 @@ export function AiChatModal({
       window.localStorage.setItem(storageKey, JSON.stringify(address))
       setCurrentAddress(address)
       setComposeNew(false)
-      onAddressChange?.(address)
+      if (!notifiedInitialAddressRef.current) {
+        notifiedInitialAddressRef.current = true
+        onAddressChange?.(address)
+      }
     },
     [onAddressChange, storageKey]
   )

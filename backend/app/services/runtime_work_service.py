@@ -1417,8 +1417,9 @@ def _runtime_task_create_payload(
         payload["projectPlugins"] = request.project_plugins
     if request.bot:
         payload["bot"] = request.bot
-    if request.attachments:
-        payload["attachments"] = request.attachments
+    compiled_attachments = list(getattr(execution_request, "attachments", []) or [])
+    if compiled_attachments:
+        payload["attachments"] = compiled_attachments
     if request.model_selection:
         payload["modelSelection"] = request.model_selection.model_dump(
             by_alias=True,
@@ -2552,6 +2553,30 @@ async def _runtime_task_workspace_path(
     return _workspace_path_for_runtime_task(result, address.local_task_id)
 
 
+async def replay_runtime_task_statuses(
+    *,
+    user_id: int,
+    device_id: str,
+    task_ids: list[str],
+) -> dict[str, Any]:
+    """Replay selected Runtime task states through the existing event stream."""
+
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.tasks.status.replay",
+            payload={"taskIds": task_ids},
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to replay Runtime task status: {exc}",
+        ) from exc
+    _raise_runtime_rpc_failure(result)
+    return result
+
+
 def _workspace_path_for_runtime_task(
     result: dict[str, Any],
     local_task_id: str,
@@ -2989,6 +3014,22 @@ async def _list_runtime_workspaces_for_device(
             for task in workspace["tasks"]
             if isinstance(task, dict)
         ]
+        runtime_v2_tasks = [
+            {
+                "task_id": task.local_task_id,
+                "model": task.model_selection.model_name,
+                "model_type": task.model_selection.model_type,
+            }
+            for task in tasks
+            if task.local_task_id.startswith("codex-queue-")
+            and task.model_selection is not None
+        ]
+        if runtime_v2_tasks:
+            logger.info(
+                "[RuntimeV2] Projected cloud task identities: device_id=%s tasks=%s",
+                device_id,
+                runtime_v2_tasks,
+            )
         grouped[(device_id, workspace_path)] = RuntimeWorkspaceListing(
             local_tasks=tasks,
             order_index=order_index,
@@ -3966,11 +4007,16 @@ def _build_direct_wework_runtime_execution_request(
         collaboration_model="single",
         mode="code",
         task_mode="code",
-        attachments=list(request.attachments),
+        attachments=[],
         runtime_permission_profile=":danger-full-access",
     )
     _apply_runtime_task_target(execution_request, target)
     _apply_runtime_create_request(execution_request, request)
+    execution_request.attachments = _runtime_create_attachment_payloads(
+        db,
+        user_id,
+        request,
+    )
     if request.model_options:
         _apply_runtime_model_options(
             db,
@@ -4172,6 +4218,42 @@ def _runtime_model_override_values(
             )
         _apply_runtime_cloud_model_options(config, model_options)
         return config, None, False
+    if runtime == "codex" and model_type is None:
+        # Centralized V1 adapter for persisted robot records created before
+        # modelType/modelOptions became part of RuntimeTaskCreateRequest.
+        # New producers must always send the complete model identity.
+        from app.services.chat.config.model_resolver import (
+            _find_model_with_namespace,
+        )
+        from app.services.chat.trigger.unified import (
+            build_wework_runtime_model_config,
+        )
+        from app.services.runtime_codex_model import (
+            get_enabled_codex_runtime_model_spec,
+        )
+
+        model_kind, model_spec = _find_model_with_namespace(
+            db,
+            model_id,
+            user_id,
+        )
+        if model_kind is None and model_spec is None:
+            runtime_spec = get_enabled_codex_runtime_model_spec(
+                db,
+                user_id,
+                model_id,
+            )
+            if runtime_spec is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Execution model '{model_id}' is unavailable",
+                )
+        config = build_wework_runtime_model_config(
+            db,
+            model_name=model_id,
+            creator=_get_user(db, user_id),
+        )
+        return config, None, False
     return None, model_id, True
 
 
@@ -4363,6 +4445,30 @@ def _apply_runtime_attachments(
         user_id,
         attachment_ids,
     )
+
+
+def _runtime_create_attachment_payloads(
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskCreateRequest,
+) -> list[dict[str, Any]]:
+    """Materialize owned attachment IDs and preserve unique direct attachments."""
+
+    materialized = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
+    merged = list(materialized)
+    seen_ids = {
+        attachment.get("id")
+        for attachment in materialized
+        if attachment.get("id") is not None
+    }
+    for attachment in request.attachments:
+        attachment_id = attachment.get("id")
+        if attachment_id is not None and attachment_id in seen_ids:
+            continue
+        merged.append(dict(attachment))
+        if attachment_id is not None:
+            seen_ids.add(attachment_id)
+    return merged
 
 
 def _runtime_attachment_payloads(

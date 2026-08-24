@@ -183,6 +183,91 @@ async def test_start_dispatches_direct_robot_without_automation_rule(
 
 
 @pytest.mark.asyncio
+async def test_continue_dispatches_newly_ready_robot_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    direct_run = AsyncMock(return_value={"id": "run-next"})
+    monkeypatch.setattr(
+        project_automation_service,
+        "run_direct_workflow_node",
+        direct_run,
+    )
+    snapshot = workflow()
+    snapshot["execution_config"] = {
+        "execution_device_id": "local-device",
+        "model": "custom-model",
+        "workspace_binding": {"type": "standalone"},
+    }
+    snapshot["nodes"] = [
+        {
+            "id": "first",
+            "name": "First",
+            "execution_mode": "robot",
+            "depends_on": [],
+            "required": True,
+            "workspace_policy": "composer",
+            "automation_rule_id": None,
+            "status": "completed",
+        },
+        {
+            "id": "next",
+            "name": "Next",
+            "execution_mode": "robot",
+            "depends_on": ["first"],
+            "required": True,
+            "workspace_policy": "inherit",
+            "automation_rule_id": None,
+            "status": "ready",
+        },
+    ]
+    item = SimpleNamespace(
+        id="ISSUE-CONTINUE",
+        cloud_project_id="11",
+        metadata_json={"workflow": snapshot},
+    )
+    db = SimpleNamespace()
+
+    started = await issue_workflow_start_service.continue_ready_stages(
+        db,
+        item=item,
+        user_id=7,
+        stage_ids={"next"},
+    )
+
+    assert started == 1
+    direct_run.assert_awaited_once_with(
+        db,
+        "11",
+        "ISSUE-CONTINUE",
+        "next",
+        7,
+    )
+
+
+@pytest.mark.asyncio
+async def test_continue_does_not_restart_ai_orchestration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = AsyncMock()
+    monkeypatch.setattr(project_automation_processor, "process", process)
+    item = SimpleNamespace(
+        id="ISSUE-AI-CONTINUE",
+        cloud_project_id="11",
+        metadata_json={"workflow": workflow(advancement_policy="ai")},
+    )
+
+    started = await issue_workflow_start_service.continue_ready_stages(
+        SimpleNamespace(),
+        item=item,
+        user_id=7,
+        stage_ids={"stage-1"},
+    )
+
+    assert started == 0
+    process.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_start_dispatches_ai_coordinator_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

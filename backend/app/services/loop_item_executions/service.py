@@ -34,6 +34,7 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage, project_chat_message_key
 from app.models.user import User
+from app.schemas.runtime_work import RuntimeTaskCreateRequest
 from app.services.loop_item_executions.profile import (
     WeworkExecutionProfile,
     WeworkExecutionProfileError,
@@ -116,6 +117,23 @@ def runtime_task_id_for(execution_id: int) -> str:
     """Return the canonical runtime task id for one execution."""
 
     return f"{RUNTIME_TASK_ID_PREFIX}-{execution_id}"
+
+
+def runtime_configuration_complete(
+    *,
+    execution_device_id: str | None,
+    model: object,
+    workspace_binding_required: bool = False,
+    workspace_binding: object = None,
+) -> bool:
+    """Return whether an execution snapshot contains a runnable Runtime."""
+
+    return bool(
+        execution_device_id
+        and isinstance(model, str)
+        and model.strip()
+        and (not workspace_binding_required or isinstance(workspace_binding, dict))
+    )
 
 
 def execution_scope_for(
@@ -470,45 +488,69 @@ class LoopItemExecutionService:
             or config.get("model")
             or ""
         )
+        configured_model_type = (
+            effective_context.get("model_type")
+            or profile_metadata.get("model_type")
+            or config.get("model_type")
+        )
+        configured_model_options = dict(
+            effective_context.get("model_options")
+            or profile_metadata.get("model_options")
+            or config.get("model_options")
+            or {}
+        )
         owner_user_id = int(
             runtime_profile.user_id if runtime_profile else runtime_subject_user_id
-        )
-        selected_environment = (
-            "wegent"
-            if runtime == "wegent"
-            else str(
-                profile_metadata.get("execution_environment")
-                or config.get("execution_environment")
-                or environment
-                or "local"
-            )
         )
         device_id = (
             None
             if runtime == "wegent"
             else (
-                str(runtime_profile.device_id)
-                if runtime_profile is not None and runtime_profile.device_id
-                else str(config.get("execution_device_id") or execution_device_id or "")
+                str(
+                    effective_context.get("execution_device_id")
+                    or (
+                        runtime_profile.device_id
+                        if runtime_profile is not None
+                        else None
+                    )
+                    or config.get("execution_device_id")
+                    or execution_device_id
+                    or ""
+                )
                 or None
             )
         )
+        if runtime == "wegent":
+            selected_environment = "wegent"
+        elif device_id:
+            from app.services.loop_item_executions.profile import (
+                wework_execution_environment,
+            )
+
+            selected_environment = wework_execution_environment(
+                db,
+                user_id=owner_user_id,
+                execution_device_id=device_id,
+            )
+        else:
+            selected_environment = str(environment or "local")
         runtime_selection = {
             "runtime_source": runtime_source,
             "runtime_profile_id": runtime_profile.id if runtime_profile else None,
             "runtime_profile_version": (
                 runtime_profile.version if runtime_profile else None
             ),
+            "model": configured_model or None,
+            "model_type": configured_model_type,
+            "model_options": configured_model_options,
             "workspace_policy": (profile_metadata.get("workspace_policy") or "project"),
         }
         workspace_binding_required = "workspace_binding" in effective_context
-        waiting_runtime = runtime != "wegent" and (
-            not device_id
-            or not configured_model
-            or (
-                workspace_binding_required
-                and not isinstance(effective_context.get("workspace_binding"), dict)
-            )
+        waiting_runtime = runtime != "wegent" and not runtime_configuration_complete(
+            execution_device_id=device_id,
+            model=configured_model,
+            workspace_binding_required=workspace_binding_required,
+            workspace_binding=effective_context.get("workspace_binding"),
         )
         return self._enqueue(
             db,
@@ -605,6 +647,8 @@ class LoopItemExecutionService:
         runtime_profile: RuntimeProfile | None,
         execution_device_id: str | None,
         model: str | None,
+        model_type: str | None,
+        model_options: dict[str, str] | None,
         assigner_user_id: int,
         priority: str | None,
         automation_context: dict[str, Any],
@@ -618,6 +662,10 @@ class LoopItemExecutionService:
             else str(execution_device_id or "")
         )
         selected_model = str(metadata.get("model") or model or "")
+        selected_model_type = metadata.get("model_type") or model_type
+        selected_model_options = dict(
+            metadata.get("model_options") or model_options or {}
+        )
         environment = str(metadata.get("execution_environment") or "")
         if not environment and device_id:
             from app.services.device_service import device_service
@@ -632,7 +680,13 @@ class LoopItemExecutionService:
             )
             environment = "cloud" if device_type in {"cloud", "remote"} else "local"
         environment = environment or "local"
-        waiting_runtime = not (device_id and selected_model)
+        workspace_binding_required = "workspace_binding" in automation_context
+        waiting_runtime = not runtime_configuration_complete(
+            execution_device_id=device_id,
+            model=selected_model,
+            workspace_binding_required=workspace_binding_required,
+            workspace_binding=automation_context.get("workspace_binding"),
+        )
         return self._enqueue(
             db,
             loop_item_id=loop_item_id,
@@ -659,6 +713,8 @@ class LoopItemExecutionService:
                     runtime_profile.version if runtime_profile else None
                 ),
                 "model": selected_model or None,
+                "model_type": selected_model_type,
+                "model_options": selected_model_options,
                 "workspace_policy": metadata.get("workspace_policy") or "project",
             },
             waiting_runtime=waiting_runtime,
@@ -683,7 +739,7 @@ class LoopItemExecutionService:
         runtime_selection: dict[str, Any] | None = None,
         waiting_runtime: bool = False,
     ) -> LoopItemExecution:
-        """Persist queue identity; runtime configuration stays canonical."""
+        """Persist queue identity and its immutable non-secret V2 intent."""
 
         # Project robots keep the shipped assignment semantics: their target
         # is validated when the robot is configured, and legacy local targets
@@ -750,10 +806,9 @@ class LoopItemExecutionService:
                 if waiting_runtime
                 else ""
             ),
-            execution_payload=json.dumps(
-                runtime_selection or {},
-                ensure_ascii=False,
-                separators=(",", ":"),
+            execution_payload=self._serialize_execution_intent(
+                runtime_selection=runtime_selection or {},
+                origin_context=context,
             ),
             attempt_no=(previous.attempt_no + 1 if previous is not None else 1),
             previous_execution_id=(previous.id if previous is not None else 0),
@@ -764,6 +819,8 @@ class LoopItemExecutionService:
         db.add(row)
         db.flush()
         row.runtime_task_id = runtime_task_id_for(row.id)
+        if not waiting_runtime and executor_type != "wegent_team":
+            self._persist_runtime_request_intent(db, execution=row)
         self._set_automation_run_status(
             db,
             row,
@@ -775,6 +832,76 @@ class LoopItemExecutionService:
         )
         db.flush()
         return row
+
+    @staticmethod
+    def _serialize_execution_intent(
+        *,
+        runtime_selection: dict[str, Any],
+        origin_context: dict[str, Any],
+        runtime_request: dict[str, Any] | None = None,
+    ) -> str:
+        value: dict[str, Any] = {
+            "schema_version": 2,
+            "runtime_selection": runtime_selection,
+            "origin_context": origin_context,
+        }
+        if runtime_request is not None:
+            value["runtime_request"] = runtime_request
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    def _persist_runtime_request_intent(
+        self,
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+    ) -> RuntimeTaskCreateRequest:
+        """Build and persist the one request that both compilers consume."""
+
+        profile, origin_context = self._runtime_profile_and_context(
+            db,
+            execution=execution,
+        )
+        task = self.resolve_task_context(
+            db,
+            execution=execution,
+            user_id=execution.executor_owner_user_id,
+        )
+        if task is None:
+            raise WeworkRuntimeConfigurationError(
+                f"Execution task '{execution.loop_item_id}' is unavailable"
+            )
+        request = profile.build_runtime_request(
+            db,
+            execution_id=execution.id,
+            runtime_task_id=(
+                execution.runtime_task_id or runtime_task_id_for(execution.id)
+            ),
+            task=task,
+            cloud_project_id=execution.cloud_project_id,
+            origin_context=origin_context,
+            execution_device_id=execution.execution_device_id or "",
+        )
+        execution.execution_payload = self._serialize_execution_intent(
+            runtime_selection=dict(execution.runtime_selection),
+            origin_context=dict(origin_context),
+            runtime_request=request.model_dump(by_alias=True, exclude_none=True),
+        )
+        logger.info(
+            "[RuntimeV2] Persisted execution intent: execution_id=%s task_id=%s "
+            "environment=%s device_id=%s model=%s model_type=%s project_id=%s "
+            "runtime_project_key=%s standalone=%s",
+            execution.id,
+            request.local_task_id,
+            execution.execution_environment,
+            request.device_id,
+            request.model_id,
+            request.model_type,
+            request.project_id,
+            request.runtime_project_key,
+            request.standalone_chat_workspace,
+        )
+        db.flush()
+        return request
 
     @staticmethod
     def _task_automation_context(
@@ -802,10 +929,12 @@ class LoopItemExecutionService:
                 status.HTTP_409_CONFLICT, "Run is not waiting for robot approval"
             )
         now = utcnow()
-        needs_runtime = not row.team_id and (
-            not row.runtime_selection.get("runtime_profile_id")
-            or not row.execution_environment
-            or not row.execution_device_id
+        origin_context = row.runtime_origin_context
+        needs_runtime = not row.team_id and not runtime_configuration_complete(
+            execution_device_id=row.execution_device_id,
+            model=row.runtime_selection.get("model"),
+            workspace_binding_required="workspace_binding" in origin_context,
+            workspace_binding=origin_context.get("workspace_binding"),
         )
         row.status = STATUS_WAITING_RUNTIME if needs_runtime else STATUS_QUEUED
         if not needs_runtime:
@@ -1553,23 +1682,19 @@ class LoopItemExecutionService:
                 .all()
             )
             for execution in executions:
-                self._bind_workflow_stage_task(db, execution=execution)
+                self._bind_issue_execution_task(db, execution=execution)
         db.commit()
         return updated
 
-    def _bind_workflow_stage_task(
+    def _bind_issue_execution_task(
         self,
         db: Session,
         *,
         execution: LoopItemExecution,
     ) -> None:
-        """Create the stage TaskBinding before Runtime delivery."""
+        """Create the Issue TaskBinding before Runtime delivery."""
 
-        if (
-            execution.executor_type != "project_robot"
-            or not execution.runtime_device_id
-            or not execution.runtime_task_id
-        ):
+        if not execution.runtime_device_id or not execution.runtime_task_id:
             return
         run, _ = self._automation_run_and_rule(db, execution)
         metadata = (
@@ -1578,21 +1703,20 @@ class LoopItemExecutionService:
             else {}
         )
         snapshot = metadata.get("workflow_stage_input")
-        if not isinstance(snapshot, dict):
-            return
-        target = snapshot.get("target_stage")
-        workflow_node_id = (
-            str(target.get("id") or "") if isinstance(target, dict) else ""
-        )
-        if not workflow_node_id:
-            raise WeworkRuntimeConfigurationError(
-                "Workflow stage execution has no target stage"
+        stage_snapshot = snapshot if isinstance(snapshot, dict) else None
+        workflow_node_id: str | None = None
+        if stage_snapshot is not None:
+            target = stage_snapshot.get("target_stage")
+            workflow_node_id = (
+                str(target.get("id") or "") if isinstance(target, dict) else ""
             )
+            if not workflow_node_id:
+                raise WeworkRuntimeConfigurationError(
+                    "Workflow stage execution has no target stage"
+                )
         item = db.get(LoopItem, execution.loop_item_id)
         if item is None:
-            raise WeworkRuntimeConfigurationError(
-                "Workflow stage execution task is unavailable"
-            )
+            raise WeworkRuntimeConfigurationError("Issue execution task is unavailable")
         from app.schemas.delivery import LoopItemTaskBind
         from app.services.loop_items.service import loop_item_service
 
@@ -1607,7 +1731,7 @@ class LoopItemExecutionService:
                 workflowNodeId=workflow_node_id,
             ),
             user_id=execution.executor_owner_user_id,
-            stage_snapshot=snapshot,
+            stage_snapshot=stage_snapshot,
             commit=False,
         )
 
@@ -3142,49 +3266,60 @@ class LoopItemExecutionService:
         *,
         execution: LoopItemExecution,
     ) -> dict[str, Any]:
-        """Materialize credentials and the runtime request at dispatch time."""
+        """Compile the persisted V2 intent for the selected transport."""
 
-        profile, origin_context = self._runtime_profile_and_context(
-            db, execution=execution
-        )
         try:
-            task = self.resolve_task_context(
-                db,
-                execution=execution,
+            request = (
+                RuntimeTaskCreateRequest.model_validate(execution.runtime_request)
+                if execution.runtime_request
+                else self._persist_runtime_request_intent(
+                    db,
+                    execution=execution,
+                )
+            )
+            if execution.execution_environment == "local":
+                return request.model_dump(by_alias=True, exclude_none=True)
+            from app.services.runtime_work_service import compile_runtime_task_create
+
+            compiled = compile_runtime_task_create(
+                db=db,
                 user_id=execution.executor_owner_user_id,
+                request=request,
             )
-        except Exception as exc:
-            raise WeworkRuntimeConfigurationError(
-                f"Execution task '{execution.loop_item_id}' is unavailable"
-            ) from exc
-        if task is None:
-            raise WeworkRuntimeConfigurationError(
-                f"Execution task '{execution.loop_item_id}' is unavailable"
+            execution_request = compiled.payload.get("executionRequest")
+            model_config = (
+                execution_request.get("model_config")
+                if isinstance(execution_request, dict)
+                else None
             )
-        materialize_request = self._materialize_backend_request(
-            db,
-            execution=execution,
-            profile=profile,
-        )
-        try:
-            return profile.build_runtime_payload(
-                db,
-                execution_id=execution.id,
-                runtime_task_id=(
-                    execution.runtime_task_id or runtime_task_id_for(execution.id)
+            logger.info(
+                "[RuntimeV2] Compiled execution payload: execution_id=%s task_id=%s "
+                "target_device_id=%s selected_model=%s selected_model_type=%s "
+                "upstream_model=%s upstream_protocol=%s",
+                execution.id,
+                request.local_task_id,
+                compiled.target.device_id,
+                compiled.payload.get("modelId"),
+                compiled.payload.get("modelType"),
+                (
+                    model_config.get("model_id") or model_config.get("model")
+                    if isinstance(model_config, dict)
+                    else None
                 ),
-                task=task,
-                cloud_project_id=execution.cloud_project_id,
-                origin_context=origin_context,
-                execution_device_id=execution.execution_device_id or "",
-                materialize_execution_request=materialize_request,
+                (
+                    model_config.get("protocol") or model_config.get("api_format")
+                    if isinstance(model_config, dict)
+                    else None
+                ),
             )
+            return compiled.payload
         except HTTPException as exc:
             raise WeworkRuntimeConfigurationError(str(exc.detail)) from exc
         except WeworkExecutionProfileError as exc:
             raise WeworkRuntimeConfigurationError(str(exc)) from exc
         except Exception as exc:
-            model_label = profile.model or "the selected runtime default"
+            model_label = str(execution.runtime_selection.get("model") or "")
+            model_label = model_label or "the selected runtime default"
             raise WeworkRuntimeConfigurationError(
                 f"Execution model '{model_label}' is unavailable"
             ) from exc
@@ -3229,9 +3364,12 @@ class LoopItemExecutionService:
                 # the manager's scheduling prompt is not an execution prompt.
                 origin_context = self._automation_runtime_context(run, rule)
             else:
-                origin_context, _ = self._task_automation_context(
-                    db, execution.loop_item_id
-                )
+                origin_context = dict(execution.runtime_origin_context)
+                if not origin_context:
+                    origin_context, _ = self._task_automation_context(
+                        db, execution.loop_item_id
+                    )
+            origin_context = self._selection_context(execution, origin_context)
             return (
                 WeworkExecutionProfile.for_project_robot(
                     agent,
@@ -3239,6 +3377,8 @@ class LoopItemExecutionService:
                     runtime_profile=runtime_profile,
                     cloud_project_id=execution.cloud_project_id,
                     model_override=str(origin_context.get("model") or ""),
+                    model_type_override=origin_context.get("model_type"),
+                    model_options_override=origin_context.get("model_options"),
                     workspace_binding_override=origin_context.get("workspace_binding"),
                 ),
                 origin_context,
@@ -3273,7 +3413,10 @@ class LoopItemExecutionService:
             run_metadata = (
                 run.metadata_json if isinstance(run.metadata_json, dict) else {}
             )
-            origin_context = self._automation_runtime_context(run, rule)
+            origin_context = self._selection_context(
+                execution,
+                self._automation_runtime_context(run, rule),
+            )
             return (
                 WeworkExecutionProfile.for_generic_robot(
                     runtime_profile=runtime_profile,
@@ -3289,6 +3432,8 @@ class LoopItemExecutionService:
                         else str(run_metadata.get("instruction_override") or "")
                     ),
                     model_override=str(origin_context.get("model") or ""),
+                    model_type_override=origin_context.get("model_type"),
+                    model_options_override=origin_context.get("model_options"),
                     local_project_id=(
                         int(binding.local_project_id or 0) if binding else 0
                     ),
@@ -3327,7 +3472,8 @@ class LoopItemExecutionService:
         profile_metadata = (
             dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
         )
-        model = profile_metadata.get("model")
+        selection = execution.runtime_selection
+        model = selection.get("model") or profile_metadata.get("model")
         if not isinstance(model, str) or not model:
             raise WeworkRuntimeConfigurationError(
                 "Custom AI manager model is unavailable"
@@ -3356,9 +3502,34 @@ class LoopItemExecutionService:
                 display_name="自定义 AI 调度员",
                 instruction=manager_prompt,
                 model=model,
+                model_type=(
+                    selection.get("model_type") or profile_metadata.get("model_type")
+                ),
+                model_options=dict(
+                    selection.get("model_options")
+                    or profile_metadata.get("model_options")
+                    or {}
+                ),
             ),
-            self._automation_runtime_context(run, rule),
+            self._selection_context(
+                execution,
+                self._automation_runtime_context(run, rule),
+            ),
         )
+
+    @staticmethod
+    def _selection_context(
+        execution: LoopItemExecution,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Overlay the persisted selection on origin metadata exactly once."""
+
+        selection = execution.runtime_selection
+        merged = dict(execution.runtime_origin_context or context)
+        for key in ("model", "model_type", "model_options"):
+            if key in selection:
+                merged[key] = selection[key]
+        return merged
 
     @staticmethod
     def _execution_runtime_profile(
@@ -3383,7 +3554,7 @@ class LoopItemExecutionService:
         workspace_binding = workflow_config.get("workspaceBinding")
         if not isinstance(workspace_binding, dict):
             workspace_binding = workflow_config.get("workspace_binding")
-        return {
+        context = {
             "rule_id": str(getattr(rule, "id", "") or ""),
             "run_id": str(getattr(run, "id", "") or ""),
             "trigger": run_metadata.get("trigger") or getattr(run, "source", None),
@@ -3391,54 +3562,26 @@ class LoopItemExecutionService:
             "event": run_metadata.get("event") or {},
             "workflow_stage_input": run_metadata.get("workflow_stage_input"),
             "model": workflow_config.get("model"),
+            "model_type": (
+                workflow_config.get("modelType") or workflow_config.get("model_type")
+            ),
+            "model_options": (
+                workflow_config.get("modelOptions")
+                or workflow_config.get("model_options")
+                or {}
+            ),
             "execution_device_id": (
                 workflow_config.get("executionDeviceId")
                 or workflow_config.get("execution_device_id")
             ),
             "workspace_binding": workspace_binding,
         }
+        if workflow_config:
+            from app.schemas.issue_workflow import WorkflowExecutionConfig
 
-    @staticmethod
-    def _materialize_backend_request(
-        db: Session,
-        *,
-        execution: LoopItemExecution,
-        profile: WeworkExecutionProfile,
-    ) -> bool:
-        """Choose the trusted component that resolves current model secrets."""
-
-        if execution.execution_environment == "local":
-            # The App owns the local model catalog and resolves the persisted
-            # model reference immediately after claim. Even when the backend
-            # happens to know a Model CRD with the same name, it must not move
-            # provider credentials across the local claim boundary.
-            return False
-        if not profile.model:
-            return True
-        from app.services.chat.config.model_resolver import _find_model_with_namespace
-        from app.services.runtime_codex_model import (
-            get_enabled_codex_runtime_model_spec,
-        )
-
-        model_kind, model_spec = _find_model_with_namespace(
-            db,
-            profile.model,
-            profile.owner_user_id,
-        )
-        if model_kind is not None and model_spec is not None:
-            return True
-        if (
-            get_enabled_codex_runtime_model_spec(
-                db,
-                profile.owner_user_id,
-                profile.model,
-            )
-            is not None
-        ):
-            return True
-        raise WeworkRuntimeConfigurationError(
-            f"Execution model '{profile.model}' is unavailable"
-        )
+            config = WorkflowExecutionConfig.model_validate(workflow_config)
+            context.update(config.runtime_request_options())
+        return context
 
     @staticmethod
     def _terminal_status(event_name: str, payload: dict) -> Optional[str]:

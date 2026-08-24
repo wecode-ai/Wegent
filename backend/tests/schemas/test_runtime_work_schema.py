@@ -2,14 +2,78 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
+from pathlib import Path
+
 import pytest
+from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
 from app.schemas.runtime_work import (
+    LocalTaskSummary,
     RuntimeGuidanceRequest,
     RuntimeTaskAddress,
     RuntimeTaskCreateRequest,
 )
+
+PROTOCOL_DIR = Path(__file__).resolve().parents[3] / "shared" / "protocol"
+
+
+def test_runtime_task_create_v2_matches_cross_runtime_golden_contract() -> None:
+    fixtures = json.loads(
+        (PROTOCOL_DIR / "runtime_task_create_request_v2.golden.json").read_text()
+    )
+    schema = json.loads(
+        (PROTOCOL_DIR / "runtime_task_create_request_v2.schema.json").read_text()
+    )
+    validator = Draft202012Validator(schema)
+
+    for fixture in fixtures.values():
+        validator.validate(fixture)
+        request = RuntimeTaskCreateRequest.model_validate(fixture)
+        serialized = request.model_dump(by_alias=True, exclude_none=True)
+
+        assert serialized["schemaVersion"] == 2
+        assert serialized["deviceId"] == fixture["deviceId"]
+        assert serialized["modelId"] == fixture["modelId"]
+        assert serialized["modelType"] == fixture["modelType"]
+        assert serialized["modelOptions"] == fixture["modelOptions"]
+        assert "modelConfig" not in serialized
+
+
+def test_local_task_summary_projects_model_identity_without_runtime_handle() -> None:
+    summary = LocalTaskSummary.model_validate(
+        {
+            "taskId": "codex-queue-293",
+            "workspacePath": "/workspace",
+            "title": "Issue execution",
+            "runtime": "codex",
+            "runtimeHandle": {
+                "threadId": "private-thread",
+                "transcript": "must not escape",
+                "modelSelection": {
+                    "modelName": "moonshot-kimi-k2.7-code-highspeed",
+                    "modelType": "public",
+                    "options": {
+                        "weworkCloudModelNamespace": "default",
+                        "weworkCloudModelResourceUserId": "0",
+                    },
+                },
+            },
+        }
+    )
+
+    payload = summary.model_dump(by_alias=True, exclude_none=True)
+
+    assert "runtimeHandle" not in payload
+    assert payload["modelSelection"] == {
+        "modelName": "moonshot-kimi-k2.7-code-highspeed",
+        "modelType": "public",
+        "options": {
+            "weworkCloudModelNamespace": "default",
+            "weworkCloudModelResourceUserId": "0",
+        },
+    }
 
 
 def test_runtime_guidance_accepts_image_attachment_without_text() -> None:
@@ -80,6 +144,16 @@ def test_runtime_task_create_v2_accepts_input_composer_capabilities() -> None:
         "cloudProjectId": "5",
         "loopItemId": "item-1",
     }
+
+
+def test_runtime_task_create_v2_rejects_materialized_model_config() -> None:
+    with pytest.raises(ValidationError, match="cannot carry materialized modelConfig"):
+        RuntimeTaskCreateRequest(
+            schemaVersion=2,
+            runtime="codex",
+            message="Implement the task",
+            modelConfig={"api_key": "must-not-cross-intent-boundary"},
+        )
 
 
 def test_runtime_task_create_preserves_cloud_project_id_as_string() -> None:

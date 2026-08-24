@@ -1,5 +1,5 @@
 import type { HttpClient } from './http'
-import type { RuntimeProjectPluginRef } from '@/types/api'
+import type { ModelType, RuntimeProjectPluginRef } from '@/types/api'
 
 export type ProjectChatWorkspaceBinding =
   | {
@@ -38,6 +38,8 @@ export interface ProjectChatAgent {
   runtime: 'codex' | 'wegent'
   wegentTeamId?: number | null
   model: string | null
+  modelType: ModelType | null
+  modelOptions: Record<string, string>
   systemPrompt: string
   capabilityDescription?: string
   status: 'active' | 'archived'
@@ -80,6 +82,8 @@ export type ProjectChatAgentInput = Pick<
   | 'runtime'
   | 'wegentTeamId'
   | 'model'
+  | 'modelType'
+  | 'modelOptions'
   | 'systemPrompt'
   | 'capabilityDescription'
   | 'visibility'
@@ -110,6 +114,8 @@ export function createProjectChatAgentApi(client: HttpClient) {
           | 'runtime'
           | 'wegentTeamId'
           | 'model'
+          | 'modelType'
+          | 'modelOptions'
           | 'systemPrompt'
           | 'capabilityDescription'
           | 'status'

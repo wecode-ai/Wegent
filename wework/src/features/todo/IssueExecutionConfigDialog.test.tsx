@@ -145,6 +145,8 @@ describe('IssueExecutionConfigDialog', () => {
           runtime_profile_id: null,
           execution_device_id: 'device-online',
           model: 'custom-model',
+          model_type: null,
+          model_options: {},
           workspace_binding: {
             type: 'device_project',
             deviceId: 'device-online',
@@ -221,7 +223,7 @@ describe('IssueExecutionConfigDialog', () => {
     await userEvent.selectOptions(deviceSelect, 'device-online')
     await userEvent.selectOptions(
       screen.getByTestId('issue-execution-config-fields-model'),
-      'kimi-code'
+      'public:kimi-code'
     )
     await userEvent.selectOptions(screen.getByTestId('issue-execution-config-fields-project'), '7')
     await userEvent.click(screen.getByTestId('issue-execution-config-confirm'))
@@ -233,6 +235,8 @@ describe('IssueExecutionConfigDialog', () => {
           runtime_profile_id: null,
           execution_device_id: 'device-online',
           model: 'kimi-code',
+          model_type: 'public',
+          model_options: { collaborationMode: 'default' },
           workspace_binding: { type: 'backend_project', projectId: 7 },
         },
       })

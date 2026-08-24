@@ -106,6 +106,35 @@ def validate_wework_execution_target(
         )
 
 
+def wework_execution_environment(
+    db: Session,
+    *,
+    user_id: int,
+    execution_device_id: str,
+) -> str:
+    """Resolve the queue partition from the selected device itself."""
+
+    from app.services.device_service import device_service
+
+    device = device_service.get_device_by_device_id(
+        db, user_id=user_id, device_id=execution_device_id
+    )
+    if device is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Execution device not found",
+        )
+    device_type = (device.json or {}).get("spec", {}).get("deviceType", "local")
+    if device_type in {"local", "app"}:
+        return "local"
+    if device_type in {"cloud", "remote"}:
+        return "cloud"
+    raise HTTPException(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        f"Unsupported execution device type '{device_type}'",
+    )
+
+
 @dataclass(frozen=True)
 class WeworkExecutionProfile:
     """Live, non-persistent inputs for one Wework runtime request."""
@@ -115,6 +144,8 @@ class WeworkExecutionProfile:
     execution_prompt: str
     instruction: str
     model: str = ""
+    model_type: str | None = None
+    model_options: dict[str, str] | None = None
     agent_id: str = ""
     local_project_id: int = 0
     max_concurrent_executions: int = 1
@@ -132,6 +163,8 @@ class WeworkExecutionProfile:
         runtime_profile: RuntimeProfile | None = None,
         cloud_project_id: str | None = None,
         model_override: str = "",
+        model_type_override: str | None = None,
+        model_options_override: dict[str, str] | None = None,
         workspace_binding_override: dict[str, Any] | None = None,
     ) -> "WeworkExecutionProfile":
         from app.services.project_chat.service import (
@@ -175,6 +208,17 @@ class WeworkExecutionProfile:
                 or config.get("model")
                 or ""
             ),
+            model_type=(
+                model_type_override
+                or profile_metadata.get("model_type")
+                or config.get("model_type")
+            ),
+            model_options=dict(
+                model_options_override
+                or profile_metadata.get("model_options")
+                or config.get("model_options")
+                or {}
+            ),
             agent_id=agent.id,
             local_project_id=local_project_id,
             max_concurrent_executions=bot_max_concurrent_executions(agent),
@@ -208,6 +252,8 @@ class WeworkExecutionProfile:
         display_name: str,
         instruction: str,
         model: str,
+        model_type: str | None = None,
+        model_options: dict[str, str] | None = None,
         local_project_id: int = 0,
     ) -> "WeworkExecutionProfile":
         if not model:
@@ -218,6 +264,8 @@ class WeworkExecutionProfile:
             execution_prompt="",
             instruction=instruction,
             model=model,
+            model_type=model_type,
+            model_options=dict(model_options or {}),
             local_project_id=local_project_id,
             manager_mode=True,
         )
@@ -231,6 +279,8 @@ class WeworkExecutionProfile:
         display_name: str,
         execution_prompt: str,
         model_override: str = "",
+        model_type_override: str | None = None,
+        model_options_override: dict[str, str] | None = None,
         local_project_id: int = 0,
         workspace_binding_override: dict[str, Any] | None = None,
     ) -> "WeworkExecutionProfile":
@@ -244,6 +294,10 @@ class WeworkExecutionProfile:
             execution_prompt=execution_prompt,
             instruction="",
             model=model,
+            model_type=model_type_override or metadata.get("model_type"),
+            model_options=dict(
+                model_options_override or metadata.get("model_options") or {}
+            ),
             local_project_id=local_project_id,
             workspace_policy=str(metadata.get("workspace_policy") or "project"),
             workspace_binding_override=(
@@ -284,7 +338,7 @@ class WeworkExecutionProfile:
             ),
         )
 
-    def build_runtime_payload(
+    def build_runtime_request(
         self,
         db: Session,
         *,
@@ -294,36 +348,13 @@ class WeworkExecutionProfile:
         cloud_project_id: str,
         origin_context: dict[str, Any],
         execution_device_id: str = "",
-        materialize_execution_request: bool = True,
-    ) -> dict[str, Any]:
-        """Build a transient runtime request from canonical live configuration.
-
-        A cloud dispatcher materializes the complete request immediately before
-        transport. Local execution leaves model resolution to the App's current
-        model catalog. Neither form is persisted.
-        """
+    ) -> RuntimeTaskCreateRequest:
+        """Build the canonical V2 intent consumed by either Runtime compiler."""
 
         owner = db.get(User, self.owner_user_id)
         project = db.get(CloudProject, cloud_project_id)
         if owner is None or project is None:
             raise ValueError("Wework execution owner or project is unavailable")
-        model_config: dict[str, Any] = {}
-        if self.model and materialize_execution_request:
-            from app.services.chat.trigger.unified import (
-                build_wework_runtime_model_config,
-            )
-
-            model_config = build_wework_runtime_model_config(
-                db,
-                model_name=self.model,
-                creator=owner,
-            )
-        runtime_model_id = self.model
-        if materialize_execution_request and model_config.get("base_url"):
-            runtime_model_id = (
-                model_config.get("codex_catalog_model_id") or "wework-gpt-5.6-sol"
-            )
-
         task_id = str(getattr(task, "id", ""))
         if self.workspace_binding_override is not None:
             workspace_binding = self.workspace_binding_override
@@ -338,7 +369,11 @@ class WeworkExecutionProfile:
             workspace_binding = adapt_legacy_workspace_binding(
                 db,
                 user_id=owner.id,
-                environment=("cloud" if materialize_execution_request else "local"),
+                environment=wework_execution_environment(
+                    db,
+                    user_id=owner.id,
+                    execution_device_id=execution_device_id,
+                ),
                 execution_device_id=execution_device_id,
                 local_project_id=self.local_project_id,
             )
@@ -420,7 +455,12 @@ class WeworkExecutionProfile:
                 "shell_type": "Codex",
             }
         ]
-        additional_context: dict[str, dict[str, str]] = {}
+        configured_additional_context = origin_context.get("additional_context")
+        additional_context: dict[str, dict[str, Any]] = (
+            dict(configured_additional_context)
+            if isinstance(configured_additional_context, dict)
+            else {}
+        )
         if isinstance(workflow_stage_input, dict):
             additional_context["workflowStageInput"] = {
                 "kind": "application",
@@ -438,14 +478,32 @@ class WeworkExecutionProfile:
                 ),
             }
 
+        configured_execution = origin_context.get("execution")
+        generated_execution = (
+            {"workspace": {"source": "git_worktree"}}
+            if (has_bound_workspace or workspace_source_task)
+            and self.workspace_policy == "git_worktree"
+            else None
+        )
+        configured_plugins = origin_context.get("project_plugins")
         request = RuntimeTaskCreateRequest(
             schemaVersion=2,
             taskId=runtime_task_id,
             runtime="codex",
             message=prompt,
             title=title,
-            modelId=runtime_model_id or None,
-            modelConfig=model_config or None,
+            modelId=self.model or None,
+            modelType=self.model_type,
+            modelOptions=self.model_options or {},
+            modelSelection=(
+                {
+                    "modelName": self.model,
+                    "modelType": self.model_type,
+                    "options": self.model_options or {},
+                }
+                if self.model
+                else None
+            ),
             bot=bot,
             cloudProjectId=str(project.id),
             projectId=(
@@ -466,29 +524,22 @@ class WeworkExecutionProfile:
             ),
             workspaceSourceTask=workspace_source_task,
             additionalContext=additional_context,
-            projectPlugins=list(self.plugins),
-            execution=(
-                {"workspace": {"source": "git_worktree"}}
-                if (has_bound_workspace or workspace_source_task)
-                and self.workspace_policy == "git_worktree"
-                else None
+            projectPlugins=(
+                configured_plugins
+                if isinstance(configured_plugins, list)
+                else list(self.plugins)
             ),
+            runtimePermissionMode=origin_context.get("runtime_permission_mode"),
+            execution=(
+                configured_execution
+                if isinstance(configured_execution, dict)
+                else generated_execution
+            ),
+            initialGoal=origin_context.get("initial_goal"),
+            initialSupervisor=origin_context.get("initial_supervisor"),
+            additionalSkills=origin_context.get("additional_skills") or [],
+            attachmentIds=origin_context.get("attachment_ids") or [],
+            attachments=origin_context.get("attachments") or [],
+            ephemeral=origin_context.get("ephemeral"),
         )
-        if materialize_execution_request:
-            from app.services.runtime_work_service import (
-                compile_runtime_task_create,
-            )
-
-            return compile_runtime_task_create(
-                db=db,
-                user_id=owner.id,
-                request=request,
-            ).payload
-
-        payload = request.model_dump(by_alias=True, exclude_none=True)
-        if workspace_binding.project_id is not None:
-            # V1 Wework local dispatchers read this exact Backend Project ID.
-            # The V2 request itself uses projectId and never forwards this
-            # compatibility alias to Executor.
-            payload["local_project_id"] = workspace_binding.project_id
-        return payload
+        return request

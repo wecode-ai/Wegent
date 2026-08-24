@@ -95,6 +95,8 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     runtime: BotRuntime = "codex"
     wegent_team_id: int | None = Field(default=None, ge=1)
     model: str | None = Field(default=None, max_length=255)
+    model_type: Literal["public", "user", "group", "runtime"] | None = None
+    model_options: dict[str, str] = Field(default_factory=dict)
     system_prompt: str = Field(default="", max_length=20_000)
     capability_description: str = Field(default="", max_length=2_000)
     visibility: BotVisibility = "creator_admin"
@@ -116,6 +118,8 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     wegent_team_id: int | None = Field(default=None, ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=100)
     model: str | None = Field(default=None, max_length=255)
+    model_type: Literal["public", "user", "group", "runtime"] | None = None
+    model_options: dict[str, str] | None = None
     system_prompt: str | None = Field(default=None, max_length=20_000)
     capability_description: str | None = Field(default=None, max_length=2_000)
     status: Literal["active", "archived"] | None = None
@@ -139,6 +143,8 @@ class ProjectChatAgentView(ProjectChatSchema):
     runtime: BotRuntime
     wegent_team_id: int | None
     model: str | None
+    model_type: Literal["public", "user", "group", "runtime"] | None
+    model_options: dict[str, str]
     system_prompt: str
     capability_description: str
     status: Literal["active", "archived"]

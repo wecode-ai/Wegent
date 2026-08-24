@@ -89,13 +89,17 @@ def assignment_mode(value: dict) -> str:
 
 
 def manager_type(value: dict) -> str | None:
-    manager = value.get("manager")
-    configured = manager.get("type") if isinstance(manager, dict) else None
+    configured = manager_config(value).get("type")
     if configured is None:
         return None
     if configured not in MANAGER_TYPES:
         raise ValueError("Automation manager type is invalid")
     return str(configured)
+
+
+def manager_config(value: dict) -> dict:
+    manager = value.get("manager")
+    return dict(manager) if isinstance(manager, dict) else {}
 
 
 def role_config(value: dict) -> dict:

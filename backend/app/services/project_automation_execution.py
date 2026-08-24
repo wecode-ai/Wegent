@@ -40,6 +40,7 @@ from app.services.project_automation_domain import (
     ProjectAutomationEvent,
     assignment_mode,
     integer,
+    manager_config,
     manager_type,
     metadata,
     project_agent,
@@ -336,6 +337,12 @@ class ProjectAutomationExecution:
             runtime_profile=profile,
             execution_device_id=str(context.get("execution_device_id") or "") or None,
             model=str(context.get("model") or "") or None,
+            model_type=(
+                str(context.get("model_type"))
+                if context.get("model_type") is not None
+                else None
+            ),
+            model_options=dict(context.get("model_options") or {}),
             assigner_user_id=owner.id,
             priority="medium",
             automation_context=context,
@@ -435,7 +442,7 @@ class ProjectAutomationExecution:
         team = runnable_wegent_team(
             db,
             owner.id,
-            integer(metadata(rule).get("wegent_team_id")),
+            integer(manager_config(metadata(rule)).get("wegent_team_id")),
         )
         if not run.task_id:
             raise RuntimeError("Automation task carrier is unavailable")
@@ -559,12 +566,11 @@ class ProjectAutomationExecution:
             sender_name = "自定义 AI 调度员"
             sender_id = f"automation_manager:{rule.id}"
         elif configured_manager == "wegent":
-            manager = rule_metadata.get("manager")
-            manager_config = dict(manager) if isinstance(manager, dict) else {}
+            configured_manager_values = manager_config(rule_metadata)
             team = wegent_team(
                 db,
                 int(rule.created_by_user_id or 0),
-                integer(manager_config.get("wegent_team_id")),
+                integer(configured_manager_values.get("wegent_team_id")),
             )
             sender_name = str(team.name or "Wegent 智能体")
             sender_id = f"wegent_team:{team.id}"
@@ -1161,6 +1167,9 @@ class ProjectAutomationExecution:
             "runtime_subject_user_id": runtime_subject_user_id,
         }
         if workflow_config:
+            from app.schemas.issue_workflow import WorkflowExecutionConfig
+
+            execution_config = WorkflowExecutionConfig.model_validate(workflow_config)
             context.update(
                 {
                     "agent_id": (
@@ -1172,7 +1181,17 @@ class ProjectAutomationExecution:
                         or workflow_config.get("execution_device_id")
                     ),
                     "model": workflow_config.get("model"),
+                    "model_type": (
+                        workflow_config.get("modelType")
+                        or workflow_config.get("model_type")
+                    ),
+                    "model_options": (
+                        workflow_config.get("modelOptions")
+                        or workflow_config.get("model_options")
+                        or {}
+                    ),
                     "workspace_binding": workspace_binding,
+                    **execution_config.runtime_request_options(),
                 }
             )
         return context
@@ -1422,6 +1441,10 @@ class ProjectAutomationProcessor:
             event.subject_id,
             dispatched,
         )
+        if dispatched:
+            from app.tasks.robot_queue_tasks import consume_queues_background
+
+            await consume_queues_background()
         return dispatched
 
     @staticmethod

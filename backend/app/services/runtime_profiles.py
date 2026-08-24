@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
@@ -18,6 +17,10 @@ from app.schemas.runtime_profile import RuntimeProfileCreate, RuntimeProfileUpda
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_item_executions.profile import validate_wework_execution_target
 
+CLOUD_MODEL_TYPES = {"public", "user", "group"}
+CLOUD_MODEL_NAMESPACE_OPTION = "weworkCloudModelNamespace"
+CLOUD_MODEL_RESOURCE_USER_ID_OPTION = "weworkCloudModelResourceUserId"
+
 
 def _metadata(row: RuntimeProfile) -> dict:
     return dict(row.metadata_json) if isinstance(row.metadata_json, dict) else {}
@@ -25,6 +28,28 @@ def _metadata(row: RuntimeProfile) -> dict:
 
 def _catalog_visible(row: RuntimeProfile) -> bool:
     return _metadata(row).get("catalog_visibility") != "internal"
+
+
+def _validate_cloud_model_identity(
+    model_type: str | None,
+    model_options: dict[str, str] | None,
+) -> None:
+    if model_type not in CLOUD_MODEL_TYPES:
+        return
+    options = model_options or {}
+    namespace = str(options.get(CLOUD_MODEL_NAMESPACE_OPTION) or "").strip()
+    try:
+        resource_user_id = int(options.get(CLOUD_MODEL_RESOURCE_USER_ID_OPTION))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Cloud model identity is incomplete",
+        ) from exc
+    if not namespace or resource_user_id < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Cloud model identity is incomplete",
+        )
 
 
 class RuntimeProfileService:
@@ -97,6 +122,7 @@ class RuntimeProfileService:
             environment=values.execution_environment,
             execution_device_id=values.execution_device_id,
         )
+        _validate_cloud_model_identity(values.model_type, values.model_options)
         row = RuntimeProfile(
             user_id=user_id,
             created_by_user_id=user_id,
@@ -138,11 +164,7 @@ class RuntimeProfileService:
             environment=environment,
             execution_device_id=device_id,
         )
-        if values.name is not None:
-            row.name = values.name.strip()
-            row.title = values.name.strip()
-        if values.execution_device_id is not None:
-            row.device_id = values.execution_device_id
+        next_metadata = dict(metadata)
         for field in (
             "execution_environment",
             "model",
@@ -151,10 +173,19 @@ class RuntimeProfileService:
             "workspace_policy",
         ):
             if field in values.model_fields_set:
-                metadata[field] = getattr(values, field)
+                next_metadata[field] = getattr(values, field)
+        _validate_cloud_model_identity(
+            next_metadata.get("model_type"),
+            next_metadata.get("model_options"),
+        )
+        if values.name is not None:
+            row.name = values.name.strip()
+            row.title = values.name.strip()
+        if values.execution_device_id is not None:
+            row.device_id = values.execution_device_id
         if values.status is not None:
             row.status = values.status
-        row.metadata_json = metadata
+        row.metadata_json = next_metadata
         row.updated_by_user_id = user_id
         row.version += 1
         db.commit()
@@ -318,12 +349,22 @@ class RuntimeProfileService:
             {
                 "runtime_profile_id": profile.id,
                 "runtime_profile_version": profile.version,
-                "runtime_source": selection.get("runtime_source") or "selected",
+                "runtime_source": "selected",
+                "model": model,
+                "model_type": metadata.get("model_type"),
+                "model_options": dict(metadata.get("model_options") or {}),
                 "workspace_policy": metadata.get("workspace_policy") or "project",
             }
         )
-        execution.execution_payload = json.dumps(
-            selection, ensure_ascii=False, separators=(",", ":")
+        from app.services.loop_item_executions.service import (
+            loop_item_execution_service,
+        )
+
+        execution.execution_payload = (
+            loop_item_execution_service._serialize_execution_intent(
+                runtime_selection=selection,
+                origin_context=dict(execution.runtime_origin_context),
+            )
         )
         execution.execution_environment = environment
         execution.execution_device_id = device_id
@@ -331,6 +372,10 @@ class RuntimeProfileService:
         execution.execution_note = ""
         execution.queued_at = datetime.now(timezone.utc).replace(tzinfo=None)
         execution.version += 1
+        loop_item_execution_service._persist_runtime_request_intent(
+            db,
+            execution=execution,
+        )
         db.commit()
         db.refresh(execution)
         return execution
