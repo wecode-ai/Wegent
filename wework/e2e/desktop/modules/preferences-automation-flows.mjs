@@ -947,7 +947,7 @@ function sitesMarketplacePlugin(installed) {
   }
 }
 
-function installedSitesPlugin() {
+function installedSitesPlugin(deviceId = 'local-device') {
   const marketplacePlugin = sitesMarketplacePlugin(true)
   return {
     apiVersion: 'agent.wecode.io/v1',
@@ -984,7 +984,7 @@ function installedSitesPlugin() {
     },
     status: {
       state: 'Available',
-      devices: [{ deviceId: 'local-device', state: 'installed' }],
+      devices: [{ deviceId, state: 'installed' }],
     },
   }
 }
@@ -1031,7 +1031,7 @@ function miniProgramMarketplacePlugin(installed) {
   }
 }
 
-function installedMiniProgramPlugin() {
+function installedMiniProgramPlugin(deviceId = 'local-device') {
   const marketplacePlugin = miniProgramMarketplacePlugin(true)
   return {
     apiVersion: 'agent.wecode.io/v1',
@@ -1068,7 +1068,7 @@ function installedMiniProgramPlugin() {
     },
     status: {
       state: 'Available',
-      devices: [{ deviceId: 'local-device', state: 'installed' }],
+      devices: [{ deviceId, state: 'installed' }],
     },
   }
 }

@@ -24,6 +24,8 @@ import {
 import { requestCloudModelCatalogSync } from '@/features/model-settings/cloudModelCatalogSyncRequest'
 import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-registration'
 import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
+import { readElectronLocalFile } from '@/lib/electron-local-file'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
   EMPTY_RUNTIME_WORK,
@@ -84,10 +86,16 @@ async function uploadLocalAttachmentToCloud(
     throw new Error(`Attachment ${attachment.filename} has no local file path`)
   }
 
-  const files = await invoke<LocalFilePayload[]>('read_dropped_files', {
-    paths: [localPath],
-  })
-  const payload = files[0]
+  const payload = isElectronRuntime()
+    ? {
+        name: attachment.filename,
+        bytes: Array.from(await readElectronLocalFile(localPath)),
+      }
+    : (
+        await invoke<LocalFilePayload[]>('read_dropped_files', {
+          paths: [localPath],
+        })
+      )[0]
   if (!payload) {
     throw new Error(`Attachment file is unavailable: ${attachment.filename}`)
   }

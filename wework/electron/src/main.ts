@@ -59,6 +59,8 @@ let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let systemDragWindow: BrowserWindow | null = null
 let popoutWindow: BrowserWindow | null = null
+let popoutWindowCreationPromise: Promise<BrowserWindow> | null = null
+let popoutWindowReadyPromise: Promise<void> | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
 let pendingSystemDrops: Array<{
   action: 'new-chat' | 'follow-up' | 'stash'
@@ -364,6 +366,8 @@ function disposeCoreDshViews(): void {
   systemDragWindow = null
   popoutWindow?.destroy()
   popoutWindow = null
+  popoutWindowCreationPromise = null
+  popoutWindowReadyPromise = null
   primaryDshLoaded = false
 }
 
@@ -380,6 +384,9 @@ function scheduleCoreDshRestart(): void {
       await desktopRuntime.restartCoreDsh()
       await loadPrimaryDshView()
       runtimePhase = 'ready'
+      void prewarmPopoutWindow().catch(error => {
+        console.warn('[popout] renderer prewarm failed after Core DSH restart', error)
+      })
       notifyRuntimeChanged()
     })().catch(error => {
       runtimePhase = 'failed'
@@ -459,6 +466,25 @@ async function ensureAuxiliaryWindow(
   if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   const existing = kind === 'system-drag-panel' ? systemDragWindow : popoutWindow
   if (existing && !existing.isDestroyed()) return existing
+  if (kind === 'popout-window' && popoutWindowCreationPromise) {
+    return popoutWindowCreationPromise
+  }
+  const creationPromise = createAuxiliaryWindow(kind)
+  if (kind === 'system-drag-panel') return creationPromise
+  popoutWindowCreationPromise = creationPromise
+  try {
+    return await creationPromise
+  } finally {
+    if (popoutWindowCreationPromise === creationPromise) {
+      popoutWindowCreationPromise = null
+    }
+  }
+}
+
+async function createAuxiliaryWindow(
+  kind: 'system-drag-panel' | 'popout-window'
+): Promise<BrowserWindow> {
+  if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   const isSystemDrag = kind === 'system-drag-panel'
   const target = new URL(isSystemDrag ? 'system-drag' : 'popout', desktopRuntime.coreDshUrl())
   const auxiliaryWindow = new BrowserWindow({
@@ -484,14 +510,40 @@ async function ensureAuxiliaryWindow(
   registerDshWindowLabel(auxiliaryWindow.webContents, kind)
   auxiliaryWindow.on('closed', () => {
     if (kind === 'system-drag-panel') systemDragWindow = null
-    else popoutWindow = null
+    else {
+      if (popoutWindow === auxiliaryWindow) popoutWindow = null
+      if (popoutWindowReadyPromise === readinessPromise) {
+        popoutWindowReadyPromise = null
+      }
+    }
   })
-  await auxiliaryWindow.loadURL(target.toString(), {
-    extraHeaders: `X-Wework-Window-Label: ${kind}`,
-  })
-  if (isSystemDrag) systemDragWindow = auxiliaryWindow
-  else popoutWindow = auxiliaryWindow
-  return auxiliaryWindow
+  let readinessPromise: Promise<void> | null = null
+  try {
+    await auxiliaryWindow.loadURL(target.toString(), {
+      extraHeaders: `X-Wework-Window-Label: ${kind}`,
+    })
+    if (isSystemDrag) {
+      systemDragWindow = auxiliaryWindow
+    } else {
+      popoutWindow = auxiliaryWindow
+      readinessPromise = waitForRendererSelector(
+        auxiliaryWindow.webContents,
+        '[data-testid="popout-workbench-page"]'
+      )
+      popoutWindowReadyPromise = readinessPromise
+      void readinessPromise.catch(() => {})
+    }
+    return auxiliaryWindow
+  } catch (error) {
+    if (!auxiliaryWindow.isDestroyed()) auxiliaryWindow.destroy()
+    throw error
+  }
+}
+
+async function prewarmPopoutWindow(): Promise<void> {
+  await ensureAuxiliaryWindow('popout-window')
+  await popoutWindowReadyPromise
+  console.log('[popout] renderer prewarmed')
 }
 
 async function showSystemDragPanel(): Promise<void> {
@@ -502,32 +554,16 @@ async function showSystemDragPanel(): Promise<void> {
   target.showInactive()
 }
 
-async function focusWindow(target: BrowserWindow): Promise<void> {
-  if (target.isFocused()) return
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      target.off('focus', handleFocus)
-      reject(new Error('Timed out waiting for the Electron window to receive focus'))
-    }, 5_000)
-    const handleFocus = () => {
-      clearTimeout(timeout)
-      resolve()
-    }
-    target.once('focus', handleFocus)
-    target.focus()
-  })
-}
-
 async function showPopoutWindow(): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
-  await waitForRendererSelector(target.webContents, '[data-testid="popout-workbench-page"]')
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   target.setPosition(
     Math.round(display.workArea.x + (display.workArea.width - 470) / 2),
     Math.round(display.workArea.y + (display.workArea.height - 112) / 2)
   )
   target.show()
-  await focusWindow(target)
+  target.focus()
+  target.webContents.focus()
 }
 
 async function createWindow(): Promise<void> {
@@ -613,6 +649,8 @@ async function shutdown(): Promise<void> {
   systemDragWindow = null
   popoutWindow?.destroy()
   popoutWindow = null
+  popoutWindowCreationPromise = null
+  popoutWindowReadyPromise = null
   embeddedBrowser?.stop()
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
@@ -712,6 +750,7 @@ async function configureDesktopRuntime(): Promise<void> {
           }),
           capturePopout: async () => {
             const target = await ensureAuxiliaryWindow('popout-window')
+            await popoutWindowReadyPromise
             return captureWebContentsDataUrl(target.webContents)
           },
           captureWorkbench: tabId => {
@@ -795,6 +834,9 @@ function startDesktopRuntime(): Promise<void> {
     await desktopRuntime?.start()
     await loadPrimaryDshView()
     runtimePhase = 'ready'
+    void prewarmPopoutWindow().catch(error => {
+      console.warn('[popout] renderer prewarm failed', error)
+    })
   })()
     .catch(error => {
       runtimePhase = 'failed'

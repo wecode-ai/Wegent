@@ -293,7 +293,9 @@ class DesktopE2EServer {
     this.failedCloudModelRequests = 0
     this.failedCloudModelWaiter = null
     this.sitesPluginInstalled = false
+    this.sitesPluginDeviceId = null
     this.miniProgramPluginInstalled = false
+    this.miniProgramPluginDeviceId = null
     this.sitesConnectionBootstrapRequests = 0
     this.scenario = 'initial'
     this.modelStage = 'initial'
@@ -1205,8 +1207,12 @@ class DesktopE2EServer {
     if (request.method === 'GET' && url.pathname === '/api/plugins/installed') {
       json(response, 200, {
         items: [
-          ...(this.sitesPluginInstalled ? [installedSitesPlugin()] : []),
-          ...(this.miniProgramPluginInstalled ? [installedMiniProgramPlugin()] : []),
+          ...(this.sitesPluginInstalled
+            ? [installedSitesPlugin(this.sitesPluginDeviceId ?? 'local-device')]
+            : []),
+          ...(this.miniProgramPluginInstalled
+            ? [installedMiniProgramPlugin(this.miniProgramPluginDeviceId ?? 'local-device')]
+            : []),
         ],
       })
       return
@@ -1219,14 +1225,20 @@ class DesktopE2EServer {
       const body = await readRequestBody(request)
       const pluginName = builtinPluginMatch[1]
       const isSitesPlugin = pluginName === 'wegent-sites'
-      const installedPlugin = isSitesPlugin ? installedSitesPlugin() : installedMiniProgramPlugin()
+      const targetDeviceId =
+        typeof body.device_id === 'string' && body.device_id.trim() ? body.device_id.trim() : null
+      const installedPlugin = isSitesPlugin
+        ? installedSitesPlugin(targetDeviceId ?? 'local-device')
+        : installedMiniProgramPlugin(targetDeviceId ?? 'local-device')
       const installedPluginId = isSitesPlugin ? 601 : 602
       if (isSitesPlugin) {
         this.sitesPluginInstalled = true
+        this.sitesPluginDeviceId = targetDeviceId
       } else {
         this.miniProgramPluginInstalled = true
+        this.miniProgramPluginDeviceId = targetDeviceId
       }
-      if (!body.device_id) {
+      if (!targetDeviceId) {
         if (isSitesPlugin) {
           this.sitesConnectionBootstrapRequests += 1
         }
@@ -1236,17 +1248,11 @@ class DesktopE2EServer {
         })
         return
       }
-      if (body.device_id !== 'local-device') {
-        json(response, 422, {
-          detail: 'A matching target device is required for application plugin synchronization',
-        })
-        return
-      }
       json(response, 200, {
         plugin: installedPlugin,
         sync: {
           success: true,
-          device_id: 'local-device',
+          device_id: targetDeviceId,
           mode: 'merge',
           skills: [],
           plugins: [{ id: installedPluginId, name: pluginName, status: 'synced' }],
@@ -1257,7 +1263,7 @@ class DesktopE2EServer {
           skipped: 0,
           results: [
             {
-              device_id: 'local-device',
+              device_id: targetDeviceId,
               success: true,
               error: null,
               skills: [],
