@@ -269,6 +269,11 @@ export function WorkspaceTabSurface({
   // disconnects their effects. Keep the current iframe route connected while
   // inactive; AppIframe hides the native WebView through its active prop.
   const keepIframeActive = Boolean(iframe)
+  // Starting an Electron Smart app is an application lifecycle operation, not
+  // a visible-tab effect. Keep its launcher connected until startup settles.
+  const keepHarnessAppLaunchActive = electronHarnessAppActive && harnessAppLaunchActive
+  const keepSurfaceActive =
+    keepNativeWorkbenchActive || keepIframeActive || keepHarnessAppLaunchActive
 
   useLayoutEffect(() => {
     if (!active) return
@@ -315,16 +320,12 @@ export function WorkspaceTabSurface({
   )
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
-      <Activity
-        mode={active || keepNativeWorkbenchActive || keepIframeActive ? 'visible' : 'hidden'}
-      >
+      <Activity mode={active || keepSurfaceActive ? 'visible' : 'hidden'}>
         <div
           className={cn(
             'min-h-0 min-w-0 overflow-hidden',
             active ? 'relative h-full' : 'absolute inset-0',
-            !active &&
-              (keepNativeWorkbenchActive || keepIframeActive) &&
-              'pointer-events-none invisible'
+            !active && keepSurfaceActive && 'pointer-events-none invisible'
           )}
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}

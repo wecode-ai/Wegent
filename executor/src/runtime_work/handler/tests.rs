@@ -4067,6 +4067,220 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
     let _ = fs::remove_file(index_path);
 }
 
+#[tokio::test]
+async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("execution-mapper-turn-race");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "runtime-subtask-1".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    handler.upsert_local_task(link);
+    let execution_id = start_test_execution(&handler, local_task_id);
+    handler.register_thread_event_route(
+        "thread-1",
+        local_task_id.to_owned(),
+        request.clone(),
+        true,
+    );
+    handler.record_active_codex_turn(
+        local_task_id,
+        execution_id,
+        "thread-1".to_owned(),
+        "turn-continuation".to_owned(),
+    );
+    handler.begin_active_codex_transcript(local_task_id, "thread-1", "turn-continuation");
+    let active_turn = handler
+        .active_codex_turn(local_task_id)
+        .expect("continuation turn should be active");
+    let message = json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-initial",
+            "item": {
+                "id": "message-initial",
+                "type": "agentMessage",
+                "phase": "final_answer",
+                "text": "Initial goal turn complete"
+            }
+        }
+    });
+
+    handler.route_codex_notification(message.clone());
+    let mut execution_mapper = CodexNotificationEventMapper::default();
+    handler
+        .map_execution_codex_notification(
+            local_task_id,
+            execution_id,
+            &request,
+            Some(active_turn),
+            &mut execution_mapper,
+            message,
+        )
+        .await;
+
+    let event = event_rx
+        .try_recv()
+        .expect("the global router should emit the historical turn once");
+    assert_eq!(event["event"], "response.block.created");
+    assert_eq!(event["payload"]["subtaskId"], "turn-initial");
+    assert_eq!(
+        event["payload"]["data"]["block"]["content"],
+        "Initial goal turn complete"
+    );
+    assert!(
+        event_rx.try_recv().is_err(),
+        "the execution mapper must not emit the historical item under the continuation turn"
+    );
+    assert!(
+        handler
+            .active_codex_transcript_messages(local_task_id)
+            .is_empty(),
+        "the historical item must not pollute the continuation transcript"
+    );
+
+    let continuation_message = json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-continuation",
+            "item": {
+                "id": "message-continuation",
+                "type": "agentMessage",
+                "text": "Automatic continuation running"
+            }
+        }
+    });
+    handler.route_codex_notification(continuation_message.clone());
+    assert!(
+        event_rx.try_recv().is_err(),
+        "the global router must leave the active turn to the execution mapper"
+    );
+    let active_turn = handler
+        .active_codex_turn(local_task_id)
+        .expect("continuation turn should remain active");
+    handler
+        .map_execution_codex_notification(
+            local_task_id,
+            execution_id,
+            &request,
+            Some(active_turn),
+            &mut execution_mapper,
+            continuation_message,
+        )
+        .await;
+
+    let event = event_rx
+        .try_recv()
+        .expect("the execution mapper should emit the active continuation once");
+    assert_eq!(event["event"], "response.block.created");
+    assert_eq!(event["payload"]["subtaskId"], "turn-continuation");
+    assert_eq!(
+        event["payload"]["data"]["block"]["content"],
+        "Automatic continuation running"
+    );
+    assert!(
+        event_rx.try_recv().is_err(),
+        "the active continuation must still be emitted exactly once"
+    );
+    let active_messages = handler.active_codex_transcript_messages(local_task_id);
+    assert_eq!(active_messages.len(), 1);
+    assert_eq!(active_messages[0]["subtaskId"], "turn-continuation");
+    assert_eq!(
+        active_messages[0]["content"],
+        "Automatic continuation running"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[tokio::test]
+async fn execution_mapper_persists_historical_completion_without_remapping_it() {
+    let (event_tx, mut event_rx) = broadcast::channel(8);
+    let index_path = temp_runtime_work_index_path("execution-mapper-completion-race");
+    let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let local_task_id = "runtime-task-1";
+    let request = ExecutionRequest {
+        task_id: local_task_id.to_owned(),
+        subtask_id: "runtime-subtask-1".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let mut link = RuntimeTaskLink::new_pending(
+        local_task_id.to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    handler.upsert_local_task(link);
+    let execution_id = start_test_execution(&handler, local_task_id);
+    handler.begin_active_codex_transcript(local_task_id, "thread-1", "turn-continuation");
+    let active_turn = ActiveCodexTurn {
+        execution_id,
+        thread_id: "thread-1".to_owned(),
+        turn_id: "turn-continuation".to_owned(),
+    };
+    let mut execution_mapper = CodexNotificationEventMapper::default();
+
+    handler
+        .map_execution_codex_notification(
+            local_task_id,
+            execution_id,
+            &request,
+            Some(active_turn),
+            &mut execution_mapper,
+            json!({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread-1",
+                    "turn": {
+                        "id": "turn-initial",
+                        "status": "completed",
+                        "completedAt": 1_780_000_001,
+                        "items": [{
+                            "id": "message-initial",
+                            "type": "agentMessage",
+                            "phase": "final_answer",
+                            "text": "Initial goal turn complete"
+                        }]
+                    }
+                }
+            }),
+        )
+        .await;
+
+    assert!(
+        event_rx.try_recv().is_err(),
+        "historical completion must not be remapped to the active continuation"
+    );
+    let link = handler
+        .local_task_link(local_task_id)
+        .expect("task should remain stored");
+    let completed = completed_transcript_messages(&link);
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0]["subtaskId"], "turn-initial");
+    assert_eq!(completed[0]["content"], "Initial goal turn complete");
+    assert!(
+        handler
+            .active_codex_transcript_messages(local_task_id)
+            .is_empty(),
+        "persisting the historical completion must not pollute the continuation transcript"
+    );
+
+    let _ = fs::remove_file(index_path);
+}
+
 #[test]
 fn context_compaction_notifications_keep_the_synthetic_subtask_identity() {
     let (event_tx, mut event_rx) = broadcast::channel(4);
