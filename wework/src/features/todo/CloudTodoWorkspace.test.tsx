@@ -742,6 +742,18 @@ describe('CloudTodoWorkspace', () => {
         type: 'block_created',
         subtaskId: 'turn-1',
         block: {
+          id: 'process-1',
+          subtaskId: 'turn-1',
+          type: 'text',
+          content: '先检查项目看板如何组织运行中的消息。',
+          status: 'done',
+          createdAt: Date.now(),
+        },
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        block: {
           id: 'tool-1',
           subtaskId: 'turn-1',
           type: 'tool',
@@ -782,8 +794,12 @@ describe('CloudTodoWorkspace', () => {
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     expect(progressPopup).toHaveTextContent('当前任务进展')
     expect(progressPopup).toHaveTextContent('验证完整工作流')
-    expect(progressPopup).toHaveTextContent('正在思考 · Rendering latest thinking')
+    expect(progressPopup).toHaveTextContent('先检查项目看板如何组织运行中的消息。')
     expect(progressPopup).toHaveTextContent('pnpm test')
+    expect(screen.getByTestId('cloud-todo-card-popup-scroll-WEG-1')).toHaveClass(
+      'max-h-[min(68vh,42rem)]',
+      'overflow-y-auto'
+    )
 
     await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
@@ -846,11 +862,10 @@ describe('CloudTodoWorkspace', () => {
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
-    const progressResponse = screen.getByTestId('cloud-todo-card-progress-response-WEG-1-2')
+    const progressResponse = screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')
     expect(progressPopup).toHaveTextContent('当前任务进展')
     expect(progressResponse).toHaveTextContent('第一行')
     expect(progressResponse).toHaveTextContent('第四行')
-    expect(progressResponse).toHaveClass('max-h-60', 'overflow-y-auto', 'whitespace-pre-wrap')
   })
 
   it('loads persisted task output for an in-progress Issue on the board', async () => {
@@ -873,6 +888,12 @@ describe('CloudTodoWorkspace', () => {
       runtime: 'codex' as const,
       running: false,
       messages: [
+        {
+          id: 'user-output',
+          role: 'user',
+          content: '请修复看板输出',
+          created_at: '2026-08-23T00:01:30Z',
+        },
         {
           id: 'assistant-output',
           role: 'assistant',
@@ -928,14 +949,15 @@ describe('CloudTodoWorkspace', () => {
       expect.objectContaining({
         deviceId: 'local-device',
         taskId: 'runtime-in-progress',
-        limit: 20,
+        limit: 50,
       })
     )
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
-    expect(
-      await screen.findByTestId('cloud-todo-card-progress-response-WEG-1-2')
-    ).toHaveTextContent('正在验证修复')
+    const conversation = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-1')
+    expect(conversation).toHaveTextContent('请修复看板输出')
+    expect(conversation).toHaveTextContent('已经定位问题')
+    expect(conversation).toHaveTextContent('正在验证修复')
   })
 
   it('reports the concrete project name for the active document tab', async () => {
@@ -3898,7 +3920,7 @@ describe('CloudTodoWorkspace', () => {
       expect.objectContaining({
         deviceId: 'local-device',
         taskId: 'stopped-task',
-        limit: 20,
+        limit: 50,
       })
     )
     expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(

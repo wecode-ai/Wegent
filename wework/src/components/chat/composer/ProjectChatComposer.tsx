@@ -110,6 +110,7 @@ interface ProjectChatComposerProps {
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
+  collapseWhenIdle?: boolean
   inputLeadingContext?: ReactNode
   /** Called when Backspace is pressed on an empty composer (e.g. dismiss Plugin Creator). */
   onDismissInputLeadingContext?: () => void
@@ -188,6 +189,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       isStreaming = false,
       onPause,
       showWorkspaceMenu,
+      collapseWhenIdle = false,
       inputLeadingContext,
       onDismissInputLeadingContext,
       toolbarLeadingContext,
@@ -374,6 +376,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           className={cn(
             'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border bg-background px-4 pb-1.5 pt-2 transition-colors',
             styles.form,
+            collapseWhenIdle && styles.collapseWhenIdle,
             isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
           )}
           onClickCapture={() => setShortComposerExpanded(true)}
