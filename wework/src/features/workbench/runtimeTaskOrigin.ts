@@ -1,10 +1,13 @@
 import type { RuntimeTaskSummary } from '@/types/api'
 
-export function runtimeTaskBoardOrigin(
-  task: Pick<RuntimeTaskSummary, 'runtimeHandle'>
-): 'board_comment' | 'board_task' | null {
+function runtimeTaskOrigin(task: Pick<RuntimeTaskSummary, 'runtimeHandle'>) {
   const origin = task.runtimeHandle?.origin
-  if (!origin || typeof origin !== 'object') return null
-  const type = (origin as { type?: unknown }).type
-  return type === 'board_comment' || type === 'board_task' ? type : null
+  return origin && typeof origin === 'object' ? (origin as Record<string, unknown>) : null
+}
+
+export function isProjectAutomationManagerRuntimeTask(
+  task: Pick<RuntimeTaskSummary, 'runtimeHandle'>
+): boolean {
+  const origin = runtimeTaskOrigin(task)
+  return origin?.type === 'project_automation' && origin.automationRole === 'manager'
 }

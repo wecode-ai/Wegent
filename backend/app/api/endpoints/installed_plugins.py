@@ -26,6 +26,11 @@ from app.schemas.installed_plugin import (
     PluginAccessUpdateRequest,
     PluginAutoUpdateBatchResponse,
     PluginCopyResponse,
+    PluginDeleteImpactResponse,
+    PluginDeleteRequest,
+    PluginDeleteResponse,
+    PluginDeviceReportRequest,
+    PluginDeviceReportResponse,
     PluginDeviceSyncResponse,
     PluginMarketplaceCapabilities,
     PluginMarketplaceInstallResponse,
@@ -156,6 +161,36 @@ async def sync_installed_plugins_to_device(
         deviceId=normalized_device_id,
         pendingCount=pending_count,
         sync=sync,
+    )
+
+
+@router.post("/installed/report-device", response_model=PluginDeviceReportResponse)
+def report_installed_plugins_on_device(
+    payload: PluginDeviceReportRequest,
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginDeviceReportResponse:
+    """Acknowledge locally present plugins on one device without pushing packages."""
+    normalized_device_id = device_id.strip()
+    if not normalized_device_id:
+        raise HTTPException(status_code=400, detail="device_id is required")
+    acknowledged_ids = plugin_device_installation_service.acknowledge_local_installs(
+        db,
+        user_id=current_user.id,
+        device_id=normalized_device_id,
+        reported_plugins=payload.plugins,
+    )
+    logger.info(
+        "Device plugin status reported: user_id=%s device_id=%s acknowledged=%s",
+        current_user.id,
+        normalized_device_id,
+        len(acknowledged_ids),
+    )
+    return PluginDeviceReportResponse(
+        deviceId=normalized_device_id,
+        acknowledgedCount=len(acknowledged_ids),
+        acknowledgedInstalledPluginIds=acknowledged_ids,
     )
 
 
@@ -317,6 +352,76 @@ async def update_marketplace_plugin_access(
             )
     access.revocationPendingCount = len(revoked_installs)
     return access
+
+
+@router.get(
+    "/marketplace/{plugin_id}/delete-impact",
+    response_model=PluginDeleteImpactResponse,
+)
+def get_marketplace_plugin_delete_impact(
+    plugin_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginDeleteImpactResponse:
+    return plugin_marketplace_service.get_personal_plugin_delete_impact(
+        db,
+        plugin_id=plugin_id,
+        user_id=current_user.id,
+    )
+
+
+@router.delete(
+    "/marketplace/{plugin_id}",
+    response_model=PluginDeleteResponse,
+)
+async def delete_marketplace_plugin(
+    plugin_id: int,
+    request: PluginDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginDeleteResponse:
+    installations = plugin_marketplace_service.delete_owned_personal_plugin(
+        db,
+        plugin_id=plugin_id,
+        user_id=current_user.id,
+        impact_revision=request.impactRevision,
+        revoke_and_delete=request.revokeAndDelete,
+    )
+    for installation_user_id, installed_id in installations:
+        try:
+            plugin_device_installation_service.mark_uninstalling(
+                db,
+                user_id=installation_user_id,
+                installed_kind_id=installed_id,
+            )
+            result = await _sync_global_capabilities(
+                db,
+                installation_user_id,
+                required_installed_kind_id=installed_id,
+                expect_installed=False,
+            )
+            plugin_device_installation_service.record_uninstall_response(
+                db,
+                user_id=installation_user_id,
+                installed_kind_id=installed_id,
+                response=result,
+            )
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "Deleted plugin uninstall sync failed: plugin_id=%s user_id=%s",
+                plugin_id,
+                installation_user_id,
+            )
+    installation_ids = [installed_id for _, installed_id in installations]
+    pending_device_count = 0
+    if installation_ids:
+        pending_device_count = (
+            db.query(PluginDeviceInstallation.id)
+            .filter(PluginDeviceInstallation.installed_kind_id.in_(installation_ids))
+            .count()
+        )
+    return PluginDeleteResponse(pendingDeviceCount=pending_device_count)
 
 
 @router.post(

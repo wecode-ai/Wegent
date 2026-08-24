@@ -22,6 +22,7 @@ Tools are declared using @mcp_tool decorator which provides:
 import logging
 from typing import Any, Dict, Optional
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
@@ -39,6 +40,7 @@ from app.services.knowledge.orchestrator import (
     MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
+from shared.models import SearchHints
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +88,7 @@ def _get_read_user_for_knowledge_base(
     param_descriptions={
         "knowledge_base_id": "Knowledge base ID to search",
         "query": "Search query text",
+        "search_hints": "Optional query plan. Allowed fields only: semantic_query (string), keywords (string array), and phrases (string array of exact multi-word matches).",
         "max_results": "Maximum number of results to return (default: 10, max: 50)",
         "document_ids": "Optional list of document IDs to restrict search scope",
         "folder_ids": "Optional list of folder IDs to restrict search scope",
@@ -96,6 +99,7 @@ async def search_knowledge_base(
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
     query: str,
+    search_hints: Optional[SearchHints] = None,
     max_results: int = 10,
     document_ids: Optional[list[int]] = None,
     folder_ids: Optional[list[int]] = None,
@@ -126,6 +130,18 @@ async def search_knowledge_base(
             "sources": [],
             "total": 0,
         }
+
+    if search_hints is not None:
+        try:
+            search_hints = SearchHints.model_validate(search_hints)
+        except ValidationError as exc:
+            return {
+                "error": f"Invalid search_hints: {exc}",
+                "query": query,
+                "chunks": [],
+                "sources": [],
+                "total": 0,
+            }
 
     db = SessionLocal()
     try:
@@ -166,6 +182,7 @@ async def search_knowledge_base(
             user=user,
             knowledge_base_id=knowledge_base_id,
             query=query,
+            search_hints=search_hints,
             max_results=max_results,
             document_ids=resolved_document_ids if scope_specified else None,
             route_mode="rag_retrieval",

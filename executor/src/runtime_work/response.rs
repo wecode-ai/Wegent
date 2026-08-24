@@ -76,8 +76,12 @@ pub(crate) struct RuntimeTaskLink {
     pub ephemeral: bool,
     pub runtime_project_key: Option<String>,
     pub runtime_workspace_roots: Vec<String>,
+    pub project_instructions: String,
+    pub project_plugin_ids: Vec<String>,
     #[serde(skip)]
     pub list_order: Option<usize>,
+    #[serde(skip)]
+    pub sidebar_order: Option<usize>,
     #[serde(skip)]
     pub group_workspace_path: Option<String>,
     #[serde(skip)]
@@ -122,7 +126,10 @@ impl RuntimeTaskLink {
             ephemeral: false,
             runtime_project_key: None,
             runtime_workspace_roots: Vec::new(),
+            project_instructions: String::new(),
+            project_plugin_ids: Vec::new(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
@@ -160,7 +167,10 @@ impl RuntimeTaskLink {
             ephemeral: false,
             runtime_project_key: None,
             runtime_workspace_roots: Vec::new(),
+            project_instructions: String::new(),
+            project_plugin_ids: Vec::new(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
@@ -182,36 +192,47 @@ impl RuntimeTaskLink {
             .as_ref()
             .and_then(|link| link.goal_status.clone());
         let supervisor = local_link.as_ref().and_then(|link| link.supervisor.clone());
-        let mut git_info = thread
+        let git_info = thread
             .get("gitInfo")
             .or_else(|| thread.get("git_info"))
             .filter(|value| !value.is_null())
             .cloned()
             .or_else(|| local_link.as_ref().and_then(|link| link.git_info.clone()));
-        if let (Some(git_info), Some(current_branch)) = (
-            git_info.as_mut().and_then(Value::as_object_mut),
-            git_branch_at_workspace(&workspace_path),
-        ) {
-            git_info.insert("currentBranch".to_owned(), Value::String(current_branch));
-        }
-        let running =
-            !local_archived && (execution_running || codex_thread_has_in_progress_turn(thread));
+        let local_completed_at = local_link.as_ref().and_then(|link| link.completed_at);
+        let local_settled_status = local_link.as_ref().and_then(local_settled_status);
+        let provider_turn_running =
+            codex_thread_has_in_progress_turn_after(thread, local_completed_at);
+        let running = !local_archived && (execution_running || provider_turn_running);
         let mut status = merged_task_status(thread, running, local_archived);
         let mut thread_status =
             codex_thread_status_type(thread).unwrap_or_else(|| "notLoaded".to_owned());
         let mut turn_status = task_turn_status(thread, running);
         if !running {
-            if runtime_status_is_running(&status) {
-                status = "active".to_owned();
-            }
-            if runtime_status_is_running(&thread_status) {
-                thread_status = "idle".to_owned();
-            }
-            if turn_status
-                .as_deref()
-                .is_some_and(runtime_status_is_running)
-            {
-                turn_status = Some("completed".to_owned());
+            if let Some(local_settled_status) = local_settled_status.as_deref() {
+                status = local_settled_status.to_owned();
+                if local_settled_status == "cancelled" {
+                    thread_status = "idle".to_owned();
+                    turn_status = Some("interrupted".to_owned());
+                } else if local_settled_status == "done" {
+                    thread_status = "idle".to_owned();
+                    turn_status = Some("completed".to_owned());
+                } else {
+                    thread_status = local_settled_status.to_owned();
+                    turn_status = Some(local_settled_status.to_owned());
+                }
+            } else {
+                if runtime_status_is_running(&status) {
+                    status = "active".to_owned();
+                }
+                if runtime_status_is_running(&thread_status) {
+                    thread_status = "idle".to_owned();
+                }
+                if turn_status
+                    .as_deref()
+                    .is_some_and(runtime_status_is_running)
+                {
+                    turn_status = Some("completed".to_owned());
+                }
             }
         }
         Self {
@@ -237,12 +258,17 @@ impl RuntimeTaskLink {
             supervisor,
             git_info,
             created_at: timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms),
-            updated_at: timestamp_ms_field(thread, "updatedAt").unwrap_or_else(now_ms),
-            completed_at: if running {
-                local_link.as_ref().and_then(|link| link.completed_at)
+            updated_at: if running {
+                timestamp_ms_field(thread, "updatedAt").unwrap_or_else(now_ms)
             } else {
-                timestamp_ms_field(thread, "updatedAt")
-                    .or_else(|| local_link.as_ref().and_then(|link| link.completed_at))
+                local_completed_at
+                    .or_else(|| timestamp_ms_field(thread, "updatedAt"))
+                    .unwrap_or_else(now_ms)
+            },
+            completed_at: if running || local_settled_status.is_some() {
+                local_completed_at
+            } else {
+                local_completed_at.or_else(|| timestamp_ms_field(thread, "updatedAt"))
             },
             runtime_handle: local_link
                 .as_ref()
@@ -257,7 +283,16 @@ impl RuntimeTaskLink {
                 .as_ref()
                 .map(|link| link.runtime_workspace_roots.clone())
                 .unwrap_or_default(),
+            project_instructions: local_link
+                .as_ref()
+                .map(|link| link.project_instructions.clone())
+                .unwrap_or_default(),
+            project_plugin_ids: local_link
+                .as_ref()
+                .map(|link| link.project_plugin_ids.clone())
+                .unwrap_or_default(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
@@ -288,7 +323,10 @@ impl RuntimeTaskLink {
             ephemeral: self.ephemeral,
             runtime_project_key: self.runtime_project_key.clone(),
             runtime_workspace_roots: self.runtime_workspace_roots.clone(),
+            project_instructions: self.project_instructions.clone(),
+            project_plugin_ids: self.project_plugin_ids.clone(),
             list_order: self.list_order,
+            sidebar_order: self.sidebar_order,
             group_workspace_path: self.group_workspace_path.clone(),
             group_project_key: self.group_project_key.clone(),
             pinned: self.pinned,
@@ -297,7 +335,42 @@ impl RuntimeTaskLink {
     }
 }
 
-fn git_branch_at_workspace(workspace_path: &str) -> Option<String> {
+fn git_workspace_info(workspace_path: &str) -> (Option<String>, Option<String>) {
+    let Some((git_dir, common_git_dir)) = git_directories_at_workspace(workspace_path) else {
+        return (None, None);
+    };
+    let branch = fs::read_to_string(git_dir.join("HEAD"))
+        .ok()
+        .and_then(|head| {
+            head.trim()
+                .strip_prefix("ref: refs/heads/")
+                .map(str::to_owned)
+        });
+    let origin_url = fs::read_to_string(common_git_dir.join("config"))
+        .ok()
+        .and_then(|config| git_origin_url(&config));
+    (branch, origin_url)
+}
+
+fn git_info_for_workspace(mut git_info: Option<Value>, workspace_path: &str) -> Option<Value> {
+    let (current_branch, origin_url) = git_workspace_info(workspace_path);
+    if current_branch.is_none() && origin_url.is_none() {
+        return git_info;
+    }
+    if !git_info.as_ref().is_some_and(Value::is_object) {
+        git_info = Some(json!({}));
+    }
+    let fields = git_info.as_mut().and_then(Value::as_object_mut)?;
+    if let Some(current_branch) = current_branch {
+        fields.insert("currentBranch".to_owned(), Value::String(current_branch));
+    }
+    if let Some(origin_url) = origin_url {
+        fields.insert("originUrl".to_owned(), Value::String(origin_url));
+    }
+    git_info
+}
+
+fn git_directories_at_workspace(workspace_path: &str) -> Option<(PathBuf, PathBuf)> {
     let workspace = Path::new(workspace_path);
     let dot_git = workspace.join(".git");
     let git_dir = if dot_git.is_dir() {
@@ -312,10 +385,39 @@ fn git_branch_at_workspace(workspace_path: &str) -> Option<String> {
             workspace.join(path)
         }
     };
-    let head = fs::read_to_string(git_dir.join("HEAD")).ok()?;
-    head.trim()
-        .strip_prefix("ref: refs/heads/")
-        .map(str::to_owned)
+    let common_git_dir = fs::read_to_string(git_dir.join("commondir"))
+        .ok()
+        .map(|value| PathBuf::from(value.trim()))
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                git_dir.join(path)
+            }
+        })
+        .unwrap_or_else(|| git_dir.clone());
+    Some((git_dir, common_git_dir))
+}
+
+fn git_origin_url(config: &str) -> Option<String> {
+    let mut in_origin = false;
+    for line in config.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_origin = line.eq_ignore_ascii_case("[remote \"origin\"]");
+            continue;
+        }
+        if !in_origin {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case("url") {
+            return Some(value.trim().to_owned()).filter(|value| !value.is_empty());
+        }
+    }
+    None
 }
 
 impl Default for RuntimeTaskLink {
@@ -342,7 +444,10 @@ impl Default for RuntimeTaskLink {
             ephemeral: false,
             runtime_project_key: None,
             runtime_workspace_roots: Vec::new(),
+            project_instructions: String::new(),
+            project_plugin_ids: Vec::new(),
             list_order: None,
+            sidebar_order: None,
             group_workspace_path: None,
             group_project_key: None,
             pinned: false,
@@ -370,6 +475,7 @@ pub(crate) struct RuntimeWorkspaceLink {
     pub project_active: bool,
     pub project_appearance: Option<Value>,
     pub default_project_space: Option<Value>,
+    pub project_ai_settings: Option<Value>,
 }
 
 impl Default for RuntimeWorkspaceLink {
@@ -391,6 +497,7 @@ impl Default for RuntimeWorkspaceLink {
             project_active: false,
             project_appearance: None,
             default_project_space: None,
+            project_ai_settings: None,
         }
     }
 }
@@ -425,6 +532,7 @@ pub(crate) fn workspace_response(
     let mut workspace_roots = groups.keys().cloned().collect::<Vec<_>>();
     workspace_roots.sort_by_key(|root| Reverse(root.len()));
     for mut link in links {
+        link.git_info = git_info_for_workspace(link.git_info.take(), &link.workspace_path);
         let normalized_link_path = link
             .group_workspace_path
             .clone()
@@ -497,6 +605,9 @@ pub(crate) fn workspace_response(
                 }
                 if let Some(default_project_space) = workspace.default_project_space.clone() {
                     workspace_json["defaultProjectSpace"] = default_project_space;
+                }
+                if let Some(ai_settings) = workspace.project_ai_settings.clone() {
+                    workspace_json["projectAiSettings"] = ai_settings;
                 }
             }
             if let Some(remote_host_id) = remote_host_id {
@@ -668,7 +779,7 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
     if let Some(thread_id) = link.thread_id.clone() {
         task.insert("threadId".to_owned(), Value::String(thread_id));
     }
-    if let Some(order) = link.list_order {
+    if let Some(order) = link.sidebar_order {
         task.insert("sidebarOrder".to_owned(), json!(order));
     }
     if let Some(git_info) = link.git_info {
@@ -817,6 +928,8 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
             | "cachedMessages"
             | "cached_message"
             | "cached_messages"
+            | "completedTranscriptMessages"
+            | "transcriptSnapshotMessages"
     )
 }
 
@@ -845,6 +958,21 @@ fn merged_task_status(thread: &Value, running: bool, archived: bool) -> String {
     thread_status(thread)
 }
 
+fn local_settled_status(link: &RuntimeTaskLink) -> Option<String> {
+    link.completed_at?;
+    match link
+        .status
+        .replace(['_', '-'], "")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "failed" | "error" | "systemerror" => Some("failed".to_owned()),
+        "cancelled" | "canceled" | "interrupted" | "aborted" => Some("cancelled".to_owned()),
+        "done" | "completed" | "complete" | "succeeded" | "success" => Some("done".to_owned()),
+        _ => None,
+    }
+}
+
 fn task_turn_status(thread: &Value, running: bool) -> Option<String> {
     if running {
         return Some("inProgress".to_owned());
@@ -858,13 +986,29 @@ fn task_turn_status(thread: &Value, running: bool) -> Option<String> {
 }
 
 pub(super) fn codex_thread_has_in_progress_turn(thread: &Value) -> bool {
+    codex_thread_has_in_progress_turn_after(thread, None)
+}
+
+fn codex_thread_has_in_progress_turn_after(
+    thread: &Value,
+    local_completed_at: Option<i64>,
+) -> bool {
     thread
         .get("turns")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|turn| string_field(turn, "status"))
-        .any(|status| runtime_status_is_running(&status))
+        .filter(|turn| {
+            string_field(turn, "status").is_some_and(|status| runtime_status_is_running(&status))
+        })
+        .any(|turn| {
+            let Some(completed_at) = local_completed_at else {
+                return true;
+            };
+            timestamp_ms_field(turn, "startedAt")
+                .or_else(|| timestamp_ms_field(turn, "started_at"))
+                .is_some_and(|started_at| started_at > completed_at)
+        })
 }
 
 pub(super) fn codex_thread_in_progress_turn_id(thread: &Value) -> Option<String> {
@@ -878,6 +1022,21 @@ pub(super) fn codex_thread_in_progress_turn_id(thread: &Value) -> Option<String>
             string_field(turn, "status").is_some_and(|status| runtime_status_is_running(&status))
         })
         .and_then(|turn| string_field(turn, "id"))
+}
+
+pub(super) fn codex_thread_terminal_task_status(thread: &Value) -> Option<&'static str> {
+    let status = thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .and_then(|turns| turns.last())
+        .and_then(|turn| string_field(turn, "status"))?;
+    match status.replace(['_', '-'], "").to_ascii_lowercase().as_str() {
+        "inprogress" | "running" | "active" => None,
+        "interrupted" | "cancelled" | "canceled" | "aborted" => Some("cancelled"),
+        "failed" | "error" => Some("failed"),
+        "completed" | "done" => Some("done"),
+        _ => None,
+    }
 }
 
 fn normalize_codex_turn_status(status: String) -> String {
@@ -1020,7 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_current_branch_from_worktree_git_pointer() {
+    fn synthesizes_git_info_from_worktree_when_provider_metadata_is_missing() {
         let root = std::env::temp_dir().join(format!(
             "wegent-runtime-hover-branch-{}-{}",
             std::process::id(),
@@ -1036,10 +1195,25 @@ mod tests {
             "ref: refs/heads/codex/hover-details\n",
         )
         .expect("git head");
+        fs::write(
+            git_dir.join("config"),
+            "[remote \"origin\"]\n\turl = git@github.com:wecode-ai/Wegent.git\n",
+        )
+        .expect("git config");
 
         assert_eq!(
-            git_branch_at_workspace(&workspace.display().to_string()).as_deref(),
-            Some("codex/hover-details")
+            git_workspace_info(&workspace.display().to_string()),
+            (
+                Some("codex/hover-details".to_owned()),
+                Some("git@github.com:wecode-ai/Wegent.git".to_owned())
+            )
+        );
+        assert_eq!(
+            git_info_for_workspace(None, &workspace.display().to_string()),
+            Some(json!({
+                "currentBranch": "codex/hover-details",
+                "originUrl": "git@github.com:wecode-ai/Wegent.git",
+            }))
         );
 
         fs::remove_dir_all(root).expect("temporary git workspace cleanup");
@@ -1119,6 +1293,32 @@ mod tests {
     }
 
     #[test]
+    fn completed_wework_task_keeps_its_persisted_activity_time() {
+        let local_link = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/workspace/project".to_owned(),
+            status: "done".to_owned(),
+            completed_at: Some(1_780_000_100_000),
+            ..RuntimeTaskLink::default()
+        };
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": "idle",
+                "createdAt": 1_780_000_000,
+                "updatedAt": 1_780_086_400,
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+            false,
+        );
+
+        assert_eq!(link.updated_at, 1_780_000_100_000);
+        assert_eq!(link.completed_at, Some(1_780_000_100_000));
+    }
+
+    #[test]
     fn active_goal_does_not_keep_task_running_when_thread_list_is_idle() {
         let local_link = RuntimeTaskLink {
             local_task_id: "task-1".to_owned(),
@@ -1193,6 +1393,174 @@ mod tests {
         assert_eq!(payload["threadStatus"], "active");
         assert_eq!(payload["turnStatus"], "inProgress");
         assert_eq!(payload["goalStatus"], "active");
+    }
+
+    #[test]
+    fn stale_provider_turn_does_not_revive_a_completed_local_task() {
+        let local_link = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/workspace/project".to_owned(),
+            status: "done".to_owned(),
+            completed_at: Some(1_780_000_002_000),
+            ..RuntimeTaskLink::default()
+        };
+
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": {"type": "active"},
+                "cwd": "/workspace/project",
+                "updatedAt": 1_780_000_003,
+                "turns": [{
+                    "id": "turn-1",
+                    "status": "inProgress",
+                    "startedAt": 1_780_000_001,
+                }],
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+            false,
+        );
+
+        assert!(!link.running);
+        assert_eq!(link.status, "done");
+        assert_eq!(link.thread_status, "idle");
+        assert_eq!(link.turn_status.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn active_provider_thread_does_not_erase_a_completed_local_task() {
+        let local_link = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/workspace/project".to_owned(),
+            status: "done".to_owned(),
+            completed_at: Some(1_780_000_002_000),
+            ..RuntimeTaskLink::default()
+        };
+
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": {"type": "active"},
+                "cwd": "/workspace/project",
+                "updatedAt": 1_780_000_003,
+                "turns": [],
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+            false,
+        );
+
+        assert!(!link.running);
+        assert_eq!(link.status, "done");
+        assert_eq!(link.thread_status, "idle");
+        assert_eq!(link.completed_at, Some(1_780_000_002_000));
+    }
+
+    #[test]
+    fn newer_provider_turn_can_restart_a_completed_local_task() {
+        let local_link = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/workspace/project".to_owned(),
+            status: "done".to_owned(),
+            completed_at: Some(1_780_000_002_000),
+            ..RuntimeTaskLink::default()
+        };
+
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": {"type": "active"},
+                "cwd": "/workspace/project",
+                "turns": [{
+                    "id": "turn-2",
+                    "status": "inProgress",
+                    "startedAt": 1_780_000_003,
+                }],
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+            false,
+        );
+
+        assert!(link.running);
+        assert_eq!(link.status, "running");
+        assert_eq!(link.thread_status, "active");
+        assert_eq!(link.turn_status.as_deref(), Some("inProgress"));
+    }
+
+    #[test]
+    fn stale_provider_metadata_does_not_revive_a_failed_local_task() {
+        let local_link = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/workspace/project".to_owned(),
+            status: "failed".to_owned(),
+            completed_at: Some(1_780_000_002_000),
+            runtime_handle: json!({
+                "lastError": "Executor restarted while the Worktree task was active",
+            }),
+            ..RuntimeTaskLink::default()
+        };
+
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": {"type": "active"},
+                "cwd": "/workspace/project",
+                "updatedAt": 1_780_000_003,
+                "turns": [{
+                    "id": "turn-1",
+                    "status": "inProgress",
+                    "startedAt": 1_780_000_001,
+                }],
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+            false,
+        );
+
+        assert!(!link.running);
+        assert_eq!(link.status, "failed");
+        assert_eq!(link.thread_status, "failed");
+        assert_eq!(link.turn_status.as_deref(), Some("failed"));
+        assert_eq!(link.completed_at, Some(1_780_000_002_000));
+        assert_eq!(
+            link.runtime_handle["lastError"],
+            "Executor restarted while the Worktree task was active"
+        );
+    }
+
+    #[test]
+    fn local_cancellation_uses_runtime_summary_status_vocabulary() {
+        let local_link = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/workspace/project".to_owned(),
+            status: "cancelled".to_owned(),
+            completed_at: Some(1_780_000_002_000),
+            ..RuntimeTaskLink::default()
+        };
+
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": {"type": "active"},
+                "cwd": "/workspace/project",
+                "turns": [{"status": "inProgress", "startedAt": 1_780_000_001}],
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+            false,
+        );
+
+        assert!(!link.running);
+        assert_eq!(link.status, "cancelled");
+        assert_eq!(link.thread_status, "idle");
+        assert_eq!(link.turn_status.as_deref(), Some("interrupted"));
     }
 
     #[test]

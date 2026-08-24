@@ -18,6 +18,12 @@ After enabling Experimental features, open the composer's **+** menu and select 
 
 For an existing task, open the right-side **Environment** panel and select **Link project space**. You can link the current project or task to a local or cloud project space, or quickly create a task in that space. Local-space operations remain on the current device; cloud-space operations use shared cloud data.
 
+### Review board-task progress
+
+The linked-task progress area does not repeat the runtime task title. While a task is running, the first row shows the latest AI text or thinking state, and a second indented row with a short vertical guide shows the most recent tool or edit action. PR/MR status remains a trailing action. After execution stops, the card shows only the last non-empty line from the final response of the latest turn and never falls back to an older turn. Unread cards use a subtle background in addition to the unread indicator.
+
+Hover anywhere on a card to open a lightweight task workspace. It initially shows the latest user message and AI response, reusing the Task conversation's thinking, tool-call, and file-edit rendering. Longer conversations scroll inside the transcript area, and **Load earlier history** fetches older turns. The composer stays on one line until clicked, then expands with the same quick phrases and actions available in Task conversations. While the composer is active, the preview stays pinned until its top-right close button is clicked. When one board task has several tasks running, the preview initially lists a summary for each one. Hovering an individual task narrows the preview to that task's progress.
+
 ## Manage project-space automation
 
 Project spaces provide an **Automation** entry that manages robot members and their execution queue in one place. A robot can be assigned as the owner of a project task: it claims the task, executes it on the local or a selected device, and writes the result or failure back into the task comment thread for human acceptance.

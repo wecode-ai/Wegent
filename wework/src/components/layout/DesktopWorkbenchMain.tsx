@@ -13,14 +13,12 @@ import {
   ArrowLeftRight,
   Bot,
   ChevronRight,
-  LayoutDashboard,
   Loader2,
   MessageCircle,
   MessageSquareWarning,
   X,
 } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
-import { ComposerModePill } from '@/components/chat/composer/GoalDraftPill'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
@@ -32,7 +30,6 @@ import { updateAppPreferences } from '@/tauri/appPreferences'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { getPopoutComposerPlaceholder } from '@/features/workbench/popoutWorkspaceContext'
 import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
-import { TodoBindingPicker } from '@/features/todo/TodoBindingPicker'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -77,8 +74,17 @@ import {
   type RightWorkspaceHarnessTab,
   type RightWorkspacePanelTab,
   type RightWorkspacePanelView,
+  type RightWorkspaceTerminalTab,
 } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
+import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
+import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
+import {
+  DEFAULT_WORK_ITEM_PROJECT_ID,
+  DEFAULT_WORK_ITEM_PROJECT_KEY,
+  isDefaultWorkItemProject,
+  type CloudProject,
+} from '@/api/deliveries'
 import {
   RIGHT_SPLIT_PANEL_MIN_WIDTH,
   useResizableRightSplitChat,
@@ -155,6 +161,8 @@ import {
   type WorkbenchPaneIdentity,
 } from './workbenchPaneIdentity'
 import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
+import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
+import type { WorkbenchSplitGroupsController } from './useWorkbenchSplitGroups'
 import {
   useWorkbenchPaneActive,
   useWorkbenchPaneId,
@@ -182,7 +190,7 @@ import {
   TaskSupervisorControl,
   type TaskSupervisorConfig,
 } from './TaskSupervisorControl'
-import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
+import { isEditableShortcutTarget, WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
 import type {
   ModelSelectionConfig,
   RuntimeName,
@@ -212,6 +220,11 @@ import {
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
 import { WorktreeCreationStatus } from './WorktreeCreationStatus'
 import { isWorktreeCreationPending } from './worktreeCreationState'
+import {
+  resolveAutomaticModel,
+  selectedModelExecutionFields,
+} from '@/features/workbench/runtimeModelSelection'
+import { titleModelForGeneration } from '@/features/workbench/useWorkbenchRuntimeMessaging'
 
 let legacyEmbeddedBrowserOpenRequestSequence = 0
 
@@ -244,6 +257,7 @@ interface WorkbenchPaneWorkspaceState {
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
+  temporaryChatAddresses?: Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
   browserStates?: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   reviewState: DesktopReviewState
   selectedFileWorkspaceTargetKey: string | null
@@ -342,8 +356,8 @@ function rightPanelTabType(
 ): 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other' {
   if (tab.startsWith('chat:')) return 'chat'
   if (isRightWorkspaceBrowserTab(tab)) return 'browser'
-  if (isRightWorkspaceHarnessTab(tab)) return 'terminal'
-  if (tab === 'review' || tab === 'terminal' || tab === 'files') return tab
+  if (isRightWorkspaceHarnessTab(tab) || isRightWorkspaceTerminalTab(tab)) return 'terminal'
+  if (tab === 'review' || tab === 'files') return tab
   return 'other'
 }
 
@@ -353,6 +367,31 @@ function isRightWorkspaceBrowserTab(tab: RightWorkspacePanelView): tab is RightW
 
 function isRightWorkspaceHarnessTab(tab: RightWorkspacePanelView): tab is RightWorkspaceHarnessTab {
   return tab.startsWith('harness:')
+}
+
+function isRightWorkspaceTerminalTab(
+  tab: RightWorkspacePanelView
+): tab is RightWorkspaceTerminalTab {
+  return tab.startsWith('terminal:')
+}
+
+function getRightWorkspaceTerminalNumericSuffix(tab: RightWorkspaceTerminalTab): number {
+  const parsed = Number.parseInt(tab.slice('terminal:'.length), 10)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeRightWorkspacePanelTab(
+  tab: RightWorkspacePanelTab | 'browser' | 'terminal'
+): RightWorkspacePanelTab {
+  if (tab === 'browser') return 'browser:1'
+  if (tab === 'terminal') return 'terminal:1'
+  return tab
+}
+
+function normalizeRightWorkspacePanelView(
+  view: RightWorkspacePanelView | 'browser' | 'terminal'
+): RightWorkspacePanelView {
+  return view === 'launcher' ? view : normalizeRightWorkspacePanelTab(view)
 }
 
 function getRightWorkspaceHarnessSessionId(tab: RightWorkspaceHarnessTab) {
@@ -374,6 +413,7 @@ function normalizeRightWorkspaceBrowserState(
     browserSessionId: state?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
     title: state?.title ?? null,
     faviconUrl: state?.faviconUrl ?? null,
+    isLoading: state?.isLoading ?? false,
     hasActiveDownload: state?.hasActiveDownload ?? false,
     openRequest: state?.openRequest ?? null,
   }
@@ -437,6 +477,7 @@ function createInitialBrowserWorkspaceState({
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
+  splitGroups: WorkbenchSplitGroupsController
   localHarnessSessions?: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSessionId?: string | null
   visible?: boolean
@@ -500,7 +541,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
-  const { services, workspaceTabId, openRuntimeTask } = useWorkbench()
+  const { services, openRuntimeTask } = useWorkbench()
   const { t } = useTranslation('common')
   const {
     onLocalHarnessSessionStarted,
@@ -512,7 +553,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const isTauri = isTauriRuntime()
-  const [splitMode, setSplitMode] = useState(false)
+  const splitMode = props.splitGroups.splitMode
   const [environmentInfoVisibilityByPane, setEnvironmentInfoVisibilityByPane] = useState<
     Record<string, EnvironmentInfoVisibilityState>
   >({})
@@ -721,19 +762,37 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       updateHarnessSessionTitle,
     ]
   )
+  const {
+    focusPane: focusSplitGroupPane,
+    closePane: closeSplitGroupPane,
+    splitPane: splitSplitGroupPane,
+    placeTask: placeSplitGroupTask,
+    updateSizes: updateSplitGroupSizes,
+  } = props.splitGroups
+  const focusSplitPane = useCallback(
+    (paneId: string) => getActiveWorkbenchLayout(focusSplitGroupPane(paneId)),
+    [focusSplitGroupPane]
+  )
+  const closeSplitPane = useCallback(
+    (paneId: string) => getActiveWorkbenchLayout(closeSplitGroupPane(paneId)),
+    [closeSplitGroupPane]
+  )
   const paneStack = (
     <SplitWorkbenchPaneStack
       activePane={props.activePane}
-      storageKey={`wework:workbench-split-layout:v2:${workspaceTabId ?? 'popout'}`}
+      layout={props.splitGroups.activeLayout}
       validRuntimeKeys={runtimePaneKeys}
       retainedResourceKeys={retainedResourceKeys}
-      runtimeKeysReady={state.runtimeWork !== null}
       activeTestId="desktop-workbench-main"
       workbenchVisible={props.visible ?? true}
       resolvePane={resolvePane}
       getPaneTitle={getPaneTitle}
       onPaneFocus={focusPane}
-      onSplitModeChange={setSplitMode}
+      onLayoutFocus={focusSplitPane}
+      onLayoutClose={closeSplitPane}
+      onLayoutSplit={splitSplitGroupPane}
+      onLayoutPlace={placeSplitGroupTask}
+      onLayoutSizesChange={updateSplitGroupSizes}
       renderPane={renderWorkbenchPane}
     />
   )
@@ -838,7 +897,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createDeviceDirectory,
     startNewChat,
   } = useWorkbenchPaneContext()
-  const { services } = useWorkbench()
+  const { services, openRuntimeTask } = useWorkbench()
   const { t } = useTranslation('common')
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
     'main' | 'right' | null
@@ -860,7 +919,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
-  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const paneSession = useWorkbenchPaneSession({
+    currentRuntimeTask,
+    debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
+  })
   const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
     source: currentRuntimeTask,
     project: currentProject,
@@ -939,6 +1001,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const supervisorDialogOpen = supervisorDialogTaskKey === supervisorDialogScopeKey
   const runtimeWork = state.runtimeWork
   const runtimeTaskSummary = findRuntimeTask(runtimeWork, currentRuntimeTask)
+  const currentRuntimeConversationSource: RuntimeTaskAddress | null =
+    currentRuntimeTask && runtimeTaskSummary
+      ? {
+          ...currentRuntimeTask,
+          runtime: runtimeTaskSummary.runtime,
+          workspacePath: runtimeTaskSummary.workspacePath || currentRuntimeTask.workspacePath,
+          threadId: runtimeTaskSummary.threadId ?? currentRuntimeTask.threadId,
+          runtimeHandle: runtimeTaskSummary.runtimeHandle ?? currentRuntimeTask.runtimeHandle,
+        }
+      : currentRuntimeTask
   const currentProjectSpaceRuntimeTask = runtimeTaskSummary ? currentRuntimeTask : null
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
   const workbenchTitle = activeLocalHarnessSession?.title ?? runtimeTaskTitle
@@ -946,26 +1018,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     activeDeliveryItem,
     boundCloudItem,
     boundCloudProject,
+    boundProjectSpaceApi,
     clearCloudActionNotice,
     clearPendingProjectContext,
     clearTodoBindingError,
     closeDeliveryDialog,
-    closeTodoBindingPicker,
     cloudActionNotice,
+    cloudProjects,
     cloudProjectMentionCandidates,
-    composerCloudProject,
+    defaultProject,
     deliveryDialogOpen,
     finishLocalDelivery,
     handleSelectCloudProject,
-    handleTodoBound,
+    openBoundProjectSpaceTask,
     openDelivery,
-    openTodoManager,
     pendingCloudProject,
-    pendingTodoItem,
     prepareSubmission,
-    todoBindingApis,
+    removeCloudProjectContext,
     todoBindingError,
-    todoBindingPickerOpen,
     visibleCloudMentionCandidates,
   } = useWorkbenchCloudProjectContext({
     active: paneActive && workbenchVisible,
@@ -977,21 +1047,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     services,
     userId: state.user?.id,
   })
-  const pendingProjectSpaceContext =
-    !currentProjectSpaceRuntimeTask && pendingCloudProject ? (
-      <ComposerModePill
-        label={pendingCloudProject.name}
-        icon={LayoutDashboard}
-        testId="project-space-context-pill"
-        cancelTestId="clear-project-space-context-button"
-        cancelLabel={t('workbench.clear_project_space_context', '不加入项目看板')}
-        onCancel={clearPendingProjectContext}
-        title={t(
-          'workbench.project_space_context_pending_title',
-          '发送后会在该项目空间的看板中创建任务'
-        )}
-      />
-    ) : null
+  const workItemContextAvailable = Boolean(
+    currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem && boundProjectSpaceApi
+  )
   const supervisor = runtimeTaskSummary?.supervisor ?? null
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
@@ -1002,14 +1060,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     services?.runtimeWorkApi &&
     (currentRuntimeTask ? currentRuntimeTaskSupportsSupervisor : newChatRuntime === 'codex')
   )
-  const supervisorModels = projectChat.models.filter(
-    model =>
-      model.isActive !== false &&
-      ['public', 'user', 'group'].includes(model.type) &&
-      Boolean(model.namespace) &&
-      model.resourceUserId !== undefined
-  )
-
   const runtimeWorkApi = services?.runtimeWorkApi
   const setSupervisorForAddress = useCallback(
     async (address: RuntimeTaskAddress, config: TaskSupervisorConfig) => {
@@ -1030,7 +1080,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
 
   const sendPaneInputWithContext = useCallback(
-    (
+    async (
       value?: string,
       options?: {
         guideWhenBusy?: boolean
@@ -1044,7 +1094,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const supervisorConfig =
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
-      const cloudSubmission = prepareSubmission(description)
+      const cloudSubmission = await prepareSubmission(description)
       return sendPaneInput(value, {
         ...options,
         additionalContext: cloudSubmission.additionalContext,
@@ -1236,17 +1286,31 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       initialBlankBrowserMigration?.rightPanelView ??
       initialWorkspaceState?.rightPanelView ??
       'launcher'
-    return (restoredView as RightWorkspacePanelView | 'browser') === 'browser'
-      ? 'browser:1'
-      : restoredView
+    return normalizeRightWorkspacePanelView(
+      restoredView as RightWorkspacePanelView | 'browser' | 'terminal'
+    )
   })
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>(() => {
     const restoredTabs = (initialBlankBrowserMigration?.rightPanelTabs ??
       initialWorkspaceState?.rightPanelTabs ??
-      []) as Array<RightWorkspacePanelTab | 'browser'>
-    return restoredTabs.map(tab => (tab === 'browser' ? 'browser:1' : tab))
+      []) as Array<RightWorkspacePanelTab | 'browser' | 'terminal'>
+    return restoredTabs.map(normalizeRightWorkspacePanelTab)
   })
+  const terminalTabSequence = useRef(
+    Math.max(
+      0,
+      ...rightPanelTabs
+        .filter(isRightWorkspaceTerminalTab)
+        .map(getRightWorkspaceTerminalNumericSuffix),
+      isRightWorkspaceTerminalTab(rightPanelView)
+        ? getRightWorkspaceTerminalNumericSuffix(rightPanelView)
+        : 0
+    )
+  )
   const [rightPanelImmediateLayout, setRightPanelImmediateLayout] = useState(false)
+  const [temporaryChatAddresses, setTemporaryChatAddresses] = useState<
+    Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
+  >(() => initialWorkspaceState?.temporaryChatAddresses ?? {})
   const [selectedFileWorkspaceTargetKey, setSelectedFileWorkspaceTargetKey] = useState<
     string | null
   >(() => initialWorkspaceState?.selectedFileWorkspaceTargetKey ?? null)
@@ -1294,6 +1358,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     browserTabSequence.current += 1
     return `browser:${browserTabSequence.current}` as RightWorkspaceBrowserTab
   }, [])
+  const allocateTerminalTab = useCallback((): RightWorkspaceTerminalTab => {
+    terminalTabSequence.current += 1
+    return `terminal:${terminalTabSequence.current}` as RightWorkspaceTerminalTab
+  }, [])
   const createBrowserTabState = useCallback(
     (
       tab: RightWorkspaceBrowserTab,
@@ -1303,6 +1371,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       browserSessionId: getRightWorkspaceBrowserLabelSuffix(tab),
       title: null,
       faviconUrl: null,
+      isLoading: false,
       hasActiveDownload: false,
       openRequest: null,
       ...overrides,
@@ -1339,6 +1408,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       rightPanelExpanded,
       rightPanelTabs,
       rightPanelView,
+      temporaryChatAddresses,
       browserStates,
       reviewState,
       selectedFileWorkspaceTargetKey,
@@ -1351,6 +1421,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
+    temporaryChatAddresses,
     browserStates,
     reviewState,
     selectedFileWorkspaceTargetKey,
@@ -1483,9 +1554,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const temporaryChatAvailable = !activeLocalHarnessSession
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
     const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
-    const workspaceTabs = canBrowseFiles
+    const availableContextTabs = workItemContextAvailable
       ? rightPanelTabs
-      : rightPanelTabs.filter(tab => tab !== 'files')
+      : rightPanelTabs.filter(tab => tab !== 'work-item')
+    const workspaceTabs = canBrowseFiles
+      ? availableContextTabs
+      : availableContextTabs.filter(tab => tab !== 'files')
     const permittedTabs = temporaryChatAvailable
       ? workspaceTabs
       : workspaceTabs.filter(tab => !tab.startsWith('chat:'))
@@ -1504,10 +1578,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelTabs,
     rightPanelView,
     temporaryChatAvailable,
+    workItemContextAvailable,
     workspaceProject,
   ])
   const effectiveRightPanelView =
-    !temporaryChatAvailable && rightPanelView.startsWith('chat:') ? 'launcher' : rightPanelView
+    (!temporaryChatAvailable && rightPanelView.startsWith('chat:')) ||
+    (!workItemContextAvailable && rightPanelView === 'work-item')
+      ? 'launcher'
+      : rightPanelView
   const temporaryChatExpanded =
     temporaryChatAvailable && rightPanelExpanded && rightPanelView.startsWith('chat:')
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
@@ -1515,7 +1593,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     fileWorkspaceDirty ||
     rightPanelTabs.some(
       tab =>
-        tab === 'terminal' || isRightWorkspaceBrowserTab(tab) || isRightWorkspaceHarnessTab(tab)
+        isRightWorkspaceTerminalTab(tab) ||
+        isRightWorkspaceBrowserTab(tab) ||
+        isRightWorkspaceHarnessTab(tab)
     )
   useEffect(() => {
     onPaneResourceRetained(paneKey, 'right-panel', hasPersistentRightPanelResource)
@@ -1573,6 +1653,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ) === index
     )
   }, [effectiveWorkspaceTarget, projectFileWorkspaceTargets])
+  const soleProjectWorkspaceTarget =
+    projectFileWorkspaceTargets.length === 1 ? projectFileWorkspaceTargets[0] : null
   const composerWorkspaceTarget =
     workspaceTarget ??
     (activeDeviceId && state.standaloneWorkspacePath
@@ -1582,17 +1664,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           source: 'runtime' as const,
         }
       : null) ??
+    soleProjectWorkspaceTarget ??
     (activeDeviceId && soleActiveDeviceWorkspacePath
       ? {
           deviceId: activeDeviceId,
           path: soleActiveDeviceWorkspacePath,
-          source: 'runtime' as const,
-        }
-      : null) ??
-    (currentRuntimeTask && (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)
-      ? {
-          deviceId: currentRuntimeTask.deviceId,
-          path: currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath!,
           source: 'runtime' as const,
         }
       : null)
@@ -2422,7 +2498,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const hasConversation = paneMessages.length > 0 || Boolean(currentRuntimeTask)
   const isCreatingWorktree = isWorktreeCreationPending(
     runtimeTaskSummary,
-    paneSession.status.sendPhase
+    paneSession.status.sendPhase,
+    paneSession.status.workspaceCreationKind
   )
   const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
@@ -2455,7 +2532,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     !currentProject &&
     !currentRuntimeTask &&
     !activeDeviceId &&
-    !devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
+    !devices.some(device => isWorkbenchDeviceOnline(device) && isWeWorkCompatibleDevice(device))
   const composerDisabled =
     activeDeviceUnavailable || activeDeviceVersionUnsupported || noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
@@ -2486,6 +2563,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const projectChatWithModelSelectorSignal = useMemo<ProjectChatControls>(
     () => ({
       ...projectChat,
+      scopeKey: paneSession.scopeKey,
+      attachments: paneSession.attachments,
+      uploadingFiles: paneSession.uploadingFiles,
+      errors: paneSession.attachmentErrors,
+      handleFileSelect: paneSession.handleFileSelect,
+      removeAttachment: paneSession.removeAttachment,
       modelSelectorOpenSignal,
       setSelectedModel: model => {
         projectChat.setSelectedModel(model)
@@ -2504,15 +2587,73 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }),
     [
       modelSelectorOpenSignal,
+      paneSession.attachmentErrors,
+      paneSession.attachments,
+      paneSession.handleFileSelect,
+      paneSession.removeAttachment,
+      paneSession.scopeKey,
+      paneSession.uploadingFiles,
       projectChat,
       refinePluginTrialPrompt,
       retryFailedMessageAfterModelSelect,
     ]
   )
-  const emptyProjectWork = useMemo(
-    () => ({ ...paneProjectWork, projectMenuOpenSignal, projectMenuAnchorElement }),
-    [paneProjectWork, projectMenuAnchorElement, projectMenuOpenSignal]
+  const branchNameApi = services?.branchNameApi
+  const generateBranchName = useCallback(
+    async (sourceText: string) => {
+      if (!branchNameApi) {
+        throw new Error(t('workbench.environment_branch_generate_failed'))
+      }
+      const selectedModel =
+        projectChat.getSelectedModel?.() ??
+        projectChat.selectedModel ??
+        resolveAutomaticModel(projectChat.models)
+      const selectedOptions =
+        projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+      const executionModel = selectedModelExecutionFields(selectedModel, selectedOptions)
+      const generationModel =
+        titleModelForGeneration(appPreferences?.preferences, projectChat.models, executionModel) ??
+        (executionModel.modelId
+          ? {
+              modelId: executionModel.modelId,
+              modelType: executionModel.modelType,
+              modelOptions: executionModel.modelOptions,
+            }
+          : null)
+      console.info('[Wework] Branch name generation model resolved', {
+        selectedModel: selectedModel?.name ?? null,
+        configuredTitleModel: appPreferences?.preferences.friendlyTaskTitleModel?.modelName ?? null,
+        generationModel: generationModel?.modelId ?? null,
+        availableModelCount: projectChat.models.length,
+      })
+      if (!generationModel) {
+        throw new Error(t('workbench.environment_branch_generate_model_unavailable'))
+      }
+      return branchNameApi.generateBranchName({
+        sourceText,
+        deviceId: currentRuntimeTask?.deviceId ?? composerWorkspaceTarget?.deviceId,
+        ...generationModel,
+      })
+    },
+    [
+      appPreferences?.preferences,
+      composerWorkspaceTarget?.deviceId,
+      currentRuntimeTask?.deviceId,
+      projectChat,
+      branchNameApi,
+      t,
+    ]
   )
+  const branchNameProjectWork = {
+    ...paneProjectWork,
+    onGenerateBranchName: branchNameApi ? generateBranchName : undefined,
+    branchNameSource: workbenchTitle ?? undefined,
+  }
+  const emptyProjectWork = {
+    ...branchNameProjectWork,
+    projectMenuOpenSignal,
+    projectMenuAnchorElement,
+  }
   const popoutComposerPlaceholder = getPopoutComposerPlaceholder(
     currentProject?.name,
     paneProjectWork.executionMode
@@ -2523,6 +2664,26 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [paneSession]
   )
+  const defaultWorkItemPreviewProject = useMemo<CloudProject>(
+    () => ({
+      id: DEFAULT_WORK_ITEM_PROJECT_ID,
+      public_id: DEFAULT_WORK_ITEM_PROJECT_ID,
+      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+      name: t('workbench.default_work_item_board', '我的任务'),
+      description: '',
+      project_store: 'local',
+      task_provider: 'local',
+      provider_config: {},
+      created_by_user_id: state.user?.id ?? 0,
+      status: 'active',
+      tags: [],
+      version: 1,
+      created_at: '',
+      updated_at: '',
+      metadata: { system_kind: 'default_work_items' },
+    }),
+    [state.user?.id, t]
+  )
   const openRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab, options?: { immediateLayout?: boolean }) => {
       if (options?.immediateLayout) setRightPanelImmediateLayout(true)
@@ -2532,6 +2693,52 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
+  const currentWorkItemGuideProject =
+    boundCloudProject ?? pendingCloudProject ?? defaultProject ?? defaultWorkItemPreviewProject
+  const availableWorkItemProjects =
+    cloudProjects.length > 0
+      ? cloudProjects.filter(project => !isDefaultWorkItemProject(project))
+      : currentWorkItemGuideProject
+        ? isDefaultWorkItemProject(currentWorkItemGuideProject)
+          ? []
+          : [currentWorkItemGuideProject]
+        : []
+  const projectSpaceContext =
+    currentProjectSpaceRuntimeTask && boundCloudProject && boundCloudItem ? (
+      <WorkItemComposerGuide
+        integrated
+        project={boundCloudProject}
+        item={boundCloudItem}
+        api={boundProjectSpaceApi}
+        currentTask={currentProjectSpaceRuntimeTask}
+        projects={availableWorkItemProjects}
+        onSelectProject={handleSelectCloudProject}
+        onRemoveProject={removeCloudProjectContext}
+        goalPresent={Boolean(paneSession.goal && !paneSession.goalDraftActive)}
+        refreshKey={`${runtimeTaskSummary?.running ?? false}:${runtimeTaskSummary?.turnStatus ?? ''}`}
+        onOpen={() => openRightPanelTab('work-item')}
+        onOpenBoard={openBoundProjectSpaceTask}
+      />
+    ) : currentProjectSpaceRuntimeTask && currentWorkItemGuideProject ? (
+      <WorkItemComposerGuide
+        integrated
+        bindingPending
+        project={currentWorkItemGuideProject}
+        projects={availableWorkItemProjects}
+        onSelectProject={handleSelectCloudProject}
+        onRemoveProject={removeCloudProjectContext}
+        goalPresent={Boolean(paneSession.goal && !paneSession.goalDraftActive)}
+      />
+    ) : !currentProjectSpaceRuntimeTask && currentWorkItemGuideProject ? (
+      <WorkItemComposerGuide
+        integrated
+        toolbar
+        project={currentWorkItemGuideProject}
+        projects={availableWorkItemProjects}
+        onSelectProject={handleSelectCloudProject}
+        onRemoveProject={clearPendingProjectContext}
+      />
+    ) : null
   useEffect(() => {
     if (!rightPanelImmediateLayout || !rightPanelOpen) return
 
@@ -2775,6 +2982,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     track('workspace_panel_removed', { panel: rightPanelTabType(tab) })
     if (tab.startsWith('chat:')) {
       temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
+      setTemporaryChatAddresses(current => {
+        if (!current[tab as RightWorkspaceChatTab]) return current
+        const next = { ...current }
+        delete next[tab as RightWorkspaceChatTab]
+        return next
+      })
     }
     if (isRightWorkspaceHarnessTab(tab)) {
       void onLocalHarnessSessionClose(getRightWorkspaceHarnessSessionId(tab))
@@ -2946,9 +3159,27 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const selectBrowserView = useCallback(() => {
     openBrowserTab()
   }, [openBrowserTab])
+  useEffect(() => {
+    if (!paneActive || !paneVisible || rightPanelOpen) return
+
+    const handleOpenBrowser = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isEditableShortcutTarget(event.target)) return
+      const primaryPressed =
+        getPlatform() === 'win'
+          ? event.ctrlKey && event.shiftKey && !event.metaKey
+          : event.metaKey && event.shiftKey && !event.ctrlKey
+      if (!primaryPressed || event.altKey || event.key.toLowerCase() !== 'b') return
+
+      event.preventDefault()
+      selectBrowserView()
+    }
+
+    window.addEventListener('keydown', handleOpenBrowser)
+    return () => window.removeEventListener('keydown', handleOpenBrowser)
+  }, [paneActive, paneVisible, rightPanelOpen, selectBrowserView])
   const selectTerminalView = useCallback(() => {
-    openRightPanelTab('terminal')
-  }, [openRightPanelTab])
+    openRightPanelTab(allocateTerminalTab())
+  }, [allocateTerminalTab, openRightPanelTab])
   const selectChatView = useCallback(() => {
     openTemporaryChatTab()
   }, [openTemporaryChatTab])
@@ -3226,19 +3457,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onListEnvironmentBranches={listEnvironmentBranches}
       onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
       onCreateEnvironmentBranch={createEnvironmentBranch}
+      onGenerateEnvironmentBranch={branchNameApi ? generateBranchName : undefined}
+      environmentBranchNameSource={workbenchTitle ?? undefined}
       onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
       onDeliver={
-        experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
+        experimentalFeaturesEnabled &&
+        currentRuntimeTask &&
+        services?.deliveryApi &&
+        activeDeliveryItem
           ? openDelivery
           : undefined
       }
       todoLabel={
         boundCloudItem ? `${boundCloudItem.id} · ${boundCloudItem.title}` : boundCloudProject?.name
-      }
-      onManageTodo={
-        experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
-          ? openTodoManager
-          : undefined
       }
       supervisor={supervisorFeatureAvailable ? supervisor : null}
       onConfigureSupervisor={
@@ -3308,7 +3539,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <ArrowLeftRight />
     </button>
   ) : undefined
-  const canContinueInIm = experimentalFeaturesEnabled && Boolean(currentRuntimeTask)
+  const canContinueInIm = Boolean(currentRuntimeTask)
   const continueInImButton = canContinueInIm ? (
     <button
       type="button"
@@ -3802,7 +4033,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     )}
                                     variant="desktop"
                                     projectChat={projectChatWithModelSelectorSignal}
-                                    projectWork={paneProjectWork}
+                                    projectWork={branchNameProjectWork}
                                     showProjectWorkBar={false}
                                     queuedMessages={paneQueuedMessages}
                                     guidanceMessages={paneGuidanceMessages}
@@ -3813,8 +4044,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                       experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
                                     }
                                     onSelectCloudProject={handleSelectCloudProject}
-                                    selectedCloudProjectId={composerCloudProject?.id}
-                                    toolbarLeadingContext={pendingProjectSpaceContext}
+                                    contextHeader={projectSpaceContext}
                                     isStreaming={paneIsBusy}
                                     onPause={pauseCurrentResponse}
                                     onCompactContext={
@@ -3999,6 +4229,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       variant="desktop"
                       projectChat={projectChatWithModelSelectorSignal}
                       projectWork={emptyProjectWork}
+                      projectWorkBarMiddleContext={projectSpaceContext}
                       projectWorkBarTrailingContext={
                         experimentalFeaturesEnabled ? (
                           <WorkbenchHarnessSelector
@@ -4055,8 +4286,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                         experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
                       }
                       onSelectCloudProject={handleSelectCloudProject}
-                      selectedCloudProjectId={composerCloudProject?.id}
-                      toolbarLeadingContext={pendingProjectSpaceContext}
                       isStreaming={paneIsBusy}
                       onPause={pauseCurrentResponse}
                       onCompactContext={
@@ -4174,7 +4403,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               allowTemporaryChat={temporaryChatAvailable}
               currentProject={workspaceProject}
               canBrowseFiles={canBrowseFiles}
-              currentRuntimeTask={currentRuntimeTask}
+              currentRuntimeTask={currentRuntimeConversationSource}
               devices={devices}
               workspaceTarget={workspacePanelTarget}
               fileWorkspaceTarget={fileWorkspaceTarget}
@@ -4190,6 +4419,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               workspaceTargetError={openFileRequest?.target ? null : workspaceTargetError}
               review={reviewState}
               planContent={rightPanelPlanContent}
+              workItemPanel={
+                workItemContextAvailable &&
+                currentProjectSpaceRuntimeTask &&
+                boundCloudProject &&
+                boundCloudItem &&
+                boundProjectSpaceApi ? (
+                  <WorkItemContextPanel
+                    key={`${boundCloudProject.id}:${boundCloudItem.id}:${boundCloudItem.version}:${currentProjectSpaceRuntimeTask.deviceId}:${currentProjectSpaceRuntimeTask.taskId}`}
+                    api={boundProjectSpaceApi}
+                    project={boundCloudProject}
+                    item={boundCloudItem}
+                    currentTask={currentProjectSpaceRuntimeTask}
+                    onOpenBoard={openBoundProjectSpaceTask}
+                    onOpenTask={openRuntimeTask}
+                  />
+                ) : null
+              }
               browserStates={browserStates}
               onBrowserStateChange={updateBrowserState}
               codeCommentCount={paneSession.codeCommentContexts.length}
@@ -4216,6 +4462,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
               onRestoreConversation={() => setRightPanelExpanded(false)}
               getChatInitialInput={tab => temporaryChatInitialInputsRef.current.get(tab)}
+              getChatInitialAddress={tab => temporaryChatAddresses[tab]}
+              onChatAddressChange={(tab, address) => {
+                setTemporaryChatAddresses(current => {
+                  if (!address) {
+                    if (!current[tab]) return current
+                    const next = { ...current }
+                    delete next[tab]
+                    return next
+                  }
+                  if (
+                    current[tab]?.taskId === address.taskId &&
+                    current[tab]?.deviceId === address.deviceId
+                  ) {
+                    return current
+                  }
+                  return { ...current, [tab]: address }
+                })
+              }}
             />
           )}
         </div>
@@ -4319,7 +4583,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           defaultModelSelection={appPreferences?.preferences.supervisorModelSelection ?? null}
           defaultIntervalSeconds={appPreferences?.preferences.supervisorIntervalSeconds ?? 30}
           defaultInstructions={appPreferences?.preferences.supervisorPrinciples ?? ''}
-          models={supervisorModels}
+          models={projectChat.models}
           onOpenChange={open => setSupervisorDialogTaskKey(open ? supervisorDialogScopeKey : null)}
           onSet={setTaskSupervisor}
           onClear={clearTaskSupervisor}
@@ -4351,19 +4615,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onDelivered={() => void finishLocalDelivery()}
             />
           )}
-        {todoBindingPickerOpen && todoBindingApis.length > 0 && (
-          <TodoBindingPicker
-            apis={todoBindingApis}
-            runtimeTask={currentProjectSpaceRuntimeTask ?? undefined}
-            runtimeTaskTitle={runtimeTaskTitle}
-            currentProject={
-              currentProjectSpaceRuntimeTask ? boundCloudProject : pendingCloudProject
-            }
-            currentItem={currentProjectSpaceRuntimeTask ? boundCloudItem : pendingTodoItem}
-            onClose={closeTodoBindingPicker}
-            onBound={handleTodoBound}
-          />
-        )}
       </>
     </main>
   )

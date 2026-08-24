@@ -3,10 +3,13 @@ import { getLatestThinkingContent, resolveStreamingThinkingContent } from '@wege
 import { parseCodeCommentContexts } from '@/lib/code-comment-context'
 import type {
   ProcessingBlock,
+  RuntimeAssistantDisplayItem,
   RuntimeConversationItem,
   RuntimeConversationTurn,
   WorkbenchMessage,
 } from '@/types/workbench'
+
+const RUNTIME_RECONNECTING_TOOL_NAME = 'runtime_reconnecting'
 
 export function mergeRuntimeConversationTurns(
   localTurns: RuntimeConversationTurn[],
@@ -72,7 +75,10 @@ export function reduceRuntimeConversationTurns(
       return updateStartedTurn(turns, action)
     case 'assistant_chunk':
       return updateTurn(turns, action.subtaskId, turn => {
-        let items = upsertReasoningChunk(turn.items, action.subtaskId, action.reasoningChunk)
+        let items = hasAssistantChunkProgress(action)
+          ? settleRuntimeReconnectingBlocks(turn.items)
+          : turn.items
+        items = upsertReasoningChunk(items, action.subtaskId, action.reasoningChunk)
         items = upsertBlocks(items, action.blocks)
         if (action.content) {
           if (action.itemId) {
@@ -106,7 +112,9 @@ export function reduceRuntimeConversationTurns(
     case 'assistant_done':
       return updateTurn(turns, action.subtaskId, turn => {
         const items = applyCompletedAssistantContent(
-          settleProcessingBlocks(upsertBlocks(turn.items, action.blocks)),
+          settleProcessingBlocks(
+            upsertBlocks(settleRuntimeReconnectingBlocks(turn.items), action.blocks)
+          ),
           turn.id,
           action.itemId,
           action.content
@@ -123,22 +131,28 @@ export function reduceRuntimeConversationTurns(
         }
       })
     case 'assistant_cancelled':
-      return updateTurn(turns, action.subtaskId, turn => ({
-        ...turn,
-        status: 'cancelled',
-        streamingThinkingContent: undefined,
-        completedAt: new Date().toISOString(),
-        stoppedNotice: true,
-      }))
+      return updateTurn(turns, action.subtaskId, turn => {
+        return {
+          ...turn,
+          items: settleRuntimeReconnectingBlocks(turn.items),
+          status: 'cancelled',
+          streamingThinkingContent: undefined,
+          completedAt: new Date().toISOString(),
+          stoppedNotice: true,
+        }
+      })
     case 'assistant_error':
-      return updateTurn(turns, action.subtaskId, turn => ({
-        ...turn,
-        status: 'failed',
-        streamingThinkingContent: undefined,
-        completedAt: new Date().toISOString(),
-        error: action.error,
-        errorType: action.errorType,
-      }))
+      return updateFailedTurn(turns, action.subtaskId, turn => {
+        return {
+          ...turn,
+          items: settleRuntimeReconnectingBlocks(turn.items),
+          status: 'failed',
+          streamingThinkingContent: undefined,
+          completedAt: new Date().toISOString(),
+          error: action.error,
+          errorType: action.errorType,
+        }
+      })
     case 'file_changes_updated':
       return updateTurn(turns, action.subtaskId, turn => ({
         ...turn,
@@ -146,10 +160,14 @@ export function reduceRuntimeConversationTurns(
       }))
     case 'block_created':
       return updateTurn(turns, action.subtaskId, turn => {
-        const items = replaceAssistantTextWithBlock(
-          turn.items,
+        const currentItems = isRuntimeReconnectingBlock(action.block)
+          ? turn.items
+          : settleRuntimeReconnectingBlocks(turn.items)
+        const items = upsertRuntimeBlock(
+          currentItems,
           action.replaceAssistantTextItemId,
-          action.block
+          action.block,
+          turn.status
         )
         return {
           ...turn,
@@ -164,10 +182,18 @@ export function reduceRuntimeConversationTurns(
       })
     case 'block_updated':
       return updateTurn(turns, action.subtaskId, turn => {
+        const currentItems = turn.items.some(
+          item =>
+            item.type === 'block' &&
+            item.id === action.blockId &&
+            isRuntimeReconnectingBlock(item.block)
+        )
+          ? turn.items
+          : settleRuntimeReconnectingBlocks(turn.items)
         const previousBlock = turn.items.find(
           item => item.type === 'block' && item.id === action.blockId
         )
-        const items = turn.items.map(item =>
+        const items = currentItems.map(item =>
           item.type === 'block' && item.id === action.blockId
             ? {
                 ...item,
@@ -251,7 +277,9 @@ function mergeRuntimeConversationTurn(
   local: RuntimeConversationTurn,
   snapshot: RuntimeConversationTurn
 ): RuntimeConversationTurn {
-  const items = mergeRuntimeConversationItems(local.items, snapshot.items)
+  const preserveLocalTerminal =
+    isTerminalTurnStatus(local.status) && isUnsettledTurnStatus(snapshot.status)
+  const items = mergeRuntimeConversationItems(local.items, snapshot.items, preserveLocalTerminal)
   const preserveLocalFailure = local.status === 'failed' && Boolean(local.error) && !snapshot.error
   const preserveStreamingThinking =
     snapshot.status === 'streaming' &&
@@ -262,14 +290,26 @@ function mergeRuntimeConversationTurn(
     clientUserMessageId: snapshot.clientUserMessageId ?? local.clientUserMessageId,
     runtimeMessageIndex: earliestRuntimeMessageIndex(local, snapshot),
     items,
-    status: preserveLocalFailure ? local.status : snapshot.status,
-    completedAt: preserveLocalFailure ? local.completedAt : snapshot.completedAt,
-    error: preserveLocalFailure ? local.error : snapshot.error,
-    errorType: preserveLocalFailure ? local.errorType : snapshot.errorType,
-    streamingThinkingContent: preserveStreamingThinking
-      ? getLatestThinkingContent(processingBlocks(items))
-      : snapshot.streamingThinkingContent,
+    status: preserveLocalTerminal || preserveLocalFailure ? local.status : snapshot.status,
+    completedAt:
+      preserveLocalTerminal || preserveLocalFailure ? local.completedAt : snapshot.completedAt,
+    error: preserveLocalTerminal || preserveLocalFailure ? local.error : snapshot.error,
+    errorType: preserveLocalTerminal || preserveLocalFailure ? local.errorType : snapshot.errorType,
+    stoppedNotice: preserveLocalTerminal ? local.stoppedNotice : snapshot.stoppedNotice,
+    streamingThinkingContent: preserveLocalTerminal
+      ? undefined
+      : preserveStreamingThinking
+        ? getLatestThinkingContent(processingBlocks(items))
+        : snapshot.streamingThinkingContent,
   }
+}
+
+function isTerminalTurnStatus(status: RuntimeConversationTurn['status']): boolean {
+  return status === 'done' || status === 'failed' || status === 'cancelled'
+}
+
+function isUnsettledTurnStatus(status: RuntimeConversationTurn['status']): boolean {
+  return status === 'pending' || status === 'streaming'
 }
 
 function earliestRuntimeMessageIndex(
@@ -285,26 +325,31 @@ function earliestRuntimeMessageIndex(
 function orderRuntimeConversationTurns(
   turns: RuntimeConversationTurn[]
 ): RuntimeConversationTurn[] {
-  const indexedTurns = turns.map((turn, index) => ({
-    turn,
-    index,
-    timestamp: runtimeConversationTurnTimestamp(turn),
-  }))
+  const pendingOptimisticTurns = turns.filter(turn => turn.id === null)
+  const indexedTurns = turns
+    .filter(turn => turn.id !== null)
+    .map((turn, index) => ({
+      turn,
+      index,
+      timestamp: runtimeConversationTurnTimestamp(turn),
+    }))
+  let orderedTurns: RuntimeConversationTurn[]
   if (indexedTurns.every(({ turn }) => turn.runtimeMessageIndex !== undefined)) {
-    return indexedTurns
+    orderedTurns = indexedTurns
       .sort(
         (left, right) =>
           left.turn.runtimeMessageIndex! - right.turn.runtimeMessageIndex! ||
           left.index - right.index
       )
       .map(({ turn }) => turn)
-  }
-  if (indexedTurns.every(({ timestamp }) => timestamp !== undefined)) {
-    return indexedTurns
+  } else if (indexedTurns.every(({ timestamp }) => timestamp !== undefined)) {
+    orderedTurns = indexedTurns
       .sort((left, right) => left.timestamp! - right.timestamp! || left.index - right.index)
       .map(({ turn }) => turn)
+  } else {
+    orderedTurns = indexedTurns.map(({ turn }) => turn)
   }
-  return turns
+  return [...orderedTurns, ...pendingOptimisticTurns]
 }
 
 function runtimeConversationTurnTimestamp(turn: RuntimeConversationTurn): number | undefined {
@@ -323,7 +368,8 @@ function runtimeConversationTurnTimestamp(turn: RuntimeConversationTurn): number
 
 function mergeRuntimeConversationItems(
   localItems: RuntimeConversationItem[],
-  snapshotItems: RuntimeConversationItem[]
+  snapshotItems: RuntimeConversationItem[],
+  preserveLocalTerminal = false
 ): RuntimeConversationItem[] {
   const reconciledLocalItems = localItems.filter(
     localItem =>
@@ -333,7 +379,7 @@ function mergeRuntimeConversationItems(
   )
   const localById = new Map(reconciledLocalItems.map(item => [item.id, item]))
   const mergedSnapshotItems = snapshotItems.map(item =>
-    mergeRuntimeConversationItem(localById.get(item.id), item)
+    mergeRuntimeConversationItem(localById.get(item.id), item, preserveLocalTerminal)
   )
   const snapshotById = new Map(mergedSnapshotItems.map(item => [item.id, item]))
   const mergedLocalItems = reconciledLocalItems.map(item => snapshotById.get(item.id) ?? item)
@@ -380,14 +426,35 @@ function assistantTextRepresentationContent(item: RuntimeConversationItem): stri
 
 function mergeRuntimeConversationItem(
   local: RuntimeConversationItem | undefined,
-  snapshot: RuntimeConversationItem
+  snapshot: RuntimeConversationItem,
+  preserveLocalTerminal: boolean
 ): RuntimeConversationItem {
   if (local?.type !== 'block' || snapshot.type !== 'block') return snapshot
+
+  if (
+    preserveLocalTerminal &&
+    isTerminalProcessingBlockStatus(local.block.status) &&
+    !isTerminalProcessingBlockStatus(snapshot.block.status)
+  ) {
+    return {
+      ...snapshot,
+      block: {
+        ...snapshot.block,
+        status: local.block.status,
+        completedAt: local.block.completedAt,
+        durationMs: local.block.durationMs,
+      } as ProcessingBlock,
+    }
+  }
 
   return {
     ...snapshot,
     block: preserveProcessingBlockTiming(local.block, snapshot.block),
   }
+}
+
+function isTerminalProcessingBlockStatus(status: ProcessingBlock['status']): boolean {
+  return status === 'done' || status === 'error'
 }
 
 function seedRuntimeConversationTurns(
@@ -405,6 +472,60 @@ function seedRuntimeConversationTurns(
     }
   }
   return turns
+}
+
+export function appendAcceptedRuntimeConversationUser(
+  turns: RuntimeConversationTurn[],
+  message: WorkbenchMessage,
+  activeTurnId: string | null,
+  turnIdsBeforeSend: ReadonlySet<string>
+): RuntimeConversationTurn[] {
+  if (message.role !== 'user') return appendOptimisticUser(turns, message)
+  if (
+    turns.some(turn =>
+      turn.items.some(item => item.type === 'user_message' && item.id === message.id)
+    )
+  ) {
+    return turns
+  }
+
+  const activeTurnIndex =
+    activeTurnId && !turnIdsBeforeSend.has(activeTurnId)
+      ? turns.findIndex(turn => turn.id === activeTurnId && !hasRuntimeConversationUser(turn))
+      : -1
+  const acceptedTurnIndex =
+    activeTurnIndex >= 0
+      ? activeTurnIndex
+      : turns.findLastIndex(
+          turn =>
+            turn.id !== null && !turnIdsBeforeSend.has(turn.id) && !hasRuntimeConversationUser(turn)
+        )
+  if (acceptedTurnIndex < 0) return appendOptimisticUser(turns, message)
+
+  const acceptedTurn = turns[acceptedTurnIndex]
+  const acceptedTurnId = acceptedTurn.id
+  if (!acceptedTurnId) return appendOptimisticUser(turns, message)
+  return replaceAt(turns, acceptedTurnIndex, {
+    ...acceptedTurn,
+    clientUserMessageId: message.id,
+    items: [
+      {
+        id: message.id,
+        type: 'user_message',
+        message: {
+          ...message,
+          role: 'user',
+          subtaskId: acceptedTurnId,
+          turnId: acceptedTurnId,
+        },
+      },
+      ...acceptedTurn.items,
+    ],
+  })
+}
+
+function hasRuntimeConversationUser(turn: RuntimeConversationTurn): boolean {
+  return turn.items.some(item => item.type === 'user_message')
 }
 
 function appendOptimisticUser(
@@ -500,6 +621,52 @@ function updateTurn(
   const index = turns.findIndex(turn => turn.id === turnId)
   if (index < 0) return turns
   return replaceAt(turns, index, update(turns[index]))
+}
+
+function updateFailedTurn(
+  turns: RuntimeConversationTurn[],
+  turnId: string | undefined,
+  update: (turn: RuntimeConversationTurn) => RuntimeConversationTurn
+): RuntimeConversationTurn[] {
+  if (!turnId) return turns
+  const existingIndex = turns.findIndex(turn => turn.id === turnId)
+  if (existingIndex >= 0) {
+    return replaceAt(turns, existingIndex, update(turns[existingIndex]))
+  }
+  const optimisticIndex = turns.findLastIndex(
+    turn => turn.id === null && (turn.status === 'pending' || turn.status === 'streaming')
+  )
+  if (optimisticIndex >= 0) {
+    const optimistic = turns[optimisticIndex]
+    return replaceAt(
+      turns,
+      optimisticIndex,
+      update({
+        ...optimistic,
+        id: turnId,
+        items: optimistic.items.map(item =>
+          item.type === 'user_message'
+            ? {
+                ...item,
+                message: {
+                  ...item.message,
+                  subtaskId: turnId,
+                  turnId,
+                },
+              }
+            : item
+        ),
+      })
+    )
+  }
+  return [
+    ...turns,
+    update({
+      id: turnId,
+      items: [],
+      status: 'streaming',
+    }),
+  ]
 }
 
 function upsertAssistantText(
@@ -626,7 +793,17 @@ function upsertBlocks(
   if (!blocks?.length) return items
   let next = items
   for (const block of blocks) {
-    const index = next.findIndex(item => item.type === 'block' && item.id === block.id)
+    const exactIndex = next.findIndex(item => item.type === 'block' && item.id === block.id)
+    const contextCompactionIndex =
+      exactIndex < 0 && isContextCompactionBlock(block)
+        ? next.findIndex(
+            item =>
+              item.type === 'block' &&
+              item.block.subtaskId === block.subtaskId &&
+              isContextCompactionBlock(item.block)
+          )
+        : -1
+    const index = exactIndex >= 0 ? exactIndex : contextCompactionIndex
     const canonicalItem: RuntimeConversationItem = {
       id: block.id,
       type: 'block',
@@ -638,6 +815,10 @@ function upsertBlocks(
     next = index < 0 ? [...next, canonicalItem] : replaceAt(next, index, canonicalItem)
   }
   return next
+}
+
+function isContextCompactionBlock(block: ProcessingBlock): boolean {
+  return block.type === 'tool' && block.toolName === 'context_compaction'
 }
 
 function replaceAssistantTextWithBlock(
@@ -655,6 +836,36 @@ function replaceAssistantTextWithBlock(
     type: 'block',
     block,
   })
+}
+
+function upsertRuntimeBlock(
+  items: RuntimeConversationItem[],
+  assistantTextItemId: string | undefined,
+  block: ProcessingBlock,
+  turnStatus: RuntimeConversationTurn['status']
+): RuntimeConversationItem[] {
+  if (assistantTextItemId) {
+    return replaceAssistantTextWithBlock(items, assistantTextItemId, block)
+  }
+
+  const existingIndex = items.findIndex(item => item.id === block.id)
+  if (existingIndex >= 0) {
+    if (items[existingIndex]?.type === 'assistant_text' && turnStatus === 'done') {
+      return items
+    }
+    return upsertBlocks(items, [block])
+  }
+  if (turnStatus !== 'done') return upsertBlocks(items, [block])
+
+  const terminalTextIndex = items.findLastIndex(item => item.type === 'assistant_text')
+  if (terminalTextIndex < 0) return upsertBlocks(items, [block])
+  const nextItems = [...items]
+  nextItems.splice(terminalTextIndex, 0, {
+    id: block.id,
+    type: 'block',
+    block,
+  })
+  return nextItems
 }
 
 function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): WorkbenchMessage[] {
@@ -686,6 +897,13 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
       turnId: turn.id ?? undefined,
       runtimeMessageIndex: turn.runtimeMessageIndex,
       blocks: blocks.length > 0 ? blocks : undefined,
+      runtimeDisplayItems: assistantItems.flatMap<RuntimeAssistantDisplayItem>(item =>
+        item.type === 'assistant_text'
+          ? [{ id: item.id, type: item.type, content: item.content }]
+          : item.type === 'block'
+            ? [{ id: item.id, type: item.type }]
+            : []
+      ),
       fileChanges: isLast ? turn.fileChanges : undefined,
       error: isLast ? turn.error : undefined,
       errorType: isLast ? turn.errorType : undefined,
@@ -784,6 +1002,43 @@ function settleProcessingBlocks(items: RuntimeConversationItem[]): RuntimeConver
       } as ProcessingBlock,
     }
   })
+}
+
+function settleRuntimeReconnectingBlocks(
+  items: RuntimeConversationItem[]
+): RuntimeConversationItem[] {
+  // A WebView refresh can miss the dedicated completion event. Any later turn
+  // progress proves the connection recovered, so the transient block must settle.
+  const completedAt = Date.now()
+  return items.map(item => {
+    if (
+      item.type !== 'block' ||
+      !isRuntimeReconnectingBlock(item.block) ||
+      item.block.status === 'done' ||
+      item.block.status === 'error'
+    ) {
+      return item
+    }
+    return {
+      ...item,
+      block: {
+        ...item.block,
+        status: 'done',
+        completedAt: item.block.completedAt ?? completedAt,
+      },
+    }
+  })
+}
+
+function hasAssistantChunkProgress(
+  action: Extract<RuntimePaneMessageAction, { type: 'assistant_chunk' }>
+): boolean {
+  if (action.content || action.reasoningChunk) return true
+  return Boolean(action.blocks?.some(block => !isRuntimeReconnectingBlock(block)))
+}
+
+function isRuntimeReconnectingBlock(block: ProcessingBlock): boolean {
+  return block.type === 'tool' && block.toolName === RUNTIME_RECONNECTING_TOOL_NAME
 }
 
 function assistantTextContent(items: RuntimeConversationItem[]): string {

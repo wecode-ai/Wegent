@@ -1,10 +1,12 @@
 import { codexUpstreamApiFormat, writeCodexConfig } from './desktop-build-flows.mjs'
+import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 
 import { createHash } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 
 import {
   CLOUD_DEVICE_ID,
+  REMOTE_DOCKER_DEVICE_ID,
   CLOUD_MODEL_CASES,
   CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -15,11 +17,13 @@ import {
   appendFile,
   appendProcessOutput,
   assert,
+  commandOutput,
   createServer,
   dirname,
   fetchJson,
   join,
   mkdir,
+  pathExists,
   readFile,
   repoDir,
   reservePort,
@@ -32,6 +36,69 @@ import {
   weworkDir,
   writeFile,
 } from './shared.mjs'
+
+const REDIS_START_ATTEMPTS = 5
+const REDIS_READY_PATTERN = /Ready to accept connections/
+const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
+
+async function waitForRedisReady(redis, logPath, fromOffset) {
+  let spawnError = null
+  const captureSpawnError = error => {
+    spawnError = error
+  }
+  redis.once('error', captureSpawnError)
+  const startedAt = Date.now()
+  try {
+    while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+      const content = await readFile(logPath, 'utf8').catch(() => '')
+      const attemptOutput = content.slice(fromOffset)
+      if (REDIS_READY_PATTERN.test(attemptOutput)) return attemptOutput
+      if (spawnError) throw spawnError
+      if (redis.exitCode !== null || redis.signalCode !== null) {
+        throw new Error(
+          `Redis exited before becoming ready: ${attemptOutput.trim() || 'no process output'}`
+        )
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+  } finally {
+    redis.off('error', captureSpawnError)
+  }
+  throw new Error(`Timed out waiting for Redis readiness in ${logPath}`)
+}
+
+async function startRedisServer(
+  logPath,
+  { reserveRedisPort = reservePort, spawnRedis = spawn } = {}
+) {
+  for (let attempt = 1; attempt <= REDIS_START_ATTEMPTS; attempt += 1) {
+    const port = await reserveRedisPort()
+    const existingLog = await readFile(logPath, 'utf8').catch(() => '')
+    const fromOffset = existingLog.length
+    await appendFile(logPath, `Redis start attempt ${attempt} on port ${port}\n`)
+    const redis = spawnRedis(
+      'redis-server',
+      ['--port', String(port), '--save', '', '--appendonly', 'no'],
+      { stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    await Promise.all([
+      appendProcessOutput(redis.stdout, logPath),
+      appendProcessOutput(redis.stderr, logPath),
+    ])
+    try {
+      await waitForRedisReady(redis, logPath, fromOffset)
+      return { port, redis }
+    } catch (error) {
+      await stopProcess(redis)
+      const attemptOutput = (await readFile(logPath, 'utf8').catch(() => '')).slice(fromOffset)
+      if (attempt < REDIS_START_ATTEMPTS && REDIS_PORT_CONFLICT_PATTERN.test(attemptOutput)) {
+        continue
+      }
+      throw error
+    }
+  }
+  throw new Error(`Redis did not start after ${REDIS_START_ATTEMPTS} attempts`)
+}
 
 class LocalPluginObjectStorage {
   constructor() {
@@ -142,34 +209,40 @@ class LocalPluginObjectStorage {
 }
 
 class RealCloudEnvironment {
-  constructor({ codexBinary, modelServerUrl, scenarioConfigToml = '', workspacePath }) {
+  constructor({
+    claudeBinary,
+    codexBinary,
+    modelServerUrl,
+    scenarioConfigToml = '',
+    workspacePath,
+  }) {
+    this.claudeBinary = claudeBinary
     this.codexBinary = codexBinary
     this.modelServerUrl = modelServerUrl
     this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
+    this.generatedRemoteExecutors = []
+    this.pluginAutoUpdateFixtures = []
   }
 
   async startBackend() {
-    this.redisPort = await reservePort()
-    this.backendPort = await reservePort()
-    this.backendUrl = `http://127.0.0.1:${this.backendPort}`
-    this.socketUrl = `http://localhost:${this.backendPort}`
     this.databasePath = join(resultDir, 'cloud-backend.sqlite3')
     this.backendLogPath = join(resultDir, 'cloud-backend.log')
     this.redisLogPath = join(resultDir, 'cloud-redis.log')
     this.remoteExecutorLogPath = join(resultDir, 'cloud-executor.log')
+    this.remoteDockerExecutorLogPath = join(resultDir, 'remote-docker-executor.log')
+    this.remoteExecutorRuntimeLogPath = join(resultDir, 'cloud-executor-runtime.log')
+    this.remoteDockerExecutorRuntimeLogPath = join(resultDir, 'remote-docker-executor-runtime.log')
     this.pluginObjectStorage = new LocalPluginObjectStorage()
     await this.pluginObjectStorage.start()
 
-    this.redis = spawn(
-      'redis-server',
-      ['--port', String(this.redisPort), '--save', '', '--appendonly', 'no'],
-      { stdio: ['ignore', 'pipe', 'pipe'] }
-    )
-    await Promise.all([
-      appendProcessOutput(this.redis.stdout, this.redisLogPath),
-      appendProcessOutput(this.redis.stderr, this.redisLogPath),
-    ])
+    const redisServer = await startRedisServer(this.redisLogPath)
+    this.redisPort = redisServer.port
+    this.redis = redisServer.redis
+
+    this.backendPort = await reservePort()
+    this.backendUrl = `http://127.0.0.1:${this.backendPort}`
+    this.socketUrl = `http://localhost:${this.backendPort}`
 
     const backendEnv = {
       ...process.env,
@@ -177,12 +250,17 @@ class RealCloudEnvironment {
       REDIS_URL: `redis://127.0.0.1:${this.redisPort}/0`,
       SECRET_KEY: `wework-desktop-e2e-${process.pid}`,
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
+      BACKEND_INTERNAL_URL: this.backendUrl,
+      WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
       GIT_TOKEN_AES_KEY: '12345678901234567890123456789012',
       GIT_TOKEN_AES_IV: '1234567890123456',
       FRONTEND_URL: this.modelServerUrl,
       CHAT_SHELL_URL: this.modelServerUrl,
+      CHAT_SHELL_MODE: 'package',
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
+      WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
+      ...remoteDeviceE2EExtension.backendEnv,
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
       ATTACHMENT_S3_ENDPOINT: this.pluginObjectStorage.endpoint,
@@ -191,6 +269,7 @@ class RealCloudEnvironment {
       ATTACHMENT_S3_USE_SSL: 'false',
       PLUGIN_PUBLISH_ENABLED: 'true',
     }
+    this.backendEnv = backendEnv
     await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
       cwd: join(repoDir, 'backend'),
       env: backendEnv,
@@ -225,6 +304,14 @@ class RealCloudEnvironment {
     await this.seedCloudVisionSidecarModels()
   }
 
+  async publishOfficialSmartApp(sourcePath) {
+    assert.ok(this.backendEnv, 'Cloud backend environment is not initialized')
+    await runChecked('uv', ['run', 'python', 'scripts/publish_official_smart_app.py', sourcePath], {
+      cwd: join(repoDir, 'backend'),
+      env: this.backendEnv,
+    })
+  }
+
   async seedPluginAutoUpdateFixtures(count = 6) {
     if (this.pluginAutoUpdateFixturesSeeded) return
     const headers = {
@@ -255,8 +342,19 @@ class RealCloudEnvironment {
           body: JSON.stringify({ approved: true, note: 'Desktop E2E update release' }),
         }
       )
+      this.pluginAutoUpdateFixtures.push({ pluginId: first.pluginId, slug })
     }
     this.pluginAutoUpdateFixturesSeeded = true
+  }
+
+  async syncPluginAutoUpdatesToCloudDevice() {
+    const headers = { Authorization: `Bearer ${this.authToken}` }
+    for (const fixture of this.pluginAutoUpdateFixtures) {
+      await fetchJson(
+        `${this.backendUrl}/api/plugins/marketplace/${fixture.pluginId}/install?device_id=${CLOUD_DEVICE_ID}`,
+        { method: 'POST', headers }
+      )
+    }
   }
 
   async publishPluginRelease({ headers, slug, version }) {
@@ -300,7 +398,7 @@ class RealCloudEnvironment {
     return initialized
   }
 
-  async assertPluginAutoUpdateComplete(expectedCount = 6) {
+  async assertPluginAutoUpdateComplete(codexHome, expectedCount = 6) {
     const installed = await fetchJson(`${this.backendUrl}/api/plugins/installed`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     })
@@ -312,28 +410,71 @@ class RealCloudEnvironment {
       fixtures.every(item => item.spec.version === '2.0.0'),
       'Not every desktop E2E plugin advanced to version 2.0.0'
     )
+    for (let index = 1; index <= expectedCount; index += 1) {
+      const slug = `desktop-e2e-auto-update-${index}`
+      const currentManifest = join(
+        codexHome,
+        'plugins',
+        'cache',
+        'wegent',
+        slug,
+        '2.0.0',
+        '.codex-plugin',
+        'plugin.json'
+      )
+      assert.equal(
+        await pathExists(currentManifest),
+        true,
+        `Plugin ${slug} did not commit its updated package to the local runtime`
+      )
+      assert.equal(
+        JSON.parse(await readFile(currentManifest, 'utf8')).version,
+        '2.0.0',
+        `Plugin ${slug} kept stale local runtime metadata after update`
+      )
+      assert.equal(
+        await pathExists(join(codexHome, 'plugins', 'cache', 'wegent', slug, '1.0.0')),
+        false,
+        `Plugin ${slug} kept its old local runtime after update`
+      )
+    }
   }
 
-  async startRemoteExecutor(executorBinary) {
-    const remoteHome = join(resultDir, 'cloud-executor-home')
-    this.remoteCodexHome = join(remoteHome, 'codex')
-    await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl, this.scenarioConfigToml)
-    const remoteEnv = {
+  async restartCloudExecutorWithoutCodexPluginRpc() {
+    assert.ok(this.remoteExecutorEnv, 'The cloud Executor environment is not initialized')
+    const unavailableCodexBinary = join(resultDir, 'unavailable-codex-for-plugin-sync')
+    await rm(unavailableCodexBinary, { force: true })
+    this.remoteExecutorEnv.CODEX_BIN = unavailableCodexBinary
+    await this.restartCloudExecutor()
+  }
+
+  executorEnv({
+    deviceId,
+    deviceName,
+    deviceType,
+    home,
+    codexHome,
+    logFile,
+    authToken = this.authToken,
+  }) {
+    return {
       ...process.env,
+      ...(this.claudeBinary ? { CLAUDE_BINARY_PATH: this.claudeBinary } : {}),
       CODEX_BIN: this.codexBinary,
-      CODEX_HOME: this.remoteCodexHome,
-      HOME: remoteHome,
-      WEGENT_CODEX_HOME: this.remoteCodexHome,
-      WEGENT_EXECUTOR_HOME: remoteHome,
+      CODEX_HOME: codexHome,
+      HOME: home,
+      WEGENT_CODEX_HOME: codexHome,
+      WEGENT_EXECUTOR_HOME: home,
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
-      WEGENT_EXECUTOR_LOG_FILE: 'cloud-executor-runtime.log',
+      WEGENT_EXECUTOR_LOG_FILE: logFile,
+      WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED: 'true',
       EXECUTOR_MODE: 'local',
       WEGENT_BACKEND_URL: this.backendUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
-      WEGENT_AUTH_TOKEN: this.authToken,
-      DEVICE_ID: CLOUD_DEVICE_ID,
-      DEVICE_NAME: 'Wework E2E Cloud Device',
-      DEVICE_TYPE: 'cloud',
+      WEGENT_AUTH_TOKEN: authToken,
+      DEVICE_ID: deviceId,
+      DEVICE_NAME: deviceName,
+      DEVICE_TYPE: deviceType,
       BIND_SHELL: 'claudecode',
       LOCAL_WORKSPACE_ROOT: dirname(this.workspacePath),
       WEGENT_WORKSPACE_ROOTS: this.workspacePath,
@@ -341,18 +482,219 @@ class RealCloudEnvironment {
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
     }
-    delete remoteEnv.WEGENT_APP_IPC_DEVICE_ID
-    this.remoteExecutor = spawn(executorBinary, [], {
+  }
+
+  async startRemoteExecutor(executorBinary) {
+    this.executorBinary = executorBinary
+    const remoteHome = join(resultDir, 'cloud-executor-home')
+    const remoteDockerHome = join(resultDir, 'remote-docker-executor-home')
+    this.remoteCodexHome = join(remoteHome, 'codex')
+    this.remoteDockerCodexHome = join(remoteDockerHome, 'codex')
+    await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl, this.scenarioConfigToml)
+    await writeCodexConfig(this.remoteDockerCodexHome, this.modelServerUrl)
+    this.remoteExecutorEnv = this.executorEnv({
+      deviceId: CLOUD_DEVICE_ID,
+      deviceName: 'Wework E2E Cloud Device',
+      deviceType: 'cloud',
+      home: remoteHome,
+      codexHome: this.remoteCodexHome,
+      logFile: 'cloud-executor-runtime.log',
+    })
+    this.remoteDockerExecutorEnv = this.executorEnv({
+      deviceId: REMOTE_DOCKER_DEVICE_ID,
+      deviceName: 'Wework E2E Remote Docker Device',
+      deviceType: 'remote',
+      home: remoteDockerHome,
+      codexHome: this.remoteDockerCodexHome,
+      logFile: 'remote-docker-executor-runtime.log',
+    })
+    delete this.remoteExecutorEnv.WEGENT_APP_IPC_DEVICE_ID
+    delete this.remoteDockerExecutorEnv.WEGENT_APP_IPC_DEVICE_ID
+    this.remoteExecutor = await this.spawnExecutor(
+      this.remoteExecutorEnv,
+      this.remoteExecutorLogPath
+    )
+    this.remoteDockerExecutor = await this.spawnExecutor(
+      this.remoteDockerExecutorEnv,
+      this.remoteDockerExecutorLogPath
+    )
+    await Promise.all([
+      this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath),
+      this.waitForDevice(REMOTE_DOCKER_DEVICE_ID, this.remoteDockerExecutorLogPath),
+    ])
+  }
+
+  async spawnExecutor(env, logPath) {
+    const executor = spawn(this.executorBinary, [], {
       cwd: weworkDir,
-      env: remoteEnv,
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     })
     await Promise.all([
-      appendProcessOutput(this.remoteExecutor.stdout, this.remoteExecutorLogPath),
-      appendProcessOutput(this.remoteExecutor.stderr, this.remoteExecutorLogPath),
+      appendProcessOutput(executor.stdout, logPath),
+      appendProcessOutput(executor.stderr, logPath),
     ])
-    await this.waitForDevice()
+    return executor
+  }
+
+  async device(deviceId) {
+    const devices = await fetchJson(`${this.backendUrl}/api/devices`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    return devices.items?.find(device => device.device_id === deviceId) ?? null
+  }
+
+  async worktreeCapabilities(deviceId = CLOUD_DEVICE_ID) {
+    return fetchJson(`${this.backendUrl}/api/runtime-work/worktrees/capabilities`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ deviceId }),
+    })
+  }
+
+  async worktreePreflight(sourcePath, ref = null, deviceId = CLOUD_DEVICE_ID) {
+    return fetchJson(`${this.backendUrl}/api/runtime-work/worktrees/preflight`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        deviceId,
+        sourcePath,
+        ...(ref ? { ref } : {}),
+      }),
+    })
+  }
+
+  async runtimeWork() {
+    return fetchJson(`${this.backendUrl}/api/runtime-work`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+  }
+
+  async runtimeTask(taskId) {
+    const work = await this.runtimeWork()
+    const workspaces = [
+      ...(work.projects ?? []).flatMap(project => project.deviceWorkspaces ?? []),
+      ...(work.chats ?? []),
+    ]
+    return workspaces
+      .flatMap(workspace => workspace.tasks ?? [])
+      .find(task => task.taskId === taskId)
+  }
+
+  async updateRuntimeSettings(maxConcurrentTasks, deviceId = CLOUD_DEVICE_ID) {
+    return fetchJson(
+      `${this.backendUrl}/api/devices/${encodeURIComponent(deviceId)}/runtime-settings`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${this.authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ max_concurrent_tasks: maxConcurrentTasks }),
+      }
+    )
+  }
+
+  async runtimeSettings(deviceId = CLOUD_DEVICE_ID) {
+    return fetchJson(
+      `${this.backendUrl}/api/devices/${encodeURIComponent(deviceId)}/runtime-settings`,
+      {
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      }
+    )
+  }
+
+  terminalSessionRecords() {
+    const keys = commandOutput('redis-cli', [
+      '-p',
+      String(this.redisPort),
+      '--raw',
+      '--scan',
+      '--pattern',
+      'terminal_session:*',
+    ])
+      .split(/\r?\n/u)
+      .map(value => value.trim())
+      .filter(Boolean)
+    return keys.map(key => {
+      const serialized = commandOutput('redis-cli', [
+        '-p',
+        String(this.redisPort),
+        '--raw',
+        'GET',
+        key,
+      ])
+      return JSON.parse(serialized)
+    })
+  }
+
+  async restartCloudExecutor() {
+    assert.ok(this.remoteExecutorEnv, 'The cloud Executor environment is not initialized')
+    const previousDevice = await this.device(CLOUD_DEVICE_ID)
+    const previousInstanceId = previousDevice?.runtime_instance_id
+    const previousLog = await readFile(this.remoteExecutorLogPath, 'utf8').catch(() => '')
+    await stopProcessGroup(this.remoteExecutor)
+    this.remoteExecutor = await this.spawnExecutor(
+      this.remoteExecutorEnv,
+      this.remoteExecutorLogPath
+    )
+
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      const device = await this.device(CLOUD_DEVICE_ID)
+      const currentLog = await readFile(this.remoteExecutorLogPath, 'utf8').catch(() => '')
+      if (device?.status === 'online' && currentLog.length > previousLog.length) {
+        assert.equal(
+          device.runtime_instance_id,
+          previousInstanceId,
+          'Restarting the same cloud Executor home changed its stable runtime identity'
+        )
+        return {
+          previousInstanceId,
+          runtimeInstanceId: device.runtime_instance_id,
+          logOffset: previousLog.length,
+        }
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+    throw new Error('The restarted cloud Executor did not reconnect with its stable identity')
+  }
+
+  async startGeneratedRemoteDevice({ deviceId, deviceName, authToken }) {
+    assert.ok(this.executorBinary, 'Remote executor binary is not ready')
+    const home = join(resultDir, `generated-remote-device-${deviceId}`)
+    const codexHome = join(home, 'codex')
+    const logPath = join(resultDir, `generated-remote-device-${deviceId}.log`)
+    await writeCodexConfig(codexHome, this.modelServerUrl)
+    const env = this.executorEnv({
+      deviceId,
+      deviceName,
+      deviceType: 'remote',
+      home,
+      codexHome,
+      logFile: `generated-remote-device-${deviceId}-runtime.log`,
+      authToken,
+    })
+    delete env.WEGENT_APP_IPC_DEVICE_ID
+    const executor = spawn(this.executorBinary, [], {
+      cwd: weworkDir,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    })
+    this.generatedRemoteExecutors.push(executor)
+    await Promise.all([
+      appendProcessOutput(executor.stdout, logPath),
+      appendProcessOutput(executor.stderr, logPath),
+    ])
+    await this.waitForDevice(deviceId, logPath)
   }
 
   async seedCloudProtocolModels() {
@@ -522,22 +864,43 @@ class RealCloudEnvironment {
       '',
       codexUpstreamApiFormat(protocol)
     )
+    await this.restartCloudExecutor()
   }
 
-  async waitForDevice() {
+  async waitForDevice(deviceId, logPath) {
+    await this.waitForDeviceStatus(deviceId, 'online', logPath)
+  }
+
+  async waitForDeviceStatus(deviceId, expectedStatus, logPath) {
     const startedAt = Date.now()
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
-      const response = await fetch(`${this.backendUrl}/api/devices`, {
-        headers: { Authorization: `Bearer ${this.authToken}` },
-      })
-      if (response.ok) {
-        const devices = await response.json()
-        const device = devices.items?.find(item => item.device_id === CLOUD_DEVICE_ID)
-        if (device?.status === 'online') return
+      try {
+        const response = await fetch(`${this.backendUrl}/api/devices`, {
+          headers: { Authorization: `Bearer ${this.authToken}` },
+        })
+        if (response.ok) {
+          const devices = await response.json()
+          const device = devices.items?.find(item => item.device_id === deviceId)
+          if (device?.status === expectedStatus) return device
+        }
+      } catch {
+        // The backend may briefly reset a readiness connection while executors register.
       }
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
     }
-    throw new Error(`Real cloud executor did not register; see ${this.remoteExecutorLogPath}`)
+    throw new Error(`Real ${deviceId} executor did not reach ${expectedStatus}; see ${logPath}`)
+  }
+
+  async stopRemoteDockerExecutorAndWaitOffline() {
+    assert.ok(this.remoteDockerExecutor, 'Remote Docker executor is not running')
+    const remoteDockerExecutor = this.remoteDockerExecutor
+    this.remoteDockerExecutor = null
+    await stopProcessGroup(remoteDockerExecutor)
+    await this.waitForDeviceStatus(
+      REMOTE_DOCKER_DEVICE_ID,
+      'offline',
+      this.remoteDockerExecutorLogPath
+    )
   }
 
   async waitForWorkspaceRemoved(workspacePath) {
@@ -636,6 +999,8 @@ class RealCloudEnvironment {
       )
     }
     await stopProcessGroup(this.remoteExecutor)
+    await stopProcessGroup(this.remoteDockerExecutor)
+    await Promise.all(this.generatedRemoteExecutors.map(executor => stopProcessGroup(executor)))
     await stopProcess(this.backend)
     await this.pluginObjectStorage?.stop()
     await stopProcess(this.redis)
@@ -673,4 +1038,4 @@ async function verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment) 
   )
 }
 
-export { RealCloudEnvironment, verifyLocalExecutorUsesCloudSocketUrl }
+export { RealCloudEnvironment, startRedisServer, verifyLocalExecutorUsesCloudSocketUrl }

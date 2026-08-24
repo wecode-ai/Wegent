@@ -7,6 +7,7 @@ export type RuntimePaneSendPhase = 'idle' | 'submitting' | 'awaiting_assistant'
 
 export interface RuntimePaneStatus {
   sendPhase: RuntimePaneSendPhase
+  workspaceCreationKind?: 'worktree'
   activeAssistantMessage: WorkbenchMessage | null
   taskExecution: {
     known: boolean
@@ -59,6 +60,9 @@ export function deriveRuntimePaneStatus({
 
   return {
     sendPhase,
+    ...(lifecycle?.workspaceCreationKind
+      ? { workspaceCreationKind: lifecycle.workspaceCreationKind }
+      : {}),
     activeAssistantMessage,
     taskExecution: {
       known: lifecycle?.execution.known ?? false,

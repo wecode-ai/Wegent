@@ -4,9 +4,11 @@ export interface ProjectChatAgent {
   id: string
   projectId: string
   name: string
-  runtime: 'codex'
+  runtime: 'codex' | 'wegent'
+  wegentTeamId?: number | null
   model: string | null
   systemPrompt: string
+  capabilityDescription?: string
   status: 'active' | 'archived'
   visibility: 'private' | 'creator_admin' | 'public'
   executionEnvironment: 'local' | 'cloud'
@@ -14,6 +16,7 @@ export interface ProjectChatAgent {
   executionDeviceId: string | null
   /** The bound local code project (task feature) this robot runs in. */
   localProjectId: number | null
+  maxConcurrentExecutions: number
   createdByUserId: number | null
   createdByUserName?: string | null
   version: number
@@ -25,13 +28,16 @@ export type ProjectChatAgentInput = Pick<
   ProjectChatAgent,
   | 'name'
   | 'runtime'
+  | 'wegentTeamId'
   | 'model'
   | 'systemPrompt'
+  | 'capabilityDescription'
   | 'visibility'
   | 'executionEnvironment'
   | 'executionMode'
   | 'executionDeviceId'
   | 'localProjectId'
+  | 'maxConcurrentExecutions'
 >
 
 export function createProjectChatAgentApi(client: HttpClient) {
@@ -49,14 +55,18 @@ export function createProjectChatAgentApi(client: HttpClient) {
         Pick<
           ProjectChatAgent,
           | 'name'
+          | 'runtime'
+          | 'wegentTeamId'
           | 'model'
           | 'systemPrompt'
+          | 'capabilityDescription'
           | 'status'
           | 'visibility'
           | 'executionEnvironment'
           | 'executionMode'
           | 'executionDeviceId'
           | 'localProjectId'
+          | 'maxConcurrentExecutions'
         >
       > &
         Pick<ProjectChatAgent, 'version'>

@@ -4,16 +4,20 @@ import type { ProjectCreateMode } from '@/components/chat/ChatInput'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useAuth } from '@/features/auth/useAuth'
 import type {
+  CloneGitRepositoryInput,
+  GitCloneProjectOperation,
   IMPrivateSession,
   ProjectWithTasks,
+  RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
-import { buildRuntimeTaskRoute, isSettingsRoute, navigateTo } from '@/lib/navigation'
+import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
+import type { DesktopSidebarAccountSettingsOptions } from './DesktopSidebarAccount'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import {
   StandaloneBlankProjectDialog,
@@ -33,12 +37,15 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import { projectSpaceApis } from '@/features/todo/projectSpaceSelection'
 import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
+import { requestWorkbenchComposerFocus } from '@/lib/workbenchComposerFocus'
 import {
   archiveLocalHarnessSession,
   closeLocalTerminal,
@@ -51,6 +58,13 @@ import type {
   LocalHarnessSessionRegistrationOptions,
   LocalHarnessWorkbenchSession,
 } from './localHarnessWorkbench'
+import {
+  getRuntimeWorkbenchPaneKeys,
+  getWorkbenchPaneKey,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneIdentity'
+import { openProjectSpaceRuntimeTaskInTab } from './projectSpaceRuntimeTaskNavigation'
+import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -84,6 +98,13 @@ function boardRouteParam(contentRoute: string, name: string): string | null {
   return new URLSearchParams(contentRoute.slice(searchIndex + 1)).get(name)
 }
 
+function boardRouteProjectRef(contentRoute: string): RuntimeProjectSpaceRef | null {
+  const projectId = boardRouteParam(contentRoute, 'projectId')
+  const projectStore = boardRouteParam(contentRoute, 'projectStore')
+  if (!projectId || (projectStore !== 'local' && projectStore !== 'backend')) return null
+  return { projectId, projectStore }
+}
+
 interface DesktopWorkbenchLayoutProps {
   routeActive?: boolean
 }
@@ -91,6 +112,7 @@ interface DesktopWorkbenchLayoutProps {
 export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const { logout: onLogout } = useAuth()
+  const runtimeTaskLifecycle = useRuntimeTaskLifecycleStoreSnapshot()
   const {
     state,
     cloudWorkStatus,
@@ -108,7 +130,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     archiveProjectConversations: onArchiveProjectConversations,
     archiveProjectsConversations: onArchiveProjectsConversations,
     archiveChatConversations: onArchiveChatConversations,
-    rememberExecutionDevice: onRememberExecutionDevice,
     refreshDevices: onRefreshDevices,
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
@@ -130,14 +151,17 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     getProjectWorkspaceRoot: onGetProjectWorkspaceRoot,
     listDeviceDirectories: onListDeviceDirectories,
     createDeviceDirectory: onCreateDeviceDirectory,
+    cloneGitRepository: onCloneGitRepository,
     listImPrivateSessions: onListImPrivateSessions,
     getImNotificationSettings: onGetImNotificationSettings,
     updateGlobalImNotification: onUpdateGlobalImNotification,
     subscribeRuntimeTaskNotifications: onSubscribeRuntimeTaskNotifications,
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
     runtimeTaskReminders,
+    projectChat,
     services,
     refreshWorkLists,
+    workspaceTabId,
   } = useWorkbench()
   const localTodoProjects = useMemo(
     () => resolveLocalTodoProjects(state.projects, state.runtimeWork),
@@ -145,6 +169,26 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
   const availableProjectSpaceApis = useMemo(() => projectSpaceApis(services), [services])
   const workspaceTabs = useOptionalWorkspaceTabs()
+  const activePane = useMemo<WorkbenchPaneIdentity>(
+    () => ({
+      currentRuntimeTask: state.currentRuntimeTask,
+      currentProject: state.currentProject,
+      standaloneChatKey: state.standaloneChatKey,
+    }),
+    [state.currentProject, state.currentRuntimeTask, state.standaloneChatKey]
+  )
+  const activePaneKey = getWorkbenchPaneKey(activePane)
+  const runtimePaneKeys = useMemo(
+    () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
+    [state.runtimeWork]
+  )
+  const splitGroups = useWorkbenchSplitGroups({
+    ...workbenchSplitStorageKeys(workspaceTabId ?? 'main'),
+    activePaneKey,
+    validRuntimeKeys: runtimePaneKeys,
+    runtimeKeysReady: state.runtimeWork !== null,
+  })
+  const { activatePane: activateSplitPane } = splitGroups
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
   const [localHarnessSessions, setLocalHarnessSessions] = useState<LocalHarnessWorkbenchSession[]>(
@@ -153,6 +197,111 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const [activeLocalHarnessSessionId, setActiveLocalHarnessSessionId] = useState<string | null>(
     null
   )
+  const [gitCloneOperations, setGitCloneOperations] = useState<GitCloneProjectOperation[]>([])
+  const runGitCloneOperation = useCallback(
+    (
+      operation: GitCloneProjectOperation,
+      options: {
+        refreshDevice?: boolean
+      } = {}
+    ) => {
+      const resumeOpening = operation.failureStage === 'open'
+      setGitCloneOperations(current =>
+        current.map(item =>
+          item.id === operation.id
+            ? {
+                ...item,
+                status: resumeOpening ? 'opening' : 'cloning',
+                failureStage: undefined,
+                failureReason: undefined,
+                error: undefined,
+              }
+            : item
+        )
+      )
+      void (async () => {
+        let stage: 'clone' | 'open' = resumeOpening ? 'open' : 'clone'
+        try {
+          if (options.refreshDevice) {
+            await onRefreshDevices?.()
+          }
+          if (!resumeOpening) {
+            await onCloneGitRepository(operation.deviceId, {
+              url: operation.url,
+              ...(operation.branch ? { branch: operation.branch } : {}),
+              targetPath: operation.targetPath,
+            })
+            stage = 'open'
+            setGitCloneOperations(current =>
+              current.map(item =>
+                item.id === operation.id ? { ...item, status: 'opening' } : item
+              )
+            )
+          }
+          await onOpenStandaloneWorkspace(operation.deviceId, operation.targetPath, operation.name)
+          setGitCloneOperations(current => current.filter(item => item.id !== operation.id))
+        } catch (error) {
+          console.error('[Wework project] Git project operation failed', {
+            stage,
+            deviceId: operation.deviceId,
+            targetPath: operation.targetPath,
+            error:
+              error instanceof Error ? { name: error.name, message: error.message } : String(error),
+          })
+          setGitCloneOperations(current =>
+            current.map(item =>
+              item.id === operation.id
+                ? {
+                    ...item,
+                    status: 'failed',
+                    failureStage: stage,
+                    failureReason:
+                      error instanceof Error && error.message.includes('executor-offline:')
+                        ? 'executor-offline'
+                        : stage === 'clone'
+                          ? 'clone-failed'
+                          : 'open-failed',
+                    error:
+                      error instanceof Error
+                        ? error.message
+                        : stage === 'clone'
+                          ? 'Failed to clone repository'
+                          : 'Failed to add project',
+                  }
+                : item
+            )
+          )
+        }
+      })()
+    },
+    [onCloneGitRepository, onOpenStandaloneWorkspace, onRefreshDevices]
+  )
+  const retryGitCloneOperation = useCallback(
+    (operation: GitCloneProjectOperation) => {
+      runGitCloneOperation(operation, {
+        refreshDevice: operation.failureReason === 'executor-offline',
+      })
+    },
+    [runGitCloneOperation]
+  )
+  const startGitCloneProject = useCallback(
+    (deviceId: string, input: CloneGitRepositoryInput) => {
+      const name = input.targetPath.split(/[\\/]/).filter(Boolean).at(-1) || 'repository'
+      const operation: GitCloneProjectOperation = {
+        ...input,
+        id: crypto.randomUUID(),
+        deviceId,
+        name,
+        status: 'cloning',
+      }
+      setGitCloneOperations(current => [operation, ...current])
+      runGitCloneOperation(operation)
+    },
+    [runGitCloneOperation]
+  )
+  const dismissGitCloneOperation = useCallback((operationId: string) => {
+    setGitCloneOperations(current => current.filter(item => item.id !== operationId))
+  }, [])
   const loadLocalHarnessSessions = useCallback(async () => {
     const sessions = await listLocalHarnessSessions()
     return sessions.map(session => ({
@@ -204,8 +353,9 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       window.removeEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
     }
   }, [loadLocalHarnessSessions])
-  const todoOpen = currentPath === '/todo'
-  const activeItem = todoOpen ? 'todo' : 'chat'
+  const routeWorkItemsOpen = currentPath === '/todo'
+  const todoOpen = routeWorkItemsOpen
+  const activeItem = 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const startNewChatOutsideHarness = useCallback(() => {
     setActiveLocalHarnessSessionId(null)
@@ -232,10 +382,18 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
       setActiveLocalHarnessSessionId(null)
-      if (currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address)) return
-      await onOpenRuntimeTask(address)
+      activateSplitPane(
+        getWorkbenchPaneKey({
+          currentRuntimeTask: address,
+          currentProject: null,
+        })
+      )
+      if (!(currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address))) {
+        await onOpenRuntimeTask(address)
+      }
+      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
     },
-    [currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
+    [activateSplitPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
   const registerLocalHarnessSession = useCallback(
     (session: LocalHarnessWorkbenchSession, options?: LocalHarnessSessionRegistrationOptions) => {
@@ -357,6 +515,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false)
   const [sidebarResizing, setSidebarResizing] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() => isSettingsRoute(initialPath))
+  const settingsReturnPathRef = useRef(initialPath === '/todo' ? '/todo' : '/')
   const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
   const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
@@ -369,15 +528,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
   const openProjectSpaceRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
-      await openRuntimeTaskOutsideHarness(address)
-      if (!workspaceTabs) return
-      const contentRoute = buildRuntimeTaskRoute(address)
-      const taskTab = workspaceTabs.tabs.find(tab => tab.kind === 'task')
-      if (taskTab) {
-        workspaceTabs.selectTab(taskTab.id, { contentRoute })
-        return
-      }
-      workspaceTabs.openTab('task', { contentRoute })
+      await openProjectSpaceRuntimeTaskInTab(address, workspaceTabs, openRuntimeTaskOutsideHarness)
     },
     [openRuntimeTaskOutsideHarness, workspaceTabs]
   )
@@ -500,10 +651,27 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
 
   const openCloudDeviceSettings = useCallback(() => {
+    settingsReturnPathRef.current = '/'
     setAutoOpenAddCloudDeviceDialog(true)
     setSettingsOpen(true)
     navigateTo('/settings/connections')
   }, [])
+
+  const openSettings = useCallback(
+    (options: DesktopSidebarAccountSettingsOptions | undefined, returnPath: '/' | '/todo') => {
+      settingsReturnPathRef.current = returnPath
+      setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
+      setSettingsOpen(true)
+      navigateTo(
+        options?.autoOpenAddCloudDeviceDialog
+          ? '/settings/connections'
+          : options?.settingsPage
+            ? `/settings/${options.settingsPage}`
+            : '/settings'
+      )
+    },
+    []
+  )
 
   const openSidebarPreview = useCallback(() => {
     if (!effectiveSidebarCollapsed) return
@@ -579,11 +747,9 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     return settings
   }, [onGetImNotificationSettings])
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Initial IM notification settings are hydrated from the connected workbench service. */
   useEffect(() => {
     void refreshImNotificationSettings().catch(() => undefined)
   }, [refreshImNotificationSettings])
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   const openImNotificationTargetDialog = useCallback(
     (mode: ImNotificationDialogMode) => {
@@ -753,7 +919,9 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       devices={state.devices}
       cloudWorkStatus={cloudWorkStatus}
       runtimeWork={state.runtimeWork}
+      gitCloneOperations={gitCloneOperations}
       currentRuntimeTask={activeLocalHarnessSessionId ? null : state.currentRuntimeTask}
+      splitGroupMemberships={splitGroups.memberships}
       standaloneDeviceId={state.standaloneDeviceId}
       standaloneWorkspacePath={state.standaloneWorkspacePath}
       imNotificationSettings={imNotificationSettings}
@@ -796,8 +964,12 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       onCreatePermanentWorktree={createPermanentWorktree}
       onSelectStandaloneDevice={selectStandaloneDevice}
       onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
-      onOpenPlugins={() => navigateTo('/plugins')}
-      onOpenAutomation={() => navigateTo('/automations')}
+      onOpenPlugins={() => {
+        navigateTo('/plugins')
+      }}
+      onOpenAutomation={() => {
+        navigateTo('/automations')
+      }}
       onRefreshDevices={onRefreshDevices}
       onOpenStandaloneFolderProject={(mode, intent = 'project') => {
         void openStandaloneFolderProject(mode, intent)
@@ -813,18 +985,13 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
       onListDeviceDirectories={onListDeviceDirectories}
       onCreateDeviceDirectory={onCreateDeviceDirectory}
+      onCloneGitRepository={onCloneGitRepository}
+      onStartGitCloneProject={startGitCloneProject}
+      onRetryGitCloneOperation={retryGitCloneOperation}
+      onDismissGitCloneOperation={dismissGitCloneOperation}
       projectSpaceApis={availableProjectSpaceApis}
-      onOpenSettings={options => {
-        setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
-        setSettingsOpen(true)
-        navigateTo(
-          options?.autoOpenAddCloudDeviceDialog
-            ? '/settings/connections'
-            : options?.settingsPage
-              ? `/settings/${options.settingsPage}`
-              : '/settings'
-        )
-      }}
+      models={projectChat.models}
+      onOpenSettings={options => openSettings(options, '/')}
       onLogout={onLogout}
     />
   )
@@ -832,11 +999,11 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   return (
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
-        {!todoOpen && <WorkbenchBackground />}
+        {!routeWorkItemsOpen && <WorkbenchBackground />}
         {!settingsOpen &&
-          !todoOpen &&
+          !routeWorkItemsOpen &&
           renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
-        {!settingsOpen && !todoOpen && effectiveSidebarCollapsed && (
+        {!settingsOpen && !routeWorkItemsOpen && effectiveSidebarCollapsed && (
           <>
             <div
               data-testid="desktop-sidebar-hover-edge"
@@ -875,9 +1042,11 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
             onOpenRuntimeTask={onOpenRuntimeTask}
             onRefreshWorkLists={refreshWorkLists}
             onBack={() => {
+              const returnPath = settingsReturnPathRef.current
               setSettingsOpen(false)
               setAutoOpenAddCloudDeviceDialog(false)
-              navigateTo('/')
+              setCurrentPath(returnPath)
+              navigateTo(returnPath)
             }}
           />
         )}
@@ -888,11 +1057,15 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 user={state.user}
                 localProjects={localTodoProjects}
                 runtimeWork={state.runtimeWork}
+                runtimeTaskLifecycle={runtimeTaskLifecycle}
                 services={services}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
-                activeProjectId={
+                onArchiveRuntimeTask={onArchiveRuntimeTask}
+                onOpenSettings={options => openSettings(options, '/todo')}
+                onLogout={onLogout}
+                activeProjectRef={
                   workspaceTabs?.activeTab.kind === 'board'
-                    ? boardRouteParam(workspaceTabs.activeTab.contentRoute, 'projectId')
+                    ? boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
                     : undefined
                 }
                 focusedItemId={
@@ -902,12 +1075,12 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 }
                 onFocusedItemHandled={() => {
                   if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
-                  const projectId = boardRouteParam(
-                    workspaceTabs.activeTab.contentRoute,
-                    'projectId'
-                  )
+                  const projectRef = boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
                   const params = new URLSearchParams()
-                  if (projectId) params.set('projectId', projectId)
+                  if (projectRef) {
+                    params.set('projectStore', projectRef.projectStore)
+                    params.set('projectId', projectRef.projectId)
+                  }
                   workspaceTabs.updateActiveTab({
                     contentRoute: `/todo${params.size ? `?${params.toString()}` : ''}`,
                   })
@@ -922,6 +1095,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                     return
                   }
                   const params = new URLSearchParams()
+                  params.set('projectStore', project.project_store)
                   params.set('projectId', project.id)
                   workspaceTabs.updateActiveTab({
                     title: project.name,
@@ -943,11 +1117,8 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
               sidebarCollapsed={effectiveSidebarCollapsed}
               sidebarResizing={sidebarResizing}
               onSidebarCollapsedChange={updateSidebarCollapsed}
-              activePane={{
-                currentRuntimeTask: state.currentRuntimeTask,
-                currentProject: state.currentProject,
-                standaloneChatKey: state.standaloneChatKey,
-              }}
+              activePane={activePane}
+              splitGroups={splitGroups}
               localHarnessSessions={localHarnessSessions}
               activeLocalHarnessSessionId={activeLocalHarnessSessionId}
               onLocalHarnessSessionStarted={registerLocalHarnessSession}
@@ -984,6 +1155,8 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onCloneGitRepository={onCloneGitRepository}
+        onStartGitCloneProject={startGitCloneProject}
         onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
         onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
         onRefreshDevices={onRefreshDevices}
@@ -1007,7 +1180,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
         preferredDeviceId={
           state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
         }
-        onSelectDevicePreference={onRememberExecutionDevice}
         upgradingDevices={upgradingDevices}
         onUpgradeDevice={onUpgradeDevice}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}

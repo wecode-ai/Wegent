@@ -147,6 +147,39 @@ describe('remote runtime work cache', () => {
     )
   })
 
+  test('preserves canonical completion fields and normalizes cached status to done', () => {
+    const input = runtimeWork(
+      workspace('remote-a', 'task-a', {
+        tasks: [
+          {
+            taskId: 'task-a',
+            threadId: 'thread-a',
+            workspacePath: '/srv/remote-a',
+            title: 'Completed task',
+            runtime: 'claude_code',
+            running: false,
+            status: 'active',
+            threadStatus: 'idle',
+            turnStatus: 'completed',
+            updatedAt: 1_786_686_568_931,
+            completedAt: 1_786_686_568_931,
+          },
+        ],
+      })
+    )
+
+    const restored = createRemoteRuntimeWorkCacheSnapshot(input)
+
+    expect(restored.projects[0].deviceWorkspaces[0].tasks[0]).toMatchObject({
+      taskId: 'task-a',
+      running: false,
+      status: 'done',
+      threadStatus: 'idle',
+      turnStatus: 'completed',
+      completedAt: 1_786_686_568_931,
+    })
+  })
+
   test('isolates cache entries by user and ignores malformed data', () => {
     writeCachedRemoteRuntimeWork(7, runtimeWork(workspace('remote-a', 'task-a')))
 

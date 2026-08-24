@@ -90,6 +90,10 @@ describe('publicTeamPayload', () => {
       bindMode: ['chat'],
       icon: '/api/resource-library/assets/team-icons/12',
       requiresWorkspace: true,
+      inputPlaceholder: {
+        zh: '描述要生成的视频',
+        mobile: { zh: '描述你想创作的内容' },
+      },
       mode: 'solo',
       members: [{ botName: 'coder', botPrompt: '' }],
     })
@@ -101,6 +105,10 @@ describe('publicTeamPayload', () => {
       },
       spec: {
         icon: '/api/resource-library/assets/team-icons/12',
+        inputPlaceholder: {
+          zh: '描述要生成的视频',
+          mobile: { zh: '描述你想创作的内容' },
+        },
         customField: 'keep-me',
         capability: {
           tags: ['technical_development'],

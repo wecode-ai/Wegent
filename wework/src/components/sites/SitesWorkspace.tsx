@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
-import { AlertCircle, Loader2, Plus, RefreshCw, Search } from 'lucide-react'
+import { AlertCircle, Boxes, Loader2, Plus, RefreshCw, Search } from 'lucide-react'
 import { ApiError } from '@/api/http'
 import { isSitesUnavailableError } from '@/api/sites'
 import type { Site, SiteAppType, SiteListItem, SitesApi } from '@/api/sites'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { replaceTo } from '@/lib/navigation'
 import { track } from '@/telemetry/client'
 import {
   DEFAULT_APPLICATION_TYPE,
@@ -28,11 +30,17 @@ interface SitesWorkspaceProps {
   createError?: string | null
   createNotice?: string | null
   onOpenPlugins?: () => void
+  smartAppsContent?: ReactNode
+  smartAppsEnabled?: boolean
+  smartAppsMode?: 'marketplace' | 'owned'
 }
+
+type ApplicationWorkspaceType = SiteAppType | 'smart_app'
 
 interface ApplicationCollectionOptions {
   api: SitesApi
   appType: SiteAppType
+  enabled: boolean
   query: string
   pageSize: number
   loadFailedMessage: string
@@ -54,15 +62,17 @@ function isSecurityCheckingError(error: unknown): boolean {
   return detail?.code === 'SECURITY_CHECKING' || nestedError?.code === 'SECURITY_CHECKING'
 }
 
-function getInitialAppType(): SiteAppType {
+function getInitialAppType(smartAppsEnabled: boolean): ApplicationWorkspaceType {
   if (typeof window === 'undefined') return DEFAULT_APPLICATION_TYPE
   const requestedType = new URLSearchParams(window.location.search).get('app_type')
+  if (smartAppsEnabled && (!requestedType || requestedType === 'smart_app')) return 'smart_app'
   return getApplicationTypeDefinition(requestedType ?? '')?.appType ?? DEFAULT_APPLICATION_TYPE
 }
 
 function useApplicationCollection({
   api,
   appType,
+  enabled,
   query,
   pageSize,
   loadFailedMessage,
@@ -107,9 +117,14 @@ function useApplicationCollection({
   }, [api, appType, loadFailedMessage, pageSize, query])
 
   useEffect(() => {
+    if (!enabled) {
+      requestId.current += 1
+      const timeout = window.setTimeout(() => setLoading(false), 0)
+      return () => window.clearTimeout(timeout)
+    }
     const timeout = window.setTimeout(() => void loadFirstPage(), 0)
     return () => window.clearTimeout(timeout)
-  }, [loadFirstPage])
+  }, [enabled, loadFirstPage])
 
   const loadMore = async () => {
     setLoadingMore(true)
@@ -210,10 +225,16 @@ export function SitesWorkspace({
   createError,
   createNotice,
   onOpenPlugins,
+  smartAppsContent,
+  smartAppsEnabled = false,
+  smartAppsMode = 'marketplace',
 }: SitesWorkspaceProps) {
   const { t } = useTranslation('sites')
+  const { t: commonT } = useTranslation('common')
   const applicationTypes = useApplicationTypeDefinitions(api)
-  const [activeAppType, setActiveAppType] = useState<SiteAppType>(getInitialAppType)
+  const [activeAppType, setActiveAppType] = useState<ApplicationWorkspaceType>(() =>
+    getInitialAppType(smartAppsEnabled)
+  )
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set())
@@ -230,40 +251,69 @@ export function SitesWorkspace({
   }, [query])
 
   useEffect(() => {
-    const handlePopState = () => setActiveAppType(getInitialAppType())
+    const handlePopState = () => setActiveAppType(getInitialAppType(smartAppsEnabled))
+    handlePopState()
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
-  }, [])
+  }, [smartAppsEnabled])
 
+  const smartAppsActive = smartAppsEnabled && activeAppType === 'smart_app'
+  const pageTitle = smartAppsActive
+    ? smartAppsMode === 'owned'
+      ? commonT('workbench.smart_apps_my_title', '我的工作台')
+      : commonT('workbench.smart_apps_marketplace_title', '智能工作台市场')
+    : t('title', '应用')
+  const pageDescription = smartAppsActive
+    ? smartAppsMode === 'owned'
+      ? commonT('workbench.smart_apps_my_description', '管理你创建、导入和安装的智能应用。')
+      : commonT(
+          'workbench.smart_apps_marketplace_description',
+          '发现官方工作台，以及成员定向分享给你的工作台。'
+        )
+    : t('subtitle', '创建、管理并发布你的应用')
+  const activeSiteAppType = activeAppType === 'smart_app' ? DEFAULT_APPLICATION_TYPE : activeAppType
   const activeApplicationType =
-    applicationTypes.find(item => item.definition.appType === activeAppType) ?? applicationTypes[0]
+    applicationTypes.find(item => item.definition.appType === activeSiteAppType) ??
+    applicationTypes[0]
   const activeDefinition = activeApplicationType.definition
   const ActiveApplicationIcon = activeDefinition.icon
   const loadFailedMessage = t(activeDefinition.loadFailed.key, activeDefinition.loadFailed.fallback)
   const collection = useApplicationCollection({
     api,
-    appType: activeAppType,
+    appType: activeSiteAppType,
+    enabled: !smartAppsActive,
     query: debouncedQuery,
     pageSize,
     loadFailedMessage,
   })
   const items = collection.items.filter(activeDefinition.isItem)
 
-  const selectAppType = useCallback((appType: SiteAppType) => {
+  const selectAppType = useCallback((appType: ApplicationWorkspaceType) => {
     setActiveAppType(appType)
     setQuery('')
     setDebouncedQuery('')
-    const url = new URL(window.location.href)
-    url.searchParams.set('app_type', appType)
-    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+    const params = new URLSearchParams(window.location.search)
+    params.set('app_type', appType)
+    params.delete('view')
+    params.delete('action')
+    replaceTo(`/sites?${params.toString()}`)
   }, [])
 
   useEffect(() => {
-    if (activeDefinition.appType !== activeAppType) selectAppType(activeDefinition.appType)
-  }, [activeAppType, activeDefinition.appType, selectAppType])
+    if (activeAppType === 'smart_app' && !smartAppsEnabled) {
+      selectAppType(activeDefinition.appType)
+      return
+    }
+    if (activeAppType !== 'smart_app' && activeDefinition.appType !== activeAppType) {
+      selectAppType(activeDefinition.appType)
+    }
+  }, [activeAppType, activeDefinition.appType, selectAppType, smartAppsEnabled])
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    const appTypes = applicationTypes.map(item => item.definition.appType)
+    const appTypes: ApplicationWorkspaceType[] = [
+      ...(smartAppsEnabled ? (['smart_app'] as const) : []),
+      ...applicationTypes.map(item => item.definition.appType),
+    ]
     const currentIndex = appTypes.indexOf(activeAppType)
     let nextIndex: number | null = null
     if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % appTypes.length
@@ -393,7 +443,7 @@ export function SitesWorkspace({
         >
           <div>{topBarLeftActions}</div>
           <div className="flex items-center gap-2">
-            {!collection.unavailable ? (
+            {!smartAppsActive && !collection.unavailable ? (
               <button
                 type="button"
                 data-testid="sites-refresh-button"
@@ -408,29 +458,34 @@ export function SitesWorkspace({
                 />
               </button>
             ) : null}
-            <ActionMenu
-              ariaLabel={t('create_application', '创建应用')}
-              testId="sites-create-button"
-              items={createItems}
-              icon={creatingType ? Loader2 : Plus}
-              triggerLabel={t('create', '创建')}
-              disabled={Boolean(creatingType)}
-              placement="bottom-end"
-              triggerClassName={[
-                'flex h-11 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40 disabled:cursor-wait disabled:opacity-60 md:h-8',
-                creatingType ? '[&>svg:first-child]:animate-spin' : '',
-              ].join(' ')}
-            />
+            {!smartAppsActive ? (
+              <ActionMenu
+                ariaLabel={t('create_application', '创建应用')}
+                testId="sites-create-button"
+                items={createItems}
+                icon={creatingType ? Loader2 : Plus}
+                triggerLabel={t('create', '创建')}
+                disabled={Boolean(creatingType)}
+                placement="bottom-end"
+                triggerClassName={[
+                  'flex h-11 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40 disabled:cursor-wait disabled:opacity-60 md:h-8',
+                  creatingType ? '[&>svg:first-child]:animate-spin' : '',
+                ].join(' ')}
+              />
+            ) : null}
           </div>
         </div>
       </div>
 
-      <div className="mx-auto flex w-full max-w-[920px] flex-col px-5 pb-14 pt-5 md:px-8 md:pt-4">
+      <div
+        className={[
+          'relative mx-auto flex w-full flex-col px-5 pb-14 pt-5 md:px-8 md:pt-4',
+          smartAppsActive ? 'max-w-[1120px]' : 'max-w-[920px]',
+        ].join(' ')}
+      >
         <section className="space-y-1.5">
-          <h1 className="text-xl font-normal leading-9 text-text-primary">{t('title', '应用')}</h1>
-          <p className="text-base leading-6 text-text-secondary md:text-lg">
-            {t('subtitle', '创建、管理并发布你的应用')}
-          </p>
+          <h1 className="text-xl font-normal leading-9 text-text-primary">{pageTitle}</h1>
+          <p className="text-base leading-6 text-text-secondary md:text-lg">{pageDescription}</p>
         </section>
 
         <div
@@ -438,6 +493,31 @@ export function SitesWorkspace({
           role="tablist"
           aria-label={t('application_types', '应用类型')}
         >
+          {smartAppsEnabled ? (
+            <button
+              type="button"
+              role="tab"
+              data-app-type="smart_app"
+              data-testid="applications-tab-smart-app"
+              id="applications-tab-smart-app"
+              aria-selected={smartAppsActive}
+              aria-controls="applications-tab-panel"
+              tabIndex={smartAppsActive ? 0 : -1}
+              onClick={() => selectAppType('smart_app')}
+              onKeyDown={handleTabKeyDown}
+              className={[
+                'relative flex h-11 items-center gap-1.5 px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',
+                smartAppsActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary',
+              ].join(' ')}
+            >
+              <Boxes className="h-3.5 w-3.5" aria-hidden="true" />
+              {t('smart_apps_tab', '智能工作台')}
+              <ExperimentalBadge testId="applications-smart-app-experimental-badge" />
+              {smartAppsActive ? (
+                <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
+              ) : null}
+            </button>
+          ) : null}
           {applicationTypes.map(({ definition }) => {
             const appType = definition.appType
             const selected = activeAppType === appType
@@ -469,134 +549,150 @@ export function SitesWorkspace({
           })}
         </div>
 
-        <label className="relative mt-5 block">
-          <span className="sr-only">
-            {t(activeDefinition.search.key, activeDefinition.search.fallback)}
-          </span>
-          <Search
-            className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-            aria-hidden="true"
-          />
-          <input
-            value={query}
-            onChange={event => setQuery(event.target.value)}
-            data-testid="sites-search-input"
-            placeholder={t(activeDefinition.search.key, activeDefinition.search.fallback)}
-            className="h-11 w-full rounded-full border border-border bg-background pl-10 pr-4 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/15 md:h-9"
-          />
-        </label>
+        {smartAppsActive ? (
+          <div
+            id="applications-tab-panel"
+            role="tabpanel"
+            aria-labelledby="applications-tab-smart-app"
+            className="mt-5"
+            data-testid="applications-smart-app-panel"
+          >
+            {smartAppsContent}
+          </div>
+        ) : (
+          <>
+            <label className="relative mt-5 block">
+              <span className="sr-only">
+                {t(activeDefinition.search.key, activeDefinition.search.fallback)}
+              </span>
+              <Search
+                className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+                aria-hidden="true"
+              />
+              <input
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                data-testid="sites-search-input"
+                placeholder={t(activeDefinition.search.key, activeDefinition.search.fallback)}
+                className="h-11 w-full rounded-full border border-border bg-background pl-10 pr-4 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/15 md:h-9"
+              />
+            </label>
 
-        {createError && (
-          <SitesCreateError
-            message={createError}
-            openPluginsLabel={t('open_plugins', '查看插件')}
-            onOpenPlugins={onOpenPlugins}
-          />
-        )}
-        {!createError && createNotice && <SitesCreateNotice message={createNotice} />}
+            {createError && (
+              <SitesCreateError
+                message={createError}
+                openPluginsLabel={t('open_plugins', '查看插件')}
+                onOpenPlugins={onOpenPlugins}
+              />
+            )}
+            {!createError && createNotice && <SitesCreateNotice message={createNotice} />}
 
-        <div
-          id="applications-tab-panel"
-          role="tabpanel"
-          aria-labelledby={`applications-tab-${activeAppType}`}
-          className="mt-8"
-        >
-          {!collection.unavailable ? (
             <div
-              className={[
-                'hidden gap-6 border-b border-border pb-3 text-xs text-text-muted md:grid',
-                activeDefinition.columnGridClassName,
-              ].join(' ')}
+              id="applications-tab-panel"
+              role="tabpanel"
+              aria-labelledby={`applications-tab-${activeAppType}`}
+              className="mt-8"
             >
-              {activeDefinition.columns.map(column => (
-                <span key={column.key}>{t(column.key, column.fallback)}</span>
-              ))}
-            </div>
-          ) : null}
-
-          {collection.loading ? (
-            <div
-              className="flex min-h-48 items-center justify-center text-text-secondary"
-              aria-label={t(activeDefinition.loading.key, activeDefinition.loading.fallback)}
-            >
-              <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
-            </div>
-          ) : collection.unavailable ? (
-            <div
-              data-testid="sites-unavailable-state"
-              className="flex min-h-56 items-center justify-center text-center"
-            >
-              <p className="text-sm text-text-secondary">{t('unavailable', '应用功能尚未推出')}</p>
-            </div>
-          ) : collection.loadError && items.length === 0 ? (
-            <div className="flex min-h-48 flex-col items-center justify-center gap-3 text-center">
-              <AlertCircle className="h-6 w-6 text-danger" aria-hidden="true" />
-              <p className="text-sm text-text-secondary" role="alert">
-                {collection.loadError}
-              </p>
-              <button
-                type="button"
-                data-testid="sites-retry-button"
-                onClick={() => void collection.loadFirstPage()}
-                className="h-11 rounded-lg border border-border px-3 text-sm hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8"
-              >
-                {t('retry', '重试')}
-              </button>
-            </div>
-          ) : items.length === 0 ? (
-            <div className="flex min-h-56 flex-col items-center justify-center text-center">
-              <ActiveApplicationIcon className="h-7 w-7 text-text-muted" aria-hidden="true" />
-              <h2 className="mt-4 text-base font-medium">{emptyTitle}</h2>
-              <p className="mt-1 text-sm text-text-secondary">{emptyDescription}</p>
-            </div>
-          ) : (
-            <div>
-              {items.map(item => (
-                <div key={item.siteid}>
-                  {activeDefinition.renderRow(item, {
-                    capabilities: activeApplicationType.capabilities,
-                    publishingIds,
-                    deletingSiteId,
-                    continuingSiteId,
-                    onPublish: publish,
-                    onContinueDevelopment: siteToContinue =>
-                      onContinueDevelopment?.(siteToContinue, activeDefinition.create),
-                    onEdit: siteToEdit => {
-                      setEditError(null)
-                      setPendingEditSite(siteToEdit)
-                    },
-                    onDelete: siteToDelete => {
-                      setDeleteError(null)
-                      setPendingDeleteSite(siteToDelete)
-                    },
-                  })}
+              {!collection.unavailable ? (
+                <div
+                  className={[
+                    'hidden gap-6 border-b border-border pb-3 text-xs text-text-muted md:grid',
+                    activeDefinition.columnGridClassName,
+                  ].join(' ')}
+                >
+                  {activeDefinition.columns.map(column => (
+                    <span key={column.key}>{t(column.key, column.fallback)}</span>
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
+              ) : null}
 
-          {collection.loadError && items.length > 0 && (
-            <p className="mt-3 text-center text-sm text-danger" role="alert">
-              {collection.loadError}
-            </p>
-          )}
-          {items.length < collection.total && (
-            <div className="flex justify-center pt-5">
-              <button
-                type="button"
-                data-testid="sites-load-more-button"
-                disabled={collection.loadingMore}
-                onClick={() => void collection.loadMore()}
-                className="flex h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-wait disabled:opacity-60 md:h-8"
-              >
-                {collection.loadingMore && (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                )}
-                {t('load_more', '加载更多')}
-              </button>
+              {collection.loading ? (
+                <div
+                  className="flex min-h-48 items-center justify-center text-text-secondary"
+                  aria-label={t(activeDefinition.loading.key, activeDefinition.loading.fallback)}
+                >
+                  <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+                </div>
+              ) : collection.unavailable ? (
+                <div
+                  data-testid="sites-unavailable-state"
+                  className="flex min-h-56 items-center justify-center text-center"
+                >
+                  <p className="text-sm text-text-secondary">
+                    {t('unavailable', '应用功能尚未推出')}
+                  </p>
+                </div>
+              ) : collection.loadError && items.length === 0 ? (
+                <div className="flex min-h-48 flex-col items-center justify-center gap-3 text-center">
+                  <AlertCircle className="h-6 w-6 text-danger" aria-hidden="true" />
+                  <p className="text-sm text-text-secondary" role="alert">
+                    {collection.loadError}
+                  </p>
+                  <button
+                    type="button"
+                    data-testid="sites-retry-button"
+                    onClick={() => void collection.loadFirstPage()}
+                    className="h-11 rounded-lg border border-border px-3 text-sm hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8"
+                  >
+                    {t('retry', '重试')}
+                  </button>
+                </div>
+              ) : items.length === 0 ? (
+                <div className="flex min-h-56 flex-col items-center justify-center text-center">
+                  <ActiveApplicationIcon className="h-7 w-7 text-text-muted" aria-hidden="true" />
+                  <h2 className="mt-4 text-base font-medium">{emptyTitle}</h2>
+                  <p className="mt-1 text-sm text-text-secondary">{emptyDescription}</p>
+                </div>
+              ) : (
+                <div>
+                  {items.map(item => (
+                    <div key={item.siteid}>
+                      {activeDefinition.renderRow(item, {
+                        capabilities: activeApplicationType.capabilities,
+                        publishingIds,
+                        deletingSiteId,
+                        continuingSiteId,
+                        onPublish: publish,
+                        onContinueDevelopment: siteToContinue =>
+                          onContinueDevelopment?.(siteToContinue, activeDefinition.create),
+                        onEdit: siteToEdit => {
+                          setEditError(null)
+                          setPendingEditSite(siteToEdit)
+                        },
+                        onDelete: siteToDelete => {
+                          setDeleteError(null)
+                          setPendingDeleteSite(siteToDelete)
+                        },
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {collection.loadError && items.length > 0 && (
+                <p className="mt-3 text-center text-sm text-danger" role="alert">
+                  {collection.loadError}
+                </p>
+              )}
+              {items.length < collection.total && (
+                <div className="flex justify-center pt-5">
+                  <button
+                    type="button"
+                    data-testid="sites-load-more-button"
+                    disabled={collection.loadingMore}
+                    onClick={() => void collection.loadMore()}
+                    className="flex h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-wait disabled:opacity-60 md:h-8"
+                  >
+                    {collection.loadingMore && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                    )}
+                    {t('load_more', '加载更多')}
+                  </button>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
       {pendingDeleteSite && (
         <DeleteSiteDialog

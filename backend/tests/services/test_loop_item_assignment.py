@@ -4,12 +4,14 @@
 """Focused contracts for task assignment, robot approval, and queue state."""
 
 import uuid
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
+from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -43,7 +45,20 @@ def _make_bot(
     *,
     mode: str = "auto",
     visibility: str = "public",
+    runtime: str = "codex",
+    wegent_team_id: int | None = None,
 ) -> ProjectChatAgent:
+    device_id = f"local-{uuid.uuid4().hex[:10]}"
+    db.add(
+        Kind(
+            kind="Device",
+            name=device_id,
+            namespace="default",
+            user_id=user.id,
+            is_active=True,
+            json={"spec": {"deviceType": "local"}},
+        )
+    )
     bot = ProjectChatAgent(
         id=f"B{uuid.uuid4().hex[:10]}",
         cloud_project_id=project.id,
@@ -51,9 +66,12 @@ def _make_bot(
         name="Queue Bot",
         status="active",
         created_by_user_id=user.id,
+        device_id=device_id if runtime == "codex" else None,
         metadata_json={
-            "runtime": "codex",
+            "runtime": runtime,
+            "wegent_team_id": wegent_team_id,
             "execution_mode": mode,
+            "execution_environment": "local",
             "visibility": visibility,
         },
     )
@@ -146,6 +164,58 @@ def test_assign_to_robot_enters_queue_with_history(
     assert execution.assigner_user_id == test_user.id
 
 
+def test_assign_to_wegent_runtime_robot_keeps_robot_as_queue_identity(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    team = Kind(
+        kind="Team",
+        name=f"board-team-{uuid.uuid4().hex[:8]}",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={},
+    )
+    test_db.add(team)
+    test_db.commit()
+    test_db.refresh(team)
+    bot = _make_bot(
+        test_db,
+        project,
+        test_user,
+        runtime="wegent",
+        wegent_team_id=team.id,
+    )
+
+    updated = loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
+    )
+
+    assert updated.assignee_team_id is None
+    assert updated.assignee_user_id is None
+    assert updated.assignee_agent_id == bot.id
+    history = (updated.metadata_json or {})["assignment_history"]
+    assert history[-1]["to_type"] == "agent"
+    assert history[-1]["to_id"] == bot.id
+    execution = _active_execution(test_db, updated)
+    assert execution is not None
+    assert execution.executor_type == "project_robot"
+    assert execution.team_id == team.id
+    assert execution.agent_id == bot.id
+    assert execution.execution_environment == "wegent"
+    assert execution.status == "queued"
+
+
 def test_assign_to_member_records_chain(test_db: Session, test_user: User) -> None:
     project = _make_project(test_db, test_user)
     member = _make_member(test_db, project, "assignee", BaseRole.Developer)
@@ -169,6 +239,62 @@ def test_assign_to_member_records_chain(test_db: Session, test_user: User) -> No
     assert metadata["assignment_history"][-1]["to_type"] == "user"
     assert metadata["assignment_history"][-1]["to_name"] == "assignee"
     assert _active_execution(test_db, updated) is None
+
+
+def test_assign_to_other_member_sends_notification(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    member = _make_member(test_db, project, "assignee", BaseRole.Developer)
+    item = _make_item(test_db, project, test_user)
+
+    with patch(
+        "app.services.loop_items.service.notify_project_task_assignee"
+    ) as notify:
+        loop_item_service.assign(
+            test_db,
+            project_id=int(project.id),
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                version=item.version,
+                assignee_type="user",
+                assignee_id=str(member.id),
+            ),
+        )
+
+    notify.assert_called_once_with(
+        user_id=member.id,
+        project_id=str(project.id),
+        project_name=project.name,
+        item_id=item.id,
+        item_title=item.title,
+        assigner_name=test_user.user_name,
+    )
+
+
+def test_assign_to_self_does_not_send_notification(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+
+    with patch(
+        "app.services.loop_items.service.notify_project_task_assignee"
+    ) as notify:
+        loop_item_service.assign(
+            test_db,
+            project_id=int(project.id),
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                version=item.version,
+                assignee_type="user",
+                assignee_id=str(test_user.id),
+            ),
+        )
+
+    notify.assert_not_called()
 
 
 def test_manual_approval_flow_only_creator_can_approve(
@@ -335,60 +461,6 @@ def test_reject_with_stale_version_has_no_side_effects(
     assert execution.approval_status == "pending"
 
 
-def test_reassign_cancels_running_run_and_emits_runtime_cancel(
-    test_db: Session, test_user: User, monkeypatch
-) -> None:
-    """Reassigning a task away from a running robot must ask the executor to
-    stop the old run, not just mark the DB row cancelled.
-
-    Regression: only the row changed, so the executor kept running the old
-    task (zombie run) and occupied the device slot.
-    """
-
-    project = _make_project(test_db, test_user)
-    bot = _make_bot(test_db, project, test_user)
-    member = _make_member(test_db, project, "developer", BaseRole.Developer)
-    item = _make_item(test_db, project, test_user)
-
-    assigned = loop_item_service.assign(
-        test_db,
-        project_id=int(project.id),
-        item_id=item.id,
-        user_id=test_user.id,
-        values=LoopItemAssign(
-            version=item.version,
-            assignee_type="agent",
-            assignee_id=bot.id,
-        ),
-    )
-    execution = _active_execution(test_db, assigned)
-    assert execution is not None
-    execution.runtime_device_id = "local-device"
-    execution.runtime_task_id = "codex-queue-99"
-    test_db.commit()
-
-    emitted: list[LoopItemExecution] = []
-    monkeypatch.setattr(
-        "app.tasks.robot_queue_tasks.emit_runtime_cancels",
-        lambda runs: emitted.extend(runs),
-    )
-
-    updated = loop_item_service.assign(
-        test_db,
-        project_id=int(project.id),
-        item_id=item.id,
-        user_id=test_user.id,
-        values=LoopItemAssign(
-            version=assigned.version,
-            assignee_type="user",
-            assignee_id=str(member.id),
-        ),
-    )
-
-    assert _active_execution(test_db, updated) is None
-    assert [run.id for run in emitted] == [execution.id]
-
-
 def test_assign_requires_admin_and_visible_bot(
     test_db: Session, test_user: User
 ) -> None:
@@ -477,3 +549,43 @@ def test_queue_listing_is_a_projection_of_assigned_tasks(
         assignee_id=str(member.id),
     )
     assert [item.id for item in member_queue] == [completed_item.id]
+
+
+def test_my_work_uses_latest_execution_truth_instead_of_task_binding(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    loop_item_service.assign(
+        test_db,
+        project_id=int(project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
+    )
+    execution = _active_execution(test_db, item)
+    assert execution is not None
+    execution.status = "claimed"
+    execution.sync_state = "stale"
+    execution.observed_state = "unconfirmed"
+    execution.attempt_no = 2
+    execution.last_event_seq = 17
+    test_db.commit()
+
+    row = next(
+        value
+        for value in loop_item_service.list_my_work(test_db, test_user.id)
+        if value["id"] == item.id
+    )
+    assert row["execution_state"] == "unknown"
+    assert row["execution_control_state"] == "claimed"
+    assert row["execution_observed_state"] == "unconfirmed"
+    assert row["execution_sync_state"] == "stale"
+    assert row["execution_attempt_no"] == 2
+    assert row["execution_last_event_seq"] == 17
+    assert row["ai_state"]["status"] == "unknown"

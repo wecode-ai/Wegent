@@ -10,6 +10,68 @@ const fs = require('fs')
 const path = require('path')
 const https = require('https')
 const http = require('http')
+const { validateMermaidMarkdown } = require('./mermaid_validation')
+
+/**
+ * Read Markdown from the input options shared by submit and validation.
+ * @param {object} args - Command arguments
+ * @returns {string|null}
+ */
+function readMarkdownInput(args) {
+  if (args.file) {
+    const filePath = path.resolve(args.file)
+    if (!fs.existsSync(filePath)) {
+      console.error(`Error: File not found: ${args.file}`)
+      return null
+    }
+    return fs.readFileSync(filePath, 'utf-8')
+  }
+
+  if (typeof args.content === 'string') {
+    return args.content
+  }
+
+  console.error('Error: Either --file or --content is required')
+  return null
+}
+
+/**
+ * Validate every Mermaid block in a Markdown page before it is published.
+ * @param {object} args - Command arguments
+ * @returns {Promise<number>}
+ */
+async function cmdValidateMermaid(args) {
+  const content = readMarkdownInput(args)
+  if (content === null) {
+    return 1
+  }
+
+  const result = await validateMermaidMarkdown(content)
+  if (result.status === 'unavailable') {
+    console.error('Mermaid validation is unavailable in this executor image.')
+    console.error('It requires mermaid@11.15.0 and jsdom@29.1.1.')
+    console.error(`Load error: ${result.loadError}`)
+    return 2
+  }
+  if (result.status === 'invalid') {
+    console.error('❌ Mermaid validation failed:')
+    for (const error of result.errors || []) {
+      console.error(`- ${error}`)
+    }
+    for (const failure of result.failures || []) {
+      console.error(`- block starting at line ${failure.line}: ${failure.error}`)
+    }
+    console.error('Rewrite the listed diagrams, then run validate-mermaid again before submit or complete.')
+    return 1
+  }
+  if (result.blocks === 0) {
+    console.log('✅ No Mermaid blocks found')
+    return 0
+  }
+
+  console.log(`✅ Mermaid validation passed for ${result.blocks} block(s)`)
+  return 0
+}
 
 /**
  * Parse TASK_INFO environment variable to get task data.
@@ -237,19 +299,8 @@ async function cmdSubmit(args) {
   }
   const generationId = parseInt(args.generationId, 10)
 
-  // Get content from file or argument
-  let content
-  if (args.file) {
-    const filePath = path.resolve(args.file)
-    if (!fs.existsSync(filePath)) {
-      console.error(`Error: File not found: ${args.file}`)
-      return 1
-    }
-    content = fs.readFileSync(filePath, 'utf-8')
-  } else if (args.content) {
-    content = args.content
-  } else {
-    console.error('Error: Either --file or --content is required')
+  const content = readMarkdownInput(args)
+  if (content === null) {
     return 1
   }
 
@@ -415,10 +466,9 @@ async function cmdComplete(args) {
 
   console.log('✅ Wiki generation completed and published')
 
-  // Printed on success too, and that is the point: broken diagrams never hold a
-  // version back, so this is the last moment anything can be done about them. Exit 0
-  // -- the run did succeed, and failing it would undo a wiki that is live and good
-  // over a figure that does not draw.
+  // A non-default policy can make diagram findings advisory. The standard Code Wiki
+  // policy rejects them before this point, but preserve the correction path for any
+  // caller that opts into the advisory mode.
   if (result.corrections) {
     console.log('')
     console.log(result.corrections)
@@ -575,6 +625,7 @@ Usage: node wiki_submit.js <command> [options]
 
 Commands:
   submit    Submit a wiki page
+  validate-mermaid  Validate Mermaid blocks in Markdown before submission
   read      Print a page's current content
   remove    Declare wiki pages as gone
   complete  Mark wiki generation as completed
@@ -599,6 +650,10 @@ Submit Options:
   --content, -c        Page content (alternative to --file)
   --ext                Extension data as JSON string
 
+Validate Mermaid Options:
+  --file, -f           Path to Markdown file to validate
+  --content, -c        Markdown content to validate (alternative to --file)
+
 Read Options:
   --path               Page path to read. Exits 0 with no output when the page
                        does not exist yet.
@@ -617,6 +672,7 @@ Fail Options:
 
 Examples:
   node wiki_submit.js submit --generation-id 123 --path architecture/backend --title "Backend Architecture" --file ./page.md
+  node wiki_submit.js validate-mermaid --file ./page.md
   node wiki_submit.js read --generation-id 123 --path architecture/backend > current.md
   node wiki_submit.js remove --generation-id 123 --path modules/legacy-sync
   node wiki_submit.js complete --generation-id 123 --head-commit $(git rev-parse HEAD)
@@ -650,6 +706,9 @@ async function main() {
         process.exit(1)
       }
       exitCode = await cmdSubmit(args)
+      break
+    case 'validate-mermaid':
+      exitCode = await cmdValidateMermaid(args)
       break
     case 'read':
       exitCode = await cmdRead(args)

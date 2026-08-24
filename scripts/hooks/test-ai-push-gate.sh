@@ -179,6 +179,21 @@ if ! grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
     exit 1
 fi
 
+if ! grep -qE 'Running unit tests with 2 workers' "$WEWORK_TEST_OUT"; then
+    echo "Expected Wework pre-push tests to use two workers by default."
+    cat "$WEWORK_TEST_OUT"
+    exit 1
+fi
+
+STATIC_CHECK_LINE=$(grep -n 'Running ESLint and TypeScript in parallel' "$WEWORK_TEST_OUT" | cut -d: -f1)
+UNIT_TEST_LINE=$(grep -n 'Running unit tests with 2 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
+if [ -z "$STATIC_CHECK_LINE" ] || [ -z "$UNIT_TEST_LINE" ] ||
+    [ "$STATIC_CHECK_LINE" -ge "$UNIT_TEST_LINE" ]; then
+    echo "Expected Wework static checks to be reported before unit tests."
+    cat "$WEWORK_TEST_OUT"
+    exit 1
+fi
+
 : > "$CALL_LOG"
 
 # This range moved a Next.js route and verifies stale generated route types are

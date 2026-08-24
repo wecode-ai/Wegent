@@ -1,11 +1,11 @@
-import { APIRequestContext, expect, Page } from '@playwright/test'
+import { APIRequestContext, expect, Page, request as playwrightRequest } from '@playwright/test'
 import { ADMIN_USER } from '../config/test-users'
 import {
   createProviderNativeKnowledgeFixture,
   deleteProviderNativeKnowledgeFixture,
   ProviderNativeKnowledgeFixture,
 } from '../fixtures/provider-native-knowledge'
-import { ApiClient, createApiClient } from './api-client'
+import { ApiClient, createApiClient, createBackendRequestHeaders } from './api-client'
 
 export const PROVIDER_NATIVE_API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 export const PROVIDER_NATIVE_MOCK_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -269,28 +269,40 @@ export async function getMcpCalls(request: APIRequestContext): Promise<RecordedP
 }
 
 export async function waitForTaskTerminal(
-  request: APIRequestContext,
   token: string,
   taskId: number,
   expected: RegExp = /^COMPLETED/
 ): Promise<string> {
+  const runtimeRequest = await playwrightRequest.newContext({
+    extraHTTPHeaders: authHeaders(token),
+  })
   let finalStatus = ''
-  await expect
-    .poll(
-      async () => {
-        const response = await request.get(
-          `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}/runtime-check`,
-          { headers: authHeaders(token) }
-        )
-        if (response.status() !== 200) return `HTTP_${response.status()}`
-        const body = (await response.json()) as { task_status: string }
-        finalStatus = body.task_status.toUpperCase()
-        return finalStatus
-      },
-      { timeout: 60_000, message: `Task ${taskId} should reach ${expected}` }
-    )
-    .toMatch(expected)
-  return finalStatus
+  try {
+    await expect
+      .poll(
+        async () => {
+          let response
+          try {
+            response = await runtimeRequest.get(
+              `${PROVIDER_NATIVE_API_URL}/api/tasks/${taskId}/runtime-check`
+            )
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            if (!/socket hang up|ECONNRESET/i.test(message)) throw error
+            return `TRANSPORT_ERROR_${message}`
+          }
+          if (response.status() !== 200) return `HTTP_${response.status()}`
+          const body = (await response.json()) as { task_status: string }
+          finalStatus = body.task_status.toUpperCase()
+          return finalStatus
+        },
+        { timeout: 60_000, message: `Task ${taskId} should reach ${expected}` }
+      )
+      .toMatch(expected)
+    return finalStatus
+  } finally {
+    await runtimeRequest.dispose()
+  }
 }
 
 export async function getTask(request: APIRequestContext, token: string, taskId: number) {
@@ -382,5 +394,5 @@ export function modelToolNames(bodies: Record<string, unknown>[]): string[] {
 }
 
 export function authHeaders(token: string): Record<string, string> {
-  return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+  return createBackendRequestHeaders(token)
 }

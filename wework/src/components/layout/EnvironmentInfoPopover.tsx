@@ -1,9 +1,7 @@
 import {
   Check,
   ChevronDown,
-  CircleCheck,
   CircleDot,
-  CircleX,
   Cloud,
   Copy,
   FolderOpen,
@@ -14,7 +12,6 @@ import {
   Link2,
   Laptop,
   LoaderCircle,
-  Clock3,
   Square,
   Upload,
   CornerDownLeft,
@@ -29,9 +26,12 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { BranchSelector } from '@/components/common/BranchSelector'
+import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
+import { changeRequestVisualStatus } from '@/features/workbench/changeRequestStatus'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
+import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import { navigateTo } from '@/lib/navigation'
 import {
@@ -59,6 +59,8 @@ interface EnvironmentInfoPopoverProps {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
+  onGenerateBranchName?: (sourceText: string) => Promise<string>
+  branchNameSource?: string
   onOpenChangesReview?: () => void
   onDeliver?: () => void
   todoLabel?: string
@@ -74,9 +76,17 @@ const FLOATING_POPOVER_WIDTH = 300
 const FLOATING_POPOVER_GAP = 8
 const FLOATING_POPOVER_MARGIN = 16
 
-function getWorkspacePathDisplayName(path: string): string {
-  const normalizedPath = path.replace(/[\\/]+$/, '')
-  return normalizedPath.split(/[\\/]/).filter(Boolean).at(-1) || path
+function compactWorkspacePath(workspacePath: string): string {
+  const segments = workspacePath
+    .replace(/[\\/]+$/, '')
+    .split(/[\\/]+/)
+    .filter(Boolean)
+  return segments.at(-1) || workspacePath
+}
+
+function normalizeWorkspacePathForComparison(workspacePath: string): string {
+  const normalizedPath = normalizeRuntimeWorkspacePath(workspacePath.replace(/\\/g, '/'))
+  return /^(?:[A-Za-z]:|\/\/)/.test(normalizedPath) ? normalizedPath.toLowerCase() : normalizedPath
 }
 
 export function EnvironmentInfoPopover({
@@ -94,6 +104,8 @@ export function EnvironmentInfoPopover({
   onListBranches,
   onCheckoutBranch,
   onCreateBranch,
+  onGenerateBranchName,
+  branchNameSource,
   onOpenChangesReview,
   onDeliver,
   todoLabel,
@@ -147,18 +159,29 @@ export function EnvironmentInfoPopover({
   const hasDiffStats = gitRepositoryAvailable && Boolean(info.additions || info.deletions)
   const showChangesSection = hasDiffStats || hasGitInfo || canShowBranchSelector
   const taskSummaryToggleLabel = t('workbench.task_summary_toggle', '切换摘要')
+  const normalizedWorkspacePath = info.workspacePath
+    ? normalizeWorkspacePathForComparison(info.workspacePath)
+    : ''
+  const workspacePathIsProjectRoot = Boolean(
+    normalizedWorkspacePath &&
+    info.workspaceRoots?.some(
+      workspaceRoot =>
+        normalizeWorkspacePathForComparison(workspaceRoot) === normalizedWorkspacePath
+    )
+  )
   const workspacePaths =
-    info.workspaceRoots && info.workspaceRoots.length > 0
-      ? info.workspaceRoots
-      : info.workspacePath
-        ? [info.workspacePath]
-        : []
+    info.workspacePath && !workspacePathIsProjectRoot
+      ? [info.workspacePath]
+      : info.workspaceRoots && info.workspaceRoots.length > 0
+        ? info.workspaceRoots
+        : info.workspacePath
+          ? [info.workspacePath]
+          : []
   const changeRequest = info.changeRequest?.changeRequest
   const changeRequestPrefix = changeRequest?.provider === 'gitlab' ? '!' : '#'
-  const changeRequestStateLabel = changeRequest
-    ? changeRequest.draft
-      ? t('workbench.environment_change_request_draft', '草稿')
-      : t(`workbench.environment_change_request_${changeRequest.state}`, changeRequest.state)
+  const changeRequestStatus = changeRequest ? changeRequestVisualStatus(changeRequest) : null
+  const changeRequestStatusLabel = changeRequestStatus
+    ? t(`workbench.change_request_status_${changeRequestStatus}`, changeRequestStatus)
     : ''
 
   function handleCreatePullRequest() {
@@ -348,13 +371,17 @@ export function EnvironmentInfoPopover({
               >
                 {workspacePaths.map((workspacePath, index) => {
                   const copied = copiedWorkspacePath === workspacePath
+                  const displayWorkspacePath = compactWorkspacePath(workspacePath)
                   return (
                     <div
                       key={workspacePath}
-                      className="flex h-11 min-w-0 items-center gap-2 md:h-7"
+                      className="flex min-h-11 min-w-0 items-start gap-2 py-1 md:min-h-0"
                       data-testid={`environment-workspace-root-row-${index}`}
                     >
-                      <FolderOpen className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                      <FolderOpen
+                        className="mt-0.5 h-4 w-4 shrink-0 text-text-muted"
+                        aria-hidden="true"
+                      />
                       <button
                         type="button"
                         data-testid={
@@ -365,7 +392,7 @@ export function EnvironmentInfoPopover({
                         onClick={() => void handleCopyWorkspacePath(workspacePath)}
                         title={workspacePath}
                         aria-label={`${t('workbench.environment_workspace_path')} · ${workspacePath}`}
-                        className="flex min-h-11 min-w-0 flex-1 items-center gap-1 rounded py-1 text-left hover:text-text-primary md:min-h-0"
+                        className="flex min-h-11 min-w-0 flex-1 items-start gap-1 rounded text-left hover:text-text-primary md:min-h-0"
                       >
                         <span className="sr-only">{t('workbench.environment_workspace_path')}</span>
                         <span
@@ -374,9 +401,9 @@ export function EnvironmentInfoPopover({
                               ? 'environment-workspace-path'
                               : `environment-workspace-root-${index}`
                           }
-                          className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium text-text-primary"
+                          className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary"
                         >
-                          {getWorkspacePathDisplayName(workspacePath)}
+                          {displayWorkspacePath}
                         </span>
                         <span
                           data-testid={
@@ -385,7 +412,7 @@ export function EnvironmentInfoPopover({
                               : `environment-workspace-root-copy-icon-${index}`
                           }
                           className={cn(
-                            'flex h-3.5 w-3.5 shrink-0 items-center justify-center',
+                            'mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center',
                             copied ? 'text-green-500' : 'text-text-muted'
                           )}
                           aria-hidden="true"
@@ -450,11 +477,13 @@ export function EnvironmentInfoPopover({
                     <BranchSelector
                       variant="environment"
                       currentBranch={info.branchName}
-                      loading={info.loading}
+                      loading={info.branchLoading ?? info.loading}
                       onRefresh={onRefresh}
                       onListBranches={onListBranches}
                       onCheckoutBranch={onCheckoutBranch}
                       onCreateBranch={onCreateBranch}
+                      onGenerateBranchName={onGenerateBranchName}
+                      branchNameSource={branchNameSource}
                     />
                   )}
                   {hasGitInfo && (
@@ -507,18 +536,26 @@ export function EnvironmentInfoPopover({
                         </button>
                       )}
                       {changeRequest ? (
-                        <button
-                          type="button"
-                          data-testid="change-request-button"
-                          onClick={handleOpenChangeRequest}
-                          title={changeRequest.title}
-                          className="flex min-h-11 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
-                        >
-                          <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                            <GitPullRequest className="h-[18px] w-[18px]" />
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="flex min-w-0 items-center gap-1.5">
+                        <div className="flex h-9 w-full items-center gap-2 rounded-md hover:bg-hover">
+                          <ChangeRequestStatusIcon
+                            snapshot={{ changeRequest }}
+                            testId="environment-change-request-status"
+                            glyphSize="environment"
+                            mainIconTestId={
+                              changeRequestStatus === 'merged'
+                                ? 'change-request-merged-icon'
+                                : 'change-request-pull-request-icon'
+                            }
+                          />
+                          <button
+                            type="button"
+                            data-testid="change-request-button"
+                            onClick={handleOpenChangeRequest}
+                            title={`${changeRequest.title} · ${changeRequestStatusLabel}`}
+                            aria-label={`${changeRequestPrefix}${changeRequest.number} ${changeRequest.title}，${changeRequestStatusLabel}`}
+                            className="flex h-9 min-w-0 flex-1 items-center text-left text-sm text-text-primary"
+                          >
+                            <span className="flex min-w-0 flex-1 items-center gap-1.5">
                               <span
                                 data-testid="change-request-number"
                                 className="shrink-0 font-medium"
@@ -532,36 +569,27 @@ export function EnvironmentInfoPopover({
                               >
                                 {changeRequest.title}
                               </span>
-                            </span>
-                            <span className="mt-0.5 flex items-center gap-2 text-xs text-text-muted">
-                              <span data-testid="change-request-state">
-                                {changeRequestStateLabel}
+                              <span data-testid="change-request-state" className="sr-only">
+                                {changeRequestStatusLabel}
                               </span>
-                              {changeRequest.checks !== 'unknown' && (
-                                <span
-                                  data-testid="change-request-checks"
-                                  className={cn(
-                                    'inline-flex items-center gap-1',
-                                    changeRequest.checks === 'success' && 'text-green-500',
-                                    changeRequest.checks === 'failure' && 'text-red-500'
-                                  )}
-                                >
-                                  {changeRequest.checks === 'success' ? (
-                                    <CircleCheck className="h-3.5 w-3.5" />
-                                  ) : changeRequest.checks === 'failure' ? (
-                                    <CircleX className="h-3.5 w-3.5" />
-                                  ) : (
-                                    <Clock3 className="h-3.5 w-3.5" />
-                                  )}
-                                  {t(
-                                    `workbench.environment_change_request_checks_${changeRequest.checks}`,
-                                    changeRequest.checks
-                                  )}
+                              {changeRequestStatus?.startsWith('checks_') && (
+                                <span data-testid="change-request-checks" className="sr-only">
+                                  {changeRequestStatusLabel}
+                                </span>
+                              )}
+                              {changeRequestStatus === 'merge_conflict' && (
+                                <span data-testid="change-request-conflict" className="sr-only">
+                                  {changeRequestStatusLabel}
+                                </span>
+                              )}
+                              {changeRequestStatus?.startsWith('merge_queue_') && (
+                                <span data-testid="change-request-merge-queue" className="sr-only">
+                                  {changeRequestStatusLabel}
                                 </span>
                               )}
                             </span>
-                          </span>
-                        </button>
+                          </button>
+                        </div>
                       ) : (
                         <button
                           type="button"

@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from app.services.execution.request_builder import TaskRequestBuilder
 from shared.models.execution import ExecutionRequest
+from shared.models.openai_converter import OpenAIRequestConverter
 
 
 def _bot_kind_with_ghost(
@@ -392,6 +393,105 @@ class TestBuildMcpServers:
         servers = {server["name"]: server for server in result}
         assert servers["seconds-server"]["timeoutSeconds"] == 900
         assert servers["native-server"]["timeout"] == 900000
+
+
+def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(test_db, mocker):
+    builder = TaskRequestBuilder(test_db)
+    subtask = SimpleNamespace(
+        id=2,
+        message_id=33,
+        executor_name="",
+        executor_namespace="",
+    )
+    task = SimpleNamespace(
+        id=1,
+        json={
+            "spec": {},
+            "metadata": {
+                "labels": {
+                    "source": "board_team_assignment",
+                    "weworkSpaceProjectId": "100",
+                    "weworkSpaceTaskId": "SPACE-1",
+                }
+            },
+        },
+        project_id=None,
+    )
+    user = SimpleNamespace(id=7, user_name="alice")
+    team = SimpleNamespace(id=5, name="team-a", namespace="default", json={})
+    bot = SimpleNamespace(id=9)
+
+    mocker.patch(
+        "app.services.execution.request_builder.Team.model_validate",
+        return_value=SimpleNamespace(spec=SimpleNamespace(collaborationModel="solo")),
+    )
+    mocker.patch.object(builder, "_get_bot_for_subtask", return_value=bot)
+    mocker.patch.object(builder, "_build_workspace", return_value={})
+    mocker.patch.object(builder, "_build_user_info", return_value={"id": 7})
+    mocker.patch.object(builder, "_get_model_config", return_value={})
+    mocker.patch.object(builder, "_get_base_system_prompt", return_value="sys")
+    mocker.patch.object(builder, "_inject_conditional_provider_skills", return_value=[])
+    mocker.patch.object(builder, "_get_bot_skills", return_value=([], [], [], {}))
+    mocker.patch.object(
+        builder,
+        "_build_bot_config",
+        return_value=[{"shell_type": "ClaudeCode", "skills": [], "mcp_servers": []}],
+    )
+    mocker.patch.object(builder, "_build_mcp_servers", return_value=[])
+    mocker.patch.object(builder, "_is_group_chat", return_value=False)
+    mocker.patch.object(builder, "_generate_auth_token", return_value="task-jwt")
+    mocker.patch.object(
+        builder, "_generate_skill_identity_token", return_value="skill-jwt"
+    )
+    mocker.patch(
+        "app.services.execution.request_builder.settings.WEGENT_BACKEND_PUBLIC_URL",
+        "http://localhost:8000",
+    )
+
+    result = builder.build(
+        subtask=subtask,
+        task=task,
+        user=user,
+        team=team,
+        message="hello",
+    )
+
+    assert result.mcp_servers == [
+        {
+            "name": "wegent-wework-space",
+            "type": "streamable-http",
+            "url": "http://localhost:8000/mcp/wework-space/sse",
+            "timeout": 60,
+            "auth": {"Authorization": "Bearer task-jwt"},
+        }
+    ]
+    assert result.bot[0]["mcp_servers"] == [
+        {
+            "name": "wegent-wework-space",
+            "type": "http",
+            "url": "http://localhost:8000/mcp/wework-space/sse",
+            "timeout": 60,
+            "headers": {"Authorization": "Bearer task-jwt"},
+        }
+    ]
+    assert "get_current_context" in result.system_prompt
+    chat_shell_request = OpenAIRequestConverter.from_execution_request(result)
+    assert chat_shell_request["tools"] == [
+        {
+            "type": "mcp",
+            "server_label": "wegent-wework-space",
+            "server_url": "http://localhost:8000/mcp/wework-space/sse",
+            "server_type": "streamable-http",
+            "require_approval": "never",
+            "server_auth": {"Authorization": "Bearer task-jwt"},
+        }
+    ]
+
+
+def test_generic_wegent_task_does_not_auto_inject_board_mcp():
+    task = SimpleNamespace(id=1, json={"metadata": {"labels": {}}})
+
+    assert TaskRequestBuilder._is_board_wegent_task(task) is False
 
 
 class TestPrepareMcpForClaudeCode:

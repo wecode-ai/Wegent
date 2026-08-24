@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.services.adapters.retriever_kinds import retriever_kinds_service
-from app.services.capability_reference_service import get_referenced_capability
 from app.services.knowledge.index_runtime import (
     KnowledgeBaseIndexInfo,
     get_kb_index_info,
@@ -30,6 +29,7 @@ from app.services.rag.runtime_specs import (
 from knowledge_engine.embedding.capabilities import (
     normalize_additional_input_modalities,
 )
+from shared.db.capability_reference import resolve_model_kind
 from shared.models import RetrievalScope, SearchHints
 from shared.utils.crypto import decrypt_api_key
 from shared.utils.placeholder import process_custom_headers_placeholders
@@ -109,6 +109,7 @@ class RagRuntimeResolver:
         reserved_output_tokens: int = 4096,
         context_buffer_ratio: float = 0.1,
         max_direct_chunks: int = 500,
+        search_hints: SearchHints | None = None,
         knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] | None = None,
     ) -> QueryRuntimeSpec:
         direct_injection_budget = None
@@ -139,6 +140,7 @@ class RagRuntimeResolver:
         return QueryRuntimeSpec(
             knowledge_base_ids=knowledge_base_ids,
             query=query,
+            search_hints=search_hints,
             max_results=max_results,
             route_mode=route_mode,
             scope=scope
@@ -652,6 +654,9 @@ class RagRuntimeResolver:
 
         embedding_config = spec.get("embeddingConfig", {})
         dimensions = embedding_config.get("dimensions") if embedding_config else None
+        encoding_format = (
+            embedding_config.get("encoding_format") if embedding_config else None
+        )
         additional_input_modalities = normalize_additional_input_modalities(
             embedding_config.get("additional_input_modalities")
             if embedding_config
@@ -670,6 +675,7 @@ class RagRuntimeResolver:
                     custom_headers if isinstance(custom_headers, dict) else {}
                 ),
                 "dimensions": dimensions,
+                "encoding_format": encoding_format,
                 "additional_input_modalities": additional_input_modalities,
             },
         )
@@ -681,43 +687,12 @@ class RagRuntimeResolver:
         user_id: int,
         model_name: str,
         model_namespace: str,
-    ):
-        if model_namespace == "default":
-            model = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Model",
-                    Kind.name == model_name,
-                    Kind.namespace == model_namespace,
-                    Kind.is_active.is_(True),
-                )
-                .filter((Kind.user_id == user_id) | (Kind.user_id == 0))
-                .order_by(Kind.user_id.desc())
-                .first()
-            )
-            return model or get_referenced_capability(
-                db,
-                kind="Model",
-                name=model_name,
-                user_id=user_id,
-                namespace=model_namespace,
-            )
-        model = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Model",
-                Kind.name == model_name,
-                Kind.namespace == model_namespace,
-                Kind.is_active.is_(True),
-            )
-            .first()
-        )
-        return model or get_referenced_capability(
+    ) -> Kind | None:
+        return resolve_model_kind(
             db,
-            kind="Model",
             name=model_name,
-            user_id=user_id,
             namespace=model_namespace,
+            user_id=user_id,
         )
 
     def _decrypt_optional_secret(self, value: Any) -> Any:

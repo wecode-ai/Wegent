@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Project robot queue execution records.
+"""Wework project task execution records.
 
 The queue is a derived view over `loop_item_executions`: any row in a
 non-terminal state is part of the queue. This service owns the run lifecycle
@@ -13,7 +13,7 @@ multi-worker cloud dispatchers never double-claim a run.
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -28,8 +28,20 @@ from app.models.delivery import (
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
 )
+from app.models.kind import Kind
 from app.models.loop_item_execution import EPOCH_TIME, LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage, project_chat_message_key
+from app.models.user import User
+from app.services.loop_item_executions.profile import (
+    WeworkExecutionProfile,
+    WeworkExecutionProfileError,
+    validate_wework_execution_target,
+)
+from app.services.project_automation_domain import (
+    TERMINAL_RUN_STATUSES,
+    assignment_mode,
+    manager_type,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +56,25 @@ class TaskContext:
     description: str
     status: str | None
     priority: str | None
+    parent_id: str | None = None
+    tags: list[str] = field(default_factory=list)
+    assignee_user_id: int | None = None
+    assignee_agent_id: str | None = None
+    assignee_team_id: int | None = None
+
+    def to_context(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+class WeworkRuntimeConfigurationError(RuntimeError):
+    """The execution intent cannot be materialized on its selected target."""
 
 
 STATUS_PENDING_APPROVAL = "pending_approval"
 STATUS_QUEUED = "queued"
 STATUS_CLAIMED = "claimed"
 STATUS_RUNNING = "running"
+STATUS_CANCEL_REQUESTED = "cancel_requested"
 STATUS_COMPLETED = "completed"
 STATUS_FAILED = "failed"
 STATUS_CANCELLED = "cancelled"
@@ -60,7 +85,21 @@ ACTIVE_STATUSES = {
     STATUS_QUEUED,
     STATUS_CLAIMED,
     STATUS_RUNNING,
+    STATUS_CANCEL_REQUESTED,
 }
+CAPACITY_STATUSES = {STATUS_CLAIMED, STATUS_RUNNING, STATUS_CANCEL_REQUESTED}
+
+OBSERVED_UNCONFIRMED = "unconfirmed"
+OBSERVED_ACCEPTED = "accepted"
+OBSERVED_RUNNING = "running"
+OBSERVED_SUCCEEDED = "succeeded"
+OBSERVED_FAILED = "failed"
+OBSERVED_CANCELLED = "cancelled"
+
+SYNC_PENDING = "pending"
+SYNC_IN_SYNC = "in_sync"
+SYNC_STALE = "stale"
+SYNC_DIVERGED = "diverged"
 
 # Canonical runtime task identity. The backend owns the name so every channel
 # (cloud RPC, local App puller) reports the same task id and events always
@@ -72,6 +111,23 @@ def runtime_task_id_for(execution_id: int) -> str:
     """Return the canonical runtime task id for one execution."""
 
     return f"{RUNTIME_TASK_ID_PREFIX}-{execution_id}"
+
+
+def execution_scope_for(
+    *,
+    loop_item_id: str,
+    agent_id: str,
+    team_id: int | None = None,
+    automation_run_id: str,
+) -> str:
+    """Return the concurrency and retry scope for one execution attempt."""
+
+    if agent_id:
+        return f"project_robot:{loop_item_id}"
+    if team_id:
+        return f"wegent_team:{loop_item_id}"
+    manager_identity = automation_run_id or loop_item_id
+    return f"automation_manager:{manager_identity}"
 
 
 PRIORITY_WEIGHTS = {
@@ -105,6 +161,219 @@ def priority_weight(priority: Optional[str]) -> int:
     return PRIORITY_WEIGHTS.get(priority or "none", 0)
 
 
+def execution_display_state(execution: LoopItemExecution) -> str:
+    """Return the single user-facing state derived from execution truth."""
+
+    if execution.status == STATUS_COMPLETED:
+        return "succeeded"
+    if execution.status in {STATUS_FAILED, STATUS_CANCELLED}:
+        return execution.status
+    if execution.sync_state in {SYNC_STALE, SYNC_DIVERGED}:
+        return "unknown"
+    if execution.status == STATUS_PENDING_APPROVAL:
+        return "waiting_approval"
+    if execution.status == STATUS_QUEUED:
+        return "queued"
+    if execution.status == STATUS_CANCEL_REQUESTED:
+        return "cancelling"
+    if execution.status == STATUS_CLAIMED:
+        return (
+            "starting"
+            if execution.observed_state == OBSERVED_UNCONFIRMED
+            else "waiting_runtime"
+        )
+    if (
+        execution.status == STATUS_RUNNING
+        and execution.observed_state == OBSERVED_RUNNING
+    ):
+        return "running"
+    return "waiting_runtime"
+
+
+def execution_ai_state(
+    db: Session,
+    execution: LoopItemExecution,
+    *,
+    existing: object = None,
+) -> dict[str, object] | None:
+    """Project task AI metadata from the authoritative execution attempt.
+
+    Message identifiers and prompts remain useful presentation context, but
+    their cached status and Runtime address must never override the newest
+    execution row.
+    """
+
+    if execution.status == STATUS_PENDING_APPROVAL:
+        return None
+    state = dict(existing) if isinstance(existing, dict) else {}
+    agent = db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
+    team = db.get(Kind, execution.team_id) if execution.team_id else None
+
+    def iso(value: datetime) -> str | None:
+        optional = _optional_datetime(value)
+        return optional.isoformat() if optional is not None else None
+
+    state.update(
+        {
+            "run_id": state.get("run_id") or f"exec-{execution.id}",
+            "status": execution_display_state(execution),
+            "agent_id": execution.agent_id or None,
+            "team_id": execution.team_id or None,
+            "agent_name": (
+                "AI 托管"
+                if execution.executor_type == "automation_manager"
+                else (
+                    team.name
+                    if execution.executor_type == "wegent_team" and team is not None
+                    else ((agent.title or agent.name) if agent is not None else None)
+                )
+            ),
+            "runtime_device_id": execution.runtime_device_id or None,
+            "runtime_task_id": execution.runtime_task_id or None,
+            "started_at": iso(execution.started_at),
+            "heartbeat_at": iso(execution.heartbeat_at),
+            "lease_expires_at": iso(execution.lease_expires_at),
+            "completed_at": iso(execution.completed_at),
+            "updated_at": iso(execution.updated_at),
+            "last_error": execution.error_message or None,
+        }
+    )
+    return state
+
+
+def _occupied_execution_scopes(db: Session) -> set[str]:
+    """Return scopes whose previous attempt may still own a Runtime process."""
+
+    return {
+        scope
+        for (scope,) in db.query(LoopItemExecution.execution_scope)
+        .filter(
+            LoopItemExecution.status.in_(CAPACITY_STATUSES),
+            LoopItemExecution.execution_scope != "",
+        )
+        .all()
+    }
+
+
+def _runtime_capacity_used(
+    db: Session,
+    *,
+    owner_user_id: int,
+    runtime_instance_id: str,
+    runtime_active: int,
+    runtime_active_task_ids: set[str] | frozenset[str],
+) -> int | None:
+    """Combine Runtime truth with durable reservations without double-counting."""
+
+    ambiguous = (
+        db.query(LoopItemExecution.id)
+        .filter(
+            LoopItemExecution.executor_owner_user_id == owner_user_id,
+            LoopItemExecution.status.in_(CAPACITY_STATUSES),
+            LoopItemExecution.runtime_instance_id == "",
+        )
+        .first()
+    )
+    if ambiguous is not None:
+        return None
+    durable_task_ids = [
+        str(runtime_task_id or "")
+        for (runtime_task_id,) in db.query(LoopItemExecution.runtime_task_id)
+        .filter(
+            LoopItemExecution.executor_owner_user_id == owner_user_id,
+            LoopItemExecution.runtime_instance_id == runtime_instance_id,
+            LoopItemExecution.status.in_(CAPACITY_STATUSES),
+        )
+        .all()
+    ]
+    pending_reservations = sum(
+        1
+        for runtime_task_id in durable_task_ids
+        if not runtime_task_id or runtime_task_id not in runtime_active_task_ids
+    )
+    return runtime_active + pending_reservations
+
+
+def _active_agent_counts(db: Session) -> dict[str, int]:
+    return {
+        str(agent_id): int(count)
+        for agent_id, count in db.query(
+            LoopItemExecution.agent_id,
+            func.count(LoopItemExecution.id),
+        )
+        .filter(
+            LoopItemExecution.status.in_(CAPACITY_STATUSES),
+            LoopItemExecution.agent_id != "",
+        )
+        .group_by(LoopItemExecution.agent_id)
+        .all()
+    }
+
+
+def _agent_limits(db: Session, agent_ids: set[str]) -> dict[str, int]:
+    if not agent_ids:
+        return {}
+    from app.services.project_chat.service import bot_max_concurrent_executions
+
+    return {
+        row.id: bot_max_concurrent_executions(row)
+        for row in db.query(ProjectChatAgent)
+        .filter(ProjectChatAgent.id.in_(agent_ids))
+        .all()
+    }
+
+
+def _agent_has_capacity(
+    agent_id: str,
+    *,
+    active_counts: dict[str, int],
+    claimed_counts: dict[str, int],
+    limits: dict[str, int],
+) -> bool:
+    if not agent_id:
+        return True
+    return active_counts.get(agent_id, 0) + claimed_counts.get(
+        agent_id, 0
+    ) < limits.get(agent_id, 1)
+
+
+def _fair_single_candidate(
+    rows: list[LoopItemExecution],
+    *,
+    occupied_scopes: set[str],
+    active_counts: dict[str, int],
+    limits: dict[str, int],
+) -> LoopItemExecution | None:
+    """Pick FIFO per agent and least-active agent within the top priority."""
+
+    for priority in sorted({row.priority_weight for row in rows}, reverse=True):
+        first_by_agent: dict[str, LoopItemExecution] = {}
+        for row in rows:
+            if row.priority_weight != priority:
+                continue
+            if not _agent_has_capacity(
+                row.agent_id,
+                active_counts=active_counts,
+                claimed_counts={},
+                limits=limits,
+            ):
+                continue
+            if row.execution_scope and row.execution_scope in occupied_scopes:
+                continue
+            key = row.agent_id or f"automation:{row.id}"
+            first_by_agent.setdefault(key, row)
+        if first_by_agent:
+            candidates = list(first_by_agent.values())
+            return min(
+                enumerate(candidates),
+                key=lambda item: (
+                    active_counts.get(item[1].agent_id, 0),
+                    item[0],
+                ),
+            )[1]
+    return None
+
+
 def utcnow() -> datetime:
     """Naive UTC timestamp matching the loop_items convention."""
 
@@ -112,7 +381,7 @@ def utcnow() -> datetime:
 
 
 class LoopItemExecutionService:
-    """Lifecycle and claiming operations for robot queue runs."""
+    """Lifecycle, profile compilation, and claiming for Wework executions."""
 
     # ------------------------------------------------------------------
     # Creation and approval
@@ -129,6 +398,8 @@ class LoopItemExecutionService:
         environment: str,
         execution_device_id: Optional[str],
         priority: Optional[str],
+        automation_context: dict[str, Any] | None = None,
+        instruction: str | None = None,
     ) -> LoopItemExecution:
         """Create a run row when a task is assigned to a robot.
 
@@ -138,26 +409,197 @@ class LoopItemExecutionService:
 
         from app.services.project_chat.service import bot_config
 
+        inferred_context, _ = self._task_automation_context(db, loop_item_id)
+        effective_context = (
+            dict(automation_context)
+            if automation_context is not None
+            else inferred_context
+        )
         mode = str(bot_config(agent).get("execution_mode") or "auto")
+        config = bot_config(agent)
+        runtime = str(config.get("runtime") or "codex")
+        team_id = int(config["wegent_team_id"]) if runtime == "wegent" else None
+        return self._enqueue(
+            db,
+            loop_item_id=loop_item_id,
+            cloud_project_id=cloud_project_id,
+            executor_type="project_robot",
+            owner_user_id=int(agent.created_by_user_id or 0),
+            agent_id=agent.id,
+            team_id=team_id,
+            assigner_user_id=assigner_user_id,
+            environment="wegent" if runtime == "wegent" else environment,
+            execution_device_id=None if runtime == "wegent" else execution_device_id,
+            priority=priority,
+            automation_context=effective_context,
+            requires_approval=mode == "manual_approval",
+        )
+
+    def create_for_team_assignment(
+        self,
+        db: Session,
+        *,
+        loop_item_id: str,
+        cloud_project_id: str,
+        team: Kind,
+        assigner_user_id: int,
+        priority: str | None,
+    ) -> LoopItemExecution:
+        """Create the authoritative run for a Wegent Team assignment."""
+
+        return self._enqueue(
+            db,
+            loop_item_id=loop_item_id,
+            cloud_project_id=cloud_project_id,
+            executor_type="wegent_team",
+            owner_user_id=assigner_user_id,
+            agent_id="",
+            team_id=team.id,
+            assigner_user_id=assigner_user_id,
+            environment="managed",
+            execution_device_id=None,
+            priority=priority,
+            automation_context=None,
+            requires_approval=False,
+        )
+
+    def enqueue_automation_manager(
+        self,
+        db: Session,
+        *,
+        loop_item_id: str,
+        cloud_project_id: str,
+        owner_user_id: int,
+        assigner_user_id: int,
+        environment: str,
+        execution_device_id: str | None,
+        priority: str | None,
+        automation_context: dict[str, Any] | None = None,
+        requires_approval: bool = False,
+    ) -> LoopItemExecution:
+        """Queue a custom AI manager on the ordinary Wework transport."""
+
+        return self._enqueue(
+            db,
+            loop_item_id=loop_item_id,
+            cloud_project_id=cloud_project_id,
+            executor_type="automation_manager",
+            owner_user_id=owner_user_id,
+            agent_id="",
+            team_id=None,
+            assigner_user_id=assigner_user_id,
+            environment=environment,
+            execution_device_id=execution_device_id,
+            priority=priority,
+            automation_context=automation_context,
+            requires_approval=requires_approval,
+        )
+
+    def _enqueue(
+        self,
+        db: Session,
+        *,
+        loop_item_id: str,
+        cloud_project_id: str,
+        executor_type: str,
+        owner_user_id: int,
+        agent_id: str,
+        team_id: int | None,
+        assigner_user_id: int,
+        environment: str,
+        execution_device_id: str | None,
+        priority: str | None,
+        automation_context: dict[str, Any] | None,
+        requires_approval: bool,
+    ) -> LoopItemExecution:
+        """Persist queue identity; runtime configuration stays canonical."""
+
+        # Project robots keep the shipped assignment semantics: their target
+        # is validated when the robot is configured, and legacy local targets
+        # may be represented by the App rather than a backend device row.
+        # A custom manager has no robot entity, so the rule target is
+        # its only source of truth and must be validated here as well as when
+        # the rule is saved.
+        if executor_type == "automation_manager":
+            validate_wework_execution_target(
+                db,
+                user_id=owner_user_id,
+                environment=environment,
+                execution_device_id=execution_device_id,
+            )
+        task = self.resolve_task_context(
+            db,
+            execution=LoopItemExecution(
+                loop_item_id=loop_item_id,
+                cloud_project_id=cloud_project_id,
+            ),
+            user_id=owner_user_id,
+        )
+        if task is None:
+            raise ValueError(f"Wework execution task '{loop_item_id}' is unavailable")
+        context = dict(automation_context or {})
+        run_id_value = context.get("run_id")
+        automation_run_id = (
+            str(run_id_value) if isinstance(run_id_value, (str, int)) else ""
+        )
+        execution_scope = execution_scope_for(
+            loop_item_id=loop_item_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            automation_run_id=automation_run_id,
+        )
+        previous = (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.execution_scope == execution_scope)
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
         now = utcnow()
         row = LoopItemExecution(
             loop_item_id=loop_item_id,
             cloud_project_id=cloud_project_id,
-            agent_id=agent.id,
+            executor_owner_user_id=owner_user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            automation_run_id=automation_run_id,
             execution_environment=environment,
             execution_device_id=execution_device_id or "",
             assigner_user_id=assigner_user_id,
-            status=(
-                STATUS_PENDING_APPROVAL if mode == "manual_approval" else STATUS_QUEUED
-            ),
+            status=STATUS_PENDING_APPROVAL if requires_approval else STATUS_QUEUED,
             priority_weight=priority_weight(priority),
             queued_at=now,
             max_retries=DEFAULT_MAX_RETRIES,
-            approval_status=("pending" if mode == "manual_approval" else ""),
+            approval_status="pending" if requires_approval else "",
+            execution_note="",
+            attempt_no=(previous.attempt_no + 1 if previous is not None else 1),
+            previous_execution_id=(previous.id if previous is not None else 0),
+            execution_scope=execution_scope,
+            observed_state=OBSERVED_UNCONFIRMED,
+            sync_state=SYNC_PENDING,
         )
         db.add(row)
         db.flush()
+        row.runtime_task_id = runtime_task_id_for(row.id)
+        self._set_automation_run_status(
+            db, row, "pending" if requires_approval else "queued"
+        )
+        db.flush()
         return row
+
+    @staticmethod
+    def _task_automation_context(
+        db: Session, loop_item_id: str
+    ) -> tuple[dict[str, Any], str | None]:
+        item = db.get(LoopItem, loop_item_id)
+        metadata = (
+            item.metadata_json if item and isinstance(item.metadata_json, dict) else {}
+        )
+        automation = metadata.get("automation")
+        if not isinstance(automation, dict):
+            return {}, None
+        context = dict(automation)
+        instruction = context.pop("prompt", None)
+        return context, str(instruction) if isinstance(instruction, str) else None
 
     def approve(
         self, db: Session, *, execution_id: int, user_id: int
@@ -183,6 +625,56 @@ class LoopItemExecutionService:
         db.refresh(row)
         return row
 
+    def mark_managed_running(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        backend_task_id: int,
+    ) -> LoopItemExecution:
+        """Record that the ordinary Wegent Team pipeline accepted a board run."""
+
+        now = utcnow()
+        updated = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.id == execution_id,
+                LoopItemExecution.team_id > 0,
+                LoopItemExecution.status == STATUS_QUEUED,
+            )
+            .update(
+                {
+                    "status": STATUS_RUNNING,
+                    "backend_task_id": backend_task_id,
+                    "started_at": now,
+                    "observed_state": OBSERVED_RUNNING,
+                    "sync_state": SYNC_IN_SYNC,
+                    "observed_at": now,
+                    "heartbeat_at": now,
+                    "version": LoopItemExecution.version + 1,
+                },
+                synchronize_session=False,
+            )
+        )
+        if updated != 1:
+            db.rollback()
+            current = db.get(LoopItemExecution, execution_id)
+            if current is None:
+                raise RuntimeError("Board Team execution disappeared")
+            return current
+        activity = self._linked_activity(db, db.get(LoopItemExecution, execution_id))
+        if activity is not None:
+            activity.status = "streaming"
+            metadata = dict(activity.metadata_json or {})
+            activity.metadata_json = {**metadata, "run_status": "running"}
+        db.commit()
+        db.expire_all()
+        row = db.get(LoopItemExecution, execution_id)
+        if row is None:
+            raise RuntimeError("Board Team execution disappeared")
+        self._push_activity_after_commit(db, activity)
+        return row
+
     def reject(
         self,
         db: Session,
@@ -206,6 +698,19 @@ class LoopItemExecutionService:
             reason or "Robot creator rejected the run"
         )
         row.completed_at = now
+        row.observed_state = OBSERVED_CANCELLED
+        row.sync_state = SYNC_IN_SYNC
+        row.observed_at = now
+        row.termination_reason = "approval_rejected"
+        self._apply_terminal_projection(
+            db,
+            execution=row,
+            terminal_status=STATUS_CANCELLED,
+            content=reason or "AI execution was rejected.",
+            error=reason,
+            summary_note=reason or "Robot creator rejected the run",
+            completed_at=now,
+        )
         # Same transaction rule as approve: the caller owns the commit so a
         # concurrent version conflict cannot leave a half-applied rejection.
         db.flush()
@@ -213,24 +718,131 @@ class LoopItemExecutionService:
         return row
 
     def cancel(
-        self, db: Session, *, execution_id: int, note: Optional[str] = None
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        note: Optional[str] = None,
+        commit: bool = True,
+        expected_status: Optional[str] = None,
+        expected_version: Optional[int] = None,
     ) -> LoopItemExecution:
-        """Cancel a run that is queued or stuck (for example on unassign)."""
+        """Request cancellation and terminalize only when no process can exist.
+
+        A delivered Start or a Runtime-observed process remains
+        ``cancel_requested`` until Runtime confirms that it stopped. This keeps
+        reassignment and user cancellation from manufacturing a terminal fact.
+        """
 
         row = db.get(LoopItemExecution, execution_id)
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
         if row.status in TERMINAL_STATUSES:
             return row
+        if expected_status is not None and row.status != expected_status:
+            return row
+        if expected_version is not None and row.version != expected_version:
+            return row
+        start_was_delivered = not loop_datetime_value_is_unset(row.start_requested_at)
+        if row.status in {STATUS_PENDING_APPROVAL, STATUS_QUEUED} or (
+            row.status == STATUS_CLAIMED and not start_was_delivered
+        ):
+            terminal = self._transition_terminal(
+                db,
+                execution_id=execution_id,
+                terminal_status=STATUS_CANCELLED,
+                note=note,
+                content=note or "AI execution was cancelled.",
+                error=note,
+                commit=commit,
+                expected_status=row.status,
+                expected_version=row.version,
+                observed_state=OBSERVED_CANCELLED,
+                observed_at=utcnow(),
+                termination_reason="cancelled_before_start",
+            )
+            if terminal is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
+            return terminal
+
         now = utcnow()
-        row.status = STATUS_CANCELLED
-        row.completed_at = now
-        if note:
-            row.execution_note = self._execution_note(note)
-        db.commit()
-        self._finish_project_automation_run(db, row.loop_item_id, "cancelled", note)
-        db.refresh(row)
-        return row
+        updated = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.id == execution_id,
+                LoopItemExecution.status.in_({STATUS_CLAIMED, STATUS_RUNNING}),
+                LoopItemExecution.version == row.version,
+            )
+            .update(
+                {
+                    "status": STATUS_CANCEL_REQUESTED,
+                    "cancel_requested_at": now,
+                    "sync_state": SYNC_PENDING,
+                    "execution_note": self._execution_note(
+                        note or "Runtime cancellation requested"
+                    ),
+                    "version": LoopItemExecution.version + 1,
+                },
+                synchronize_session=False,
+            )
+        )
+        if updated != 1:
+            if commit:
+                db.rollback()
+            current = db.get(LoopItemExecution, execution_id)
+            if current is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
+            return current
+        if commit:
+            db.commit()
+        else:
+            db.flush()
+        db.expire_all()
+        current = db.get(LoopItemExecution, execution_id)
+        if current is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
+        if commit:
+            self.open_execution_activity(db, execution=current)
+            db.refresh(current)
+        return current
+
+    def confirm_runtime_cancelled(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        note: Optional[str] = None,
+        commit: bool = True,
+    ) -> Optional[LoopItemExecution]:
+        """Commit cancellation after Runtime's stop ACK or cancelled event."""
+
+        current = db.get(LoopItemExecution, execution_id)
+        if current is not None and current.termination_reason == "stall_timeout":
+            return self._transition_terminal(
+                db,
+                execution_id=execution_id,
+                terminal_status=STATUS_FAILED,
+                note=note or current.execution_note,
+                content=current.execution_note or "Runtime execution stalled",
+                error=current.execution_note or "Runtime execution stalled",
+                expected_status=STATUS_CANCEL_REQUESTED,
+                observed_state=OBSERVED_CANCELLED,
+                observed_at=utcnow(),
+                termination_reason="stall_timeout",
+                commit=commit,
+            )
+        return self._transition_terminal(
+            db,
+            execution_id=execution_id,
+            terminal_status=STATUS_CANCELLED,
+            note=note,
+            content=note or "AI execution was cancelled.",
+            expected_status=STATUS_CANCEL_REQUESTED,
+            observed_state=OBSERVED_CANCELLED,
+            observed_at=utcnow(),
+            termination_reason="runtime_cancel_acknowledged",
+            commit=commit,
+        )
 
     # ------------------------------------------------------------------
     # Capacity-gated claiming
@@ -243,8 +855,12 @@ class LoopItemExecutionService:
         agent_id: str,
         execution_device_id: str,
         environment: str,
+        owner_user_id: int,
+        runtime_instance_id: str,
+        device_capacity: int,
+        runtime_active: int,
+        runtime_active_task_ids: set[str] | frozenset[str],
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
-        device_capacity: int = 1,
         assigner_filter: Optional[int] = None,
     ) -> Optional[LoopItemExecution]:
         """Atomically claim the next queued run for one robot on one device.
@@ -255,32 +871,29 @@ class LoopItemExecutionService:
         below keeps a single claim atomic even without it.
         """
 
-        running_count = (
-            db.query(func.count(LoopItemExecution.id))
-            .filter(
-                LoopItemExecution.execution_device_id == execution_device_id,
-                LoopItemExecution.execution_environment == environment,
-                LoopItemExecution.status == STATUS_RUNNING,
-            )
-            .scalar()
-            or 0
+        running_count = _runtime_capacity_used(
+            db,
+            owner_user_id=owner_user_id,
+            runtime_instance_id=runtime_instance_id,
+            runtime_active=runtime_active,
+            runtime_active_task_ids=runtime_active_task_ids,
         )
-        if running_count >= device_capacity:
+        if running_count is None or running_count >= device_capacity:
             return None
-        already_running = (
-            db.query(LoopItemExecution.id)
-            .filter(
-                LoopItemExecution.agent_id == agent_id,
-                LoopItemExecution.status == STATUS_RUNNING,
-            )
-            .first()
-        )
-        if already_running is not None:
+        active_counts = _active_agent_counts(db)
+        limits = _agent_limits(db, {agent_id})
+        if not _agent_has_capacity(
+            agent_id,
+            active_counts=active_counts,
+            claimed_counts={},
+            limits=limits,
+        ):
             return None
 
         query = (
             db.query(LoopItemExecution)
             .filter(
+                LoopItemExecution.executor_owner_user_id == owner_user_id,
                 LoopItemExecution.agent_id == agent_id,
                 LoopItemExecution.execution_device_id == execution_device_id,
                 LoopItemExecution.execution_environment == environment,
@@ -291,12 +904,13 @@ class LoopItemExecutionService:
                 LoopItemExecution.queued_at.asc(),
                 LoopItemExecution.id.asc(),
             )
-            .limit(1)
         )
         if assigner_filter is not None:
             query = query.filter(LoopItemExecution.assigner_user_id == assigner_filter)
         candidate = query.first()
         if candidate is None:
+            return None
+        if candidate.execution_scope in _occupied_execution_scopes(db):
             return None
 
         now = utcnow()
@@ -308,10 +922,13 @@ class LoopItemExecutionService:
             )
             .update(
                 {
-                    "status": STATUS_RUNNING,
-                    "started_at": now,
+                    "status": STATUS_CLAIMED,
+                    "claimed_at": now,
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "runtime_device_id": execution_device_id,
+                    "runtime_instance_id": runtime_instance_id,
+                    "runtime_task_id": runtime_task_id_for(candidate.id),
                     "version": LoopItemExecution.version + 1,
                 }
             )
@@ -320,11 +937,6 @@ class LoopItemExecutionService:
         if claimed != 1:
             return None
         db.refresh(candidate)
-        self._persist_runtime_identity(
-            db,
-            execution=candidate,
-            runtime_device_id=execution_device_id,
-        )
         return candidate
 
     def claim_next_for_device(
@@ -333,8 +945,12 @@ class LoopItemExecutionService:
         *,
         execution_device_id: str,
         environment: str,
+        runtime_instance_id: str,
+        device_capacity: int,
+        runtime_active: int,
+        runtime_active_task_ids: set[str] | frozenset[str],
+        owner_user_id: int,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
-        device_capacity: int = 1,
     ) -> Optional[LoopItemExecution]:
         """Claim one queued run for any robot bound to a device.
 
@@ -343,47 +959,38 @@ class LoopItemExecutionService:
         capacity (each robot still runs one task at a time).
         """
 
-        running_count = (
-            db.query(func.count(LoopItemExecution.id))
-            .filter(
-                LoopItemExecution.execution_device_id == execution_device_id,
-                LoopItemExecution.execution_environment == environment,
-                LoopItemExecution.status == STATUS_RUNNING,
-            )
-            .scalar()
-            or 0
+        running_count = _runtime_capacity_used(
+            db,
+            owner_user_id=owner_user_id,
+            runtime_instance_id=runtime_instance_id,
+            runtime_active=runtime_active,
+            runtime_active_task_ids=runtime_active_task_ids,
         )
-        if running_count >= device_capacity:
+        if running_count is None or running_count >= device_capacity:
             return None
-        running_agents = {
-            agent_id
-            for (agent_id,) in db.query(LoopItemExecution.agent_id)
-            .filter(
-                LoopItemExecution.execution_device_id == execution_device_id,
-                LoopItemExecution.execution_environment == environment,
-                LoopItemExecution.status == STATUS_RUNNING,
-            )
-            .all()
-        }
-        candidate = (
+        query = (
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.execution_device_id == execution_device_id,
                 LoopItemExecution.execution_environment == environment,
                 LoopItemExecution.status == STATUS_QUEUED,
-                (
-                    LoopItemExecution.agent_id.notin_(running_agents)
-                    if running_agents
-                    else True
-                ),
             )
             .order_by(
                 LoopItemExecution.priority_weight.desc(),
                 LoopItemExecution.queued_at.asc(),
                 LoopItemExecution.id.asc(),
             )
-            .limit(1)
-            .first()
+        )
+        query = query.filter(LoopItemExecution.executor_owner_user_id == owner_user_id)
+        occupied_scopes = _occupied_execution_scopes(db)
+        active_counts = _active_agent_counts(db)
+        rows = query.all()
+        limits = _agent_limits(db, {row.agent_id for row in rows if row.agent_id})
+        candidate = _fair_single_candidate(
+            rows,
+            occupied_scopes=occupied_scopes,
+            active_counts=active_counts,
+            limits=limits,
         )
         if candidate is None:
             return None
@@ -396,10 +1003,13 @@ class LoopItemExecutionService:
             )
             .update(
                 {
-                    "status": STATUS_RUNNING,
-                    "started_at": now,
+                    "status": STATUS_CLAIMED,
+                    "claimed_at": now,
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "runtime_device_id": execution_device_id,
+                    "runtime_instance_id": runtime_instance_id,
+                    "runtime_task_id": runtime_task_id_for(candidate.id),
                     "version": LoopItemExecution.version + 1,
                 }
             )
@@ -408,11 +1018,6 @@ class LoopItemExecutionService:
         if claimed != 1:
             return None
         db.refresh(candidate)
-        self._persist_runtime_identity(
-            db,
-            execution=candidate,
-            runtime_device_id=execution_device_id,
-        )
         return candidate
 
     def claim_batch_for_device(
@@ -421,74 +1026,107 @@ class LoopItemExecutionService:
         *,
         execution_device_id: str,
         environment: str,
+        runtime_instance_id: str,
+        device_capacity: int,
+        runtime_active: int,
+        runtime_active_task_ids: set[str] | frozenset[str],
+        owner_user_id: int,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
-        device_capacity: int = 1,
         batch_size: int = 16,
     ) -> list[LoopItemExecution]:
         """Atomically claim a batch of queued runs for one device.
 
         The caller holds the per-device lock, so this is the single consumer
         path for a device. Runs move to `claimed` (taken but not yet handed to
-        the executor); `mark_running` advances them once the execution subtask
-        actually starts. Capacity is measured on `running` plus `claimed`
+        the executor); `mark_start_requested` records when the execution
+        subtask may deliver Start. Capacity includes every claimed or active run
         (already taken by this pass) so the device is never over-subscribed
         across consumers.
         """
 
-        occupied = (
-            db.query(func.count(LoopItemExecution.id))
-            .filter(
-                LoopItemExecution.execution_device_id == execution_device_id,
-                LoopItemExecution.execution_environment == environment,
-                LoopItemExecution.status.in_([STATUS_CLAIMED, STATUS_RUNNING]),
-            )
-            .scalar()
-            or 0
+        occupied = _runtime_capacity_used(
+            db,
+            owner_user_id=owner_user_id,
+            runtime_instance_id=runtime_instance_id,
+            runtime_active=runtime_active,
+            runtime_active_task_ids=runtime_active_task_ids,
         )
-        if occupied >= device_capacity:
+        if occupied is None or occupied >= device_capacity:
             return []
-        occupied_agents = {
-            agent_id
-            for (agent_id,) in db.query(LoopItemExecution.agent_id)
-            .filter(
-                LoopItemExecution.execution_device_id == execution_device_id,
-                LoopItemExecution.execution_environment == environment,
-                LoopItemExecution.status.in_([STATUS_CLAIMED, STATUS_RUNNING]),
-            )
-            .all()
-        }
-        candidates = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.execution_device_id == execution_device_id,
-                LoopItemExecution.execution_environment == environment,
-                LoopItemExecution.status == STATUS_QUEUED,
-                (
-                    LoopItemExecution.agent_id.notin_(occupied_agents)
-                    if occupied_agents
-                    else True
-                ),
-            )
-            .order_by(
-                LoopItemExecution.priority_weight.desc(),
-                LoopItemExecution.queued_at.asc(),
-                LoopItemExecution.id.asc(),
-            )
-            .limit(batch_size)
-            .all()
+        candidates = db.query(LoopItemExecution).filter(
+            LoopItemExecution.execution_device_id == execution_device_id,
+            LoopItemExecution.execution_environment == environment,
+            LoopItemExecution.status == STATUS_QUEUED,
         )
+        candidates = candidates.filter(
+            LoopItemExecution.executor_owner_user_id == owner_user_id
+        )
+        candidates = candidates.order_by(
+            LoopItemExecution.priority_weight.desc(),
+            LoopItemExecution.queued_at.asc(),
+            LoopItemExecution.id.asc(),
+        ).all()
         if not candidates:
             return []
-        slots = max(0, device_capacity - occupied)
+        slots = min(batch_size, max(0, device_capacity - occupied))
         claimable: list[int] = []
-        seen_agents: set[str] = set()
-        for candidate in candidates:
+        claimed_agent_counts: dict[str, int] = {}
+        seen_scopes: set[str] = set()
+        occupied_scopes = _occupied_execution_scopes(db)
+        active_counts = _active_agent_counts(db)
+        limits = _agent_limits(
+            db, {candidate.agent_id for candidate in candidates if candidate.agent_id}
+        )
+        priorities = sorted(
+            {candidate.priority_weight for candidate in candidates}, reverse=True
+        )
+        for priority in priorities:
+            queues: dict[str, list[LoopItemExecution]] = {}
+            for candidate in candidates:
+                if candidate.priority_weight != priority:
+                    continue
+                key = candidate.agent_id or f"automation:{candidate.id}"
+                queues.setdefault(key, []).append(candidate)
+            while queues and len(claimable) < slots:
+                progressed = False
+                for key in list(queues):
+                    queue = queues[key]
+                    selected = None
+                    while queue:
+                        candidate = queue.pop(0)
+                        if not _agent_has_capacity(
+                            candidate.agent_id,
+                            active_counts=active_counts,
+                            claimed_counts=claimed_agent_counts,
+                            limits=limits,
+                        ):
+                            queue.clear()
+                            break
+                        if candidate.execution_scope and (
+                            candidate.execution_scope in occupied_scopes
+                            or candidate.execution_scope in seen_scopes
+                        ):
+                            continue
+                        selected = candidate
+                        break
+                    if not queue:
+                        queues.pop(key, None)
+                    if selected is None:
+                        continue
+                    claimable.append(selected.id)
+                    if selected.agent_id:
+                        claimed_agent_counts[selected.agent_id] = (
+                            claimed_agent_counts.get(selected.agent_id, 0) + 1
+                        )
+                    if selected.execution_scope:
+                        seen_scopes.add(selected.execution_scope)
+                    progressed = True
+                    if len(claimable) >= slots:
+                        break
+                if not progressed:
+                    break
             if len(claimable) >= slots:
                 break
-            if candidate.agent_id in seen_agents:
-                continue
-            seen_agents.add(candidate.agent_id)
-            claimable.append(candidate.id)
         if not claimable:
             return []
         now = utcnow()
@@ -501,16 +1139,18 @@ class LoopItemExecutionService:
             .update(
                 {
                     "status": STATUS_CLAIMED,
-                    "started_at": now,
+                    "claimed_at": now,
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "runtime_instance_id": runtime_instance_id,
                     "version": LoopItemExecution.version + 1,
                 },
                 synchronize_session=False,
             )
         )
-        db.commit()
-        if updated == 0:
+        db.flush()
+        if updated != len(claimable):
+            db.rollback()
             return []
         db.expire_all()
         rows = (
@@ -518,23 +1158,111 @@ class LoopItemExecutionService:
             .filter(LoopItemExecution.id.in_(claimable))
             .all()
         )
+        for row in rows:
+            row.runtime_device_id = execution_device_id
+            row.runtime_task_id = runtime_task_id_for(row.id)
+        db.commit()
+        for row in rows:
+            db.refresh(row)
         by_id = {row.id: row for row in rows}
         return [
             by_id[execution_id] for execution_id in claimable if execution_id in by_id
         ]
 
-    def mark_running(
+    def claim_next_unbound_local(
+        self,
+        db: Session,
+        *,
+        owner_user_id: int,
+        execution_device_id: str,
+        runtime_instance_id: str,
+        device_capacity: int,
+        runtime_active: int,
+        runtime_active_task_ids: set[str] | frozenset[str],
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    ) -> Optional[LoopItemExecution]:
+        """Claim a legacy project-robot run without a persisted device binding."""
+
+        occupied = _runtime_capacity_used(
+            db,
+            owner_user_id=owner_user_id,
+            runtime_instance_id=runtime_instance_id,
+            runtime_active=runtime_active,
+            runtime_active_task_ids=runtime_active_task_ids,
+        )
+        if occupied is None or occupied >= device_capacity:
+            return None
+        candidates = (
+            db.query(LoopItemExecution)
+            .join(ProjectChatAgent, ProjectChatAgent.id == LoopItemExecution.agent_id)
+            .filter(
+                LoopItemExecution.executor_owner_user_id == owner_user_id,
+                LoopItemExecution.execution_environment == "local",
+                LoopItemExecution.status == STATUS_QUEUED,
+                or_(
+                    LoopItemExecution.execution_device_id.is_(None),
+                    LoopItemExecution.execution_device_id == "",
+                ),
+                ProjectChatAgent.created_by_user_id == owner_user_id,
+                ProjectChatAgent.status == "active",
+            )
+            .order_by(
+                LoopItemExecution.priority_weight.desc(),
+                LoopItemExecution.queued_at.asc(),
+                LoopItemExecution.id.asc(),
+            )
+            .all()
+        )
+        occupied_scopes = _occupied_execution_scopes(db)
+        active_counts = _active_agent_counts(db)
+        limits = _agent_limits(db, {row.agent_id for row in candidates if row.agent_id})
+        candidate = _fair_single_candidate(
+            candidates,
+            occupied_scopes=occupied_scopes,
+            active_counts=active_counts,
+            limits=limits,
+        )
+        if candidate is None:
+            return None
+
+        now = utcnow()
+        claimed = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.id == candidate.id,
+                LoopItemExecution.status == STATUS_QUEUED,
+            )
+            .update(
+                {
+                    "status": STATUS_CLAIMED,
+                    "execution_device_id": execution_device_id,
+                    "claimed_at": now,
+                    "heartbeat_at": now,
+                    "lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "runtime_device_id": execution_device_id,
+                    "runtime_instance_id": runtime_instance_id,
+                    "runtime_task_id": runtime_task_id_for(candidate.id),
+                    "version": LoopItemExecution.version + 1,
+                }
+            )
+        )
+        db.commit()
+        if claimed != 1:
+            return None
+        db.refresh(candidate)
+        return candidate
+
+    def mark_start_requested(
         self,
         db: Session,
         *,
         execution_ids: list[int],
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ) -> int:
-        """Advance claimed runs to running once their execution has started.
+        """Record that a Runtime start command may now be delivered.
 
-        Returns the number of runs actually advanced. A run that was already
-        reclaimed by the lease watchdog (back to queued) or cancelled is left
-        untouched, so the caller must not start a runtime task for it.
+        The row stays claimed. Only a Runtime event or a trusted Runtime status
+        query may prove that the process is running.
         """
 
         if not execution_ids:
@@ -545,10 +1273,11 @@ class LoopItemExecutionService:
             .filter(
                 LoopItemExecution.id.in_(execution_ids),
                 LoopItemExecution.status == STATUS_CLAIMED,
+                loop_datetime_is_unset(LoopItemExecution.start_requested_at),
             )
             .update(
                 {
-                    "status": STATUS_RUNNING,
+                    "start_requested_at": now,
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
                     "version": LoopItemExecution.version + 1,
@@ -556,96 +1285,169 @@ class LoopItemExecutionService:
                 synchronize_session=False,
             )
         )
+        db.flush()
+        if updated:
+            db.expire_all()
+            executions = (
+                db.query(LoopItemExecution)
+                .filter(
+                    LoopItemExecution.id.in_(execution_ids),
+                    LoopItemExecution.status == STATUS_CLAIMED,
+                )
+                .all()
+            )
+            for execution in executions:
+                self._bind_workflow_stage_task(db, execution=execution)
         db.commit()
         return updated
 
-    def claim_next_unbound_local(
+    def _bind_workflow_stage_task(
         self,
         db: Session,
         *,
-        creator_user_id: int,
-        execution_device_id: str,
-        lease_seconds: int = DEFAULT_LEASE_SECONDS,
-    ) -> Optional[LoopItemExecution]:
-        """Claim the next queued local run whose robot has no bound device.
+        execution: LoopItemExecution,
+    ) -> None:
+        """Create the stage TaskBinding before Runtime delivery."""
 
-        Robots created before device binding existed have an empty
-        execution_device_id; they run on any of the creator's local devices.
-        The claim binds the device so future capacity accounting is stable.
-        """
-
-        from app.models.delivery import ProjectChatAgent
-
-        candidate = (
-            db.query(LoopItemExecution)
-            .join(ProjectChatAgent, ProjectChatAgent.id == LoopItemExecution.agent_id)
-            .filter(
-                ProjectChatAgent.created_by_user_id == creator_user_id,
-                ProjectChatAgent.status == "active",
-                LoopItemExecution.execution_environment == "local",
-                LoopItemExecution.status == STATUS_QUEUED,
-                or_(
-                    LoopItemExecution.execution_device_id.is_(None),
-                    LoopItemExecution.execution_device_id == "",
-                ),
-            )
-            .order_by(
-                LoopItemExecution.priority_weight.desc(),
-                LoopItemExecution.queued_at.asc(),
-                LoopItemExecution.id.asc(),
-            )
-            .limit(1)
-            .first()
+        if (
+            execution.executor_type != "project_robot"
+            or not execution.runtime_device_id
+            or not execution.runtime_task_id
+        ):
+            return
+        run, _ = self._automation_run_and_rule(db, execution)
+        metadata = (
+            run.metadata_json
+            if run is not None and isinstance(run.metadata_json, dict)
+            else {}
         )
-        if candidate is None:
-            return None
-        now = utcnow()
-        claimed = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.id == candidate.id,
-                LoopItemExecution.status == STATUS_QUEUED,
-            )
-            .update(
-                {
-                    "status": STATUS_RUNNING,
-                    "execution_device_id": execution_device_id,
-                    "started_at": now,
-                    "heartbeat_at": now,
-                    "lease_expires_at": now + timedelta(seconds=lease_seconds),
-                    "version": LoopItemExecution.version + 1,
-                }
-            )
+        snapshot = metadata.get("workflow_stage_input")
+        if not isinstance(snapshot, dict):
+            return
+        target = snapshot.get("target_stage")
+        workflow_node_id = (
+            str(target.get("id") or "") if isinstance(target, dict) else ""
         )
-        db.commit()
-        if claimed != 1:
-            return None
-        db.refresh(candidate)
-        self._persist_runtime_identity(
+        if not workflow_node_id:
+            raise WeworkRuntimeConfigurationError(
+                "Workflow stage execution has no target stage"
+            )
+        item = db.get(LoopItem, execution.loop_item_id)
+        if item is None:
+            raise WeworkRuntimeConfigurationError(
+                "Workflow stage execution task is unavailable"
+            )
+        from app.schemas.delivery import LoopItemTaskBind
+        from app.services.loop_items.service import loop_item_service
+
+        loop_item_service.bind_execution_task(
             db,
-            execution=candidate,
-            runtime_device_id=execution_device_id,
+            item_id=item.id,
+            values=LoopItemTaskBind(
+                deviceId=execution.runtime_device_id,
+                taskId=execution.runtime_task_id,
+                taskTitle=item.title or "",
+                backendTaskId=execution.backend_task_id or None,
+                workflowNodeId=workflow_node_id,
+            ),
+            user_id=execution.executor_owner_user_id,
+            stage_snapshot=snapshot,
+            commit=False,
         )
-        return candidate
 
-    @staticmethod
-    def _persist_runtime_identity(
+    def request_runtime_start(
+        self,
         db: Session,
         *,
-        execution: LoopItemExecution,
+        execution_id: int,
         runtime_device_id: str,
-    ) -> None:
-        """Bind the canonical runtime task identity before the executor runs.
+        runtime_task_id: str,
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    ) -> Optional[LoopItemExecution]:
+        """Fence one App-originated Runtime create before delivery.
 
-        The runtime task id is derived from the execution id and stored on the
-        row at claim time, so runtime events can match the execution even when
-        they arrive before the transport reports the created task.
+        A persisted ``start_requested_at`` separates a claim that is safe to
+        return to the queue from a create request that may already have reached
+        Runtime. The latter must be reconciled, never guessed or redelivered.
         """
 
-        execution.runtime_device_id = runtime_device_id
-        execution.runtime_task_id = runtime_task_id_for(execution.id)
-        db.commit()
-        db.refresh(execution)
+        row = db.get(LoopItemExecution, execution_id)
+        if row is None or row.status != STATUS_CLAIMED:
+            return None
+        if runtime_task_id != runtime_task_id_for(row.id):
+            return None
+        if row.runtime_device_id not in {"", runtime_device_id}:
+            return None
+        updated = self.mark_start_requested(
+            db,
+            execution_ids=[execution_id],
+            lease_seconds=lease_seconds,
+        )
+        if updated != 1:
+            return None
+        db.expire_all()
+        return db.get(LoopItemExecution, execution_id)
+
+    def report_runtime_dispatch_unknown(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        runtime_device_id: str,
+        runtime_task_id: str,
+        error: str,
+    ) -> Optional[LoopItemExecution]:
+        """Preserve capacity when an App-originated create has no known result.
+
+        Once delivery intent exists, a missing response cannot distinguish a
+        rejected request from a lost acceptance response. The execution stays
+        claimed and becomes stale so reconciliation, not redelivery, decides.
+        """
+
+        row = db.get(LoopItemExecution, execution_id)
+        if row is None:
+            return None
+        if (
+            row.status != STATUS_CLAIMED
+            or loop_datetime_value_is_unset(row.start_requested_at)
+            or row.runtime_device_id != runtime_device_id
+            or row.runtime_task_id != runtime_task_id
+        ):
+            return row
+        return self.mark_dispatch_unknown(
+            db,
+            execution_id=execution_id,
+            error=error,
+        )
+
+    def fail_runtime_preflight(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        error: str,
+        note: Optional[str] = None,
+    ) -> Optional[LoopItemExecution]:
+        """Fail only while Runtime delivery is provably impossible."""
+
+        row = db.get(LoopItemExecution, execution_id)
+        if row is None:
+            return None
+        if (
+            row.status != STATUS_CLAIMED
+            or not loop_datetime_value_is_unset(row.start_requested_at)
+            or row.observed_state != OBSERVED_UNCONFIRMED
+        ):
+            return row
+        return self.fail(
+            db,
+            execution_id=row.id,
+            error=error,
+            note=note or "runtime_preflight_failed",
+            requeue=False,
+            expected_status=STATUS_CLAIMED,
+            expected_version=row.version,
+        )
 
     # ------------------------------------------------------------------
     # Runtime write-back
@@ -660,10 +1462,29 @@ class LoopItemExecutionService:
         runtime_task_id: Optional[str] = None,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ) -> Optional[LoopItemExecution]:
-        """Extend the lease of a running execution."""
+        """Extend the control-plane lease without asserting Runtime liveness."""
 
         row = db.get(LoopItemExecution, execution_id)
-        if row is None or row.status != STATUS_RUNNING:
+        if row is None or row.status not in CAPACITY_STATUSES:
+            return None
+        expected_task_id = runtime_task_id_for(row.id)
+        if runtime_task_id and runtime_task_id != expected_task_id:
+            logger.warning(
+                "[LoopItemExecution] Rejected heartbeat Runtime identity mismatch "
+                "execution=%s expected=%s incoming=%s",
+                row.id,
+                expected_task_id,
+                runtime_task_id,
+            )
+            return None
+        if runtime_device_id and row.runtime_device_id not in {"", runtime_device_id}:
+            logger.warning(
+                "[LoopItemExecution] Rejected heartbeat device mismatch "
+                "execution=%s expected=%s incoming=%s",
+                row.id,
+                row.runtime_device_id,
+                runtime_device_id,
+            )
             return None
         now = utcnow()
         row.heartbeat_at = now
@@ -671,9 +1492,88 @@ class LoopItemExecutionService:
         if runtime_device_id:
             row.runtime_device_id = runtime_device_id
         if runtime_task_id:
-            row.runtime_task_id = runtime_task_id
+            row.runtime_task_id = expected_task_id
         db.commit()
         db.refresh(row)
+        return row
+
+    def confirm_runtime_accepted(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        runtime_device_id: str,
+        runtime_task_id: str,
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
+        commit: bool = True,
+    ) -> Optional[LoopItemExecution]:
+        """Record Runtime acceptance without claiming that execution has started."""
+
+        row = db.get(LoopItemExecution, execution_id)
+        if row is None or row.status != STATUS_CLAIMED:
+            return None
+        if runtime_task_id != runtime_task_id_for(row.id):
+            return None
+        if row.runtime_device_id not in {"", runtime_device_id}:
+            return None
+        now = utcnow()
+        row.runtime_device_id = runtime_device_id
+        row.runtime_task_id = runtime_task_id
+        if loop_datetime_value_is_unset(row.start_requested_at):
+            row.start_requested_at = now
+        row.observed_state = OBSERVED_ACCEPTED
+        row.sync_state = SYNC_IN_SYNC
+        row.error_message = ""
+        row.termination_reason = ""
+        row.observed_at = now
+        row.heartbeat_at = now
+        row.lease_expires_at = now + timedelta(seconds=lease_seconds)
+        row.version += 1
+        if commit:
+            db.commit()
+            db.refresh(row)
+        else:
+            db.flush()
+        return row
+
+    def accept_runtime_and_open_activity(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        runtime_device_id: str,
+        runtime_task_id: str,
+        prompt: Optional[str],
+    ) -> Optional[LoopItemExecution]:
+        """Commit Runtime acceptance and its activity projection together."""
+
+        try:
+            row = self.confirm_runtime_accepted(
+                db,
+                execution_id=execution_id,
+                runtime_device_id=runtime_device_id,
+                runtime_task_id=runtime_task_id,
+                commit=False,
+            )
+            if row is None:
+                db.rollback()
+                return None
+            view = self.open_execution_activity(
+                db,
+                execution=row,
+                prompt=prompt,
+                commit=False,
+                push=False,
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        db.refresh(row)
+        if view is not None:
+            from app.services.project_chat.push import push_project_chat_message
+
+            push_project_chat_message(view.model_dump(by_alias=True))
         return row
 
     def execution_for_runtime(
@@ -683,14 +1583,14 @@ class LoopItemExecutionService:
         runtime_device_id: str,
         runtime_task_id: str,
     ) -> Optional[LoopItemExecution]:
-        """Resolve the running execution owned by a runtime task identity."""
+        """Resolve the active execution owned by a Runtime task identity."""
 
         return (
             db.query(LoopItemExecution)
             .filter(
                 LoopItemExecution.runtime_device_id == runtime_device_id,
                 LoopItemExecution.runtime_task_id == runtime_task_id,
-                LoopItemExecution.status == STATUS_RUNNING,
+                LoopItemExecution.status.in_(CAPACITY_STATUSES),
             )
             .order_by(LoopItemExecution.id.desc())
             .first()
@@ -702,8 +1602,10 @@ class LoopItemExecutionService:
         *,
         execution: LoopItemExecution,
         prompt: Optional[str] = None,
+        commit: bool = True,
+        push: bool = True,
     ) -> Optional[object]:
-        """Open the reviewable AI activity message for a started robot run.
+        """Open the reviewable AI activity for a claimed or running attempt.
 
         The runtime identity is bound at claim time, so every execution channel
         (cloud RPC and the local App puller) opens exactly one streaming
@@ -711,10 +1613,25 @@ class LoopItemExecutionService:
         key is (project, task, agent, runtime ids), making this idempotent.
         """
 
+        current = db.get(
+            LoopItemExecution,
+            execution.id,
+            populate_existing=True,
+        )
+        if current is None or current.status not in CAPACITY_STATUSES:
+            logger.info(
+                "[LoopItemExecution] Activity open skipped for inactive "
+                "execution=%s status=%s",
+                execution.id,
+                current.status if current is not None else "missing",
+            )
+            return None
+        execution = current
         if not execution.runtime_device_id or not execution.runtime_task_id:
             return None
-        from app.schemas.project_chat import ProjectChatAgentStart
-        from app.services.project_chat.service import bot_config, project_chat_service
+        import uuid
+
+        from app.services.project_chat.service import project_chat_service
 
         existing_streaming = (
             db.query(ProjectChatMessage)
@@ -722,7 +1639,7 @@ class LoopItemExecutionService:
                 ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
                 ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
                 ProjectChatMessage.sender_type == "agent",
-                ProjectChatMessage.status == "streaming",
+                ProjectChatMessage.status.in_(["pending", "streaming"]),
                 loop_datetime_is_unset(ProjectChatMessage.deleted_at),
             )
             .count()
@@ -734,84 +1651,160 @@ class LoopItemExecutionService:
             execution.runtime_task_id,
             existing_streaming,
         )
-        agent = db.get(ProjectChatAgent, execution.agent_id)
-        if agent is None or not agent.created_by_user_id:
-            logger.warning(
-                "[LoopItemExecution] Activity open skipped: agent=%s unavailable",
-                execution.agent_id,
+        try:
+            profile, origin_context = self._runtime_profile_and_context(
+                db, execution=execution
+            )
+        except WeworkRuntimeConfigurationError:
+            logger.exception(
+                "[LoopItemExecution] Activity open failed: unavailable runtime "
+                "configuration execution=%s",
+                execution.id,
             )
             return None
-        return project_chat_service.start_agent_response(
-            db,
-            user_id=int(agent.created_by_user_id),
-            request=ProjectChatAgentStart(
-                project_id=str(execution.cloud_project_id),
-                task_id=execution.loop_item_id,
-                trigger_message_id=None,
-                agent_id=agent.id,
-                runtime_device_id=execution.runtime_device_id,
-                runtime_task_id=execution.runtime_task_id,
-                prompt=prompt or self.build_robot_prompt(agent),
-                auto_retry=True,
-                model=bot_config(agent).get("model"),
-            ),
+        activity_status = (
+            "streaming" if execution.status == STATUS_RUNNING else "pending"
         )
+        run_status = (
+            "running"
+            if execution.status == STATUS_RUNNING
+            else (
+                "cancelling"
+                if execution.status == STATUS_CANCEL_REQUESTED
+                else "starting"
+            )
+        )
+        row = self._linked_activity(db, execution)
+        if row is None:
+            message_id = (
+                str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
+            )
+            row = ProjectChatMessage(
+                message_id=message_id,
+                client_message_id=message_id,
+                project_id=execution.cloud_project_id,
+                task_id=execution.loop_item_id,
+                sender_type="agent",
+                sender_id=execution.agent_id
+                or f"{execution.executor_type}:{execution.automation_run_id}",
+                sender_name=profile.display_name,
+                message_type="agent_chunk",
+                content="",
+                metadata_json={},
+                agent_id=execution.agent_id or "",
+                status=activity_status,
+            )
+            db.add(row)
+            db.flush()
+        metadata = dict(row.metadata_json or {})
+        metadata.update(
+            {
+                "run_status": run_status,
+                "execution_id": execution.id,
+                "executor_type": execution.executor_type,
+                "executor_ref": execution.agent_id
+                or self._automation_rule_id(db, execution),
+                "automation_run_id": execution.automation_run_id,
+                "model": profile.model or None,
+            }
+        )
+        row.message_type = "agent_chunk"
+        row.metadata_json = metadata
+        row.runtime_device_id = execution.runtime_device_id
+        row.runtime_task_id = execution.runtime_task_id
+        row.runtime_activity_key = project_chat_service._runtime_activity_key(
+            execution.runtime_device_id,
+            execution.runtime_task_id,
+            row.trigger_message_id or "",
+        )
+        row.status = activity_status
+        agent = (
+            db.get(ProjectChatAgent, execution.agent_id) if execution.agent_id else None
+        )
+        if (
+            execution.executor_type != "automation_manager"
+            and execution.status == STATUS_RUNNING
+        ):
+            visible_prompt = prompt or profile.user_input(
+                project_id=execution.cloud_project_id,
+                task_id=execution.loop_item_id,
+                execution_id=execution.id,
+                workflow_stage_input=(
+                    origin_context.get("workflow_stage_input")
+                    if isinstance(origin_context.get("workflow_stage_input"), dict)
+                    else None
+                ),
+            )
+            project_chat_service._set_task_ai_state(
+                db,
+                row=row,
+                trigger=None,
+                agent=agent,
+                status_value="running",
+                prompt=visible_prompt,
+                user_id=execution.executor_owner_user_id,
+            )
+        if commit:
+            db.commit()
+            db.refresh(row)
+        else:
+            db.flush()
+        view = project_chat_service.to_view(row)
+        if push:
+            from app.services.project_chat.push import push_project_chat_message
+
+            push_project_chat_message(view.model_dump(by_alias=True))
+        return view
 
     def close_placeholder_activity(
         self, db: Session, *, execution: LoopItemExecution
     ) -> None:
-        """Drop an empty streaming activity when a run is handed back to queue.
+        """Return a linked activity card to queued state after a retry."""
 
-        The message is only a placeholder until the first output arrives, so a
-        requeued run must not leave a fake "AI 执行" card behind. Content-bearing
-        messages are left untouched and closed by the normal terminal path.
-        """
-
-        if not execution.runtime_device_id or not execution.runtime_task_id:
-            return
-        rows = (
-            db.query(ProjectChatMessage)
-            .filter(
-                ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
-                ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
-                ProjectChatMessage.sender_type == "agent",
-                ProjectChatMessage.status == "streaming",
-                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-            )
-            .all()
-        )
-        for row in rows:
-            if (row.content or "").strip():
-                continue
-            row.deleted_at = utcnow()
-            row.runtime_activity_key = project_chat_message_key(
-                row.message_id, deleted=True
-            )
+        linked = self._apply_requeued_projection(db, execution=execution)
         db.commit()
+        self._push_activity_after_commit(db, linked)
 
     def complete(
-        self, db: Session, *, execution_id: int, note: Optional[str] = None
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        note: Optional[str] = None,
+        content: Optional[str] = None,
+        observed_at: Optional[datetime] = None,
+        event_seq: Optional[int] = None,
     ) -> Optional[LoopItemExecution]:
         """Mark a run completed and release its device slot."""
 
-        row = db.get(LoopItemExecution, execution_id)
-        if row is None or row.status in TERMINAL_STATUSES:
-            return row
-        row.status = STATUS_COMPLETED
-        row.completed_at = utcnow()
-        row.lease_expires_at = EPOCH_TIME
-        if note:
-            row.execution_note = self._execution_note(note)
-        db.commit()
-        self._finish_runtime_activity(
-            db,
-            execution=row,
-            status_value="completed",
-            content=note,
+        previous = db.get(LoopItemExecution, execution_id)
+        was_active_manager = bool(
+            previous is not None
+            and previous.status in ACTIVE_STATUSES
+            and previous.executor_type == "automation_manager"
         )
-        self._finish_project_automation_run(db, row.loop_item_id, "succeeded", note)
-        db.refresh(row)
-        return row
+        result = self._transition_terminal(
+            db,
+            execution_id=execution_id,
+            terminal_status=STATUS_COMPLETED,
+            note=note,
+            content=content if content is not None else note,
+            observed_state=OBSERVED_SUCCEEDED,
+            observed_at=observed_at,
+            event_seq=event_seq,
+            termination_reason="runtime_succeeded",
+        )
+        if (
+            was_active_manager
+            and result is not None
+            and result.status == STATUS_COMPLETED
+        ):
+            self._finalize_manager_transport(
+                db,
+                execution=result,
+                content=content if content is not None else note,
+            )
+        return result
 
     def fail(
         self,
@@ -822,6 +1815,11 @@ class LoopItemExecutionService:
         note: Optional[str] = None,
         requeue: bool = False,
         requeue_infra: bool = False,
+        expected_status: Optional[str] = None,
+        expected_version: Optional[int] = None,
+        observed_at: Optional[datetime] = None,
+        event_seq: Optional[int] = None,
+        termination_reason: str = "runtime_failed",
     ) -> Optional[LoopItemExecution]:
         """Mark a run failed, requeue it when retries remain, or requeue it
         after a transient infrastructure failure.
@@ -837,158 +1835,803 @@ class LoopItemExecutionService:
         if row is None or row.status in TERMINAL_STATUSES:
             return row
         now = utcnow()
-        if requeue_infra:
-            row.status = STATUS_QUEUED
-            row.queued_at = now
-            row.lease_expires_at = EPOCH_TIME
-            row.error_message = self._error_text(error)[:2000]
-        elif requeue and row.retry_attempt < row.max_retries:
-            row.retry_attempt += 1
-            row.status = STATUS_QUEUED
-            row.queued_at = now
-            row.lease_expires_at = EPOCH_TIME
-            row.error_message = self._error_text(error)[:2000]
-        else:
-            row.status = STATUS_FAILED
-            row.completed_at = now
-            row.lease_expires_at = EPOCH_TIME
-            row.error_message = self._error_text(error)[:2000]
-        if note:
-            row.execution_note = self._execution_note(note)
-        db.commit()
-        if row.status == STATUS_QUEUED:
-            self.close_placeholder_activity(db, execution=row)
-        elif row.status == STATUS_FAILED:
-            self._finish_runtime_activity(
+        should_requeue = requeue_infra or (
+            requeue and row.retry_attempt < row.max_retries
+        )
+        if not should_requeue:
+            return self._transition_terminal(
                 db,
-                execution=row,
-                status_value="failed",
+                execution_id=execution_id,
+                terminal_status=STATUS_FAILED,
+                note=note,
                 content=error,
                 error=error,
+                expected_status=expected_status,
+                expected_version=expected_version,
+                observed_state=OBSERVED_FAILED,
+                observed_at=observed_at,
+                event_seq=event_seq,
+                termination_reason=termination_reason,
             )
-            self._finish_project_automation_run(db, row.loop_item_id, "failed", error)
+
+        if requeue and not requeue_infra:
+            previous = self._transition_terminal(
+                db,
+                execution_id=execution_id,
+                terminal_status=STATUS_FAILED,
+                note=note,
+                content=error,
+                error=error,
+                commit=False,
+                expected_status=expected_status,
+                expected_version=expected_version,
+                observed_state=OBSERVED_FAILED,
+                observed_at=observed_at,
+                event_seq=event_seq,
+                termination_reason=termination_reason,
+            )
+            if previous is None or previous.status != STATUS_FAILED:
+                db.rollback()
+                return db.get(LoopItemExecution, execution_id)
+            retry = self._new_retry_attempt(previous, queued_at=now)
+            db.add(retry)
+            db.flush()
+            retry.runtime_task_id = runtime_task_id_for(retry.id)
+            self._set_automation_run_status(db, retry, "queued")
+            db.commit()
+            db.refresh(retry)
+            self.publish_terminal_projection(db, previous)
+            return retry
+
+        values: dict[str, Any] = {
+            "status": STATUS_QUEUED,
+            "queued_at": now,
+            "lease_expires_at": EPOCH_TIME,
+            "error_message": self._error_text(error)[:2000],
+            "version": LoopItemExecution.version + 1,
+        }
+        if requeue_infra:
+            values.update(
+                {
+                    "start_requested_at": EPOCH_TIME,
+                    "observed_state": OBSERVED_UNCONFIRMED,
+                    "observed_at": EPOCH_TIME,
+                    "sync_state": SYNC_PENDING,
+                    "termination_reason": "",
+                }
+            )
+        if requeue and not requeue_infra:
+            values["retry_attempt"] = LoopItemExecution.retry_attempt + 1
+        if note:
+            values["execution_note"] = self._execution_note(note)
+        query = db.query(LoopItemExecution).filter(
+            LoopItemExecution.id == execution_id,
+            (
+                LoopItemExecution.status == expected_status
+                if expected_status is not None
+                else LoopItemExecution.status.in_(ACTIVE_STATUSES)
+            ),
+        )
+        if expected_version is not None:
+            query = query.filter(LoopItemExecution.version == expected_version)
+        updated = query.update(values, synchronize_session=False)
+        if updated != 1:
+            db.rollback()
+            return db.get(LoopItemExecution, execution_id)
+
+        try:
+            db.expire_all()
+            row = db.get(LoopItemExecution, execution_id)
+            if row is None:
+                raise RuntimeError(
+                    f"Requeued execution disappeared after CAS: {execution_id}"
+                )
+            activity = self._apply_requeued_projection(db, execution=row)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
         db.refresh(row)
+        self._push_activity_after_commit(db, activity)
         return row
 
-    def _finish_runtime_activity(
+    @staticmethod
+    def _new_retry_attempt(
+        previous: LoopItemExecution, *, queued_at: datetime
+    ) -> LoopItemExecution:
+        """Create an isolated attempt after Runtime proved the old one ended."""
+
+        return LoopItemExecution(
+            loop_item_id=previous.loop_item_id,
+            cloud_project_id=previous.cloud_project_id,
+            executor_owner_user_id=previous.executor_owner_user_id,
+            agent_id=previous.agent_id,
+            team_id=previous.team_id,
+            backend_task_id=None,
+            automation_run_id=previous.automation_run_id,
+            execution_environment=previous.execution_environment,
+            execution_device_id=previous.execution_device_id,
+            assigner_user_id=previous.assigner_user_id,
+            status=STATUS_QUEUED,
+            priority_weight=previous.priority_weight,
+            queued_at=queued_at,
+            attempt_no=previous.attempt_no + 1,
+            previous_execution_id=previous.id,
+            execution_scope=previous.execution_scope,
+            observed_state=OBSERVED_UNCONFIRMED,
+            sync_state=SYNC_PENDING,
+            retry_attempt=previous.retry_attempt + 1,
+            max_retries=previous.max_retries,
+            approval_status="approved" if previous.approval_status else "",
+            approved_by_user_id=previous.approved_by_user_id,
+            approved_at=previous.approved_at,
+            execution_note=previous.execution_note,
+        )
+
+    def mark_dispatch_unknown(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        error: str,
+    ) -> Optional[LoopItemExecution]:
+        """Preserve capacity when Start may have succeeded but no proof arrived."""
+
+        row = db.get(LoopItemExecution, execution_id)
+        if row is None or row.status not in CAPACITY_STATUSES:
+            return row
+        updated = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.id == execution_id,
+                LoopItemExecution.version == row.version,
+                LoopItemExecution.status.in_(CAPACITY_STATUSES),
+            )
+            .update(
+                {
+                    "sync_state": SYNC_STALE,
+                    "error_message": self._error_text(error)[:2000],
+                    "termination_reason": "start_confirmation_timeout",
+                    "version": LoopItemExecution.version + 1,
+                },
+                synchronize_session=False,
+            )
+        )
+        if updated != 1:
+            db.rollback()
+            return db.get(LoopItemExecution, execution_id)
+        db.commit()
+        db.expire_all()
+        return db.get(LoopItemExecution, execution_id)
+
+    def _transition_terminal(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        terminal_status: str,
+        note: Optional[str],
+        content: Optional[str],
+        error: Optional[str] = None,
+        commit: bool = True,
+        expected_status: Optional[str] = None,
+        expected_version: Optional[int] = None,
+        observed_state: Optional[str] = None,
+        observed_at: Optional[datetime] = None,
+        event_seq: Optional[int] = None,
+        termination_reason: Optional[str] = None,
+    ) -> Optional[LoopItemExecution]:
+        """Atomically choose and project the first terminal outcome.
+
+        The execution row is the aggregate root. A conditional update elects
+        exactly one terminal writer; that writer projects the same outcome to
+        the automation run and activity in the same transaction. Losing
+        writers reload the durable winner and perform no side effects.
+        """
+
+        if terminal_status not in TERMINAL_STATUSES:
+            raise ValueError(f"Unsupported terminal status: {terminal_status}")
+        now = utcnow()
+        values: dict[str, Any] = {
+            "status": terminal_status,
+            "completed_at": now,
+            "lease_expires_at": EPOCH_TIME,
+            "version": LoopItemExecution.version + 1,
+        }
+        if observed_state is not None:
+            values["observed_state"] = observed_state
+            values["sync_state"] = SYNC_IN_SYNC
+            values["observed_at"] = observed_at or now
+        if event_seq is not None:
+            values["last_event_seq"] = event_seq
+        if termination_reason is not None:
+            values["termination_reason"] = termination_reason
+        if terminal_status == STATUS_FAILED:
+            values["error_message"] = self._error_text(error or content or "")[:2000]
+        else:
+            values["error_message"] = ""
+        if note:
+            values["execution_note"] = self._execution_note(note)
+
+        query = db.query(LoopItemExecution).filter(
+            LoopItemExecution.id == execution_id,
+            (
+                LoopItemExecution.status == expected_status
+                if expected_status is not None
+                else LoopItemExecution.status.in_(ACTIVE_STATUSES)
+            ),
+        )
+        if expected_version is not None:
+            query = query.filter(LoopItemExecution.version == expected_version)
+        if event_seq is not None:
+            query = query.filter(LoopItemExecution.last_event_seq < event_seq)
+        updated = query.update(values, synchronize_session=False)
+        if updated != 1:
+            if commit:
+                # End a potentially stale REPEATABLE READ snapshot before
+                # loading the concurrent winner.
+                db.rollback()
+                return db.get(LoopItemExecution, execution_id)
+            # A caller-owned transaction may already hold the LoopItem lock.
+            # Do not release it on a terminal race. FOR UPDATE is a current
+            # read under MySQL REPEATABLE READ, so it observes the durable
+            # winner while retaining every lock owned by this transaction.
+            return (
+                db.query(LoopItemExecution)
+                .filter(LoopItemExecution.id == execution_id)
+                .populate_existing()
+                .with_for_update()
+                .one_or_none()
+            )
+
+        try:
+            db.expire_all()
+            execution = db.get(LoopItemExecution, execution_id)
+            if execution is None:
+                raise RuntimeError(
+                    f"Terminal execution disappeared after CAS: {execution_id}"
+                )
+            activity = self._apply_terminal_projection(
+                db,
+                execution=execution,
+                terminal_status=terminal_status,
+                content=content,
+                error=error,
+                summary_note=note,
+                completed_at=now,
+            )
+            if commit:
+                db.commit()
+            else:
+                db.flush()
+        except Exception:
+            if commit:
+                db.rollback()
+            raise
+
+        if commit:
+            db.refresh(execution)
+            self._push_activity_after_commit(db, activity)
+        return execution
+
+    def publish_terminal_projection(
+        self, db: Session, execution: LoopItemExecution
+    ) -> None:
+        """Broadcast a terminal projection after its caller-owned commit."""
+
+        activity = self._linked_activity(db, execution)
+        self._push_activity_after_commit(db, activity)
+
+    def reconcile_automation_run_projection(
+        self,
+        db: Session,
+        *,
+        run_id: str,
+    ) -> bool:
+        """Repair a run whose newest execution already has a terminal outcome.
+
+        ``LoopItemExecution`` is the execution aggregate root. The automation
+        run and activity are durable projections of its newest execution. This
+        method is intentionally idempotent so a healthy worker can repair a
+        write interrupted by an older process or a crash without reopening or
+        rewriting the terminal execution.
+        """
+
+        from app.models.delivery import ProjectAutomationRun
+
+        run = db.get(ProjectAutomationRun, run_id)
+        if run is None:
+            return False
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(LoopItemExecution.automation_run_id == run_id)
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+        if execution is None or execution.status not in TERMINAL_STATUSES:
+            return False
+        if (
+            execution.executor_type == "automation_manager"
+            and self._manager_assignment_recorded(db, run_id=run_id)
+        ):
+            return False
+
+        activity = self._linked_activity(db, execution)
+        before = self._projection_fingerprint(run, activity)
+        content, error = self._terminal_projection_content(execution)
+        projected = self._apply_terminal_projection(
+            db,
+            execution=execution,
+            terminal_status=execution.status,
+            content=content,
+            error=error,
+            summary_note=execution.execution_note or None,
+            completed_at=(
+                execution.completed_at
+                if not loop_datetime_value_is_unset(execution.completed_at)
+                else utcnow()
+            ),
+        )
+        if before == self._projection_fingerprint(run, projected):
+            return False
+        db.commit()
+        db.refresh(execution)
+        self._push_activity_after_commit(db, projected)
+        logger.warning(
+            "[LoopItemExecutions] Reconciled terminal automation projection "
+            "run=%s execution=%s execution_status=%s run_status=%s",
+            run_id,
+            execution.id,
+            execution.status,
+            run.status,
+        )
+        return True
+
+    def reconcile_terminal_automation_projections(
+        self,
+        db: Session,
+        *,
+        limit: int = 100,
+    ) -> int:
+        """Repair active automation runs backed by terminal executions."""
+
+        from app.models.delivery import ProjectAutomationRun
+
+        latest_executions = (
+            db.query(
+                LoopItemExecution.automation_run_id.label("automation_run_id"),
+                func.max(LoopItemExecution.id).label("execution_id"),
+            )
+            .filter(LoopItemExecution.automation_run_id != "")
+            .group_by(LoopItemExecution.automation_run_id)
+            .subquery()
+        )
+        run_ids = [
+            str(run_id)
+            for (run_id,) in (
+                db.query(ProjectAutomationRun.id)
+                .join(
+                    latest_executions,
+                    latest_executions.c.automation_run_id == ProjectAutomationRun.id,
+                )
+                .join(
+                    LoopItemExecution,
+                    LoopItemExecution.id == latest_executions.c.execution_id,
+                )
+                .filter(
+                    ProjectAutomationRun.status.notin_(TERMINAL_RUN_STATUSES),
+                    LoopItemExecution.status.in_(TERMINAL_STATUSES),
+                )
+                .limit(limit)
+                .all()
+            )
+        ]
+        repaired = 0
+        for run_id in run_ids:
+            if self.reconcile_automation_run_projection(db, run_id=run_id):
+                repaired += 1
+        return repaired
+
+    @staticmethod
+    def _projection_fingerprint(
+        run: object, activity: ProjectChatMessage | None
+    ) -> tuple[object, ...]:
+        activity_metadata = (
+            activity.metadata_json
+            if activity is not None and isinstance(activity.metadata_json, dict)
+            else {}
+        )
+        return (
+            getattr(run, "status", None),
+            getattr(run, "description", None),
+            getattr(run, "completed_at", None),
+            getattr(activity, "status", None),
+            getattr(activity, "message_type", None),
+            getattr(activity, "content", None),
+            activity_metadata.get("run_status"),
+            activity_metadata.get("error"),
+        )
+
+    @staticmethod
+    def _terminal_projection_content(
+        execution: LoopItemExecution,
+    ) -> tuple[str, str | None]:
+        if execution.status == STATUS_FAILED:
+            error = execution.error_message or "Automation execution failed"
+            return error, error
+        if execution.status == STATUS_CANCELLED:
+            return execution.execution_note or "Automation run cancelled", None
+        return execution.execution_note or "Automation run completed", None
+
+    @staticmethod
+    def _manager_assignment_recorded(db: Session, *, run_id: str) -> bool:
+        from app.services.project_automation_execution import (
+            project_automation_execution,
+        )
+
+        return project_automation_execution.has_recorded_manager_assignment(
+            db, run_id=run_id
+        )
+
+    def _apply_terminal_projection(
         self,
         db: Session,
         *,
         execution: LoopItemExecution,
-        status_value: str,
+        terminal_status: str,
         content: Optional[str],
-        error: Optional[str] = None,
-    ) -> None:
-        """Close the streaming activity when a channel reports a terminal state.
+        error: Optional[str],
+        summary_note: Optional[str],
+        completed_at: datetime,
+    ) -> ProjectChatMessage | None:
+        """Apply the elected execution outcome without committing or pushing."""
 
-        Runtime events normally close the message through the project chat
-        projection; direct App-side terminal reports (complete/fail) use this
-        so a started run never leaves a streaming comment behind.
-        """
-
-        if not execution.runtime_device_id or not execution.runtime_task_id:
-            return
+        from app.models.delivery import ProjectAutomationRun
+        from app.services.project_automation_execution import (
+            project_automation_execution,
+        )
         from app.services.project_chat.service import project_chat_service
 
-        try:
-            project_chat_service.finish_runtime_activity(
+        activity = self._linked_activity(db, execution)
+        manager_assignment_recorded = bool(
+            execution.executor_type == "automation_manager"
+            and execution.automation_run_id
+            and project_automation_execution.has_recorded_manager_assignment(
+                db, run_id=execution.automation_run_id
+            )
+        )
+        if activity is not None and execution.executor_type == "automation_manager":
+            if terminal_status != STATUS_COMPLETED and manager_assignment_recorded:
+                activity.status = STATUS_COMPLETED
+                activity.message_type = "text"
+                activity.content = "AI 调度员已完成分派，但调度结果回传失败。" + (
+                    f" {error}" if error else ""
+                )
+                activity_metadata = dict(activity.metadata_json or {})
+                activity.metadata_json = {
+                    **activity_metadata,
+                    "run_status": STATUS_COMPLETED,
+                    **({"transport_error": str(error)} if error else {}),
+                }
+            elif terminal_status != STATUS_COMPLETED:
+                activity.status = terminal_status
+                activity.message_type = "text"
+                activity.content = str(content or error or "AI manager failed")
+                activity_metadata = dict(activity.metadata_json or {})
+                activity.metadata_json = {
+                    **activity_metadata,
+                    "run_status": terminal_status,
+                    **({"error": str(error)} if error else {}),
+                }
+        elif activity is not None:
+            project_chat_service._finish_activity(
                 db,
-                runtime_device_id=execution.runtime_device_id,
-                runtime_task_id=execution.runtime_task_id,
-                status_value=status_value,
+                activity,
+                status_value=terminal_status,
                 content=content,
                 error=error,
             )
-        except Exception:
+            metadata = dict(activity.metadata_json or {})
+            activity.metadata_json = {
+                **metadata,
+                "run_status": terminal_status,
+            }
+
+        if execution.automation_run_id:
+            run = db.get(ProjectAutomationRun, execution.automation_run_id)
+            if run is not None:
+                if (
+                    execution.executor_type == "automation_manager"
+                    and manager_assignment_recorded
+                ):
+                    if run.status not in TERMINAL_RUN_STATUSES:
+                        run.status = "succeeded"
+                        run.completed_at = completed_at
+                        run.version += 1
+                        from app.services.project_workflow_projection import (
+                            sync_automation_workflow_node,
+                        )
+
+                        sync_automation_workflow_node(db, run)
+                    return activity
+                if (
+                    execution.executor_type == "automation_manager"
+                    and terminal_status == STATUS_COMPLETED
+                ):
+                    return activity
+                if (
+                    execution.executor_type == "project_robot"
+                    and project_automation_execution.has_recorded_manager_assignment(
+                        db, run_id=execution.automation_run_id
+                    )
+                ):
+                    return activity
+                run_status = {
+                    STATUS_COMPLETED: "succeeded",
+                    STATUS_FAILED: "failed",
+                    STATUS_CANCELLED: "cancelled",
+                }[terminal_status]
+                summary = summary_note
+                if terminal_status == STATUS_FAILED:
+                    summary = error or summary_note
+                description = (
+                    str(summary).strip()[:2000] if summary else f"Run {run_status}."
+                )
+                if (
+                    run.status != run_status
+                    or run.description != description
+                    or run.completed_at != completed_at
+                ):
+                    run.status = run_status
+                    run.description = description
+                    run.completed_at = completed_at
+                    run.version += 1
+                    from app.services.project_workflow_projection import (
+                        sync_automation_workflow_node,
+                    )
+
+                    sync_automation_workflow_node(db, run)
+        return activity
+
+    @staticmethod
+    def _finalize_manager_transport(
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        content: str | None,
+    ) -> None:
+        if not execution.automation_run_id:
+            raise WeworkRuntimeConfigurationError(
+                "AI manager execution is not linked to an automation run"
+            )
+        from app.services.project_automation_execution import (
+            project_automation_execution,
+        )
+
+        try:
+            project_automation_execution.finalize_manager_result(
+                db,
+                run_id=execution.automation_run_id,
+                content=content if isinstance(content, str) else None,
+            )
+        except Exception as exc:
             logger.exception(
-                "[LoopItemExecution] Activity finish failed execution=%s status=%s",
+                "[LoopItemExecution] AI manager finalization failed execution=%s",
                 execution.id,
-                status_value,
+            )
+            db.rollback()
+            project_automation_execution._fail_run(
+                db,
+                run_id=execution.automation_run_id,
+                error=str(exc) or "AI manager finalization failed",
             )
 
-    def _finish_project_automation_run(
+    def _apply_requeued_projection(
         self,
         db: Session,
-        loop_item_id: str,
-        status_value: str,
-        note: Optional[str],
-    ) -> None:
-        """Finish an automation after its run and child tasks terminate."""
+        *,
+        execution: LoopItemExecution,
+    ) -> ProjectChatMessage | None:
+        """Project an elected retry to its run and reusable activity card."""
 
         from app.models.delivery import ProjectAutomationRun
 
-        item = db.get(LoopItem, loop_item_id)
-        run = (
-            db.query(ProjectAutomationRun)
-            .filter(ProjectAutomationRun.task_id == loop_item_id)
-            .first()
-        )
-        is_scan_task = run is not None
-        if run is None and item is not None and item.parent_id:
-            run = (
-                db.query(ProjectAutomationRun)
-                .filter(ProjectAutomationRun.task_id == item.parent_id)
-                .first()
-            )
-        if run is None or run.status != "running":
-            return
-        if is_scan_task and status_value in {"failed", "cancelled"}:
-            terminal_status = status_value
-        else:
-            children = (
-                db.query(LoopItem)
+        linked = self._linked_activity(db, execution)
+        if linked is not None:
+            metadata = dict(linked.metadata_json or {})
+            linked.metadata_json = {**metadata, "run_status": STATUS_QUEUED}
+            linked.status = "pending"
+            linked.runtime_device_id = ""
+            linked.runtime_task_id = ""
+            linked.runtime_activity_key = project_chat_message_key(linked.message_id)
+        if execution.runtime_device_id and execution.runtime_task_id:
+            rows = (
+                db.query(ProjectChatMessage)
                 .filter(
-                    LoopItem.parent_id == run.task_id,
-                    loop_datetime_is_unset(LoopItem.deleted_at),
+                    ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
+                    ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
+                    ProjectChatMessage.sender_type == "agent",
+                    ProjectChatMessage.status == "streaming",
+                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
                 )
                 .all()
             )
-            if is_scan_task and not children:
-                terminal_status = "succeeded"
-                summary = str(note).strip() if note else ""
-            else:
-                executions = [
-                    self.latest_for_item(db, item_id=child.id) for child in children
-                ]
-                if any(
-                    execution is None or execution.status not in TERMINAL_STATUSES
-                    for execution in executions
-                ):
-                    return
-                terminal_status = (
-                    "failed"
-                    if any(
-                        execution.status != STATUS_COMPLETED
-                        for execution in executions
-                        if execution
-                    )
-                    else "succeeded"
+            for row in rows:
+                if linked is not None and row.id == linked.id:
+                    continue
+                if (row.content or "").strip():
+                    continue
+                row.deleted_at = utcnow()
+                row.runtime_activity_key = project_chat_message_key(
+                    row.message_id, deleted=True
                 )
-                completed_count = sum(
-                    execution is not None and execution.status == STATUS_COMPLETED
-                    for execution in executions
+        if execution.automation_run_id:
+            run = db.get(ProjectAutomationRun, execution.automation_run_id)
+            if run is not None and run.status not in {
+                "succeeded",
+                "failed",
+                "cancelled",
+            }:
+                run.status = STATUS_QUEUED
+                run.version += 1
+                from app.services.project_workflow_projection import (
+                    sync_automation_workflow_node,
                 )
-                summary = (
-                    f"Completed {len(children)} child task(s)."
-                    if completed_count == len(children)
-                    else f"Completed {completed_count} of {len(children)} child task(s)."
-                )
-        run.status = terminal_status
-        if is_scan_task and status_value in {"failed", "cancelled"}:
-            summary = str(note).strip() if note else f"Run {terminal_status}."
-        run.description = summary[:2000]
-        run.completed_at = utcnow()
-        run.version += 1
-        parent = db.get(LoopItem, run.task_id) if run.task_id else None
-        if parent is not None and terminal_status == "succeeded":
-            from app.services.loop_items.service import loop_item_service
 
-            project = db.get(CloudProject, parent.cloud_project_id)
-            statuses = loop_item_service._project_status_ids(project) if project else []
-            parent.status = statuses[-1] if statuses else parent.status
-            parent.completed_at = utcnow()
-            parent.version += 1
-        db.commit()
+                sync_automation_workflow_node(db, run)
+        return linked
+
+    def _push_activity_after_commit(
+        self, db: Session, activity: ProjectChatMessage | None
+    ) -> None:
+        """Broadcast a committed projection without weakening its durability."""
+
+        if activity is None:
+            return
+        message_id = activity.message_id
+        try:
+            db.refresh(activity)
+            from app.services.project_chat.service import project_chat_service
+
+            payload = project_chat_service.to_view(activity).model_dump(by_alias=True)
+            # ``refresh`` starts a read transaction. End it before publishing to
+            # Redis so a slow transport cannot retain a SQL connection or locks.
+            db.commit()
+            self._push_activity(payload)
+        except Exception:
+            if db.in_transaction():
+                db.rollback()
+            logger.exception(
+                "[LoopItemExecution] Committed activity push failed message=%s",
+                message_id,
+            )
+
+    def push_linked_activity_after_commit(
+        self, db: Session, *, execution: LoopItemExecution
+    ) -> None:
+        """Push the already-committed activity projection for an execution."""
+
+        self._push_activity_after_commit(db, self._linked_activity(db, execution))
+
+    @staticmethod
+    def _automation_run_and_rule(
+        db: Session, execution: LoopItemExecution
+    ) -> tuple[Any | None, Any | None]:
+        if not execution.automation_run_id:
+            return None, None
+        from app.models.delivery import ProjectAutomationRule, ProjectAutomationRun
+
+        run = db.get(ProjectAutomationRun, execution.automation_run_id)
+        parent_id = getattr(run, "parent_id", None)
+        rule = db.get(ProjectAutomationRule, parent_id) if parent_id else None
+        return run, rule
+
+    @staticmethod
+    def _automation_rule_id(db: Session, execution: LoopItemExecution) -> str:
+        _, rule = LoopItemExecutionService._automation_run_and_rule(db, execution)
+        return str(getattr(rule, "id", "") or "")
+
+    @staticmethod
+    def _automation_activity_message_id(
+        db: Session, execution: LoopItemExecution
+    ) -> str:
+        run, _ = LoopItemExecutionService._automation_run_and_rule(db, execution)
+        metadata = getattr(run, "metadata_json", None)
+        if not isinstance(metadata, dict):
+            return ""
+        value = metadata.get("activity_message_id")
+        return value if isinstance(value, str) else ""
+
+    @staticmethod
+    def _linked_activity(
+        db: Session, execution: LoopItemExecution
+    ) -> ProjectChatMessage | None:
+        activity_message_id = LoopItemExecutionService._automation_activity_message_id(
+            db, execution
+        )
+        if activity_message_id:
+            row = (
+                db.query(ProjectChatMessage)
+                .filter(
+                    ProjectChatMessage.message_id == activity_message_id,
+                    ProjectChatMessage.project_id == execution.cloud_project_id,
+                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                )
+                .first()
+            )
+            row_metadata = (
+                row.metadata_json
+                if row is not None and isinstance(row.metadata_json, dict)
+                else {}
+            )
+            if row is not None and row_metadata.get("execution_id") == execution.id:
+                return row
+        if not execution.runtime_device_id or not execution.runtime_task_id:
+            runtime_row = None
+        else:
+            runtime_row = (
+                db.query(ProjectChatMessage)
+                .filter(
+                    ProjectChatMessage.runtime_device_id == execution.runtime_device_id,
+                    ProjectChatMessage.runtime_task_id == execution.runtime_task_id,
+                    ProjectChatMessage.sender_type == "agent",
+                    loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                )
+                .order_by(ProjectChatMessage.id.desc())
+                .first()
+            )
+        if runtime_row is not None:
+            return runtime_row
+        candidates = (
+            db.query(ProjectChatMessage)
+            .filter(
+                ProjectChatMessage.project_id == execution.cloud_project_id,
+                ProjectChatMessage.task_id == execution.loop_item_id,
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+            )
+            .order_by(ProjectChatMessage.id.desc())
+            .limit(20)
+            .all()
+        )
+        for candidate in candidates:
+            metadata = candidate.metadata_json
+            if (
+                isinstance(metadata, dict)
+                and metadata.get("execution_id") == execution.id
+            ):
+                return candidate
+        return None
+
+    @staticmethod
+    def _push_activity(payload: dict[str, Any]) -> None:
+        from app.services.project_chat.push import push_project_chat_message
+
+        push_project_chat_message(payload)
+
+    @staticmethod
+    def _set_automation_run_status(
+        db: Session,
+        execution: LoopItemExecution,
+        status_value: str,
+        *,
+        commit: bool = False,
+    ) -> None:
+        if not execution.automation_run_id:
+            return
+        from app.models.delivery import ProjectAutomationRun
+
+        run = db.get(ProjectAutomationRun, execution.automation_run_id)
+        if run is None or run.status in {"succeeded", "failed", "cancelled"}:
+            return
+        run.status = status_value
+        run.version += 1
+        from app.services.project_workflow_projection import (
+            sync_automation_workflow_node,
+        )
+
+        sync_automation_workflow_node(db, run)
+        if commit:
+            db.commit()
 
     @staticmethod
     def _execution_note(note: str) -> str:
@@ -1023,12 +2666,7 @@ class LoopItemExecutionService:
         payload: dict,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ) -> Optional[LoopItemExecution]:
-        """Project device runtime events onto the matching running execution.
-
-        Streaming events extend the lease (the device is alive); terminal
-        events complete or fail the run. This is the write-back path shared by
-        cloud dispatches and cloud-project local pulls.
-        """
+        """Accept one ordered Runtime observation for the matching attempt."""
 
         row = self.execution_for_runtime(
             db,
@@ -1037,32 +2675,172 @@ class LoopItemExecutionService:
         )
         if row is None:
             return None
+        raw_event_seq = payload.get("eventSeq", payload.get("event_seq"))
+        if isinstance(raw_event_seq, bool):
+            raw_event_seq = None
+        try:
+            event_seq = int(raw_event_seq)
+        except (TypeError, ValueError):
+            event_seq = 0
+        if event_seq <= 0:
+            logger.warning(
+                "[LoopItemExecution] Rejected Runtime event without sequence "
+                "execution=%s task=%s event=%s",
+                row.id,
+                runtime_task_id,
+                event_name,
+            )
+            return None
+        if event_seq <= row.last_event_seq:
+            logger.info(
+                "[LoopItemExecution] Ignored duplicate or reordered Runtime event "
+                "execution=%s current_seq=%s incoming_seq=%s event=%s",
+                row.id,
+                row.last_event_seq,
+                event_seq,
+                event_name,
+            )
+            return None
+        if row.status in TERMINAL_STATUSES:
+            logger.info(
+                "[LoopItemExecution] Ignored Runtime event after terminal truth "
+                "execution=%s status=%s incoming_seq=%s event=%s",
+                row.id,
+                row.status,
+                event_seq,
+                event_name,
+            )
+            return None
         now = utcnow()
-        row.heartbeat_at = now
-        row.lease_expires_at = now + timedelta(seconds=lease_seconds)
         terminal = self._terminal_status(event_name, payload)
+        if terminal is not None:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
         if terminal == STATUS_COMPLETED:
-            row.status = STATUS_COMPLETED
-            row.completed_at = now
-            row.lease_expires_at = EPOCH_TIME
-        elif terminal in {STATUS_FAILED, STATUS_CANCELLED}:
-            db.flush()
             data = payload.get("data")
             data = data if isinstance(data, dict) else {}
-            error_value = (
-                payload.get("error")
-                or data.get("error")
-                or f"Runtime task ended with {terminal}"
+            from app.services.project_chat.service import ProjectChatService
+
+            return self.complete(
+                db,
+                execution_id=row.id,
+                content=ProjectChatService._project_chat_final_text(data, payload),
+                observed_at=now,
+                event_seq=event_seq,
             )
+        if terminal in {STATUS_FAILED, STATUS_CANCELLED}:
+            data = payload.get("data")
+            data = data if isinstance(data, dict) else {}
+            error_value = payload.get("error") or data.get("error")
+            if row.status == STATUS_CANCEL_REQUESTED:
+                error_text = (
+                    self._error_text(error_value) if error_value is not None else None
+                )
+                return self._transition_terminal(
+                    db,
+                    execution_id=row.id,
+                    terminal_status=STATUS_CANCELLED,
+                    note=error_text,
+                    content=error_text or "AI execution was cancelled.",
+                    error=error_text,
+                    expected_status=STATUS_CANCEL_REQUESTED,
+                    expected_version=row.version,
+                    observed_state=OBSERVED_CANCELLED,
+                    observed_at=now,
+                    event_seq=event_seq,
+                    termination_reason="runtime_cancelled",
+                )
+            if terminal == STATUS_CANCELLED:
+                error_text = (
+                    self._error_text(error_value) if error_value is not None else None
+                )
+                return self._transition_terminal(
+                    db,
+                    execution_id=row.id,
+                    terminal_status=STATUS_CANCELLED,
+                    note=error_text,
+                    content=error_text or "AI execution was cancelled.",
+                    error=error_text,
+                    expected_status=row.status,
+                    expected_version=row.version,
+                    observed_state=OBSERVED_CANCELLED,
+                    observed_at=now,
+                    event_seq=event_seq,
+                    termination_reason="runtime_cancelled",
+                )
+            error_value = error_value or "Runtime task ended with failed"
             return self.fail(
                 db,
                 execution_id=row.id,
                 error=self._error_text(error_value),
                 requeue=True,
+                expected_status=row.status,
+                expected_version=row.version,
+                observed_at=now,
+                event_seq=event_seq,
+                termination_reason="runtime_failed",
+            )
+        next_status = (
+            STATUS_CANCEL_REQUESTED
+            if row.status == STATUS_CANCEL_REQUESTED
+            else STATUS_RUNNING
+        )
+        was_running = row.status == STATUS_RUNNING
+        started_at = (
+            row.started_at if not loop_datetime_value_is_unset(row.started_at) else now
+        )
+        updated = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.id == row.id,
+                LoopItemExecution.version == row.version,
+                LoopItemExecution.status.in_(CAPACITY_STATUSES),
+                LoopItemExecution.last_event_seq < event_seq,
+            )
+            .update(
+                {
+                    "status": next_status,
+                    "observed_state": OBSERVED_RUNNING,
+                    "sync_state": SYNC_IN_SYNC,
+                    "error_message": "",
+                    "termination_reason": "",
+                    "observed_at": now,
+                    "started_at": started_at,
+                    "heartbeat_at": now,
+                    "lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "last_event_seq": event_seq,
+                    "version": LoopItemExecution.version + 1,
+                },
+                synchronize_session=False,
+            )
+        )
+        if updated != 1:
+            db.rollback()
+            return None
+        db.expire_all()
+        row = db.get(LoopItemExecution, row.id)
+        if row is None:
+            db.rollback()
+            return None
+        self._set_automation_run_status(db, row, "running")
+        task = db.get(LoopItem, row.loop_item_id)
+        task_projection_is_stale = (
+            row.executor_type != "automation_manager"
+            and task is not None
+            and task.status not in {"in_progress", "in_review", "completed"}
+        )
+        if not was_running or task_projection_is_stale:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
             )
         db.commit()
-        if terminal == STATUS_COMPLETED:
-            self._finish_project_automation_run(db, row.loop_item_id, "succeeded", None)
         db.refresh(row)
         return row
 
@@ -1095,6 +2873,10 @@ class LoopItemExecutionService:
             description=item.description or "",
             status=item.status,
             priority=item.priority,
+            parent_id=item.parent_id or None,
+            tags=item.tags,
+            assignee_user_id=item.assignee_user_id or None,
+            assignee_agent_id=item.assignee_agent_id or None,
         )
 
     def build_runtime_payload(
@@ -1102,249 +2884,204 @@ class LoopItemExecutionService:
         db: Session,
         *,
         execution: LoopItemExecution,
-        task: TaskContext,
-    ) -> Optional[dict]:
-        """Build the runtime.tasks.create payload for a claimed run.
+    ) -> dict[str, Any]:
+        """Materialize credentials and the runtime request at dispatch time."""
 
-        Replayed by the cloud dispatcher and the local App puller, so both
-        sides create the exact task the App would have created.
-        """
-
-        from app.models.delivery import ProjectChatAgent
-        from app.models.user import User
-        from app.services.project_chat.service import bot_config
-
-        agent = db.get(ProjectChatAgent, execution.agent_id)
-        if task is None or agent is None:
-            return None
-        creator = (
-            db.get(User, agent.created_by_user_id) if agent.created_by_user_id else None
+        profile, origin_context = self._runtime_profile_and_context(
+            db, execution=execution
         )
-        if creator is None:
-            return None
-        team = self._resolve_default_team(db, creator.id)
-        model = bot_config(agent).get("model")
-        model_config = {}
-        if isinstance(model, str) and model:
-            from app.services.chat.trigger.unified import (
-                _build_cloud_gateway_model_config,
-                _build_codex_runtime_model_config,
-            )
-
-            resolved = _build_codex_runtime_model_config(
-                model,
-                {},
-                db=db,
-                user_id=creator.id,
-            )
-            gateway_config = _build_cloud_gateway_model_config(
+        try:
+            task = self.resolve_task_context(
                 db,
-                model_name=model,
-                creator=creator,
-                upstream_api_format=resolved.get("upstream_api_format"),
+                execution=execution,
+                user_id=execution.executor_owner_user_id,
             )
-            # Public/group cloud models route through the backend LLM gateway
-            # (same as an App send); everything else keeps its direct config.
-            model_config = gateway_config or resolved
-            if gateway_config:
-                upstream_model_id = str(resolved.get("model_id") or "").lower()
-                inferred_catalog_model_id = (
-                    "wework-kimi-k2-7" if "kimi-k2.7" in upstream_model_id else None
-                )
-                model_config.setdefault(
-                    "codex_catalog_model_id",
-                    resolved.get("codex_catalog_model_id")
-                    or inferred_catalog_model_id
-                    or "wework-gpt-5.6-sol",
-                )
-                model_config["codex_responses_compat_proxy"] = True
-        runtime_task_id = getattr(
-            execution, "runtime_task_id", None
-        ) or runtime_task_id_for(execution.id)
-        payload = self._build_runtime_payload(
-            item=task,
-            agent=agent,
-            creator=creator,
-            team=team,
-            prompt=self.build_robot_prompt(agent),
-            model_config=model_config,
-            runtime_task_id=runtime_task_id,
-        )
-        request = payload.get("executionRequest") or {}
-        bot = request.get("bot") if isinstance(request, dict) else None
-        model_config_value = (
-            request.get("model_config") if isinstance(request, dict) else None
-        )
-        logger.info(
-            "[LoopItemExecution] Runtime payload built execution=%s bot_count=%s "
-            "model_config_base_url=%s",
-            execution.id,
-            len(bot) if isinstance(bot, list) else -1,
-            (
-                model_config_value.get("base_url")
-                if isinstance(model_config_value, dict)
-                else None
+        except Exception as exc:
+            raise WeworkRuntimeConfigurationError(
+                f"Execution task '{execution.loop_item_id}' is unavailable"
+            ) from exc
+        if task is None:
+            raise WeworkRuntimeConfigurationError(
+                f"Execution task '{execution.loop_item_id}' is unavailable"
             )
-            or None,
+        materialize_request = self._materialize_backend_request(
+            db,
+            execution=execution,
+            profile=profile,
         )
-        return payload
-
-    @staticmethod
-    def build_robot_prompt(agent: object) -> str:
-        """Build the robot role description sent to the executor.
-
-        The task title and description are not embedded here; the AI reads the
-        bound task itself through wework_space (get_board_item). Mirror the
-        App-side role description so local and cloud runs stay consistent.
-        """
-
-        from app.services.project_chat.service import bot_config
-
-        system_prompt = bot_config(agent).get("system_prompt") or ""
-        agent_name = (
-            getattr(agent, "title", None) or getattr(agent, "name", None) or "AI"
-        )
-        return (
-            f"你是 {agent_name}，这个项目任务的 AI 执行者。\n{system_prompt}"
-            if system_prompt
-            else f"你是 {agent_name}，这个项目任务的 AI 执行者。"
-        )
-
-    @staticmethod
-    def _resolve_default_team(db: Session, user_id: int) -> Optional[object]:
-        """Resolve the user's default Wework team (same source as the App)."""
-
-        from app.api.endpoints.users import parse_default_team_config
-        from app.core.config import settings
-        from app.models.kind import Kind
-
-        config = parse_default_team_config(settings.DEFAULT_TEAM_WEWORK)
-        if config is None:
-            return None
-        return (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Team",
-                Kind.name == config.name,
-                Kind.namespace == config.namespace,
-                Kind.user_id == user_id,
-                Kind.is_active == True,
+        try:
+            return profile.build_runtime_payload(
+                db,
+                execution_id=execution.id,
+                runtime_task_id=(
+                    execution.runtime_task_id or runtime_task_id_for(execution.id)
+                ),
+                task=task,
+                cloud_project_id=execution.cloud_project_id,
+                origin_context=origin_context,
+                execution_device_id=execution.execution_device_id or "",
+                materialize_execution_request=materialize_request,
             )
-            .first()
-        )
+        except WeworkExecutionProfileError as exc:
+            raise WeworkRuntimeConfigurationError(str(exc)) from exc
+        except Exception as exc:
+            model_label = profile.model or "the selected runtime default"
+            raise WeworkRuntimeConfigurationError(
+                f"Execution model '{model_label}' is unavailable"
+            ) from exc
 
-    @staticmethod
-    def _build_runtime_payload(
+    def _runtime_profile_and_context(
+        self,
+        db: Session,
         *,
-        item: object,
-        agent: object,
-        creator: object,
-        team: Optional[object],
-        prompt: str,
-        model_config: Optional[dict] = None,
-        runtime_task_id: str,
-    ) -> dict:
-        """Build the same runtime.tasks.create payload the App sends."""
+        execution: LoopItemExecution,
+    ) -> tuple[WeworkExecutionProfile, dict[str, Any]]:
+        """Resolve live executor configuration from its canonical record."""
 
-        from app.services.project_chat.service import bot_config
-
-        config = bot_config(agent)
-        system_prompt = config.get("system_prompt") or ""
-        model = config.get("model")
-        model = model if isinstance(model, str) else None
-        runtime_model_id = model
-        if model_config and model_config.get("base_url"):
-            # The App routes cloud models through a known Codex catalog entry
-            # while the gateway config selects the real upstream model. Using
-            # the display name here makes Codex fall back to guessed metadata
-            # and can add unsupported request fields such as `reasoning`.
-            runtime_model_id = (
-                model_config.get("codex_catalog_model_id") or "wework-gpt-5.6-sol"
+        run, rule = self._automation_run_and_rule(db, execution)
+        if execution.executor_type == "project_robot":
+            if not execution.agent_id:
+                raise WeworkRuntimeConfigurationError(
+                    "Project robot execution has no robot"
+                )
+            agent = db.get(ProjectChatAgent, execution.agent_id)
+            if (
+                agent is None
+                or agent.status != "active"
+                or str(agent.cloud_project_id) != str(execution.cloud_project_id)
+            ):
+                raise WeworkRuntimeConfigurationError(
+                    f"Project robot '{execution.agent_id}' is unavailable"
+                )
+            owner_user_id = int(agent.created_by_user_id or 0)
+            if owner_user_id != execution.executor_owner_user_id:
+                raise WeworkRuntimeConfigurationError(
+                    "Project robot owner no longer matches the queued execution"
+                )
+            if run is not None and rule is not None:
+                # Automation only decides who receives the task. Once a
+                # project robot is assigned it must execute through the same
+                # role + live task-context contract as an ordinary assignment;
+                # the manager's scheduling prompt is not an execution prompt.
+                origin_context = self._automation_runtime_context(run, rule)
+            else:
+                origin_context, _ = self._task_automation_context(
+                    db, execution.loop_item_id
+                )
+            return (
+                WeworkExecutionProfile.for_project_robot(agent),
+                origin_context,
             )
-        task_id = runtime_task_id
-        subtask_id = f"{task_id}-assistant"
-        team_id = int(getattr(team, "id", 0) or 0)
-        team_name = getattr(team, "name", "") or ""
-        team_namespace = getattr(team, "namespace", "default") or "default"
-        agent_name = (
-            getattr(agent, "title", None) or getattr(agent, "name", None) or "AI"
+
+        if execution.executor_type != "automation_manager":
+            raise WeworkRuntimeConfigurationError(
+                f"Unknown Wework executor type '{execution.executor_type}'"
+            )
+        if run is None or rule is None:
+            raise WeworkRuntimeConfigurationError(
+                "AI manager automation run or rule is unavailable"
+            )
+        owner_user_id = int(getattr(rule, "created_by_user_id", 0) or 0)
+        if owner_user_id != execution.executor_owner_user_id:
+            raise WeworkRuntimeConfigurationError(
+                "AI manager owner no longer matches the queued execution"
+            )
+        rule_metadata = getattr(rule, "metadata_json", None)
+        rule_metadata = rule_metadata if isinstance(rule_metadata, dict) else {}
+        if (
+            assignment_mode(rule_metadata) != "ai_managed"
+            or manager_type(rule_metadata) != "custom"
+        ):
+            raise WeworkRuntimeConfigurationError(
+                "Automation is no longer configured for a custom AI manager"
+            )
+        model = rule_metadata.get("model")
+        if not isinstance(model, str) or not model:
+            raise WeworkRuntimeConfigurationError(
+                "Custom AI manager model is unavailable"
+            )
+        from app.services.project_automation_execution import (
+            project_automation_execution,
         )
-        title = getattr(item, "title", None) or getattr(item, "name", None) or ""
-        local_project_id = int(
-            getattr(item, "local_project_id", 0)
-            or getattr(agent, "local_project_id", 0)
-            or 0
+
+        project = db.get(CloudProject, execution.cloud_project_id)
+        owner = db.get(User, owner_user_id)
+        if project is None or owner is None:
+            raise WeworkRuntimeConfigurationError(
+                "Automation project or owner is unavailable"
+            )
+        manager_prompt = project_automation_execution._managed_prompt(
+            db,
+            owner=owner,
+            project=project,
+            rule=rule,
+            run=run,
+            context=self._automation_runtime_context(run, rule),
         )
-        identity = (
-            f"你是 {agent_name}，这个项目任务的 AI 执行者。\n{system_prompt}"
-            if system_prompt
-            else f"你是 {agent_name}，这个项目任务的 AI 执行者。"
+        return (
+            WeworkExecutionProfile.for_automation_manager(
+                owner_user_id=owner_user_id,
+                display_name="自定义 AI 调度员",
+                instruction=manager_prompt,
+                model=model,
+            ),
+            self._automation_runtime_context(run, rule),
         )
-        execution_request = {
-            "task_id": task_id,
-            "subtask_id": subtask_id,
-            "team_id": team_id,
-            "team_name": team_name,
-            "team_namespace": team_namespace,
-            "task_title": title,
-            "subtask_title": f"{title} - Assistant",
-            "user_id": creator.id,
-            "user_name": creator.user_name,
-            "user": {
-                "id": creator.id,
-                "name": creator.user_name,
-                "user_name": creator.user_name,
-            },
-            "bot": [
-                {
-                    "id": agent.id,
-                    "name": agent_name,
-                    "shell_type": "codex",
-                    "system_prompt": identity,
-                }
-            ],
-            "system_prompt": identity,
-            "prompt": prompt,
-            "model_config": model_config or {},
-            "standalone_chat_workspace": local_project_id <= 0,
-            "enable_tools": True,
-            "enable_web_search": False,
-            # Match the App's default send. Enabling this unconditionally adds
-            # a `reasoning` parameter that some otherwise supported gateway
-            # models reject before the automation can start.
-            "enable_deep_thinking": False,
-            "skill_names": [],
-            "mcp_servers": [],
-        }
+
+    @staticmethod
+    def _automation_runtime_context(run: Any, rule: Any) -> dict[str, Any]:
+        run_metadata = getattr(run, "metadata_json", None)
+        run_metadata = run_metadata if isinstance(run_metadata, dict) else {}
         return {
-            "taskId": task_id,
-            "teamId": team_id,
-            "runtime": "codex",
-            "message": prompt,
-            "title": title,
-            **({"modelId": runtime_model_id} if runtime_model_id else {}),
-            "cloudProjectId": str(getattr(item, "cloud_project_id", "")),
-            **({"local_project_id": local_project_id} if local_project_id > 0 else {}),
-            "executionRequest": execution_request,
-            "additionalContext": {
-                "projectChat": {
-                    "kind": "application",
-                    "value": (
-                        f"This run is bound to task cloud://projects/"
-                        f"{getattr(item, 'cloud_project_id', '')}/todos/{getattr(item, 'id', '')} "
-                        "in the current project space. Read the task with the wework_space "
-                        "get_board_item tool before executing; the task link already "
-                        "contains the space_id and item_id, so do not call list_spaces to "
-                        "find the project. Your final response is a reviewable task comment. "
-                        "Report actual changes, verification, unfinished work, and risks."
-                    ),
-                },
-                "projectChatAgent": {
-                    "kind": "application",
-                    "value": identity,
-                },
-            },
+            "rule_id": str(getattr(rule, "id", "") or ""),
+            "run_id": str(getattr(run, "id", "") or ""),
+            "trigger": run_metadata.get("trigger") or getattr(run, "source", None),
+            "scheduled_for": run_metadata.get("scheduled_for"),
+            "event": run_metadata.get("event") or {},
+            "workflow_stage_input": run_metadata.get("workflow_stage_input"),
         }
+
+    @staticmethod
+    def _materialize_backend_request(
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        profile: WeworkExecutionProfile,
+    ) -> bool:
+        """Choose the trusted component that resolves current model secrets."""
+
+        if execution.execution_environment == "local":
+            # The App owns the local model catalog and resolves the persisted
+            # model reference immediately after claim. Even when the backend
+            # happens to know a Model CRD with the same name, it must not move
+            # provider credentials across the local claim boundary.
+            return False
+        if not profile.model:
+            return True
+        from app.services.chat.config.model_resolver import _find_model_with_namespace
+        from app.services.runtime_codex_model import (
+            get_enabled_codex_runtime_model_spec,
+        )
+
+        model_kind, model_spec = _find_model_with_namespace(
+            db,
+            profile.model,
+            profile.owner_user_id,
+        )
+        if model_kind is not None and model_spec is not None:
+            return True
+        if (
+            get_enabled_codex_runtime_model_spec(
+                db,
+                profile.owner_user_id,
+                profile.model,
+            )
+            is not None
+        ):
+            return True
+        raise WeworkRuntimeConfigurationError(
+            f"Execution model '{profile.model}' is unavailable"
+        )
 
     @staticmethod
     def _terminal_status(event_name: str, payload: dict) -> Optional[str]:
@@ -1397,6 +3134,9 @@ class LoopItemExecutionService:
             .limit(limit)
             .all()
         )
+        limits = _agent_limits(
+            db, {execution.agent_id for execution in rows if execution.agent_id}
+        )
         return [
             {
                 "id": execution.id,
@@ -1405,17 +3145,39 @@ class LoopItemExecutionService:
                 "task_title": None,
                 "task_status": None,
                 "task_priority": None,
-                "agent_id": execution.agent_id,
+                "executor_type": execution.executor_type,
+                "executor_owner_user_id": execution.executor_owner_user_id,
+                "agent_id": _optional_text(execution.agent_id),
+                "team_id": execution.optional_team_id,
+                "backend_task_id": execution.optional_backend_task_id,
+                "automation_run_id": execution.automation_run_id,
                 "assigner_user_id": execution.assigner_user_id,
                 "execution_environment": execution.execution_environment,
                 "execution_device_id": _optional_text(execution.execution_device_id),
+                "runtime_instance_id": _optional_text(execution.runtime_instance_id),
                 "status": execution.status,
+                "display_state": execution_display_state(execution),
+                "observed_state": execution.observed_state,
+                "sync_state": execution.sync_state,
                 "priority_weight": execution.priority_weight,
                 "queued_at": _optional_datetime(execution.queued_at),
                 "started_at": _optional_datetime(execution.started_at),
                 "completed_at": _optional_datetime(execution.completed_at),
                 "lease_expires_at": _optional_datetime(execution.lease_expires_at),
                 "heartbeat_at": _optional_datetime(execution.heartbeat_at),
+                "claimed_at": _optional_datetime(execution.claimed_at),
+                "start_requested_at": _optional_datetime(execution.start_requested_at),
+                "observed_at": _optional_datetime(execution.observed_at),
+                "cancel_requested_at": _optional_datetime(
+                    execution.cancel_requested_at
+                ),
+                "attempt_no": execution.attempt_no,
+                "previous_execution_id": _optional_user_id(
+                    execution.previous_execution_id
+                ),
+                "execution_scope": execution.execution_scope,
+                "last_event_seq": execution.last_event_seq,
+                "termination_reason": execution.termination_reason,
                 "retry_attempt": execution.retry_attempt,
                 "error_message": execution.error_message,
                 "execution_note": execution.execution_note,
@@ -1424,6 +3186,7 @@ class LoopItemExecutionService:
                 "rejected_reason": _optional_text(execution.rejected_reason),
                 "runtime_device_id": _optional_text(execution.runtime_device_id),
                 "runtime_task_id": _optional_text(execution.runtime_task_id),
+                "agent_max_concurrent_executions": limits.get(execution.agent_id, 1),
                 "version": execution.version,
                 "created_at": execution.created_at,
                 "updated_at": execution.updated_at,
@@ -1465,12 +3228,19 @@ class LoopItemExecutionService:
         now: Optional[datetime] = None,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ) -> tuple[int, int]:
-        """Recover runs whose lease expired (crashed devices/workers).
+        """Release provably unstarted claims and flag delivered starts stale.
 
-        Returns (requeued, failed) counts. A run is requeued when it has not
-        exceeded its retry budget, otherwise it is marked failed.
+        A lease is transport liveness, not process liveness. Once Start may
+        have been delivered this scan must preserve the slot until a Runtime
+        event, cancel ACK, or status query establishes the real outcome.
         """
 
+        projection_repairs = self.reconcile_terminal_automation_projections(db)
+        if projection_repairs:
+            logger.warning(
+                "[LoopItemExecutions] Repaired %s terminal automation projection(s)",
+                projection_repairs,
+            )
         current = now or utcnow()
         # A healthy run renews its lease on every runtime event, so a run is
         # stale shortly after its lease expires. Do not wait another full
@@ -1480,14 +3250,14 @@ class LoopItemExecutionService:
         stale_rows = (
             db.query(LoopItemExecution)
             .filter(
-                LoopItemExecution.status.in_([STATUS_CLAIMED, STATUS_RUNNING]),
+                LoopItemExecution.status.in_(CAPACITY_STATUSES),
                 ~loop_datetime_is_unset(LoopItemExecution.lease_expires_at),
                 LoopItemExecution.lease_expires_at < stale_threshold,
             )
             .all()
         )
         requeued = 0
-        failed = 0
+        unknown = 0
         for row in stale_rows:
             logger.warning(
                 "[LoopItemExecutions] Recovering stale run execution=%s task=%s "
@@ -1497,17 +3267,242 @@ class LoopItemExecutionService:
                 row.status,
                 row.lease_expires_at,
             )
-            self.fail(
-                db,
-                execution_id=row.id,
-                error="Run lease expired; execution environment did not heartbeat",
-                requeue=True,
-            )
-            if row.status == STATUS_QUEUED:
+            if row.status == STATUS_CLAIMED and loop_datetime_value_is_unset(
+                row.start_requested_at
+            ):
+                self.fail(
+                    db,
+                    execution_id=row.id,
+                    error="Claim lease expired before Runtime dispatch",
+                    note="claim_lease_expired_before_start",
+                    requeue_infra=True,
+                )
                 requeued += 1
             else:
-                failed += 1
-        return requeued, failed
+                self.mark_dispatch_unknown(
+                    db,
+                    execution_id=row.id,
+                    error="Runtime state must be reconciled after lease expiry",
+                )
+                unknown += 1
+        return requeued, unknown
+
+    def stale_for_reconciliation(
+        self, db: Session, *, limit: int = 100
+    ) -> list[LoopItemExecution]:
+        """Return attempts whose Runtime truth must be queried."""
+
+        return (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.status.in_(CAPACITY_STATUSES),
+                LoopItemExecution.sync_state == SYNC_STALE,
+                LoopItemExecution.runtime_device_id != "",
+                LoopItemExecution.runtime_task_id != "",
+            )
+            .order_by(LoopItemExecution.observed_at.asc(), LoopItemExecution.id.asc())
+            .limit(limit)
+            .all()
+        )
+
+    def active_for_device_reconciliation(
+        self,
+        db: Session,
+        *,
+        owner_user_id: int,
+        runtime_device_id: str,
+        limit: int = 100,
+    ) -> list[LoopItemExecution]:
+        """Return active attempts to reconcile when their device reconnects."""
+
+        return (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.executor_owner_user_id == owner_user_id,
+                LoopItemExecution.runtime_device_id == runtime_device_id,
+                LoopItemExecution.runtime_task_id != "",
+                LoopItemExecution.status.in_(CAPACITY_STATUSES),
+            )
+            .order_by(LoopItemExecution.id.asc())
+            .limit(limit)
+            .all()
+        )
+
+    def reconcile_runtime_snapshot(
+        self,
+        db: Session,
+        *,
+        execution_id: int,
+        runtime_status: str,
+        running: bool,
+        turn_status: Optional[str] = None,
+    ) -> Optional[LoopItemExecution]:
+        """Apply a trusted snapshot and restore its missing activity projection."""
+
+        row = db.get(LoopItemExecution, execution_id)
+        if row is None or row.status not in CAPACITY_STATUSES:
+            return row
+        normalized = runtime_status.lower().strip()
+        normalized_turn = (turn_status or "").lower().strip()
+        if normalized == "missing" and row.status == STATUS_CANCEL_REQUESTED:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
+            return self.confirm_runtime_cancelled(
+                db,
+                execution_id=row.id,
+                note="Runtime no longer reports the cancelled task",
+            )
+        if (
+            normalized == "missing"
+            and row.status == STATUS_CLAIMED
+            and row.observed_state == OBSERVED_UNCONFIRMED
+            and row.termination_reason == "start_confirmation_timeout"
+            and not loop_datetime_value_is_unset(row.start_requested_at)
+        ):
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
+            return self.fail(
+                db,
+                execution_id=row.id,
+                error=(
+                    "Runtime confirmed that the task does not exist after "
+                    "start confirmation timed out"
+                ),
+                note="Runtime task was missing after an unconfirmed start",
+                requeue_infra=True,
+                expected_status=STATUS_CLAIMED,
+                expected_version=row.version,
+            )
+        if running or normalized in {"running", "in_progress"}:
+            now = utcnow()
+            next_status = (
+                STATUS_CANCEL_REQUESTED
+                if row.status == STATUS_CANCEL_REQUESTED
+                else STATUS_RUNNING
+            )
+            row.status = next_status
+            row.observed_state = OBSERVED_RUNNING
+            row.sync_state = SYNC_IN_SYNC
+            row.error_message = ""
+            row.termination_reason = ""
+            row.observed_at = now
+            if loop_datetime_value_is_unset(row.started_at):
+                row.started_at = now
+            row.version += 1
+            self._set_automation_run_status(db, row, "running")
+            db.flush()
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
+            db.commit()
+            db.refresh(row)
+            self.push_linked_activity_after_commit(db, execution=row)
+            return row
+        terminal = {
+            "completed": STATUS_COMPLETED,
+            "succeeded": STATUS_COMPLETED,
+            "failed": STATUS_FAILED,
+            "error": STATUS_FAILED,
+            "cancelled": STATUS_CANCELLED,
+            "canceled": STATUS_CANCELLED,
+            "interrupted": STATUS_CANCELLED,
+            "aborted": STATUS_CANCELLED,
+        }.get(normalized_turn) or {
+            "completed": STATUS_COMPLETED,
+            "succeeded": STATUS_COMPLETED,
+            "failed": STATUS_FAILED,
+            "error": STATUS_FAILED,
+            "cancelled": STATUS_CANCELLED,
+            "canceled": STATUS_CANCELLED,
+        }.get(
+            normalized
+        )
+        if terminal == STATUS_COMPLETED:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
+            return self.complete(db, execution_id=row.id, note="Runtime reconciled")
+        if terminal == STATUS_FAILED:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
+            return self.fail(
+                db,
+                execution_id=row.id,
+                error="Runtime reported a failed task during reconciliation",
+                termination_reason="runtime_reconciled_failed",
+            )
+        if terminal == STATUS_CANCELLED:
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
+            return self._transition_terminal(
+                db,
+                execution_id=row.id,
+                terminal_status=STATUS_CANCELLED,
+                note="Runtime reconciled cancellation",
+                content="AI execution was cancelled.",
+                observed_state=OBSERVED_CANCELLED,
+                observed_at=utcnow(),
+                termination_reason="runtime_reconciled_cancelled",
+            )
+        if normalized in {"accepted", "active", "pending", "queued", "starting"}:
+            now = utcnow()
+            row.observed_state = OBSERVED_ACCEPTED
+            row.sync_state = SYNC_IN_SYNC
+            row.error_message = ""
+            row.termination_reason = ""
+            row.observed_at = now
+            row.heartbeat_at = now
+            row.lease_expires_at = now + timedelta(seconds=DEFAULT_LEASE_SECONDS)
+            row.version += 1
+            db.flush()
+            self.open_execution_activity(
+                db,
+                execution=row,
+                commit=False,
+                push=False,
+            )
+            db.commit()
+            db.refresh(row)
+            self.push_linked_activity_after_commit(db, execution=row)
+            return row
+        row.sync_state = SYNC_DIVERGED
+        row.error_message = (
+            f"Runtime returned unrecognized status '{runtime_status or 'missing'}'"
+        )[:2000]
+        row.version += 1
+        db.flush()
+        self.open_execution_activity(
+            db,
+            execution=row,
+            commit=False,
+            push=False,
+        )
+        db.commit()
+        db.refresh(row)
+        self.push_linked_activity_after_commit(db, execution=row)
+        return row
 
     def stall_scan(
         self,
@@ -1516,13 +3511,13 @@ class LoopItemExecutionService:
         now: Optional[datetime] = None,
         text_timeout_seconds: int = DEFAULT_STALL_TEXT_TIMEOUT_SECONDS,
     ) -> list[LoopItemExecution]:
-        """Fail runs that produced no AI text for a long time.
+        """Request cancellation for runs with no AI text for a long time.
 
         Lease renewal keeps event-flowing runs alive forever, which includes
-        runaway tool loops that never emit assistant text. A run executing
-        longer than ``text_timeout_seconds`` with an empty streaming message is
-        stalled: mark it failed so the task unlocks and the device slot frees.
-        Returns the stalled runs so callers can also cancel them on the device.
+        runaway tool loops that never emit assistant text. A delivered run is
+        never terminalized from this timeout alone: it remains capacity-holding
+        in ``cancel_requested`` until Runtime acknowledges the stop. Returns
+        the cancellation intents so callers can emit the Runtime RPC.
         """
 
         current = now or utcnow()
@@ -1553,16 +3548,15 @@ class LoopItemExecutionService:
             )
             if message is not None and (message.content or "").strip():
                 continue
-            self.fail(
+            requested = self.cancel(
                 db,
                 execution_id=execution.id,
-                error=(
+                note=(
                     f"AI 执行超过 {text_timeout_seconds // 60} 分钟未产生任何输出，"
                     "已自动停止（疑似卡死）"
                 ),
-                requeue=False,
             )
-            stalled.append(execution)
+            stalled.append(requested)
         return stalled
 
     # ------------------------------------------------------------------
@@ -1575,11 +3569,10 @@ class LoopItemExecutionService:
         row = db.get(LoopItemExecution, execution_id)
         if row is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Execution not found")
-        agent = db.get(ProjectChatAgent, row.agent_id)
-        if agent is None or agent.created_by_user_id != user_id:
+        if row.executor_owner_user_id != user_id:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
-                "Only the robot creator can approve or reject this run",
+                "Only the executor owner can approve or reject this run",
             )
         return row
 

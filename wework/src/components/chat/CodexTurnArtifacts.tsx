@@ -199,7 +199,7 @@ function MemoryCitationEntryRow({
       {entry.note ? <span className="block break-words text-text-muted">{entry.note}</span> : null}
       <span
         data-testid="codex-memory-citation-tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 hidden max-w-[min(28rem,calc(100vw-3rem))] -translate-x-1/2 whitespace-normal break-all rounded-xl border border-white/10 bg-[#2f2f2f] px-3 py-2 text-sm font-normal leading-5 text-white shadow-lg group-hover/memory-entry:block group-focus-visible/memory-entry:block"
+        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 hidden max-w-[min(28rem,calc(100vw-3rem))] -translate-x-1/2 whitespace-normal break-all rounded-xl border border-border bg-popover px-3 py-2 text-sm font-normal leading-5 text-text-primary shadow-lg group-hover/memory-entry:block group-focus-visible/memory-entry:block"
       >
         {filename}
       </span>

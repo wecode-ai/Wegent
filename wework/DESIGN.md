@@ -145,6 +145,11 @@ the static CSS bundle:
 | Heading large  |       `24px` |              `29px` | `500`     | rare prominent heading                |
 | Display        |       `28px` |         `32px–34px` | `500`     | exceptional home/onboarding use only  |
 
+Document-style Markdown previews use the heading ramp for clear content
+hierarchy: H1 uses Heading large, H2 uses Heading medium, and H3 uses Heading
+small. Lower heading levels continue through the semantic UI sizes. Compact
+chat and process Markdown keep their denser heading scale.
+
 The default UI font size is `14px`; the default code font size is `12px`.
 Appearance settings may change UI size from `11px` through `16px` and code size
 from `8px` through `24px`, in whole-pixel steps. Changing UI size scales every
@@ -271,6 +276,20 @@ Required semantic results:
 These are reference values. Product code must consume semantic Wework tokens,
 not scatter literals. Every reusable token must define both themes.
 
+Theme-aware application chrome must use semantic tokens even when a component
+has multiple layout variants. A prop such as compact, remote, mobile, or
+embedded may change spacing and composition, but it must not select a
+light-only or dark-only color recipe. Apply this rule to nested surfaces as
+well as their containers: dialogs, directory pickers, menus, inputs, list rows,
+tooltips, footers, and action groups must all inherit the active theme.
+
+Literal white, black, or neutral fills are allowed only when color is part of
+the content contract rather than application chrome. Examples include a QR
+code's required white quiet zone, an authored HTML document or image canvas, a
+syntax-highlighted code theme, a brand icon, and native window controls. Keep
+these exceptions narrow and visually contained; do not use them to justify a
+light-only panel or control.
+
 Surfaces should be separated in this order: spacing, a small neutral tone
 change, a hairline, then elevation. Do not jump directly to a bordered card.
 
@@ -388,6 +407,10 @@ may reveal on hover/focus but must remain keyboard accessible.
   screenshot-matched review artifacts must use that width.
 - Sidebar rows are `30px` high with a `10px` radius, `8px–10px` horizontal
   padding, `14px` text, and an ordinary `16px` icon.
+- Leading status icons may occupy reserved indentation only when their negative
+  offset is fully contained by the row's left padding. Keep icons in the normal
+  flex flow for shallow pinned and top-level task rows so the glyph and its hit
+  target remain inside the sidebar viewport.
 - Priority task entries are selectable two-line data rows rather than compact
   navigation rows. They use a `48px` minimum height so the title and `12px–14px`
   source metadata remain readable.
@@ -395,10 +418,10 @@ may reveal on hover/focus but must remain keyboard accessible.
 - Keep the sidebar base surface stable when the application window gains or
   loses focus. Window focus must not darken the task or work-items sidebar.
 - Sortable sidebar rows must keep the sortable container separate from the
-  pointer activator. Only the primary icon-and-label or label region may start
-  pointer sorting, after at least `6px` of movement; trailing actions, metadata,
-  and unused row space must remain click-only. Preserve keyboard sorting on the
-  sortable container.
+  pointer activator. The primary non-action area, including unused space beside
+  a short label, may start pointer sorting after at least `6px` of movement.
+  Trailing actions and metadata must remain outside the activator. Preserve
+  keyboard sorting on the sortable container.
 - Section spacing may be larger than row spacing; avoid divider-heavy grouping.
 - On macOS light theme, use the captured warm translucent/off-white sidebar
   material and keep the main canvas pure white. Preserve the traffic-light safe
@@ -525,6 +548,8 @@ recipe closely:
   shadow;
 - do not add a dark visible border in the normal state; forced-color mode may
   add an explicit outline;
+- the default desktop input starts at two text lines; compact composers start
+  at one line and grow only when content requires it;
 - multiline input horizontal inset is `12px`;
 - attachment inset is `8px`, with the nested radius derived from the outer
   composer radius rather than chosen independently;
@@ -729,6 +754,11 @@ semantics for all three.
 
 ### 7.3 Runtime and conversation state
 
+- 分栏中的编辑器状态必须按任务作用域隔离，包括未发送文本、附件、上传进度和
+  上传错误；一个分栏的粘贴、移除或发送操作不得改变其他分栏的编辑器。
+- Composer state in split panes must be isolated by task scope, including
+  unsent text, attachments, upload progress, and upload errors. Pasting,
+  removing, or sending in one pane must not change another pane's composer.
 - Keep task execution lifecycle state separate from conversation delivery
   state. The runtime task state machine owns execution, turns, and goals; the
   conversation queue reducer owns queued messages and guidance delivery.

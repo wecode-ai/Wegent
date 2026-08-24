@@ -36,9 +36,8 @@ pub(crate) const KIMI_K27_MODEL: &str = "wework-kimi-k2-7";
 #[cfg(test)]
 pub(crate) const DEEPSEEK_V4_FLASH_MODEL: &str = "wework-deepseek-v4-flash";
 #[cfg(test)]
-pub(crate) const VISION_SIDECAR_MODEL: &str = "wework-vision-sidecar";
-#[cfg(test)]
 pub(crate) const DEEPSEEK_V4_PRO_MODEL: &str = "wework-deepseek-v4-pro";
+pub(crate) const VISION_SIDECAR_CATALOG_SUFFIX: &str = "-vision-sidecar";
 #[cfg(test)]
 const GPT_56_SOL_MODEL: &str = "gpt-5.6-sol";
 #[cfg(test)]
@@ -58,7 +57,6 @@ const KIMI_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-model
 const DEEPSEEK_CODEX_MODELS: &str =
     include_str!("../../../shared/assets/codex-models/deepseek.json");
 const OPENAI_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-models/openai.json");
-const WEWORK_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-models/wework.json");
 
 fn default_base_instructions() -> String {
     DEFAULT_BASE_INSTRUCTIONS.replace(
@@ -115,9 +113,22 @@ pub(crate) fn catalog() -> Value {
 }
 
 pub(crate) fn models() -> Vec<Value> {
+    let mut models = base_models();
+    append_vision_sidecar_models(&mut models);
+    models
+}
+
+fn base_models() -> Vec<Value> {
     let mut models = builtin_model_entries();
     models.extend(read_custom_models());
     models
+}
+
+pub(crate) fn vision_sidecar_catalog_model_id(base_model_id: &str) -> String {
+    if base_model_id.ends_with(VISION_SIDECAR_CATALOG_SUFFIX) {
+        return base_model_id.to_owned();
+    }
+    format!("{base_model_id}{VISION_SIDECAR_CATALOG_SUFFIX}")
 }
 
 pub(crate) fn write_custom_models(entries: &[Value]) -> Result<usize, String> {
@@ -267,7 +278,6 @@ fn builtin_model_entries() -> Vec<Value> {
         ("Kimi", KIMI_CODEX_MODELS),
         ("DeepSeek", DEEPSEEK_CODEX_MODELS),
         ("OpenAI", OPENAI_CODEX_MODELS),
-        ("Wework", WEWORK_CODEX_MODELS),
     ]
     .into_iter()
     .flat_map(|(group, source)| catalog_entries_from_resource(group, source))
@@ -282,11 +292,11 @@ fn catalog_entries_from_resource(group: &str, source: &str) -> Vec<Value> {
         .unwrap_or_else(|| panic!("{group} catalog contains a models array"));
     models
         .iter()
-        .map(|model| catalog_entry_from_resource(group, model, models))
+        .map(|model| catalog_entry_from_resource(group, model))
         .collect()
 }
 
-fn catalog_entry_from_resource(group: &str, model: &Value, models: &[Value]) -> Value {
+fn catalog_entry_from_resource(group: &str, model: &Value) -> Value {
     let source = model
         .as_object()
         .unwrap_or_else(|| panic!("{group} catalog model is an object"));
@@ -298,25 +308,19 @@ fn catalog_entry_from_resource(group: &str, model: &Value, models: &[Value]) -> 
         .get("display_name")
         .and_then(Value::as_str)
         .unwrap_or_else(|| panic!("{group} catalog model has a display name"));
-    let mut entry = source
-        .get("extends")
-        .and_then(Value::as_str)
-        .map(|base_slug| {
-            let base = models
-                .iter()
-                .find(|candidate| candidate["slug"] == base_slug)
-                .unwrap_or_else(|| panic!("{group} catalog base model {base_slug} exists"));
-            catalog_entry_from_resource(group, base, models)
-        })
-        .unwrap_or_else(|| {
-            model_entry(
-                slug,
-                display_name,
-                source.get("apply_patch_tool_type").and_then(Value::as_str),
-            )
-        });
+    let mut entry = model_entry(
+        slug,
+        display_name,
+        source.get("apply_patch_tool_type").and_then(Value::as_str),
+    );
     for (key, value) in source {
-        if key != "extends" && key != "upstream_model_id" {
+        if !matches!(
+            key.as_str(),
+            "upstream_model_id"
+                | "upstream_model_ids"
+                | "upstream_model_id_contains"
+                | "upstream_api_formats"
+        ) {
             entry[key] = value.clone();
         }
     }
@@ -429,10 +433,7 @@ fn catalog_cache() -> &'static Mutex<Option<CatalogCacheEntry>> {
 }
 
 fn configured_catalog_upstream() -> Option<(String, String)> {
-    let codex_home = env::var_os("WEGENT_CODEX_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)?;
-    let document = fs::read_to_string(codex_home.join("config.toml"))
+    let document = fs::read_to_string(crate::agents::wework_codex_home().join("config.toml"))
         .ok()?
         .parse::<DocumentMut>()
         .ok()?;
@@ -463,7 +464,7 @@ fn merge_capability_models(catalog: &mut Value) {
         *catalog = json!({ "models": models() });
         return;
     };
-    for capability_model in models() {
+    for capability_model in base_models() {
         let slug = capability_model.get("slug").and_then(Value::as_str);
         if !upstream_models
             .iter()
@@ -472,6 +473,57 @@ fn merge_capability_models(catalog: &mut Value) {
             upstream_models.push(capability_model);
         }
     }
+    append_vision_sidecar_models(upstream_models);
+}
+
+fn append_vision_sidecar_models(models: &mut Vec<Value>) {
+    let existing_slugs = models
+        .iter()
+        .filter_map(|model| model.get("slug").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect::<std::collections::HashSet<_>>();
+    let variants = models
+        .iter()
+        .filter_map(vision_sidecar_catalog_model)
+        .filter(|model| {
+            model
+                .get("slug")
+                .and_then(Value::as_str)
+                .is_some_and(|slug| !existing_slugs.contains(slug))
+        })
+        .collect::<Vec<_>>();
+    models.extend(variants);
+}
+
+fn vision_sidecar_catalog_model(base: &Value) -> Option<Value> {
+    let slug = base.get("slug")?.as_str()?.trim();
+    if slug.is_empty() || slug.ends_with(VISION_SIDECAR_CATALOG_SUFFIX) {
+        return None;
+    }
+    let mut model = base.clone();
+    let display_name = base
+        .get("display_name")
+        .and_then(Value::as_str)
+        .unwrap_or(slug);
+    let mut input_modalities = base
+        .get("input_modalities")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_else(|| vec![Value::String("text".to_owned())]);
+    if !input_modalities.iter().any(|modality| modality == "text") {
+        input_modalities.insert(0, Value::String("text".to_owned()));
+    }
+    if !input_modalities.iter().any(|modality| modality == "image") {
+        input_modalities.push(Value::String("image".to_owned()));
+    }
+    model["slug"] = Value::String(vision_sidecar_catalog_model_id(slug));
+    model["display_name"] = Value::String(format!("{display_name} with vision delegation"));
+    model["description"] = Value::String(format!(
+        "{display_name} routed through an explicitly configured vision sidecar"
+    ));
+    model["visibility"] = Value::String("none".to_owned());
+    model["input_modalities"] = Value::Array(input_modalities);
+    Some(model)
 }
 
 fn model_entry(slug: &str, display_name: &str, apply_patch_tool_type: Option<&str>) -> Value {
@@ -566,15 +618,6 @@ mod tests {
         assert_eq!(model["visibility"], "none");
         assert_eq!(model["input_modalities"], json!(["text"]));
 
-        let vision_model = catalog["models"]
-            .as_array()
-            .expect("models array")
-            .iter()
-            .find(|model| model["slug"] == VISION_SIDECAR_MODEL)
-            .expect("vision sidecar entry");
-        assert_eq!(vision_model["visibility"], "none");
-        assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
-
         let pro_model = catalog["models"]
             .as_array()
             .expect("models array")
@@ -589,6 +632,124 @@ mod tests {
         assert_eq!(pro_model["supports_search_tool"], true);
         assert_eq!(pro_model["visibility"], "none");
         assert_eq!(pro_model["input_modalities"], json!(["text"]));
+
+        for base_slug in [DEEPSEEK_V4_FLASH_MODEL, DEEPSEEK_V4_PRO_MODEL] {
+            let slug = vision_sidecar_catalog_model_id(base_slug);
+            let vision_model = catalog["models"]
+                .as_array()
+                .expect("models array")
+                .iter()
+                .find(|model| model["slug"] == slug.as_str())
+                .expect("DeepSeek vision delegation entry");
+            assert_eq!(vision_model["context_window"], 1_048_576);
+            assert_eq!(vision_model["default_reasoning_level"], "high");
+            assert_eq!(vision_model["apply_patch_tool_type"], "freeform");
+            assert_eq!(vision_model["supports_parallel_tool_calls"], true);
+            assert_eq!(vision_model["multi_agent_version"], "v2");
+            assert_eq!(vision_model["visibility"], "none");
+            assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
+        }
+    }
+
+    #[test]
+    fn catalog_derives_a_vision_variant_for_every_base_profile() {
+        let catalog = catalog();
+        let models = catalog["models"].as_array().expect("models array");
+        let base_model = models
+            .iter()
+            .find(|model| model["slug"] == KIMI_K27_MODEL)
+            .expect("Kimi base entry");
+        let vision_slug = vision_sidecar_catalog_model_id(KIMI_K27_MODEL);
+        let vision_model = models
+            .iter()
+            .find(|model| model["slug"] == vision_slug)
+            .expect("derived Kimi vision entry");
+
+        assert_eq!(vision_model["context_window"], base_model["context_window"]);
+        assert_eq!(
+            vision_model["supports_parallel_tool_calls"],
+            base_model["supports_parallel_tool_calls"]
+        );
+        assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
+        assert_eq!(vision_model["visibility"], "none");
+    }
+
+    #[test]
+    fn vision_derivation_preserves_arbitrary_catalog_capabilities() {
+        let mut models = vec![json!({
+            "slug": "operator-model",
+            "display_name": "Operator Model",
+            "description": "Operator-defined capabilities",
+            "visibility": "list",
+            "context_window": 777_777,
+            "default_reasoning_level": "max",
+            "supports_parallel_tool_calls": true,
+            "experimental_supported_tools": ["custom_tool"],
+            "input_modalities": ["text", "audio"]
+        })];
+
+        append_vision_sidecar_models(&mut models);
+
+        let vision_model = models
+            .iter()
+            .find(|model| model["slug"] == "operator-model-vision-sidecar")
+            .expect("derived operator vision entry");
+        assert_eq!(vision_model["context_window"], 777_777);
+        assert_eq!(vision_model["default_reasoning_level"], "max");
+        assert_eq!(vision_model["supports_parallel_tool_calls"], true);
+        assert_eq!(
+            vision_model["experimental_supported_tools"],
+            json!(["custom_tool"])
+        );
+        assert_eq!(
+            vision_model["input_modalities"],
+            json!(["text", "audio", "image"])
+        );
+        assert_eq!(vision_model["visibility"], "none");
+    }
+
+    #[test]
+    fn vision_derivation_adds_text_to_an_image_only_profile() {
+        let base = json!({
+            "slug": "image-only-model",
+            "display_name": "Image-only Model",
+            "input_modalities": ["image"]
+        });
+
+        let vision_model = vision_sidecar_catalog_model(&base).expect("derived model");
+
+        assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
+    }
+
+    #[test]
+    fn merge_derives_vision_from_the_effective_upstream_base_profile() {
+        let mut catalog = json!({
+            "models": [{
+                "slug": GPT_56_SOL_MODEL,
+                "display_name": "Upstream Sol",
+                "description": "Effective upstream profile",
+                "context_window": 999_999,
+                "supports_parallel_tool_calls": true,
+                "input_modalities": ["text"]
+            }]
+        });
+
+        merge_capability_models(&mut catalog);
+
+        let vision_slug = vision_sidecar_catalog_model_id(GPT_56_SOL_MODEL);
+        let vision_model = catalog["models"]
+            .as_array()
+            .expect("models array")
+            .iter()
+            .find(|model| model["slug"] == vision_slug)
+            .expect("derived upstream vision entry");
+        assert_eq!(
+            vision_model["display_name"],
+            "Upstream Sol with vision delegation"
+        );
+        assert_eq!(vision_model["context_window"], 999_999);
+        assert_eq!(vision_model["supports_parallel_tool_calls"], true);
+        assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
     }
 
     #[test]
@@ -636,7 +797,6 @@ mod tests {
             KIMI_K3_MODEL,
             KIMI_K27_MODEL,
             DEEPSEEK_V4_FLASH_MODEL,
-            VISION_SIDECAR_MODEL,
             DEEPSEEK_V4_PRO_MODEL,
             WEWORK_GPT_56_SOL_MODEL,
             WEWORK_GPT_56_TERRA_MODEL,

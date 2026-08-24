@@ -15,13 +15,14 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type { CloudProject } from '@/api/deliveries'
 import type {
-  Attachment,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
+  RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskSummary,
 } from '@/types/api'
 import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
+import { useProjectRuntimeTaskComposer } from './useProjectRuntimeTaskComposer'
 
 interface ProjectSpaceConversation {
   key: string
@@ -97,7 +98,7 @@ export function ProjectSpaceChatSidebar({
   onClose,
 }: ProjectSpaceChatSidebarProps) {
   const { t } = useTranslation('common')
-  const { state, createProjectRuntimeTask } = useWorkbenchPaneContext()
+  const { state } = useWorkbenchPaneContext()
   const conversations = useMemo(
     () =>
       projectSpaceConversations(
@@ -190,28 +191,19 @@ export function ProjectSpaceChatSidebar({
     [project.id]
   )
 
-  const createConversation = useCallback(
-    async (
-      message: string,
-      options: {
-        attachments: Attachment[]
-        onError: (message: string) => void
-        onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
-      }
-    ) => {
-      const address = await createProjectRuntimeTask(message, {
-        project: selectedLocalProject,
-        attachments: options.attachments,
-        collaborationMode: 'default',
-        cloudProjectId: String(project.id),
-        additionalContext: projectSpaceChatRuntimeContext(project),
-        onError: options.onError,
-        onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
-      })
-      return address
-    },
-    [createProjectRuntimeTask, project, selectedLocalProject]
+  const runtimeContext = useMemo<
+    Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
+  >(
+    () => ({
+      cloudProjectId: String(project.id),
+      additionalContext: projectSpaceChatRuntimeContext(project),
+    }),
+    [project]
   )
+  const createConversation = useProjectRuntimeTaskComposer({
+    project: selectedLocalProject,
+    runtimeContext,
+  })
 
   const resize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {

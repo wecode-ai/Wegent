@@ -35,7 +35,11 @@ import type {
   TurnFileChangesSummary,
 } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import type {
+  ProcessingBlock,
+  RuntimeAssistantDisplayItem,
+  WorkbenchMessage,
+} from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import {
   getAttachmentTextPreview,
@@ -59,6 +63,7 @@ import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { CodeCommentPreview } from './CodeCommentPreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import { getFileEditDurationsBySourceBlock } from './blocks/fileEditDurations'
 import { getDurationText } from './blocks/processingDuration'
 import { usePersistentProcessingExpansion } from './blocks/processingExpansionState'
 import { isContextCompactionToolName, isGuidanceToolName } from './blocks/toolBlockKinds'
@@ -81,6 +86,7 @@ import {
   cacheConversationVirtualMeasurements,
   getConversationVirtualMeasurements,
 } from '@/features/workbench/runtimeConversationCache'
+import { getRuntimeMessageActiveThinking } from '@/features/workbench/runtimeThinking'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -128,6 +134,7 @@ interface MessageListProps {
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   onVirtualLayoutChange?: () => void
+  virtualAnchorToEnd?: boolean
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -221,6 +228,7 @@ export const MessageList = memo(function MessageList({
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   onVirtualLayoutChange,
+  virtualAnchorToEnd = true,
   renderGapAfterMessage,
 }: MessageListProps) {
   const { t } = useTranslation('common')
@@ -317,7 +325,7 @@ export const MessageList = memo(function MessageList({
     paddingStart: MESSAGE_LIST_PADDING_TOP_PX,
     paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
     overscan: VIRTUAL_MESSAGE_OVERSCAN,
-    anchorTo: 'end',
+    anchorTo: virtualAnchorToEnd ? 'end' : 'start',
     rangeExtractor: range => {
       const indexes =
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
@@ -797,6 +805,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'onAskSelectionInSidebar'
       : null,
     previous.onVirtualLayoutChange !== next.onVirtualLayoutChange ? 'onVirtualLayoutChange' : null,
+    previous.virtualAnchorToEnd !== next.virtualAnchorToEnd ? 'virtualAnchorToEnd' : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
 
@@ -1940,24 +1949,6 @@ function getDisplayProcessingBlocks(
     })
 }
 
-function getLatestActiveThinkingContent(blocks: ProcessingBlock[] | undefined): string {
-  if (!blocks?.length) return ''
-
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    const block = blocks[index]
-    if (
-      block?.type === 'thinking' &&
-      block.status !== 'done' &&
-      block.status !== 'error' &&
-      block.content.trim()
-    ) {
-      return block.content
-    }
-  }
-
-  return ''
-}
-
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
   return blocks.filter(
     (block): block is Extract<ProcessingBlock, { type: 'tool' }> =>
@@ -1965,7 +1956,7 @@ function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
   )
 }
 
-function AssistantMessage({
+export function AssistantMessage({
   message,
   conversationKey,
   devices,
@@ -2031,13 +2022,15 @@ function AssistantMessage({
     () => getDisplayProcessingBlocks(message.blocks, isCancelled),
     [isCancelled, message.blocks]
   )
+  const fileEditDurationsBySourceBlock = useMemo(
+    () => getFileEditDurationsBySourceBlock(displayBlocks),
+    [displayBlocks]
+  )
   const processingSegments = splitProcessingBlocks(displayBlocks)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = !isCancelled && message.status === 'streaming'
-  const activeThinkingContent = isStreaming
-    ? (message.streamingThinkingContent ?? getLatestActiveThinkingContent(message.blocks))
-    : ''
+  const activeThinkingContent = isStreaming ? getRuntimeMessageActiveThinking(message) : ''
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
   const isAssistantRunning = isStreaming || hasRunningBlocks
   const canShowFinalArtifacts = !isAssistantRunning
@@ -2053,11 +2046,26 @@ function AssistantMessage({
   const hasPlanResponse = displayBlocks.some(
     block => block.type === 'plan' && Boolean(block.content.trim())
   )
+  const orderedRuntimeSegments = getOrderedRuntimeDisplaySegments(
+    message.runtimeDisplayItems,
+    displayBlocks
+  )
+  const orderedRuntimeContent = orderedRuntimeSegments
+    .flatMap(segment => (segment.kind === 'content' ? [segment.content] : []))
+    .join('\n\n')
+  const hasProcessingAfterContent = orderedRuntimeSegments.some(
+    (segment, index) =>
+      hasVisibleContent &&
+      orderedRuntimeContent === visibleContent &&
+      segment.kind === 'content' &&
+      orderedRuntimeSegments.slice(index + 1).some(candidate => candidate.kind === 'processing')
+  )
   const usesFinalProcessingShell =
     hasBlocks &&
     !hasPlanResponse &&
     !hasRunningBlocks &&
     !isCancelled &&
+    !hasProcessingAfterContent &&
     (isProcessingOnlyBeforeGuidance ||
       (hasVisibleContent &&
         !message.runtimeGuidanceSplitBefore &&
@@ -2066,6 +2074,7 @@ function AssistantMessage({
     isStreaming,
     hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),
     hasVisibleContent,
+    hasTrailingCompletedProcessText: hasTrailingCompletedProcessText(displayBlocks),
   })
   const webSearchSources = isStreaming
     ? []
@@ -2087,7 +2096,7 @@ function AssistantMessage({
         <ToolBlocksDisplay
           key={`${segment.kind}:${index}`}
           blocks={segment.blocks}
-          fileEditDurationBlocks={displayBlocks}
+          fileEditDurationsBySourceBlock={fileEditDurationsBySourceBlock}
           isStreaming={isStreaming}
           startedAt={getProcessingSummaryStartMs(message, segment.blocks, isStreaming)}
           forceExpanded={segment.kind === 'narrative'}
@@ -2117,6 +2126,66 @@ function AssistantMessage({
           hiddenRequestUserInputIds={hiddenRequestUserInputIds}
         />
       ))
+    : null
+  const orderedRuntimeTimeline = hasProcessingAfterContent
+    ? orderedRuntimeSegments.map((segment, segmentIndex) => {
+        if (segment.kind === 'content') {
+          return (
+            <div
+              key={`content:${segmentIndex}`}
+              data-message-selectable-text
+              data-testid="assistant-message-content"
+            >
+              <AssistantMarkdown
+                content={segment.content}
+                isStreaming={isStreaming}
+                onOpenFile={openFileFromLink}
+                fileChanges={message.fileChanges}
+              />
+            </div>
+          )
+        }
+
+        const segments = splitProcessingBlocks(segment.blocks)
+        return (
+          <Fragment key={`processing:${segmentIndex}`}>
+            {segments.map((processingSegment, processingIndex) => (
+              <ToolBlocksDisplay
+                key={`${processingSegment.kind}:${processingIndex}`}
+                blocks={processingSegment.blocks}
+                fileEditDurationsBySourceBlock={fileEditDurationsBySourceBlock}
+                isStreaming={isStreaming}
+                startedAt={getProcessingSummaryStartMs(
+                  message,
+                  processingSegment.blocks,
+                  isStreaming
+                )}
+                forceExpanded={processingSegment.kind === 'narrative'}
+                processingPhase={
+                  segmentIndex === orderedRuntimeSegments.length - 1 ? 'live' : 'intermediate'
+                }
+                showInterToolThinking={
+                  isStreaming &&
+                  segmentIndex === orderedRuntimeSegments.length - 1 &&
+                  processingSegment.kind === 'tool' &&
+                  processingIndex === segments.length - 1
+                }
+                thinkingContent={activeThinkingContent}
+                showSummary={processingSegment.kind === 'tool'}
+                stateKey={`${processingStateKey}:ordered:${segmentIndex}:${processingIndex}`}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onRequestUserInputSubmit={onRequestUserInputSubmit}
+                onRequestUserInputIgnore={onRequestUserInputIgnore}
+                onOpenAssistantPlan={onOpenAssistantPlan}
+                onLoadFullTranscript={onLoadFullTranscript}
+                loadingFullTranscript={loadingFullTranscript}
+                hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+                hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+              />
+            ))}
+          </Fragment>
+        )
+      })
     : null
   const finalProcessingDuration = getDurationText(
     displayBlocks,
@@ -2168,6 +2237,8 @@ function AssistantMessage({
               </button>
               {finalProcessingExpanded ? <div className="mt-1">{processingTimeline}</div> : null}
             </div>
+          ) : hasProcessingAfterContent ? (
+            orderedRuntimeTimeline
           ) : (
             processingTimeline
           )}
@@ -2182,7 +2253,7 @@ function AssistantMessage({
               loadingFullTranscript={loadingFullTranscript}
             />
           ) : null}
-          {hasVisibleContent ? (
+          {hasVisibleContent && !hasProcessingAfterContent ? (
             <div data-message-selectable-text data-testid="assistant-message-content">
               <AssistantMarkdown
                 content={visibleContent}
@@ -2377,6 +2448,50 @@ type ProcessingSegment = {
   blocks: ProcessingBlock[]
 }
 
+type RuntimeDisplaySegment =
+  | {
+      kind: 'content'
+      content: string
+    }
+  | {
+      kind: 'processing'
+      blocks: ProcessingBlock[]
+    }
+
+function getOrderedRuntimeDisplaySegments(
+  items: RuntimeAssistantDisplayItem[] | undefined,
+  displayBlocks: ProcessingBlock[]
+): RuntimeDisplaySegment[] {
+  if (!items?.length) return []
+
+  const blocksById = new Map(displayBlocks.map(block => [block.id, block]))
+  const segments: RuntimeDisplaySegment[] = []
+
+  items.forEach(item => {
+    if (item.type === 'assistant_text') {
+      if (!item.content.trim()) return
+      const previous = segments.at(-1)
+      if (previous?.kind === 'content') {
+        previous.content = `${previous.content}\n\n${item.content}`
+      } else {
+        segments.push({ kind: 'content', content: item.content })
+      }
+      return
+    }
+
+    const block = blocksById.get(item.id)
+    if (!block) return
+    const previous = segments.at(-1)
+    if (previous?.kind === 'processing') {
+      previous.blocks.push(block)
+    } else {
+      segments.push({ kind: 'processing', blocks: [block] })
+    }
+  })
+
+  return segments
+}
+
 function getProcessingPhase(
   segments: ProcessingSegment[],
   index: number,
@@ -2416,16 +2531,26 @@ function hasProcessingDisplayBlock(blocks: ProcessingBlock[]): boolean {
   return buildProcessingDisplayRows(blocks).length > 0
 }
 
+function hasTrailingCompletedProcessText(blocks: ProcessingBlock[]): boolean {
+  const lastBlock = blocks.at(-1)
+  return lastBlock?.type === 'text' && (lastBlock.status === 'done' || lastBlock.status === 'error')
+}
+
 function shouldShowAssistantThinkingIndicator({
   isStreaming,
   hasProcessingDisplayBlock,
   hasVisibleContent,
+  hasTrailingCompletedProcessText,
 }: {
   isStreaming: boolean
   hasProcessingDisplayBlock: boolean
   hasVisibleContent: boolean
+  hasTrailingCompletedProcessText: boolean
 }): boolean {
-  return isStreaming && (!hasProcessingDisplayBlock || hasVisibleContent)
+  return (
+    isStreaming &&
+    (!hasProcessingDisplayBlock || hasVisibleContent || hasTrailingCompletedProcessText)
+  )
 }
 
 function AssistantErrorCard({

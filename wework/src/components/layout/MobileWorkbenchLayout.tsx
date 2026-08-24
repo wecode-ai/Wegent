@@ -178,7 +178,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     'codex'
   const isCreatingWorktree = isWorktreeCreationPending(
     runtimeTaskSummary,
-    paneSession.status.sendPhase
+    paneSession.status.sendPhase,
+    paneSession.status.workspaceCreationKind
   )
   const activeConversationProject = activePaneProject
   const effectiveProjectChat = projectChat ?? {
@@ -250,7 +251,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     !activeConversationProject &&
     !currentRuntimeTask &&
     !activeDeviceId &&
-    !state.devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
+    !state.devices.some(
+      device => isWorkbenchDeviceOnline(device) && isWeWorkCompatibleDevice(device)
+    )
   const composerDisabled =
     activeDeviceUnavailable || activeDeviceVersionUnsupported || noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable

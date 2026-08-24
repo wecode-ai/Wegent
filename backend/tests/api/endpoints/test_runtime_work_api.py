@@ -35,6 +35,120 @@ def test_list_runtime_work_endpoint_uses_current_user(
     assert "client_origin" not in service_mock.await_args.kwargs
 
 
+@pytest.mark.parametrize(
+    ("http_method", "path", "rpc_method", "payload"),
+    [
+        (
+            "post",
+            "/api/runtime-work/worktrees/capabilities",
+            "runtime.worktrees.capabilities",
+            {"deviceId": "device-1"},
+        ),
+        (
+            "post",
+            "/api/runtime-work/worktrees/preflight",
+            "runtime.worktrees.preflight",
+            {
+                "deviceId": "device-1",
+                "sourcePath": "/repo",
+                "ref": "main",
+            },
+        ),
+        (
+            "post",
+            "/api/runtime-work/worktrees/settings",
+            "runtime.worktrees.settings.get",
+            {"deviceId": "device-1"},
+        ),
+        (
+            "put",
+            "/api/runtime-work/worktrees/settings",
+            "runtime.worktrees.settings.update",
+            {
+                "deviceId": "device-1",
+                "autoCleanupEnabled": False,
+                "keepCount": 7,
+            },
+        ),
+        (
+            "post",
+            "/api/runtime-work/worktrees/list",
+            "runtime.worktrees.list",
+            {"deviceId": "device-1"},
+        ),
+        (
+            "post",
+            "/api/runtime-work/worktrees/prepare",
+            "runtime.worktrees.prepare",
+            {
+                "deviceId": "device-1",
+                "sourcePath": "/repo",
+                "worktreeId": "task-1",
+                "ref": "main",
+                "permanent": False,
+            },
+        ),
+        (
+            "post",
+            "/api/runtime-work/worktrees/delete",
+            "runtime.worktrees.delete",
+            {
+                "deviceId": "device-1",
+                "path": "/worktrees/task-1/repo",
+                "preserveSnapshot": True,
+            },
+        ),
+        (
+            "post",
+            "/api/runtime-work/worktrees/restore",
+            "runtime.worktrees.restore",
+            {
+                "deviceId": "device-1",
+                "path": "/worktrees/task-1/repo",
+                "preserveSnapshot": True,
+            },
+        ),
+    ],
+)
+def test_runtime_worktree_endpoints_relay_to_addressed_runtime(
+    test_client,
+    test_token,
+    monkeypatch,
+    http_method,
+    path,
+    rpc_method,
+    payload,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "deviceId": "device-1",
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "call_runtime_worktree_rpc",
+        service_mock,
+    )
+
+    response = getattr(test_client, http_method)(
+        path,
+        headers=_auth_headers(test_token),
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["deviceId"] == "device-1"
+    service_mock.assert_awaited_once_with(
+        user_id=service_mock.await_args.kwargs["user_id"],
+        device_id="device-1",
+        method=rpc_method,
+        payload=payload,
+    )
+
+
 def test_create_runtime_task_preserves_delivery_context(
     test_client,
     test_token,

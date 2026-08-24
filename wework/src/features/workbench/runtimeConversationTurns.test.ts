@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
+  appendAcceptedRuntimeConversationUser,
   appendRuntimeConversationGuidance,
   mergeRuntimeConversationTurns,
   projectRuntimeConversationTurns,
@@ -33,6 +34,109 @@ function requestBlock(id: string, turnId: string): ProcessingBlock {
 }
 
 describe('runtimeConversationTurns', () => {
+  test('settles a stale reconnecting block when the turn resumes with new work', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'reconnecting-turn-1',
+        subtaskId: 'turn-1',
+        type: 'tool',
+        toolName: 'runtime_reconnecting',
+        status: 'streaming',
+        createdAt: 100,
+      },
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'command-1',
+        subtaskId: 'turn-1',
+        type: 'tool',
+        toolName: 'exec_command',
+        status: 'streaming',
+        createdAt: 200,
+      },
+    })
+
+    expect(turns[0].items).toEqual([
+      expect.objectContaining({
+        id: 'reconnecting-turn-1',
+        block: expect.objectContaining({
+          status: 'done',
+          completedAt: expect.any(Number),
+        }),
+      }),
+      expect.objectContaining({
+        id: 'command-1',
+        block: expect.objectContaining({ status: 'streaming' }),
+      }),
+    ])
+  })
+
+  test('keeps the reconnecting block active until actual turn progress arrives', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'reconnecting-turn-1',
+        subtaskId: 'turn-1',
+        type: 'tool',
+        toolName: 'runtime_reconnecting',
+        status: 'streaming',
+        createdAt: 100,
+      },
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      blocks: [],
+    })
+
+    expect(turns[0].items[0]).toMatchObject({
+      id: 'reconnecting-turn-1',
+      block: { status: 'streaming' },
+    })
+  })
+
+  test('settles a reconnecting block when the turn reaches an error terminal state', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'reconnecting-turn-1',
+        subtaskId: 'turn-1',
+        type: 'tool',
+        toolName: 'runtime_reconnecting',
+        status: 'streaming',
+        createdAt: 100,
+      },
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_error',
+      subtaskId: 'turn-1',
+      error: 'upstream unavailable',
+    })
+
+    expect(turns[0]).toMatchObject({
+      status: 'failed',
+      items: [
+        {
+          id: 'reconnecting-turn-1',
+          block: {
+            status: 'done',
+            completedAt: expect.any(Number),
+          },
+        },
+      ],
+    })
+  })
+
   test('binds only the exact optimistic user to the real Codex turn id', () => {
     let turns = reduceRuntimeConversationTurns([], {
       type: 'user_added',
@@ -78,6 +182,132 @@ describe('runtimeConversationTurns', () => {
       [null, 'client-user-1'],
       ['turn-2', 'client-user-2'],
     ])
+  })
+
+  test('inserts an accepted queued user before a turn that started before send resolved', () => {
+    let turns = reduceRuntimeConversationTurns([], {
+      type: 'assistant_started',
+      subtaskId: 'turn-2',
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-2',
+      itemId: 'assistant-2',
+      content: 'Second answer',
+    })
+
+    turns = appendAcceptedRuntimeConversationUser(
+      turns,
+      userMessage('client-user-2', 'Second question'),
+      'turn-2',
+      new Set()
+    )
+
+    expect(projectRuntimeConversationTurns(turns).map(message => message.content)).toEqual([
+      'Second question',
+      'Second answer',
+    ])
+    expect(turns[0]).toMatchObject({
+      id: 'turn-2',
+      clientUserMessageId: 'client-user-2',
+      items: [
+        {
+          id: 'client-user-2',
+          message: { subtaskId: 'turn-2', turnId: 'turn-2' },
+        },
+        { id: 'assistant-2', type: 'assistant_text' },
+      ],
+    })
+  })
+
+  test('binds an accepted queued user after its new turn already completed', () => {
+    let turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [],
+          status: 'done',
+        },
+      ],
+      {
+        type: 'assistant_started',
+        subtaskId: 'turn-2',
+      }
+    )
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_done',
+      subtaskId: 'turn-2',
+      itemId: 'assistant-2',
+      content: 'Second answer',
+      blocks: [],
+    })
+
+    turns = appendAcceptedRuntimeConversationUser(
+      turns,
+      userMessage('client-user-2', 'Second question'),
+      null,
+      new Set(['turn-1'])
+    )
+
+    expect(projectRuntimeConversationTurns(turns).map(message => message.content)).toEqual([
+      'Second question',
+      'Second answer',
+    ])
+    expect(turns[1]).toMatchObject({
+      id: 'turn-2',
+      clientUserMessageId: 'client-user-2',
+      status: 'done',
+    })
+  })
+
+  test('does not bind an accepted queued user to a turn that predates the send', () => {
+    const turns = appendAcceptedRuntimeConversationUser(
+      [
+        { id: 'turn-1', items: [], status: 'streaming' },
+        { id: 'turn-2', items: [], status: 'streaming' },
+      ],
+      userMessage('client-user-2', 'Second question'),
+      'turn-1',
+      new Set(['turn-1'])
+    )
+
+    expect(turns[0]).toMatchObject({
+      id: 'turn-1',
+      items: [],
+    })
+    expect(turns[0]).not.toHaveProperty('clientUserMessageId')
+    expect(turns[1]).toMatchObject({
+      id: 'turn-2',
+      clientUserMessageId: 'client-user-2',
+      items: [
+        {
+          id: 'client-user-2',
+          message: { subtaskId: 'turn-2', turnId: 'turn-2' },
+        },
+      ],
+    })
+  })
+
+  test('keeps an accepted queued user optimistic when no new turn exists yet', () => {
+    const turns = appendAcceptedRuntimeConversationUser(
+      [{ id: 'turn-1', items: [], status: 'done' }],
+      userMessage('client-user-2', 'Second question'),
+      'turn-1',
+      new Set(['turn-1'])
+    )
+
+    expect(turns).toHaveLength(2)
+    expect(turns[0]).toMatchObject({ id: 'turn-1', items: [] })
+    expect(turns[1]).toMatchObject({
+      id: null,
+      clientUserMessageId: 'client-user-2',
+      items: [{ id: 'client-user-2' }],
+    })
+    expect(turns[1].items[0]).toMatchObject({ type: 'user_message' })
+    const optimisticItem = turns[1].items[0]
+    expect(
+      optimisticItem.type === 'user_message' ? optimisticItem.message.turnId : null
+    ).toBeUndefined()
   })
 
   test('corrects a provisional turn id by exact client user message id', () => {
@@ -263,6 +493,47 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('preserves process text that arrives after assistant text in display order', () => {
+    const turns: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'assistant-item-1',
+            type: 'assistant_text',
+            content: 'The answer arrived first.',
+            createdAt: '2026-08-14T00:00:00.000Z',
+          },
+          {
+            id: 'process-after-answer',
+            type: 'block',
+            block: {
+              id: 'process-after-answer',
+              subtaskId: 'turn-1',
+              type: 'text',
+              content: 'Then the latest process update arrived.',
+              status: 'streaming',
+              createdAt: Date.parse('2026-08-14T00:00:01.000Z'),
+            },
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+
+    expect(projectRuntimeConversationTurns(turns)[0].runtimeDisplayItems).toEqual([
+      {
+        id: 'assistant-item-1',
+        type: 'assistant_text',
+        content: 'The answer arrived first.',
+      },
+      {
+        id: 'process-after-answer',
+        type: 'block',
+      },
+    ])
+  })
+
   test('reuses the Codex response item identity when terminal content arrives without a chunk', () => {
     const turns = reduceRuntimeConversationTurns(
       [
@@ -409,6 +680,90 @@ describe('runtimeConversationTurns', () => {
       content: '内存检查完成。',
       blocks: [expect.objectContaining({ id: 'cpu-progress' })],
     })
+  })
+
+  test('ignores a matching process block that arrives after terminal assistant content', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'assistant-item-1',
+              type: 'assistant_text',
+              content: '处理完成。',
+              createdAt: '2026-08-21T00:00:00.000Z',
+            },
+          ],
+          status: 'done',
+        },
+      ],
+      {
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        block: {
+          id: 'assistant-item-1',
+          subtaskId: 'turn-1',
+          type: 'text',
+          content: '处理完成。',
+          status: 'done',
+          createdAt: Date.parse('2026-08-21T00:00:00.000Z'),
+        },
+      }
+    )
+
+    expect(turns[0].items).toEqual([
+      expect.objectContaining({
+        id: 'assistant-item-1',
+        type: 'assistant_text',
+        content: '处理完成。',
+      }),
+    ])
+  })
+
+  test('places a late processing block before terminal assistant content', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'assistant-item-1',
+              type: 'assistant_text',
+              content: '处理完成。',
+              createdAt: '2026-08-21T00:00:01.000Z',
+            },
+          ],
+          status: 'done',
+        },
+      ],
+      {
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        block: {
+          id: 'file-changes-1',
+          subtaskId: 'turn-1',
+          type: 'file_changes',
+          status: 'done',
+          createdAt: Date.parse('2026-08-21T00:00:00.000Z'),
+          fileChanges: {
+            version: 1,
+            status: 'active',
+            artifact_id: 'artifact-1',
+            device_id: 'device-1',
+            workspace_path: '/workspace/project',
+            file_count: 1,
+            additions: 1,
+            deletions: 0,
+            files: [],
+            reverted_at: null,
+            revertible: false,
+          },
+        },
+      }
+    )
+
+    expect(turns[0].items.map(item => item.id)).toEqual(['file-changes-1', 'assistant-item-1'])
   })
 
   test('keeps a completed final text block before subsequently applied guidance', () => {
@@ -979,6 +1334,47 @@ describe('runtimeConversationTurns', () => {
     ])
   })
 
+  test('keeps an unmatched optimistic user turn after the recovered snapshot', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: null,
+        clientUserMessageId: 'client-user-continue',
+        items: [
+          {
+            id: 'client-user-continue',
+            type: 'user_message',
+            message: {
+              ...userMessage('client-user-continue', '继续'),
+              createdAt: '2026-07-30T00:00:01.000Z',
+              status: 'sending',
+            },
+          },
+        ],
+        status: 'pending',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-history',
+        items: [
+          {
+            id: 'assistant-history',
+            type: 'assistant_text',
+            content: '已恢复的 AI 输出',
+            createdAt: '2026-07-30T00:00:02.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    expect(
+      projectRuntimeConversationTurns(mergeRuntimeConversationTurns(local, snapshot)).map(
+        message => message.content
+      )
+    ).toEqual(['已恢复的 AI 输出', '继续'])
+  })
+
   test('keeps an older stopped local turn before a newer snapshot turn', () => {
     const local: RuntimeConversationTurn[] = [
       {
@@ -1260,6 +1656,51 @@ describe('runtimeConversationTurns', () => {
     }
   })
 
+  test('replaces the optimistic context compaction block with the runtime block', () => {
+    const createdAt = 1_780_000_001_250
+    let turns = reduceRuntimeConversationTurns(
+      [{ id: 'task-1-context-compact', items: [], status: 'streaming' }],
+      {
+        type: 'block_created',
+        subtaskId: 'task-1-context-compact',
+        block: {
+          id: 'context-compaction-optimistic',
+          subtaskId: 'task-1-context-compact',
+          type: 'tool',
+          toolName: 'context_compaction',
+          status: 'pending',
+          createdAt,
+        },
+      }
+    )
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'block_created',
+      subtaskId: 'task-1-context-compact',
+      block: {
+        id: 'context-compaction-runtime',
+        subtaskId: 'task-1-context-compact',
+        type: 'tool',
+        toolName: 'context_compaction',
+        status: 'done',
+        createdAt: createdAt + 500,
+        completedAt: createdAt + 500,
+      },
+    })
+
+    expect(turns[0].items).toHaveLength(1)
+    expect(turns[0].items[0]).toMatchObject({
+      id: 'context-compaction-runtime',
+      type: 'block',
+      block: {
+        id: 'context-compaction-runtime',
+        status: 'done',
+        createdAt,
+        completedAt: createdAt + 500,
+      },
+    })
+  })
+
   test('uses the runtime tool duration when completing a streamed block', () => {
     const createdAt = 1_780_000_001_250
     let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
@@ -1331,6 +1772,44 @@ describe('runtimeConversationTurns', () => {
       runtimeStatus: 'failed',
       error: 'Context window exceeded',
       errorType: 'response.failed',
+    })
+  })
+
+  test('binds a pre-turn runtime failure to the pending optimistic user turn', () => {
+    let turns = reduceRuntimeConversationTurns([], {
+      type: 'user_added',
+      message: userMessage('client-message-1', 'Read the current Issue'),
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_error',
+      subtaskId: 'runtime-turn-1',
+      error: 'Project-space capability unavailable',
+      errorType: 'response.failed',
+    })
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({
+      id: 'runtime-turn-1',
+      clientUserMessageId: 'client-message-1',
+      status: 'failed',
+      error: 'Project-space capability unavailable',
+      errorType: 'response.failed',
+    })
+    expect(turns[0].items[0]).toMatchObject({
+      type: 'user_message',
+      message: {
+        id: 'client-message-1',
+        subtaskId: 'runtime-turn-1',
+        turnId: 'runtime-turn-1',
+      },
+    })
+    const messages = projectRuntimeConversationTurns(turns)
+    expect(messages).toHaveLength(2)
+    expect(messages[1]).toMatchObject({
+      role: 'assistant',
+      status: 'failed',
+      error: 'Project-space capability unavailable',
     })
   })
 
@@ -1610,6 +2089,80 @@ describe('runtimeConversationTurns', () => {
     expect(mergeRuntimeConversationTurns(local, snapshot)[0].streamingThinkingContent).toBe(
       'Updated reasoning'
     )
+  })
+
+  test('does not regress a completed live turn to a stale streaming snapshot', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'tool-1',
+            type: 'block',
+            block: {
+              id: 'tool-1',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              createdAt: 1,
+              completedAt: 2,
+            },
+          },
+          {
+            id: 'message-1',
+            type: 'assistant_text',
+            content: 'Complete answer',
+            createdAt: '2026-08-21T07:10:38.000Z',
+          },
+        ],
+        status: 'done',
+        completedAt: '2026-08-21T07:10:38.000Z',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'tool-1',
+            type: 'block',
+            block: {
+              id: 'tool-1',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'streaming',
+              createdAt: 1,
+            },
+          },
+          {
+            id: 'message-1',
+            type: 'assistant_text',
+            content: 'Complete answer',
+            createdAt: '2026-08-21T07:10:38.000Z',
+          },
+        ],
+        status: 'streaming',
+        streamingThinkingContent: 'Still working',
+      },
+    ]
+
+    const [merged] = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged).toMatchObject({
+      id: 'turn-1',
+      status: 'done',
+      completedAt: '2026-08-21T07:10:38.000Z',
+      streamingThinkingContent: undefined,
+    })
+    expect(merged.items[0]).toMatchObject({
+      type: 'block',
+      block: {
+        status: 'done',
+        completedAt: 2,
+      },
+    })
   })
 
   test('uses UTF-16 code-unit offsets when replacing streamed text', () => {

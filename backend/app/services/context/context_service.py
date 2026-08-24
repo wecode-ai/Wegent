@@ -27,6 +27,9 @@ from app.schemas.subtask_context import (
     SubtaskContextBrief,
     TruncationInfo,
 )
+from app.services.attachment.external_storage import (
+    find_external_attachment_storage_adapter,
+)
 from app.services.attachment.parser import (
     DocumentParseError,
     DocumentParser,
@@ -334,6 +337,7 @@ class ContextService:
         filename: str,
         binary_data: bytes,
         subtask_id: int = 0,
+        storage_purpose: str = "default",
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """
         Upload and process a file attachment.
@@ -344,6 +348,7 @@ class ContextService:
             filename: Original filename
             binary_data: File binary data
             subtask_id: Subtask ID to link to (0 means unlinked)
+            storage_purpose: Explicit purpose used to select external storage
 
         Returns:
             Tuple of (Created SubtaskContext record, TruncationInfo if truncated)
@@ -357,8 +362,16 @@ class ContextService:
             filename, binary_data
         )
 
-        # Get the storage backend
-        storage_backend = get_storage_backend(db)
+        external_storage = find_external_attachment_storage_adapter(
+            mime_type,
+            storage_purpose,
+        )
+        storage_backend = get_storage_backend(db) if external_storage is None else None
+        storage_backend_type = (
+            external_storage.backend_type
+            if external_storage is not None
+            else storage_backend.backend_type  # type: ignore[union-attr]
+        )
 
         context = self._create_attachment_context(
             user_id=user_id,
@@ -367,7 +380,7 @@ class ContextService:
             file_size=file_size,
             mime_type=mime_type,
             subtask_id=subtask_id,
-            storage_backend=storage_backend.backend_type,
+            storage_backend=storage_backend_type,
         )
         db.add(context)
         db.flush()  # Get the ID
@@ -380,18 +393,42 @@ class ContextService:
         }
 
         try:
-            self._store_attachment_binary(
-                storage_backend=storage_backend,
-                context=context,
-                filename=filename,
-                mime_type=mime_type,
-                file_size=file_size,
-                binary_data=binary_data,
-            )
-        except StorageError as e:
-            logger.exception(f"Failed to save context {context.id} to storage: {e}")
+            if external_storage is not None:
+                stored = external_storage.store(
+                    db=db,
+                    user_id=user_id,
+                    filename=filename,
+                    mime_type=mime_type,
+                    data=binary_data,
+                )
+                context.type_data = {
+                    **(context.type_data or {}),
+                    "storage_backend": stored.backend_type,
+                    "storage_key": stored.storage_key,
+                    "is_encrypted": False,
+                    "encryption_version": 0,
+                    **stored.type_data,
+                }
+                context.binary_data = b""
+            else:
+                self._store_attachment_binary(
+                    storage_backend=storage_backend,
+                    context=context,
+                    filename=filename,
+                    mime_type=mime_type,
+                    file_size=file_size,
+                    binary_data=binary_data,
+                )
+        except Exception as exc:
+            logger.exception(f"Failed to save context {context.id} to storage: {exc}")
             db.rollback()
             raise
+
+        if external_storage is not None and stored.skip_parsing:
+            context.status = ContextStatus.READY.value
+            db.commit()
+            db.refresh(context)
+            return context, None
 
         # Update status to PARSING
         context.status = ContextStatus.PARSING.value
@@ -414,7 +451,7 @@ class ContextService:
         logger.info(
             f"Attachment uploaded successfully: id={context.id}, "
             f"filename={filename}, text_length={context.text_length}, "
-            f"storage_backend={storage_backend.backend_type}, "
+            f"storage_backend={context.storage_backend}, "
             f"truncated={truncation_info.is_truncated if truncation_info else False}"
         )
 

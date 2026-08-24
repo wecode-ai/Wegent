@@ -21,6 +21,7 @@ use super::*;
 struct ClaudeRuntimeEventSink {
     handler: RuntimeWorkRpcHandler,
     local_task_id: String,
+    execution_id: u64,
     request: ExecutionRequest,
     transcript: Arc<Mutex<ClaudeTurnTranscript>>,
 }
@@ -73,6 +74,16 @@ impl EventSink for ClaudeRuntimeEventSink {
     type SendFuture = Ready<Result<(), String>>;
 
     fn send(&self, event: EventEnvelope) -> Self::SendFuture {
+        let active = self
+            .handler
+            .active_local_executions
+            .lock()
+            .expect("active local execution map lock should not be poisoned");
+        if !active.get(&self.local_task_id).is_some_and(|control| {
+            control.execution_id == self.execution_id && !control.stop_requested
+        }) {
+            return ready(Ok(()));
+        }
         if let Ok(mut transcript) = self.transcript.lock() {
             transcript.record(&event);
         }
@@ -194,11 +205,26 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn start_claude_turn(&self, local_task_id: String, request: ExecutionRequest) {
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
-        let execution_id =
-            self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
+        let execution_id = match self.start_local_task_execution(
+            local_task_id.clone(),
+            request
+                .project_workspace_path
+                .as_deref()
+                .or_else(|| request.cwd()),
+            cancel_tx,
+            stopped_rx,
+        ) {
+            Ok(execution_id) => execution_id,
+            Err(error) => {
+                self.fail_local_task_execution_start(&local_task_id, &error);
+                return;
+            }
+        };
         let handler = self.clone();
         tokio::spawn(async move {
-            let _scheduled_turn_guard = ScheduledTurnGuard::new(handler.clone());
+            let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
+            let _scheduled_turn_guard =
+                ScheduledTurnGuard::new(handler.clone(), local_task_id.clone());
             let (request, model_proxy_token) = prepare_claude_model_proxy(request);
             let model = string_field(&request.model_config, "model_id").unwrap_or_default();
             let builder = ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model);
@@ -206,6 +232,7 @@ impl RuntimeWorkRpcHandler {
             let sink = ClaudeRuntimeEventSink {
                 handler: handler.clone(),
                 local_task_id: local_task_id.clone(),
+                execution_id,
                 request: request.clone(),
                 transcript: Arc::clone(&transcript),
             };
@@ -252,8 +279,8 @@ impl RuntimeWorkRpcHandler {
                             );
                         }
                     }
-                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
                     let _ = sink.send(builder.response_completed(content)).await;
+                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
                 }
                 ExecutionOutcome::WaitingForUserInput { stop_reason } => {
                     let blocks = transcript
@@ -268,10 +295,10 @@ impl RuntimeWorkRpcHandler {
                         "done",
                         None,
                     );
-                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
                     let _ = sink
                         .send(builder.response_waiting_for_user_input(stop_reason))
                         .await;
+                    handler.finish_local_task(&local_task_id, execution_id, None, "done");
                 }
                 ExecutionOutcome::Failed { message } => {
                     handler.persist_claude_assistant_message(
@@ -282,8 +309,8 @@ impl RuntimeWorkRpcHandler {
                         "failed",
                         Some(message),
                     );
-                    handler.finish_local_task(&local_task_id, execution_id, None, "failed");
                     let _ = sink.send(builder.error(message, "runtime_error")).await;
+                    handler.finish_local_task(&local_task_id, execution_id, None, "failed");
                 }
                 ExecutionOutcome::Cancelled { message } => {
                     handler.persist_claude_assistant_message(
@@ -294,7 +321,7 @@ impl RuntimeWorkRpcHandler {
                         "cancelled",
                         Some(message),
                     );
-                    handler.finish_local_task(&local_task_id, execution_id, None, "cancelled");
+                    handler.settle_cancelled_local_task_execution(&local_task_id, execution_id);
                     handler.emit_claude_runtime_event(
                         &local_task_id,
                         &request,
@@ -310,7 +337,6 @@ impl RuntimeWorkRpcHandler {
             if let Some(token) = model_proxy_token {
                 local_model_proxy::unregister_harness(&token);
             }
-            let _ = stopped_tx.send(());
         });
     }
 
@@ -349,6 +375,14 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(source) = request.extra.get("source") {
             payload["payload"]["source"] = source.clone();
+        }
+        if matches!(
+            event_type,
+            "response.completed" | "response.failed" | "response.incomplete" | "error"
+        ) {
+            if let Some(title) = runtime_task_title(request) {
+                payload["payload"]["taskTitle"] = Value::String(title);
+            }
         }
         let _ = event_tx.send(payload);
     }
@@ -492,6 +526,32 @@ fn prepare_claude_model_proxy(mut request: ExecutionRequest) -> (ExecutionReques
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    fn block_created_event(id: &str) -> EventEnvelope {
+        EventEnvelope {
+            event_type: "response.block.created".to_owned(),
+            task_id: "task-1".to_owned(),
+            subtask_id: "turn-1".to_owned(),
+            data: json!({
+                "block": {
+                    "id": id,
+                    "type": "text",
+                },
+            }),
+            message_id: None,
+            executor_name: None,
+            executor_namespace: None,
+            validation_id: None,
+        }
+    }
+
+    fn isolated_handler() -> (tempfile::TempDir, RuntimeWorkRpcHandler) {
+        let directory = tempfile::tempdir().expect("temporary runtime work directory");
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
+        (directory, handler)
+    }
 
     #[test]
     fn claude_transcript_merges_streamed_block_updates() {
@@ -540,9 +600,67 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn claude_event_sink_drops_events_after_cancellation_starts() {
+        let directory = tempfile::tempdir().expect("temporary runtime work directory");
+        let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(4);
+        let mut handler =
+            RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+        handler.store = RuntimeWorkStore::new(directory.path().join("index.json"));
+        let (cancel_tx, _cancel_rx) = oneshot::channel();
+        let (_stopped_tx, stopped_rx) = oneshot::channel();
+        let execution_id = handler
+            .start_local_task_execution("task-1".to_owned(), None, cancel_tx, stopped_rx)
+            .expect("local execution should start");
+        let transcript = Arc::new(Mutex::new(ClaudeTurnTranscript::default()));
+        let sink = ClaudeRuntimeEventSink {
+            handler: handler.clone(),
+            local_task_id: "task-1".to_owned(),
+            execution_id,
+            request: ExecutionRequest {
+                task_id: "task-1".to_owned(),
+                subtask_id: "turn-1".to_owned(),
+                ..ExecutionRequest::default()
+            },
+            transcript: Arc::clone(&transcript),
+        };
+
+        sink.send(block_created_event("before-cancel"))
+            .await
+            .expect("active event should be accepted");
+        event_rx
+            .recv()
+            .await
+            .expect("active event should be emitted");
+
+        {
+            let mut active = handler
+                .active_local_executions
+                .lock()
+                .expect("active local execution map lock");
+            let control = active.get_mut("task-1").expect("active Claude turn");
+            control.stop_requested = true;
+        }
+        sink.send(block_created_event("after-cancel"))
+            .await
+            .expect("late event should be ignored without failing the runtime");
+
+        assert!(matches!(event_rx.try_recv(), Err(TryRecvError::Empty)));
+        assert_eq!(
+            transcript
+                .lock()
+                .expect("Claude transcript lock")
+                .blocks()
+                .iter()
+                .map(|block| block["id"].as_str())
+                .collect::<Vec<_>>(),
+            vec![Some("before-cancel")]
+        );
+    }
+
     #[test]
     fn claude_goal_uses_native_print_mode_command_and_persists_state() {
-        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let (_directory, handler) = isolated_handler();
         let link = RuntimeTaskLink::new_pending_with_runtime(
             "claude-task-1".to_owned(),
             "/tmp/project".to_owned(),
@@ -580,7 +698,7 @@ mod tests {
 
     #[test]
     fn claude_goal_status_update_preserves_objective() {
-        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let (_directory, handler) = isolated_handler();
         let mut link = RuntimeTaskLink::new_pending_with_runtime(
             "claude-task-1".to_owned(),
             "/tmp/project".to_owned(),

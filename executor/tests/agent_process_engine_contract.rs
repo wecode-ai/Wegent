@@ -183,6 +183,7 @@ async fn agent_process_engine_saves_claude_session_id_for_follow_up_turns() {
     let fake_claude = write_fake_executable(
         "fake-claude-session",
         r#"#!/bin/sh
+cat >/dev/null
 printf '%s\n' '{"type":"system","subtype":"init","session_id":"saved-from-output"}'
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"session saved"}]}}'
 "#,
@@ -571,12 +572,15 @@ async fn agent_process_engine_refreshes_existing_bot_skills_for_regular_claude_t
     let fake_claude = write_fake_executable(
         "fake-claude-refresh-bot-skill",
         r#"#!/bin/sh
+cat >/dev/null
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
 "#,
     );
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
@@ -634,6 +638,8 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "local");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", &backend_url);
+    let _task_api = EnvGuard::set("TASK_API_DOMAIN", &backend_url);
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {

@@ -3,6 +3,7 @@
     {
       "slug": "wework-deepseek-v4-flash",
       "upstream_model_id": "deepseek-v4-flash",
+      "upstream_api_formats": ["openai-responses"],
       "display_name": "DeepSeek-V4-Flash",
       "description": "Latest frontier agentic coding model.",
       "priority": 1,
@@ -49,6 +50,7 @@
     {
       "slug": "wework-deepseek-v4-pro",
       "upstream_model_id": "deepseek-v4-pro",
+      "upstream_api_formats": ["openai-responses"],
       "display_name": "DeepSeek-V4-Pro",
       "description": "Most capable frontier agentic coding model.",
       "priority": 2,

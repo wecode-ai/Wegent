@@ -20,6 +20,22 @@ Wework 内置一个默认关闭的前端性能诊断开关，用于定位 releas
 
 排查启动页长时间不消失时，对齐前端日志的 `Frontend logging initialized` 与 executor 日志的 `app IPC stdio ready`。两者之间的时间主要反映本地 executor 冷启动；`runtime work list finished` 等后续记录用于判断工作台数据加载耗时。不要把后台云端同步的超时误判为本地启动门控。
 
+## Runtime 任务创建诊断
+
+前端会将任务创建关键阶段以 `[Wework] Runtime task create diagnostic` 前缀写入持久化日志，无需开启性能诊断。记录只包含阶段、任务/设备标识、模型标识、耗时和结果，不包含消息正文、凭据或模型连接配置。
+
+排查“乐观任务已显示，但 executor 没有收到 `runtime.tasks.create`”时，按以下顺序查找最后出现的阶段：
+
+1. `workbench-model-prepare-*`：工作台发起并完成首次模型准备。
+2. `workbench-runtime-create-dispatched`：工作台开始调用 runtime 创建接口。
+3. `hybrid-local-device-discovery-*` 和 `hybrid-route-resolved`：混合服务完成设备发现并选定本地或云端路由。
+4. `hybrid-create-forwarded`：创建请求已转发到选定的 runtime API。
+5. `local-device-resolved`、`local-primary-model-prepared`、`local-supervisor-model-prepared` 和 `local-payload-built`：本地/远程 Executor IPC 客户端完成设备解析、模型准备和 payload 构建。
+6. `local-rpc-dispatched` 与 `local-rpc-resolved`：`runtime.tasks.create` 已发出并返回。
+7. `hybrid-create-resolved` 或 `hybrid-create-failed`：混合服务观察到最终结果。
+
+缺少下一个阶段通常表示调用停在两条记录之间。结合相同 `taskId` 对齐前端日志、云端 WebSocket RPC 日志和 executor 日志，确认是模型同步、设备发现、payload 构建、IPC 发送还是 executor 响应卡住。
+
 ## 开启方式
 
 在 Wework 窗口中按隐藏快捷键：
@@ -76,7 +92,9 @@ Codex 会从历史 API 中过滤 `<codex_internal_context>`，因此 Wework 发�
 
 桌面工作台最多缓存 10 个普通 pane，并按最近使用顺序淘汰。非活跃且已停止运行的 pane 会释放 transcript 消息、历史 DOM、分页范围、导航索引和 processing 展开状态；再次切回时从 runtime transcript 原始数据重新加载。
 
-Tauri 对话统一使用 `@tanstack/react-virtual` 的消息行虚拟列表，不再根据消息数量切换实现。虚拟列表通过 `anchorTo: 'end'` 以列表末端为锚点；滚动快照统一表示为“视口底部到列表底部的距离”。库内共享 `ResizeObserver` 测量已挂载消息的真实高度。活动中的流式消息即使位于可见范围和 overscan 之外，也必须保留在虚拟 range 中，使其高度增长持续进入 TanStack Virtual 的测量；否则消息重新挂载时从估算高度切换到真实高度，会破坏历史阅读位置。用户停留在底部时，高度变化继续按末端距离补偿；用户主动向上滚动后，则记录视口内首个文本滚动锚点及其视口偏移，并在流式消息重新测量时恢复该文本锚点。这样既能保持底部自动跟随，也能避免正在阅读的文本随流式输出持续向上漂移。渲染范围在可见区前后各保留 2 条消息。消息行不再使用 `IntersectionObserver` 做第二层窗口化；单条超长 Markdown 仍保留独立的块级窗口化，以限制一个可见消息内部的 DOM 数量。其余 `IntersectionObserver` 用途包括跟随底部状态和附件预览等独立功能。
+Tauri 对话统一使用 `@tanstack/react-virtual` 的消息行虚拟列表，不再根据消息数量切换实现。用户停留在底部时，虚拟列表使用 `anchorTo: 'end'` 维持末端跟随；用户主动向上滚动后必须切换为 `anchorTo: 'start'`，避免流式消息行增长时 TanStack Virtual 继续改写滚动位置。滚动快照统一表示为“视口底部到列表底部的距离”。库内共享 `ResizeObserver` 测量已挂载消息的真实高度。活动中的流式消息即使位于可见范围和 overscan 之外，也必须保留在虚拟 range 中，使其高度增长持续进入 TanStack Virtual 的测量；否则消息重新挂载时从估算高度切换到真实高度，会破坏历史阅读位置。用户停留在底部时，高度变化继续按末端距离补偿；用户主动向上滚动后，则记录视口内首个文本滚动锚点及其视口偏移，并在流式消息重新测量时恢复该文本锚点。这样既能保持底部自动跟随，也能避免正在阅读的文本随流式输出持续向上漂移。渲染范围在可见区前后各保留 2 条消息。消息行不再使用 `IntersectionObserver` 做第二层窗口化；单条超长 Markdown 仍保留独立的块级窗口化，以限制一个可见消息内部的 DOM 数量。其余 `IntersectionObserver` 用途包括跟随底部状态和附件预览等独立功能。
+
+单条 assistant 消息可能包含大量工具块，并被拆成多个 `ToolBlocksDisplay` 段。依赖完整消息上下文的派生数据（例如文件编辑耗时）必须在消息级别只计算一次，再映射到各显示段；不得让每个显示段重复扫描整条消息。没有对应展示块时应直接走空结果快路径，工具名称匹配也应避免为每个 block 创建拆分数组或集合。
 
 每个对话只缓存有界的 TanStack 测量快照，并与距底部滚动快照一起恢复。修改这套逻辑时，应覆盖短对话、长对话、底部流式跟随、屏幕外流式消息持续测量、向上滚动后的文本锚点稳定性、历史位置恢复、切换后重开、导航强制挂载和归档缓存淘汰。
 
@@ -128,7 +146,7 @@ Wework 将 executor 高频到达的文本增量与 Markdown 展示节奏分离�
 
 ## 现场取证
 
-release 包默认编译 Tauri Web Inspector 能力，但主 WebView 默认保持不可检查状态，因此其 WebKit 原生右键菜单不包含 Inspect Element。按隐藏快捷键打开 **Developer Commands** 并选择 **Open Web Inspector** 时，原生侧才会动态设置 `WKWebView.isInspectable` 并打开 Inspector；该入口与 Performance Diagnostics 开关相互独立，要求 macOS 13.3 或更高版本。内置浏览器是独立 WebView，会保留右键 Inspect Element。需要构建不含 Inspector 能力的发行包时，设置 `WEWORK_RELEASE_DEVTOOLS=0`。如需在本地诊断启动时自动打开，可以用环境变量：
+release 包默认编译 Tauri Web Inspector 能力，但主 WebView 默认保持不可检查状态，因此其 WebKit 原生右键菜单不包含 Inspect Element。按隐藏快捷键打开 **Developer Commands** 并选择 **Open Web Inspector** 时，原生侧才会动态设置 `WKWebView.isInspectable` 并打开 Inspector；该入口与 Performance Diagnostics 开关相互独立，要求 macOS 13.3 或更高版本。内置浏览器子 WebView 只在 debug 构建中启用 Inspector；macOS 会在 Inspector frontend 首次显示前强制 detach，因此 F12 打开独立窗口，不会停靠、重置子视图尺寸或覆盖工作台。release 构建通过显式 build cfg 禁用子 WebView Inspector。需要构建不含主 WebView Inspector 能力的发行包时，设置 `WEWORK_RELEASE_DEVTOOLS=0`。如需在本地诊断启动时自动打开主 WebView Inspector，可以用环境变量：
 
 ```bash
 WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork

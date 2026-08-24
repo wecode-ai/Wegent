@@ -41,21 +41,55 @@ async function verifyReconnectRecovery({ composerSelector, control }) {
   )
 
   control.disconnectReconnectResponse()
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 5_000))
+  const briefDisconnectSnapshot = JSON.parse(
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+  )
+  assert.equal(
+    briefDisconnectSnapshot.testIds.includes('runtime-reconnecting-status'),
+    false,
+    'A brief model stream interruption showed the reconnecting status before ten seconds'
+  )
   await control.command(
     'waitFor',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-reconnecting-status"]`,
-    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    { timeoutMs: 15_000 }
   )
   await captureVerificationScreenshot(
     control,
     'reconnect-02-reconnecting.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
+  const reconnectingSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const reconnectingTaskId = reconnectingSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(reconnectingTaskId, 'The reconnecting task did not expose its runtime task ID')
+
+  const readyCountBeforeReload = control.readyCount
+  await control.command('reloadMainWindow', 'body')
+  await withTimeout(
+    control.awaitReadyAfter(readyCountBeforeReload),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The reloaded Wework WebView did not reconnect during response recovery'
+  )
+  await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    stableMs: 300,
+  })
 
   await withTimeout(
     control.awaitScenarioRequestCount('reconnect', 2),
     DEFAULT_STEP_TIMEOUT_MS,
     'Codex did not retry the disconnected response stream'
+  )
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === reconnectingTaskId &&
+      snapshot.pane?.transcript?.loading === false,
+    'Reloading did not restore the reconnecting conversation before response recovery',
+    WORKBENCH_READY_TIMEOUT_MS
   )
   control.releaseReconnectResponse()
   await control.command(
@@ -98,25 +132,20 @@ async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) 
     runningSnapshot.workbench?.currentRuntimeTask,
     'The send-rejection task did not expose its runtime address'
   )
-  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
-    value: JSON.stringify({
-      address: runningSnapshot.workbench.currentRuntimeTask,
-      type: 'turn_settled',
-    }),
-  })
-  await waitForWorkbenchDebugState(
-    control,
-    snapshot => snapshot.pane?.status?.isBusy === false,
-    'The send-rejection fixture did not make the composer available'
-  )
-
   await control.command('fill', composerSelector, { value: SEND_REJECTION_RETRY_PROMPT })
   await captureVerificationScreenshot(
     control,
     'send-rejection-02-retry-ready.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
-  await control.command('press', composerSelector, { key: 'Enter' })
+  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+    value: JSON.stringify({
+      address: runningSnapshot.workbench.currentRuntimeTask,
+      type: 'turn_settled',
+    }),
+    target: composerSelector,
+    key: 'Enter',
+  })
   await control.command('waitFor', '[data-testid="conversation-queue-panel"]', {
     text: SEND_REJECTION_RETRY_PROMPT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

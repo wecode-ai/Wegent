@@ -88,6 +88,22 @@ describe('createProjectChatClient', () => {
     ).resolves.toEqual(message)
   })
 
+  it('subscribes to loop-item invalidation events on the authenticated user socket', async () => {
+    const onChange = vi.fn()
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+
+    const unsubscribe = await client.subscribeLoopItemChanges!(onChange)
+
+    expect(ensureConnected).toHaveBeenCalled()
+    expect(socket.on).toHaveBeenCalledWith('wework:loop_item:changed', onChange)
+    unsubscribe()
+    expect(socket.off).toHaveBeenCalledWith('wework:loop_item:changed', onChange)
+  })
+
   it('refreshes the newest message window after reconnecting', async () => {
     const refreshed = { ...message, content: 'completed content', status: 'completed' as const }
     socket.emit
@@ -174,6 +190,62 @@ describe('createProjectChatClient', () => {
         agentId: '12',
         runtimeDeviceId: 'device-1',
         runtimeTaskId: 'runtime-task-1',
+      })
+    ).resolves.toEqual(message)
+  })
+
+  it('continues the native Wegent Task bound to a board reply', async () => {
+    socket.emit.mockImplementation((event, payload, ack) => {
+      expect(event).toBe('wework:project_chat:wegent:continue')
+      expect(payload).toEqual({
+        projectId: 'project-1',
+        taskId: 'task-1',
+        triggerMessageId: 'message-7',
+        agentId: '12',
+        attachmentIds: [9],
+      })
+      ack({ ok: true, result: message })
+    })
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+
+    await expect(
+      client.continueWegentTask!({
+        projectId: 'project-1',
+        taskId: 'task-1',
+        triggerMessageId: 'message-7',
+        agentId: '12',
+        attachmentIds: [9],
+      })
+    ).resolves.toEqual(message)
+  })
+
+  it('opens a reply in a custom automation manager session', async () => {
+    socket.emit.mockImplementation((event, payload, ack) => {
+      expect(event).toBe('wework:project_chat:manager:continue')
+      expect(payload).toEqual({
+        projectId: 'project-1',
+        taskId: 'task-1',
+        triggerMessageId: 'message-7',
+        managerMessageId: 'manager-1',
+      })
+      ack({ ok: true, result: message })
+    })
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+
+    await expect(
+      client.continueAutomationManager!({
+        projectId: 'project-1',
+        taskId: 'task-1',
+        triggerMessageId: 'message-7',
+        managerMessageId: 'manager-1',
       })
     ).resolves.toEqual(message)
   })

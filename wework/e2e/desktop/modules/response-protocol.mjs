@@ -57,7 +57,7 @@ function responseCompleted(id, output) {
       id,
       object: 'response',
       status: 'completed',
-      ...(output ? { output } : {}),
+      output: output ?? [],
       usage: {
         input_tokens: 0,
         input_tokens_details: null,
@@ -80,23 +80,43 @@ function responseFailed(id, message) {
   }
 }
 
-function functionCall(callId, name, argumentsValue) {
+function functionCall(callId, name, argumentsValue, outputIndex = 0) {
+  const argumentsText = JSON.stringify(argumentsValue)
   return [
     {
       type: 'response.output_item.added',
+      output_index: outputIndex,
       item: {
+        id: callId,
         type: 'function_call',
         call_id: callId,
         name,
+        arguments: '',
       },
     },
     {
+      type: 'response.function_call_arguments.delta',
+      output_index: outputIndex,
+      item_id: callId,
+      call_id: callId,
+      delta: argumentsText,
+    },
+    {
+      type: 'response.function_call_arguments.done',
+      output_index: outputIndex,
+      item_id: callId,
+      call_id: callId,
+      arguments: argumentsText,
+    },
+    {
       type: 'response.output_item.done',
+      output_index: outputIndex,
       item: {
+        id: callId,
         type: 'function_call',
         call_id: callId,
         name,
-        arguments: JSON.stringify(argumentsValue),
+        arguments: argumentsText,
       },
     },
   ]
@@ -119,6 +139,12 @@ function toolSearchCall(callId, argumentsValue) {
       arguments: argumentsValue,
     },
   }
+}
+
+function toolSearchResponseEvents(callId, selection) {
+  return selection.native
+    ? [toolSearchCall(callId, selection.arguments)]
+    : functionCall(callId, selection.name, selection.arguments)
 }
 
 function customToolCall(callId, name, input) {
@@ -432,11 +458,14 @@ function selectOfficialPluginMcpTool(request, argumentsValue) {
 }
 
 function selectMcpTool(request, namespaceName, toolName, argumentsValue) {
-  const namespace = requestToolSearchResults(request).find(
+  const namespaces = requestToolSearchResults(request).filter(
     candidate => candidate?.type === 'namespace' && candidate.name === namespaceName
   )
-  assert.ok(namespace, `tool_search did not return MCP namespace ${namespaceName}`)
-  const tool = namespace.tools?.find(
+  assert.ok(namespaces.length > 0, `tool_search did not return MCP namespace ${namespaceName}`)
+  const namespace = namespaces.find(candidate =>
+    candidate.tools?.some(tool => tool?.type === 'function' && tool.name === toolName)
+  )
+  const tool = namespace?.tools?.find(
     candidate => candidate?.type === 'function' && candidate.name === toolName
   )
   assert.ok(tool, `Searched MCP namespace ${namespaceName} did not expose ${toolName}`)
@@ -453,6 +482,41 @@ function selectConvertedTool(request, toolName, argumentsValue) {
   return { name, arguments: argumentsValue }
 }
 
+function selectMcpToolRequest(request, toolName, argumentsValue, directToolName) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  const names = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
+  const advertisesToolSearch = tools.some(
+    tool =>
+      tool?.type === 'tool_search' ||
+      (tool?.type === 'function' &&
+        ['tool_search', 'search_deferred_tools'].includes(tool?.name ?? tool?.function?.name))
+  )
+  if (!advertisesToolSearch && directToolName && names.includes(directToolName)) {
+    return {
+      mode: 'direct',
+      ...selectTool(request, directToolName, argumentsValue),
+    }
+  }
+  return {
+    mode: 'search',
+    ...selectToolSearch(request, toolName),
+  }
+}
+
+function mcpToolRequestEvents(
+  request,
+  { toolName, argumentsValue, directToolName, searchCallId, toolCallId }
+) {
+  const selection = selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
+  return {
+    mode: selection.mode,
+    events:
+      selection.mode === 'direct'
+        ? functionCall(toolCallId, selection.name, selection.arguments)
+        : toolSearchResponseEvents(searchCallId, selection),
+  }
+}
+
 function selectToolSearch(request, query) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   const toolNames = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
@@ -460,9 +524,13 @@ function selectToolSearch(request, query) {
     tool =>
       tool?.type === 'tool_search' ||
       (tool?.type === 'function' &&
-        (tool?.name === 'tool_search' || tool?.function?.name === 'tool_search'))
+        ['tool_search', 'search_deferred_tools'].includes(tool?.name ?? tool?.function?.name))
   )
-  assert.equal(searchTools.length, 1, 'Real Codex did not advertise exactly one tool_search tool')
+  assert.equal(
+    searchTools.length,
+    1,
+    `Real Codex did not advertise exactly one deferred tool search: ${toolNames.join(', ')}`
+  )
   assert.equal(
     tools.some(tool => tool?.type === 'namespace'),
     false,
@@ -478,7 +546,12 @@ function selectToolSearch(request, query) {
     encodedTools < 32 * 1024,
     `Real Codex first-turn tool payload exceeded 32 KiB: ${encodedTools} bytes`
   )
-  return { query, limit: 8 }
+  const searchTool = searchTools[0]
+  return {
+    name: searchTool?.name ?? searchTool?.function?.name ?? 'tool_search',
+    native: searchTool?.type === 'tool_search',
+    arguments: { query, limit: 8 },
+  }
 }
 
 function requestToolSearchResults(request) {
@@ -620,7 +693,10 @@ export {
   selectOfficialPluginMcpTool,
   selectMcpTool,
   selectConvertedTool,
+  selectMcpToolRequest,
+  mcpToolRequestEvents,
   selectToolSearch,
+  toolSearchResponseEvents,
   requestToolSearchResults,
   selectShellTool,
   selectShellToolCommand,

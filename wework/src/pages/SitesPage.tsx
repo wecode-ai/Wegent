@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Menu } from 'lucide-react'
 import { ApiError, createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { createSitesApi, createUnavailableSitesApi } from '@/api/sites'
+import { createSmartAppsApi } from '@/api/smartApps'
 import type { Site, SiteAppType } from '@/api/sites'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
@@ -18,6 +19,7 @@ import type { ApplicationCreateStrategy } from '@/components/sites/applicationTy
 import { getRuntimeConfig } from '@/config/runtime'
 import { useAuth } from '@/features/auth/useAuth'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -37,6 +39,7 @@ import type {
   InstalledPlugin,
   RuntimeTaskAddress,
 } from '@/types/api'
+import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
 
 class ApplicationPluginSyncConfirmationError extends Error {}
 
@@ -213,6 +216,7 @@ export function SitesPage() {
   const { t: commonT } = useTranslation('common')
   const { logout } = useAuth()
   const cloudConnection = useCloudConnection()
+  const experimentalFeatures = useExperimentalFeaturesState()
   const isMobile = useIsMobile()
   const isTauri = isTauriRuntime()
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -223,6 +227,15 @@ export function SitesPage() {
   const [creatingType, setCreatingType] = useState<SiteAppType | null>(null)
   const [continuingSiteId, setContinuingSiteId] = useState<string | null>(null)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
+  const searchParams = new URLSearchParams(window.location.search)
+  const smartAppsRequested = searchParams.get('app_type') === 'smart_app'
+  const smartAppsView = searchParams.get('view')
+
+  useEffect(() => {
+    if (smartAppsRequested && experimentalFeatures.loaded && !experimentalFeatures.enabled) {
+      navigateTo('/sites')
+    }
+  }, [experimentalFeatures.enabled, experimentalFeatures.loaded, smartAppsRequested])
   const {
     state,
     cloudWorkStatus,
@@ -285,6 +298,28 @@ export function SitesPage() {
 
     const token = cloudConnection.token
     return createPluginApi(
+      createHttpClient({
+        baseUrl: cloudConnection.apiBaseUrl,
+        getToken: () => token,
+        redirectOnUnauthorized: false,
+      })
+    )
+  }, [
+    apiBaseUrl,
+    cloudConnection.apiBaseUrl,
+    cloudConnection.isConnected,
+    cloudConnection.token,
+    isLocalFirst,
+  ])
+  const smartAppsApi = useMemo(() => {
+    if (!isLocalFirst) {
+      return createSmartAppsApi(createHttpClient({ baseUrl: apiBaseUrl }))
+    }
+    if (!cloudConnection.isConnected || !cloudConnection.apiBaseUrl || !cloudConnection.token) {
+      return null
+    }
+    const token = cloudConnection.token
+    return createSmartAppsApi(
       createHttpClient({
         baseUrl: cloudConnection.apiBaseUrl,
         getToken: () => token,
@@ -621,6 +656,15 @@ export function SitesPage() {
           createError={createError}
           createNotice={createNotice}
           onOpenPlugins={() => navigateTo('/plugins')}
+          smartAppsEnabled={experimentalFeatures.enabled}
+          smartAppsMode={smartAppsView === 'owned' ? 'owned' : 'marketplace'}
+          smartAppsContent={
+            smartAppsView === 'owned' ? (
+              <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />
+            ) : (
+              <SmartAppsMarketplacePage api={smartAppsApi} />
+            )
+          }
           sidebarCollapsed={sidebarCollapsed && !isMobile}
           topBarLeftActions={topBarLeftActions}
         />

@@ -1,0 +1,355 @@
+import { createHash } from 'node:crypto'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import { fileURLToPath } from 'node:url'
+import { constants as zlibConstants, createGzip } from 'node:zlib'
+import { spawn } from 'node:child_process'
+
+import {
+  macosSigningFingerprint,
+  signPreparedMacOsBinaries,
+} from './lib/deepseek-harness-signing.mjs'
+import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const source = path.join(root, 'harness-runtime')
+const runtimesDirectory = path.join(source, 'runtimes')
+const pluginsDirectory = path.join(source, 'plugins')
+const targetDirectory = path.join(root, 'src-tauri', 'bundled-harness-runtime')
+const catalogPath = path.join(targetDirectory, 'runtimes.json')
+const placeholder = path.join(targetDirectory, '.resource-placeholder')
+const cacheDirectory = path.join(root, 'node_modules', '.cache')
+const assetDirectory = path.join(cacheDirectory, 'harness-runtime-assets')
+const materializedRoot = path.join(cacheDirectory, 'harness-runtime-dev')
+const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v4'
+const materializeRequested = process.argv.includes('--materialize')
+const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
+const baseUrl = (
+  process.env.WEWORK_HARNESS_RUNTIME_BASE_URL?.trim() ||
+  'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
+).replace(/\/+$/, '')
+const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+
+async function listFiles(directory, relative = '') {
+  const entries = await readdir(path.join(directory, relative), { withFileTypes: true })
+  const files = []
+  for (const entry of entries) {
+    const child = path.join(relative, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...(await listFiles(directory, child)))
+    } else if (entry.isFile()) {
+      files.push(child)
+    }
+  }
+  return files.sort()
+}
+
+function run(command, args, cwd, environment = {}) {
+  return new Promise((resolve, reject) => {
+    const resolved = wrapWindowsScriptCommand(command, args)
+    const child = spawn(resolved.command, resolved.args, {
+      cwd,
+      env: { ...process.env, ...environment },
+      stdio: 'inherit',
+    })
+    child.once('error', reject)
+    child.once('exit', code => {
+      if (code === 0) resolve()
+      else reject(new Error(`${command} exited with code ${code ?? 'unknown'}`))
+    })
+  })
+}
+
+function runtimePlatform() {
+  const platform = { darwin: 'macos', win32: 'windows', linux: 'linux' }[process.platform]
+  const architecture = { arm64: 'arm64', x64: 'x64' }[process.arch]
+  if (!platform || !architecture) {
+    throw new Error(`Unsupported Harness runtime target: ${process.platform}-${process.arch}`)
+  }
+  return `${platform}-${architecture}`
+}
+
+async function sha256(pathname) {
+  const hash = createHash('sha256')
+  await pipeline(createReadStream(pathname), hash)
+  return hash.digest('hex')
+}
+
+async function resetTargetDirectory() {
+  await rm(targetDirectory, { recursive: true, force: true })
+  await mkdir(targetDirectory, { recursive: true })
+  await writeFile(placeholder, '')
+}
+
+async function runtimeSources() {
+  const pluginFiles = await listFiles(pluginsDirectory)
+  const sharedEntries = await Promise.all(
+    sharedFiles.map(async name => ({ name, content: await readFile(path.join(source, name)) }))
+  )
+  const pluginEntries = await Promise.all(
+    pluginFiles.map(async name => ({
+      name: path.join('plugins', name),
+      content: await readFile(path.join(pluginsDirectory, name)),
+    }))
+  )
+  const runtimeDirectories = (await readdir(runtimesDirectory, { withFileTypes: true }))
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort()
+  return Promise.all(
+    runtimeDirectories.map(async directory => {
+      const runtimeRoot = path.join(runtimesDirectory, directory)
+      const packageContent = await readFile(path.join(runtimeRoot, 'package.json'))
+      const lockContent = await readFile(path.join(runtimeRoot, 'pnpm-lock.yaml'))
+      const packageJson = JSON.parse(packageContent.toString('utf8'))
+      const dshVersion = packageJson.dependencies?.['@deepseek-ai/dsh']
+      if (typeof dshVersion !== 'string' || dshVersion !== packageJson.version) {
+        throw new Error(`${directory}/package.json must pin DSH to its package version`)
+      }
+      return {
+        dshVersion,
+        runtimeRoot,
+        entries: [
+          { name: 'package.json', content: packageContent },
+          { name: 'pnpm-lock.yaml', content: lockContent },
+          ...sharedEntries,
+          ...pluginEntries,
+        ],
+        pluginFiles,
+      }
+    })
+  )
+}
+
+function runtimeIdentity(runtime) {
+  const sourceFingerprint = createHash('sha256')
+    .update(archiveFormatVersion)
+    .update('\0')
+    .update(process.versions.modules)
+    .update('\0')
+    .update(macosSigningFingerprint(process.platform, process.env.APPLE_SIGNING_IDENTITY))
+    .update('\0')
+    .update(
+      runtime.entries.map(entry => `${entry.name}\0${entry.content.toString('base64')}`).join('\0')
+    )
+    .digest('hex')
+  const safeVersion = runtime.dshVersion.replace(/[^0-9A-Za-z.-]/g, '-')
+  const assetName = `harness-runtime-${runtimePlatform()}-dsh-${safeVersion}-${sourceFingerprint}.tar.gz`
+  return {
+    ...runtime,
+    sourceFingerprint,
+    assetName,
+    assetPath: path.join(assetDirectory, assetName),
+    descriptorName: assetName.replace(/\.tar\.gz$/, '.json'),
+  }
+}
+
+function validateDescriptor(descriptor, runtime) {
+  const downloadUrl = `${baseUrl}/${runtime.assetName}`
+  if (
+    descriptor.dshVersion !== runtime.dshVersion ||
+    descriptor.sourceFingerprint !== runtime.sourceFingerprint ||
+    descriptor.assetName !== runtime.assetName ||
+    descriptor.downloadUrl !== downloadUrl ||
+    typeof descriptor.archiveSha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/i.test(descriptor.archiveSha256) ||
+    typeof descriptor.archiveBytes !== 'number' ||
+    descriptor.archiveBytes <= 0
+  ) {
+    throw new Error(`Published Harness runtime descriptor is invalid: ${runtime.descriptorName}`)
+  }
+  return descriptor
+}
+
+async function ensurePublishedAsset(descriptor, runtime) {
+  let valid = false
+  try {
+    valid =
+      (await stat(runtime.assetPath)).size === descriptor.archiveBytes &&
+      (await sha256(runtime.assetPath)) === descriptor.archiveSha256
+  } catch {
+    // Download or repair the immutable cached asset below.
+  }
+  if (valid) return
+
+  const response = await fetch(descriptor.downloadUrl)
+  if (!response.ok || !response.body) {
+    throw new Error(`Failed to fetch published Harness runtime asset: ${response.status}`)
+  }
+  const temporary = `${runtime.assetPath}.${process.pid}.part`
+  await rm(temporary, { force: true })
+  try {
+    await pipeline(Readable.fromWeb(response.body), createWriteStream(temporary))
+    if (
+      (await stat(temporary)).size !== descriptor.archiveBytes ||
+      (await sha256(temporary)) !== descriptor.archiveSha256
+    ) {
+      throw new Error('Published Harness runtime asset failed integrity verification')
+    }
+    await rm(runtime.assetPath, { force: true })
+    await rename(temporary, runtime.assetPath)
+  } finally {
+    await rm(temporary, { force: true })
+  }
+}
+
+async function reusePublishedRuntime(runtime) {
+  if (skipRemoteReuse) return null
+  let response
+  try {
+    response = await fetch(`${baseUrl}/${runtime.descriptorName}`)
+  } catch {
+    return null
+  }
+  if (response.status === 404) return null
+  if (!response.ok) {
+    throw new Error(`Failed to fetch published Harness runtime descriptor: ${response.status}`)
+  }
+  const descriptor = validateDescriptor(await response.json(), runtime)
+  await ensurePublishedAsset(descriptor, runtime)
+  await writeFile(
+    path.join(assetDirectory, runtime.descriptorName),
+    `${JSON.stringify(descriptor, null, 2)}\n`
+  )
+  console.log(`Reused published Harness runtime: ${runtime.assetName}`)
+  return descriptor
+}
+
+async function materializeRuntime(runtime, descriptor) {
+  const destination = path.join(materializedRoot, descriptor.sourceFingerprint)
+  const identityPath = path.join(destination, 'runtime.json')
+  try {
+    const current = JSON.parse(await readFile(identityPath, 'utf8'))
+    if (
+      current.sourceFingerprint === descriptor.sourceFingerprint &&
+      current.dshVersion === descriptor.dshVersion
+    ) {
+      return
+    }
+  } catch {
+    // Materialize or repair the development runtime below.
+  }
+  const temporary = `${destination}-${process.pid}`
+  await rm(temporary, { recursive: true, force: true })
+  await mkdir(temporary, { recursive: true })
+  try {
+    await run('tar', ['-xzf', runtime.assetPath, '-C', temporary], root)
+    await rm(destination, { recursive: true, force: true })
+    await rename(temporary, destination)
+  } finally {
+    await rm(temporary, { recursive: true, force: true })
+  }
+}
+
+async function buildRuntime(runtime) {
+  const staging = path.join(
+    cacheDirectory,
+    `wework-harness-runtime-${runtime.dshVersion}-${process.pid}`
+  )
+  const temporaryArchive = `${runtime.assetPath}.${process.pid}.tar.gz`
+  const temporaryTar = temporaryArchive.slice(0, -3)
+  try {
+    await rm(staging, { recursive: true, force: true })
+    await rm(temporaryArchive, { force: true })
+    await rm(temporaryTar, { force: true })
+    await mkdir(staging, { recursive: true })
+    for (const entry of runtime.entries) {
+      const destination = path.join(staging, entry.name)
+      await mkdir(path.dirname(destination), { recursive: true })
+      await writeFile(destination, entry.content)
+    }
+    await run(pnpmCommand, ['install', '--prod', '--frozen-lockfile'], staging)
+    await writeFile(
+      path.join(staging, 'runtime.json'),
+      `${JSON.stringify(
+        {
+          dshVersion: runtime.dshVersion,
+          sourceFingerprint: runtime.sourceFingerprint,
+        },
+        null,
+        2
+      )}\n`
+    )
+    await writeFile(path.join(staging, '.resource-placeholder'), '')
+    await signPreparedMacOsBinaries(staging)
+
+    await run('tar', ['-cf', temporaryTar, '-C', staging, '.'], root, {
+      COPYFILE_DISABLE: '1',
+    })
+    await pipeline(
+      createReadStream(temporaryTar),
+      createGzip({ level: zlibConstants.Z_BEST_SPEED }),
+      createWriteStream(temporaryArchive)
+    )
+    const descriptor = {
+      dshVersion: runtime.dshVersion,
+      sourceFingerprint: runtime.sourceFingerprint,
+      archiveSha256: await sha256(temporaryArchive),
+      archiveBytes: (await stat(temporaryArchive)).size,
+      downloadUrl: `${baseUrl}/${runtime.assetName}`,
+      assetName: runtime.assetName,
+    }
+    await rm(runtime.assetPath, { force: true })
+    await rename(temporaryArchive, runtime.assetPath)
+    await writeFile(
+      path.join(assetDirectory, runtime.descriptorName),
+      `${JSON.stringify(descriptor, null, 2)}\n`
+    )
+    console.log(`Prepared Harness runtime asset: ${runtime.assetPath}`)
+    return descriptor
+  } finally {
+    await rm(staging, { recursive: true, force: true })
+    await rm(temporaryArchive, { force: true })
+    await rm(temporaryTar, { force: true })
+  }
+}
+
+if (process.argv.includes('--clean')) {
+  await resetTargetDirectory()
+  process.exit(0)
+}
+if (process.env.WEWORK_HARNESS_RUNTIME_URL?.trim()) {
+  throw new Error(
+    'WEWORK_HARNESS_RUNTIME_URL cannot address multiple DSH versions; use WEWORK_HARNESS_RUNTIME_BASE_URL'
+  )
+}
+
+await mkdir(assetDirectory, { recursive: true })
+const runtimes = (await runtimeSources()).map(runtimeIdentity)
+if (runtimes.length === 0) {
+  throw new Error('Harness runtime must declare at least one DSH version')
+}
+const descriptors = []
+for (const runtime of runtimes) {
+  let descriptor = null
+  try {
+    const cached = JSON.parse(
+      await readFile(path.join(assetDirectory, runtime.descriptorName), 'utf8')
+    )
+    await access(runtime.assetPath)
+    descriptor = validateDescriptor(cached, runtime)
+    await ensurePublishedAsset(descriptor, runtime)
+  } catch {
+    descriptor = await reusePublishedRuntime(runtime)
+  }
+  descriptor ??= await buildRuntime(runtime)
+  descriptors.push(descriptor)
+  if (materializeRequested) {
+    await materializeRuntime(runtime, descriptor)
+  }
+}
+
+await resetTargetDirectory()
+await writeFile(catalogPath, `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`)
+if (materializeRequested) {
+  await mkdir(materializedRoot, { recursive: true })
+  await writeFile(
+    path.join(materializedRoot, 'runtimes.json'),
+    `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`
+  )
+  console.log(`Harness runtime root: ${materializedRoot}`)
+}

@@ -21,6 +21,7 @@ from app.models.user import User
 from app.models.wiki import WikiContent, WikiGeneration, WikiGenerationStatus
 from app.services.knowledge.code_wiki.generation import (
     GenerationInFlight,
+    GenerationWikiNotFound,
     current_run_state,
     finish_generation,
     published_commit,
@@ -148,6 +149,25 @@ def test_an_unchanged_repository_starts_nothing(
     assert RunMode(started.decision.mode) is RunMode.SKIP
 
 
+def test_an_explicit_full_rebuild_starts_at_the_same_commit(
+    test_db: Session, knowledge_base: Kind, test_user: User, effects: FakeEffects
+):
+    _publish_a_first_wiki(test_db, knowledge_base, test_user, effects)
+
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        force_full=True,
+        now=NOW,
+    )
+
+    assert started.started
+    assert RunMode(started.decision.mode) is RunMode.FULL
+    assert started.seeded_pages == 0
+
+
 def test_an_incremental_run_is_seeded_before_the_agent_sees_it(
     test_db: Session, knowledge_base: Kind, test_user: User, effects: FakeEffects
 ):
@@ -202,6 +222,23 @@ def test_a_second_run_is_refused_while_one_is_live(
             knowledge_base=knowledge_base,
             user=test_user,
             head_commit=NEXT_HEAD,
+            now=NOW,
+        )
+
+
+def test_a_run_does_not_start_after_its_wiki_was_deleted(
+    test_db: Session, knowledge_base: Kind, test_user: User
+) -> None:
+    """A start that waited behind deletion must not use a stale KB object."""
+    test_db.delete(knowledge_base)
+    test_db.flush()
+
+    with pytest.raises(GenerationWikiNotFound, match="was deleted"):
+        start_generation(
+            test_db,
+            knowledge_base=knowledge_base,
+            user=test_user,
+            head_commit=HEAD,
             now=NOW,
         )
 

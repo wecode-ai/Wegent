@@ -61,7 +61,6 @@ interface ProjectCreateDialogProps {
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
   showWorkspaceKindSelect?: boolean
   preferredDeviceId?: string | null
-  onSelectDevicePreference?: (deviceId: string) => void
   onOpenCloudDeviceSettings?: () => void
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
@@ -187,7 +186,6 @@ function ProjectCreateDialogContent({
   onUpdateProjectName,
   showWorkspaceKindSelect = false,
   preferredDeviceId,
-  onSelectDevicePreference,
   onOpenCloudDeviceSettings,
   onGetDeviceHomeDirectory,
   onListDeviceDirectories,
@@ -267,7 +265,6 @@ function ProjectCreateDialogContent({
 
   const selectDevice = (deviceId: string) => {
     setActiveDeviceId(deviceId)
-    onSelectDevicePreference?.(deviceId)
   }
 
   const setFolderDraft = (result: DeviceFolderPickerResult) => {
@@ -376,11 +373,11 @@ function ProjectCreateDialogContent({
     )
 
     return (
-      <section className="mt-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-3">
+      <section className="mt-4 rounded-lg border border-border bg-surface p-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-sm font-medium text-[#202124]">{getDeviceLabel(activeDevice)}</p>
-            <p className="mt-1 truncate font-mono text-xs text-[#6b6f76]">
+            <p className="text-sm font-medium text-text-primary">{getDeviceLabel(activeDevice)}</p>
+            <p className="mt-1 truncate font-mono text-xs text-text-secondary">
               {folderPath || t('workbench.project_device_folder_empty', '尚未关联文件夹')}
             </p>
           </div>
@@ -390,7 +387,7 @@ function ProjectCreateDialogContent({
               data-testid="project-device-unlink-button"
               disabled={submitting}
               onClick={unlinkActiveDevice}
-              className="h-8 shrink-0 rounded-md border border-[#d8d8d8] px-2 text-xs font-medium text-[#8a3b3b] hover:bg-[#fff1f1] disabled:opacity-50"
+              className="h-8 shrink-0 rounded-md border border-red-500/25 px-2 text-xs font-medium text-red-500 hover:bg-red-500/10 disabled:opacity-50"
             >
               {t('workbench.project_unlink_device_folder', '解除关联')}
             </button>
@@ -400,7 +397,7 @@ function ProjectCreateDialogContent({
         {!canUseDevice && (
           <div
             data-testid={`project-device-unavailable-${activeDevice.device_id}`}
-            className="mt-3 rounded-lg border border-[#f0dfc7] bg-[#fff8ed] px-3 py-2 text-sm leading-5 text-[#7a4b16]"
+            className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-sm leading-5 text-amber-700 dark:text-amber-300"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -415,7 +412,7 @@ function ProjectCreateDialogContent({
                         '设备恢复在线后可选择目录'
                       )}
                 </p>
-                <p className="mt-0.5 text-xs text-[#8a5a20]">
+                <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/80">
                   {belowVersion
                     ? t('workbench.project_device_upgrade_detail', {
                         defaultValue: '当前 {{current}}，需要 {{required}} 或以上',
@@ -433,7 +430,7 @@ function ProjectCreateDialogContent({
                   data-testid={`upgrade-project-device-${activeDevice.device_id}`}
                   disabled={submitting || upgrading}
                   onClick={() => void onUpgradeDevice?.(activeDevice.device_id)}
-                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[#e4b777] bg-white px-2 text-xs font-medium text-[#7a4b16] hover:bg-[#fff4df] disabled:opacity-50"
+                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-amber-500/30 bg-background px-2 text-xs font-medium text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
                 >
                   {upgrading ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -467,7 +464,7 @@ function ProjectCreateDialogContent({
                   'min-h-10 rounded-lg border px-2 text-xs font-medium',
                   workspaceKind === value
                     ? 'border-text-primary bg-text-primary text-background'
-                    : 'border-[#d8d8d8] text-[#3c4043] hover:bg-[#f7f7f8]',
+                    : 'border-border text-text-primary hover:bg-muted',
                 ].join(' ')}
               >
                 {label}
@@ -484,7 +481,7 @@ function ProjectCreateDialogContent({
             onClick={() =>
               setFolderPickerState({ deviceId: activeDevice.device_id, mode: 'select' })
             }
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#d8d8d8] bg-white px-3 text-sm font-medium text-[#3c4043] hover:bg-[#f7f7f8] disabled:opacity-50"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:opacity-50"
           >
             <Folder className="h-4 w-4" />
             {t('workbench.project_folder_select_existing', '选择已有')}
@@ -496,7 +493,7 @@ function ProjectCreateDialogContent({
             onClick={() =>
               setFolderPickerState({ deviceId: activeDevice.device_id, mode: 'create' })
             }
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#d8d8d8] bg-white px-3 text-sm font-medium text-[#3c4043] hover:bg-[#f7f7f8] disabled:opacity-50"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:opacity-50"
           >
             <FolderPlus className="h-4 w-4" />
             {t('workbench.project_folder_create_new', '新建')}
@@ -546,14 +543,14 @@ function ProjectCreateDialogContent({
         data-testid="project-create-dialog"
         className={
           isMobileSheet
-            ? 'max-h-[88dvh] w-full overflow-y-auto rounded-t-[28px] border border-[#EDEDED] border-b-0 bg-white p-5 pb-[max(24px,env(safe-area-inset-bottom))] shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
-            : 'max-h-[88vh] w-full max-w-[680px] overflow-y-auto rounded-lg border border-[#d8d8d8] bg-white p-6 shadow-2xl'
+            ? 'max-h-[88dvh] w-full overflow-y-auto rounded-t-[28px] border border-border border-b-0 bg-popover p-5 pb-[max(24px,env(safe-area-inset-bottom))] text-text-primary shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
+            : 'max-h-[88vh] w-full max-w-[680px] overflow-y-auto rounded-lg border border-border bg-popover p-6 text-text-primary shadow-2xl'
         }
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold text-[#202124]">{title}</h2>
-            <p className="mt-2 text-sm leading-[18px] text-[#6b6f76]">{description}</p>
+            <h2 className="text-base font-semibold text-text-primary">{title}</h2>
+            <p className="mt-2 text-sm leading-[18px] text-text-secondary">{description}</p>
           </div>
           <button
             type="button"
@@ -562,7 +559,7 @@ function ProjectCreateDialogContent({
               if (!submitting) onClose()
             }}
             disabled={submitting}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-[#606368] hover:bg-[#f1f3f4] disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             aria-label={t('workbench.close_dialog', '关闭')}
           >
             <X className="h-4 w-4" />
@@ -570,7 +567,7 @@ function ProjectCreateDialogContent({
         </div>
 
         {allProjectDevices.length === 0 && onOpenCloudDeviceSettings && (
-          <p className="mt-5 text-sm leading-5 text-[#606368]">
+          <p className="mt-5 text-sm leading-5 text-text-secondary">
             {t('workbench.project_no_available_devices_hint', '创建项目需要一台可用设备。')}
             <a
               href="/settings/connections"
@@ -579,7 +576,7 @@ function ProjectCreateDialogContent({
                 event.preventDefault()
                 onOpenCloudDeviceSettings()
               }}
-              className="ml-1 font-medium text-[#14b8a6] underline underline-offset-2 hover:text-[#0f9f93]"
+              className="ml-1 font-medium text-primary underline underline-offset-2 hover:text-primary/80"
             >
               {t('workbench.project_create_cloud_device_connection', '创建云设备连接')}
             </a>
@@ -588,7 +585,7 @@ function ProjectCreateDialogContent({
 
         {isEditing ? (
           <label className="mt-5 block">
-            <span className="text-sm font-semibold text-[#202124]">
+            <span className="text-sm font-semibold text-text-primary">
               {t('workbench.project_name', '项目名称')}
             </span>
             <input
@@ -599,22 +596,25 @@ function ProjectCreateDialogContent({
                 setProjectName(event.target.value)
                 setProjectCreateError(null)
               }}
-              className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] px-3 text-sm outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
+              className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60"
             />
           </label>
         ) : primaryDraft ? (
-          <div className="mt-5 rounded-lg border border-[#e5e5e5] bg-[#f7f7f8] px-3 py-2">
+          <div className="mt-5 rounded-lg border border-border bg-muted px-3 py-2">
             {renamingInline ? (
               <input
                 data-testid="project-name-input"
                 value={projectName}
                 disabled={submitting}
                 onChange={event => setProjectName(event.target.value)}
-                className="h-9 w-full rounded-md border border-[#d8d8d8] bg-white px-2 text-sm outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
+                className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20"
               />
             ) : (
               <div className="flex items-center justify-between gap-3">
-                <p data-testid="project-name-preview" className="truncate text-sm text-[#3c4043]">
+                <p
+                  data-testid="project-name-preview"
+                  className="truncate text-sm text-text-primary"
+                >
                   {t('workbench.project_name_preview', {
                     defaultValue: '项目名：{{name}}',
                     name: finalProjectName,
@@ -624,7 +624,7 @@ function ProjectCreateDialogContent({
                   type="button"
                   data-testid="project-rename-inline-button"
                   onClick={() => setRenamingInline(true)}
-                  className="h-8 shrink-0 rounded-md px-2 text-xs font-medium text-[#0f766e] hover:bg-[#e5f6f4]"
+                  className="h-8 shrink-0 rounded-md px-2 text-xs font-medium text-primary hover:bg-primary/10"
                 >
                   {t('workbench.rename_project', '重命名项目')}
                 </button>
@@ -651,7 +651,7 @@ function ProjectCreateDialogContent({
                       'min-h-10 rounded-md border px-3 text-left text-sm',
                       active
                         ? 'border-text-primary bg-text-primary text-background'
-                        : 'border-[#d8d8d8] text-[#3c4043] hover:bg-[#f7f7f8]',
+                        : 'border-border text-text-primary hover:bg-muted',
                       !selectable ? 'cursor-not-allowed opacity-50 hover:bg-transparent' : '',
                     ].join(' ')}
                   >
@@ -668,7 +668,7 @@ function ProjectCreateDialogContent({
             ) : (
               <p
                 data-testid="project-no-usable-device-hint"
-                className="mt-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa] px-3 py-3 text-sm text-[#6b6f76]"
+                className="mt-4 rounded-lg border border-border bg-surface px-3 py-3 text-sm text-text-secondary"
               >
                 {t(
                   'workbench.device_status_no_online_device',
@@ -680,7 +680,7 @@ function ProjectCreateDialogContent({
         )}
 
         {projectCreateError && (
-          <p className="mt-4 rounded-md bg-[#fff1f1] px-3 py-2 text-sm text-[#8a3b3b]">
+          <p className="mt-4 rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-500">
             {projectCreateError}
           </p>
         )}
@@ -691,7 +691,7 @@ function ProjectCreateDialogContent({
             data-testid="cancel-project-create-button"
             disabled={submitting}
             onClick={onClose}
-            className="h-10 rounded-md border border-[#d8d8d8] px-4 text-sm font-medium text-[#3c4043] hover:bg-[#f7f7f8] disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-10 rounded-md border border-border px-4 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('workbench.cancel', '取消')}
           </button>

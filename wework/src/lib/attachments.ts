@@ -1,4 +1,3 @@
-import { getRuntimeConfig } from '@/config/runtime'
 import type { Attachment } from '@/types/api'
 
 const TEXT_ATTACHMENT_PREVIEW_BYTES = 4096
@@ -51,11 +50,6 @@ export function isImageAttachment(attachment: Attachment): boolean {
       attachment.file_extension.toLowerCase()
     )
   )
-}
-
-export function getAttachmentImageUrl(attachmentId: number): string {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return `${apiBaseUrl}/attachments/${attachmentId}/download`
 }
 
 export function getAttachmentTypeLabel(attachment: Attachment): string {

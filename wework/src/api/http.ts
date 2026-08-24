@@ -321,7 +321,13 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     if (!diagnostics.response.ok) {
       throw await parseAndLogHttpError(diagnostics.response, diagnostics)
     }
-    return diagnostics.response.blob()
+    const blob = await diagnostics.response.blob()
+    if (blob.type) {
+      return blob
+    }
+
+    const contentType = diagnostics.response.headers.get('Content-Type')?.split(';', 1)[0]?.trim()
+    return contentType ? new Blob([blob], { type: contentType }) : blob
   }
 
   return {

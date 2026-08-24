@@ -1,18 +1,34 @@
-import { AlertCircle, Check, Copy, Globe2, Loader2, X } from 'lucide-react'
+import {
+  AlertCircle,
+  Check,
+  ChevronLeft,
+  Copy,
+  FolderOpen,
+  FolderPlus,
+  GitBranch,
+  Globe2,
+  Loader2,
+  X,
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
 import { isImeEnterEvent } from '@/lib/ime'
 import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
 import {
+  WEWORK_MIN_EXECUTOR_VERSION,
   canUseForProjectCreation,
   canUseForRemoteProjectCreation,
+  hasLocalRuntimeRoute,
   isCloudDevice,
   isClaudeCodeDevice,
   isRemoteDevice,
+  isUsableDevice,
+  isWeWorkExecutorVersionCompatible,
 } from '@/lib/device-capabilities'
-import type { DeviceInfo } from '@/types/api'
+import type { CloneGitRepositoryInput, DeviceInfo } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse, RemoteDeviceStartupCommand } from '@/types/devices'
 import { DeviceFolderPicker } from './DeviceFolderPicker'
 import { basename, joinPath } from './device-folder-path'
@@ -20,6 +36,7 @@ import { LocalProjectCreateDialog } from './LocalProjectCreateDialog'
 
 export type StandaloneWorkspaceDialogMode = 'existing' | 'remote'
 export type StandaloneRemoteDialogIntent = 'project' | 'cloud-work' | 'add-device'
+export type RemoteProjectSource = 'existing' | 'blank' | 'git'
 
 function isLocalDevice(device: DeviceInfo): boolean {
   return !isCloudDevice(device) && !isRemoteDevice(device)
@@ -57,13 +74,39 @@ function getRemoteDeviceLabel(device: DeviceInfo): string {
   return getRemoteDeviceNetworkLabel(device) ?? getStandaloneDeviceLabel(device)
 }
 
-function getUsableStandaloneDevices(
+function getRemoteDeviceOptionLabel(
+  device: DeviceInfo,
+  typeLabel: string,
+  unavailableLabel: string,
+  upgradeLabel: string
+): string {
+  const deviceLabel = getStandaloneDeviceLabel(device)
+  const networkLabel = getRemoteDeviceNetworkLabel(device)
+  const labels = [typeLabel, deviceLabel]
+  if (networkLabel && networkLabel !== deviceLabel) labels.push(networkLabel)
+  if (!isUsableDevice(device)) labels.push(unavailableLabel)
+  else if (!isWeWorkExecutorVersionCompatible(device.executor_version)) labels.push(upgradeLabel)
+  return labels.join(' · ')
+}
+
+function getStandaloneDeviceOptions(
   devices: DeviceInfo[],
   mode: StandaloneWorkspaceDialogMode
 ): DeviceInfo[] {
   const isTargetDevice = mode === 'remote' ? isRemoteProjectDevice : isLocalDevice
-  return devices
-    .filter(device => isClaudeCodeDevice(device) && isTargetDevice(device))
+  return devices.filter(
+    device =>
+      isClaudeCodeDevice(device) &&
+      isTargetDevice(device) &&
+      (mode !== 'remote' || !hasLocalRuntimeRoute(device))
+  )
+}
+
+function getUsableStandaloneDevices(
+  devices: DeviceInfo[],
+  mode: StandaloneWorkspaceDialogMode
+): DeviceInfo[] {
+  return getStandaloneDeviceOptions(devices, mode)
     .filter(device =>
       mode === 'remote' ? canUseForRemoteProjectCreation(device) : canUseForProjectCreation(device)
     )
@@ -102,6 +145,33 @@ function getUniqueProjectDirectoryName(baseName: string, existingNames: string[]
   }
 
   return `${baseName} ${Date.now()}`
+}
+
+function getGitRepositoryName(url: string): string {
+  const trimmed = url.trim().replace(/\/+$/, '')
+  const path =
+    trimmed.startsWith('git@') && trimmed.includes(':')
+      ? trimmed.slice(trimmed.indexOf(':') + 1)
+      : trimmed
+  return (
+    path
+      .split('/')
+      .filter(Boolean)
+      .at(-1)
+      ?.replace(/\.git$/i, '') ?? ''
+  )
+}
+
+function isValidGitRepositoryUrl(url: string): boolean {
+  const value = url.trim()
+  if (/^(?:\/|[A-Za-z]:[\\/])/.test(value)) return true
+  if (/^[^@\s]+@[^:\s]+:.+/.test(value)) return true
+  try {
+    const parsed = new URL(value)
+    return ['http:', 'https:', 'ssh:', 'git:', 'file:'].includes(parsed.protocol)
+  } catch {
+    return false
+  }
 }
 
 function normalizeRemoteDeviceStartupCommands(
@@ -279,6 +349,8 @@ export function StandaloneFolderProjectDialog({
   onGetDeviceHomeDirectory,
   onListDeviceDirectories,
   onCreateDeviceDirectory,
+  onCloneGitRepository,
+  onStartGitCloneProject,
   onOpenStandaloneWorkspace,
   onGetRemoteDeviceStartupCommand,
   onRefreshDevices,
@@ -294,6 +366,8 @@ export function StandaloneFolderProjectDialog({
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
+  onCloneGitRepository?: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
+  onStartGitCloneProject?: (deviceId: string, input: CloneGitRepositoryInput) => void
   onOpenStandaloneWorkspace?: (
     deviceId: string,
     workspacePath: string,
@@ -314,11 +388,31 @@ export function StandaloneFolderProjectDialog({
   const [nativePickerFallback, setNativePickerFallback] = useState(false)
   const [selectedLocalRoots, setSelectedLocalRoots] = useState<string[]>([])
   const [selectedLocalDeviceId, setSelectedLocalDeviceId] = useState('')
+  const [remoteProjectSource, setRemoteProjectSource] = useState<RemoteProjectSource | null>(null)
+  const [gitUrl, setGitUrl] = useState('')
+  const [gitBranch, setGitBranch] = useState('')
+  const [gitParentPath, setGitParentPath] = useState('')
+  const [gitParentPickerOpen, setGitParentPickerOpen] = useState(false)
+  const [gitAdvancedOpen, setGitAdvancedOpen] = useState(false)
+  const [gitSubmitting, setGitSubmitting] = useState(false)
+  const [gitError, setGitError] = useState<string | null>(null)
   const nativePickerStartedRef = useRef(false)
+  const gitParentDefaultDeviceIdRef = useRef<string | null>(null)
   const selectableDevices = useMemo(
     () => getUsableStandaloneDevices(devices, mode),
     [devices, mode]
   )
+  const remoteDeviceOptions = useMemo(
+    () =>
+      mode === 'remote'
+        ? getStandaloneDeviceOptions(devices, mode).sort((left, right) =>
+            getRemoteDeviceLabel(left).localeCompare(getRemoteDeviceLabel(right))
+          )
+        : [],
+    [devices, mode]
+  )
+  const cloudDeviceOptions = remoteDeviceOptions.filter(isCloudDevice)
+  const remoteDockerDeviceOptions = remoteDeviceOptions.filter(isRemoteDevice)
   const defaultDevice = useMemo(
     () => getPreferredStandaloneWorkspaceDevice(devices, preferredDeviceId, mode),
     [devices, mode, preferredDeviceId]
@@ -331,6 +425,8 @@ export function StandaloneFolderProjectDialog({
     selectableDevices[0] ??
     null
   const addingRemoteDevice = mode === 'remote' && remoteIntent === 'add-device'
+  const choosingRemoteProjectSource =
+    mode === 'remote' && remoteIntent === 'project' && remoteProjectSource === null
   const showStartupCommand =
     mode === 'remote' &&
     (addingRemoteDevice || !activeDevice) &&
@@ -344,6 +440,15 @@ export function StandaloneFolderProjectDialog({
     setNativePickerFallback(false)
     setSelectedLocalRoots([])
     setSelectedLocalDeviceId('')
+    setRemoteProjectSource(null)
+    setGitUrl('')
+    setGitBranch('')
+    setGitParentPath('')
+    setGitParentPickerOpen(false)
+    setGitAdvancedOpen(false)
+    setGitSubmitting(false)
+    setGitError(null)
+    gitParentDefaultDeviceIdRef.current = null
     onClose()
   }, [onClose])
 
@@ -425,6 +530,38 @@ export function StandaloneFolderProjectDialog({
   ])
 
   useEffect(() => {
+    const deviceId = activeDevice?.device_id
+    if (
+      !open ||
+      remoteProjectSource !== 'git' ||
+      !deviceId ||
+      gitParentDefaultDeviceIdRef.current === deviceId
+    ) {
+      return undefined
+    }
+    gitParentDefaultDeviceIdRef.current = deviceId
+    let cancelled = false
+    onGetDeviceHomeDirectory(deviceId)
+      .then(path => {
+        if (!cancelled) {
+          setGitParentPath(currentPath => currentPath || path)
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setGitError(
+            error instanceof Error
+              ? error.message
+              : t('workbench.project_home_directory_load_failed', '无法读取 home 目录')
+          )
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeDevice?.device_id, onGetDeviceHomeDirectory, open, remoteProjectSource, t])
+
+  useEffect(() => {
     if (!open) {
       nativePickerStartedRef.current = false
       return undefined
@@ -479,6 +616,60 @@ export function StandaloneFolderProjectDialog({
     if (!activeStartupCommand) return
     await navigator.clipboard?.writeText(activeStartupCommand.command)
     setStartupCommandCopied(true)
+  }
+
+  const submitGitProject = async () => {
+    if (!activeDevice || (!onCloneGitRepository && !onStartGitCloneProject) || gitSubmitting) return
+    const normalizedUrl = gitUrl.trim()
+    const repositoryName = getGitRepositoryName(normalizedUrl)
+    if (!normalizedUrl || !repositoryName || !isValidGitRepositoryUrl(normalizedUrl)) {
+      setGitError(t('workbench.remote_project_git_url_invalid', '请输入有效的 Git 仓库地址'))
+      return
+    }
+    if (hasEmbeddedHttpGitCredentials(normalizedUrl)) {
+      setGitError(
+        t(
+          'workbench.remote_project_git_credentials_forbidden',
+          '仓库地址不能包含账号、密码或 Token，请使用设备已有的 Git 凭据。'
+        )
+      )
+      return
+    }
+    if (!gitParentPath.trim()) {
+      setGitError(t('workbench.remote_project_git_parent_required', '请输入目标父目录'))
+      return
+    }
+
+    const targetPath = joinPath(gitParentPath.trim(), repositoryName)
+    if (onStartGitCloneProject) {
+      onStartGitCloneProject(activeDevice.device_id, {
+        url: normalizedUrl,
+        ...(gitBranch.trim() ? { branch: gitBranch.trim() } : {}),
+        targetPath,
+      })
+      closeDialog()
+      return
+    }
+
+    setGitSubmitting(true)
+    setGitError(null)
+    try {
+      await onCloneGitRepository!(activeDevice.device_id, {
+        url: normalizedUrl,
+        ...(gitBranch.trim() ? { branch: gitBranch.trim() } : {}),
+        targetPath,
+      })
+      await onOpenStandaloneWorkspace?.(activeDevice.device_id, targetPath, repositoryName)
+      closeDialog()
+    } catch (error) {
+      setGitError(
+        error instanceof Error
+          ? error.message
+          : t('workbench.remote_project_git_clone_failed', 'Git 仓库克隆失败')
+      )
+    } finally {
+      setGitSubmitting(false)
+    }
   }
 
   if (!open) return null
@@ -592,7 +783,7 @@ export function StandaloneFolderProjectDialog({
           </button>
         </div>
 
-        {usesRemoteFolderPicker && selectableDevices.length > 0 && !addingRemoteDevice && (
+        {usesRemoteFolderPicker && remoteDeviceOptions.length > 0 && !addingRemoteDevice && (
           <label className="mt-5 block">
             <span className="text-sm font-medium text-text-primary">
               {t('workbench.remote_host', '远程主机')}
@@ -602,16 +793,79 @@ export function StandaloneFolderProjectDialog({
               <select
                 data-testid="standalone-remote-device-select"
                 value={activeDevice?.device_id ?? ''}
-                onChange={event => setActiveDeviceId(event.target.value)}
+                onChange={event => {
+                  setActiveDeviceId(event.target.value)
+                  gitParentDefaultDeviceIdRef.current = null
+                  setGitParentPath('')
+                  setGitParentPickerOpen(false)
+                  setGitError(null)
+                }}
                 className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none"
               >
-                {selectableDevices.map(device => (
-                  <option key={device.device_id} value={device.device_id}>
-                    {getRemoteDeviceLabel(device)}
+                {!activeDevice && (
+                  <option value="" disabled>
+                    {t('workbench.no_remote_project_device', '暂无可用远程或云设备')}
                   </option>
-                ))}
+                )}
+                {cloudDeviceOptions.length > 0 && (
+                  <optgroup label={t('workbench.remote_host_cloud_group', '云设备')}>
+                    {cloudDeviceOptions.map(device => (
+                      <option
+                        key={device.device_id}
+                        value={device.device_id}
+                        disabled={!canUseForRemoteProjectCreation(device)}
+                        data-testid={`standalone-remote-device-option-${device.device_id}`}
+                      >
+                        {getRemoteDeviceOptionLabel(
+                          device,
+                          t('workbench.remote_host_cloud_group', '云设备'),
+                          t('workbench.project_device_offline', '（离线）'),
+                          t(
+                            'workbench.remote_host_upgrade_required',
+                            `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
+                            { version: WEWORK_MIN_EXECUTOR_VERSION }
+                          )
+                        )}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {remoteDockerDeviceOptions.length > 0 && (
+                  <optgroup label={t('workbench.remote_host_docker_group', '远程 Docker 设备')}>
+                    {remoteDockerDeviceOptions.map(device => (
+                      <option
+                        key={device.device_id}
+                        value={device.device_id}
+                        disabled={!canUseForRemoteProjectCreation(device)}
+                        data-testid={`standalone-remote-device-option-${device.device_id}`}
+                      >
+                        {getRemoteDeviceOptionLabel(
+                          device,
+                          t('workbench.remote_host_docker_group', '远程 Docker 设备'),
+                          t('workbench.project_device_offline', '（离线）'),
+                          t(
+                            'workbench.remote_host_upgrade_required',
+                            `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
+                            { version: WEWORK_MIN_EXECUTOR_VERSION }
+                          )
+                        )}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </span>
+            {remoteDeviceOptions.some(device => !canUseForRemoteProjectCreation(device)) && (
+              <span
+                data-testid="standalone-remote-device-unavailable-hint"
+                className="mt-2 block text-xs leading-5 text-text-secondary"
+              >
+                {t(
+                  'workbench.remote_host_unavailable_hint',
+                  '离线或版本不匹配的远程设备会显示在列表中，但暂时不能选择。'
+                )}
+              </span>
+            )}
           </label>
         )}
 
@@ -760,8 +1014,243 @@ export function StandaloneFolderProjectDialog({
                 : t('workbench.no_local_project_device', '暂无可用本地设备')}
             </p>
           )
+        ) : choosingRemoteProjectSource ? (
+          <div data-testid="remote-project-source-options" className="mt-5 space-y-2">
+            {(
+              [
+                {
+                  source: 'existing',
+                  icon: FolderOpen,
+                  title: t('workbench.remote_project_source_existing', '打开已有目录'),
+                  description: t(
+                    'workbench.remote_project_source_existing_desc',
+                    '选择设备上已经存在的项目目录。'
+                  ),
+                },
+                {
+                  source: 'blank',
+                  icon: FolderPlus,
+                  title: t('workbench.remote_project_source_blank', '新建空项目'),
+                  description: t(
+                    'workbench.remote_project_source_blank_desc',
+                    '选择父目录并创建新的项目文件夹。'
+                  ),
+                },
+                {
+                  source: 'git',
+                  icon: GitBranch,
+                  title: t('workbench.remote_project_source_git', '从 Git 仓库克隆'),
+                  description: t(
+                    'workbench.remote_project_source_git_desc',
+                    '输入仓库地址，在当前设备上克隆并打开。'
+                  ),
+                },
+              ] as const
+            ).map(option => {
+              const Icon = option.icon
+              return (
+                <button
+                  key={option.source}
+                  type="button"
+                  data-testid={`remote-project-source-${option.source}`}
+                  onClick={() => {
+                    setRemoteProjectSource(option.source)
+                    if (option.source === 'git') {
+                      gitParentDefaultDeviceIdRef.current = null
+                      setGitParentPath('')
+                      setGitParentPickerOpen(false)
+                    }
+                    setGitError(null)
+                  }}
+                  className="flex w-full items-start gap-3 rounded-xl border border-border bg-background p-3 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-text-primary">
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-text-primary">
+                      {option.title}
+                    </span>
+                    <span className="mt-1 block text-sm leading-5 text-text-secondary">
+                      {option.description}
+                    </span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        ) : remoteProjectSource === 'git' ? (
+          <div className="mt-5">
+            <button
+              type="button"
+              data-testid="remote-project-source-back"
+              disabled={gitSubmitting}
+              onClick={() => setRemoteProjectSource(null)}
+              className="inline-flex h-11 items-center gap-1 text-sm text-text-secondary hover:text-text-primary disabled:opacity-50 sm:h-8"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              {t('workbench.remote_project_source_change', '更改项目来源')}
+            </button>
+            {gitParentPickerOpen ? (
+              <div className="mt-3">
+                <h3 className="mb-2 text-sm font-medium text-text-primary">
+                  {t('workbench.remote_project_git_parent_select', '选择目标父目录')}
+                </h3>
+                <DeviceFolderPicker
+                  key={activeDevice.device_id}
+                  device={activeDevice}
+                  mode="select"
+                  variant="remote"
+                  initialPath={gitParentPath}
+                  confirmLabel={t('workbench.remote_project_git_parent_confirm', '选择此文件夹')}
+                  onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+                  onListDeviceDirectories={onListDeviceDirectories}
+                  onCreateDeviceDirectory={onCreateDeviceDirectory}
+                  onCancel={() => setGitParentPickerOpen(false)}
+                  onConfirm={result => {
+                    setGitParentPath(result.path)
+                    setGitParentPickerOpen(false)
+                    setGitError(null)
+                  }}
+                />
+              </div>
+            ) : (
+              <>
+                <label className="mt-3 block">
+                  <span className="text-sm font-medium text-text-primary">
+                    {t('workbench.remote_project_git_url', 'Git 仓库地址')}
+                  </span>
+                  <input
+                    data-testid="remote-project-git-url-input"
+                    value={gitUrl}
+                    autoFocus
+                    disabled={gitSubmitting}
+                    onChange={event => {
+                      setGitUrl(event.target.value)
+                      setGitError(null)
+                    }}
+                    placeholder="https://github.com/owner/repository.git"
+                    className="mt-2 h-11 w-full rounded-[10px] border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60 sm:h-10"
+                  />
+                </label>
+                <div className="mt-4">
+                  <label
+                    htmlFor="remote-project-git-parent-input"
+                    className="text-sm font-medium text-text-primary"
+                  >
+                    {t('workbench.remote_project_git_parent', '目标父目录')}
+                  </label>
+                  <span className="mt-2 flex gap-2">
+                    <input
+                      id="remote-project-git-parent-input"
+                      data-testid="remote-project-git-parent-input"
+                      value={gitParentPath}
+                      disabled={gitSubmitting}
+                      onChange={event => {
+                        setGitParentPath(event.target.value)
+                        setGitError(null)
+                      }}
+                      className="h-11 min-w-0 flex-1 rounded-[10px] border border-border bg-background px-3 font-mono text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60 sm:h-10"
+                    />
+                    <button
+                      type="button"
+                      data-testid="remote-project-git-parent-browse"
+                      disabled={gitSubmitting}
+                      onClick={() => setGitParentPickerOpen(true)}
+                      className="inline-flex h-11 shrink-0 items-center gap-2 rounded-[10px] border border-border px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:opacity-50 sm:h-10"
+                    >
+                      <FolderOpen className="h-4 w-4" />
+                      {t('workbench.remote_project_git_parent_browse', '选择')}
+                    </button>
+                  </span>
+                </div>
+                {gitUrl.trim() && getGitRepositoryName(gitUrl) && gitParentPath.trim() && (
+                  <p
+                    data-testid="remote-project-git-target-preview"
+                    className="mt-2 truncate font-mono text-xs text-text-secondary"
+                  >
+                    {joinPath(gitParentPath.trim(), getGitRepositoryName(gitUrl))}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  data-testid="remote-project-git-advanced-toggle"
+                  disabled={gitSubmitting}
+                  onClick={() => setGitAdvancedOpen(value => !value)}
+                  className="mt-4 h-11 text-sm text-text-secondary hover:text-text-primary disabled:opacity-50 sm:h-8"
+                >
+                  {gitAdvancedOpen
+                    ? t('workbench.remote_project_git_advanced_hide', '收起分支设置')
+                    : t('workbench.remote_project_git_advanced_show', '指定分支')}
+                </button>
+                {gitAdvancedOpen && (
+                  <label className="mt-2 block">
+                    <span className="sr-only">
+                      {t('workbench.remote_project_git_branch', 'Git 分支')}
+                    </span>
+                    <input
+                      data-testid="remote-project-git-branch-input"
+                      value={gitBranch}
+                      disabled={gitSubmitting}
+                      onChange={event => {
+                        setGitBranch(event.target.value)
+                        setGitError(null)
+                      }}
+                      placeholder={t(
+                        'workbench.remote_project_git_branch_placeholder',
+                        '留空使用默认分支'
+                      )}
+                      className="h-11 w-full rounded-[10px] border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/20 disabled:opacity-60 sm:h-10"
+                    />
+                  </label>
+                )}
+                {gitError && (
+                  <p data-testid="remote-project-git-error" className="mt-3 text-sm text-red-500">
+                    {gitError}
+                  </p>
+                )}
+                <div className="mt-5 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    data-testid="remote-project-git-cancel"
+                    disabled={gitSubmitting}
+                    onClick={closeDialog}
+                    className="h-11 rounded-[10px] px-4 text-sm font-medium text-text-secondary hover:bg-muted disabled:opacity-50 sm:h-9"
+                  >
+                    {t('workbench.cancel', '取消')}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="remote-project-git-submit"
+                    disabled={
+                      gitSubmitting ||
+                      !gitUrl.trim() ||
+                      !gitParentPath.trim() ||
+                      !getGitRepositoryName(gitUrl)
+                    }
+                    onClick={() => void submitGitProject()}
+                    className="inline-flex h-11 items-center gap-2 rounded-[10px] bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50 sm:h-9"
+                  >
+                    {gitSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {t('workbench.remote_project_git_submit', '克隆并添加')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         ) : (
           <div className="mt-5">
+            {mode === 'remote' && remoteIntent === 'project' && (
+              <button
+                type="button"
+                data-testid="remote-project-source-back"
+                onClick={() => setRemoteProjectSource(null)}
+                className="mb-3 inline-flex h-8 items-center gap-1 text-sm text-text-secondary hover:text-text-primary"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                {t('workbench.remote_project_source_change', '更改项目来源')}
+              </button>
+            )}
             {usesRemoteFolderPicker && (
               <h3 className="mb-2 text-sm font-medium text-text-primary">
                 {t('workbench.project_directory_path', '文件夹路径')}
@@ -770,10 +1259,14 @@ export function StandaloneFolderProjectDialog({
             <DeviceFolderPicker
               key={activeDevice.device_id}
               device={activeDevice}
-              mode="select"
-              variant={usesRemoteFolderPicker ? 'remoteDark' : 'light'}
+              mode={remoteProjectSource === 'blank' ? 'create' : 'select'}
+              variant={usesRemoteFolderPicker ? 'remote' : 'default'}
               confirmLabel={
-                usesRemoteFolderPicker ? t('workbench.project_add_confirm', '添加项目') : undefined
+                usesRemoteFolderPicker
+                  ? remoteProjectSource === 'blank'
+                    ? t('workbench.remote_project_blank_submit', '创建并添加')
+                    : t('workbench.project_add_confirm', '添加项目')
+                  : undefined
               }
               onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
               onListDeviceDirectories={onListDeviceDirectories}

@@ -3,7 +3,12 @@ import { applyInstalledPluginsToMarketplaceItems } from '@/api/local/codexPlugin
 import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { marketplaceItemMarketplaceId } from './pluginDistribution'
-import { linkedCloudPluginId, localPluginId } from './installedPluginMerge'
+import {
+  hasLocalCodexMaterialization,
+  linkedCloudPluginId,
+  localMaterializedVersion,
+  localPluginId,
+} from './installedPluginMerge'
 
 export function isLocalMarketplaceItem(item: PluginMarketplaceItem): boolean {
   if (item.latestReleaseId != null) return false
@@ -27,20 +32,6 @@ export function localMarketplaceDedupeKey(item: PluginMarketplaceItem): string {
   return `${(marketplaceId || 'unknown').toLowerCase()}:${name}`
 }
 
-function withDiskInstallHints(
-  primary: PluginMarketplaceItem,
-  disk: PluginMarketplaceItem
-): PluginMarketplaceItem {
-  if (!disk.installed && !disk.installedLocally) return primary
-  return {
-    ...primary,
-    installed: true,
-    installedLocally: true,
-    installedPluginId: primary.installedPluginId || disk.installedPluginId,
-    enabled: primary.enabled || disk.enabled,
-  }
-}
-
 function preferLocalMarketplaceItem(
   current: PluginMarketplaceItem,
   candidate: PluginMarketplaceItem
@@ -48,10 +39,10 @@ function preferLocalMarketplaceItem(
   const currentIsDisk = isDiskPersonalMarketplaceItem(current)
   const candidateIsDisk = isDiskPersonalMarketplaceItem(candidate)
   if (currentIsDisk && !candidateIsDisk) {
-    return withDiskInstallHints(candidate, current)
+    return candidate
   }
   if (!currentIsDisk && candidateIsDisk) {
-    return withDiskInstallHints(current, candidate)
+    return current
   }
   if (candidate.installed && !current.installed) return candidate
   return current
@@ -95,7 +86,11 @@ export function mergeMarketplaceCatalog(
   const cloudManagedInstalls = new Map<string, InstalledPlugin>()
   for (const plugin of installedPlugins) {
     const cloudPluginId = linkedCloudPluginId(plugin)
-    if (cloudPluginId !== null && localPluginId(plugin) !== null) {
+    if (
+      cloudPluginId !== null &&
+      localPluginId(plugin) !== null &&
+      typeof plugin.spec.pluginId !== 'number'
+    ) {
       localPublishedInstalls.set(String(cloudPluginId), plugin)
     }
     // Account installs from /installed-plugins carry spec.pluginId == catalog id.
@@ -108,26 +103,48 @@ export function mergeMarketplaceCatalog(
 
   const merged = new Map<string, PluginMarketplaceItem>()
   const cloudNames = new Set<string>()
+  const cloudKeysByCatalogId = new Map<string, string>()
+  const ownedCloudKeysByName = new Map<string, string>()
   for (const item of cloudItems) {
     const localInstall = localPublishedInstalls.get(String(item.id))
     const cloudInstall = localInstall ? undefined : cloudManagedInstalls.get(String(item.id))
     const matchedInstall = localInstall ?? cloudInstall
+    const installedVersion = matchedInstall
+      ? localMaterializedVersion(matchedInstall) ||
+        (typeof matchedInstall.spec.pluginId !== 'number'
+          ? matchedInstall.spec.version?.trim() || null
+          : null)
+      : null
+    const catalogVersion = (item.version ?? '').trim()
+    const localVersionLags = Boolean(
+      installedVersion && catalogVersion && installedVersion !== catalogVersion
+    )
     // Cloud catalog ids are unique; never collapse distinct plugins by display name.
-    merged.set(`cloud:${item.id}`, {
+    const cloudKey = `cloud:${item.id}`
+    merged.set(cloudKey, {
       ...item,
       ...(matchedInstall
         ? {
             installed: true,
             installedPluginId: localPluginId(matchedInstall) ?? item.installedPluginId,
-            installedLocally: Boolean(localInstall) || Boolean(item.installedLocally),
+            installedLocally:
+              Boolean(localInstall) ||
+              Boolean(item.installedLocally) ||
+              hasLocalCodexMaterialization(matchedInstall),
+            installedVersion,
             enabled: matchedInstall.spec.enabled,
             updateAvailable:
-              item.updateAvailable || matchedInstall.spec.installState === 'update_available',
+              item.updateAvailable ||
+              matchedInstall.spec.installState === 'update_available' ||
+              localVersionLags,
             currentDeviceInstallation: localInstall ? null : item.currentDeviceInstallation,
           }
         : {}),
     })
-    cloudNames.add(item.name.toLowerCase())
+    const normalizedName = item.name.toLowerCase()
+    cloudNames.add(normalizedName)
+    cloudKeysByCatalogId.set(String(item.id), cloudKey)
+    if (item.accessRole === 'owner') ownedCloudKeysByName.set(normalizedName, cloudKey)
   }
   for (const item of localItems) {
     const marketplaceId = marketplaceItemMarketplaceId(item)
@@ -138,12 +155,46 @@ export function mergeMarketplaceCatalog(
       continue
     }
     // Built-in local mirrors of a cloud listing are already represented above.
-    if (cloudNames.has(item.name.toLowerCase())) continue
+    const normalizedName = item.name.toLowerCase()
+    if (cloudNames.has(normalizedName)) {
+      const matchingCloudKey = cloudKeysByCatalogId.get(String(item.id))
+      if (matchingCloudKey) {
+        const cloudItem = merged.get(matchingCloudKey)
+        if (cloudItem && item.installedLocally && item.installedVersion) {
+          merged.set(matchingCloudKey, {
+            ...cloudItem,
+            installedLocally: true,
+            installedVersion: item.installedVersion,
+          })
+        }
+      }
+      const ownedCloudKey = ownedCloudKeysByName.get(normalizedName)
+      const marketplacePath = item.manifest?.marketplacePath
+      if (
+        ownedCloudKey &&
+        marketplaceId &&
+        isPersonalMarketplaceId(marketplaceId) &&
+        typeof marketplacePath === 'string' &&
+        marketplacePath.trim()
+      ) {
+        const cloudItem = merged.get(ownedCloudKey)
+        if (cloudItem) {
+          merged.set(ownedCloudKey, {
+            ...cloudItem,
+            localPersonalSource: {
+              marketplacePath: marketplacePath.trim(),
+              pluginName: item.name,
+            },
+          })
+        }
+      }
+      continue
+    }
     // Personal aliases (wework-personal / personal) share one catalog slot.
     const key =
       marketplaceId && isPersonalMarketplaceId(marketplaceId)
-        ? `local-personal:${item.name.toLowerCase()}`
-        : `local-builtin:${(marketplaceId || 'unknown').toLowerCase()}:${item.name.toLowerCase()}`
+        ? `local-personal:${normalizedName}`
+        : `local-builtin:${(marketplaceId || 'unknown').toLowerCase()}:${normalizedName}`
     const existing = merged.get(key)
     merged.set(key, existing ? preferLocalMarketplaceItem(existing, item) : item)
   }

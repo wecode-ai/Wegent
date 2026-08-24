@@ -4,6 +4,14 @@
 
 use super::*;
 
+const ACTIVE_TURN_STOP_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+enum ActiveTurnStopState {
+    Missing,
+    Pending,
+    Stopped,
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn collect_links(&self, archived: bool) -> Vec<RuntimeTaskLink> {
         let started_at = Instant::now();
@@ -195,7 +203,7 @@ impl RuntimeWorkRpcHandler {
         links: Vec<RuntimeTaskLink>,
         project_index: &CodexGlobalProjectIndex,
     ) -> Vec<RuntimeTaskLink> {
-        let links = links
+        let mut links = links
             .into_iter()
             .map(|mut link| {
                 if !is_codex_runtime(&link.runtime) {
@@ -205,13 +213,6 @@ impl RuntimeWorkRpcHandler {
                 if let Some(thread_id) = link.thread_id.as_deref() {
                     link.pinned = project_index.is_pinned_thread(thread_id);
                     link.pinned_order = project_index.pinned_thread_order(thread_id);
-                    if infer_workspace_kind(&link.workspace_path) == "chat" {
-                        link.list_order = Some(project_index.thread_sort_order(
-                            "chats",
-                            thread_id,
-                            link.list_order.unwrap_or(usize::MAX / 2),
-                        ));
-                    }
                 }
                 link
             })
@@ -226,6 +227,7 @@ impl RuntimeWorkRpcHandler {
             .join("|");
 
         if !project_index.has_projects() && !project_index.has_project_state() {
+            self.apply_manual_project_thread_orders(&mut links, project_index);
             log_executor_event(
                 "runtime work project filter skipped",
                 &[
@@ -370,13 +372,6 @@ impl RuntimeWorkRpcHandler {
             let project_name = project.name.clone();
             link.group_workspace_path = Some(project_workspace_path.clone());
             link.group_project_key = Some(project_key.clone());
-            if let Some(thread_id) = link.thread_id.as_deref() {
-                link.list_order = Some(project_index.thread_sort_order(
-                    &project_key,
-                    thread_id,
-                    link.list_order.unwrap_or(usize::MAX / 2),
-                ));
-            }
             kept_project += 1;
             log_runtime_project_filter_item(
                 &link,
@@ -418,7 +413,80 @@ impl RuntimeWorkRpcHandler {
             ],
         );
 
+        self.apply_manual_project_thread_orders(&mut visible_links, project_index);
         visible_links
+    }
+
+    fn apply_manual_project_thread_orders(
+        &self,
+        links: &mut [RuntimeTaskLink],
+        project_index: &CodexGlobalProjectIndex,
+    ) {
+        struct ManualProjectTaskGroups {
+            unlisted: Vec<usize>,
+            listed: Vec<usize>,
+            unlisted_before_listed: bool,
+        }
+
+        let mut groups = HashMap::<String, ManualProjectTaskGroups>::new();
+        for (index, link) in links.iter().enumerate() {
+            if !is_codex_runtime(&link.runtime) {
+                continue;
+            }
+            let Some(thread_id) = link.thread_id.as_deref() else {
+                continue;
+            };
+            let project_key = runtime_task_sidebar_project_key(link, project_index);
+            if !project_index.has_manual_thread_order(&project_key) {
+                continue;
+            }
+
+            let group =
+                groups
+                    .entry(project_key.clone())
+                    .or_insert_with(|| ManualProjectTaskGroups {
+                        unlisted: Vec::new(),
+                        listed: Vec::new(),
+                        unlisted_before_listed: link.group_project_key.is_some(),
+                    });
+            if project_index.is_thread_in_manual_order(&project_key, thread_id) {
+                group.listed.push(index);
+            } else {
+                group.unlisted.push(index);
+            }
+        }
+
+        for (project_key, mut group) in groups {
+            group.listed.sort_by(|left, right| {
+                let left_thread = links[*left].thread_id.as_deref().unwrap_or("");
+                let right_thread = links[*right].thread_id.as_deref().unwrap_or("");
+                project_index
+                    .thread_sort_order(&project_key, left_thread, 0)
+                    .cmp(&project_index.thread_sort_order(&project_key, right_thread, 0))
+            });
+            if group.unlisted_before_listed {
+                group.unlisted.sort_by(|left, right| {
+                    compare_unlisted_manual_project_links(&links[*left], &links[*right])
+                });
+            } else {
+                group.unlisted.sort_by(|left, right| {
+                    links[*left]
+                        .list_order
+                        .unwrap_or(usize::MAX / 2)
+                        .cmp(&links[*right].list_order.unwrap_or(usize::MAX / 2))
+                });
+            }
+
+            let ordered_indices = if group.unlisted_before_listed {
+                group.unlisted.into_iter().chain(group.listed)
+            } else {
+                group.listed.into_iter().chain(group.unlisted)
+            };
+            for (next_order, index) in ordered_indices.enumerate() {
+                links[index].list_order = Some(next_order);
+                links[index].sidebar_order = Some(next_order);
+            }
+        }
     }
 
     pub(super) async fn task_link_from_payload(
@@ -552,8 +620,11 @@ impl RuntimeWorkRpcHandler {
         let queue_position = local_link
             .as_ref()
             .and_then(|link| self.queued_local_task_position(&link.local_task_id));
-        let workspace_path = string_field(thread, "cwd")
-            .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
+        let workspace_path = local_link
+            .as_ref()
+            .map(|link| link.workspace_path.clone())
+            .filter(|path| !path.trim().is_empty())
+            .or_else(|| string_field(thread, "cwd"))
             .unwrap_or_else(|| "~/.codex".to_owned());
         let mut link =
             RuntimeTaskLink::from_thread_metadata(thread, local_link, workspace_path, local_active);
@@ -648,19 +719,41 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn start_local_task_execution(
         &self,
         local_task_id: String,
+        workspace_path: Option<&str>,
         cancel: oneshot::Sender<()>,
         stopped: oneshot::Receiver<()>,
-    ) -> u64 {
+    ) -> Result<u64, AppIpcError> {
         let execution_id = self.next_execution_id.fetch_add(1, Ordering::Relaxed);
-        let control = ActiveTurnCancellation {
+        let workspace_path = self
+            .store
+            .get_task(&local_task_id)
+            .map(|task| PathBuf::from(task.workspace_path))
+            .or_else(|| workspace_path.map(PathBuf::from));
+        let managed_worktree_path =
+            workspace_path.filter(|path| self.worktrees.is_managed_path(path));
+        if let Some(workspace_path) = managed_worktree_path.as_deref() {
+            self.worktrees
+                .begin_execution(workspace_path, &local_task_id, execution_id)
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "worktree_execution_state_failed",
+                        format!("Failed to persist Worktree execution evidence: {error}"),
+                    )
+                })?;
+        }
+        let control = ActiveLocalExecution {
             execution_id,
+            stop_requested: false,
+            stop_acknowledged: false,
+            managed_worktree_path,
             cancel,
             stopped,
+            codex_turn: None,
         };
         if let Some(previous) = self
-            .active_turn_cancellations
+            .active_local_executions
             .lock()
-            .expect("active turn cancellation map lock should not be poisoned")
+            .expect("active local execution map lock should not be poisoned")
             .insert(local_task_id.clone(), control)
         {
             let _ = previous.cancel.send(());
@@ -669,7 +762,7 @@ impl RuntimeWorkRpcHandler {
             apply_local_execution_state(link, true, None);
             link.completed_at = None;
         });
-        execution_id
+        Ok(execution_id)
     }
 
     pub(super) fn finish_local_task_execution(
@@ -677,19 +770,168 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         execution_id: u64,
     ) -> bool {
-        let mut active = self
-            .active_turn_cancellations
+        {
+            let mut active = self
+                .active_local_executions
+                .lock()
+                .expect("active local execution map lock should not be poisoned");
+            let Some(control) = active.get(local_task_id) else {
+                return false;
+            };
+            if control.execution_id != execution_id {
+                return false;
+            }
+            if !self.clear_worktree_execution_lease(local_task_id, control) {
+                return false;
+            }
+            active.remove(local_task_id);
+        }
+        true
+    }
+
+    pub(super) fn is_current_local_task_execution(
+        &self,
+        local_task_id: &str,
+        execution_id: u64,
+    ) -> bool {
+        self.active_local_executions
             .lock()
-            .expect("active turn cancellation map lock should not be poisoned");
-        if active
+            .expect("active local execution map lock should not be poisoned")
             .get(local_task_id)
             .is_some_and(|control| control.execution_id == execution_id)
+    }
+
+    pub(super) fn force_settle_local_task_execution(
+        &self,
+        local_task_id: &str,
+        thread_id: Option<String>,
+        status: &str,
+        reason: &str,
+    ) -> bool {
         {
+            let mut active = self
+                .active_local_executions
+                .lock()
+                .expect("active local execution map lock should not be poisoned");
+            let Some(control) = active.get_mut(local_task_id) else {
+                return false;
+            };
+            if !control.stop_requested {
+                let (spent_cancel, spent_cancel_rx) = oneshot::channel();
+                drop(spent_cancel_rx);
+                let cancel = std::mem::replace(&mut control.cancel, spent_cancel);
+                control.stop_requested = true;
+                let _ = cancel.send(());
+            }
+            if !self.clear_worktree_execution_lease(local_task_id, control) {
+                log_executor_event(
+                    "runtime work forced settlement ignored execution lease conflict",
+                    &[
+                        ("local_task_id", local_task_id.to_owned()),
+                        ("execution_id", control.execution_id.to_string()),
+                        ("reason", reason.to_owned()),
+                    ],
+                );
+            }
             active.remove(local_task_id);
-            true
-        } else {
-            false
         }
+        self.store.update_task(local_task_id, |link| {
+            if thread_id.is_some() {
+                link.thread_id = thread_id;
+            }
+            link.updated_at = now_ms();
+            link.completed_at = Some(link.updated_at);
+            link.status = status.to_owned();
+            apply_local_execution_state(link, false, None);
+            if link.thread_id.is_some() {
+                clear_runtime_handle_messages(&mut link.runtime_handle);
+            }
+        });
+        self.schedule_worktree_prune();
+        log_executor_event(
+            "runtime work local execution force settled",
+            &[
+                ("local_task_id", local_task_id.to_owned()),
+                ("status", status.to_owned()),
+                ("reason", reason.to_owned()),
+            ],
+        );
+        true
+    }
+
+    pub(super) fn settle_cancelled_local_task_execution(
+        &self,
+        local_task_id: &str,
+        execution_id: u64,
+    ) -> bool {
+        {
+            let mut active = self
+                .active_local_executions
+                .lock()
+                .expect("active local execution map lock should not be poisoned");
+            let Some(control) = active.get_mut(local_task_id) else {
+                return false;
+            };
+            if control.execution_id != execution_id || !control.stop_requested {
+                return false;
+            }
+            control.stop_acknowledged = true;
+            if !self.clear_worktree_execution_lease(local_task_id, control) {
+                return false;
+            }
+            active.remove(local_task_id);
+        }
+        self.store.update_task(local_task_id, |link| {
+            link.updated_at = now_ms();
+            link.completed_at = Some(link.updated_at);
+            link.status = "cancelled".to_owned();
+            apply_local_execution_state(link, false, None);
+        });
+        self.schedule_worktree_prune();
+        true
+    }
+
+    fn clear_worktree_execution_lease(
+        &self,
+        local_task_id: &str,
+        control: &ActiveLocalExecution,
+    ) -> bool {
+        let Some(workspace_path) = control.managed_worktree_path.as_deref() else {
+            return true;
+        };
+        match self
+            .worktrees
+            .finish_execution(workspace_path, local_task_id, control.execution_id)
+        {
+            Ok(cleared) => cleared,
+            Err(error) => {
+                log_executor_event(
+                    "worktree execution evidence cleanup failed",
+                    &[
+                        ("local_task_id", local_task_id.to_owned()),
+                        ("error", error),
+                    ],
+                );
+                false
+            }
+        }
+    }
+
+    pub(super) fn fail_local_task_execution_start(&self, local_task_id: &str, error: &AppIpcError) {
+        self.store
+            .update_task(local_task_id, |link| apply_local_task_failure(link, error));
+        log_executor_event(
+            "runtime work turn start failed",
+            &[
+                ("local_task_id", local_task_id.to_owned()),
+                ("error", error.message.clone()),
+            ],
+        );
+        let handler = self.clone();
+        let local_task_id = local_task_id.to_owned();
+        tokio::spawn(async move {
+            handler.finish_scheduled_turn(&local_task_id).await;
+        });
     }
 
     pub(super) fn record_active_codex_turn(
@@ -699,34 +941,29 @@ impl RuntimeWorkRpcHandler {
         thread_id: String,
         turn_id: String,
     ) {
-        let current_execution_id = self
-            .active_turn_cancellations
+        let mut active = self
+            .active_local_executions
             .lock()
-            .expect("active turn cancellation map lock should not be poisoned")
-            .get(local_task_id)
-            .map(|control| control.execution_id);
-        if current_execution_id.is_some_and(|current| current != execution_id) {
+            .expect("active local execution map lock should not be poisoned");
+        let Some(execution) = active.get_mut(local_task_id) else {
+            return;
+        };
+        if execution.execution_id != execution_id {
             return;
         }
-        self.active_codex_turns
-            .lock()
-            .expect("active codex turn map lock should not be poisoned")
-            .insert(
-                local_task_id.to_owned(),
-                ActiveCodexTurn {
-                    execution_id,
-                    thread_id,
-                    turn_id,
-                },
-            );
+        execution.codex_turn = Some(ActiveCodexTurn {
+            execution_id,
+            thread_id,
+            turn_id,
+        });
     }
 
     pub(super) fn active_codex_turn(&self, local_task_id: &str) -> Option<ActiveCodexTurn> {
-        self.active_codex_turns
+        self.active_local_executions
             .lock()
-            .expect("active codex turn map lock should not be poisoned")
+            .expect("active local execution map lock should not be poisoned")
             .get(local_task_id)
-            .cloned()
+            .and_then(|execution| execution.codex_turn.clone())
     }
 
     pub(super) async fn wait_for_active_codex_turn(
@@ -749,51 +986,86 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn clear_active_codex_turn(&self, local_task_id: &str, execution_id: u64) {
         let mut active = self
-            .active_codex_turns
+            .active_local_executions
             .lock()
-            .expect("active codex turn map lock should not be poisoned");
-        if active
-            .get(local_task_id)
+            .expect("active local execution map lock should not be poisoned");
+        let Some(execution) = active.get_mut(local_task_id) else {
+            return;
+        };
+        if execution
+            .codex_turn
+            .as_ref()
             .is_some_and(|turn| turn.execution_id == execution_id)
         {
-            active.remove(local_task_id);
+            execution.codex_turn = None;
         }
     }
 
     pub(super) async fn abort_active_turn(&self, local_task_id: &str) -> bool {
-        let control = {
-            self.active_turn_cancellations
-                .lock()
-                .expect("active turn cancellation map lock should not be poisoned")
-                .remove(local_task_id)
-        };
-        if let Some(control) = control {
-            let _ = control.cancel.send(());
-            let stopped =
-                tokio::time::timeout(std::time::Duration::from_secs(10), control.stopped).await;
-            if stopped.is_err() {
+        self.abort_active_turn_with_timeout(local_task_id, Duration::from_secs(10))
+            .await
+    }
+
+    pub(super) async fn abort_active_turn_with_timeout(
+        &self,
+        local_task_id: &str,
+        stop_timeout: Duration,
+    ) -> bool {
+        let deadline = Instant::now() + stop_timeout;
+        loop {
+            match self.poll_active_turn_stop(local_task_id) {
+                ActiveTurnStopState::Missing | ActiveTurnStopState::Stopped => return true,
+                ActiveTurnStopState::Pending => {}
+            }
+            let now = Instant::now();
+            if now >= deadline {
                 return false;
             }
+            tokio::time::sleep(
+                ACTIVE_TURN_STOP_POLL_INTERVAL.min(deadline.saturating_duration_since(now)),
+            )
+            .await;
         }
-        self.active_codex_turns
+    }
+
+    fn poll_active_turn_stop(&self, local_task_id: &str) -> ActiveTurnStopState {
+        let mut active = self
+            .active_local_executions
             .lock()
-            .expect("active codex turn map lock should not be poisoned")
-            .remove(local_task_id);
-        true
+            .expect("active local execution map lock should not be poisoned");
+        let Some(control) = active.get_mut(local_task_id) else {
+            return ActiveTurnStopState::Missing;
+        };
+        if !control.stop_requested {
+            let (spent_cancel, spent_cancel_rx) = oneshot::channel();
+            drop(spent_cancel_rx);
+            let cancel = std::mem::replace(&mut control.cancel, spent_cancel);
+            control.stop_requested = true;
+            let _ = cancel.send(());
+        }
+        if !control.stop_acknowledged {
+            control.stop_acknowledged = match control.stopped.try_recv() {
+                Ok(()) => true,
+                Err(oneshot::error::TryRecvError::Closed | oneshot::error::TryRecvError::Empty) => {
+                    false
+                }
+            };
+        }
+        if control.stop_acknowledged {
+            if !self.clear_worktree_execution_lease(local_task_id, control) {
+                return ActiveTurnStopState::Pending;
+            }
+            active.remove(local_task_id);
+            ActiveTurnStopState::Stopped
+        } else {
+            ActiveTurnStopState::Pending
+        }
     }
 
     pub(super) fn is_active_local_task(&self, local_task_id: &str) -> bool {
-        let has_active_execution = self
-            .active_turn_cancellations
+        self.active_local_executions
             .lock()
-            .expect("active turn cancellation map lock should not be poisoned")
-            .contains_key(local_task_id);
-        if has_active_execution {
-            return true;
-        }
-        self.active_codex_turns
-            .lock()
-            .expect("active codex turn map lock should not be poisoned")
+            .expect("active local execution map lock should not be poisoned")
             .contains_key(local_task_id)
     }
 
@@ -816,19 +1088,20 @@ impl RuntimeWorkRpcHandler {
         execution_id: u64,
         thread_id: Option<String>,
         status: &str,
-    ) {
+    ) -> bool {
         if !self.finish_local_task_execution(local_task_id, execution_id) {
-            return;
+            return false;
         }
         self.store.update_task(local_task_id, |link| {
             if thread_id.is_some() {
                 link.thread_id = thread_id;
             }
-            apply_local_execution_state(link, false, None);
             link.updated_at = now_ms();
             if status != "running" {
                 link.completed_at = Some(link.updated_at);
+                link.status = status.to_owned();
             }
+            apply_local_execution_state(link, status == "running", None);
             if link.thread_id.is_some() {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
             }
@@ -836,6 +1109,7 @@ impl RuntimeWorkRpcHandler {
         if status != "running" {
             self.schedule_worktree_prune();
         }
+        true
     }
 
     pub(super) fn sync_runtime_task_goal_from_notification(
@@ -887,4 +1161,53 @@ impl RuntimeWorkRpcHandler {
             }
         });
     }
+}
+
+fn runtime_task_sidebar_project_key(
+    link: &RuntimeTaskLink,
+    project_index: &CodexGlobalProjectIndex,
+) -> String {
+    if let Some(project_key) = link
+        .group_project_key
+        .as_deref()
+        .filter(|project_key| !project_key.trim().is_empty())
+    {
+        return project_key.to_owned();
+    }
+    if let Some(project_key) = link
+        .thread_id
+        .as_deref()
+        .and_then(|thread_id| project_index.sidebar_project_key_for_thread(thread_id))
+    {
+        return project_key.to_owned();
+    }
+    if let Some(project_key) = link
+        .runtime_project_key
+        .as_deref()
+        .filter(|project_key| !project_key.trim().is_empty())
+    {
+        return project_key.to_owned();
+    }
+    if let Some(workspace_path) = link
+        .group_workspace_path
+        .as_deref()
+        .filter(|workspace_path| !workspace_path.trim().is_empty())
+    {
+        return format!("local:{workspace_path}");
+    }
+    if infer_workspace_kind(&link.workspace_path) == "chat" {
+        return "chats".to_owned();
+    }
+    format!("local:{}", workspace_group_path(&link.workspace_path))
+}
+
+fn compare_unlisted_manual_project_links(
+    left: &RuntimeTaskLink,
+    right: &RuntimeTaskLink,
+) -> std::cmp::Ordering {
+    right
+        .updated_at
+        .cmp(&left.updated_at)
+        .then_with(|| right.created_at.cmp(&left.created_at))
+        .then_with(|| left.local_task_id.cmp(&right.local_task_id))
 }

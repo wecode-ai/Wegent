@@ -29,6 +29,7 @@ function TabsState() {
       <div data-testid="active-tab-kind">{activeTab.kind}</div>
       <div data-testid="active-tab-title">{activeTab.title}</div>
       <div data-testid="active-tab-route">{activeTab.contentRoute}</div>
+      <div data-testid="board-tab-title">{boardTab?.title}</div>
       <button type="button" onClick={() => openTab('board')}>
         新建项目空间标签
       </button>
@@ -50,8 +51,14 @@ function TabsState() {
 
 function RoutingHarness({
   startupTabKind,
+  startupTabId,
+  fixedTabs,
+  restoreSessionTabs,
 }: {
   startupTabKind?: 'task' | 'board' | 'agent'
+  startupTabId?: string
+  fixedTabs?: Parameters<typeof WorkspaceTabsProvider>[0]['fixedTabs']
+  restoreSessionTabs?: boolean
 } = {}) {
   const [location, setLocation] = useState(() => ({
     pathname: window.location.pathname,
@@ -74,7 +81,10 @@ function RoutingHarness({
       search={location.search}
       storageScope="context-test"
       labels={labels}
+      fixedTabs={fixedTabs}
+      startupTabId={startupTabId}
       startupTabKind={startupTabKind}
+      restoreSessionTabs={restoreSessionTabs}
     >
       <TabsState />
     </WorkspaceTabsProvider>
@@ -121,7 +131,7 @@ describe('WorkspaceTabsProvider routing', () => {
 
   test('recreates the preferred startup tab when the persisted list no longer contains it', () => {
     localStorage.setItem(
-      'wework.workspaceTabs.v2:context-test',
+      'wework.workspaceTabs.v3:context-test',
       JSON.stringify({
         activeTabId: 'task-1',
         tabs: [
@@ -142,6 +152,80 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
   })
 
+  test('synchronizes a missing fixed startup tab before selecting it', () => {
+    localStorage.setItem(
+      'wework.workspaceTabs.v3:context-test',
+      JSON.stringify({
+        activeTabId: 'task-1',
+        tabs: [
+          {
+            id: 'task-1',
+            kind: 'task',
+            title: '任务',
+            contentRoute: '/',
+          },
+        ],
+      })
+    )
+
+    render(
+      <RoutingHarness
+        restoreSessionTabs
+        startupTabId="fixed-board"
+        fixedTabs={[
+          {
+            id: 'fixed-task',
+            kind: 'task',
+            title: '任务',
+            contentRoute: '/',
+            fixed: true,
+          },
+          {
+            id: 'fixed-board',
+            kind: 'board',
+            title: '项目空间',
+            contentRoute: '/todo',
+            fixed: true,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('active-tab-id')).toHaveTextContent('fixed-board')
+    expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
+    expect(window.location.pathname).toBe('/todo')
+    expect(window.location.search).toContain('workspaceTab=fixed-board')
+  })
+
+  test('renames the persisted default board tab without changing named project tabs', () => {
+    localStorage.setItem(
+      'wework.workspaceTabs.v3:context-test',
+      JSON.stringify({
+        activeTabId: 'board-default',
+        tabs: [
+          {
+            id: 'board-default',
+            kind: 'board',
+            title: '工作项',
+            contentRoute: '/todo',
+          },
+          {
+            id: 'board-project',
+            kind: 'board',
+            title: '产品规划',
+            contentRoute: '/todo?projectId=project-1',
+          },
+        ],
+      })
+    )
+    window.history.replaceState({}, '', '/todo?workspaceTab=board-default')
+
+    render(<RoutingHarness />)
+
+    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('项目空间')
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
+  })
+
   test('the explicit new-tab action still opens a separate tab', () => {
     render(<RoutingHarness />)
 
@@ -150,6 +234,30 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('tab-count')).toHaveTextContent('4')
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
     expect(window.location.search).toContain('workspaceTab=board-')
+  })
+
+  test('does not restore or persist regular tabs when session restoration is disabled', () => {
+    localStorage.setItem(
+      'wework.workspaceTabs.v3:context-test',
+      JSON.stringify({
+        activeTabId: 'old-tab',
+        tabs: [
+          {
+            id: 'old-tab',
+            kind: 'auxiliary',
+            title: '旧标签',
+            contentRoute: '/plugins',
+            fixed: false,
+          },
+        ],
+      })
+    )
+
+    render(<RoutingHarness restoreSessionTabs={false} />)
+    act(() => screen.getByRole('button', { name: '新建项目空间标签' }).click())
+
+    expect(screen.getByTestId('active-tab-title')).not.toHaveTextContent('旧标签')
+    expect(localStorage.getItem('wework.workspaceTabs.v3:context-test')).toContain('old-tab')
   })
 
   test('selects and updates an existing board tab for a concrete project task', () => {

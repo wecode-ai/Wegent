@@ -30,8 +30,14 @@ export function AssignmentChainPopover({
       {entries.map((entry, index) => {
         const byName = memberNameById(projectMembers, entry.by_user_id)
         const toName =
-          entry.to_type === 'agent'
-            ? (entry.to_name ?? t('todo.assignment_chain_agent', '机器人'))
+          entry.to_type === 'agent' || entry.to_type === 'team'
+            ? (entry.to_name ??
+              t(
+                entry.to_type === 'team'
+                  ? 'todo.assignment_chain_team'
+                  : 'todo.assignment_chain_agent',
+                entry.to_type === 'team' ? 'Wegent 智能体' : '机器人'
+              ))
             : (entry.to_name ?? memberNameById(projectMembers, Number(entry.to_id)))
         const actionLabel = {
           assign: t('todo.assignment_action_assign', '指派'),

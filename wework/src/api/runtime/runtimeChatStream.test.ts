@@ -44,6 +44,56 @@ describe('createRuntimeChatStream', () => {
     })
   })
 
+  test('delivers project task assignment notifications', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const onProjectTaskAssigned = vi.fn()
+    const stream = createRuntimeChatStream({ subscribe, request })
+
+    stream.subscribe({ onProjectTaskAssigned })
+    await Promise.resolve()
+    listener({
+      event: 'project.task.assigned',
+      payload: {
+        projectId: '91',
+        projectName: '运营项目',
+        itemId: 'WEG-12',
+        itemTitle: '准备周报',
+        assignerName: 'Alice',
+      },
+    })
+
+    expect(onProjectTaskAssigned).toHaveBeenCalledWith({
+      projectId: '91',
+      projectName: '运营项目',
+      itemId: 'WEG-12',
+      itemTitle: '准备周报',
+      assignerName: 'Alice',
+    })
+  })
+
+  test('delivers executor lag notifications for lifecycle reconciliation', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const onRuntimeEventLagged = vi.fn()
+    const stream = createRuntimeChatStream({ subscribe, request })
+
+    stream.subscribe({ onRuntimeEventLagged })
+    await Promise.resolve()
+    listener({
+      event: 'executor.event_lagged',
+      payload: { skipped: 7 },
+    })
+
+    expect(onRuntimeEventLagged).toHaveBeenCalledWith({ skipped: 7 })
+  })
+
   test('delivers task-plan events to the global subscription only', async () => {
     let listener!: (event: LocalExecutorEvent) => void
     subscribe.mockImplementation(async handler => {

@@ -12,23 +12,25 @@ device through the same runtime RPC channel the App uses.
 """
 
 import asyncio
+import json
 import logging
 import os
 from typing import Optional
 
 import celery.signals
 from prometheus_client import Counter, Gauge
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.core.distributed_lock import distributed_lock
-from app.models.delivery import ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
+from app.services.device.capacity import get_runtime_capacity
 from app.services.device_service import device_service
 from app.services.loop_item_executions.service import (
+    WeworkRuntimeConfigurationError,
     loop_item_execution_service,
 )
 
@@ -113,6 +115,22 @@ def _fail_dispatch(
     semantics.
     """
 
+    if isinstance(exc, ExecutorSessionStartError):
+        reason = _infra_reason(exc)
+        logger.error(
+            "[RobotQueue] Runtime start outcome is unknown execution=%s "
+            "device=%s error=%s",
+            execution.id,
+            execution.execution_device_id,
+            str(exc)[:300],
+        )
+        loop_item_execution_service.mark_dispatch_unknown(
+            db,
+            execution_id=execution.id,
+            error=str(exc),
+        )
+        ROBOT_QUEUE_INFRA_FAILED_TOTAL.labels(reason=reason).inc()
+        return
     if isinstance(exc, RobotQueueInfraError):
         reason = _infra_reason(exc)
         logger.warning(
@@ -131,6 +149,23 @@ def _fail_dispatch(
             requeue_infra=True,
         )
         ROBOT_QUEUE_INFRA_FAILED_TOTAL.labels(reason=reason).inc()
+        return
+    if isinstance(exc, WeworkRuntimeConfigurationError):
+        logger.error(
+            "[RobotQueue] Runtime configuration unavailable execution=%s "
+            "device=%s error=%s",
+            execution.id,
+            execution.execution_device_id,
+            str(exc)[:300],
+        )
+        loop_item_execution_service.fail(
+            db,
+            execution_id=execution.id,
+            error=str(exc)[:2000],
+            note="runtime_configuration_unavailable",
+            requeue=False,
+        )
+        ROBOT_QUEUE_FAILED_TOTAL.inc()
         return
     logger.exception(
         "[RobotQueue] Dispatch failed execution=%s device=%s",
@@ -170,7 +205,12 @@ def _robot_queue_loop() -> asyncio.AbstractEventLoop:
 
 @celery_app.task(bind=True, name="app.tasks.robot_queue_tasks.scan_robot_queue")
 def scan_robot_queue(self) -> dict:
-    """Periodically drain robot queues (local and cloud) with capacity gating."""
+    """Recover stale queue state and publish queue metrics.
+
+    Cloud dispatch has exactly one state machine: the owner-scoped consumer
+    claims rows and hands them to ``execute_robot_task``. The periodic scan
+    must never independently claim or dispatch the same rows.
+    """
 
     if not settings.ROBOT_QUEUE_SCHEDULER_ENABLED:
         return {"status": "skipped", "reason": "scheduler_disabled"}
@@ -183,9 +223,12 @@ def scan_robot_queue(self) -> dict:
             return {"status": "skipped", "reason": "lock_held_by_another_instance"}
         with get_db_session() as db:
             try:
-                requeued, failed = loop_item_execution_service.recovery_scan(db)
+                requeued, unknown = loop_item_execution_service.recovery_scan(db)
                 ROBOT_QUEUE_RECOVERED_TOTAL.labels(action="requeued").inc(requeued)
-                ROBOT_QUEUE_RECOVERED_TOTAL.labels(action="failed").inc(failed)
+                ROBOT_QUEUE_RECOVERED_TOTAL.labels(action="unknown").inc(unknown)
+                reconciled = _robot_queue_loop().run_until_complete(
+                    _reconcile_stale_executions(db)
+                )
                 stalled = loop_item_execution_service.stall_scan(db)
                 if stalled:
                     logger.warning(
@@ -197,9 +240,6 @@ def scan_robot_queue(self) -> dict:
                         ],
                     )
                     emit_runtime_cancels(stalled)
-                dispatched = _robot_queue_loop().run_until_complete(
-                    _dispatch_queued_executions(db)
-                )
                 from sqlalchemy import func, select
 
                 ROBOT_QUEUE_DEPTH.set(
@@ -220,9 +260,10 @@ def scan_robot_queue(self) -> dict:
                 )
                 return {
                     "status": "ok",
-                    "dispatched": dispatched,
                     "requeued": requeued,
-                    "failed": failed,
+                    "unknown": unknown,
+                    "reconciled": reconciled,
+                    "stalled": len(stalled),
                 }
             except Exception:
                 logger.exception("[RobotQueue] scan_robot_queue failed")
@@ -235,12 +276,11 @@ def scan_robot_queue(self) -> dict:
     max_retries=0,
 )
 def execute_robot_task(self, execution_id: int) -> dict:
-    """Run one claimed cloud/local execution on its bound device.
+    """Run one claimed cloud execution on its bound device.
 
     The consumer loop only claims (queued -> claimed) and hands the work here;
-    this subtask advances claimed -> running, performs the runtime RPC and
-    writes back. A run that was reclaimed by the lease watchdog in between is
-    skipped instead of double-executed.
+    this subtask records that Start may be delivered, performs the Runtime RPC,
+    and waits for a Runtime event to prove the process actually started.
     """
 
     from app.db.session import get_db_session
@@ -249,19 +289,18 @@ def execute_robot_task(self, execution_id: int) -> dict:
         execution = db.get(LoopItemExecution, execution_id)
         if execution is None:
             return {"status": "missing", "execution_id": execution_id}
-        advanced = loop_item_execution_service.mark_running(
-            db, execution_ids=[execution_id]
-        )
-        if advanced != 1:
+        if execution.execution_environment != "cloud":
+            return {
+                "status": "skipped",
+                "reason": "local executions are claimed by the Wework App",
+                "execution_id": execution_id,
+            }
+        if execution.status != "claimed":
             return {
                 "status": "skipped",
                 "reason": "execution is no longer claimed",
                 "execution_id": execution_id,
             }
-        # mark_running updates the row out-of-band; refresh so heartbeat and
-        # dispatch observe the running state instead of the stale claim.
-        db.expire_all()
-        execution = db.get(LoopItemExecution, execution_id)
         try:
             _robot_queue_loop().run_until_complete(_dispatch_execution(db, execution))
             ROBOT_QUEUE_DISPATCHED_TOTAL.inc()
@@ -269,308 +308,82 @@ def execute_robot_task(self, execution_id: int) -> dict:
         except Exception as exc:
             _fail_dispatch(db, execution, exc)
             if isinstance(exc, RobotQueueInfraError):
+                current = db.get(LoopItemExecution, execution_id)
                 return {
-                    "status": "requeued",
+                    "status": (
+                        "unknown"
+                        if current is not None and current.sync_state == "stale"
+                        else "requeued"
+                    ),
                     "reason": _infra_reason(exc),
                     "execution_id": execution_id,
                 }
             return {"status": "failed", "execution_id": execution_id}
 
 
-def _queued_devices(db: Session) -> list[tuple[str, str]]:
-    """Distinct bound devices with queued/claimed runs, both environments."""
+def _queued_devices(db: Session) -> list[tuple[int, str, str]]:
+    """Distinct owner-scoped cloud devices with queued/claimed runs."""
 
     from sqlalchemy import select
 
     rows = db.execute(
         select(
+            LoopItemExecution.executor_owner_user_id,
             LoopItemExecution.execution_device_id,
             LoopItemExecution.execution_environment,
         )
         .where(
             LoopItemExecution.status.in_(["queued", "claimed"]),
+            LoopItemExecution.execution_environment == "cloud",
             LoopItemExecution.execution_device_id.is_not(None),
             LoopItemExecution.execution_device_id != "",
         )
         .distinct()
     ).all()
-    return [(str(row[0]), str(row[1])) for row in rows if row[0]]
+    return [
+        (int(row[0]), str(row[1]), str(row[2])) for row in rows if row[0] and row[1]
+    ]
 
 
-def _device_owner_user_id(
-    db: Session,
-    device_id: str,
-    preferred_user_id: Optional[int] = None,
-    fallback_to_any: bool = True,
-) -> Optional[int]:
-    """Resolve the user who owns a device.
-
-    The executor's device socket registers under the user who owns the device
-    (its online key is ``device:online:{owner}:{device_id}``), which may
-    differ from the robot creator in mixed dev environments. When a preferred
-    user is given (the robot creator), their own Device row wins so robots
-    bound to a same-named device such as "local-device" stay on the creator's
-    device instead of an arbitrary shared owner.
-    """
+def _owner_has_device(db: Session, owner_user_id: int, device_id: str) -> bool:
+    """Return whether the exact owner has an active device with this id."""
 
     from app.models.kind import Kind
 
-    query = db.query(Kind).filter(
-        Kind.kind == "Device",
-        Kind.name == device_id,
-        Kind.is_active == True,
-    )
-    if preferred_user_id is not None:
-        row = query.filter(Kind.user_id == preferred_user_id).first()
-        if row and row.user_id:
-            return row.user_id
-        if not fallback_to_any:
-            return None
-    row = query.first()
-    return row.user_id if row and row.user_id else None
-
-
-def _resolve_routing_user_ids(
-    db: Session,
-    device_id: str,
-    creator_id: Optional[int],
-    environment: str,
-) -> list[int]:
-    """Candidate routing users for one bound device, best owner first.
-
-    Local/app robots must run on the creator's own device: a generic device id
-    such as "local-device" can be registered by many users in shared
-    environments, so the creator-scoped Device row is resolved first and no
-    stranger's same-named device is ever used. Cloud devices have unique ids,
-    so their recorded owner is preferred and the creator remains a fallback.
-    """
-
-    candidates: list[int] = []
-    if environment == "cloud":
-        owner = _device_owner_user_id(db, device_id)
-        if owner:
-            candidates.append(owner)
-        if creator_id and creator_id not in candidates:
-            candidates.append(creator_id)
-        return candidates
-    if creator_id:
-        creator_owner = _device_owner_user_id(
-            db,
-            device_id,
-            preferred_user_id=creator_id,
-            fallback_to_any=False,
+    return (
+        db.query(Kind.id)
+        .filter(
+            Kind.kind == "Device",
+            Kind.namespace == "default",
+            Kind.name == device_id,
+            Kind.user_id == owner_user_id,
+            Kind.is_active == True,
         )
-        if creator_owner:
-            candidates.append(creator_owner)
-        if creator_id not in candidates:
-            candidates.append(creator_id)
-    return candidates
+        .first()
+        is not None
+    )
 
 
 async def _routing_user_for_device(
-    db: Session, device_id: str, environment: str
+    db: Session, owner_user_id: int, device_id: str, environment: str
 ) -> Optional[int]:
-    """Return an online user that can route RPCs to this device."""
+    """Return the exact online owner for one cloud queue identity."""
 
-    sample = (
-        db.query(LoopItemExecution)
-        .filter(
-            LoopItemExecution.execution_device_id == device_id,
-            LoopItemExecution.status.in_(["queued", "claimed"]),
-        )
-        .first()
-    )
-    if sample is None:
+    if environment != "cloud" or not _owner_has_device(db, owner_user_id, device_id):
         return None
-    sample_agent = db.get(ProjectChatAgent, sample.agent_id)
-    sample_creator = (
-        db.get(User, sample_agent.created_by_user_id)
-        if sample_agent and sample_agent.created_by_user_id
-        else None
-    )
-    candidate_users = _resolve_routing_user_ids(
-        db,
-        device_id,
-        sample_creator.id if sample_creator else None,
-        environment,
-    )
-    for candidate in candidate_users:
-        if await _device_online(candidate, device_id):
-            return candidate
-    return None
+    return owner_user_id if await _device_online(owner_user_id, device_id) else None
 
 
-async def _dispatch_queued_executions(db: Session) -> int:
-    """Dispatch queued robot runs to their bound devices.
-
-    Local and cloud devices are the same kind of executor, so every run is
-    claimed by the backend and pushed over the device WebSocket with the same
-    `runtime.tasks.create` RPC the App uses to submit codex tasks. The payload
-    carries the complete model configuration (same as an App send), so devices
-    do not need an App to start a run. Offline devices stay queued and are
-    retried on the next scan.
-    """
-
-    dispatched = 0
-    for device_id, environment in _queued_devices(db):
-        with distributed_lock.acquire_context(
-            f"robot_exec:{device_id}",
-            expire_seconds=ROBOT_DEVICE_LOCK_TIMEOUT,
-        ) as device_acquired:
-            if not device_acquired:
-                logger.info(
-                    "[RobotQueue] Queued run not dispatched: device lock busy "
-                    "device=%s environment=%s",
-                    device_id,
-                    environment,
-                )
-                continue
-            sample = (
-                db.query(LoopItemExecution)
-                .filter(
-                    LoopItemExecution.execution_device_id == device_id,
-                    LoopItemExecution.execution_environment == environment,
-                    LoopItemExecution.status == "queued",
-                )
-                .first()
-            )
-            if sample is None:
-                continue
-            sample_agent = db.get(ProjectChatAgent, sample.agent_id)
-            sample_creator = (
-                db.get(User, sample_agent.created_by_user_id)
-                if sample_agent and sample_agent.created_by_user_id
-                else None
-            )
-            candidate_users = _resolve_routing_user_ids(
-                db,
-                device_id,
-                sample_creator.id if sample_creator else None,
-                environment,
-            )
-            routing_user_id = None
-            for candidate in candidate_users:
-                if await _device_online(candidate, device_id):
-                    routing_user_id = candidate
-                    break
-            if routing_user_id is None:
-                # Leave runs queued; no identity with this device is online.
-                logger.info(
-                    "[RobotQueue] Queued run not dispatched: no online device owner "
-                    "for device=%s environment=%s sample_execution=%s",
-                    device_id,
-                    environment,
-                    sample.id,
-                )
-                continue
-            logger.info(
-                "[RobotQueue] Dispatch route resolved device=%s environment=%s "
-                "routing_user=%s sample_execution=%s",
-                device_id,
-                environment,
-                routing_user_id,
-                sample.id,
-            )
-            capacity = (
-                settings.ROBOT_CLOUD_DEVICE_SLOTS
-                if environment == "cloud"
-                else settings.ROBOT_LOCAL_DEVICE_SLOTS
-            )
-            while True:
-                execution = loop_item_execution_service.claim_next_for_device(
-                    db,
-                    execution_device_id=device_id,
-                    environment=environment,
-                    device_capacity=capacity,
-                )
-                if execution is None:
-                    occupied = (
-                        db.query(func.count(LoopItemExecution.id))
-                        .filter(
-                            LoopItemExecution.execution_device_id == device_id,
-                            LoopItemExecution.execution_environment == environment,
-                            LoopItemExecution.status.in_(["claimed", "running"]),
-                        )
-                        .scalar()
-                        or 0
-                    )
-                    logger.info(
-                        "[RobotQueue] Queued run not dispatched: device slot busy "
-                        "device=%s environment=%s occupied=%s capacity=%s",
-                        device_id,
-                        environment,
-                        occupied,
-                        capacity,
-                    )
-                    break
-                try:
-                    await _dispatch_execution(
-                        db, execution, routing_user_id=routing_user_id
-                    )
-                    dispatched += 1
-                    ROBOT_QUEUE_DISPATCHED_TOTAL.inc()
-                except Exception as exc:
-                    _fail_dispatch(db, execution, exc)
-
-    # Robots created before device binding have no bound device; they run on
-    # any online local device of the creator.
-    unbound = (
-        db.query(LoopItemExecution)
-        .join(ProjectChatAgent, ProjectChatAgent.id == LoopItemExecution.agent_id)
-        .filter(
-            LoopItemExecution.execution_environment == "local",
-            LoopItemExecution.status == "queued",
-            or_(
-                LoopItemExecution.execution_device_id.is_(None),
-                LoopItemExecution.execution_device_id == "",
-            ),
-            ProjectChatAgent.status == "active",
-        )
-        .order_by(
-            LoopItemExecution.priority_weight.desc(),
-            LoopItemExecution.queued_at.asc(),
-            LoopItemExecution.id.asc(),
-        )
-        .limit(10)
-        .all()
-    )
-    for execution in unbound:
-        agent = db.get(ProjectChatAgent, execution.agent_id)
-        if agent is None or not agent.created_by_user_id:
-            continue
-        device_id = await _online_local_device(db, agent.created_by_user_id)
-        if not device_id:
-            continue
-        claimed = loop_item_execution_service.claim_next_unbound_local(
-            db,
-            creator_user_id=agent.created_by_user_id,
-            execution_device_id=device_id,
-        )
-        if claimed is None:
-            continue
-        try:
-            await _dispatch_execution(db, claimed)
-            dispatched += 1
-            ROBOT_QUEUE_DISPATCHED_TOTAL.inc()
-        except Exception as exc:
-            _fail_dispatch(db, claimed, exc)
-    return dispatched
-
-
-async def dispatch_queues_background() -> None:
-    """Trigger queue dispatch from the request path (dev-friendly).
-
-    Production keeps the Celery scan as the retry/fallback; this entry point
-    makes assign/approve push immediately without requiring a Celery worker.
-    """
+async def consume_queues_background() -> None:
+    """Wake the canonical cloud consumer from a request path."""
 
     from app.db.session import get_db_session
 
     try:
         with get_db_session() as db:
-            await _dispatch_queued_executions(db)
+            await _consumer_pass(db)
     except Exception:
-        logger.exception("[RobotQueue] Background queue dispatch failed")
+        logger.exception("[RobotQueue] Background queue consume failed")
 
 
 def _robot_queue_internal_url() -> str:
@@ -590,67 +403,65 @@ def _robot_queue_internal_url() -> str:
     return f"{base}/api"
 
 
-def emit_runtime_cancels(executions: list) -> None:
-    """Best-effort tell devices to stop runs the backend just cancelled.
-
-    Reassign/unassign and explicit cancel only mark the DB row cancelled;
-    without this RPC the executor keeps running the old task (zombie run) and
-    occupies the device slot. Fire-and-forget through the same internal emit
-    endpoint the queue dispatcher uses, so it works from both request and
-    worker contexts.
-    """
+def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
+    """Stop Runtime tasks and commit cancellation only after its ACK."""
 
     import httpx
 
-    from app.db.session import get_db_session
-
     backend_url = _robot_queue_internal_url()
-    with get_db_session() as db:
-        for execution in executions:
-            runtime_task_id = getattr(execution, "runtime_task_id", "") or ""
-            runtime_device_id = getattr(execution, "runtime_device_id", "") or ""
-            if not runtime_task_id or not runtime_device_id:
-                continue
-            creator_id = None
-            agent_id = getattr(execution, "agent_id", None)
-            if agent_id:
-                agent = db.get(ProjectChatAgent, agent_id)
-                creator_id = agent.created_by_user_id if agent else None
-            user_id = _device_owner_user_id(
-                db, runtime_device_id, preferred_user_id=creator_id
-            )
-            if user_id is None:
-                # Cloud devices owned by another account still route by owner.
-                user_id = _device_owner_user_id(db, runtime_device_id)
-            if user_id is None:
-                continue
-            try:
-                with httpx.Client(
-                    base_url=backend_url, timeout=5, trust_env=False
-                ) as client:
-                    response = client.post(
-                        "/internal/robot-queue/emit-runtime-rpc",
-                        json={
-                            "user_id": user_id,
-                            "device_id": runtime_device_id,
-                            "method": "runtime.tasks.cancel",
-                            "payload": {
-                                "taskId": runtime_task_id,
-                                "deviceId": runtime_device_id,
-                            },
+    confirmed_execution_ids: set[int] = set()
+    for execution in executions:
+        runtime_task_id = execution.runtime_task_id or ""
+        runtime_device_id = execution.runtime_device_id or ""
+        owner_user_id = execution.executor_owner_user_id
+        if not runtime_task_id or not runtime_device_id or not owner_user_id:
+            continue
+        try:
+            with httpx.Client(
+                base_url=backend_url, timeout=5, trust_env=False
+            ) as client:
+                response = client.post(
+                    "/internal/robot-queue/emit-runtime-rpc",
+                    headers={
+                        "Authorization": f"Bearer {settings.INTERNAL_SERVICE_TOKEN}"
+                    },
+                    json={
+                        "user_id": owner_user_id,
+                        "device_id": runtime_device_id,
+                        "method": "runtime.tasks.cancel",
+                        "payload": {
+                            "taskId": runtime_task_id,
+                            "deviceId": runtime_device_id,
                         },
-                    )
-                    if response.status_code != 200:
-                        logger.warning(
-                            "[RobotQueue] Runtime cancel emit failed status=%s execution=%s",
-                            response.status_code,
-                            getattr(execution, "id", None),
-                        )
-            except Exception:
-                logger.exception(
-                    "[RobotQueue] Runtime cancel emit failed execution=%s",
-                    getattr(execution, "id", None),
+                        "wait_ack": True,
+                        "ack_timeout_seconds": 15,
+                    },
                 )
+                result = response.json() if response.status_code == 200 else {}
+                if response.status_code != 200 or not result.get("accepted"):
+                    logger.warning(
+                        "[RobotQueue] Runtime cancel was not confirmed status=%s "
+                        "execution=%s result=%s",
+                        response.status_code,
+                        execution.id,
+                        str(result)[:500],
+                    )
+                    continue
+            from app.db.session import get_db_session
+
+            with get_db_session() as db:
+                loop_item_execution_service.confirm_runtime_cancelled(
+                    db,
+                    execution_id=execution.id,
+                    note="Runtime confirmed cancellation",
+                )
+            confirmed_execution_ids.add(execution.id)
+        except Exception:
+            logger.exception(
+                "[RobotQueue] Runtime cancel emit failed execution=%s",
+                execution.id,
+            )
+    return confirmed_execution_ids
 
 
 def publish_run_event(device_id: str, runtime_task_id: str, event_name: str) -> None:
@@ -693,6 +504,161 @@ def publish_run_event(device_id: str, runtime_task_id: str, event_name: str) -> 
             runtime_task_id,
             event_name,
         )
+
+
+async def _reconcile_stale_executions(db: Session) -> int:
+    """Query Runtime for stale attempts without guessing from lease expiry."""
+
+    executions = loop_item_execution_service.stale_for_reconciliation(db)
+    execution_refs = [
+        (
+            execution.id,
+            execution.executor_owner_user_id,
+            execution.runtime_device_id,
+            execution.runtime_task_id,
+        )
+        for execution in executions
+    ]
+    db.rollback()
+    reconciled = 0
+    for (
+        execution_id,
+        owner_user_id,
+        runtime_device_id,
+        runtime_task_id,
+    ) in execution_refs:
+        result = await _emit_runtime_rpc(
+            user_id=owner_user_id,
+            device_id=runtime_device_id,
+            method="runtime.tasks.list",
+            payload={},
+            wait_ack=True,
+        )
+        response = result.get("response")
+        if not result.get("accepted") or not isinstance(response, dict):
+            continue
+        task_snapshot: Optional[dict] = None
+        for workspace in response.get("workspaces", []):
+            if not isinstance(workspace, dict):
+                continue
+            for task in workspace.get("tasks", []):
+                if (
+                    isinstance(task, dict)
+                    and str(task.get("taskId") or task.get("task_id") or "")
+                    == runtime_task_id
+                ):
+                    task_snapshot = task
+                    break
+            if task_snapshot is not None:
+                break
+        if task_snapshot is None:
+            loop_item_execution_service.reconcile_runtime_snapshot(
+                db,
+                execution_id=execution_id,
+                runtime_status="missing",
+                running=False,
+            )
+            reconciled += 1
+            continue
+        loop_item_execution_service.reconcile_runtime_snapshot(
+            db,
+            execution_id=execution_id,
+            runtime_status=str(task_snapshot.get("status") or ""),
+            running=bool(task_snapshot.get("running")),
+            turn_status=str(
+                task_snapshot.get("turnStatus")
+                or task_snapshot.get("turn_status")
+                or ""
+            ),
+        )
+        reconciled += 1
+    return reconciled
+
+
+async def reconcile_device_executions(*, user_id: int, device_id: str) -> int:
+    """Reconcile active runs after a device reconnects.
+
+    The database session is released before the Runtime RPC so reconnect
+    recovery never holds a SQL transaction across network I/O.
+    """
+
+    from app.db.session import get_db_session
+
+    with get_db_session() as db:
+        executions = loop_item_execution_service.active_for_device_reconciliation(
+            db,
+            owner_user_id=user_id,
+            runtime_device_id=device_id,
+        )
+        execution_refs = [
+            (execution.id, execution.runtime_task_id) for execution in executions
+        ]
+    if not execution_refs:
+        return 0
+
+    result = await _emit_runtime_rpc(
+        user_id=user_id,
+        device_id=device_id,
+        method="runtime.tasks.list",
+        payload={},
+        wait_ack=True,
+    )
+    response = result.get("response")
+    if not result.get("accepted") or not isinstance(response, dict):
+        logger.warning(
+            "[RobotQueue] Device reconnect reconciliation unavailable "
+            "user=%s device=%s executions=%s",
+            user_id,
+            device_id,
+            [execution_id for execution_id, _ in execution_refs],
+        )
+        return 0
+
+    snapshots: dict[str, dict] = {}
+    for workspace in response.get("workspaces", []):
+        if not isinstance(workspace, dict):
+            continue
+        for task in workspace.get("tasks", []):
+            if not isinstance(task, dict):
+                continue
+            runtime_task_id = str(task.get("taskId") or task.get("task_id") or "")
+            if runtime_task_id:
+                snapshots[runtime_task_id] = task
+
+    reconciled = 0
+    with get_db_session() as db:
+        for execution_id, runtime_task_id in execution_refs:
+            execution = db.get(LoopItemExecution, execution_id)
+            if (
+                execution is None
+                or execution.executor_owner_user_id != user_id
+                or execution.runtime_device_id != device_id
+                or execution.runtime_task_id != runtime_task_id
+            ):
+                continue
+            snapshot = snapshots.get(runtime_task_id)
+            loop_item_execution_service.reconcile_runtime_snapshot(
+                db,
+                execution_id=execution_id,
+                runtime_status=(
+                    str(snapshot.get("status") or "") if snapshot else "missing"
+                ),
+                running=bool(snapshot.get("running")) if snapshot else False,
+                turn_status=(
+                    str(snapshot.get("turnStatus") or snapshot.get("turn_status") or "")
+                    if snapshot
+                    else None
+                ),
+            )
+            reconciled += 1
+    logger.info(
+        "[RobotQueue] Reconciled active executions after device reconnect "
+        "user=%s device=%s count=%s",
+        user_id,
+        device_id,
+        reconciled,
+    )
+    return reconciled
 
 
 def wait_for_run_event(
@@ -746,39 +712,45 @@ async def _consumer_pass(db: Session) -> int:
     multiple consumers scale without a global scan lock."""
 
     handled = 0
-    for device_id, environment in _queued_devices(db):
-        if environment == "local" and device_id == "local-device":
-            logger.debug(
-                "[RobotQueue] Background consumer left local compatibility "
-                "device for App claim device=%s",
-                device_id,
-            )
-            continue
+    for owner_user_id, device_id, environment in _queued_devices(db):
         with distributed_lock.acquire_context(
-            f"robot_exec:{device_id}",
+            f"robot_exec_owner:{owner_user_id}",
             expire_seconds=ROBOT_DEVICE_LOCK_TIMEOUT,
-        ) as acquired:
-            if not acquired:
+        ) as owner_acquired:
+            if not owner_acquired:
                 continue
-            routing_user_id = await _routing_user_for_device(db, device_id, environment)
-            if routing_user_id is None:
-                # Device offline or no identity online; leave runs queued.
-                continue
-            capacity = (
-                settings.ROBOT_CLOUD_DEVICE_SLOTS
-                if environment == "cloud"
-                else settings.ROBOT_LOCAL_DEVICE_SLOTS
-            )
-            executions = loop_item_execution_service.claim_batch_for_device(
+            capacity = await get_runtime_capacity(
                 db,
-                execution_device_id=device_id,
-                environment=environment,
-                device_capacity=capacity,
-                batch_size=ROBOT_CONSUMER_BATCH_SIZE,
+                owner_user_id=owner_user_id,
+                device_id=device_id,
             )
-            for execution in executions:
-                execute_robot_task.apply_async(args=[execution.id])
-            handled += len(executions)
+            if capacity is None:
+                continue
+            with distributed_lock.acquire_context(
+                f"robot_exec:{owner_user_id}:runtime:{capacity.runtime_instance_id}",
+                expire_seconds=ROBOT_DEVICE_LOCK_TIMEOUT,
+            ) as device_acquired:
+                if not device_acquired:
+                    continue
+                routing_user_id = await _routing_user_for_device(
+                    db, owner_user_id, device_id, environment
+                )
+                if routing_user_id is None:
+                    continue
+                executions = loop_item_execution_service.claim_batch_for_device(
+                    db,
+                    execution_device_id=device_id,
+                    environment=environment,
+                    runtime_instance_id=capacity.runtime_instance_id,
+                    device_capacity=capacity.limit,
+                    runtime_active=capacity.active,
+                    runtime_active_task_ids=capacity.active_task_ids,
+                    batch_size=ROBOT_CONSUMER_BATCH_SIZE,
+                    owner_user_id=owner_user_id,
+                )
+                for execution in executions:
+                    execute_robot_task.apply_async(args=[execution.id])
+                handled += len(executions)
     return handled
 
 
@@ -830,38 +802,6 @@ def _start_robot_consumer(**kwargs: object) -> None:
     logger.info("[RobotQueue] Consumer thread started")
 
 
-async def _online_local_device(db: Session, user_id: int) -> Optional[str]:
-    """Resolve an online local/app device for the creator."""
-
-    from app.models.kind import Kind
-    from app.schemas.device import DeviceType
-    from app.services.device_service import device_service
-
-    rows = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Device",
-            Kind.user_id == user_id,
-            Kind.namespace == "default",
-            Kind.is_active == True,
-        )
-        .all()
-    )
-    for row in rows:
-        spec = (row.json or {}).get("spec", {})
-        if spec.get("deviceType") not in {
-            DeviceType.LOCAL.value,
-            DeviceType.APP.value,
-        }:
-            continue
-        try:
-            if await device_service.get_device_online_info(user_id, row.name):
-                return row.name
-        except Exception:
-            continue
-    return None
-
-
 async def _dispatch_execution(
     db: Session,
     execution: LoopItemExecution,
@@ -870,35 +810,34 @@ async def _dispatch_execution(
 ) -> None:
     """Start one claimed run on its bound device via the App's codex channel.
 
-    `runtime.tasks.create` is the same RPC the App uses to submit codex tasks,
-    so local and cloud devices are handled uniformly. The executor runs the
-    task and its runtime events update the execution record.
+    The backend dispatches only cloud rows. Local rows are claimed and started
+    by the Wework App, with both paths resolving current configuration only
+    when the execution starts.
     """
 
-    agent = db.get(ProjectChatAgent, execution.agent_id)
-    creator = (
-        db.get(User, agent.created_by_user_id) if agent.created_by_user_id else None
-    )
-    if agent is None or creator is None or not execution.execution_device_id:
-        raise RuntimeError(f"Execution {execution.id} has no creator or bound device")
-    task = loop_item_execution_service.resolve_task_context(
-        db, execution=execution, user_id=creator.id
-    )
-    if task is None:
-        raise RuntimeError(f"Execution {execution.id} lost its task")
-    if routing_user_id is None:
-        candidates = _resolve_routing_user_ids(
-            db,
-            execution.execution_device_id,
-            creator.id,
-            execution.execution_environment,
+    if execution.execution_environment != "cloud":
+        raise RuntimeError(f"Execution {execution.id} is not a cloud execution")
+    owner_user_id = execution.executor_owner_user_id
+    creator = db.get(User, owner_user_id)
+    if creator is None or not execution.execution_device_id:
+        raise RuntimeError(f"Execution {execution.id} has no owner or bound device")
+    if routing_user_id is not None and routing_user_id != owner_user_id:
+        raise RuntimeError(
+            f"Execution {execution.id} cannot route through another device owner"
         )
-        routing_user_id = candidates[0] if candidates else None
+    if routing_user_id is None:
+        if not _owner_has_device(db, owner_user_id, execution.execution_device_id):
+            raise RuntimeError(
+                f"Execution {execution.id} has no owner-scoped device binding"
+            )
+        routing_user_id = owner_user_id
     if routing_user_id is None:
         raise RuntimeError(f"Execution {execution.id} has no routable device owner")
 
-    online = await device_service.get_device_online_info(
-        routing_user_id, execution.execution_device_id
+    capacity = await get_runtime_capacity(
+        db,
+        owner_user_id=routing_user_id,
+        device_id=execution.execution_device_id,
     )
     logger.info(
         "[RobotQueue] Dispatch online check execution=%s device=%s "
@@ -906,17 +845,17 @@ async def _dispatch_execution(
         execution.id,
         execution.execution_device_id,
         routing_user_id,
-        bool(online),
+        bool(capacity),
     )
-    if not online:
-        raise DeviceOfflineError("Device went offline before dispatch")
+    if capacity is None:
+        raise DeviceOfflineError("Device capacity observation expired before dispatch")
+    if capacity.runtime_instance_id != execution.runtime_instance_id:
+        raise DeviceOfflineError("Runtime capacity identity changed before dispatch")
 
-    prompt = loop_item_execution_service.build_robot_prompt(agent)
     payload = loop_item_execution_service.build_runtime_payload(
-        db, execution=execution, task=task
+        db,
+        execution=execution,
     )
-    if payload is None:
-        raise RuntimeError(f"Execution {execution.id} payload cannot be built")
     # The canonical runtime task id is bound at claim time; keep the same
     # identity here so events always map back to this execution.
     task_id = execution.runtime_task_id or f"codex-queue-{execution.id}"
@@ -925,6 +864,15 @@ async def _dispatch_execution(
     if isinstance(execution_request, dict):
         execution_request["task_id"] = task_id
         execution_request["subtask_id"] = f"{task_id}-assistant"
+    advanced = loop_item_execution_service.mark_start_requested(
+        db, execution_ids=[execution.id]
+    )
+    if advanced != 1:
+        raise RuntimeError(f"Execution {execution.id} is no longer dispatchable")
+    db.expire_all()
+    execution = db.get(LoopItemExecution, execution.id)
+    if execution is None:
+        raise RuntimeError("Execution disappeared before Runtime dispatch")
     # Write the runtime ids first so the executor's first event matches this
     # execution, then emit through the uvicorn process (the worker's Socket.IO
     # singleton is bound to a foreign loop). The Socket.IO ACK routing through
@@ -932,12 +880,6 @@ async def _dispatch_execution(
     # the executor's first runtime event (subscribe-before-emit): only a real
     # codex session produces one. A run whose executor never starts the session
     # fails/requeues here instead of showing a fake "AI 执行" comment.
-    loop_item_execution_service.heartbeat(
-        db,
-        execution_id=execution.id,
-        runtime_device_id=execution.execution_device_id,
-        runtime_task_id=task_id,
-    )
     import asyncio
 
     # Start the subscriber before emitting so the executor's first event can
@@ -957,6 +899,10 @@ async def _dispatch_execution(
     )
     if not ack.get("emitted"):
         wait_task.cancel()
+        if ack.get("outcome_unknown"):
+            raise ExecutorSessionStartError(
+                "Runtime RPC delivery outcome is unknown after Start was fenced"
+            )
         raise DeviceEmitRejectedError("Device did not accept the runtime RPC")
     event_name = await wait_task
     if not event_name:
@@ -968,28 +914,19 @@ async def _dispatch_execution(
         "[RobotQueue] Runtime create confirmed execution=%s task=%s device=%s "
         "user=%s runtime_task=%s first_event=%s",
         execution.id,
-        getattr(task, "id", ""),
+        execution.loop_item_id,
         execution.execution_device_id,
         routing_user_id,
         task_id,
         event_name,
     )
-    try:
-        loop_item_execution_service.open_execution_activity(
-            db,
-            execution=execution,
-            prompt=prompt,
-        )
-    except Exception:
-        logger.exception(
-            "[RobotQueue] Failed to open activity comment for execution=%s",
-            execution.id,
-        )
     logger.info(
-        "[RobotQueue] Dispatched execution=%s task=%s agent=%s device=%s runtime_task=%s",
+        "[RobotQueue] Dispatched execution=%s task=%s executor=%s agent=%s "
+        "device=%s runtime_task=%s",
         execution.id,
-        task.id,
-        agent.id,
+        execution.loop_item_id,
+        execution.executor_type,
+        execution.agent_id,
         execution.execution_device_id,
         task_id,
     )
@@ -1015,6 +952,7 @@ async def _emit_runtime_rpc(
         ) as client:
             response = await client.post(
                 "/internal/robot-queue/emit-runtime-rpc",
+                headers={"Authorization": f"Bearer {settings.INTERNAL_SERVICE_TOKEN}"},
                 json={
                     "user_id": user_id,
                     "device_id": device_id,
@@ -1030,7 +968,10 @@ async def _emit_runtime_rpc(
                     response.status_code,
                     response.text[:500],
                 )
-                return {"emitted": False}
+                return {
+                    "emitted": False,
+                    "outcome_unknown": response.status_code >= 500,
+                }
             return response.json()
     except Exception as exc:
         logger.exception(
@@ -1039,7 +980,7 @@ async def _emit_runtime_rpc(
             device_id,
             method,
         )
-        return {"emitted": False}
+        return {"emitted": False, "outcome_unknown": True}
 
 
 async def _device_online(user_id: int, device_id: str) -> bool:

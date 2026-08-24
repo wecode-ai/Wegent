@@ -8,6 +8,7 @@ import pytest
 
 from app.services.knowledge.code_wiki.mermaid_check import (
     check_mermaid_blocks,
+    count_mermaid_blocks,
     describe_warnings,
 )
 
@@ -87,6 +88,32 @@ def test_an_unclosed_quote_is_reported():
     assert "unclosed quote" in warnings[0].message
 
 
+def test_a_flowchart_node_cannot_reuse_its_subgraph_id() -> None:
+    """Dagre makes the node its own parent and fails only while rendering."""
+    markdown = _fence(
+        "flowchart TD\n" "  subgraph RPC[RPC]\n" "    RPC[Request processor]\n" "  end"
+    )
+
+    warnings = check_mermaid_blocks(markdown)
+
+    assert len(warnings) == 1
+    assert "RPC" in warnings[0].message
+    assert "subgraph" in warnings[0].message
+
+
+def test_flowchart_comments_and_quoted_labels_do_not_declare_nodes() -> None:
+    markdown = _fence(
+        "flowchart TD\n"
+        "  subgraph RPC[RPC]\n"
+        "    A[Service]\n"
+        "  end\n"
+        "  %% RPC[comment example]\n"
+        '  A -- "RPC [call]" --> B'
+    )
+
+    assert check_mermaid_blocks(markdown) == []
+
+
 def test_comments_before_the_diagram_type_are_skipped():
     markdown = _fence("%% layout notes\nflowchart LR\n  A --> B")
 
@@ -104,6 +131,18 @@ def test_a_mermaid_example_quoted_inside_another_fence_is_not_checked():
     markdown = "````markdown\n```mermaid\nflowchat TD\n```\n````"
 
     assert check_mermaid_blocks(markdown) == []
+
+
+def test_count_uses_the_same_fence_grammar_as_structural_checks():
+    markdown = "\n\n".join(
+        [
+            _fence("flowchart TD\n  A --> B", "MERMAID"),
+            "````markdown\n```mermaid\nflowchart TD\n```\n````",
+            "~~~mermaid\nflowchart TD\n  A --> B\n",
+        ]
+    )
+
+    assert count_mermaid_blocks(markdown) == 2
 
 
 def test_entity_relationship_cardinality_is_not_mistaken_for_a_bracket_error():

@@ -18,6 +18,7 @@ from app.api.endpoints.installed_plugins import (
     _can_publish,
     _sync_global_capabilities,
     install_marketplace_plugin,
+    report_installed_plugins_on_device,
     sync_installed_plugins_to_device,
     uninstall_installed_plugin,
 )
@@ -43,6 +44,8 @@ from app.schemas.installed_plugin import (
     InstalledPluginUpdateRequest,
     PluginAccessTarget,
     PluginAccessUpdateRequest,
+    PluginDeviceReportItem,
+    PluginDeviceReportRequest,
     PluginSubmissionInitRequest,
     PluginUpstreamCreateRequest,
 )
@@ -278,6 +281,7 @@ def _device_install(test_db, user_id: int) -> tuple[Kind, PluginRelease]:
             "spec": {
                 "pluginId": plugin.id,
                 "releaseId": release.id,
+                "version": release.version,
                 "enabled": True,
                 "installState": "installed",
             }
@@ -1456,6 +1460,152 @@ def test_restricted_access_replacement_revokes_original_install_and_copy(
     assert exc_info.value.status_code == 404
 
 
+def test_personal_plugin_delete_requires_impact_confirmation_and_revokes_usage(
+    test_db, test_user
+):
+    recipient = User(
+        user_name="delete-recipient",
+        password_hash=test_user.password_hash,
+        email="delete-recipient@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(recipient)
+    test_db.flush()
+    plugin = Plugin(
+        slug="delete-me",
+        name="delete-me",
+        display_name="Delete Me",
+        owner_user_id=test_user.id,
+        keywords_json=[],
+        interface_json={},
+        visibility="personal",
+        status="published",
+    )
+    test_db.add(plugin)
+    test_db.flush()
+    installed = Kind(
+        user_id=recipient.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="delete-me",
+        json={
+            "spec": {
+                "pluginId": plugin.id,
+                "enabled": True,
+                "installState": "installed",
+            }
+        },
+        is_active=True,
+    )
+    test_db.add(installed)
+    test_db.flush()
+    test_db.add_all(
+        [
+            ResourceMember.create(
+                resource_type="Plugin",
+                resource_id=plugin.id,
+                entity_type="user",
+                entity_id=str(recipient.id),
+                status=MemberStatus.APPROVED.value,
+            ),
+            PluginDeviceInstallation(
+                installed_kind_id=installed.id,
+                user_id=recipient.id,
+                device_id="offline-device",
+                state="installed",
+            ),
+        ]
+    )
+    test_db.commit()
+    service = PluginMarketplaceService()
+
+    impact = service.get_personal_plugin_delete_impact(
+        test_db,
+        plugin_id=plugin.id,
+        user_id=test_user.id,
+    )
+
+    assert impact.affectedUserCount == 1
+    assert impact.installedDeviceCount == 1
+    assert impact.sharedTargetCount == 1
+    with pytest.raises(HTTPException) as exc_info:
+        service.delete_owned_personal_plugin(
+            test_db,
+            plugin_id=plugin.id,
+            user_id=test_user.id,
+            impact_revision=impact.impactRevision,
+            revoke_and_delete=False,
+        )
+    assert exc_info.value.status_code == 409
+
+    installations = service.delete_owned_personal_plugin(
+        test_db,
+        plugin_id=plugin.id,
+        user_id=test_user.id,
+        impact_revision=impact.impactRevision,
+        revoke_and_delete=True,
+    )
+
+    assert installations == [(recipient.id, installed.id)]
+    test_db.refresh(plugin)
+    test_db.refresh(installed)
+    assert plugin.status == "deleted"
+    assert installed.is_active is False
+    assert installed.json["spec"]["installState"] == "uninstalled"
+    assert (
+        test_db.query(ResourceMember)
+        .filter(ResourceMember.resource_id == plugin.id)
+        .count()
+        == 0
+    )
+
+
+def test_personal_plugin_delete_rejects_stale_impact_revision(test_db, test_user):
+    plugin = Plugin(
+        slug="delete-revision",
+        name="delete-revision",
+        display_name="Delete Revision",
+        owner_user_id=test_user.id,
+        keywords_json=[],
+        interface_json={},
+        visibility="personal",
+        status="published",
+    )
+    test_db.add(plugin)
+    test_db.commit()
+    service = PluginMarketplaceService()
+    impact = service.get_personal_plugin_delete_impact(
+        test_db,
+        plugin_id=plugin.id,
+        user_id=test_user.id,
+    )
+    test_db.add(
+        Kind(
+            user_id=test_user.id,
+            kind="InstalledPlugin",
+            namespace="default",
+            name="delete-revision",
+            json={"spec": {"pluginId": plugin.id}},
+            is_active=True,
+        )
+    )
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.delete_owned_personal_plugin(
+            test_db,
+            plugin_id=plugin.id,
+            user_id=test_user.id,
+            impact_revision=impact.impactRevision,
+            revoke_and_delete=True,
+        )
+
+    assert exc_info.value.status_code == 409
+    test_db.refresh(plugin)
+    assert plugin.status == "published"
+
+
 def test_namespace_grant_includes_members_of_child_departments(test_db, test_user):
     service = PluginMarketplaceService()
     recipient = User(
@@ -1975,6 +2125,89 @@ async def test_sync_installed_plugins_to_device_materializes_account_install(
     assert row.device_id == "new-device"
     assert row.state == "installed"
     assert row.actual_release_id == release.id
+
+
+def test_report_installed_plugins_on_device_acks_without_pushing_packages(
+    test_db, test_user, monkeypatch
+):
+    installed, release = _device_install(test_db, test_user.id)
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="current-device",
+            desired_release_id=release.id,
+            state="pending",
+        )
+    )
+    test_db.commit()
+
+    async def boom(**_kwargs):
+        raise AssertionError("report-device must not dispatch capability sync")
+
+    monkeypatch.setattr(device_capability_sync_service, "sync_device_payload", boom)
+
+    response = report_installed_plugins_on_device(
+        payload=PluginDeviceReportRequest(
+            plugins=[
+                PluginDeviceReportItem(
+                    installedPluginId=installed.id,
+                    releaseId=release.id,
+                    version=release.version,
+                )
+            ]
+        ),
+        device_id="current-device",
+        db=test_db,
+        current_user=test_user,
+    )
+
+    assert response.deviceId == "current-device"
+    assert response.acknowledgedCount == 1
+    assert response.acknowledgedInstalledPluginIds == [installed.id]
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.device_id == "current-device"
+    assert row.state == "installed"
+    assert row.actual_release_id == release.id
+    assert row.error_code == ""
+    assert row.attempt_count == 0
+
+
+def test_report_installed_plugins_on_device_rejects_stale_release_evidence(
+    test_db, test_user
+):
+    installed, release = _device_install(test_db, test_user.id)
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="current-device",
+            desired_release_id=release.id,
+            state="pending",
+        )
+    )
+    test_db.commit()
+
+    response = report_installed_plugins_on_device(
+        payload=PluginDeviceReportRequest(
+            plugins=[
+                PluginDeviceReportItem(
+                    installedPluginId=installed.id,
+                    releaseId=release.id + 100,
+                    version=release.version,
+                )
+            ]
+        ),
+        device_id="current-device",
+        db=test_db,
+        current_user=test_user,
+    )
+
+    assert response.acknowledgedCount == 0
+    assert response.acknowledgedInstalledPluginIds == []
+    row = test_db.query(PluginDeviceInstallation).one()
+    assert row.state == "pending"
+    assert row.actual_release_id == 0
 
 
 def test_device_sync_keeps_disabled_plugin_materialized(test_db, test_user):

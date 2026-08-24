@@ -35,6 +35,7 @@ from app.api.endpoints import (
     openapi_responses,
     pet,
     project_automations,
+    project_incoming_hooks,
     projects,
     prompt_optimization,
     quota,
@@ -46,6 +47,7 @@ from app.api.endpoints import (
     sites,
     skill_identity,
     skill_market,
+    smart_apps,
     subtasks,
     system_skills,
     tables,
@@ -153,6 +155,16 @@ api_router.include_router(
     project_automations.router,
     prefix="/v1/cloud-projects",
     tags=["project-automations"],
+)
+api_router.include_router(
+    project_incoming_hooks.router,
+    prefix="/v1/cloud-projects",
+    tags=["project-incoming-hooks"],
+)
+api_router.include_router(
+    project_incoming_hooks.public_router,
+    prefix="/v1/incoming-hooks",
+    tags=["project-incoming-hooks"],
 )
 api_router.include_router(
     loop_item_executions.router,
@@ -313,6 +325,7 @@ api_router.include_router(
 )
 api_router.include_router(installed_mcps.router, prefix="/mcps", tags=["mcps"])
 api_router.include_router(installed_plugins.router, prefix="/plugins", tags=["plugins"])
+api_router.include_router(smart_apps.router, prefix="/smart-apps", tags=["smart-apps"])
 api_router.include_router(
     local_executor.router, prefix="/local-executor", tags=["local-executor"]
 )

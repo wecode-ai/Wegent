@@ -245,6 +245,8 @@
       "confirmDelete": "Are you sure you want to delete this knowledge base? This action cannot be undone.",
       "cannotDeleteWithDocuments": "This knowledge base contains documents and cannot be deleted. Please delete all documents first.",
       "deleteWarning": "This knowledge base contains {{count}} document(s). Please delete all documents before deleting the knowledge base.",
+      "deleteCodeWikiWarning": "Deleting this Code Wiki also removes all generated pages and its repository binding. This cannot be undone.",
+      "deleteFailed": "Failed to delete knowledge base. Please try again.",
       "search": "Search knowledge bases...",
       "noResults": "No matching knowledge bases",
       "categoryFilter": {
@@ -307,6 +309,14 @@
       "batchMovePartial": "Batch move completed: {{success}} succeeded, {{failed}} failed. Failed documents remain selected and highlighted for retry"
     },
     "document": {
+      "retrievalProfile": {
+        "fallbackReasons": {
+          "retriever_unavailable": "The configured retrieval default profile is unavailable, so automatic defaults will be used.",
+          "embedding_model_unavailable": "The configured retrieval default profile is unavailable, so automatic defaults will be used.",
+          "profile_incomplete": "The configured retrieval default profile is incomplete, so automatic defaults will be used.",
+          "unavailable": "The retrieval default profile is unavailable, so automatic defaults will be used."
+        }
+      },
       "title": "Documents",
       "upload": "Add sources",
       "edit": "Edit Document",
@@ -1134,7 +1144,8 @@
       "modelLabel": "Generation model",
       "modelDescription": "This repository's code is sent to the model. Assess the exposure yourself.",
       "modelPlaceholder": "Select a model",
-      "modelRequired": "Select the model to generate with"
+      "modelRequired": "Select the model to generate with",
+      "created": "Code Wiki created. Content is generating."
     },
     "reader": {
       "regenerate": "Regenerate",
@@ -1185,6 +1196,7 @@
       "taskFailed": "The task failed",
       "republish": "Restore this version",
       "republished": "This version is published again",
+      "republishedDescription": "The page content has been refreshed.",
       "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this.",
       "republishConfirmTitle": "Restore this version?",
       "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break.",

@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
@@ -43,6 +44,15 @@ class NoInterpolationDotEnvSettingsSource(DotEnvSettingsSource):
 
 
 VALID_RAG_RUNTIME_MODES = {"local", "remote"}
+GIT_TOKEN_CRYPTO_ENV_NAMES = ("GIT_TOKEN_AES_KEY", "GIT_TOKEN_AES_IV")
+
+
+def load_git_token_crypto_environment(env_file: Path) -> None:
+    """Make git-token crypto settings available to the shared crypto module."""
+    values = dotenv_values(env_file, interpolate=False)
+    for name in GIT_TOKEN_CRYPTO_ENV_NAMES:
+        if name not in os.environ and (value := values.get(name)) is not None:
+            os.environ[name] = value
 
 
 def _normalize_rag_runtime_mode_value(value: Any, *, label: str) -> str:
@@ -180,6 +190,10 @@ class Settings(BaseSettings):
     VIDEO_POLL_SCHEDULE_LEASE_SECONDS: int = 10
     VIDEO_RECOVERY_STALE_SECONDS: int = 10
     VIDEO_RECOVERY_LOOKBACK_HOURS: int = 1
+    SEEDANCE_ASSET_BASE_URL: str = ""
+    SEEDANCE_ASSET_GROUP_ID: str = ""
+    SEEDANCE_ASSET_STATUS_POLL_INTERVAL_SECONDS: int = 5
+    SEEDANCE_ASSET_STATUS_TIMEOUT_SECONDS: int = 60
 
     # Default models used by image/video generation MCP tools when the current
     # task model is not a matching generation model.
@@ -419,8 +433,6 @@ class Settings(BaseSettings):
     # Project robot queue scheduler
     ROBOT_QUEUE_SCHEDULER_ENABLED: bool = True
     ROBOT_QUEUE_SCAN_INTERVAL_SECONDS: int = 5
-    ROBOT_CLOUD_DEVICE_SLOTS: int = 2
-    ROBOT_LOCAL_DEVICE_SLOTS: int = 2
 
     # Knowledge indexing protection configuration
     KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS: int = 120
@@ -881,6 +893,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+
+# The shared crypto module reads these values directly from ``os.environ`` rather
+# than from ``Settings``. Keep local ``backend/.env`` startup behavior aligned
+# with Docker's explicit environment injection, without overriding deployment
+# environment variables.
+load_git_token_crypto_environment(Path(__file__).resolve().parents[2] / ".env")
 
 # Global configuration instance
 settings = Settings()

@@ -1,6 +1,6 @@
 # Wegent
 
-> 开源、可自部署的智能体工作平台。
+> 一套跨越本地桌面、云端智能体与远程工作机的开源 AI 工作系统。
 
 [English](README.md) | 简体中文
 
@@ -8,167 +8,126 @@
 [![License](https://img.shields.io/github/license/wecode-ai/Wegent)](LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/wecode-ai/Wegent)](https://github.com/wecode-ai/Wegent/issues)
 
-Wegent 让团队创建和共享能够实际执行任务的 AI 智能体，用于对话、代码开发、知识库和自动化工作。通过 Web 管理团队能力，通过 Wework 让智能体直接在本地项目和开发环境中工作。
+Wegent 包含桌面工作台和可自托管的 Web 平台。Wegent Desktop 用于处理本地项目、文件、命令、测试和代码变更；Wegent Web 提供网页端智能体、知识库、自动化和管理功能；Wegent Backend 为这些应用提供共享项目空间、模型和执行设备。
 
-<div align="center">
+[下载 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases) · [查看文档](https://wecode-ai.github.io/wegent-docs/zh/) · [参与贡献](CONTRIBUTING.md)
 
-**[部署 Wegent](#快速开始)** · **[下载 Wework](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)** · **[查看文档](https://wecode-ai.github.io/wegent-docs/zh/)**
+## Wegent Desktop
 
-</div>
+Wegent Desktop 按项目和任务组织本地编码工作。任务界面集中展示会话、工具活动、测试、变更文件和 Diff；项目空间界面提供任务看板、共享文件、自动化和执行状态。
 
-<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Wegent 产品界面" />
+<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-desktop-workbench.png" width="100%" alt="Wegent Desktop 中真实执行的编码任务，在同一个工作台展示验证结果、变更文件和展开的源码 Diff" />
 
-## 可以用 Wegent 做什么
+<p align="center"><sub>在 Wegent Desktop 中执行并审查本地编码任务。</sub></p>
 
-| 场景 | Wegent 可以做什么 |
-| --- | --- |
-| **团队 AI 助手** | 提供可私有部署的对话入口，共享模型、知识和 Skills，支持群聊协作与文件处理 |
-| **AI Coding** | 在隔离环境或本地电脑中修改代码、运行测试、提交变更并创建 Pull Request |
-| **企业知识助手** | 解析和索引文档、网页与企业数据，让智能体基于自己的资料回答问题 |
-| **持续自动化** | 通过定时和事件触发追踪信息、分析网页、筛选通知并发布信息流 |
-| **本地与内网执行** | 使用本地代码、CLI、浏览器、专用开发环境和内网资源完成任务 |
-| **已有系统集成** | 通过 API、MCP 和 IM 机器人把智能体接入现有应用与团队工具 |
+<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-project-workspace.png" width="100%" alt="Wegent Desktop 中真实的项目工作空间，展示任务看板、项目导航和正在由远程工作机推进的测试任务" />
 
-## 选择使用方式
+<p align="center"><sub>Wegent Desktop 中的项目空间，包括任务看板、共享文件、自动化和执行状态。</sub></p>
 
-| 使用 Wegent Web | 使用 Wework |
-| --- | --- |
-| 创建和共享智能体、模型、知识库与自动化任务 | 打开本地项目，让 AI 使用文件、终端、CLI 和开发环境 |
-| 统一管理用户、权限和执行设备 | 使用本机 Codex、本地模型和本地 Executor |
-| 通过浏览器、API 和 IM 服务团队 | 面向日常 AI Coding 和本地工作流 |
+## 核心功能
 
-Wework 可以连接到团队部署的 Wegent，在本地工作时使用共享模型、云端设备和远程任务。
-
-**[部署 Wegent](#快速开始)** · **[下载 Wework](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
+- **桌面工作台**：组织本地项目、任务、会话、文件、工具活动、测试和 Diff。
+- **可复用智能体**：组合模型、提示词、Skills、知识、工具和协作配置。
+- **项目空间**：共享任务看板、文件、讨论、自动化、执行记录和交付物。
+- **多种执行位置**：在本机、远程工作机或服务端执行器中运行任务。
+- **自托管服务**：部署 Wegent Web 和 Backend，管理团队访问、API、权限、调度和知识服务。
 
 ## 为什么选择 Wegent
 
-| 特点 | 带来的价值 |
-| --- | --- |
-| **能力可以复用** | 模型、知识、工具和 Skills 可以组合成智能体，在不同任务中重复使用 |
-| **多个机器人可以协作** | 按任务组织机器人分工完成检索、分析、编码和审查 |
-| **任务在合适的位置运行** | 根据代码和数据所在位置选择云端、容器、本地设备或内网环境 |
-| **同一套能力服务多个入口** | 从 Web、Wework、API 和 IM 调用团队沉淀的智能体能力 |
+**基于 Codex 的本地编码体验是 Wegent Desktop 的基础。**它直接在你的项目中使用本地代码、文件、命令和开发环境；当编码工作需要跨越一台电脑或一个人时，再连接 Wegent Backend。连接后，本地工作台和 Web 使用同一套项目、任务和设备资源。
+
+- **让任务在合适的设备上运行**：继续使用本地已有的代码、文件、命令和开发环境，也可以选择远程工作机或服务端执行器运行同一个项目的任务。
+- **让团队围绕同一个项目推进**：项目空间将任务看板、共享文件、讨论、执行状态和交付物关联起来，而不只是在各自的电脑上保存会话和代码变更。
+- **把重复流程交给自动化**：项目空间可配置自动化与执行队列，用于持续推进项目中的例行工作。
+- **由团队掌握服务和数据**：Web 和 Backend 可以自托管，用于共享访问、权限、模型配置、调度、知识服务和远程设备管理。
+
+如果工作始终只在一台电脑上完成，Wegent Desktop 提供熟悉的 Codex 编码体验；当任务需要在多人、多设备或自托管环境之间流转时，连接 Wegent 可在此基础上继续扩展。
+
+## Wegent Web
+
+Wegent Web 提供远程智能体的网页界面。智能体使用配置好的模型、知识、Skills 和工具，Wegent Backend 负责管理任务和执行。
+
+<img src="https://github.com/wecode-ai/Wegent/releases/download/readme-assets/wegent-remote-agent.png" width="100%" alt="Wegent 远程智能体调用工具生成并展示甘特图" />
+
+<p align="center"><sub>Wegent 远程智能体调用工具生成甘特图。</sub></p>
+
+## 工作方式
+
+Wegent Desktop 直接使用本地项目和本机运行时，也可以连接 Wegent Backend 使用共享资源和执行设备。Wegent Web 是基于同一 Backend 的独立网页界面。
+
+```mermaid
+flowchart LR
+    User["用户"] --> Desktop["Wegent Desktop"]
+    User --> Web["Wegent Web"]
+    Desktop --> Local["本地项目与运行环境"]
+    Desktop <--> Backend["Wegent Backend"]
+    Web <--> Backend
+    Backend --> Agents["共享智能体与知识"]
+    Backend --> Space["项目空间"]
+    Backend --> Remote["云端与远程设备"]
+```
 
 ## 快速开始
 
-### 部署 Wegent Web
+### Wegent Desktop
 
-前置要求：Docker。执行以下命令启动单容器 + SQLite 的 Standalone 模式：
+1. 从 [Releases 下载 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases) 并安装。
+2. 打开应用，添加或选择一个本地项目。
+3. 创建任务并描述需要执行的工作。
+4. 查看智能体活动、命令输出和文件变更。
+
+### Wegent Web 和 Backend
+
+使用 Docker 以 Standalone 模式启动自托管 Web 应用和 Backend：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
 ```
 
-启动后：
+启动后打开 http://localhost:3000，按页面引导设置管理员密码并配置模型。更多部署方式见 [安装指南](docs/zh/wegent/getting-started/installation.md) 和 [Standalone 模式](docs/zh/wegent/deployment/standalone-mode.md)。
 
-1. 打开 http://localhost:3000。
-2. 按页面引导设置管理员密码。
-3. 在设置中配置一个模型和 API Key。
-4. 选择预置智能体并发送第一条消息。
+## 开发
 
-常用管理命令：
+需要 Node.js 20+ 和 pnpm：
 
 ```bash
-wegent-standalone status
-wegent-standalone logs
-wegent-standalone restart
-wegent-standalone stop
+pnpm install
+pnpm --filter wework dev
 ```
 
-如果命令不在当前 `PATH` 中，可以使用 `~/.local/bin/wegent-standalone`。
+运行 macOS 桌面应用：
 
-### 使用 Wework
-
-下载并安装 Wework，打开一个本地项目即可开始 AI Coding。Wework 自带本地执行能力，也可以在设置中连接团队部署的 Wegent。
-
-任务执行期间，Wework 会持续展示最新工具调用；工具列表默认显示约 3.5 行并可滚动，当前最新一行和仍在运行的工具会以扫光效果提示，命令输出、搜索详情和文件变更可逐项展开。中间过程文本只结束当前工具段，并继续以“已调用工具”汇总显示；最终回答开始后，处理过程会收起为带分隔线的“已处理”条目，展开后仍使用相同的工具列表。
-
-**[下载 Wework Desktop](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
-
-### Wegent Web 部署方式
-
-| 方式 | 适合场景 | 入口 |
-| --- | --- | --- |
-| **Standalone** | 个人体验和轻量自部署 | 上方一键安装命令 |
-| **Standard** | 使用 MySQL、Redis 和独立服务的团队部署 | [安装指南](docs/zh/getting-started/installation.md) |
-| **Development** | 参与开发和二次扩展 | [开发环境搭建](docs/zh/developer-guide/setup.md) |
-
-Standalone 还可以选择 `host`、`container` 或 `hybrid` Executor 模式，详见 [Standalone 模式](docs/zh/deployment/standalone-mode.md)。
-
-## 智能体模型
-
-<details>
-<summary>了解 Wegent 如何组织智能体与任务</summary>
-
-Wegent 将能力、协作关系和运行上下文分开管理，使它们可以在不同任务和环境中复用。
-
-```text
-Ghost（提示词 + MCP + Skills）
-  + Shell（Chat / ClaudeCode / Agno / Dify）
-  + Model
-  = Bot（机器人）
-
-多个 Bot + 协作模式 = Team（界面中的“智能体”）
-Team + Workspace = Task（一次可追踪的执行）
+```bash
+pnpm --filter wework dev:mac
 ```
 
-这些资源可以通过界面、YAML 和 API 管理。详细说明见 [核心概念](docs/zh/concepts/core-concepts.md)和 [YAML 规范](docs/zh/reference/yaml-specification.md)。
+桌面端的开发、构建和发布说明见 [wework/README.md](wework/README.md)；`wework/` 是当前桌面应用源码目录。
 
-</details>
+## 仓库结构
 
-## 架构概览
-
-<details>
-<summary>查看 Wegent 技术组件</summary>
-
-```mermaid
-graph TB
-    User["用户 / API / IM"] --> Frontend["Wegent Web<br/>Next.js"]
-    User --> Wework["Wework Desktop<br/>Tauri + React"]
-    Frontend --> Backend["Backend<br/>FastAPI"]
-    Wework -. "可选云端连接" .-> Backend
-    Wework --> LocalWork["本地 Codex / 文件 / 终端"]
-
-    Backend --> Database[("MySQL / SQLite")]
-    Backend --> Redis[("Redis")]
-    Backend --> ChatShell["Chat Shell"]
-    Backend --> ExecutorManager["Executor Manager"]
-    Backend --> KnowledgeRuntime["Knowledge Runtime"]
-
-    ExecutorManager --> CloudExecutor["云端 / 容器 Executor"]
-    Backend <--> LocalExecutor["本地 Executor"]
-    KnowledgeRuntime --> VectorStore["Elasticsearch / Qdrant / Milvus"]
-    KnowledgeRuntime --> DocConverter["Document Converter"]
-```
-
-</details>
-
-### 仓库结构
-
-| 目录 | 职责 |
-| --- | --- |
-| `frontend/` | Wegent Web 产品 |
-| `backend/` | REST API 和核心业务逻辑 |
-| `wework/` | Tauri 桌面工作台 |
-| `executor/` | 智能体任务执行环境 |
-| `executor_manager/` | Executor 调度与编排 |
-| `chat_shell/` | 对话运行时 |
-| `knowledge_runtime/` | 知识检索服务 |
-| `knowledge_doc_converter/` | 文档解析与转换 |
-| `shared/` | 跨服务共享模块 |
+| 目录                       | 职责                                 |
+| -------------------------- | ------------------------------------ |
+| `wework/`                  | Wegent Desktop（Tauri、Vite、React） |
+| `executor/`                | 本地与远程的智能体任务执行环境       |
+| `frontend/`                | Wegent 平台 Web 管理界面             |
+| `backend/`                 | REST API 和核心业务逻辑              |
+| `executor_manager/`        | 执行器调度与编排                     |
+| `chat_shell/`              | 对话运行时                           |
+| `knowledge_runtime/`       | 知识检索服务                         |
+| `knowledge_doc_converter/` | 文档解析与转换                       |
+| `shared/`                  | 跨服务共享模块                       |
 
 ## 文档
 
-- [快速开始](docs/zh/getting-started/quick-start.md)
-- [安装与部署](docs/zh/getting-started/installation.md)
-- [核心概念](docs/zh/concepts/core-concepts.md)
-- [用户指南](docs/zh/user-guide/README.md)
-- [OpenAPI Responses API](docs/zh/reference/openapi-responses-api.md)
-- [开发者指南](docs/zh/developer-guide/README.md)
-- [故障排查](docs/zh/troubleshooting.md)
+- [Wegent Desktop 文档](docs/zh/wework/README.md)
+- [桌面端开发与发布](wework/README.md)
+- [Wegent 快速开始](docs/zh/wegent/getting-started/quick-start.md)
+- [安装与部署](docs/zh/wegent/getting-started/installation.md)
+- [核心概念](docs/zh/wegent/concepts/core-concepts.md)
+- [开发者指南](docs/zh/wegent/developer-guide/README.md)
+- [故障排查](docs/zh/wegent/troubleshooting.md)
 
-## 参与项目
+## 参与贡献
 
 欢迎提交问题、改进文档、贡献代码或分享新的使用方式。
 
@@ -259,13 +218,6 @@ graph TB
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/yixiangxx">
-                    <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
-                    <br />
-                    <sub><b>Yi Xiang</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/sunnights">
                     <img src="https://avatars.githubusercontent.com/u/1886887?v=4" width="80;" alt="sunnights"/>
                     <br />
@@ -280,10 +232,24 @@ graph TB
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/yixiangxx">
+                    <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+                    <br />
+                    <sub><b>Yi Xiang</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/cocowh">
                     <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
                     <br />
                     <sub><b>Birch</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/luckjun529-lang">
+                    <img src="https://avatars.githubusercontent.com/u/224970532?v=4" width="80;" alt="luckjun529-lang"/>
+                    <br />
+                    <sub><b>junlong chen</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -293,6 +259,8 @@ graph TB
                     <sub><b>+7</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/2561056571">
                     <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
@@ -300,8 +268,6 @@ graph TB
                     <sub><b>Xuemin</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/fengkuizhi">
                     <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
@@ -310,10 +276,24 @@ graph TB
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/lvmowei">
+                    <img src="https://avatars.githubusercontent.com/u/5328905?v=4" width="80;" alt="lvmowei"/>
+                    <br />
+                    <sub><b>lvmowei</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/jnhu76">
                     <img src="https://avatars.githubusercontent.com/u/5766215?v=4" width="80;" alt="jnhu76"/>
                     <br />
                     <sub><b>Jm.hu</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/maquan0927">
+                    <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
+                    <br />
+                    <sub><b>Just Quan</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -331,12 +311,14 @@ graph TB
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/maquan0927">
-                    <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
+                <a href="https://github.com/earthAlone2026">
+                    <img src="https://avatars.githubusercontent.com/u/270281822?v=4" width="80;" alt="earthAlone2026"/>
                     <br />
-                    <sub><b>Just Quan</b></sub>
+                    <sub><b>xiaoqiang</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/RockysGit">
                     <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
@@ -352,19 +334,17 @@ graph TB
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/hustfisher">
-                    <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
+                <a href="https://github.com/qwertyerge">
+                    <img src="https://avatars.githubusercontent.com/u/13088125?v=4" width="80;" alt="qwertyerge"/>
                     <br />
-                    <sub><b>fishermen</b></sub>
+                    <sub><b>Erdawang</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
-                <a href="https://github.com/earthAlone2026">
-                    <img src="https://avatars.githubusercontent.com/u/270281822?v=4" width="80;" alt="earthAlone2026"/>
+                <a href="https://github.com/Twelveeee">
+                    <img src="https://avatars.githubusercontent.com/u/48245733?v=4" width="80;" alt="Twelveeee"/>
                     <br />
-                    <sub><b>xiaoqiang</b></sub>
+                    <sub><b>Twelveeee</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -375,24 +355,10 @@ graph TB
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/qwertyerge">
-                    <img src="https://avatars.githubusercontent.com/u/13088125?v=4" width="80;" alt="qwertyerge"/>
+                <a href="https://github.com/hustfisher">
+                    <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
                     <br />
-                    <sub><b>Erdawang</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/luckjun529-lang">
-                    <img src="https://avatars.githubusercontent.com/u/224970532?v=4" width="80;" alt="luckjun529-lang"/>
-                    <br />
-                    <sub><b>junlong chen</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/lvmowei">
-                    <img src="https://avatars.githubusercontent.com/u/5328905?v=4" width="80;" alt="lvmowei"/>
-                    <br />
-                    <sub><b>lvmowei</b></sub>
+                    <sub><b>fishermen</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -409,6 +375,8 @@ graph TB
                     <sub><b>Jolestar</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/code-wangdi">
                     <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
@@ -416,8 +384,6 @@ graph TB
                     <sub><b>Code-wangdi</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/haosenwang1018">
                     <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
@@ -451,13 +417,6 @@ graph TB
                     <img src="https://avatars.githubusercontent.com/u/44485717?v=4" width="80;" alt="RichardoMrMu"/>
                     <br />
                     <sub><b>RichardoMu</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/Twelveeee">
-                    <img src="https://avatars.githubusercontent.com/u/48245733?v=4" width="80;" alt="Twelveeee"/>
-                    <br />
-                    <sub><b>Twelveeee</b></sub>
                 </a>
             </td>
             <td align="center">

@@ -1,10 +1,12 @@
-fn normalize_inactive_running_task(link: &mut RuntimeTaskLink) {
-    if !is_inactive_running_task(link) {
+fn normalize_settled_task_state(link: &mut RuntimeTaskLink) {
+    if link.running || link.completed_at.is_none() || link.status == "archived" {
         return;
     }
-    link.status = "active".to_owned();
-    link.running = false;
-    link.thread_status = "idle".to_owned();
+
+    link.status = settled_task_status(link).to_owned();
+    if runtime_status_is_running(&link.thread_status) {
+        link.thread_status = "idle".to_owned();
+    }
     if link
         .turn_status
         .as_deref()
@@ -12,7 +14,35 @@ fn normalize_inactive_running_task(link: &mut RuntimeTaskLink) {
     {
         link.turn_status = Some("completed".to_owned());
     }
-    link.updated_at = now_ms();
+}
+
+fn settled_task_status(link: &RuntimeTaskLink) -> &'static str {
+    let statuses = [
+        link.status.as_str(),
+        link.thread_status.as_str(),
+        link.turn_status.as_deref().unwrap_or_default(),
+    ];
+    if statuses.iter().any(|status| {
+        matches!(
+            normalized_runtime_status(status).as_str(),
+            "failed" | "error" | "systemerror"
+        )
+    }) {
+        return "failed";
+    }
+    if statuses.iter().any(|status| {
+        matches!(
+            normalized_runtime_status(status).as_str(),
+            "cancelled" | "canceled" | "interrupted" | "aborted"
+        )
+    }) {
+        return "cancelled";
+    }
+    "done"
+}
+
+fn normalized_runtime_status(status: &str) -> String {
+    status.replace(['_', '-'], "").to_ascii_lowercase()
 }
 
 fn apply_local_execution_state(
@@ -45,7 +75,8 @@ fn apply_local_execution_state(
         return;
     }
     if !running {
-        normalize_inactive_running_task(link);
+        link.running = false;
+        normalize_settled_task_state(link);
         return;
     }
 
@@ -55,15 +86,25 @@ fn apply_local_execution_state(
     link.turn_status = Some("inProgress".to_owned());
 }
 
-fn is_inactive_running_task(link: &RuntimeTaskLink) -> bool {
-    if !link.running {
-        return false;
+fn apply_local_task_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
+    link.running = false;
+    link.status = "failed".to_owned();
+    link.thread_status = "failed".to_owned();
+    link.turn_status = Some("failed".to_owned());
+    link.updated_at = now_ms();
+    link.completed_at = Some(link.updated_at);
+    normalize_settled_task_state(link);
+    if !link.runtime_handle.is_object() {
+        link.runtime_handle = json!({});
     }
-    let status = link.status.replace(['_', '-'], "").to_ascii_lowercase();
-    matches!(
-        status.as_str(),
-        "running" | "inprogress" | "busy" | "pending"
-    )
+    if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
+        runtime_handle.remove("queuePosition");
+        runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
+        runtime_handle.insert(
+            "lastErrorCode".to_owned(),
+            Value::String(error.code.clone()),
+        );
+    }
 }
 
 fn task_fields(task_id: &str, subtask_id: &str) -> Vec<(&'static str, String)> {
@@ -222,6 +263,7 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
             project_active: project.active,
             project_appearance: project.appearance.clone(),
             default_project_space: project.default_project_space.clone(),
+            project_ai_settings: project.ai_settings.clone(),
         })
         .collect()
 }
@@ -309,6 +351,13 @@ fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
         prompt: Value::String(link.title.clone()),
         ..ExecutionRequest::default()
     };
+    set_runtime_task_title(&mut request, &link.title);
+    if !link.project_plugin_ids.is_empty() {
+        request.extra.insert(
+            "project_plugin_ids".to_owned(),
+            json!(link.project_plugin_ids),
+        );
+    }
     if let Some(permission_mode) = link
         .runtime_handle
         .get("modelSelection")

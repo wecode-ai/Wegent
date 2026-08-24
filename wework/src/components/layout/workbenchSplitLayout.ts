@@ -78,6 +78,7 @@ export function focusWorkbenchPane(
   state: WorkbenchLayoutState,
   paneId: string
 ): WorkbenchLayoutState {
+  if (state.focusedPaneId === paneId) return state
   return findWorkbenchPane(state.root, paneId) ? { ...state, focusedPaneId: paneId } : state
 }
 
@@ -86,24 +87,8 @@ export function focusWorkbenchTask(
   paneKey: string
 ): WorkbenchLayoutState | null {
   const pane = collectWorkbenchPanes(state.root).find(candidate => candidate.paneKey === paneKey)
-  return pane ? { ...state, focusedPaneId: pane.id } : null
-}
-
-export function openWorkbenchPane(
-  state: WorkbenchLayoutState,
-  paneKey: string
-): WorkbenchLayoutState {
-  const existing = focusWorkbenchTask(state, paneKey)
-  if (existing) return existing
-
-  const panes = collectWorkbenchPanes(state.root)
-  const target = panes.find(pane => pane.id === state.focusedPaneId) ?? panes[0]
-  if (!target) return createWorkbenchLayout(paneKey)
-  return {
-    ...state,
-    root: updatePane(state.root, target.id, pane => ({ ...pane, paneKey })),
-    focusedPaneId: target.id,
-  }
+  if (!pane) return null
+  return pane.id === state.focusedPaneId ? state : { ...state, focusedPaneId: pane.id }
 }
 
 export function splitWorkbenchPane(
@@ -218,6 +203,7 @@ export function pruneWorkbenchLayout(
     panes.find(pane => pane.id === state.focusedPaneId) ??
     panes.find(pane => pane.paneKey) ??
     panes[0]
+  if (root === state.root && focused.id === state.focusedPaneId) return state
   return {
     ...state,
     root,
@@ -331,6 +317,7 @@ function pruneNode(
     .filter((entry): entry is { child: WorkbenchLayoutNode; size: number } => entry.child !== null)
   if (retained.length === 0) return null
   if (retained.length === 1) return retained[0].child
+  if (retained.every((entry, index) => entry.child === node.children[index])) return node
   return {
     ...node,
     children: retained.map(entry => entry.child),

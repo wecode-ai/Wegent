@@ -22,14 +22,17 @@ use crate::{
     local::git_commit_message::generate_commit_message,
     local::local_skills::list_local_skills,
     local::workspace_files::{
-        execute_workspace_file_command_with_input, is_workspace_file_command,
+        execute_workspace_file_command_with_input, is_workspace_file_command, WORKSPACE_ROOTS_ENV,
     },
-    logging::{format_executor_log, reserve_executor_stdout_for_protocol, write_executor_log_line},
+    logging::{
+        format_executor_log, reserve_executor_stdout_for_protocol, write_executor_error_line,
+        write_executor_log_line,
+    },
     runtime_work::RuntimeWorkRpcHandler,
     task_runtime::{
-        BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, LocalCommentCreate,
-        LocalExecutionClaim, ProjectCreate, ProjectDescriptor, ProjectUpdate, RuntimeTaskAddress,
-        TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
+        BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, DeliveryFinalize,
+        LocalCommentCreate, LocalExecutionClaim, ProjectCreate, ProjectDescriptor, ProjectUpdate,
+        RuntimeTaskAddress, TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
     },
     version::get_version,
 };
@@ -41,6 +44,7 @@ const DEFAULT_DEVICE_ID: &str = "local-device";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
+const APP_IPC_WRITE_BUFFER_CAPACITY: usize = 8192;
 const GIT_PUSH_SCRIPT: &str = r#"branch=$(git branch --show-current)
 if [ -z "$branch" ]; then
   echo "Cannot push detached HEAD" >&2
@@ -92,6 +96,7 @@ print(json.dumps(result, ensure_ascii=False))
 "#;
 const GIT_HOSTING_CLI_STATUS_SCRIPT: &str = r#"
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -120,6 +125,15 @@ def run(*args):
         check=False,
     )
 
+def is_authenticated(auth_result):
+    if auth_result.returncode == 0:
+        return True
+    if tool != "glab":
+        return False
+
+    output = "\n".join((auth_result.stdout, auth_result.stderr))
+    return re.search(r"(?m)^\s*[✓✔]\s+Logged in to\s+", output) is not None
+
 try:
     version_result = run("--version")
     version = next(
@@ -141,7 +155,7 @@ except subprocess.TimeoutExpired:
 print(json.dumps({
     "tool": tool,
     "installed": True,
-    "authenticated": auth_result.returncode == 0,
+    "authenticated": is_authenticated(auth_result),
     "executablePath": executable,
     "version": version,
     "detectionError": None,
@@ -271,6 +285,7 @@ pub trait RuntimeWorkHandler: Send + Sync {
 
 pub trait BackendConnectionHandler: Send + Sync {
     fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+    fn backend_status<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,7 +328,7 @@ pub struct AppIpcServer {
 
 impl Default for AppIpcServer {
     fn default() -> Self {
-        let (event_tx, _) = broadcast::channel(512);
+        let (event_tx, _) = broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
         Self {
             device_id: DEFAULT_DEVICE_ID.to_owned(),
             runtime_instance_id: None,
@@ -441,8 +456,80 @@ impl AppIpcServer {
             return handler.configure_backend(params).await;
         }
 
+        if method == "executor.backend.status" {
+            let Some(handler) = &self.backend_connection_handler else {
+                return Err(AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection handler is not available",
+                ));
+            };
+            return handler.backend_status().await;
+        }
+
         if method == "device.execute_command" {
             return self.handle_device_command(params).await;
+        }
+
+        if method == "executions.claim_next" {
+            let Some(handler) = &self.runtime_work_handler else {
+                return Err(AppIpcError::new(
+                    "runtime_unavailable",
+                    "Runtime work handler is not available",
+                ));
+            };
+            let runtime_instance_id = self.runtime_instance_id.as_ref().ok_or_else(|| {
+                AppIpcError::new(
+                    "runtime_identity_unavailable",
+                    "Runtime instance identity is not available",
+                )
+            })?;
+            let capacity = handler
+                .handle_runtime_rpc(json!({
+                    "method": "runtime.capacity.get",
+                    "payload": {},
+                }))
+                .await?;
+            let limit = capacity
+                .get("limit")
+                .and_then(Value::as_u64)
+                .filter(|value| (1..=20).contains(value))
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "runtime_capacity_unavailable",
+                        "Runtime capacity is not available",
+                    )
+                })?;
+            let mut params = params.as_object().cloned().ok_or_else(|| {
+                AppIpcError::new("invalid_request", "Claim params must be an object")
+            })?;
+            let claim = params
+                .get_mut("claim")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| AppIpcError::new("invalid_request", "Claim must be an object"))?;
+            claim.insert(
+                "runtime_instance_id".to_owned(),
+                Value::String(runtime_instance_id.clone()),
+            );
+            claim.insert("device_capacity".to_owned(), Value::from(limit));
+            claim.insert(
+                "runtime_active".to_owned(),
+                capacity.get("active").cloned().ok_or_else(|| {
+                    AppIpcError::new(
+                        "runtime_capacity_unavailable",
+                        "Runtime active capacity is not available",
+                    )
+                })?,
+            );
+            claim.insert(
+                "runtime_active_task_ids".to_owned(),
+                capacity.get("active_task_ids").cloned().ok_or_else(|| {
+                    AppIpcError::new(
+                        "runtime_capacity_unavailable",
+                        "Runtime active task identities are not available",
+                    )
+                })?,
+            );
+            return handle_task_runtime_request(method, Value::Object(params)).await;
         }
 
         if method.starts_with("projects.")
@@ -535,10 +622,19 @@ impl AppIpcServer {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        let (write_tx, mut write_rx) = mpsc::channel::<Value>(512);
+        let (priority_write_tx, mut priority_write_rx) =
+            mpsc::channel::<Value>(APP_IPC_WRITE_BUFFER_CAPACITY);
+        let (bulk_write_tx, mut bulk_write_rx) =
+            mpsc::channel::<Value>(APP_IPC_WRITE_BUFFER_CAPACITY);
         let mut writer_task = tokio::spawn(async move {
             let mut writer = writer;
-            while let Some(message) = write_rx.recv().await {
+            loop {
+                let message = tokio::select! {
+                    biased;
+                    Some(message) = priority_write_rx.recv() => message,
+                    Some(message) = bulk_write_rx.recv() => message,
+                    else => break,
+                };
                 write_message(&mut writer, &message)
                     .await
                     .map_err(|error| format!("failed to write app IPC message: {error}"))?;
@@ -546,16 +642,17 @@ impl AppIpcServer {
             Ok::<(), String>(())
         });
 
-        write_tx
+        priority_write_tx
             .send(self.ready_event())
             .await
             .map_err(|error| format!("failed to queue app IPC ready event: {error}"))?;
 
         let mut reader = BufReader::new(reader);
         let mut events = self.event_tx.subscribe();
-        let mut line = String::new();
+        let mut frame = Vec::new();
+        let mut bulk_backpressure_reported = false;
         loop {
-            line.clear();
+            frame.clear();
             tokio::select! {
                 writer = &mut writer_task => {
                     return match writer {
@@ -564,16 +661,22 @@ impl AppIpcServer {
                         Err(error) => Err(format!("app IPC writer task failed: {error}")),
                     };
                 }
-                read = reader.read_line(&mut line) => {
+                read = reader.read_until(b'\n', &mut frame) => {
                     let bytes_read = read
                         .map_err(|error| format!("failed to read app IPC request: {error}"))?;
                     if bytes_read == 0 {
                         writer_task.abort();
                         return Ok(());
                     }
+                    let request_line = match std::str::from_utf8(&frame) {
+                        Ok(line) => line.to_owned(),
+                        Err(error) => {
+                            log_invalid_app_ipc_frame(&frame, error);
+                            continue;
+                        }
+                    };
                     let server = self.clone();
-                    let response_tx = write_tx.clone();
-                    let request_line = line.clone();
+                    let response_tx = priority_write_tx.clone();
                     let (request_id, method) = app_ipc_request_metadata(&request_line);
                     tokio::spawn(async move {
                         let started_at = Instant::now();
@@ -652,16 +755,60 @@ impl AppIpcServer {
                 event = events.recv() => {
                     match event {
                         Ok(message) => {
-                            write_tx.send(message)
-                                .await
-                                .map_err(|error| format!("failed to queue app IPC event: {error}"))?;
+                            if is_bulk_app_ipc_event(&message) {
+                                match bulk_write_tx.try_send(message) {
+                                    Ok(()) => bulk_backpressure_reported = false,
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        if !bulk_backpressure_reported {
+                                            bulk_backpressure_reported = true;
+                                            write_executor_error_line(&format_executor_log(
+                                                "app IPC bulk event backpressure; transcript recovery requested",
+                                                &[(
+                                                    "capacity",
+                                                    APP_IPC_WRITE_BUFFER_CAPACITY.to_string(),
+                                                )],
+                                            ));
+                                            let lagged = self.event_message(
+                                                "executor.event_lagged",
+                                                json!({
+                                                    "skipped": 1,
+                                                    "reason": "ipc_backpressure",
+                                                }),
+                                            );
+                                            priority_write_tx.send(lagged)
+                                                .await
+                                                .map_err(|error| format!(
+                                                    "failed to queue app IPC backpressure event: {error}"
+                                                ))?;
+                                        }
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                                        return Err("app IPC bulk writer queue closed".to_owned());
+                                    }
+                                }
+                            } else {
+                                if priority_write_tx.capacity() == 0 {
+                                    write_executor_error_line(&format_executor_log(
+                                        "app IPC priority event backpressure",
+                                        &[(
+                                            "capacity",
+                                            APP_IPC_WRITE_BUFFER_CAPACITY.to_string(),
+                                        )],
+                                    ));
+                                }
+                                priority_write_tx.send(message)
+                                    .await
+                                    .map_err(|error| format!(
+                                        "failed to queue app IPC priority event: {error}"
+                                    ))?;
+                            }
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
                             let message = self.event_message(
                                 "executor.event_lagged",
                                 json!({ "skipped": skipped }),
                             );
-                            write_tx.send(message)
+                            priority_write_tx.send(message)
                                 .await
                                 .map_err(|error| format!("failed to queue app IPC lag event: {error}"))?;
                         }
@@ -693,12 +840,18 @@ impl AppIpcServer {
         }
 
         let args = string_list(params.get("args"))?;
-        let env = string_env(params.get("env"))?;
+        let path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
+        let mut env = string_env(params.get("env"))?;
         if is_workspace_file_command(command_key) {
+            if !env.contains_key(WORKSPACE_ROOTS_ENV) {
+                if let Some(path) = path.as_ref() {
+                    env.insert(WORKSPACE_ROOTS_ENV.to_owned(), path.clone());
+                }
+            }
             return serde_json::to_value(
                 execute_workspace_file_command_with_input(
                     command_key,
-                    string_field(&params, "path").or_else(|| string_field(&params, "cwd")),
+                    path,
                     args,
                     env,
                     string_field(&params, "stdin"),
@@ -747,6 +900,31 @@ impl AppIpcServer {
         serde_json::to_value(apply_post_processor(result, command.post_processor))
             .map_err(|error| AppIpcError::new("internal_error", error.to_string()))
     }
+}
+
+fn is_bulk_app_ipc_event(message: &Value) -> bool {
+    match message.get("event").and_then(Value::as_str) {
+        Some("runtime.plan.updated") => true,
+        Some("response.block.created") => {
+            app_ipc_event_data(message)
+                .and_then(|data| data.get("block"))
+                .and_then(|block| block.get("type"))
+                .and_then(Value::as_str)
+                == Some("file_changes")
+        }
+        Some("response.block.updated") => app_ipc_event_data(message)
+            .and_then(|data| data.get("updates"))
+            .is_some_and(|updates| {
+                updates.get("tool_output_delta").is_some() || updates.get("file_changes").is_some()
+            }),
+        _ => false,
+    }
+}
+
+fn app_ipc_event_data(message: &Value) -> Option<&Value> {
+    message
+        .get("payload")
+        .and_then(|payload| payload.get("data"))
 }
 
 async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Value, AppIpcError> {
@@ -1156,6 +1334,14 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "todos.bindings.batch" => {
+            let task_ids = string_list_field(params.get("task_ids"), "task_ids")?;
+            serialize_task_value(
+                runtime
+                    .list_task_bindings_batch(&task_ids)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "todos.bind" | "projects.bind_task" => {
             let project_id = required_task_string(&params, "project_id")?;
             let item_id = params.get("item_id").and_then(Value::as_str);
@@ -1182,11 +1368,30 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "runtime_tasks.system_context" => {
+            let device_id = required_task_string(&params, "device_id")?;
+            let runtime_task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .find_system_task_binding(device_id, runtime_task_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "runtime_tasks.user_context" => {
+            let device_id = required_task_string(&params, "device_id")?;
+            let runtime_task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .find_user_task_binding(device_id, runtime_task_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "runtime_tasks.unbind" => {
             let device_id = required_task_string(&params, "device_id")?;
             let runtime_task_id = required_task_string(&params, "task_id")?;
+            let item_id = params.get("item_id").and_then(Value::as_str);
             runtime
-                .unbind_task(device_id, runtime_task_id)
+                .unbind_task(device_id, runtime_task_id, item_id)
                 .map_err(task_runtime_error)?;
             Ok(json!({"unbound": true}))
         }
@@ -1259,6 +1464,15 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?
             })
         }
+        "executions.cancel" => {
+            let execution_id = required_task_i64(&params, "execution_id")?;
+            let note = params.get("note").and_then(Value::as_str);
+            serialize_task_value(
+                runtime
+                    .cancel_execution(execution_id, note)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "executions.claim_next" => {
             let input = task_input::<LocalExecutionClaim>(&params, "claim")?;
             serialize_task_value(
@@ -1286,39 +1500,89 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
-        "executions.complete" => {
+        "executions.start_requested"
+        | "executions.runtime_start"
+        | "executions.dispatch_unknown" => {
             let execution_id = required_task_i64(&params, "execution_id")?;
-            let note = params.get("note").and_then(Value::as_str);
-            serialize_task_value(
-                runtime
-                    .complete_execution(execution_id, note)
-                    .map_err(task_runtime_error)?,
-            )
+            let runtime_device_id = required_task_string(&params, "runtime_device_id")?;
+            let runtime_task_id = required_task_string(&params, "runtime_task_id")?;
+            let lease_seconds = params
+                .get("lease_seconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(300);
+            let execution = match method {
+                "executions.start_requested" => runtime.request_runtime_start(
+                    execution_id,
+                    runtime_device_id,
+                    runtime_task_id,
+                    lease_seconds,
+                ),
+                "executions.runtime_start" => runtime.confirm_runtime_accepted(
+                    execution_id,
+                    runtime_device_id,
+                    runtime_task_id,
+                    lease_seconds,
+                ),
+                _ => runtime.mark_runtime_dispatch_unknown(
+                    execution_id,
+                    runtime_device_id,
+                    runtime_task_id,
+                    params
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Runtime dispatch outcome is unknown"),
+                ),
+            }
+            .map_err(task_runtime_error)?;
+            serialize_task_value(execution)
         }
-        "executions.fail" => {
+        "executions.dispatch_failed" => {
             let execution_id = required_task_i64(&params, "execution_id")?;
             let error = params
                 .get("error")
                 .and_then(Value::as_str)
-                .unwrap_or("Local runtime run failed");
-            let requeue = params
-                .get("requeue")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
+                .unwrap_or("Local runtime preflight failed");
             serialize_task_value(
                 runtime
-                    .fail_execution(execution_id, error, requeue)
+                    .fail_runtime_preflight(execution_id, error)
                     .map_err(task_runtime_error)?,
             )
         }
         "executions.recover_stale" => {
-            let (requeued, failed) = runtime
+            let (requeued, unknown) = runtime
                 .recover_stale_local_executions()
                 .map_err(task_runtime_error)?;
             Ok(json!({
                 "requeued": requeued,
-                "failed": failed,
+                "unknown": unknown,
             }))
+        }
+        "executions.list_stale" => serialize_task_value(
+            runtime
+                .stale_local_executions()
+                .map_err(task_runtime_error)?,
+        ),
+        "executions.reconcile" => {
+            let execution_id = required_task_i64(&params, "execution_id")?;
+            let runtime_status = params
+                .get("runtime_status")
+                .and_then(Value::as_str)
+                .unwrap_or("missing");
+            let running = params
+                .get("running")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let turn_status = params.get("turn_status").and_then(Value::as_str);
+            serialize_task_value(
+                runtime
+                    .reconcile_execution_snapshot(
+                        execution_id,
+                        runtime_status,
+                        running,
+                        turn_status,
+                    )
+                    .map_err(task_runtime_error)?,
+            )
         }
         "files.list" => {
             let project_id = required_task_string(&params, "project_id")?;
@@ -1442,9 +1706,21 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
         "deliveries.finalize" => {
             let item_id = required_task_string(&params, "item_id")?;
             let delivery_id = required_task_string(&params, "delivery_id")?;
+            let input = params
+                .get("finalize")
+                .cloned()
+                .map(serde_json::from_value::<DeliveryFinalize>)
+                .transpose()
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "invalid_request",
+                        format!("invalid finalize input: {error}"),
+                    )
+                })?
+                .unwrap_or_default();
             serialize_task_value(
                 runtime
-                    .finalize_delivery(item_id, delivery_id)
+                    .finalize_delivery(item_id, delivery_id, input)
                     .map_err(task_runtime_error)?,
             )
         }
@@ -1689,14 +1965,15 @@ fn git_is_worktree(path: &str) -> bool {
 
 #[cfg(windows)]
 fn git_stdout(path: &str, args: &[&str]) -> Option<String> {
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    command
         .arg("-C")
         .arg(path)
         .args(args)
         .env_clear()
-        .envs(build_env(&HashMap::new()))
-        .output()
-        .ok()?;
+        .envs(build_env(&HashMap::new()));
+    crate::process::hide_windows_console(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1786,6 +2063,20 @@ fn log_app_ipc_request(
     write_executor_log_line(&format_executor_log(event, &fields));
 }
 
+fn log_invalid_app_ipc_frame(frame: &[u8], error: std::str::Utf8Error) {
+    let mut fields = vec![
+        ("bytes", frame.len().to_string()),
+        ("valid_up_to", error.valid_up_to().to_string()),
+    ];
+    if let Some(error_len) = error.error_len() {
+        fields.push(("invalid_sequence_bytes", error_len.to_string()));
+    }
+    write_executor_log_line(&format_executor_log(
+        "invalid app IPC frame discarded",
+        &fields,
+    ));
+}
+
 fn log_app_ipc_response_error(
     request_id: Option<&str>,
     method: Option<&str>,
@@ -1818,6 +2109,7 @@ pub async fn serve_app_ipc_sidecar(
     device_id: String,
     runtime_instance_id: String,
 ) -> Result<(), String> {
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     let server = AppIpcServer::new()
         .with_device_id(normalize_device_id(device_id))
         .with_runtime_instance_id(runtime_instance_id)
@@ -1881,18 +2173,18 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             None,
         )),
         "git_diff" => Some(command_definition(
-            "bash -lc <git_workspace_diff>",
-            &["bash", "-lc", GIT_WORKSPACE_DIFF_SCRIPT],
+            "bash -c <git_workspace_diff>",
+            &["bash", "-c", GIT_WORKSPACE_DIFF_SCRIPT],
             None,
         )),
         "git_branch_diff" => Some(command_definition(
-            "bash -lc <git_branch_diff>",
-            &["bash", "-lc", GIT_BRANCH_DIFF_SCRIPT],
+            "bash -c <git_branch_diff>",
+            &["bash", "-c", GIT_BRANCH_DIFF_SCRIPT],
             None,
         )),
         "git_branch_diff_shortstat" => Some(command_definition(
-            "bash -lc <git_branch_diff_shortstat>",
-            &["bash", "-lc", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
+            "bash -c <git_branch_diff_shortstat>",
+            &["bash", "-c", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
             None,
         )),
         "git_diff_unstaged" => Some(command_definition(
@@ -1941,9 +2233,41 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "--limit",
                 "20",
                 "--json",
-                "number,url,title,state,isDraft,statusCheckRollup",
+                "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus",
                 "--head",
             ],
+            Some(PostProcessor::Json),
+        )),
+        "git_github_pull_requests_batch" => Some(command_definition(
+            "gh api --method GET repos/{owner}/{repo}/pulls?state=all&per_page=100",
+            &[
+                "gh",
+                "api",
+                "--method",
+                "GET",
+                "repos/{owner}/{repo}/pulls?state=all&per_page=100",
+                "--jq",
+                concat!(
+                    "[.[] | {number, html_url, title, state, draft, ",
+                    "head: {ref: .head.ref}, updated_at, merged_at}]"
+                ),
+            ],
+            Some(PostProcessor::Json),
+        )),
+        "git_github_pull_request_merge_queue" => Some(command_definition(
+            "gh api graphql <pull-request-merge-queue-query>",
+            &[
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                "query=query($url:URI!){resource(url:$url){... on PullRequest{mergeQueueEntry{id}}}}",
+            ],
+            Some(PostProcessor::Json),
+        )),
+        "git_github_pull_request_merge_queue_batch" => Some(command_definition(
+            "gh api graphql",
+            &["gh", "api", "graphql"],
             Some(PostProcessor::Json),
         )),
         "git_gitlab_merge_requests" => Some(command_definition(
@@ -1962,6 +2286,24 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "--output",
                 "json",
                 "--source-branch",
+            ],
+            Some(PostProcessor::Json),
+        )),
+        "git_gitlab_merge_requests_batch" => Some(command_definition(
+            "glab mr list --all",
+            &[
+                "glab",
+                "mr",
+                "list",
+                "--all",
+                "--per-page",
+                "100",
+                "--order",
+                "updated_at",
+                "--sort",
+                "desc",
+                "--output",
+                "json",
             ],
             Some(PostProcessor::Json),
         )),
@@ -2135,19 +2477,26 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 }
 
 fn string_list(value: Option<&Value>) -> Result<Vec<String>, AppIpcError> {
+    string_list_field(value, "args")
+}
+
+fn string_list_field(value: Option<&Value>, field: &str) -> Result<Vec<String>, AppIpcError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
     let Some(items) = value.as_array() else {
-        return Err(AppIpcError::new("bad_request", "args must be a list"));
+        return Err(AppIpcError::new(
+            "bad_request",
+            format!("{field} must be a list"),
+        ));
     };
 
     items
         .iter()
         .map(|item| {
-            item.as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| AppIpcError::new("bad_request", "args must contain only strings"))
+            item.as_str().map(str::to_owned).ok_or_else(|| {
+                AppIpcError::new("bad_request", format!("{field} must contain only strings"))
+            })
         })
         .collect()
 }
@@ -2257,4 +2606,136 @@ where
     bytes.push(b'\n');
     writer.write_all(&bytes).await?;
     writer.flush().await
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{json, Value};
+    use tokio::io::{duplex, split, AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    use super::{is_bulk_app_ipc_event, local_app_command, AppIpcServer};
+
+    #[test]
+    fn prioritizes_chat_events_over_diagnostic_blocks() {
+        assert!(is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.updated",
+            "payload": {
+                "data": {
+                    "updates": {
+                        "tool_output_delta": "diagnostic output"
+                    }
+                }
+            }
+        })));
+        assert!(is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.created",
+            "payload": {
+                "data": {
+                    "block": {
+                        "type": "file_changes"
+                    }
+                }
+            }
+        })));
+        assert!(is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "runtime.plan.updated",
+        })));
+        assert!(!is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.created",
+            "payload": {
+                "data": {
+                    "block": {
+                        "type": "text"
+                    }
+                }
+            }
+        })));
+        assert!(!is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.updated",
+            "payload": {
+                "data": {
+                    "updates": {
+                        "status": "done"
+                    }
+                }
+            }
+        })));
+        assert!(!is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.output_text.delta",
+        })));
+        assert!(!is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.completed",
+        })));
+    }
+
+    #[test]
+    fn git_diff_commands_do_not_start_a_login_shell() {
+        for command_key in ["git_diff", "git_branch_diff", "git_branch_diff_shortstat"] {
+            let command = local_app_command(command_key).expect("command must be registered");
+
+            assert_eq!(command.argv.first(), Some(&"bash"));
+            assert_eq!(command.argv.get(1), Some(&"-c"));
+            assert!(!command.argv.contains(&"-l"));
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_utf8_frame_does_not_stop_app_ipc() {
+        let server = AppIpcServer::new();
+        let (client, executor) = duplex(4096);
+        let (client_reader, mut client_writer) = split(client);
+        let (executor_reader, executor_writer) = split(executor);
+        let serving = tokio::spawn(async move {
+            server
+                .serve_io(executor_reader, executor_writer)
+                .await
+                .expect("app IPC should stay available after a malformed frame");
+        });
+
+        client_writer
+            .write_all(b"\xff\n")
+            .await
+            .expect("invalid frame should be written");
+        client_writer
+            .write_all(
+                br#"{"type":"request","id":"health-after-invalid","method":"executor.health","params":{}}
+"#,
+            )
+            .await
+            .expect("health request should be written");
+        let mut client_reader = BufReader::new(client_reader);
+        let mut output = Vec::new();
+        for _ in 0..2 {
+            let mut line = String::new();
+            client_reader
+                .read_line(&mut line)
+                .await
+                .expect("app IPC output should remain valid UTF-8");
+            output.push(line);
+        }
+        client_writer
+            .shutdown()
+            .await
+            .expect("client input should close");
+        serving.await.expect("app IPC task should finish");
+
+        let messages = output
+            .iter()
+            .map(|line| serde_json::from_str::<Value>(line).expect("valid app IPC JSON"))
+            .collect::<Vec<_>>();
+        assert!(messages.iter().any(|message| {
+            message.get("event") == Some(&Value::String("executor.ready".to_owned()))
+        }));
+        assert!(messages.iter().any(|message| {
+            message.get("id") == Some(&Value::String("health-after-invalid".to_owned()))
+                && message.get("ok") == Some(&Value::Bool(true))
+        }));
+    }
 }

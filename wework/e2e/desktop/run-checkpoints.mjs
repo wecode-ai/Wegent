@@ -8,24 +8,72 @@ import { fileURLToPath } from 'node:url'
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
-const DEFAULT_PARALLEL_CHECKPOINTS = 3
+const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_SCENARIO_MODULES = {
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
+  'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'change-request-status': './scenarios/change-request-status.scenario.mjs',
+  'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
+  'local-file-preview': './scenarios/local-file-preview.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
+  'harness-apps': './scenarios/harness-apps.scenario.mjs',
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
+  'browser-toolbar-actions': './scenarios/embedded-browser-toolbar-actions.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
+  'runtime-terminal-convergence': './scenarios/runtime-terminal-convergence.scenario.mjs',
+  'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
+  'codex-notification-isolation': './scenarios/codex-notification-isolation.scenario.mjs',
+  'context-compaction': './scenarios/context-compaction.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
+  'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
+  'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
+  'task-attachments': './scenarios/task-attachments.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'change-request-status',
+  'claude-runtime',
+  'local-file-preview',
   'local-harness',
+  'harness-apps',
+  'offline-local-project-space',
+  'task-attachments',
+  'project-assignment-notification',
   'runtime-task-queue',
+  'runtime-terminal-convergence',
+  'running-conversation-history',
+  'codex-notification-isolation',
+  'context-compaction',
   'split-workbench',
+  'temporary-chat',
 ])
+const CLOUD_ONLY_CHECKPOINTS = new Set([
+  'cloud-git-worktree',
+  'cloud-worktree-capability',
+  'cloud-worktree-create',
+  'cloud-worktree-queued-cancel',
+  'cloud-worktree-tools',
+  'cloud-worktree-archive-restore',
+  'cloud-worktree-device-restart',
+])
+const COMPOSITE_CHECKPOINTS = new Map([
+  [
+    'cloud-git-worktree',
+    [
+      'cloud-worktree-capability',
+      'cloud-worktree-create',
+      'cloud-worktree-queued-cancel',
+      'cloud-worktree-tools',
+      'cloud-worktree-archive-restore',
+      'cloud-worktree-device-restart',
+    ],
+  ],
+])
+const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
+  checkpoint => !COMPOSITE_CHECKPOINTS.has(checkpoint)
+)
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const taskFlowPath = join(scriptDir, 'task-flow.e2e.mjs')
 const cliArgs = process.argv.slice(2)
@@ -189,11 +237,28 @@ function existingBuildManifest(env) {
 function requestedCheckpointRange(args) {
   if (args.length !== 2) return null
   const [flag, checkpoint] = args
-  const startIndex = DESKTOP_CHECKPOINTS.indexOf(checkpoint)
-  if (startIndex < 0) return null
   if (flag === '--segment') return [checkpoint]
-  if (flag === '--from-segment') return DESKTOP_CHECKPOINTS.slice(startIndex)
+  if (flag === '--from-segment') {
+    const startCheckpoint = COMPOSITE_CHECKPOINTS.get(checkpoint)?.[0] ?? checkpoint
+    const startIndex = DEFAULT_DESKTOP_CHECKPOINTS.indexOf(startCheckpoint)
+    if (startIndex < 0) return null
+    return DEFAULT_DESKTOP_CHECKPOINTS.slice(startIndex)
+  }
   return null
+}
+
+function expandCompositeCheckpoints(checkpoints) {
+  const expanded = []
+  const seen = new Set()
+  for (const checkpoint of checkpoints) {
+    const members = COMPOSITE_CHECKPOINTS.get(checkpoint) ?? [checkpoint]
+    for (const member of members) {
+      if (seen.has(member)) continue
+      seen.add(member)
+      expanded.push(member)
+    }
+  }
+  return expanded
 }
 
 function requestedParallelCheckpoints(args) {
@@ -210,7 +275,7 @@ function requestedParallelCheckpoints(args) {
       throw new Error(`Unknown desktop E2E checkpoint: ${checkpoint}`)
     }
   }
-  return checkpoints
+  return expandCompositeCheckpoints(checkpoints)
 }
 
 function parallelCheckpointLimit() {
@@ -219,6 +284,13 @@ function parallelCheckpointLimit() {
     throw new Error('WEWORK_E2E_PARALLEL_CHECKPOINTS must be a positive integer')
   }
   return value
+}
+
+function parallelCheckpointArgs(checkpoint) {
+  const scope = process.env.WEWORK_E2E_PARALLEL_SCOPE ?? 'cloud'
+  if (scope === 'cloud') return ['--cloud-only', '--segment', checkpoint]
+  if (scope === 'core') return ['--segment', checkpoint]
+  throw new Error('WEWORK_E2E_PARALLEL_SCOPE must be "cloud" or "core"')
 }
 
 async function runRequestedArgs() {
@@ -264,7 +336,7 @@ async function runParallelCheckpoints(checkpoints) {
       delete env.WEWORK_E2E_CONTROL_SERVER_PORT
       delete env.WEWORK_E2E_MODEL_SERVER_PORT
       console.log(`\n[desktop-e2e] START ${checkpoint}`)
-      const result = await runTaskFlow(['--cloud-only', '--segment', checkpoint], env, checkpoint)
+      const result = await runTaskFlow(parallelCheckpointArgs(checkpoint), env, checkpoint)
       if (result.code === 0) {
         console.log(
           `[desktop-e2e] PASS ${checkpoint}: duration=${formatDuration(result.durationMs)}, assertion-errors=none${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
@@ -320,7 +392,10 @@ async function runCheckpoints(checkpoints) {
         checkpoint
       )
       console.log(`\n[desktop-e2e] START ${checkpoint}`)
-      const result = await runTaskFlow(['--segment', checkpoint], env, checkpoint)
+      const args = CLOUD_ONLY_CHECKPOINTS.has(checkpoint)
+        ? ['--cloud-only', '--segment', checkpoint]
+        : ['--segment', checkpoint]
+      const result = await runTaskFlow(args, env, checkpoint)
 
       if (!buildManifest && !existingBuildManifest(env)) {
         try {
@@ -370,7 +445,7 @@ async function runCheckpoints(checkpoints) {
 }
 
 async function runAllCheckpoints() {
-  await runCheckpoints(DESKTOP_CHECKPOINTS)
+  await runCheckpoints(DEFAULT_DESKTOP_CHECKPOINTS)
 }
 
 if (requestedArgs.length > 0) {

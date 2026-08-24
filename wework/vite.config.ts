@@ -61,6 +61,9 @@ export default defineConfig({
     // Test artifacts may contain standalone plugin apps with dependencies that
     // are intentionally absent from Wework. Only crawl the desktop app entry.
     entries: ['index.html'],
+    // The drawing renderer loads Mermaid dynamically. Pre-bundle the concrete
+    // package so WebKit does not confuse it with syntax-language chunks.
+    include: ['mermaid', 'plantuml-encoder'],
   },
   build: {
     // File-viewer renderers are split into dedicated chunks; the desktop shell
@@ -105,9 +108,14 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     globals: true,
+    server: {
+      deps: {
+        inline: [/@file-viewer/, /@panzoom/],
+      },
+    },
     // Keep local and pre-push runs below the resource-contention point where
     // jsdom-heavy files begin timing out nondeterministically.
-    maxWorkers: 4,
+    maxWorkers: 2,
     exclude: [...configDefaults.exclude, 'e2e/**', 'test-results/**'],
     coverage: {
       provider: 'istanbul',

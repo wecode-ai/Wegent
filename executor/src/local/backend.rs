@@ -6,7 +6,10 @@ use std::{
     env,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -39,6 +42,7 @@ mod client;
 mod config;
 mod connection_controller;
 mod extension;
+mod runtime_rpc_encoding;
 mod session_events;
 mod socket_transport;
 mod tasks;
@@ -57,6 +61,7 @@ pub use upgrade::{LocalDeviceUpgradeHandler, LocalUpgradeService};
 use cancellation::LocalCancellationRegistry;
 use capability::{default_capability_sync_handler, DefaultCapabilityReporter};
 use extension::default_extension_handler;
+use runtime_rpc_encoding::encode_runtime_rpc_response;
 use session_events::{
     default_session_handler, session_result_payload, session_start_request, value_string, value_u16,
 };
@@ -79,7 +84,7 @@ const TERMINAL_EXIT_EVENT: &str = "terminal:exit";
 const TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
 const RUNTIME_EVENT_EVENT: &str = "runtime:event";
-const RUNTIME_EVENT_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+const RUNTIME_EVENT_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
@@ -130,6 +135,7 @@ pub struct LocalBackendRunner<
     extension_handler: Option<Arc<dyn DeviceExtensionHandler>>,
     cancellations: LocalCancellationRegistry,
     runtime_event_forwarder: Option<JoinHandle<()>>,
+    connection_status: Arc<AtomicBool>,
 }
 
 impl<T, R> Drop for LocalBackendRunner<T, R>
@@ -138,6 +144,7 @@ where
     R: TaskRunner,
 {
     fn drop(&mut self) {
+        self.connection_status.store(false, Ordering::Release);
         if let Some(forwarder) = self.runtime_event_forwarder.take() {
             forwarder.abort();
         }
@@ -149,7 +156,8 @@ where
     T: LocalBackendTransport,
 {
     pub fn new(config: LocalBackendConfig, transport: T) -> Self {
-        let (runtime_event_tx, runtime_event_rx) = broadcast::channel(512);
+        let (runtime_event_tx, runtime_event_rx) =
+            broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
         let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
             RuntimeWorkRpcHandler::with_event_sender(
                 config.device_id.clone(),
@@ -244,7 +252,13 @@ where
             extension_handler: None,
             cancellations: LocalCancellationRegistry::default(),
             runtime_event_forwarder: None,
+            connection_status: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn with_connection_status(mut self, connection_status: Arc<AtomicBool>) -> Self {
+        self.connection_status = connection_status;
+        self
     }
 
     pub fn with_task_controller<C>(mut self, controller: C) -> Self
@@ -310,29 +324,38 @@ where
         let client = self.client.clone();
         self.runtime_event_forwarder = Some(tokio::spawn(async move {
             loop {
-                match events.recv().await {
-                    Ok(event) => {
-                        if let Err(error) = client
-                            .call_raw_event(RUNTIME_EVENT_EVENT, event, RUNTIME_EVENT_ACK_TIMEOUT)
-                            .await
-                        {
-                            write_executor_error_line(&format_executor_log(
-                                "runtime event relay failed",
-                                &[("error", error)],
-                            ));
-                        }
-                    }
+                let event = match events.recv().await {
+                    Ok(event) => event,
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        let payload = json!({
+                        json!({
                             "type": "event",
                             "event": "executor.event_lagged",
                             "payload": {
                                 "skipped": skipped,
                             },
-                        });
-                        let _ = client.emit_raw_event(RUNTIME_EVENT_EVENT, payload).await;
+                        })
                     }
                     Err(broadcast::error::RecvError::Closed) => return,
+                };
+
+                let mut failure_logged = false;
+                loop {
+                    match client
+                        .emit_raw_event(RUNTIME_EVENT_EVENT, event.clone())
+                        .await
+                    {
+                        Ok(()) => break,
+                        Err(error) => {
+                            if !failure_logged {
+                                write_executor_error_line(&format_executor_log(
+                                    "runtime event relay failed; delivery will retry",
+                                    &[("error", error)],
+                                ));
+                                failure_logged = true;
+                            }
+                            sleep(RUNTIME_EVENT_RETRY_INTERVAL).await;
+                        }
+                    }
                 }
             }
         }));
@@ -343,6 +366,7 @@ where
     }
 
     pub async fn run_forever(self) -> Result<(), String> {
+        self.connection_status.store(false, Ordering::Release);
         self.register_handlers();
         let _session_gateway = if self.start_session_gateway {
             match &self.session_handler {
@@ -361,14 +385,17 @@ where
         loop {
             match self.connect_and_register().await {
                 Ok(()) => {
+                    self.connection_status.store(true, Ordering::Release);
                     write_executor_log_line(&local_backend_registered_log_line(
                         &self.client.config.backend_url,
                         &self.client.config.device_id,
                     ));
                     retry_delay = self.client.config.reconnect_delay;
                     self.heartbeat_until_reconnect().await;
+                    self.connection_status.store(false, Ordering::Release);
                 }
                 Err(error) => {
+                    self.connection_status.store(false, Ordering::Release);
                     write_executor_error_line(&local_backend_connection_failure_log_line(
                         &self.client.config.backend_url,
                         &error,
@@ -589,16 +616,14 @@ where
         Arc::new(move |payload| {
             let runtime_work_handler = runtime_work_handler.clone();
             Box::pin(async move {
+                let method = payload
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<missing>")
+                    .to_owned();
                 write_executor_log_line(&format_executor_log(
                     "runtime:rpc received",
-                    &[(
-                        "method",
-                        payload
-                            .get("method")
-                            .and_then(Value::as_str)
-                            .unwrap_or("<missing>")
-                            .to_owned(),
-                    )],
+                    &[("method", method.clone())],
                 ));
                 let Some(handler) = runtime_work_handler else {
                     return Some(runtime_error_response(AppIpcError::new(
@@ -631,7 +656,7 @@ where
                         ),
                     ],
                 ));
-                Some(response)
+                Some(encode_runtime_rpc_response(&method, response))
             })
         })
     }
@@ -641,13 +666,47 @@ where
         Arc::new(move |payload| {
             let capability_sync_handler = capability_sync_handler.clone();
             Box::pin(async move {
-                let Some(handler) = capability_sync_handler else {
-                    return Some(json!({
+                let started_at = Instant::now();
+                write_executor_log_line(&format_executor_log(
+                    "device capability sync started",
+                    &[(
+                        "mode",
+                        payload
+                            .get("mode")
+                            .and_then(Value::as_str)
+                            .unwrap_or("merge")
+                            .to_owned(),
+                    )],
+                ));
+                let response = match capability_sync_handler {
+                    Some(handler) => handler.handle_sync_capabilities(payload).await,
+                    None => json!({
                         "success": false,
                         "error": "Capability sync handler is not available",
-                    }));
+                    }),
                 };
-                Some(handler.handle_sync_capabilities(payload).await)
+                write_executor_log_line(&format_executor_log(
+                    "device capability sync finished",
+                    &[
+                        ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                        (
+                            "ok",
+                            response
+                                .get("success")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                                .to_string(),
+                        ),
+                        (
+                            "error",
+                            response
+                                .get("error")
+                                .map(Value::to_string)
+                                .unwrap_or_default(),
+                        ),
+                    ],
+                ));
+                Some(response)
             })
         })
     }
@@ -821,7 +880,14 @@ where
             .register_device(self.client.config.registration_timeout)
             .await
         {
-            Ok(true) => Ok(()),
+            Ok(true) => {
+                self.refresh_runtime_capacity().await;
+                if let Err(error) = self.client.emit_liveness_heartbeat().await {
+                    let _ = self.client.disconnect().await;
+                    return Err(error);
+                }
+                Ok(())
+            }
             Ok(false) => {
                 let _ = self.client.disconnect().await;
                 Err("device registration was rejected by backend".to_owned())
@@ -844,17 +910,13 @@ where
                     continue;
                 }
             }
-            let failure = match self
-                .client
-                .send_heartbeat(self.client.config.heartbeat_timeout)
-                .await
-            {
-                Ok(true) => {
+            self.refresh_runtime_capacity().await;
+            let failure = match self.client.emit_liveness_heartbeat().await {
+                Ok(()) => {
                     consecutive_failures = 0;
                     next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
                     continue;
                 }
-                Ok(false) => "heartbeat was rejected by backend".to_owned(),
                 Err(error) => error,
             };
 
@@ -869,6 +931,20 @@ where
             }
             next_heartbeat_at = Instant::now() + self.client.config.heartbeat_timeout;
         }
+    }
+
+    async fn refresh_runtime_capacity(&self) {
+        let capacity = match &self.runtime_work_handler {
+            Some(handler) => handler
+                .handle_runtime_rpc(json!({
+                    "method": "runtime.capacity.get",
+                    "payload": {},
+                }))
+                .await
+                .ok(),
+            None => None,
+        };
+        self.client.set_runtime_capacity(capacity);
     }
 
     async fn forward_terminal_events(&self) {
@@ -968,10 +1044,11 @@ pub fn local_backend_heartbeat_failure_log_line(backend_url: &str, error: &str) 
 }
 
 pub async fn serve_local_app_sidecar(config: DeviceConfig) -> Result<(), String> {
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
     let runtime_instance_id = backend_config.runtime_instance_id.clone();
-    let (runtime_event_tx, _) = broadcast::channel(512);
+    let (runtime_event_tx, _) = broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
     let backend_connection_snapshot: Arc<Mutex<Option<ConnectionConfig>>> =
         Arc::new(Mutex::new(None));
     let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
@@ -1162,5 +1239,28 @@ mod tests {
         assert_eq!(request.auth_token.as_deref(), Some("token"));
         assert_eq!(request.runtime_auth_token.as_deref(), Some("runtime-token"));
         assert_eq!(request.device_id.as_deref(), Some("local-device"));
+    }
+
+    #[test]
+    fn heartbeat_reports_runtime_capacity_and_installation_identity() {
+        let client =
+            LocalBackendClient::new(backend_config("local-device"), SocketIoTransport::default());
+        client.set_runtime_capacity(Some(json!({
+            "limit": 4,
+            "active": 2,
+            "active_task_ids": ["task-1", "task-2"],
+            "queued": 1,
+        })));
+
+        let payload = client.heartbeat_payload();
+
+        assert_eq!(payload["runtime_instance_id"], "runtime-1");
+        assert_eq!(payload["runtime_capacity"]["limit"], 4);
+        assert_eq!(payload["runtime_capacity"]["active"], 2);
+        assert_eq!(
+            payload["runtime_capacity"]["active_task_ids"],
+            json!(["task-1", "task-2"])
+        );
+        assert_eq!(payload["runtime_capacity"]["queued"], 1);
     }
 }

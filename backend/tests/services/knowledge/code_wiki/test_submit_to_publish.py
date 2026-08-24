@@ -238,11 +238,17 @@ def test_pages_sent_with_the_final_summary_are_published_too(
             generation_id=generation.id,
             sections=[
                 WikiContentSection(
+                    type="architecture",
+                    title="Architecture",
+                    content="overview",
+                    path="architecture",
+                ),
+                WikiContentSection(
                     type="chapter",
                     title="Backend Architecture",
                     content="body",
                     path="architecture/backend",
-                )
+                ),
             ],
             summary=WikiContentSummary(status="COMPLETED", head_commit=HEAD),
         ),
@@ -252,8 +258,48 @@ def test_pages_sent_with_the_final_summary_are_published_too(
     # in source_config, so rewording the heading renames the document without moving
     # it or changing the id the RAG index is keyed on.
     assert [doc.name for doc in _documents(test_db, knowledge_base.id)] == [
-        "Backend Architecture"
+        "Architecture",
+        "Backend Architecture",
     ]
+
+
+def test_missing_section_page_is_refused_until_the_agent_repairs_it(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    no_side_effects: FakeEffects,
+) -> None:
+    generation = _generation(test_db, test_user, knowledge_base.id)
+    _seed_page(test_db, generation, "index")
+    _seed_page(test_db, generation, "architecture/backend")
+
+    _submit(test_db, generation, status="COMPLETED", head_commit=HEAD)
+
+    test_db.refresh(generation)
+    assert generation.status == WikiGenerationStatus.FAILED
+    assert (
+        "required section overview pages are missing"
+        in generation.ext[PUBLISH_GATE_EXT_KEY]["reason"]
+    )
+    assert _documents(test_db, knowledge_base.id) == []
+
+    WikiService().save_generation_contents(
+        test_db,
+        WikiContentWriteRequest(
+            generation_id=generation.id,
+            sections=[
+                WikiContentSection(
+                    type="architecture",
+                    title="Architecture",
+                    content="overview",
+                    path="architecture",
+                )
+            ],
+        ),
+    )
+    _submit(test_db, generation, status="COMPLETED", head_commit=HEAD)
+
+    assert published_generation_id(knowledge_base) == generation.id
 
 
 def test_a_legacy_generation_only_records_its_status(
@@ -304,7 +350,7 @@ def _conclude(
     )
 
 
-BROKEN_DIAGRAM = "```mermaid\nflowchat TD\n  A --> B\n```"
+BROKEN_DIAGRAM = "```mermaid\nflowchart TD\n  subgraph RPC[RPC]\n    RPC[Request processor]\n  end\n```"
 
 
 def test_a_broken_diagram_is_reported_back_to_the_agent(
@@ -313,12 +359,7 @@ def test_a_broken_diagram_is_reported_back_to_the_agent(
     test_user: User,
     no_side_effects: FakeEffects,
 ):
-    """The version publishes and the agent is still told to fix the diagram.
-
-    Both halves matter. Diagrams never hold a version back, so this arrives on a run
-    that succeeded -- and that is precisely why it has to arrive: the run is about to
-    end, and the agent is the only party that can rewrite the page.
-    """
+    """The version stays private and the writer receives the exact correction."""
     generation = _generation(test_db, test_user, knowledge_base.id)
     _seed_page(test_db, generation, "index")
     (
@@ -329,10 +370,10 @@ def test_a_broken_diagram_is_reported_back_to_the_agent(
 
     response = _conclude(test_db, generation, status="COMPLETED", head_commit=HEAD)
 
-    assert response["published"] is True
+    assert response["published"] is False
     assert "index" in response["corrections"]
-    assert "flowchat" in response["corrections"]
-    assert generation.ext[PUBLISH_GATE_EXT_KEY]["correctionPending"] is True
+    assert "RPC" in response["corrections"]
+    assert generation.ext[PUBLISH_GATE_EXT_KEY]["correctionPending"] is False
 
 
 def test_a_successful_diagram_correction_closes_the_writer_window(
@@ -348,7 +389,8 @@ def test_a_successful_diagram_correction_closes_the_writer_window(
         .filter(WikiContent.generation_id == generation.id)
         .update({WikiContent.content: BROKEN_DIAGRAM})
     )
-    _conclude(test_db, generation, status="COMPLETED", head_commit=HEAD)
+    refused = _conclude(test_db, generation, status="COMPLETED", head_commit=HEAD)
+    assert refused["published"] is False
 
     response = _conclude(
         test_db,

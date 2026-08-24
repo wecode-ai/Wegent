@@ -44,6 +44,7 @@ export class RuntimeTaskMachine {
       goalStatus,
       continuable,
       unread,
+      workspaceCreationKind,
     } = this.state
     const executionKnown = executionPhase !== 'unknown'
     const isQueued = executionPhase === 'queued'
@@ -57,6 +58,7 @@ export class RuntimeTaskMachine {
       key: getRuntimeTaskLifecycleKey(address),
       address,
       task,
+      ...(workspaceCreationKind ? { workspaceCreationKind } : {}),
       execution: {
         phase: executionPhase,
         known: executionKnown,
@@ -65,6 +67,7 @@ export class RuntimeTaskMachine {
       turn: {
         phase: turnPhase,
         active: isTurnActive,
+        id: this.state.activeTurnId,
         outcome: turnOutcome,
       },
       goalStatus,

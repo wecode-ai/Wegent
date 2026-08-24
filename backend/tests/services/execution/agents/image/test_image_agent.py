@@ -14,9 +14,11 @@ Tests the image generation agent workflow including:
 import asyncio
 from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from app.services.attachment.public_link import verify_public_attachment_token
 from shared.models import EventType, ExecutionRequest
 
 
@@ -383,7 +385,7 @@ class TestImageAgent:
                 await agent.execute(sample_request, mock_emitter)
 
         # Assert
-        # Verify DONE event was emitted with data URL
+        # Verify upload receives the provider data URL while DONE uses the attachment URL
         done_calls = [
             call
             for call in mock_emitter.emit.call_args_list
@@ -392,8 +394,18 @@ class TestImageAgent:
         assert len(done_calls) == 1
         done_event = done_calls[0][0][0]
         image_urls = done_event.result["blocks"][0]["image_urls"]
-        assert len(image_urls) == 1
-        assert image_urls[0].startswith("data:image/jpeg;base64,")
+        assert image_urls == ["/api/attachments/999/download"]
+        image_download_urls = done_event.result["blocks"][0]["image_download_urls"]
+        download_token = parse_qs(urlparse(image_download_urls[0]).query)["token"][0]
+        token_payload = verify_public_attachment_token(download_token)
+        assert token_payload["attachment_id"] == 999
+        assert token_payload["exp"] - token_payload["iat"] == 3600
+        assert (
+            done_event.result["blocks"][0]["image_download_url_expires_in_seconds"]
+            == 3600
+        )
+        uploaded_url = mock_upload.await_args.kwargs["image_url"]
+        assert uploaded_url.startswith("data:image/jpeg;base64,")
 
     @pytest.mark.asyncio
     async def test_execute_with_multiple_images(
@@ -445,8 +457,12 @@ class TestImageAgent:
         done_event = done_calls[0][0][0]
         image_block = done_event.result["blocks"][0]
         assert image_block["image_count"] == 3
-        assert len(image_block["image_urls"]) == 3
-        assert len(image_block["image_attachment_ids"]) == 3
+        assert image_block["image_urls"] == [
+            "/api/attachments/1001/download",
+            "/api/attachments/1002/download",
+            "/api/attachments/1003/download",
+        ]
+        assert image_block["image_attachment_ids"] == [1001, 1002, 1003]
 
     def test_agent_name(self):
         """Test agent name property."""

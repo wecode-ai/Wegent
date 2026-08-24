@@ -388,6 +388,16 @@ class TaskQueryMixin:
         add_group_chat_info_to_task(
             db, task_id=task_id, task_dict=task_dict, user_id=user_id
         )
+        from app.services.execution.agents.video.extensions import (
+            refresh_extended_video_result_urls,
+        )
+
+        refresh_extended_video_result_urls(task_dict, user_id)
+        from app.services.execution.agents.image.download_url import (
+            refresh_task_image_download_urls,
+        )
+
+        refresh_task_image_download_urls(task_dict)
         return task_dict
 
     def get_task_skills(

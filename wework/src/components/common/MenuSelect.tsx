@@ -17,6 +17,8 @@ export function MenuSelect({
   onChange,
   pill = false,
   disabled = false,
+  placeholder,
+  invalid = false,
 }: {
   testId: string
   value: string
@@ -24,20 +26,29 @@ export function MenuSelect({
   onChange: (value: string) => void
   pill?: boolean
   disabled?: boolean
+  placeholder?: string
+  invalid?: boolean
 }) {
   const selected = options.find(option => option.value === value)
+  const selectionState = value ? 'selected' : 'unselected'
   return (
     <PopupMenu
       testId={testId}
       disabled={disabled}
+      invalid={invalid}
       trigger={
         <span
+          data-selection-state={selectionState}
+          data-invalid={invalid || undefined}
           className={cn(
             'inline-flex h-8 max-w-64 items-center justify-end gap-1.5 rounded-full px-2 text-sm font-medium',
-            pill && 'bg-surface'
+            pill && 'bg-surface',
+            selectionState === 'selected' && 'text-text-primary',
+            selectionState === 'unselected' && 'text-text-muted',
+            invalid && 'text-destructive ring-1 ring-destructive/40'
           )}
         >
-          <span className="truncate">{selected?.label ?? value}</span>
+          <span className="truncate">{selected?.label ?? placeholder ?? value}</span>
           <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
         </span>
       }
@@ -165,6 +176,7 @@ export function PopupMenu({
   children,
   keepOpen = false,
   disabled = false,
+  invalid = false,
   menuWidth,
 }: {
   testId: string
@@ -172,6 +184,7 @@ export function PopupMenu({
   children: (close: () => void) => ReactNode
   keepOpen?: boolean
   disabled?: boolean
+  invalid?: boolean
   menuWidth?: number
 }) {
   const rootRef = useRef<HTMLSpanElement>(null)
@@ -223,6 +236,7 @@ export function PopupMenu({
         type="button"
         data-testid={testId}
         disabled={disabled}
+        aria-invalid={invalid || undefined}
         onClick={() => setOpen(current => !current)}
         className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50"
         aria-haspopup="menu"
