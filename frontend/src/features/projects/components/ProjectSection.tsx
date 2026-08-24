@@ -39,11 +39,7 @@ import { paths } from '@/config/paths'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { TaskInlineRename } from '@/components/common/TaskInlineRename'
 import { taskApis } from '@/apis/tasks'
-import {
-  canImportOrdinaryTaskToProject,
-  canStartProjectConversation,
-  isWorkspaceProject,
-} from '../utils/projectClassification'
+import { canImportOrdinaryTaskToProject, isWorkspaceProject } from '../utils/projectClassification'
 
 interface ProjectSectionProps {
   onTaskSelect?: () => void
@@ -69,12 +65,17 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
       selectTask(null)
 
       const params = new URLSearchParams()
-      params.set('projectId', String(project.id))
-      const deviceId = project.config?.execution?.deviceId
-      if (deviceId) {
-        params.set('deviceId', deviceId)
+      if (isWorkspaceProject(project)) {
+        params.set('projectId', String(project.id))
+        const deviceId = project.config?.execution?.deviceId
+        if (deviceId) {
+          params.set('deviceId', deviceId)
+        }
+        router.push(`/devices/chat?${params.toString()}`)
+      } else {
+        params.set('conversationGroupId', String(project.id))
+        router.push(`${paths.chat.getHref()}?${params.toString()}`)
       }
-      router.push(`/devices/chat?${params.toString()}`)
       onTaskSelect?.()
     },
     [setSelectedProjectTaskId, selectTask, router, onTaskSelect]
@@ -204,9 +205,7 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
                   selectedProjectTaskId={selectedProjectTaskId}
                   onRefreshProjects={refreshProjects}
                   isWorkspace={isWorkspaceProject(project)}
-                  onNewConversation={
-                    canStartProjectConversation(project) ? handleNewConversation : undefined
-                  }
+                  onNewConversation={handleNewConversation}
                 />
               </DroppableProject>
             ))
@@ -339,7 +338,7 @@ function ProjectItem({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* New conversation button (workspace projects only, on hover) */}
+        {/* New conversation button (on hover) */}
         {onNewConversation && (
           <Button
             variant="ghost"

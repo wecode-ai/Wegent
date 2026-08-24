@@ -236,6 +236,29 @@ describe('TeamSelectorButton', () => {
     expect(mockPush).toHaveBeenCalledWith('/chat?teamId=2&projectId=2180&deviceId=cloud-device')
   })
 
+  it('preserves conversation group context when switching to an agent on another page', async () => {
+    mockSearchParams = new URLSearchParams({
+      conversationGroupId: '31',
+      taskId: '99',
+    })
+    const taskTeam = makeTeam({ id: 1, name: 'task-agent', bind_mode: ['task'] })
+    const chatTeam = makeTeam({ id: 2, name: 'chat-agent', bind_mode: ['chat'] })
+
+    render(
+      <TeamSelectorButton
+        selectedTeam={taskTeam}
+        setSelectedTeam={jest.fn()}
+        teams={[taskTeam, chatTeam]}
+        disabled={false}
+        currentMode="task"
+      />
+    )
+
+    fireEvent.click(await screen.findByTestId('team-option-chat-agent'))
+
+    expect(mockPush).toHaveBeenCalledWith('/chat?teamId=2&conversationGroupId=31')
+  })
+
   it('shows five recent teams and fills missing entries by update time', async () => {
     mockedUserApis.getRecentTeams.mockResolvedValueOnce([
       { id: 3, name: 'team-3', is_system: false },

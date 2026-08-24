@@ -210,14 +210,21 @@ describe('project sidebar behavior', () => {
     expect(screen.getByTestId('project-create-dialog-mode')).toHaveTextContent('workspace')
   })
 
-  test('shows the new conversation shortcut only for projects with a workspace path', () => {
+  test('starts a new conversation inside either a group or a workspace project', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
     fireEvent.click(screen.getByTestId('project-section-toggle'))
 
-    expect(screen.getAllByTestId('project-new-conversation-btn')).toHaveLength(1)
-    expect(screen.getByText('pathless-project')).toBeInTheDocument()
-    expect(screen.getByText('workspace-project')).toBeInTheDocument()
+    const newConversationButtons = screen.getAllByTestId('project-new-conversation-btn')
+    expect(newConversationButtons).toHaveLength(2)
+
+    fireEvent.click(newConversationButtons[0])
+    expect(pushMock).toHaveBeenLastCalledWith('/chat?conversationGroupId=1')
+
+    fireEvent.click(newConversationButtons[1])
+    expect(pushMock).toHaveBeenLastCalledWith('/devices/chat?projectId=2&deviceId=device-1')
+    expect(setSelectedProjectTaskIdMock).toHaveBeenCalledWith(null)
+    expect(setSelectedTaskMock).toHaveBeenCalledWith(null)
   })
 
   test('opens workspace project tasks in device chat from the unified section', () => {
