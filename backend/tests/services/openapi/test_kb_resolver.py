@@ -73,6 +73,49 @@ class TestKnowledgeBaseNameResolver:
             assert len(result.not_found) == 0
             assert len(result.no_access) == 0
 
+    def test_resolve_folder_scope_with_no_explicit_documents(self, resolver, mock_db):
+        """Test resolving a folder-only scope persisted with an empty document list."""
+        accessible_kb = self._create_mock_accessible_kb(123, "default", "my_kb")
+        grouped_response = self._create_mock_grouped_response(
+            created_by_me=[accessible_kb]
+        )
+
+        with (
+            patch(
+                "app.services.openapi.kb_resolver.KnowledgeService."
+                "get_all_knowledge_bases_grouped",
+                return_value=grouped_response,
+            ),
+            patch(
+                "app.services.openapi.kb_resolver.KnowledgeFolderService."
+                "resolve_document_ids_for_scope",
+                return_value=[237],
+            ) as mock_resolve_scope,
+        ):
+            result = resolver.resolve(
+                [
+                    {
+                        "namespace": "default",
+                        "name": "my_kb",
+                        "scope_specified": True,
+                        "folder_ids": [18],
+                        "document_ids": [],
+                        "include_subfolders": True,
+                    }
+                ],
+                raise_on_error=True,
+            )
+
+        assert result.resolved[0].resolved_document_ids == [237]
+        mock_resolve_scope.assert_called_once_with(
+            db=mock_db,
+            knowledge_base_id=123,
+            user_id=1,
+            folder_ids=[18],
+            document_ids=None,
+            include_subfolders=True,
+        )
+
     def test_resolve_multiple_kbs_success(self, resolver, mock_db):
         """Test resolving multiple knowledge bases successfully."""
         accessible_kb1 = self._create_mock_accessible_kb(1, "default", "kb1")

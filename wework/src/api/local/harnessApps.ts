@@ -24,6 +24,10 @@ export interface HarnessAppManifest {
     dsh: string
     node: string
   }
+  plugins?: Array<{
+    spec: string
+    path?: string
+  }>
   defaultModel?: Record<string, unknown>
 }
 
@@ -40,6 +44,7 @@ export interface HarnessAppInstallation {
   error: string | null
   smartAppId?: number | null
   releaseId?: number | null
+  source: 'managed' | 'linked' | 'market'
 }
 
 export interface HarnessAppPreview {
@@ -62,6 +67,32 @@ export interface HarnessAppSavedExport extends HarnessAppExport {
 }
 
 export const harnessAppsApi = {
+  createDirectory(input: {
+    parentPath: string
+    name: string
+    displayName: string
+    description: string
+  }) {
+    return invoke<HarnessAppInstallation>('create_harness_app_directory', input)
+  },
+  linkDirectory(directoryPath: string) {
+    return invoke<HarnessAppInstallation>('link_harness_app_directory', { directoryPath })
+  },
+  addPlugin(installationId: string, pluginSpec: string) {
+    return invoke<HarnessAppInstallation>('add_harness_app_plugin', {
+      installationId,
+      pluginSpec,
+    })
+  },
+  copyToDirectory(
+    installationId: string,
+    input: { parentPath: string; name: string; displayName: string }
+  ) {
+    return invoke<HarnessAppInstallation>('copy_harness_app_to_directory', {
+      installationId,
+      ...input,
+    })
+  },
   preview(archivePath: string) {
     return invoke<HarnessAppPreview>('preview_harness_app', { archivePath })
   },

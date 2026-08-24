@@ -1,24 +1,13 @@
+import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { afterEach, describe, expect, test } from 'vitest'
 
-const temporaryDirectories = []
-const processes = []
 const OUTPUT_TIMEOUT_MS = 15_000
 
-afterEach(async () => {
-  for (const process of processes.splice(0)) {
-    if (process.exitCode === null && process.signalCode === null) process.kill('SIGKILL')
-  }
-  await Promise.all(
-    temporaryDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true }))
-  )
-})
-
-function waitForOutput(stream, pattern, timeoutMs = OUTPUT_TIMEOUT_MS, diagnostics = () => '') {
+function waitForOutput(stream, pattern, diagnostics = () => '') {
   return new Promise((resolveOutput, rejectOutput) => {
     let output = ''
     const timeout = setTimeout(() => {
@@ -28,7 +17,7 @@ function waitForOutput(stream, pattern, timeoutMs = OUTPUT_TIMEOUT_MS, diagnosti
           `Timed out waiting for ${pattern}; output=${JSON.stringify(output)}; diagnostics=${JSON.stringify(diagnostics())}`
         )
       )
-    }, timeoutMs)
+    }, OUTPUT_TIMEOUT_MS)
     const onData = chunk => {
       output += chunk
       const match = output.match(pattern)
@@ -44,18 +33,43 @@ function waitForOutput(stream, pattern, timeoutMs = OUTPUT_TIMEOUT_MS, diagnosti
   })
 }
 
-describe('dev executor reload', { timeout: 30_000 }, () => {
-  test('builds once initially and rebuilds after a source change', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'wework-executor-reload-'))
-    temporaryDirectories.push(directory)
-    const executorDirectory = join(directory, 'executor')
-    const sourceDirectory = join(executorDirectory, 'src')
-    const sourcePath = join(sourceDirectory, 'main.rs')
-    const targetDirectory = join(directory, 'target')
-    const binDirectory = join(directory, 'bin')
-    const buildLog = join(directory, 'build.log')
-    const executorTemplate = join(directory, 'fake-executor.mjs')
-    const cargo = join(binDirectory, 'cargo')
+async function stopProcess(process) {
+  if (process.exitCode !== null || process.signalCode !== null) return
+  const exited = new Promise(resolveExit => process.once('exit', resolveExit))
+  process.kill('SIGTERM')
+  await Promise.race([exited, delay(2_500)])
+  if (process.exitCode === null && process.signalCode === null) {
+    process.kill('SIGKILL')
+    await exited
+  }
+}
+
+async function waitForProcessExit(pid) {
+  const deadline = Date.now() + 2_500
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0)
+    } catch {
+      return
+    }
+    await delay(50)
+  }
+  assert.fail(`Executor process ${pid} did not exit`)
+}
+
+async function run() {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-executor-reload-'))
+  const executorDirectory = join(directory, 'executor')
+  const sourceDirectory = join(executorDirectory, 'src')
+  const sourcePath = join(sourceDirectory, 'main.rs')
+  const targetDirectory = join(directory, 'target')
+  const binDirectory = join(directory, 'bin')
+  const buildLog = join(directory, 'build.log')
+  const executorTemplate = join(directory, 'fake-executor.mjs')
+  const cargo = join(binDirectory, 'cargo')
+  let watcher = null
+
+  try {
     await mkdir(sourceDirectory, { recursive: true })
     await mkdir(binDirectory, { recursive: true })
     await writeFile(join(executorDirectory, 'Cargo.toml'), '[package]\nname = "fake"\n')
@@ -64,7 +78,7 @@ describe('dev executor reload', { timeout: 30_000 }, () => {
     await writeFile(
       executorTemplate,
       `#!/usr/bin/env node
-process.stdout.write(\`ready \${process.pid}\\n\`)
+console.log(\`ready \${process.pid}\`)
 process.stdin.on('data', chunk => {
   if (chunk.toString().trim() === 'crash') process.exit(1)
   process.stdout.write(\`echo:\${chunk}\`)
@@ -87,7 +101,7 @@ chmodSync(output, 0o755)
     )
     await chmod(cargo, 0o755)
 
-    const watcher = spawn(
+    watcher = spawn(
       process.execPath,
       [resolve('scripts/dev-executor-reload.mjs'), 'app-ipc-server'],
       {
@@ -103,49 +117,39 @@ chmodSync(output, 0o755)
         stdio: ['pipe', 'pipe', 'pipe'],
       }
     )
-    processes.push(watcher)
     let watcherStderr = ''
     watcher.stderr.on('data', chunk => {
       watcherStderr += chunk
     })
 
-    const firstReady = await waitForOutput(
-      watcher.stdout,
-      /ready (\d+)\n/,
-      OUTPUT_TIMEOUT_MS,
-      () => watcherStderr
-    )
+    const firstReady = await waitForOutput(watcher.stdout, /ready (\d+)\n/, () => watcherStderr)
     await writeFile(sourcePath, 'fn main() { println!("changed"); }\n')
     const secondReady = await waitForOutput(watcher.stdout, /ready (\d+)\n/)
-    expect(secondReady[1]).not.toBe(firstReady[1])
-    expect((await readFile(buildLog, 'utf8')).trim().split('\n')).toHaveLength(2)
+    assert.notEqual(secondReady[1], firstReady[1])
+    assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, 2)
 
     const now = new Date()
     await utimes(sourcePath, now, now)
     await delay(700)
-    expect((await readFile(buildLog, 'utf8')).trim().split('\n')).toHaveLength(2)
+    assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, 2)
 
     watcher.stdin.write('ping\n')
-    await expect(waitForOutput(watcher.stdout, /echo:ping\n/)).resolves.toBeTruthy()
+    await waitForOutput(watcher.stdout, /echo:ping\n/)
 
     const thirdReadyOutput = waitForOutput(watcher.stdout, /ready (\d+)\n/)
     watcher.stdin.write('crash\n')
     const thirdReady = await thirdReadyOutput
-    expect(thirdReady[1]).not.toBe(secondReady[1])
-    expect((await readFile(buildLog, 'utf8')).trim().split('\n')).toHaveLength(2)
+    assert.notEqual(thirdReady[1], secondReady[1])
+    assert.equal((await readFile(buildLog, 'utf8')).trim().split('\n').length, 2)
 
-    watcher.kill('SIGTERM')
-    await new Promise(resolveExit => watcher.once('exit', resolveExit))
-    processes.splice(processes.indexOf(watcher), 1)
-    await expect
-      .poll(() => {
-        try {
-          process.kill(Number(thirdReady[1]), 0)
-          return true
-        } catch {
-          return false
-        }
-      })
-      .toBe(false)
-  }, 20_000)
-})
+    await stopProcess(watcher)
+    await waitForProcessExit(Number(thirdReady[1]))
+    watcher = null
+  } finally {
+    if (watcher) await stopProcess(watcher)
+    await rm(directory, { recursive: true, force: true })
+  }
+}
+
+await run()
+process.stdout.write('dev executor reload integration test passed\n')
