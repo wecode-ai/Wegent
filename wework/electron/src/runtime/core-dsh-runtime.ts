@@ -1,5 +1,6 @@
 import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import semver from 'semver'
 
 export const CORE_DSH_VERSION = '0.1.1-rc.2'
 const PROFILE_NAME = 'wework-core'
@@ -112,17 +113,29 @@ export async function selectBundledDshRuntime(
   role: string,
   version: string
 ): Promise<BundledDshRuntime> {
+  return selectBundledDshRuntimeMatching(root, role, version)
+}
+
+export async function selectBundledDshRuntimeMatching(
+  root: string,
+  role: string,
+  versionRequirement: string
+): Promise<BundledDshRuntime> {
   const absoluteRoot = resolve(root)
   const roots = (await isRuntimeRoot(absoluteRoot))
     ? [absoluteRoot]
     : await runtimeDirectories(absoluteRoot)
   const candidates = (await Promise.all(roots.map(candidate => readRuntime(candidate)))).filter(
     (runtime): runtime is BundledDshRuntime =>
-      runtime !== null && runtime.role === role && runtime.version === version
+      runtime !== null &&
+      runtime.role === role &&
+      semver.satisfies(runtime.version, versionRequirement, { includePrerelease: true })
   )
-  const selected = candidates[0]
+  const selected = candidates.sort((left, right) => semver.rcompare(left.version, right.version))[0]
   if (!selected) {
-    throw new Error(`Bundled ${role} DSH runtime ${version} is unavailable under ${absoluteRoot}`)
+    throw new Error(
+      `Bundled ${role} DSH runtime matching ${versionRequirement} is unavailable under ${absoluteRoot}`
+    )
   }
   return selected
 }

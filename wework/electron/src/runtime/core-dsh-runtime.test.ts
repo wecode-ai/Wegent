@@ -1,7 +1,12 @@
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { CORE_DSH_VERSION, prepareCoreDshLaunch, selectCoreDshRuntime } from './core-dsh-runtime.js'
+import {
+  CORE_DSH_VERSION,
+  prepareCoreDshLaunch,
+  selectBundledDshRuntimeMatching,
+  selectCoreDshRuntime,
+} from './core-dsh-runtime.js'
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('core DSH runtime', () => {
@@ -22,6 +27,25 @@ describe('core DSH runtime', () => {
 
     await expect(selectCoreDshRuntime(root.path)).resolves.toMatchObject({
       version: CORE_DSH_VERSION,
+    })
+    await root.remove()
+  })
+
+  test('selects the highest bundled runtime satisfying a version requirement', async () => {
+    const root = await temporaryDirectory('workbench-dsh-selection-')
+    await writeRuntime(root.path, '0.1.0-rc.7', '7')
+    await writeRuntime(root.path, '0.1.0-rc.8', '8')
+    await writeRuntime(root.path, '0.1.1-rc.1', '9')
+
+    await expect(
+      selectBundledDshRuntimeMatching(root.path, 'workbench', '>=0.1.0-rc.7 <=0.1.0-rc.8')
+    ).resolves.toMatchObject({
+      version: '0.1.0-rc.8',
+    })
+    await expect(
+      selectBundledDshRuntimeMatching(root.path, 'workbench', '0.1.0-rc.7')
+    ).resolves.toMatchObject({
+      version: '0.1.0-rc.7',
     })
     await root.remove()
   })

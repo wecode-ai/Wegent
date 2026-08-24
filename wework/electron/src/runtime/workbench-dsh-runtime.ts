@@ -4,7 +4,7 @@ import { basename, join, resolve, sep } from 'node:path'
 import semver from 'semver'
 import * as tar from 'tar'
 import {
-  selectBundledDshRuntime,
+  selectBundledDshRuntimeMatching,
   type BundledDshRuntime,
   type CommandRunner,
 } from './core-dsh-runtime.js'
@@ -61,10 +61,10 @@ export interface WorkbenchDshLaunch {
 export async function prepareWorkbenchDshLaunch(
   options: PrepareWorkbenchDshOptions
 ): Promise<WorkbenchDshLaunch> {
-  const runtime = await selectBundledDshRuntime(
+  const runtime = await selectBundledDshRuntimeMatching(
     options.runtimeRoot,
     'workbench',
-    WORKBENCH_DSH_VERSION
+    options.manifest.requirements.dsh
   )
   validateRequirements(options.manifest, runtime)
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
@@ -331,6 +331,12 @@ async function installPluginSpecs(
 
 async function patchModelProvider(path: string): Promise<void> {
   const source = await readFile(path, 'utf8')
+  await writeFile(path, injectModelProviderPatch(source), {
+    mode: 0o600,
+  })
+}
+
+export function injectModelProviderPatch(source: string): string {
   let provider = false
   let model = false
   const patched = source.split('\n').map(line => {
@@ -350,17 +356,16 @@ async function patchModelProvider(path: string): Promise<void> {
     throw new Error('Smart app exposes an incomplete provider/model pair')
   }
   if (!provider) {
-    patched.push(
-      '',
+    const existing = patched.join('\n').trim()
+    const prefix = existing && existing !== '[]' ? `${existing}\n` : ''
+    return `${prefix}${[
       '- id: agent-default-model',
       '  config:',
       '    provider: wework-local',
-      '    model: wework-selected'
-    )
+      '    model: wework-selected',
+    ].join('\n')}\n`
   }
-  await writeFile(path, `${patched.join('\n').replace(/\n+$/, '')}\n`, {
-    mode: 0o600,
-  })
+  return `${patched.join('\n').replace(/\n+$/, '')}\n`
 }
 
 async function writeModelSettings(dshHome: string, baseUrl: string): Promise<void> {

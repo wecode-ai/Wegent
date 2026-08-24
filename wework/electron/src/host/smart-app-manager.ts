@@ -464,7 +464,9 @@ export class SmartAppManager {
       const installations = await this.readRegistry()
       const installation = requiredInstallation(installations, installationId)
       await this.writeRegistry(installations.filter(item => item.id !== installationId))
-      await rm(dirname(installation.packagePath), { recursive: true, force: true })
+      if (installation.source !== 'linked') {
+        await rm(dirname(installation.packagePath), { recursive: true, force: true })
+      }
       if (deleteData) {
         await rm(join(this.root(), 'instances', safeName(installationId)), {
           recursive: true,
@@ -868,15 +870,6 @@ function validateManifest(manifest: WorkbenchAppManifest): void {
     !semver.validRange(manifest.requirements.node, { includePrerelease: true })
   ) {
     throw new Error('Smart app runtime requirements are invalid')
-  }
-  if (
-    !semver.satisfies(WORKBENCH_DSH_VERSION, manifest.requirements.dsh, {
-      includePrerelease: true,
-    })
-  ) {
-    throw new Error(
-      `Smart app requires DeepSeek Harness ${manifest.requirements.dsh}, but Wework provides ${WORKBENCH_DSH_VERSION}`
-    )
   }
   const packages = manifest.packages ?? []
   const names = new Set<string>()

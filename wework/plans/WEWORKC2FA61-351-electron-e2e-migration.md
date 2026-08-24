@@ -4,7 +4,7 @@
 
 ## 审计基线与结论
 
-- `origin/main`：`9dc36dc02b137c827bb836a38c0bb64963a38a02`
+- 合并时 `origin/main`：`e36f29ed4`
 - PR 基线 HEAD：`14f04e765b13eae2276096d26c18d8e1b83e9ea1`
 - `origin/main` 定义 44 个 desktop checkpoint、4 个 plugin segment，并包含
   22 个独立 scenario 文件。
@@ -205,11 +205,17 @@ WEWORK_DESKTOP_RUNTIME=electron
   `2026-08-24T17-14-49-653Z-13762` 中两次
   `git rev-parse --is-inside-work-tree` 均返回 `true`。
 - 新增原生职责 E2E 均通过：启动 loading
-  `2026-08-24T16-59-36-435Z-77306`、titlebar/原生窗口
-  `2026-08-24T17-00-53-675Z-80388`、Tray/Dock/close-to-tray
-  `2026-08-24T17-00-55-126Z-80687`。
-- Electron 单测：34 files / 115 tests；Frontend 原生职责聚焦测试：
-  3 files / 11 tests；Electron 与 Wework TypeScript 类型检查均通过。
+  `2026-08-24T17-36-48-289Z-40795`、titlebar/原生窗口
+  `2026-08-24T17-37-12-360Z-41311`、Tray/Dock/close-to-tray
+  `2026-08-24T17-37-37-178Z-41887`；合并 main 后新增的 workspace tabs
+  状态保持覆盖也通过，证据为 `2026-08-24T17-35-41-358Z-39141`。
+- `harness-apps` 在合并 main 后暴露并修复了 3 个 Electron 主流程缺陷：
+  空 YAML patch 的模型注入、关联目录卸载误删父目录、工作台 DSH 多版本选择。
+  `0.1.0-rc.7` 与 `0.1.0-rc.8` 均重新纳入物化运行时，原 E2E 未修改；完整
+  Smart App 创建、预览、插件、导出、关联、导入、多版本启动与停止流程通过，
+  证据为 `2026-08-24T17-59-37-880Z-67616`。
+- Electron 单测：35 files / 120 tests；Frontend 聚焦测试：
+  3 files / 110 tests；Electron 与 Wework TypeScript 类型检查均通过。
 - Tauri 删除门禁：排除本迁移记录与锁文件后，对源码、脚本、配置、文档和 CI
   扫描 `tauri`、`src-tauri`、`isTauri`、`data-tauri`、
   `@tauri-apps`、`WEWORK_E2E_DESKTOP_RUNTIME`，命中数为 0。

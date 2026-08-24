@@ -197,6 +197,14 @@ describe('SmartAppManager', () => {
         version: '0.1.0',
       },
     })
+
+    await manager.delete(created.id, true)
+    await expect(
+      readFile(join(created.packagePath, 'plugin-manifest.json'), 'utf8')
+    ).resolves.toContain('"created-app"')
+    await expect(manager.list()).resolves.not.toContainEqual(
+      expect.objectContaining({ id: created.id })
+    )
   })
 })
 

@@ -17,7 +17,7 @@ import { normalizeFileViewerAssetManifest } from './lib/harness-runtime-metadata
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const coreDshVersion = '0.1.1-rc.2'
-const workbenchDshVersions = new Set(['0.1.0-rc.8'])
+const workbenchDshVersions = new Set(['0.1.0-rc.7', '0.1.0-rc.8'])
 const source = path.join(root, 'harness-runtime')
 const runtimesDirectory = path.join(source, 'runtimes')
 const pluginsDirectory = path.join(source, 'plugins')
