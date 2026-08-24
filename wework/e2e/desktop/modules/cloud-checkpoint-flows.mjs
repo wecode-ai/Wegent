@@ -167,6 +167,10 @@ async function createCloudProjectFixture(control, workspacePath) {
 }
 
 async function verifyCloudProjectCreationSources(control, workspacePath) {
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
   const homePath = join(resultDir, 'cloud-executor-home')
 
   const createProjectAndSnapshotMenus = async sourceTestId => {
@@ -296,8 +300,10 @@ async function verifyCloudCheckpoint({
   app,
   appIdentifier,
   cloudEnvironment,
+  codexHome,
   control,
   desktopScenario,
+  executorLogPath,
   restartDesktopApp,
   setPhase,
   workspacePath,
@@ -328,6 +334,8 @@ async function verifyCloudCheckpoint({
   }
 
   if (checkpoint === 'plugin-auto-update') {
+    setPhase('cloud-plugin-auto-update-disable-codex-rpc')
+    await cloudEnvironment.restartCloudExecutorWithoutCodexPluginRpc()
     setPhase('cloud-plugin-auto-update-fixtures')
     await cloudEnvironment.seedPluginAutoUpdateFixtures(6)
     setPhase('cloud-plugin-auto-update')
@@ -355,7 +363,10 @@ async function verifyCloudCheckpoint({
       'success',
       'Plugin auto-update did not finish successfully in the real Tauri application'
     )
-    await cloudEnvironment.assertPluginAutoUpdateComplete(6)
+    await cloudEnvironment.assertPluginAutoUpdateComplete(codexHome, 6)
+    setPhase('cloud-plugin-auto-update-without-codex-rpc')
+    await cloudEnvironment.syncPluginAutoUpdatesToCloudDevice()
+    await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
     return
   }
 
@@ -369,7 +380,7 @@ async function verifyCloudCheckpoint({
     control,
     workspacePath
   )
-  const executorLogPath = cloudEnvironment.remoteExecutorLogPath
+  const remoteExecutorLogPath = cloudEnvironment.remoteExecutorLogPath
 
   switch (checkpoint) {
     case 'cloud-git-worktree':
@@ -424,9 +435,17 @@ async function verifyCloudCheckpoint({
       return
     case 'goal-lifecycle':
       setPhase('cloud-goal-busy-handoff')
-      await verifyBusyTurnGoalHandoff({ composerSelector, control, executorLogPath })
+      await verifyBusyTurnGoalHandoff({
+        composerSelector,
+        control,
+        executorLogPath: remoteExecutorLogPath,
+      })
       setPhase('cloud-goal-idle-unread')
-      await verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, executorLogPath })
+      await verifyActiveGoalIdleUnreadLifecycle({
+        composerSelector,
+        control,
+        executorLogPath: remoteExecutorLogPath,
+      })
       setPhase('cloud-goal-restart-recovery')
       await verifyCloudGoalRestartRecoveryLifecycle({
         composerSelector,

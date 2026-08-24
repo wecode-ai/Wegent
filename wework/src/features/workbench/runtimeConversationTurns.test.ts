@@ -682,6 +682,90 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('ignores a matching process block that arrives after terminal assistant content', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'assistant-item-1',
+              type: 'assistant_text',
+              content: '处理完成。',
+              createdAt: '2026-08-21T00:00:00.000Z',
+            },
+          ],
+          status: 'done',
+        },
+      ],
+      {
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        block: {
+          id: 'assistant-item-1',
+          subtaskId: 'turn-1',
+          type: 'text',
+          content: '处理完成。',
+          status: 'done',
+          createdAt: Date.parse('2026-08-21T00:00:00.000Z'),
+        },
+      }
+    )
+
+    expect(turns[0].items).toEqual([
+      expect.objectContaining({
+        id: 'assistant-item-1',
+        type: 'assistant_text',
+        content: '处理完成。',
+      }),
+    ])
+  })
+
+  test('places a late processing block before terminal assistant content', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'assistant-item-1',
+              type: 'assistant_text',
+              content: '处理完成。',
+              createdAt: '2026-08-21T00:00:01.000Z',
+            },
+          ],
+          status: 'done',
+        },
+      ],
+      {
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        block: {
+          id: 'file-changes-1',
+          subtaskId: 'turn-1',
+          type: 'file_changes',
+          status: 'done',
+          createdAt: Date.parse('2026-08-21T00:00:00.000Z'),
+          fileChanges: {
+            version: 1,
+            status: 'active',
+            artifact_id: 'artifact-1',
+            device_id: 'device-1',
+            workspace_path: '/workspace/project',
+            file_count: 1,
+            additions: 1,
+            deletions: 0,
+            files: [],
+            reverted_at: null,
+            revertible: false,
+          },
+        },
+      }
+    )
+
+    expect(turns[0].items.map(item => item.id)).toEqual(['file-changes-1', 'assistant-item-1'])
+  })
+
   test('keeps a completed final text block before subsequently applied guidance', () => {
     const guidance = {
       ...userMessage('guidance-1', 'Use the new name'),
@@ -1248,6 +1332,47 @@ describe('runtimeConversationTurns', () => {
       'turn-a',
       'turn-z',
     ])
+  })
+
+  test('keeps an unmatched optimistic user turn after the recovered snapshot', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: null,
+        clientUserMessageId: 'client-user-continue',
+        items: [
+          {
+            id: 'client-user-continue',
+            type: 'user_message',
+            message: {
+              ...userMessage('client-user-continue', '继续'),
+              createdAt: '2026-07-30T00:00:01.000Z',
+              status: 'sending',
+            },
+          },
+        ],
+        status: 'pending',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-history',
+        items: [
+          {
+            id: 'assistant-history',
+            type: 'assistant_text',
+            content: '已恢复的 AI 输出',
+            createdAt: '2026-07-30T00:00:02.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    expect(
+      projectRuntimeConversationTurns(mergeRuntimeConversationTurns(local, snapshot)).map(
+        message => message.content
+      )
+    ).toEqual(['已恢复的 AI 输出', '继续'])
   })
 
   test('keeps an older stopped local turn before a newer snapshot turn', () => {
@@ -1964,6 +2089,80 @@ describe('runtimeConversationTurns', () => {
     expect(mergeRuntimeConversationTurns(local, snapshot)[0].streamingThinkingContent).toBe(
       'Updated reasoning'
     )
+  })
+
+  test('does not regress a completed live turn to a stale streaming snapshot', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'tool-1',
+            type: 'block',
+            block: {
+              id: 'tool-1',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              createdAt: 1,
+              completedAt: 2,
+            },
+          },
+          {
+            id: 'message-1',
+            type: 'assistant_text',
+            content: 'Complete answer',
+            createdAt: '2026-08-21T07:10:38.000Z',
+          },
+        ],
+        status: 'done',
+        completedAt: '2026-08-21T07:10:38.000Z',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'tool-1',
+            type: 'block',
+            block: {
+              id: 'tool-1',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'streaming',
+              createdAt: 1,
+            },
+          },
+          {
+            id: 'message-1',
+            type: 'assistant_text',
+            content: 'Complete answer',
+            createdAt: '2026-08-21T07:10:38.000Z',
+          },
+        ],
+        status: 'streaming',
+        streamingThinkingContent: 'Still working',
+      },
+    ]
+
+    const [merged] = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged).toMatchObject({
+      id: 'turn-1',
+      status: 'done',
+      completedAt: '2026-08-21T07:10:38.000Z',
+      streamingThinkingContent: undefined,
+    })
+    expect(merged.items[0]).toMatchObject({
+      type: 'block',
+      block: {
+        status: 'done',
+        completedAt: 2,
+      },
+    })
   })
 
   test('uses UTF-16 code-unit offsets when replacing streamed text', () => {

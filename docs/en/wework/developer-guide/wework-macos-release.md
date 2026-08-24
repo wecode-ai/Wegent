@@ -12,7 +12,7 @@ The Wework macOS app uses the Tauri updater for automatic upgrades. Local or sta
 
 - The default build target is `universal-apple-darwin`, producing one installer that supports both Apple Silicon and Intel Macs.
 - The updater manifest includes both `darwin-aarch64` and `darwin-x86_64`; both platform entries can point to the same universal archive.
-- `src-tauri/tauri.conf.json` does not store the update service URL or updater public key. Both the local release script and GitHub Actions use `wework/scripts/generate-release-config.mjs` to create a temporary Tauri config that injects release parameters while preserving the complete `bundle.resources` list from the base config. Tauri config overrides replace resource arrays as a whole, so release paths must not maintain a separate incomplete resources list.
+- `src-tauri/tauri.conf.json` does not store the update service URL or updater public key. Both the local release script and GitHub Actions use `wework/scripts/generate-release-config.mjs` to create a temporary Tauri config that injects release parameters while preserving every resource type from the base config and narrowing the broad Codex resource rule to the current build target. Tauri config overrides replace resource arrays as a whole, so release paths must not maintain a separate incomplete resources list.
 - Updater private keys and publish tokens are read only from environment variables or local files and must not be committed.
 - Codex CLI is not compiled locally. Before building, `wework/scripts/prepare-codex-binary.mjs` downloads the npm tarball pinned by `wework/codex-binaries.lock.json`, verifies its SHA-512 integrity, and bundles it as a Tauri resource.
 
@@ -20,11 +20,27 @@ The Wework macOS app uses the Tauri updater for automatic upgrades. Local or sta
 
 The Wework desktop package includes Codex CLI directly, so users do not need to install it on first launch. The version and per-platform tarball checksums are pinned in `wework/codex-binaries.lock.json`.
 
-The current pin is stable Codex `0.147.0`. An upgrade must update every
+The current pin is stable Codex `0.149.0`. An upgrade must update every
 supported platform's npm package version, official registry tarball URL, and
 SHA-512 integrity value together; do not replace the binary inside an already
 signed app bundle. Prepare the sidecar again through a release build, then
 package and code-sign the application.
+
+After an upgrade, run the focused unit test and prepare every supported target
+to confirm that each archive passes integrity verification and contains both
+`codex` and `codex-code-mode-host`:
+
+```bash
+pnpm --filter wework test scripts/prepare-codex-binary.test.mjs
+pnpm --filter wework run prepare:codex --all
+```
+
+Then read the current macOS target's `binaryPath` from
+`wework/codex-binaries.lock.json` and run `--version` on that exact binary under
+`wework/src-tauri/binaries/codex/<target>/`; do not use a `codex` found on
+`PATH`. Use `pnpm --filter wework ai:verify start` to validate at least Codex
+App Server initialization, local task creation, one completed real turn, and
+plugin list loading in an isolated real Tauri application.
 
 Local builds prepare the Codex binary for the current target automatically:
 
@@ -141,7 +157,7 @@ The repository includes `.github/workflows/wework-app.yml` for producing macOS D
 https://github.com/<owner>/<repo>/releases/download/wework-updater/{{target}}-{{arch}}.json
 ```
 
-The macOS CI job does not invoke `release-mac-app.sh`, but both release paths share `wework/scripts/generate-release-config.mjs`. The generator copies the complete `bundle.resources` list from `src-tauri/tauri.conf.json`, ensuring that Codex, hooks, bundled plugins, and hidden marketplace manifests are included in formal release packages. Update the base Tauri config when desktop resources change instead of duplicating the list in the workflow.
+The macOS CI job does not invoke `release-mac-app.sh`, but both release paths share `wework/scripts/generate-release-config.mjs`. The generator copies every resource type from `src-tauri/tauri.conf.json` and uses `CODEX_TARGET` to retain only the current platform's Codex binaries. This keeps hooks, bundled plugins, runtime descriptors, and hidden marketplace manifests in formal release packages without accidentally bundling Codex targets left behind in a persistent workspace. Update the base Tauri config when desktop resources change instead of duplicating the list in the workflow.
 
 The workflow can only be started manually from GitHub Actions and does not respond to tag pushes. Select a release channel when starting it:
 
@@ -159,6 +175,28 @@ After publishing the versioned Release, the workflow updates rolling manifests i
 - `stable-*` points only to the latest stable release.
 - `beta-*` points to whichever Beta or stable release has the higher SemVer, so Beta users also receive newer stable releases.
 - A release only replaces a rolling manifest when its SemVer is higher; historical or lower releases cannot downgrade users.
+
+DeepSeek Harness and Node.js Runtimes are also published in the fixed `wework-updater` Release, but they are not assets of a specific Wework application version. Harness produces a separate immutable asset for each DSH version and platform; Node.js assets are keyed by Node version and platform. The preparation scripts derive a Runtime fingerprint from dependency lockfiles, the Node ABI, signing identity, and archive format. An existing fingerprint reuses the published asset, so a new Runtime is published only when a dependency or one of those build inputs changes. CI uploads the archive before its descriptor and refuses to overwrite or repair a half-published pair, preserving checksums embedded in older clients.
+
+Internal MinIO releases use the same Runtime asset model.
+`build-minio-mac-release.sh` and `build-minio-windows-release.sh` collect every
+DSH version in the Harness catalog plus the Node.js Runtime, then publish each
+Runtime as a same-named `.tar.gz` and `.json` descriptor pair. A complete
+published pair is reused only when its remote descriptor exactly matches the
+current build. To migrate archives uploaded by the legacy archive-only flow,
+the script adds the missing descriptor only when the remote archive size and
+SHA-256 exactly match the current descriptor. A different archive, or a
+descriptor without its archive, fails the release and must never overwrite the
+old object. When Runtime packaging changes and the old archive cannot be
+reused, increment the archive format version in the preparation script so the
+fingerprint and asset name both change.
+
+If Jenkins still exposes `CHANGE_LOG` as a single-line string parameter that
+cannot be reconfigured, use a literal `\n` for each line break, for example
+`## Changes\n\n- Fix the release flow\n- Improve Runtime downloads`. The
+macOS and Windows MinIO release scripts decode this notation only for an
+explicit `--notes` value and write real multiline Markdown to the updater
+manifest.
 
 Users opt into Beta updates under Wework **Settings → About** by enabling **Receive Beta updates**. The client uses the `stable` target by default and the `beta` target after opt-in. Changing the setting immediately checks for updates and persists locally.
 

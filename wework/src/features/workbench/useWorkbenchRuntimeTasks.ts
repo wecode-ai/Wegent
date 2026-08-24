@@ -24,8 +24,6 @@ import type {
 import {
   createRuntimeTaskStreamHandlers,
   runtimeAddressDebug,
-  runtimeMessagesToWorkbenchMessages,
-  runtimeTranscriptTurnsToConversationTurns,
   runtimeTranscriptDebug,
   type RuntimeTaskStreamHandlers,
 } from './runtimePaneMessages'
@@ -48,6 +46,7 @@ import type {
 } from './workbenchContextTypes'
 import { evictRuntimeConversation } from './runtimeConversationCache'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
+import { projectRuntimePaneTranscript } from './runtimeTaskLifecycle/projection'
 
 interface UseWorkbenchRuntimeTasksOptions {
   user: User
@@ -58,6 +57,7 @@ interface UseWorkbenchRuntimeTasksOptions {
   lifecycleStore: RuntimeTaskLifecycleStore
   markRuntimeTasksArchived: (addresses: RuntimeTaskAddress[]) => void
   refreshWorkLists: RefreshWorkLists
+  canNavigate?: () => boolean
 }
 
 const runtimeTranscriptRequests = new Map<string, Promise<RuntimePaneTranscript>>()
@@ -71,6 +71,7 @@ export function useWorkbenchRuntimeTasks({
   lifecycleStore,
   markRuntimeTasksArchived,
   refreshWorkLists,
+  canNavigate = () => true,
 }: UseWorkbenchRuntimeTasksOptions) {
   const { t } = useTranslation('common')
   const openedRuntimeTaskKeysRef = useRef<Set<string>>(new Set())
@@ -101,11 +102,11 @@ export function useWorkbenchRuntimeTasks({
         reopeningCurrentTask,
         navigate: options?.navigate === true,
       })
-      if (options?.navigate) {
+      if (options?.navigate && canNavigate()) {
         navigateTo(buildRuntimeTaskRoute(address))
       }
     },
-    [dispatch]
+    [canNavigate, dispatch]
   )
 
   const isCurrentRuntimeTask = useCallback(
@@ -155,24 +156,7 @@ export function useWorkbenchRuntimeTasks({
             throw new Error('Runtime transcript response is missing canonical turns')
           }
 
-          return {
-            messages: runtimeMessagesToWorkbenchMessages(
-              Array.isArray(transcript.messages) ? transcript.messages : []
-            ),
-            turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns),
-            running: typeof transcript.running === 'boolean' ? transcript.running : undefined,
-            contextUsage: transcript.contextUsage ?? null,
-            turnNavigation: Array.isArray(transcript.turnNavigation)
-              ? transcript.turnNavigation
-              : [],
-            fullContent: transcript.fullContent === true,
-            rangeStart: typeof transcript.rangeStart === 'number' ? transcript.rangeStart : null,
-            rangeEnd: typeof transcript.rangeEnd === 'number' ? transcript.rangeEnd : null,
-            hasMoreBefore: Boolean(transcript.hasMoreBefore),
-            beforeCursor: transcript.beforeCursor ?? null,
-            hasMoreAfter: Boolean(transcript.hasMoreAfter),
-            afterCursor: transcript.afterCursor ?? null,
-          }
+          return projectRuntimePaneTranscript(transcript)
         })
         .finally(() => {
           if (runtimeTranscriptRequests.get(transcriptKey) === request) {
@@ -258,27 +242,23 @@ export function useWorkbenchRuntimeTasks({
 
   const completeArchivedBoardTasks = useCallback(
     async (addresses: RuntimeTaskAddress[]) => {
-      const trackingApis = [
-        services.projectSpaceApis?.local,
-        services.projectSpaceApis?.cloud ?? services.deliveryApi,
-      ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
-      if (trackingApis.length === 0) return
+      const trackingApi = services.projectSpaceApis?.local
+      if (!trackingApi) return
 
       await Promise.all(
         addresses.map(async address => {
-          const results = await Promise.allSettled(
-            trackingApis.map(api => api!.updateTaskTrackingStatus(address, 'archived'))
-          )
-          if (results.every(result => result.status === 'rejected')) {
+          try {
+            await trackingApi.updateTaskTrackingStatus(address, 'archived')
+          } catch (error) {
             console.warn('[Wework] Failed to complete archived task on project board', {
               address: runtimeAddressDebug(address),
-              errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
+              error,
             })
           }
         })
       )
     },
-    [services.deliveryApi, services.projectSpaceApis]
+    [services.projectSpaceApis?.local]
   )
 
   const archiveRuntimeConversations = useCallback(

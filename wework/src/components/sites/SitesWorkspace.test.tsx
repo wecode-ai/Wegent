@@ -363,6 +363,8 @@ describe('SitesWorkspace', () => {
     )
 
     expect(await screen.findByTestId('smart-apps-content')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '智能工作台市场' })).toBeInTheDocument()
+    expect(screen.getByText('发现官方工作台，以及成员定向分享给你的工作台。')).toBeInTheDocument()
     expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
       'aria-selected',
       'true'
@@ -387,6 +389,23 @@ describe('SitesWorkspace', () => {
 
     expect(await screen.findByTestId('smart-apps-content')).toBeInTheDocument()
     expect(api.listSites).not.toHaveBeenCalled()
+  })
+
+  test('uses the My workbench heading for the owned Smart apps view', async () => {
+    window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
+
+    render(
+      <SitesWorkspace
+        api={createApi()}
+        onCreate={vi.fn()}
+        smartAppsEnabled
+        smartAppsMode="owned"
+        smartAppsContent={<div data-testid="smart-apps-content">我的内容</div>}
+      />
+    )
+
+    expect(await screen.findByRole('heading', { name: '我的工作台' })).toBeInTheDocument()
+    expect(screen.getByText('管理你创建、导入和安装的智能应用。')).toBeInTheDocument()
   })
 
   test('invokes the Mini Program entry from the create menu', async () => {

@@ -24,7 +24,10 @@ use crate::{
     local::workspace_files::{
         execute_workspace_file_command_with_input, is_workspace_file_command, WORKSPACE_ROOTS_ENV,
     },
-    logging::{format_executor_log, reserve_executor_stdout_for_protocol, write_executor_log_line},
+    logging::{
+        format_executor_log, reserve_executor_stdout_for_protocol, write_executor_error_line,
+        write_executor_log_line,
+    },
     runtime_work::RuntimeWorkRpcHandler,
     task_runtime::{
         BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, DeliveryFinalize,
@@ -41,6 +44,7 @@ const DEFAULT_DEVICE_ID: &str = "local-device";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
+const APP_IPC_WRITE_BUFFER_CAPACITY: usize = 8192;
 const GIT_PUSH_SCRIPT: &str = r#"branch=$(git branch --show-current)
 if [ -z "$branch" ]; then
   echo "Cannot push detached HEAD" >&2
@@ -324,7 +328,7 @@ pub struct AppIpcServer {
 
 impl Default for AppIpcServer {
     fn default() -> Self {
-        let (event_tx, _) = broadcast::channel(512);
+        let (event_tx, _) = broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
         Self {
             device_id: DEFAULT_DEVICE_ID.to_owned(),
             runtime_instance_id: None,
@@ -618,10 +622,19 @@ impl AppIpcServer {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        let (write_tx, mut write_rx) = mpsc::channel::<Value>(512);
+        let (priority_write_tx, mut priority_write_rx) =
+            mpsc::channel::<Value>(APP_IPC_WRITE_BUFFER_CAPACITY);
+        let (bulk_write_tx, mut bulk_write_rx) =
+            mpsc::channel::<Value>(APP_IPC_WRITE_BUFFER_CAPACITY);
         let mut writer_task = tokio::spawn(async move {
             let mut writer = writer;
-            while let Some(message) = write_rx.recv().await {
+            loop {
+                let message = tokio::select! {
+                    biased;
+                    Some(message) = priority_write_rx.recv() => message,
+                    Some(message) = bulk_write_rx.recv() => message,
+                    else => break,
+                };
                 write_message(&mut writer, &message)
                     .await
                     .map_err(|error| format!("failed to write app IPC message: {error}"))?;
@@ -629,16 +642,17 @@ impl AppIpcServer {
             Ok::<(), String>(())
         });
 
-        write_tx
+        priority_write_tx
             .send(self.ready_event())
             .await
             .map_err(|error| format!("failed to queue app IPC ready event: {error}"))?;
 
         let mut reader = BufReader::new(reader);
         let mut events = self.event_tx.subscribe();
-        let mut line = String::new();
+        let mut frame = Vec::new();
+        let mut bulk_backpressure_reported = false;
         loop {
-            line.clear();
+            frame.clear();
             tokio::select! {
                 writer = &mut writer_task => {
                     return match writer {
@@ -647,16 +661,22 @@ impl AppIpcServer {
                         Err(error) => Err(format!("app IPC writer task failed: {error}")),
                     };
                 }
-                read = reader.read_line(&mut line) => {
+                read = reader.read_until(b'\n', &mut frame) => {
                     let bytes_read = read
                         .map_err(|error| format!("failed to read app IPC request: {error}"))?;
                     if bytes_read == 0 {
                         writer_task.abort();
                         return Ok(());
                     }
+                    let request_line = match std::str::from_utf8(&frame) {
+                        Ok(line) => line.to_owned(),
+                        Err(error) => {
+                            log_invalid_app_ipc_frame(&frame, error);
+                            continue;
+                        }
+                    };
                     let server = self.clone();
-                    let response_tx = write_tx.clone();
-                    let request_line = line.clone();
+                    let response_tx = priority_write_tx.clone();
                     let (request_id, method) = app_ipc_request_metadata(&request_line);
                     tokio::spawn(async move {
                         let started_at = Instant::now();
@@ -735,16 +755,60 @@ impl AppIpcServer {
                 event = events.recv() => {
                     match event {
                         Ok(message) => {
-                            write_tx.send(message)
-                                .await
-                                .map_err(|error| format!("failed to queue app IPC event: {error}"))?;
+                            if is_bulk_app_ipc_event(&message) {
+                                match bulk_write_tx.try_send(message) {
+                                    Ok(()) => bulk_backpressure_reported = false,
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        if !bulk_backpressure_reported {
+                                            bulk_backpressure_reported = true;
+                                            write_executor_error_line(&format_executor_log(
+                                                "app IPC bulk event backpressure; transcript recovery requested",
+                                                &[(
+                                                    "capacity",
+                                                    APP_IPC_WRITE_BUFFER_CAPACITY.to_string(),
+                                                )],
+                                            ));
+                                            let lagged = self.event_message(
+                                                "executor.event_lagged",
+                                                json!({
+                                                    "skipped": 1,
+                                                    "reason": "ipc_backpressure",
+                                                }),
+                                            );
+                                            priority_write_tx.send(lagged)
+                                                .await
+                                                .map_err(|error| format!(
+                                                    "failed to queue app IPC backpressure event: {error}"
+                                                ))?;
+                                        }
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                                        return Err("app IPC bulk writer queue closed".to_owned());
+                                    }
+                                }
+                            } else {
+                                if priority_write_tx.capacity() == 0 {
+                                    write_executor_error_line(&format_executor_log(
+                                        "app IPC priority event backpressure",
+                                        &[(
+                                            "capacity",
+                                            APP_IPC_WRITE_BUFFER_CAPACITY.to_string(),
+                                        )],
+                                    ));
+                                }
+                                priority_write_tx.send(message)
+                                    .await
+                                    .map_err(|error| format!(
+                                        "failed to queue app IPC priority event: {error}"
+                                    ))?;
+                            }
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
                             let message = self.event_message(
                                 "executor.event_lagged",
                                 json!({ "skipped": skipped }),
                             );
-                            write_tx.send(message)
+                            priority_write_tx.send(message)
                                 .await
                                 .map_err(|error| format!("failed to queue app IPC lag event: {error}"))?;
                         }
@@ -836,6 +900,31 @@ impl AppIpcServer {
         serde_json::to_value(apply_post_processor(result, command.post_processor))
             .map_err(|error| AppIpcError::new("internal_error", error.to_string()))
     }
+}
+
+fn is_bulk_app_ipc_event(message: &Value) -> bool {
+    match message.get("event").and_then(Value::as_str) {
+        Some("runtime.plan.updated") => true,
+        Some("response.block.created") => {
+            app_ipc_event_data(message)
+                .and_then(|data| data.get("block"))
+                .and_then(|block| block.get("type"))
+                .and_then(Value::as_str)
+                == Some("file_changes")
+        }
+        Some("response.block.updated") => app_ipc_event_data(message)
+            .and_then(|data| data.get("updates"))
+            .is_some_and(|updates| {
+                updates.get("tool_output_delta").is_some() || updates.get("file_changes").is_some()
+            }),
+        _ => false,
+    }
+}
+
+fn app_ipc_event_data(message: &Value) -> Option<&Value> {
+    message
+        .get("payload")
+        .and_then(|payload| payload.get("data"))
 }
 
 async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Value, AppIpcError> {
@@ -1245,6 +1334,14 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "todos.bindings.batch" => {
+            let task_ids = string_list_field(params.get("task_ids"), "task_ids")?;
+            serialize_task_value(
+                runtime
+                    .list_task_bindings_batch(&task_ids)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "todos.bind" | "projects.bind_task" => {
             let project_id = required_task_string(&params, "project_id")?;
             let item_id = params.get("item_id").and_then(Value::as_str);
@@ -1271,11 +1368,30 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "runtime_tasks.system_context" => {
+            let device_id = required_task_string(&params, "device_id")?;
+            let runtime_task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .find_system_task_binding(device_id, runtime_task_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "runtime_tasks.user_context" => {
+            let device_id = required_task_string(&params, "device_id")?;
+            let runtime_task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .find_user_task_binding(device_id, runtime_task_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "runtime_tasks.unbind" => {
             let device_id = required_task_string(&params, "device_id")?;
             let runtime_task_id = required_task_string(&params, "task_id")?;
+            let item_id = params.get("item_id").and_then(Value::as_str);
             runtime
-                .unbind_task(device_id, runtime_task_id)
+                .unbind_task(device_id, runtime_task_id, item_id)
                 .map_err(task_runtime_error)?;
             Ok(json!({"unbound": true}))
         }
@@ -1947,6 +2063,20 @@ fn log_app_ipc_request(
     write_executor_log_line(&format_executor_log(event, &fields));
 }
 
+fn log_invalid_app_ipc_frame(frame: &[u8], error: std::str::Utf8Error) {
+    let mut fields = vec![
+        ("bytes", frame.len().to_string()),
+        ("valid_up_to", error.valid_up_to().to_string()),
+    ];
+    if let Some(error_len) = error.error_len() {
+        fields.push(("invalid_sequence_bytes", error_len.to_string()));
+    }
+    write_executor_log_line(&format_executor_log(
+        "invalid app IPC frame discarded",
+        &fields,
+    ));
+}
+
 fn log_app_ipc_response_error(
     request_id: Option<&str>,
     method: Option<&str>,
@@ -2347,19 +2477,26 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 }
 
 fn string_list(value: Option<&Value>) -> Result<Vec<String>, AppIpcError> {
+    string_list_field(value, "args")
+}
+
+fn string_list_field(value: Option<&Value>, field: &str) -> Result<Vec<String>, AppIpcError> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
     let Some(items) = value.as_array() else {
-        return Err(AppIpcError::new("bad_request", "args must be a list"));
+        return Err(AppIpcError::new(
+            "bad_request",
+            format!("{field} must be a list"),
+        ));
     };
 
     items
         .iter()
         .map(|item| {
-            item.as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| AppIpcError::new("bad_request", "args must contain only strings"))
+            item.as_str().map(str::to_owned).ok_or_else(|| {
+                AppIpcError::new("bad_request", format!("{field} must contain only strings"))
+            })
         })
         .collect()
 }
@@ -2473,7 +2610,70 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::local_app_command;
+    use serde_json::{json, Value};
+    use tokio::io::{duplex, split, AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    use super::{is_bulk_app_ipc_event, local_app_command, AppIpcServer};
+
+    #[test]
+    fn prioritizes_chat_events_over_diagnostic_blocks() {
+        assert!(is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.updated",
+            "payload": {
+                "data": {
+                    "updates": {
+                        "tool_output_delta": "diagnostic output"
+                    }
+                }
+            }
+        })));
+        assert!(is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.created",
+            "payload": {
+                "data": {
+                    "block": {
+                        "type": "file_changes"
+                    }
+                }
+            }
+        })));
+        assert!(is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "runtime.plan.updated",
+        })));
+        assert!(!is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.created",
+            "payload": {
+                "data": {
+                    "block": {
+                        "type": "text"
+                    }
+                }
+            }
+        })));
+        assert!(!is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.updated",
+            "payload": {
+                "data": {
+                    "updates": {
+                        "status": "done"
+                    }
+                }
+            }
+        })));
+        assert!(!is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.output_text.delta",
+        })));
+        assert!(!is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.completed",
+        })));
+    }
 
     #[test]
     fn git_diff_commands_do_not_start_a_login_shell() {
@@ -2484,5 +2684,58 @@ mod tests {
             assert_eq!(command.argv.get(1), Some(&"-c"));
             assert!(!command.argv.contains(&"-l"));
         }
+    }
+
+    #[tokio::test]
+    async fn invalid_utf8_frame_does_not_stop_app_ipc() {
+        let server = AppIpcServer::new();
+        let (client, executor) = duplex(4096);
+        let (client_reader, mut client_writer) = split(client);
+        let (executor_reader, executor_writer) = split(executor);
+        let serving = tokio::spawn(async move {
+            server
+                .serve_io(executor_reader, executor_writer)
+                .await
+                .expect("app IPC should stay available after a malformed frame");
+        });
+
+        client_writer
+            .write_all(b"\xff\n")
+            .await
+            .expect("invalid frame should be written");
+        client_writer
+            .write_all(
+                br#"{"type":"request","id":"health-after-invalid","method":"executor.health","params":{}}
+"#,
+            )
+            .await
+            .expect("health request should be written");
+        let mut client_reader = BufReader::new(client_reader);
+        let mut output = Vec::new();
+        for _ in 0..2 {
+            let mut line = String::new();
+            client_reader
+                .read_line(&mut line)
+                .await
+                .expect("app IPC output should remain valid UTF-8");
+            output.push(line);
+        }
+        client_writer
+            .shutdown()
+            .await
+            .expect("client input should close");
+        serving.await.expect("app IPC task should finish");
+
+        let messages = output
+            .iter()
+            .map(|line| serde_json::from_str::<Value>(line).expect("valid app IPC JSON"))
+            .collect::<Vec<_>>();
+        assert!(messages.iter().any(|message| {
+            message.get("event") == Some(&Value::String("executor.ready".to_owned()))
+        }));
+        assert!(messages.iter().any(|message| {
+            message.get("id") == Some(&Value::String("health-after-invalid".to_owned()))
+                && message.get("ok") == Some(&Value::Bool(true))
+        }));
     }
 }

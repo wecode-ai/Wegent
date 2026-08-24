@@ -122,6 +122,7 @@ export function useWorkbenchModels({
   const selectedModelOptions = selectedModelOptionsByScope[scopeKey] ?? {}
   const selectedModelRef = useRef<Record<string, UnifiedModel | null>>({})
   const selectedModelOptionsRef = useRef<Record<string, ModelOptions>>({})
+  const modelLoadRevisionRef = useRef(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [restoredSelectionKeyByScope, setRestoredSelectionKeyByScope] = useState<
@@ -220,21 +221,22 @@ export function useWorkbenchModels({
     let cancelled = false
 
     async function loadModels() {
+      const revision = ++modelLoadRevisionRef.current
       setIsLoading(true)
       setError(null)
       try {
         const response = await api.listModels()
-        if (!cancelled) {
+        if (!cancelled && revision === modelLoadRevisionRef.current) {
           const filtered = response.data.filter(isSupportedModelFamily)
           reconcileSelectedModels(filterModel ? filtered.filter(filterModel) : filtered)
           setAvailableModels(filtered)
         }
       } catch (nextError) {
-        if (!cancelled) {
+        if (!cancelled && revision === modelLoadRevisionRef.current) {
           setError(nextError instanceof Error ? nextError : new Error('Failed to load models'))
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && revision === modelLoadRevisionRef.current) {
           setIsLoading(false)
         }
       }

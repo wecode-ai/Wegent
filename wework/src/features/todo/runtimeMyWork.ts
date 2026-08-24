@@ -33,7 +33,8 @@ function taskBoardStatus(
   const state = runtimeTaskBoardState(lifecycle?.task ?? task)
   if (state === 'active') return { status: 'in_progress', hasActiveTask: true }
   if (state === 'completed') return { status: 'completed', hasActiveTask: false }
-  return { status: 'pending', hasActiveTask: false }
+  if (state === 'queued') return { status: 'pending', hasActiveTask: false }
+  return { status: 'in_review', hasActiveTask: false }
 }
 
 function timestamp(value: string | number | null | undefined): string {

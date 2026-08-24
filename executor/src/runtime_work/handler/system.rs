@@ -47,7 +47,9 @@ impl RuntimeWorkRpcHandler {
                     outcome.interrupted_preparation || outcome.interrupted_execution
                 })
             {
-                let task_id = outcome.record.worktree_id;
+                let task_id = outcome
+                    .interrupted_execution_task_id
+                    .unwrap_or(outcome.record.worktree_id);
                 let error = outcome.record.last_error.unwrap_or_else(|| {
                     if outcome.interrupted_execution {
                         "Executor restarted while the Worktree task was executing; runtime was not resumed"
@@ -694,11 +696,14 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         expected_models: Vec<String>,
     ) -> Result<Value, AppIpcError> {
+        let _restart_guard = codex_app_server_restart_gate().lock().await;
         let active_task_count = self
-            .active_codex_turns
+            .active_local_executions
             .lock()
-            .expect("active Codex turn registry should not be poisoned")
-            .len();
+            .expect("active local execution map lock should not be poisoned")
+            .values()
+            .filter(|execution| execution.codex_turn.is_some())
+            .count();
         let force = bool_field(&payload, "force").unwrap_or(false);
         let if_idle = bool_field(&payload, "ifIdle").unwrap_or(false);
         if active_task_count > 0 && if_idle && !force {

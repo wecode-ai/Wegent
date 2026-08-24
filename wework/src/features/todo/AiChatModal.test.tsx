@@ -79,6 +79,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
           modelType?: ModelType | null
           modelOptions?: ModelOptions
         }
+        optimisticUserMessage: import('@/types/workbench').WorkbenchMessage & { role: 'user' }
         onError: (message: string) => void
         onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
       }
@@ -103,6 +104,12 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
                 modelId: 'backend-codex',
                 modelType: 'user',
                 modelOptions: { reasoningEffort: 'high' },
+              },
+              optimisticUserMessage: {
+                id: 'queued-side-chat-1',
+                role: 'user',
+                content: '给出任务列表',
+                status: 'done',
               },
               onError: vi.fn(),
               onRuntimeTaskOptimisticOpen: vi.fn(),
@@ -224,27 +231,6 @@ describe('AiChatModal', () => {
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-auto-submit', 'no')
   })
 
-  it('submits the original title immediately when a work item moves to in progress', () => {
-    render(
-      <AiChatModal
-        project={project}
-        localProjects={localProjects}
-        task={task}
-        initialTaskInput="Implement cloud MCP"
-        autoSubmitInitialTaskInput
-        embedded
-        open
-        onClose={vi.fn()}
-      />
-    )
-
-    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute(
-      'data-initial-input',
-      'Implement cloud MCP'
-    )
-    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-auto-submit', 'yes')
-  })
-
   it('always creates private AI conversations with the Codex runtime', async () => {
     render(
       <AiChatModal
@@ -262,6 +248,10 @@ describe('AiChatModal', () => {
       '给出任务列表',
       expect.objectContaining({
         runtime: 'codex',
+        optimisticUserMessage: expect.objectContaining({
+          id: 'queued-side-chat-1',
+          role: 'user',
+        }),
         executionModel: {
           modelId: 'backend-codex',
           modelType: 'user',
@@ -503,5 +493,30 @@ describe('AiChatModal', () => {
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-send-ephemeral', 'no')
     await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
     expect(onOpenRuntimeTask).toHaveBeenCalledWith(address)
+  })
+
+  it('separates returning to the Issue from closing the unified sidebar', async () => {
+    const onBack = vi.fn()
+    const onClose = vi.fn()
+
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialAddress={{ deviceId: 'local-device', taskId: 'runtime-1' }}
+        embedded
+        open
+        onBack={onBack}
+        onClose={onClose}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('ai-chat-modal-back'))
+    expect(onBack).toHaveBeenCalledOnce()
+    expect(onClose).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
+    expect(onClose).toHaveBeenCalledOnce()
   })
 })

@@ -59,6 +59,12 @@ Tauri 无参数启动 executor sidecar，并通过子进程 stdin/stdout 交换�
 
 stdio 生命周期由父子进程关系直接确定：写入失败、stdout EOF 或子进程退出才表示本地 IPC 失效。普通请求超时只结束对应请求，不销毁通道，因此系统休眠或调度延迟不会触发端口重连或误切换到其他 executor。
 
+Executor 启动的设备命令必须关闭 stdin，不能继承承载 App JSONL 协议的进程 stdin，否则子命令读取标准输入时会窃取请求字节并破坏后续协议帧。Executor 按字节读取并以换行符划分 App IPC 帧，再单独验证每一帧的 UTF-8；非法帧只记录长度和错误偏移后丢弃，不能终止整个 executor 或中断其他正在运行的任务。检测到 executor runtime instance 变化后，Wework 会重新获取受影响任务的列表和 transcript；已被 transcript 确认接收的排队消息会从队列移除，断线时尚未确认的发送会恢复为可重试的排队状态。
+
+本地 runtime 事件通道和 App IPC 写入队列使用有界缓冲，容量均为 8192。IPC 写入将 Responses 文本、终态、错误和 RPC 响应放入高优先级队列，将工具块、诊断、计划和文件变化事件放入低优先级队列。高优先级队列满时发送方显式等待并记录背压；低优先级队列满时丢弃当前可恢复事件、记录背压并发送 `executor.event_lagged`，避免直到 broadcast 覆盖旧事件后才发现消息缺失。
+
+工具输出事件最多携带 64 KiB，文件变化事件中的 diff 预览最多携带 128 KiB；完整 patch 仍保存在可读取的 artifact 中。Wework 收到 `executor.event_lagged` 后会重新拉取当前任务和全部运行中任务的 transcript，并使用稳定的客户端消息 ID 将 transcript 与尚未落盘的乐观用户消息合并。因此任务切换或事件积压后，运行状态、用户输入和 AI 输出会从同一份恢复结果重新收敛。
+
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过 stdio 服务 Wework App，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
 ### Executor 启动环境与 Codex Home 初始化
@@ -74,6 +80,8 @@ Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为�
 运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
 
 `running` 由两类实时信号共同确定：executor 当前进程维护的活跃任务集合，以及 Codex thread 中明确标记为 `inProgress` 的 turn。后者覆盖 Goal 自动续轮等场景：本地执行包装可能已经返回，但 provider 仍在运行后续 turn。Codex thread 自身的 `active` 状态、已持久化的任务摘要和 Wework 本地提醒都不能单独推断任务仍在运行。任务列表、transcript、详情面板、系统托盘和阻止休眠逻辑必须消费同一份 executor `running` 值；executor 或 Wework 重启后，如果 `thread/read` 或 `thread/list` 仍返回活跃 turn，界面必须恢复运行态，只有不存在活跃 turn 时才收敛为空闲。
+
+在单个 executor 进程内，发送、引导和取消操作只使用一份本地执行记录作为生命周期权威来源。Codex 的 `threadId` 和 `turnId` 是该执行记录的附属上下文，只在 execution ID 仍匹配时有效，不能存放在独立注册表中继续维持任务运行。执行结束时，executor 会原子删除本地执行及其 Codex turn 上下文，再发送终态响应；与完成事件并发但稍后返回的 `turn/steer` 等 provider 回调必须被忽略，不能把已经结束的任务重新标记为运行中。`thread/read` 或 `thread/list` 返回的活跃 turn 仍可用于任务列表投影和重启恢复，但不能创建第二套进程内执行生命周期。
 
 任务摘要同时透传 Codex 的 `threadStatus`（`notLoaded`、`idle`、`systemError`、`active`）和 `turnStatus`（`inProgress`、`completed`、`interrupted`、`failed`）。`continuable` 单独表示会话未归档、仍可继续发送消息；它不能用于推断当前回合正在运行。Wework 只使用明确的 `running` 和真实回合状态显示运行反馈，不把线程或消息的 `active` 状态转换为 streaming。
 

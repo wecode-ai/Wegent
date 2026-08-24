@@ -1955,7 +1955,7 @@ function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
   )
 }
 
-function AssistantMessage({
+export function AssistantMessage({
   message,
   conversationKey,
   devices,

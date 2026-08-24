@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
@@ -37,6 +38,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
   isTauri: vi.fn(() => false),
 }))
+vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(), save: vi.fn() }))
 
 vi.mock('@/telemetry/client', () => telemetryMocks)
 vi.mock('@/api/cloud/connectorApps', () => ({
@@ -204,6 +206,12 @@ function mockCodexAppServerInvoke(
       pluginPath: string
     }>
     localConnectorAuthHealth?: () => Promise<unknown>
+    localPluginImport?: {
+      archivePath: string
+      pluginName: string
+      displayName: string
+      version: string
+    }
   } = {}
 ) {
   const marketplaces = [...(options.marketplaces ?? [])]
@@ -219,6 +227,32 @@ function mockCodexAppServerInvoke(
   const apps = options.apps ?? []
 
   vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+    if (command === 'local_executor_preview_plugin_import' && options.localPluginImport) {
+      return Promise.resolve({
+        valid: true,
+        archivePath: options.localPluginImport.archivePath,
+        sha256: 'a'.repeat(64),
+        name: options.localPluginImport.pluginName,
+        displayName: options.localPluginImport.displayName,
+        version: options.localPluginImport.version,
+        description: 'Imported offline fixture',
+        skillCount: 1,
+        mcpServerCount: 0,
+        executableCapabilities: [],
+        existing: false,
+        existingVersion: null,
+        issues: [],
+      })
+    }
+    if (command === 'local_executor_import_plugin_package' && options.localPluginImport) {
+      return Promise.resolve({
+        pluginName: options.localPluginImport.pluginName,
+        displayName: options.localPluginImport.displayName,
+        version: options.localPluginImport.version,
+        rollbackId: 'offline-import-rollback',
+      })
+    }
+    if (command === 'local_executor_finalize_plugin_import') return Promise.resolve(undefined)
     if (command === 'local_executor_codex_home_migration_status') {
       return Promise.resolve({
         weworkCodexHome: '/Users/test/.wework/codex',
@@ -257,6 +291,26 @@ function mockCodexAppServerInvoke(
     const request = args as {
       method?: string
       params?: { method?: string; params?: Record<string, unknown> }
+    }
+    if (
+      request.method === 'runtime.codex.plugin.install_local_first' &&
+      options.localPluginImport
+    ) {
+      installedPluginNames.add(options.localPluginImport.pluginName)
+      return Promise.resolve({
+        pluginName: options.localPluginImport.pluginName,
+        localCommitted: true,
+      })
+    }
+    if (request.method === 'runtime.codex.plugin.uninstall_local') {
+      const pluginName = String(
+        (args as { params?: { pluginName?: string } }).params?.pluginName ?? ''
+      )
+      installedPluginNames.delete(pluginName)
+      return Promise.resolve({
+        pluginKey: `${pluginName}@wework-personal`,
+        localCommitted: true,
+      })
     }
     if (request.method === 'executor.backend.status') {
       const connected =
@@ -392,6 +446,13 @@ function expectCodexAppServerRequest(method: string, params: Record<string, unkn
       method,
       params: expect.objectContaining(params),
     },
+  })
+}
+
+function expectCodexAppServerRequestNotCalled(method: string) {
+  expect(invoke).not.toHaveBeenCalledWith('local_executor_request', {
+    method: 'codex.app_server_request',
+    params: expect.objectContaining({ method }),
   })
 }
 
@@ -1330,6 +1391,7 @@ describe('PluginsWorkspace', () => {
     vi.mocked(convertFileSrc).mockClear()
     vi.mocked(invoke).mockReset()
     vi.mocked(isTauri).mockReturnValue(false)
+    vi.mocked(open).mockReset()
     vi.mocked(listWegentConnectorApps).mockReset()
     vi.mocked(listWegentConnectorApps).mockResolvedValue([])
     vi.mocked(authorizeWegentConnector).mockReset()
@@ -4512,8 +4574,15 @@ describe('PluginsWorkspace', () => {
     )
     // Bare ids like documents-local-id look like Codex remote plugin ids and must
     // not be probed for local/personal uninstalls.
-    expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'documents@wework-personal' })
-    expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'documents@personal' })
+    expect(invoke).toHaveBeenCalledWith('local_executor_request', {
+      method: 'runtime.codex.plugin.uninstall_local',
+      params: {
+        marketplacePath:
+          '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal/.agents/plugins/marketplace.json',
+        pluginName: 'documents',
+      },
+    })
+    expectCodexAppServerRequestNotCalled('plugin/uninstall')
     expect(invoke).toHaveBeenCalledWith('local_executor_unlink_plugin_release', {
       marketplacePath: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
       localPluginName: 'documents',
@@ -5572,6 +5641,12 @@ describe('PluginsWorkspace', () => {
           ],
         },
         {
+          name: 'wework',
+          displayName: 'Wegent',
+          path: 'wework',
+          plugins: [],
+        },
+        {
           name: 'awesome-codex-plugins',
           displayName: 'Awesome Codex Plugins',
           path: 'https://github.com/example/awesome-codex-plugins',
@@ -5593,6 +5668,7 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText('MailAgent')).toBeInTheDocument()
     expect(screen.getByText('EchoID')).toBeInTheDocument()
     expect(screen.getByText('SuperPowers')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-tab-wework')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('plugins-distribution-tab-official'))
     expect(screen.getByText('MailAgent')).toBeInTheDocument()
@@ -6748,6 +6824,94 @@ describe('PluginsWorkspace', () => {
     expect(window.location.pathname).toBe('/plugins/create')
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
     expect(screen.queryByTestId('plugins-create-menu')).not.toBeInTheDocument()
+  })
+
+  test('refreshes only local plugin state after importing a ZIP', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    vi.mocked(open).mockResolvedValue('/tmp/offline-import.zip')
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          displayName: '个人创建',
+          path: '/Users/test/.agents/plugins/marketplace.json',
+          plugins: [
+            {
+              id: 'offline-import',
+              name: 'offline-import',
+              displayName: 'Offline Import',
+            },
+          ],
+        },
+      ],
+      localPluginImport: {
+        archivePath: '/tmp/offline-import.zip',
+        pluginName: 'offline-import',
+        displayName: 'Offline Import',
+        version: '1.0.0',
+      },
+    })
+
+    render(<PluginsWorkspace />)
+
+    await screen.findByTestId('plugins-create-button')
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(
+            ([command, args]) =>
+              command === 'local_executor_request' &&
+              (args as { method?: string; params?: { method?: string } })?.method ===
+                'codex.app_server_request' &&
+              (args as { params?: { method?: string } })?.params?.method === 'plugin/list'
+          )
+      ).toHaveLength(1)
+    )
+    const pluginListCallsBeforeImport = vi
+      .mocked(invoke)
+      .mock.calls.filter(
+        ([command, args]) =>
+          command === 'local_executor_request' &&
+          (args as { method?: string; params?: { method?: string } })?.method ===
+            'codex.app_server_request' &&
+          (args as { params?: { method?: string } })?.params?.method === 'plugin/list'
+      ).length
+
+    await userEvent.click(screen.getByTestId('plugins-create-button'))
+    await userEvent.click(screen.getByTestId('plugins-import-plugin-option'))
+    await userEvent.click(screen.getByTestId('plugin-import-select'))
+    await userEvent.click(await screen.findByTestId('plugin-import-confirm'))
+
+    expect(await screen.findByTestId('plugin-operation-notice')).toHaveTextContent(
+      '插件已导入并安装。如需连接器授权，可稍后在插件详情中登录。'
+    )
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.some(
+            ([command, args]) =>
+              command === 'local_executor_request' &&
+              (args as { method?: string })?.method === 'runtime.codex.plugin.install_local_first'
+          )
+      ).toBe(true)
+    )
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(
+          ([command, args]) =>
+            command === 'local_executor_request' &&
+            (args as { method?: string; params?: { method?: string } })?.method ===
+              'codex.app_server_request' &&
+            (args as { params?: { method?: string } })?.params?.method === 'plugin/list'
+        )
+    ).toHaveLength(pluginListCallsBeforeImport)
   })
 
   test('closes the create menu on outside click and Escape', async () => {

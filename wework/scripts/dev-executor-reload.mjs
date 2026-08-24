@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process'
-import { existsSync, watch } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, readdirSync, watch } from 'node:fs'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const DEBOUNCE_DELAY_MS = 350
@@ -39,6 +40,7 @@ let rebuilding = false
 let rebuildPending = false
 let shuttingDown = false
 let unexpectedExitCount = 0
+let lastAttemptedSourceFingerprint = null
 const pendingInput = []
 const watchers = []
 
@@ -48,6 +50,31 @@ function log(message) {
 
 function pipeBuildOutput(stream) {
   stream?.on('data', chunk => process.stderr.write(chunk))
+}
+
+function hashPath(hash, path) {
+  const entries = readdirSync(path, { withFileTypes: true }).sort((left, right) =>
+    left.name.localeCompare(right.name)
+  )
+  for (const entry of entries) {
+    const entryPath = join(path, entry.name)
+    if (entry.isDirectory()) {
+      hashPath(hash, entryPath)
+    } else if (entry.isFile()) {
+      hash.update(relative(executorDir, entryPath))
+      hash.update(readFileSync(entryPath))
+    }
+  }
+}
+
+function sourceFingerprint() {
+  const hash = createHash('sha256')
+  for (const path of [manifestPath, join(executorDir, 'Cargo.lock')]) {
+    hash.update(relative(executorDir, path))
+    hash.update(readFileSync(path))
+  }
+  hashPath(hash, join(executorDir, 'src'))
+  return hash.digest('hex')
 }
 
 function runBuild() {
@@ -180,6 +207,12 @@ async function rebuildAndRestart() {
       rebuildPending = false
       clearTimeout(restartTimer)
       restartTimer = null
+      const fingerprint = sourceFingerprint()
+      if (fingerprint === lastAttemptedSourceFingerprint) {
+        log('executor source unchanged; skipping duplicate rebuild')
+        break
+      }
+      lastAttemptedSourceFingerprint = fingerprint
       await stopChild()
       if (shuttingDown) break
 

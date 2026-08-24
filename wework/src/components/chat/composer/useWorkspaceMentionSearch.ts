@@ -21,18 +21,21 @@ export function useWorkspaceMentionSearch(
     error: false,
   })
   const normalizedQuery = query.trim()
-  const activeKey = target ? `${target.deviceId}\0${target.path}\0${normalizedQuery}` : ''
+  const deviceId = target?.deviceId
+  const workspacePath = target?.path
+  const search = workspaceFileApi?.searchWorkspaceEntries
+  const activeKey =
+    deviceId && workspacePath ? `${deviceId}\0${workspacePath}\0${normalizedQuery}` : ''
 
   useEffect(() => {
-    const search = workspaceFileApi?.searchWorkspaceEntries
-    if (!normalizedQuery || !target || !search) return
+    if (!normalizedQuery || !deviceId || !workspacePath || !search) return
 
     let stale = false
-    const searchKey = `${target.deviceId}\0${target.path}\0${normalizedQuery}`
+    const searchKey = `${deviceId}\0${workspacePath}\0${normalizedQuery}`
     const cancellationToken = `composer-${Date.now()}-${Math.random().toString(36).slice(2)}`
     const timer = window.setTimeout(() => {
       setSearchState({ key: searchKey, matches: [], loading: true, error: false })
-      void search(target.deviceId, target.path, normalizedQuery, cancellationToken)
+      void search(deviceId, workspacePath, normalizedQuery, cancellationToken)
         .then(response => {
           if (!stale) {
             setSearchState({
@@ -54,7 +57,7 @@ export function useWorkspaceMentionSearch(
       stale = true
       window.clearTimeout(timer)
     }
-  }, [normalizedQuery, target, workspaceFileApi])
+  }, [deviceId, normalizedQuery, search, workspacePath])
 
   const matches = useMemo(
     () => (searchState.key === activeKey ? searchState.matches : []),

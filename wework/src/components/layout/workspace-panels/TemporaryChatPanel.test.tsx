@@ -24,6 +24,7 @@ const address: RuntimeTaskAddress = {
 const mocks = vi.hoisted(() => ({
   resetAttachments: vi.fn(),
   sendRuntimePaneMessage: vi.fn(async () => true),
+  createTask: vi.fn(),
 }))
 
 vi.mock('@/components/chat/ScrollableMessageArea', () => ({
@@ -117,6 +118,7 @@ describe('TemporaryChatPanel', () => {
   beforeEach(() => {
     mocks.resetAttachments.mockReset()
     mocks.sendRuntimePaneMessage.mockClear()
+    mocks.createTask.mockReset()
   })
 
   it('keeps sent attachments on the user message after clearing the composer', async () => {
@@ -144,6 +146,36 @@ describe('TemporaryChatPanel', () => {
         attachments: [attachment],
       }),
       expect.any(Object)
+    )
+  })
+
+  it('uses the same optimistic user message when creating a formal task', async () => {
+    mocks.createTask.mockImplementation(async (_message, options) => {
+      options.onRuntimeTaskOptimisticOpen(address)
+      return address
+    })
+
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={null}
+        instanceId="sidebar-test"
+        createTask={mocks.createTask}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-send'))
+
+    await waitFor(() => expect(mocks.createTask).toHaveBeenCalledTimes(1))
+    expect(mocks.createTask).toHaveBeenCalledWith(
+      '发送附件',
+      expect.objectContaining({
+        optimisticUserMessage: expect.objectContaining({
+          id: expect.stringMatching(/^queued-side-chat-/),
+          role: 'user',
+          content: '发送附件',
+        }),
+      })
     )
   })
 })

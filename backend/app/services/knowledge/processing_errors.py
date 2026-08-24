@@ -154,6 +154,21 @@ def map_indexing_exception(
     exc: Exception, *, generation: int
 ) -> DocumentProcessingError:
     """Map an indexing exception without exposing its raw message."""
+    if getattr(exc, "code", None) == "embedding_dimension_mismatch":
+        details = getattr(exc, "details", None) or {}
+        model = details.get("model")
+        return build_processing_error(
+            stage=DocumentProcessingStage.INDEXING,
+            code="embedding_dimension_mismatch",
+            message=(
+                "The embedding model returned an unexpected vector dimension. "
+                "Check the model configuration and rebuild the document index."
+            ),
+            retryable=False,
+            generation=generation,
+            model=model if isinstance(model, str) else None,
+        )
+
     normalized = str(exc).lower()
     if "timeout" in normalized or "deadline" in normalized:
         return build_processing_error(

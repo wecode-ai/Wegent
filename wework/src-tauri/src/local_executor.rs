@@ -75,6 +75,7 @@ const PLUGIN_MUTATION_LOCK_FILE: &str = "plugin-mutations.lock";
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
 type SharedExecutorInner = Arc<Mutex<LocalExecutorInner>>;
+type SharedExecutorChild = Arc<Mutex<Option<LocalExecutorChild>>>;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -224,7 +225,7 @@ impl Clone for LocalExecutorState {
 
 #[derive(Default)]
 struct LocalExecutorInner {
-    child: Option<LocalExecutorChild>,
+    child: Option<SharedExecutorChild>,
     pending: HashMap<String, PendingSender>,
     backend_connection: Option<LocalExecutorBackendConnection>,
     running: bool,
@@ -458,7 +459,7 @@ pub fn shutdown_local_executor(state: &LocalExecutorState, reason: &str) {
     });
 
     if let Some(child) = child {
-        child.kill();
+        kill_executor_child(child);
     } else {
         audit_local_executor_signal(format!(
             "event=executor_shutdown_no_owned_child sender_pid={} reason={reason}",
@@ -1028,7 +1029,8 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
         .to_string();
     let mut envs = vec![
         (LOCAL_EXECUTOR_HOME_ENV.to_string(), executor_home),
-        (CODEX_HOME_ENV.to_string(), codex_home),
+        (CODEX_HOME_ENV.to_string(), codex_home.clone()),
+        (WEGENT_CODEX_HOME_ENV.to_string(), codex_home),
         (LOCAL_EXECUTOR_LOG_DIR_ENV.to_string(), log_dir),
         (APP_IPC_DEVICE_ID_ENV.to_string(), app_ipc_device_id.clone()),
         ("DEVICE_ID".to_string(), app_ipc_device_id.clone()),
@@ -1356,8 +1358,7 @@ fn write_codex_shell_environment_value(
     let content = fs::read_to_string(&config_path).unwrap_or_default();
     let next_content = set_shell_environment_value_in_config(&content, key, value);
     if next_content != content {
-        fs::write(&config_path, next_content)
-            .map_err(|error| format!("failed to write {}: {error}", config_path.display()))?;
+        write_atomic_file(&config_path, next_content.as_bytes())?;
     }
     read_codex_local_config()
 }
@@ -1375,8 +1376,7 @@ fn restore_codex_shell_environment_config(
     content: &str,
 ) -> Result<(), String> {
     if existed {
-        fs::write(config_path, content)
-            .map_err(|error| format!("failed to restore {}: {error}", config_path.display()))?;
+        write_atomic_file(config_path, content.as_bytes())?;
     } else if config_path.exists() {
         fs::remove_file(config_path)
             .map_err(|error| format!("failed to remove {}: {error}", config_path.display()))?;
@@ -1390,8 +1390,7 @@ fn write_codex_remote_apps_enabled(enabled: bool) -> Result<CodexLocalConfig, St
         .map_err(|error| format!("failed to create {}: {error}", codex_home.display()))?;
     let content = fs::read_to_string(&config_path).unwrap_or_default();
     let next_content = set_remote_apps_enabled_in_config(&content, enabled);
-    fs::write(&config_path, next_content)
-        .map_err(|error| format!("failed to write {}: {error}", config_path.display()))?;
+    write_atomic_file(&config_path, next_content.as_bytes())?;
     read_codex_local_config()
 }
 
@@ -1636,6 +1635,102 @@ fn remove_bundled_marketplace_path(path: &Path) -> Result<(), String> {
     }
 }
 
+fn preserve_personal_marketplace_plugins(
+    destination: &Path,
+    staging: &Path,
+    bundled_plugins: &HashSet<String>,
+) -> Result<(), String> {
+    if !destination.is_dir() {
+        return Ok(());
+    }
+
+    let mut personal_plugins = HashSet::new();
+    for manifest_path in [
+        destination.join(".agents/plugins/marketplace.json"),
+        destination.join(".claude-plugin/marketplace.json"),
+    ] {
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let content = fs::read_to_string(&manifest_path)
+            .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+        let manifest = serde_json::from_str::<Value>(&content)
+            .map_err(|error| format!("invalid marketplace {}: {error}", manifest_path.display()))?;
+        if !is_personal_marketplace_name(manifest.get("name").and_then(Value::as_str)) {
+            return Err(format!(
+                "marketplace {} must use the reserved personal marketplace name",
+                manifest_path.display()
+            ));
+        }
+        let plugins = manifest
+            .get("plugins")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                format!(
+                    "marketplace {} must contain a plugins array",
+                    manifest_path.display()
+                )
+            })?;
+        for plugin in plugins {
+            let Some(name) = plugin.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            let name = validate_plugin_name(name)?.to_string();
+            let bundled_by_default = plugin
+                .pointer("/policy/installation")
+                .and_then(Value::as_str)
+                == Some("INSTALLED_BY_DEFAULT");
+            if !bundled_plugins.contains(&name) && !bundled_by_default {
+                personal_plugins.insert(name);
+            }
+        }
+    }
+
+    for plugin_name in personal_plugins {
+        let source_plugin = destination.join("plugins").join(&plugin_name);
+        let manifest_path = source_plugin.join(".codex-plugin/plugin.json");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let manifest = fs::read(&manifest_path)
+            .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+        let manifest = serde_json::from_slice::<Value>(&manifest).map_err(|error| {
+            format!(
+                "invalid plugin manifest {}: {error}",
+                manifest_path.display()
+            )
+        })?;
+        if manifest.get("name").and_then(Value::as_str) != Some(plugin_name.as_str()) {
+            continue;
+        }
+
+        copy_directory_recursive(&source_plugin, &staging.join("plugins").join(&plugin_name))?;
+        for staging_manifest in [
+            staging.join(".agents/plugins/marketplace.json"),
+            staging.join(".claude-plugin/marketplace.json"),
+        ] {
+            upsert_marketplace_plugin_entry(&staging_manifest, &plugin_name)?;
+        }
+    }
+
+    let copy_registry = copy_registry_path(destination);
+    if copy_registry.is_file() {
+        let staging_registry = copy_registry_path(staging);
+        if let Some(parent) = staging_registry.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+        }
+        fs::copy(&copy_registry, &staging_registry).map_err(|error| {
+            format!(
+                "failed to preserve {} at {}: {error}",
+                copy_registry.display(),
+                staging_registry.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn initialize_bundled_plugin_marketplace_from_paths(
     source: &Path,
     destination: &Path,
@@ -1665,6 +1760,11 @@ fn initialize_bundled_plugin_marketplace_from_paths(
     ));
     remove_bundled_marketplace_path(&staging)?;
     if let Err(error) = copy_directory_recursive(source, &staging) {
+        let _ = remove_bundled_marketplace_path(&staging);
+        return Err(error);
+    }
+    if let Err(error) = preserve_personal_marketplace_plugins(destination, &staging, &codex_plugins)
+    {
         let _ = remove_bundled_marketplace_path(&staging);
         return Err(error);
     }
@@ -1933,7 +2033,7 @@ fn mark_child_terminated_for_generation(
     inner: &SharedExecutorInner,
     generation: u64,
     message: String,
-) -> Option<LocalExecutorChild> {
+) -> Option<SharedExecutorChild> {
     if let Ok(mut inner) = inner.lock() {
         if inner.generation != generation {
             return None;
@@ -2131,11 +2231,34 @@ fn is_terminal_response_event(event: &str) -> bool {
     )
 }
 
-fn write_request_line(inner: &mut LocalExecutorInner, line: &str) -> Result<(), String> {
-    let Some(child) = inner.child.as_mut() else {
-        return Err("Local executor stdio is not connected".to_string());
-    };
-    child.write(line.as_bytes())
+fn kill_executor_child(child: SharedExecutorChild) {
+    if let Ok(Some(child)) = child.lock().map(|mut child| child.take()) {
+        child.kill();
+    }
+}
+
+fn executor_child_is_running(child: &SharedExecutorChild) -> bool {
+    child
+        .try_lock()
+        .map(|mut child| {
+            child
+                .as_mut()
+                .map(LocalExecutorChild::is_running)
+                .unwrap_or(false)
+        })
+        .unwrap_or(true)
+}
+
+fn write_request_line(child: &SharedExecutorChild, line: &str) -> Result<(), String> {
+    // The state mutex only guards executor metadata. Keeping it out of this
+    // potentially blocking pipe write lets the stdout reader resolve responses.
+    let mut child = child
+        .lock()
+        .map_err(|_| "Failed to lock local executor child".to_string())?;
+    child
+        .as_mut()
+        .ok_or_else(|| "Local executor stdio is not connected".to_string())?
+        .write(line.as_bytes())
 }
 
 fn drain_process_output(
@@ -2162,7 +2285,7 @@ fn register_spawned_child(
         .lock()
         .map_err(|_| "Failed to lock local executor state".to_string())?;
     inner.generation = inner.generation.saturating_add(1);
-    inner.child = Some(child);
+    inner.child = Some(Arc::new(Mutex::new(Some(child))));
     inner.running = true;
     inner.ready = false;
     inner.codex_initialize_elapsed_ms = None;
@@ -2221,7 +2344,7 @@ fn finish_stdio_reader(
     fail_pending_requests_for_generation(state, generation, message);
     if terminate_child {
         if let Some(child) = child {
-            child.kill();
+            kill_executor_child(child);
         }
     }
 }
@@ -2398,7 +2521,7 @@ fn stop_failed_sidecar_start(state: &LocalExecutorState, error: &str) {
         inner.child.take()
     });
     if let Some(child) = child {
-        child.kill();
+        kill_executor_child(child);
     }
     fail_pending_requests(state, error.to_string());
 }
@@ -2446,8 +2569,8 @@ async fn start_executor_if_needed_unlocked(
         if inner.running && inner.ready {
             if inner
                 .child
-                .as_mut()
-                .map(LocalExecutorChild::is_running)
+                .as_ref()
+                .map(executor_child_is_running)
                 .unwrap_or(false)
             {
                 return Ok(());
@@ -2458,7 +2581,7 @@ async fn start_executor_if_needed_unlocked(
         inner.child.take()
     };
     if let Some(child) = child_to_kill {
-        child.kill();
+        kill_executor_child(child);
     }
     if let Err(error) = spawn_sidecar(app, state).await {
         set_executor_error(state, error.clone());
@@ -2513,11 +2636,15 @@ async fn send_executor_request_with_timeout(
         serde_json::to_string(&message).map_err(|error| error.to_string())?
     );
 
-    {
+    let child = {
         let mut inner = state
             .inner
             .lock()
             .map_err(|_| "Failed to lock local executor state".to_string())?;
+        let child = inner
+            .child
+            .clone()
+            .ok_or_else(|| "Local executor stdio is not connected".to_string())?;
         inner.pending.insert(request_id.clone(), sender);
         let pending_count = inner.pending.len();
         if log_request {
@@ -2525,13 +2652,15 @@ async fn send_executor_request_with_timeout(
                 "Local executor IPC request started: request_id={request_id}, method={method}, pending_count={pending_count}"
             );
         }
-        if let Err(error) = write_request_line(&mut inner, &line) {
-            inner.pending.remove(&request_id);
-            log::warn!(
-                "Local executor IPC request write failed: request_id={request_id}, method={method}, error={error}"
-            );
-            return Err(error);
-        }
+        child
+    };
+
+    if let Err(error) = write_request_line(&child, &line) {
+        remove_pending_request(&state.inner, &request_id);
+        log::warn!(
+            "Local executor IPC request write failed: request_id={request_id}, method={method}, error={error}"
+        );
+        return Err(error);
     }
 
     let inner = state.inner.clone();
@@ -3090,12 +3219,12 @@ fn read_optional_file(path: &Path) -> Result<Option<Vec<u8>>, String> {
     }
 }
 
-fn personal_manifest_contains_plugin(
+fn personal_manifest_plugin_registration(
     manifest_path: &Path,
     plugin_name: &str,
-) -> Result<bool, String> {
+) -> Result<Option<bool>, String> {
     if !manifest_path.is_file() {
-        return Ok(false);
+        return Ok(None);
     }
     let content = fs::read_to_string(manifest_path)
         .map_err(|error| format!("Failed to read {}: {error}", manifest_path.display()))?;
@@ -3107,19 +3236,21 @@ fn personal_manifest_contains_plugin(
     })?;
     let is_personal = is_personal_marketplace_name(manifest.get("name").and_then(Value::as_str));
     if !is_personal {
-        return Ok(false);
+        return Ok(None);
     }
-    Ok(manifest
-        .get("plugins")
-        .and_then(Value::as_array)
-        .is_some_and(|plugins| {
-            plugins.iter().any(|plugin| {
-                plugin
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .is_some_and(|name| name == plugin_name)
-            })
-        }))
+    Ok(Some(
+        manifest
+            .get("plugins")
+            .and_then(Value::as_array)
+            .is_some_and(|plugins| {
+                plugins.iter().any(|plugin| {
+                    plugin
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .is_some_and(|name| name == plugin_name)
+                })
+            }),
+    ))
 }
 
 fn delete_personal_plugin(marketplace_path: &Path, plugin_name: &str) -> Result<(), String> {
@@ -3138,17 +3269,34 @@ fn delete_personal_plugin(marketplace_path: &Path, plugin_name: &str) -> Result<
     }
     manifest_candidates.sort();
     manifest_candidates.dedup();
+    let mut personal_marketplace_found = false;
     let personal_manifests = manifest_candidates
         .into_iter()
         .filter_map(
-            |path| match personal_manifest_contains_plugin(&path, plugin_name) {
-                Ok(true) => Some(Ok(path)),
-                Ok(false) => None,
+            |path| match personal_manifest_plugin_registration(&path, plugin_name) {
+                Ok(Some(registered)) => {
+                    personal_marketplace_found = true;
+                    registered.then_some(Ok(path))
+                }
+                Ok(None) => None,
                 Err(error) => Some(Err(error)),
             },
         )
         .collect::<Result<Vec<_>, _>>()?;
     if personal_manifests.is_empty() {
+        let plugin_path = marketplace_root.join("plugins").join(plugin_name);
+        match fs::symlink_metadata(&plugin_path) {
+            Err(error)
+                if personal_marketplace_found && error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                remove_plugin_registry_entries(&marketplace_root, plugin_name)?;
+                return Ok(());
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!("Failed to inspect personal plugin: {error}"));
+            }
+            _ => {}
+        }
         return Err("Plugin is not registered in this personal marketplace".to_string());
     }
 
@@ -4352,16 +4500,42 @@ fn updated_copy_registry(path: &Path, record: LocalPluginCopyRecord) -> Result<V
 fn write_atomic_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
-        .ok_or_else(|| "Plugin copy registry path is invalid".to_string())?;
+        .ok_or_else(|| format!("Atomic write path has no parent: {}", path.display()))?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
-    let temp_path = parent.join(format!(".plugin-copy-registry-{}.tmp", std::process::id()));
-    fs::write(&temp_path, bytes)
-        .map_err(|error| format!("Failed to write plugin copy registry: {error}"))?;
-    if let Err(error) = fs::rename(&temp_path, path) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(format!("Failed to replace plugin copy registry: {error}"));
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|error| {
+        format!(
+            "Failed to create temporary file for {}: {error}",
+            path.display()
+        )
+    })?;
+    temporary.write_all(bytes).map_err(|error| {
+        format!(
+            "Failed to write temporary file for {}: {error}",
+            path.display()
+        )
+    })?;
+    temporary.as_file().sync_all().map_err(|error| {
+        format!(
+            "Failed to sync temporary file for {}: {error}",
+            path.display()
+        )
+    })?;
+    if let Ok(metadata) = fs::metadata(path) {
+        fs::set_permissions(temporary.path(), metadata.permissions()).map_err(|error| {
+            format!(
+                "Failed to preserve permissions while replacing {}: {error}",
+                path.display()
+            )
+        })?;
     }
+    temporary.persist(path).map_err(|error| {
+        format!(
+            "Failed to atomically replace {}: {}",
+            path.display(),
+            error.error
+        )
+    })?;
     Ok(())
 }
 
@@ -5745,6 +5919,74 @@ mod tests {
     }
 
     #[test]
+    fn deleting_an_already_absent_personal_plugin_is_idempotent() {
+        let root = import_test_root("delete-absent-personal-plugin");
+        let codex_marketplace = root.join(".agents/plugins/marketplace.json");
+        let claude_marketplace = root.join(".claude-plugin/marketplace.json");
+        fs::create_dir_all(codex_marketplace.parent().unwrap()).unwrap();
+        fs::create_dir_all(claude_marketplace.parent().unwrap()).unwrap();
+        let marketplace = r#"{"name":"wework-personal","plugins":[]}"#;
+        fs::write(&codex_marketplace, marketplace).unwrap();
+        fs::write(&claude_marketplace, marketplace).unwrap();
+        write_plugin_cloud_links(
+            &root,
+            vec![LocalPluginCloudLink {
+                local_plugin_name: "already-gone".to_string(),
+                cloud_plugin_id: 71,
+                cloud_release_id: Some(72),
+            }],
+        )
+        .unwrap();
+        write_atomic_file(
+            &copy_registry_path(&root),
+            &serde_json::to_vec_pretty(&LocalPluginCopyRegistry {
+                copies: vec![LocalPluginCopyRecord {
+                    local_plugin_name: "already-gone".to_string(),
+                    source_plugin_id: 1,
+                    source_release_id: 2,
+                    source_plugin_name: "source".to_string(),
+                }],
+                cloud_links: Vec::new(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        delete_personal_plugin(&root, "already-gone").unwrap();
+        delete_personal_plugin(&root, "already-gone").unwrap();
+
+        assert!(load_plugin_cloud_links(&root).is_empty());
+        let copy_registry: LocalPluginCopyRegistry =
+            serde_json::from_slice(&fs::read(copy_registry_path(&root)).unwrap()).unwrap();
+        assert!(copy_registry.copies.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_delete_an_unregistered_personal_plugin_directory() {
+        let root = import_test_root("delete-unregistered-personal-plugin");
+        let marketplace = root.join(".agents/plugins/marketplace.json");
+        let plugin_manifest = root.join("plugins/unregistered/.codex-plugin/plugin.json");
+        fs::create_dir_all(marketplace.parent().unwrap()).unwrap();
+        fs::create_dir_all(plugin_manifest.parent().unwrap()).unwrap();
+        fs::write(&marketplace, r#"{"name":"wework-personal","plugins":[]}"#).unwrap();
+        fs::write(
+            &plugin_manifest,
+            r#"{"name":"unregistered","version":"1.0.0"}"#,
+        )
+        .unwrap();
+
+        let error = delete_personal_plugin(&root, "unregistered").unwrap_err();
+
+        assert_eq!(
+            error,
+            "Plugin is not registered in this personal marketplace"
+        );
+        assert!(plugin_manifest.is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn packages_a_personal_codex_plugin_without_manual_zip_selection() {
         let root = import_test_root("package-plugin");
         let plugin_root = root.join("plugins/gitlab");
@@ -6515,6 +6757,86 @@ mod tests {
     }
 
     #[test]
+    fn preserves_registered_personal_plugins_when_refreshing_bundled_plugins() {
+        let root = import_test_root("bundled-plugin-marketplace-personal");
+        let source = root.join("source");
+        let destination = root.join("destination/wework-personal");
+        fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+        fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+        fs::create_dir_all(source.join("plugins/smart-app-builder/.codex-plugin")).unwrap();
+        fs::write(
+            source.join(".agents/plugins/marketplace.json"),
+            r#"{"name":"wework-personal","plugins":[{"name":"smart-app-builder"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join(".claude-plugin/marketplace.json"),
+            r#"{"name":"wework-personal","plugins":[{"name":"smart-app-builder"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join("plugins/smart-app-builder/.codex-plugin/plugin.json"),
+            r#"{"name":"smart-app-builder","version":"1.0.0"}"#,
+        )
+        .unwrap();
+
+        initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+        let personal_plugin = destination.join("plugins/dev-tools");
+        fs::create_dir_all(personal_plugin.join(".codex-plugin")).unwrap();
+        fs::write(
+            personal_plugin.join(".codex-plugin/plugin.json"),
+            r#"{"name":"dev-tools","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        let retired_bundled_plugin = destination.join("plugins/retired-bundled-plugin");
+        fs::create_dir_all(retired_bundled_plugin.join(".codex-plugin")).unwrap();
+        fs::write(
+            retired_bundled_plugin.join(".codex-plugin/plugin.json"),
+            r#"{"name":"retired-bundled-plugin","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        for manifest in [
+            destination.join(".agents/plugins/marketplace.json"),
+            destination.join(".claude-plugin/marketplace.json"),
+        ] {
+            upsert_marketplace_plugin_entry(&manifest, "dev-tools").unwrap();
+            let mut value = serde_json::from_slice::<Value>(&fs::read(&manifest).unwrap()).unwrap();
+            value
+                .get_mut("plugins")
+                .and_then(Value::as_array_mut)
+                .unwrap()
+                .push(json!({
+                    "name": "retired-bundled-plugin",
+                    "policy": { "installation": "INSTALLED_BY_DEFAULT" }
+                }));
+            fs::write(&manifest, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        }
+        let registry = copy_registry_path(&destination);
+        fs::create_dir_all(registry.parent().unwrap()).unwrap();
+        fs::write(&registry, br#"{"copies":[]}"#).unwrap();
+        fs::write(destination.join("stale.txt"), "stale").unwrap();
+
+        initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+        initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+
+        let expected = HashSet::from(["dev-tools".to_string(), "smart-app-builder".to_string()]);
+        assert_eq!(
+            marketplace_plugin_names(&destination.join(".agents/plugins/marketplace.json"))
+                .unwrap(),
+            expected
+        );
+        assert_eq!(
+            marketplace_plugin_names(&destination.join(".claude-plugin/marketplace.json")).unwrap(),
+            expected
+        );
+        assert!(personal_plugin.join(".codex-plugin/plugin.json").is_file());
+        assert!(!retired_bundled_plugin.exists());
+        assert_eq!(fs::read(&registry).unwrap(), br#"{"copies":[]}"#);
+        assert!(!destination.join("stale.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn exposes_bundled_plugins_marked_for_default_installation() {
         let root = import_test_root("bundled-plugin-marketplace-defaults");
         let source = root.join("source");
@@ -6719,6 +7041,43 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
 
         assert!(!next.contains("WEGENT_RUNTIME_AUTH_TOKEN"));
         assert!(next.contains("BROWSER_USE_AVAILABLE_BACKENDS = \"chrome,iab\""));
+    }
+
+    #[test]
+    fn atomic_file_replacement_never_exposes_partial_content() {
+        let root = import_test_root("atomic-file-replacement");
+        let path = root.join("config.toml");
+        let first = vec![b'a'; 256 * 1024];
+        let second = vec![b'b'; 256 * 1024];
+        write_atomic_file(&path, &first).unwrap();
+
+        let writer_path = path.clone();
+        let writer_first = first.clone();
+        let writer_second = second.clone();
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer_finished = Arc::clone(&finished);
+        let writer = thread::spawn(move || {
+            for index in 0..100 {
+                let content = if index % 2 == 0 {
+                    &writer_second
+                } else {
+                    &writer_first
+                };
+                write_atomic_file(&writer_path, content).unwrap();
+            }
+            writer_finished.store(true, Ordering::Release);
+        });
+
+        while !finished.load(Ordering::Acquire) {
+            let content = fs::read(&path).unwrap();
+            assert!(
+                content == first || content == second,
+                "atomic replacement exposed {} partial bytes",
+                content.len()
+            );
+        }
+        writer.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -7183,6 +7542,9 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
         let codex_home_env = envs
             .get(CODEX_HOME_ENV)
             .expect("codex home env should be passed to sidecar");
+        let wegent_codex_home_env = envs
+            .get(WEGENT_CODEX_HOME_ENV)
+            .expect("Wegent Codex home env should be passed to sidecar");
         let log_dir_env = envs
             .get(LOCAL_EXECUTOR_LOG_DIR_ENV)
             .expect("log dir env should be passed to sidecar");
@@ -7191,10 +7553,12 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
                 executor_home_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-")
             );
             assert_eq!(codex_home_env, &format!("{executor_home_env}/codex"));
+            assert_eq!(wegent_codex_home_env, codex_home_env);
             assert!(log_dir_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-"));
         } else {
             assert_eq!(executor_home_env, "/tmp/wework-instance-executor");
             assert_eq!(codex_home_env, "/tmp/wework-instance-executor/codex");
+            assert_eq!(wegent_codex_home_env, codex_home_env);
             assert_eq!(log_dir_env, "/tmp/wework-instance-executor/logs");
         }
     }
@@ -7437,7 +7801,7 @@ BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
 
     #[cfg(unix)]
     #[test]
-    fn configured_sidecar_kill_stops_grandchild_process_group() {
+    fn shutdown_stops_configured_sidecar_process_group_before_returning() {
         let dir = std::env::temp_dir().join(format!(
             "wework-local-executor-process-group-{}",
             std::process::id()
@@ -7476,18 +7840,28 @@ wait
             .stderr(Stdio::piped());
         configure_managed_process_group(&mut command);
         let child = command.spawn().expect("sidecar should start");
-        let child = LocalExecutorChild::Process(ManagedProcessChild::new(child));
+        let child_pid = child.id();
+        let state = LocalExecutorState::default();
+        register_spawned_child(
+            &state,
+            LocalExecutorChild::Process(ManagedProcessChild::new(child)),
+        )
+        .expect("sidecar should be registered");
         let grandchild_pid = match wait_for_pid_file(&pid_path, Duration::from_secs(10)) {
             Some(pid) => pid,
             None => {
-                child.kill();
+                shutdown_local_executor(&state, "test_cleanup");
                 panic!("grandchild pid");
             }
         };
         let _cleanup = ProcessCleanup::new(grandchild_pid);
 
-        child.kill();
+        shutdown_local_executor(&state, "test_shutdown");
 
+        assert!(
+            !process_alive(child_pid),
+            "sidecar process should be stopped before kill returns"
+        );
         assert!(
             wait_until_dead(grandchild_pid, Duration::from_secs(2)),
             "grandchild process should be stopped when sidecar is killed"

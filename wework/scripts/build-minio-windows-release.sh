@@ -10,6 +10,8 @@ PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/wework-updater-signing.sh"
 # shellcheck source=lib/codex-code-statistics.sh
 source "$SCRIPT_DIR/lib/codex-code-statistics.sh"
+# shellcheck source=lib/wework-release-notes.sh
+source "$SCRIPT_DIR/lib/wework-release-notes.sh"
 
 EXPLICIT_VITE_API_BASE_URL="${VITE_API_BASE_URL+x}"
 EXPLICIT_VITE_API_BASE_URL_VALUE="${VITE_API_BASE_URL:-}"
@@ -144,6 +146,14 @@ config = {
     "version": os.environ["VERSION"],
     "bundle": {
         "createUpdaterArtifacts": True,
+        "resources": [
+            "binaries/codex/x86_64-pc-windows-msvc/**/*",
+            "binaries/codex/legal/**/*",
+            "bundled-execution-runtimes/*",
+            "bundled-harness-runtime/*",
+            "bundled-hooks/**/*",
+            "bundled-plugins",
+        ],
     },
     "plugins": {
         "updater": {
@@ -261,7 +271,7 @@ verify_uploaded_artifacts() {
     fi
   done < <(
     node -e \
-      "const m=require(process.argv[1]); for (const a of m.assets) console.log(a.name)" \
+      "const m=require(process.argv[1]); for (const a of m.assets) { console.log(a.archiveName); console.log(a.descriptorName) }" \
       "$OUTPUT_DIR/release-runtime-assets.json"
   )
 }
@@ -292,7 +302,7 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --notes)
-      RELEASE_NOTES="$2"
+      RELEASE_NOTES="$(wework_decode_release_notes "$2")"
       shift 2
       ;;
     --endpoint)
@@ -445,6 +455,7 @@ if [ -n "$BRAND_CONFIG" ]; then
 fi
 
 WEWORK_SKIP_ENV_FILE=1 \
+WEWORK_RUNTIME_TARGET="$WINDOWS_BUILD_TARGET" \
 WEWORK_HARNESS_RUNTIME_BASE_URL="$UPDATE_BASE_URL" \
 WEWORK_EXECUTION_RUNTIME_BASE_URL="$UPDATE_BASE_URL" \
 VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \

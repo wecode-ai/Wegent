@@ -122,7 +122,9 @@ mod plugin_skills;
 use diagnostics::{json_scalar_field, json_string_field};
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
-pub(crate) use home::{executor_home, select_wework_codex_user_instructions, wework_codex_home};
+pub(crate) use home::{
+    executor_home, replace_config, select_wework_codex_user_instructions, wework_codex_home,
+};
 use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
 use plugin_skills::PluginSkillResolver;
 
@@ -2836,6 +2838,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     if let Some(cargo_target_override) = super::cargo_cache::codex_config_override(request) {
         launch_config.config_overrides.push(cargo_target_override);
     }
+    launch_config
+        .config_overrides
+        .extend(super::pnpm_worktree::codex_config_overrides(request));
     launch_config
         .config_overrides
         .extend(codex_runtime_default_config_overrides());

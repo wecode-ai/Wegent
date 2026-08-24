@@ -42,6 +42,11 @@ export interface RuntimeWorkspaceContext {
   workspaceTarget: WorkspaceTarget | null
 }
 
+export interface RuntimeTaskSource {
+  workspace: RuntimeDeviceWorkspace
+  task: RuntimeTaskSummary
+}
+
 export function createLocalFileWorkspaceTarget(
   filePath: string,
   devices: DeviceInfo[]
@@ -205,6 +210,26 @@ function runtimeTaskMatches(
 
   const taskPath = task.workspacePath || workspace.workspacePath
   return addressPath === taskPath || addressPath === workspace.workspacePath
+}
+
+export function resolveRuntimeTaskSource({
+  currentRuntimeTask,
+  runtimeWork,
+}: Pick<
+  ResolveRuntimeWorkspaceContextOptions,
+  'currentRuntimeTask' | 'runtimeWork'
+>): RuntimeTaskSource | null {
+  if (!currentRuntimeTask) return null
+  for (const workspace of [
+    ...(runtimeWork?.projects.flatMap(project => project.deviceWorkspaces) ?? []),
+    ...(runtimeWork?.chats ?? []),
+  ]) {
+    const task = workspace.tasks.find(item =>
+      runtimeTaskMatches(currentRuntimeTask, workspace, item)
+    )
+    if (task) return { workspace, task }
+  }
+  return null
 }
 
 export function resolveRuntimeWorkspaceContext({
