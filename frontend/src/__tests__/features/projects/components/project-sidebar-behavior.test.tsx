@@ -39,6 +39,7 @@ const pathlessProject: ProjectWithTasks = {
       task_id: 101,
       task_title: 'pathless task',
       task_status: 'COMPLETED',
+      device_id: 'device-2',
       is_group_chat: false,
       project_id: 1,
     },
@@ -234,6 +235,16 @@ describe('project sidebar behavior', () => {
     fireEvent.click(screen.getByText('workspace task'))
 
     expect(pushMock).toHaveBeenCalledWith('/devices/chat?taskId=202&projectId=2&deviceId=device-1')
+  })
+
+  test('keeps a grouped device conversation on the device chat page', () => {
+    render(<ProjectSection onTaskSelect={jest.fn()} />)
+
+    fireEvent.click(screen.getByTestId('project-section-toggle'))
+    fireEvent.click(screen.getByText('pathless task'))
+
+    expect(pushMock).toHaveBeenCalledWith('/devices/chat?taskId=101')
+    expect(toggleProjectExpandedMock).not.toHaveBeenCalled()
   })
 
   test('ordinary task menu imports only into pathless projects', () => {

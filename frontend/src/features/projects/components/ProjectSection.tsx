@@ -122,6 +122,9 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
         params.set('deviceId', deviceId)
       }
       router.push(`/devices/chat?${params.toString()}`)
+    } else if (projectTask.device_id) {
+      // Grouped device conversations must stay on the device chat page.
+      router.push(`/devices/chat?${params.toString()}`)
     } else {
       router.push(`${paths.chat.getHref()}?${params.toString()}`)
     }

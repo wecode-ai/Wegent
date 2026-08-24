@@ -301,29 +301,39 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   // Toggle project expanded state
   const toggleProjectExpanded = useCallback(
     (projectId: number) => {
+      const nextIsExpanded = !expandedProjects.has(projectId)
+
       setExpandedProjects(prev => {
         const next = new Set(prev)
-        if (next.has(projectId)) {
-          next.delete(projectId)
-        } else {
+        if (nextIsExpanded) {
           next.add(projectId)
+        } else {
+          next.delete(projectId)
         }
         return next
       })
+
+      // Keep the project model aligned so refreshes and subsequent toggles
+      // persist the visible state instead of reusing a stale server value.
+      setProjects(prev =>
+        prev.map(project =>
+          project.id === projectId ? { ...project, is_expanded: nextIsExpanded } : project
+        )
+      )
 
       // Persist to server
       const project = projects.find(p => p.id === projectId)
       if (project) {
         projectApis
           .updateProject(projectId, {
-            is_expanded: !project.is_expanded,
+            is_expanded: nextIsExpanded,
           })
           .catch(err => {
             console.error('[ProjectContext] Failed to persist expanded state:', err)
           })
       }
     },
-    [projects]
+    [expandedProjects, projects]
   )
 
   // Load projects on mount
