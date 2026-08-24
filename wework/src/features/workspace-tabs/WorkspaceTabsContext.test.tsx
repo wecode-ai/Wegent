@@ -1,9 +1,10 @@
 import { act, render, screen } from '@testing-library/react'
 import { useEffect, useState } from 'react'
-import { beforeEach, describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { navigateTo } from '@/lib/navigation'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import { useWorkspaceTabs } from './workspaceTabsContextValue'
+import { WORKSPACE_TABS_CLOSED_EVENT, type WorkspaceTabsClosedEventDetail } from './workspaceTabs'
 
 const labels = {
   task: '任务',
@@ -19,7 +20,7 @@ const labels = {
 }
 
 function TabsState() {
-  const { activeTab, openTab, selectTab, tabs } = useWorkspaceTabs()
+  const { activeTab, closeTab, openTab, selectTab, tabs } = useWorkspaceTabs()
   const boardTab = tabs.find(tab => tab.kind === 'board')
 
   return (
@@ -32,6 +33,9 @@ function TabsState() {
       <div data-testid="board-tab-title">{boardTab?.title}</div>
       <button type="button" onClick={() => openTab('board')}>
         新建项目空间标签
+      </button>
+      <button type="button" onClick={() => closeTab(activeTab.id)}>
+        关闭当前标签
       </button>
       <button
         type="button"
@@ -108,6 +112,21 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('auxiliary')
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('插件')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
+  })
+
+  test('notifies resource owners when a workspace tab closes', () => {
+    const onTabsClosed = vi.fn()
+    window.addEventListener(WORKSPACE_TABS_CLOSED_EVENT, onTabsClosed)
+    render(<RoutingHarness />)
+    const closingTabId = screen.getByTestId('active-tab-id').textContent
+
+    act(() => screen.getByRole('button', { name: '关闭当前标签' }).click())
+
+    expect(onTabsClosed).toHaveBeenCalledTimes(1)
+    expect(
+      (onTabsClosed.mock.calls[0][0] as CustomEvent<WorkspaceTabsClosedEventDetail>).detail
+    ).toEqual({ tabIds: [closingTabId] })
+    window.removeEventListener(WORKSPACE_TABS_CLOSED_EVENT, onTabsClosed)
   })
 
   test('activates the preferred tab when the main workspace starts at the root route', () => {

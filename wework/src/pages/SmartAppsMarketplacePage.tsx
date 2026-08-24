@@ -61,12 +61,18 @@ import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAp
 import { useHarnessAppManagement } from '@/features/harness-apps/useHarnessAppManagement'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
-import { revealLocalFile } from '@/lib/local-terminal'
+import { getLocalExecutorDeviceId, revealLocalFile } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
+import type { CreateProjectRequest, ProjectWithTasks } from '@/types/api'
+import type { ProjectMutationOptions } from '@/features/workbench/workbenchContextTypes'
 
 interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
   mode?: 'marketplace' | 'owned'
+  onCreateProject?: (
+    data: CreateProjectRequest,
+    options?: ProjectMutationOptions
+  ) => Promise<ProjectWithTasks>
 }
 
 interface PendingInstall {
@@ -219,6 +225,7 @@ async function readManifest(
 export function SmartAppsMarketplacePage({
   api,
   mode = 'marketplace',
+  onCreateProject,
 }: SmartAppsMarketplacePageProps) {
   const { t, i18n } = useTranslation('common')
   const [items, setItems] = useState<SmartAppMarketplaceItem[]>([])
@@ -489,7 +496,11 @@ export function SmartAppsMarketplacePage({
     }
   }
 
-  async function openBuilder(installation: HarnessAppInstallation, intent: 'develop' | 'created') {
+  async function openBuilder(
+    installation: HarnessAppInstallation,
+    intent: 'develop' | 'created',
+    targetProject?: ProjectWithTasks
+  ) {
     setCreateError(null)
     try {
       const intentPrompt =
@@ -513,6 +524,7 @@ export function SmartAppsMarketplacePage({
             '完成后运行验证；需要分发时导出 ZIP，日常开发继续直接使用此目录。'
           )
         ),
+        targetProject,
       })
       queueSmartAppDevelopmentPreview({
         installationId: installation.id,
@@ -541,14 +553,33 @@ export function SmartAppsMarketplacePage({
     setCreating(true)
     setCreateError(null)
     try {
+      const localDeviceId = await getLocalExecutorDeviceId()
+      if (!localDeviceId) {
+        throw new Error(t('workbench.no_local_project_device', '暂无可用本地设备'))
+      }
       const installation = await harnessAppsApi.createDirectory(input)
       notifyHarnessAppInstallationsChanged({
         type: 'installed',
         installationId: installation.id,
         installation,
       })
+      const project = await onCreateProject?.(
+        {
+          name: installation.manifest.displayName,
+          description: installation.manifest.description,
+          config: {
+            mode: 'workspace',
+            execution: { targetType: 'local', deviceId: localDeviceId },
+            workspace: {
+              source: 'local_path',
+              localPath: installation.packagePath,
+            },
+          },
+        },
+        { refreshWorkLists: false }
+      )
       await refresh()
-      await openBuilder(installation, 'created')
+      await openBuilder(installation, 'created', project)
     } finally {
       setCreating(false)
     }

@@ -516,6 +516,50 @@ fn linked_installation_refreshes_edits_and_recovers_after_invalid_content() {
 }
 
 #[test]
+fn declared_plugins_use_the_standard_dsh_add_command() {
+    assert_eq!(
+        dsh_plugin_add_args("web", &["dsh-better-sidebar".to_string()], false),
+        vec![
+            "plugin".to_string(),
+            "--profile".to_string(),
+            "web".to_string(),
+            "add".to_string(),
+            "dsh-better-sidebar".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn web_profile_approves_the_reviewed_node_pty_build() {
+    let directory = tempdir().unwrap();
+
+    prepare_web_profile(directory.path(), "web").unwrap();
+
+    let workspace =
+        fs::read_to_string(directory.path().join("profiles/web/pnpm-workspace.yaml")).unwrap();
+    assert!(workspace.contains("allowBuilds:\n  node-pty: true\n"));
+}
+
+#[test]
+fn bundled_plugins_disable_install_scripts() {
+    assert_eq!(
+        dsh_plugin_add_args(
+            "web",
+            &["file:/runtime/plugins/wework-model-context".to_string()],
+            true,
+        ),
+        vec![
+            "plugin".to_string(),
+            "--profile".to_string(),
+            "web".to_string(),
+            "add".to_string(),
+            "--ignore-scripts".to_string(),
+            "file:/runtime/plugins/wework-model-context".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn manifest_rejects_install_package_escape() {
     let mut parsed: HarnessAppManifest = serde_json::from_str(&manifest("0.1.0-rc.8")).unwrap();
     parsed.entry.install_package = "../outside".to_string();

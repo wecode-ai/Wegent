@@ -19,6 +19,7 @@ const createDirectory = vi.fn()
 const linkDirectory = vi.fn()
 const copyToDirectory = vi.fn()
 const revealLocalFile = vi.fn()
+const getLocalExecutorDeviceId = vi.fn()
 
 vi.mock('@/hooks/useTranslation', () => {
   const translate = (_key: string, fallback?: string) => fallback ?? _key
@@ -26,6 +27,7 @@ vi.mock('@/hooks/useTranslation', () => {
 })
 vi.mock('@/lib/navigation', () => ({ navigateTo: (path: string) => navigateTo(path) }))
 vi.mock('@/lib/local-terminal', () => ({
+  getLocalExecutorDeviceId: () => getLocalExecutorDeviceId(),
   revealLocalFile: (path: string) => revealLocalFile(path),
 }))
 vi.mock('@/features/plugins/pluginTrial', () => ({
@@ -172,6 +174,7 @@ describe('SmartAppsMarketplacePage', () => {
       manifest: importedInstallation.manifest,
     })
     addPlugin.mockReset().mockResolvedValue(importedInstallation)
+    getLocalExecutorDeviceId.mockReset().mockResolvedValue('local-device-1')
     downloadPackage.mockReset().mockResolvedValue({
       valid: true,
       archivePath: '/tmp/research.zip',
@@ -515,7 +518,23 @@ describe('SmartAppsMarketplacePage', () => {
   })
 
   test('queues the development preview after creating a blank workbench', async () => {
-    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
+    const project = {
+      id: 42,
+      name: '空白工作台',
+      tasks: [],
+      config: {
+        mode: 'workspace',
+        execution: { targetType: 'local' as const, deviceId: 'local-device-1' },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/tmp/blank-workbench',
+        },
+      },
+    }
+    const onCreateProject = vi.fn().mockResolvedValue(project)
+    render(
+      <SmartAppsMarketplacePage api={api([])} mode="owned" onCreateProject={onCreateProject} />
+    )
 
     fireEvent.click(screen.getByTestId('smart-apps-created-create'))
     fireEvent.change(screen.getByTestId('smart-app-development-display-name'), {
@@ -535,8 +554,48 @@ describe('SmartAppsMarketplacePage', () => {
         displayName: '空白工作台',
       })
     )
-    expect(queuePluginReferenceTrial).toHaveBeenCalled()
+    expect(onCreateProject).toHaveBeenCalledWith(
+      {
+        name: '空白工作台',
+        description: '整理本地研究资料',
+        config: {
+          mode: 'workspace',
+          execution: { targetType: 'local', deviceId: 'local-device-1' },
+          workspace: {
+            source: 'local_path',
+            localPath: '/tmp/blank-workbench',
+          },
+        },
+      },
+      { refreshWorkLists: false }
+    )
+    expect(queuePluginReferenceTrial).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openInNewChat: true,
+        targetProject: project,
+      })
+    )
     expect(navigateTo).toHaveBeenCalledWith('/')
+  })
+
+  test('does not create a workbench directory without a local project device', async () => {
+    getLocalExecutorDeviceId.mockResolvedValue(null)
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" onCreateProject={vi.fn()} />)
+
+    fireEvent.click(screen.getByTestId('smart-apps-created-create'))
+    fireEvent.change(screen.getByTestId('smart-app-development-display-name'), {
+      target: { value: '空白工作台' },
+    })
+    fireEvent.change(screen.getByTestId('smart-app-development-name'), {
+      target: { value: 'blank-workbench' },
+    })
+    fireEvent.change(screen.getByTestId('smart-app-development-parent-path'), {
+      target: { value: '/tmp' },
+    })
+    fireEvent.click(screen.getByTestId('smart-app-development-confirm'))
+
+    expect(await screen.findByText('暂无可用本地设备')).toBeInTheDocument()
+    expect(createDirectory).not.toHaveBeenCalled()
   })
 
   test('stays on my creations when the builder cannot install', async () => {

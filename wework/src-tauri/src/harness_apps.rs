@@ -2313,7 +2313,7 @@ fn prepare_web_profile(home: &Path, profile: &str) -> Result<(), String> {
         .map_err(|error| format!("Failed to write Harness app profile patch: {error}"))?;
     fs::write(
         profile_dir.join("pnpm-workspace.yaml"),
-        "packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n",
+        "packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\nallowBuilds:\n  node-pty: true\n",
     )
     .map_err(|error| format!("Failed to write Harness app profile workspace: {error}"))
 }
@@ -2328,6 +2328,20 @@ fn install_harness_plugin(
     install_harness_plugins(runtime, home, profile, &[package.to_path_buf()], label)
 }
 
+fn dsh_plugin_add_args(profile: &str, specs: &[String], ignore_scripts: bool) -> Vec<String> {
+    let mut args = vec![
+        "plugin".to_string(),
+        "--profile".to_string(),
+        profile.to_string(),
+        "add".to_string(),
+    ];
+    if ignore_scripts {
+        args.push("--ignore-scripts".to_string());
+    }
+    args.extend(specs.iter().cloned());
+    args
+}
+
 fn install_harness_plugins(
     runtime: &DshRuntime,
     home: &Path,
@@ -2335,18 +2349,11 @@ fn install_harness_plugins(
     packages: &[PathBuf],
     label: &str,
 ) -> Result<(), String> {
-    let mut args = vec![
-        "plugin".to_string(),
-        "--profile".to_string(),
-        profile.to_string(),
-        "add".to_string(),
-        "--ignore-scripts".to_string(),
-    ];
-    args.extend(
-        packages
-            .iter()
-            .map(|package| format!("file:{}", package.display())),
-    );
+    let specs = packages
+        .iter()
+        .map(|package| format!("file:{}", package.display()))
+        .collect::<Vec<_>>();
+    let args = dsh_plugin_add_args(profile, &specs, true);
     let output = dsh_command(runtime, &args, home)
         .output()
         .map_err(|error| format!("Failed to install {label}: {error}"))?;
@@ -2377,20 +2384,18 @@ fn install_declared_harness_app_plugins(
     if manifest.plugins.is_empty() {
         return Ok(());
     }
-    let mut args = vec![
-        "plugin".to_string(),
-        "--profile".to_string(),
-        profile.to_string(),
-        "add".to_string(),
-        "--ignore-scripts".to_string(),
-    ];
-    args.extend(manifest.plugins.iter().map(|plugin| {
-        plugin
-            .path
-            .as_deref()
-            .map(|path| format!("file:{}", package_root.join(path).display()))
-            .unwrap_or_else(|| plugin.spec.clone())
-    }));
+    let specs = manifest
+        .plugins
+        .iter()
+        .map(|plugin| {
+            plugin
+                .path
+                .as_deref()
+                .map(|path| format!("file:{}", package_root.join(path).display()))
+                .unwrap_or_else(|| plugin.spec.clone())
+        })
+        .collect::<Vec<_>>();
+    let args = dsh_plugin_add_args(profile, &specs, false);
     let output = dsh_command(runtime, &args, home)
         .output()
         .map_err(|error| format!("Failed to install declared DSH plugins: {error}"))?;

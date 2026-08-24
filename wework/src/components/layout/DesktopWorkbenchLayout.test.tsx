@@ -26,6 +26,7 @@ import {
   WorkspaceTabsContext,
   type WorkspaceTabsContextValue,
 } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { dispatchWorkspaceTabsClosed } from '@/features/workspace-tabs/workspaceTabs'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
@@ -74,6 +75,7 @@ const deliveryApiMock = vi.hoisted(() => ({
   trackProjectTask: vi.fn(),
 }))
 const embeddedBrowserMocks = vi.hoisted(() => ({
+  closeEmbeddedBrowser: vi.fn().mockResolvedValue(undefined),
   setEmbeddedBrowserActiveTab: vi.fn().mockResolvedValue(undefined),
 }))
 const harnessAppMocks = vi.hoisted(() => ({
@@ -127,6 +129,7 @@ vi.mock('@/lib/embedded-browser', async importOriginal => {
   const actual = await importOriginal<typeof import('@/lib/embedded-browser')>()
   return {
     ...actual,
+    closeEmbeddedBrowser: embeddedBrowserMocks.closeEmbeddedBrowser,
     setEmbeddedBrowserActiveTab: embeddedBrowserMocks.setEmbeddedBrowserActiveTab,
   }
 })
@@ -757,6 +760,7 @@ describe('DesktopWorkbenchLayout', () => {
     harnessAppMocks.addPlugin.mockReset()
     harnessAppMocks.start.mockReset()
     harnessAppMocks.stop.mockReset().mockResolvedValue(undefined)
+    embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
     harnessAppTabMocks.takeProxyToken.mockResolvedValue(null)
     harnessAppTabMocks.takeContextToken.mockResolvedValue(null)
     unregisterHarnessProxyMock.mockResolvedValue(undefined)
@@ -1012,6 +1016,7 @@ describe('DesktopWorkbenchLayout', () => {
     codeCommentContexts?: unknown[]
     subagentStatuses?: RuntimeSubagentStatus[]
     workspaceFileApi?: WorkbenchContextValue['workspaceFileApi']
+    workspaceTabId?: string
     runtimeWorkApi?: WorkbenchServices['runtimeWorkApi']
     lifecycleTaskRunning?: boolean
     isAwaitingAssistantStart?: boolean
@@ -1245,6 +1250,7 @@ describe('DesktopWorkbenchLayout', () => {
         },
         ...(props.runtimeWorkApi ? { runtimeWorkApi: props.runtimeWorkApi } : {}),
       },
+      workspaceTabId: props.workspaceTabId,
       state,
       isStartupReady: true,
       workspaceFileApi: props.workspaceFileApi ?? baseProps.workspaceFileApi,
@@ -10647,13 +10653,15 @@ describe('DesktopWorkbenchLayout', () => {
       .mockResolvedValueOnce([running])
       .mockResolvedValueOnce([installed])
       .mockResolvedValue([running])
-    harnessAppMocks.addPlugin.mockResolvedValue({
+    const pluginAdded = {
       ...installed,
       manifest: {
         ...installed.manifest,
         plugins: [{ spec: '@scope/dsh-plugin' }],
       },
-    })
+    }
+    const addPlugin = createDeferred<typeof pluginAdded>()
+    harnessAppMocks.addPlugin.mockImplementation(() => addPlugin.promise)
     const initialStart = createDeferred<typeof running>()
     harnessAppMocks.start
       .mockImplementationOnce(() => initialStart.promise)
@@ -10693,9 +10701,20 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.type(screen.getByTestId('smart-app-plugin-spec-input'), '@scope/dsh-plugin')
     await userEvent.click(screen.getByTestId('smart-app-plugin-confirm'))
 
+    await waitFor(() => {
+      const reloading = screen.getByTestId('smart-app-development-preview-reloading')
+      expect(reloading).toHaveTextContent('正在重新加载 DSH…')
+      expect(reloading).toHaveTextContent('正在准备运行环境和已配置插件，请稍候')
+    })
+    expect(screen.queryByTestId('workspace-browser-frame')).not.toBeInTheDocument()
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+      expect.any(String),
+      undefined
+    )
     await waitFor(() =>
       expect(harnessAppMocks.addPlugin).toHaveBeenCalledWith(installed.id, '@scope/dsh-plugin')
     )
+    addPlugin.resolve(pluginAdded)
     await waitFor(() =>
       expect(screen.queryByTestId('smart-app-plugin-dialog')).not.toBeInTheDocument()
     )
@@ -10706,6 +10725,99 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(harnessAppMocks.stop).toHaveBeenCalledWith(installed.id))
     await waitFor(() => expect(harnessAppMocks.start).toHaveBeenCalledTimes(3))
     expect(screen.getByText('DSH 开发预览 · 文件改动后可重新加载')).toBeInTheDocument()
+
+    harnessAppMocks.stop.mockClear()
+    await userEvent.click(screen.getByTestId('right-workspace-browser-tab-1-close-button'))
+
+    await waitFor(() => expect(harnessAppMocks.stop).toHaveBeenCalledWith(installed.id))
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+        expect.any(String),
+        undefined
+      )
+    )
+    expect(screen.queryByTestId('smart-app-development-preview')).not.toBeInTheDocument()
+  })
+
+  test('closes the Smart app browser and runtime when the development tab is disposed', async () => {
+    const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+    const workspaceTab = {
+      id: 'smart-app-development-tab',
+      kind: 'task' as const,
+      title: '智能工作台开发',
+      contentRoute: '/',
+      fixed: false,
+    }
+    const workspaceTabs = {
+      tabs: [workspaceTab],
+      activeTabId: workspaceTab.id,
+      activeTab: workspaceTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } satisfies WorkspaceTabsContextValue
+    const installed = {
+      id: 'blank-workbench-disposal',
+      manifest: {
+        name: 'blank-workbench-disposal',
+        displayName: '待关闭工作台',
+        version: '0.1.0',
+        type: 'deepseek-harness-plugin-bundle' as const,
+        description: 'Web preset',
+        entry: {
+          installPackage: 'packages/bundle/web-app',
+          profile: 'blank-workbench-disposal',
+        },
+        requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
+      },
+      packagePath: '/tmp/blank-workbench-disposal',
+      sha256: 'b'.repeat(64),
+      modelKey: null,
+      resident: false,
+      runtimeVersion: null,
+      state: 'installed' as const,
+      webUrl: null,
+      error: null,
+      source: 'linked' as const,
+    }
+    const running = {
+      ...installed,
+      state: 'running' as const,
+      webUrl: 'http://127.0.0.1:43124/',
+    }
+    harnessAppMocks.list.mockResolvedValue([installed])
+    harnessAppMocks.start.mockResolvedValue(running)
+    queueSmartAppDevelopmentPreview({
+      installationId: installed.id,
+      displayName: installed.manifest.displayName,
+    })
+
+    render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <DesktopWorkbenchLayout {...propsForTask(taskA)} workspaceTabId={workspaceTab.id} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute('src', running.webUrl)
+    )
+    embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
+    harnessAppMocks.stop.mockClear()
+
+    act(() => dispatchWorkspaceTabsClosed([workspaceTab.id]))
+
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+        expect.any(String),
+        undefined
+      )
+    )
+    await waitFor(() => expect(harnessAppMocks.stop).toHaveBeenCalledWith(installed.id))
+    expect(screen.queryByTestId('smart-app-development-preview')).not.toBeInTheDocument()
   })
 
   test('exposes the task-scoped browser label before the browser panel mounts', () => {

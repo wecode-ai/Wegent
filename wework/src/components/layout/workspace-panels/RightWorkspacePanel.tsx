@@ -124,6 +124,7 @@ export interface RightWorkspaceBrowserState {
   developmentPreview?: {
     installationId: string
     displayName: string
+    workspaceTabId?: string
     status: 'starting' | 'ready' | 'reloading' | 'error'
     error?: string
   }

@@ -1,15 +1,18 @@
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
 import { ensureBundledPluginInstalled } from '@/tauri/localExecutor'
+import type { ProjectWithTasks } from '@/types/api'
 
 interface QueueSmartAppBuilderInput {
   displayName: string
   prompt: string
+  targetProject?: ProjectWithTasks
 }
 
 export async function queueSmartAppBuilder({
   displayName,
   prompt,
+  targetProject,
 }: QueueSmartAppBuilderInput): Promise<void> {
   await ensureBundledPluginInstalled('smart-app-builder')
   const queued = queuePluginReferenceTrial({
@@ -18,6 +21,7 @@ export async function queueSmartAppBuilder({
     displayName,
     prompt,
     openInNewChat: true,
+    targetProject,
   })
   if (!queued) throw new Error('Smart App Builder reference could not be queued')
 }
