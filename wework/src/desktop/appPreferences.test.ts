@@ -7,6 +7,7 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 }))
 
 const mergedDefaultPreferences = {
+  appearanceMode: 'system',
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   fixedWorkspaceTabs: [
@@ -320,6 +321,23 @@ describe('appPreferences', () => {
     })
     expect(invokeMock).toHaveBeenCalledWith('preferences.update', {
       patch: { language: 'en' },
+    })
+  })
+
+  test('updates the startup appearance mode through the Electron host', async () => {
+    invokeMock.mockResolvedValue({
+      ...mergedDefaultPreferences,
+      appearanceMode: 'dark',
+    })
+
+    const { updateAppPreferences } = await import('./appPreferences')
+
+    await expect(updateAppPreferences({ appearanceMode: 'dark' })).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      appearanceMode: 'dark',
+    })
+    expect(invokeMock).toHaveBeenCalledWith('preferences.update', {
+      patch: { appearanceMode: 'dark' },
     })
   })
 
