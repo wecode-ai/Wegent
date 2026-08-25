@@ -15,7 +15,9 @@ const COMPLETIONS = {
   quiet: 'WEWORK_E2E_CODEX_NOTIFICATION_QUIET_COMPLETE',
   noisy: 'WEWORK_E2E_CODEX_NOTIFICATION_NOISY_COMPLETE',
 }
-const NOISE_DELTA_COUNT = 2200
+// The notification hub unit test covers bursts beyond its 2048-event capacity.
+// Keep the desktop flow large enough to exercise interleaving without monopolizing renderer IPC.
+const NOISE_DELTA_COUNT = 256
 
 function sse(event) {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
@@ -273,7 +275,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await waitForRequestCount(requests, 1, uiTimeoutMs)
       const noisy = await sendTask(control, newConversationSelector, PROMPTS.noisy, uiTimeoutMs)
       await waitForRequestCount(requests, 2, uiTimeoutMs)
-      const burstSettleTimeoutMs = Math.max(uiTimeoutMs * 3, 60_000)
+      const burstSettleTimeoutMs = uiTimeoutMs * 3
 
       const sidebar = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar"]`
       for (const [task, completion] of [
