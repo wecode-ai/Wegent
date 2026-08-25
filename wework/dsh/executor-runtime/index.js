@@ -63,6 +63,16 @@ export async function handleExecutorEvents(req, res, client) {
   if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET')
   const after = eventCursor(req)
+  let active = true
+  let dispose = () => {}
+  let writer = null
+  const disconnect = () => {
+    if (!active) return
+    active = false
+    writer?.close()
+    dispose()
+  }
+  req.once('close', disconnect)
   try {
     const replay = client.replay(after)
     res.writeHead(200, {
@@ -70,38 +80,53 @@ export async function handleExecutorEvents(req, res, client) {
       'cache-control': 'no-cache, no-store',
       connection: 'keep-alive',
     })
-    let dispose = () => {}
-    const writer = createExecutorEventWriter(res, () => dispose())
-    for (const event of replay) writer.write(event)
+    const writeChunk = chunk => {
+      if (!active || res.writableEnded || res.destroyed) {
+        disconnect()
+        return false
+      }
+      const writable = res.write(chunk)
+      if (!writable) {
+        disconnect()
+        if (!res.writableEnded && !res.destroyed) res.end()
+      }
+      return writable
+    }
+    writer = createExecutorEventWriter(writeChunk)
+    for (const event of replay) {
+      writer.write(event)
+      if (!active) return
+    }
     writer.flush()
-    if (res.writableEnded) return
+    if (!active || res.writableEnded || res.destroyed) return
     dispose = client.listen(event => writer.write(event))
-    req.on('close', () => {
-      writer.close()
+    if (!active) {
       dispose()
-    })
-    res.write(': connected\n\n')
+      return
+    }
+    writeChunk(': connected\n\n')
   } catch (error) {
+    disconnect()
     if (!res.headersSent) sendError(res, error)
-    else res.end(`event: error\ndata: ${JSON.stringify(errorBody(error))}\n\n`)
+    else if (!res.writableEnded && !res.destroyed) {
+      res.end(`event: error\ndata: ${JSON.stringify(errorBody(error))}\n\n`)
+    }
   }
 }
 
-function createExecutorEventWriter(res, disconnect) {
+function createExecutorEventWriter(writeChunk) {
   const pendingBlockUpdates = new Map()
   let flushImmediate = null
   let closed = false
 
   const writeRaw = event => {
-    if (closed || res.writableEnded) return false
-    const writable = res.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
+    if (closed) return false
+    const writable = writeChunk(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
     if (!writable) {
       closed = true
       if (flushImmediate) clearImmediate(flushImmediate)
       flushImmediate = null
       pendingBlockUpdates.clear()
-      disconnect()
-      res.end()
       return false
     }
     return true

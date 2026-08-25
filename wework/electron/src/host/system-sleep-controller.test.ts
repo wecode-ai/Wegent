@@ -71,4 +71,14 @@ describe('SystemSleepController', () => {
     controller.handleExecutorEvent('response.completed', { taskId: 'task-1' })
     expect(mocks.stop).toHaveBeenCalledWith(42)
   })
+
+  test('ignores high-frequency response updates that do not change task activity', () => {
+    const controller = new SystemSleepController()
+
+    controller.handleExecutorEvent('response.output_text.delta', { taskId: 'task-1' })
+    controller.handleExecutorEvent('response.block.updated', { taskId: 'task-1' })
+
+    expect(mocks.start).not.toHaveBeenCalled()
+    expect(mocks.stop).not.toHaveBeenCalled()
+  })
 })

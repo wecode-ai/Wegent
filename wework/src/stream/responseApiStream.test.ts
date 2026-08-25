@@ -544,6 +544,37 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('emits text block content delta updates', () => {
+    const onBlockUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onBlockUpdated },
+      'response.block.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        deviceId: 'device-1',
+        data: {
+          block_id: 'message-1',
+          updates: {
+            status: 'streaming',
+            content_delta: 'next',
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onBlockUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      blockId: 'message-1',
+      status: 'streaming',
+      contentDelta: 'next',
+    })
+  })
+
   test('treats command output with non-zero exit code as completed', () => {
     const onBlockUpdated = vi.fn()
 

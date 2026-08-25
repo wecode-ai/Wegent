@@ -428,6 +428,7 @@ function emitBlockUpdated(
     toolOutputTruncated?: boolean
     toolOutputOriginalBytes?: number
     content?: string
+    contentDelta?: string
     fileChanges?: ChatBlock['fileChanges']
     renderPayload?: unknown
   }
@@ -559,6 +560,7 @@ function emitResponseBlockUpdated(
   const toolInput = parseRecord(updates.toolInput ?? updates.tool_input)
   const renderPayload = updates.renderPayload ?? updates.render_payload
   const fileChanges = parseRecord(updates.fileChanges ?? updates.file_changes)
+  const contentDelta = updates.contentDelta ?? updates.content_delta
   const toolOutputDelta = updates.toolOutputDelta ?? updates.tool_output_delta
   const toolOutputTruncated = updates.toolOutputTruncated ?? updates.tool_output_truncated
   const toolOutputOriginalBytes =
@@ -574,6 +576,7 @@ function emitResponseBlockUpdated(
     stringField(data, 'blockId') ?? stringField(data, 'block_id'),
     {
       ...(typeof updates.content === 'string' && { content: updates.content }),
+      ...(typeof contentDelta === 'string' && { contentDelta }),
       ...(typeof (updates.toolOutput ?? updates.tool_output) !== 'undefined' && {
         toolOutput: updates.toolOutput ?? updates.tool_output,
       }),

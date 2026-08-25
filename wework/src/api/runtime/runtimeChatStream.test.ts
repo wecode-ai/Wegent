@@ -44,6 +44,177 @@ describe('createRuntimeChatStream', () => {
     })
   })
 
+  test('coalesces a burst of text deltas before delivering terminal events', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const calls: string[] = []
+    const onChatChunk = vi.fn(payload => calls.push(`chunk:${payload.content}`))
+    const onChatDone = vi.fn(() => calls.push('done'))
+    const stream = createRuntimeChatStream({ subscribe, request })
+
+    stream.subscribe({ onChatChunk, onChatDone })
+    await Promise.resolve()
+    for (let offset = 0; offset < 2200; offset += 1) {
+      listener({
+        event: 'response.output_text.delta',
+        payload: {
+          taskId: 'task-1',
+          subtaskId: '1001',
+          deviceId: 'local-device',
+          data: {
+            item_id: 'message-1',
+            delta: 'x',
+            offset,
+          },
+        },
+      })
+    }
+    listener({
+      event: 'response.output_text.done',
+      payload: {
+        taskId: 'task-1',
+        subtaskId: '1001',
+        deviceId: 'local-device',
+        data: {
+          item_id: 'message-1',
+          text: 'complete',
+        },
+      },
+    })
+    listener({
+      event: 'response.completed',
+      payload: {
+        taskId: 'task-1',
+        subtaskId: '1001',
+        deviceId: 'local-device',
+        data: { value: 'complete' },
+      },
+    })
+
+    expect(onChatChunk).toHaveBeenCalledTimes(3)
+    expect(onChatChunk.mock.calls[0]?.[0]).toMatchObject({ content: 'x', offset: 0 })
+    expect(onChatChunk.mock.calls[1]?.[0]).toMatchObject({
+      content: 'x'.repeat(2199),
+      offset: 1,
+    })
+    expect(onChatChunk.mock.calls[2]?.[0]).toMatchObject({
+      content: 'complete',
+      contentMode: 'snapshot',
+    })
+    expect(calls.at(-1)).toBe('done')
+  })
+
+  test('coalesces cumulative block content snapshots before terminal events', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const calls: string[] = []
+    const onBlockUpdated = vi.fn(payload => calls.push(`block:${payload.content}`))
+    const onChatDone = vi.fn(() => calls.push('done'))
+    const stream = createRuntimeChatStream({ subscribe, request })
+
+    stream.subscribe({ onBlockUpdated, onChatDone })
+    await Promise.resolve()
+    for (let count = 1; count <= 2200; count += 1) {
+      listener({
+        event: 'response.block.updated',
+        payload: {
+          taskId: 'task-1',
+          subtaskId: '1001',
+          deviceId: 'local-device',
+          data: {
+            block_id: 'message-1',
+            updates: {
+              content: 'x'.repeat(count),
+              status: 'streaming',
+            },
+          },
+        },
+      })
+    }
+    listener({
+      event: 'response.completed',
+      payload: {
+        taskId: 'task-1',
+        subtaskId: '1001',
+        deviceId: 'local-device',
+        data: { value: 'complete' },
+      },
+    })
+
+    expect(onBlockUpdated).toHaveBeenCalledTimes(2)
+    expect(onBlockUpdated.mock.calls[0]?.[0]).toMatchObject({
+      blockId: 'message-1',
+      content: 'x',
+      status: 'streaming',
+    })
+    expect(onBlockUpdated.mock.calls[1]?.[0]).toMatchObject({
+      blockId: 'message-1',
+      content: 'x'.repeat(2200),
+      status: 'streaming',
+    })
+    expect(calls.at(-1)).toBe('done')
+  })
+
+  test('coalesces block content deltas before terminal events', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const calls: string[] = []
+    const onBlockUpdated = vi.fn(payload => calls.push(`block:${payload.contentDelta}`))
+    const onChatDone = vi.fn(() => calls.push('done'))
+    const stream = createRuntimeChatStream({ subscribe, request })
+
+    stream.subscribe({ onBlockUpdated, onChatDone })
+    await Promise.resolve()
+    for (let count = 0; count < 2200; count += 1) {
+      listener({
+        event: 'response.block.updated',
+        payload: {
+          taskId: 'task-1',
+          subtaskId: '1001',
+          deviceId: 'local-device',
+          data: {
+            block_id: 'message-1',
+            updates: {
+              content_delta: 'x',
+              status: 'streaming',
+            },
+          },
+        },
+      })
+    }
+    listener({
+      event: 'response.completed',
+      payload: {
+        taskId: 'task-1',
+        subtaskId: '1001',
+        deviceId: 'local-device',
+        data: { value: 'complete' },
+      },
+    })
+
+    expect(onBlockUpdated).toHaveBeenCalledTimes(2)
+    expect(onBlockUpdated.mock.calls[0]?.[0]).toMatchObject({
+      blockId: 'message-1',
+      contentDelta: 'x',
+      status: 'streaming',
+    })
+    expect(onBlockUpdated.mock.calls[1]?.[0]).toMatchObject({
+      blockId: 'message-1',
+      contentDelta: 'x'.repeat(2199),
+      status: 'streaming',
+    })
+    expect(calls.at(-1)).toBe('done')
+  })
+
   test('delivers project task assignment notifications', async () => {
     let listener!: (event: LocalExecutorEvent) => void
     subscribe.mockImplementation(async handler => {

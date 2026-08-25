@@ -52,6 +52,50 @@ test('disconnects an SSE slow consumer instead of buffering indefinitely', async
   assert.equal(listened, false)
 })
 
+test('stops replaying events after disconnecting an SSE slow consumer', async () => {
+  const request = executorEventRequest()
+  const response = responseFixture({ writable: false, throwAfterEnd: true })
+  const client = {
+    replay() {
+      return [executorEvent(1), executorEvent(2)]
+    },
+    listen() {
+      assert.fail('slow replay consumers must not subscribe to live events')
+    },
+  }
+
+  await handleExecutorEvents(request, response, client)
+
+  assert.equal(response.writes, 1)
+  assert.equal(response.writableEnded, true)
+})
+
+test('ignores queued live events after disconnecting an SSE slow consumer', async () => {
+  const request = executorEventRequest()
+  const response = responseFixture({ writableSequence: [true, false], throwAfterEnd: true })
+  let listener
+  let disposeCalls = 0
+  const client = {
+    replay() {
+      return []
+    },
+    listen(nextListener) {
+      listener = nextListener
+      return () => {
+        disposeCalls += 1
+      }
+    },
+  }
+
+  await handleExecutorEvents(request, response, client)
+  listener(executorEvent(1))
+  listener(executorEvent(2))
+
+  assert.equal(response.writes, 2)
+  assert.equal(response.writableEnded, true)
+  assert.equal(disposeCalls, 1)
+})
+
 test('coalesces bursty content snapshots before a terminal event', async () => {
   const request = executorEventRequest()
   const response = responseFixture()
@@ -125,6 +169,9 @@ function executorEventRequest() {
 
 function blockUpdate(sequence, content) {
   return executorEvent(sequence, 'response.block.updated', {
+    deviceId: 'local-device',
+    taskId: 'task-1',
+    subtaskId: 'subtask-1',
     data: {
       block_id: 'process-1',
       updates: { content, status: 'streaming' },
@@ -132,18 +179,13 @@ function blockUpdate(sequence, content) {
   })
 }
 
-function executorEvent(sequence, event, payload) {
+function executorEvent(sequence, event = 'task.updated', payload = { id: `task-${sequence}` }) {
   return {
     protocolVersion: 1,
     sequence,
     emittedAt: new Date().toISOString(),
     event,
-    payload: {
-      deviceId: 'local-device',
-      taskId: 'task-1',
-      subtaskId: 'subtask-1',
-      ...payload,
-    },
+    payload,
   }
 }
 
@@ -154,14 +196,21 @@ function responseFixture(options = {}) {
     body: '',
     headersSent: false,
     writableEnded: false,
+    destroyed: false,
+    writes: 0,
     writeHead(status, headers) {
       this.status = status
       this.headers = headers
       this.headersSent = true
     },
     write(body) {
+      if (options.throwAfterEnd && this.writableEnded) {
+        throw new Error('write after end')
+      }
+      const writable = options.writableSequence?.[this.writes] ?? options.writable !== false
+      this.writes += 1
       this.body += body
-      return options.writable !== false
+      return writable
     },
     end(body = '') {
       this.body += body

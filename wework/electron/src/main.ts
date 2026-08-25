@@ -1,8 +1,10 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   ipcMain,
   Menu,
+  nativeTheme,
   screen,
   session,
   shell,
@@ -44,9 +46,16 @@ import { presentWindow } from './host/window-presentation.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
-import { StartupSplash } from './host/startup-splash.js'
+import { resolveStartupSplashTheme, StartupSplash } from './host/startup-splash.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
+import { installNativeContextMenu } from './host/image-context-menu.js'
+import {
+  cleanupStaleTemporaryImages,
+  materializeTemporaryImage,
+  resolveRendererImageContext,
+  scheduleTemporaryImageCleanup,
+} from './host/image-context-actions.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
@@ -112,6 +121,30 @@ rendererHealth.on('change', () => {
 
 function secureDshContents(contents: WebContents, dshUrl: string): void {
   const allowedOrigin = new URL(dshUrl).origin
+  installNativeContextMenu(
+    contents,
+    items => Menu.buildFromTemplate(items),
+    {
+      copyPath: path => clipboard.writeText(path),
+      copyText: text => clipboard.writeText(text),
+      openImage: async image => {
+        const temporaryPath = image.localPath
+          ? null
+          : await materializeTemporaryImage(contents, image)
+        const path = image.localPath ?? temporaryPath
+        if (!path) throw new Error('Image path is unavailable')
+        const error = await shell.openPath(path)
+        if (temporaryPath) scheduleTemporaryImageCleanup(temporaryPath)
+        if (error) throw new Error(error)
+      },
+      reportError: (action, error) => {
+        console.error(`[context-menu] ${action} failed`, error)
+      },
+      resolveImageContext: params => resolveRendererImageContext(contents, params),
+      showItemInFolder: path => shell.showItemInFolder(path),
+    },
+    app.getLocale()
+  )
   contents.setWindowOpenHandler(({ url }) => {
     const target = new URL(url)
     if (target.origin === allowedOrigin) return { action: 'allow' }
@@ -954,6 +987,9 @@ function startDesktopRuntime(): Promise<void> {
 
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
+    await cleanupStaleTemporaryImages().catch(error => {
+      console.error('[context-menu] failed to remove stale temporary images', error)
+    })
     installDshWindowLabelHeaders()
     installIpc()
     preferences = new PreferencesStore(app.getPath('userData'))
@@ -973,6 +1009,7 @@ if (hasSingleInstanceLock) {
     })
     trayManager = createTrayManager()
     trayManager.create()
+    const startupPreferences = await preferences.read()
     startupSplash = new StartupSplash({
       createWindow: options => {
         const target = new BrowserWindow(options)
@@ -980,7 +1017,7 @@ if (hasSingleInstanceLock) {
           close: () => target.close(),
           isDestroyed: () => target.isDestroyed(),
           isVisible: () => target.isVisible(),
-          loadFile: path => target.loadFile(path),
+          loadFile: (path, options) => target.loadFile(path, options),
           once: (event, listener) => {
             if (event === 'closed') target.once('closed', listener)
             else target.once('ready-to-show', listener)
@@ -994,6 +1031,10 @@ if (hasSingleInstanceLock) {
         }
       },
       htmlPath: resolve(packageRoot, 'dist/shell/startup-splash/index.html'),
+      theme: resolveStartupSplashTheme(
+        startupPreferences.appearanceMode,
+        nativeTheme.shouldUseDarkColors
+      ),
     })
     await Promise.all([startupSplash.show(), createWindow()])
     void startDesktopRuntime()
