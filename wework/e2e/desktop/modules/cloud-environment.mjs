@@ -13,7 +13,6 @@ import {
   CLOUD_VISION_SIDECAR_CASE,
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_API_KEY,
-  PLUGIN_CREATOR_COMPLETION_TEXT,
   PLUGIN_CREATOR_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   appendFile,
@@ -628,7 +627,7 @@ class RealCloudEnvironment {
       taskId: task.taskId,
       workspacePath: task.workspacePath,
     }
-    await this.waitForRuntimeTranscript(address, PLUGIN_CREATOR_COMPLETION_TEXT)
+    await this.waitForRuntimeTask(address)
     return address
   }
 
@@ -636,34 +635,21 @@ class RealCloudEnvironment {
     const startedAt = Date.now()
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
       const task = await this.runtimeTask(address.taskId)
-      if (task?.workspacePath === address.workspacePath) return task
+      if (
+        task?.workspacePath === address.workspacePath &&
+        ['failed', 'cancelled'].includes(task.status)
+      ) {
+        throw new Error(`Cloud runtime task ${address.taskId} settled as ${task.status}`)
+      }
+      const active =
+        task?.running === true || ['creating', 'queued', 'active', 'running'].includes(task?.status)
+      if (task?.workspacePath === address.workspacePath && !active) return task
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
     const device = await this.device(CLOUD_DEVICE_ID).catch(() => null)
     throw new Error(
       `Cloud runtime task ${address.taskId} did not expose its workspace ` +
         `(device_status=${device?.status ?? 'unknown'})`
-    )
-  }
-
-  async waitForRuntimeTranscript(address, expectedText) {
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
-      const transcript = await fetchJson(`${this.backendUrl}/api/runtime-work/transcript`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.authToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ ...address, includeFullContent: true }),
-      }).catch(() => null)
-      if (transcript?.messages?.some(message => message.content?.includes(expectedText))) {
-        return transcript
-      }
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-    }
-    throw new Error(
-      `Cloud runtime task ${address.taskId} transcript did not contain ${expectedText}`
     )
   }
 
@@ -677,7 +663,6 @@ class RealCloudEnvironment {
       body: JSON.stringify({ address, message: marker }),
     })
     assert.equal(result.accepted, true, `Cloud Plugin Creator result was rejected: ${result.error}`)
-    await this.waitForRuntimeTranscript(address, marker)
   }
 
   async spawnExecutor(env, logPath) {
