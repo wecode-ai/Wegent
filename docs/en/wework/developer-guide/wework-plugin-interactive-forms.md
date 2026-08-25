@@ -133,7 +133,7 @@ default_tools_approval_mode = "approve"
 
 Request-level, bot-level, and Wework built-in persistent MCP servers should all follow this rule. For tools from Wegent Connector Apps, Wework writes the built-in persistent MCP server `mcp_servers.wegent_apps` with the same `default_tools_approval_mode = "approve"` and refreshes existing config during connector configure or app sync.
 
-If a plugin tool really needs per-call approval, the plugin config can explicitly declare `default_tools_approval_mode = "prompt"`. Wework must preserve that explicit setting.
+If a plugin tool really needs per-call approval, the plugin config can explicitly declare `default_tools_approval_mode = "prompt"`. Wework must preserve that explicit setting. Read-only and workspace permission modes still show the approval card for these calls. In Full access mode, Wework automatically accepts approval requests marked with `_meta.codex_approval_kind = "mcp_tool_call"` instead of showing them to the user.
 
 Also keep:
 
@@ -147,6 +147,7 @@ These switches control different behavior:
 - `approvalPolicy.granular.mcp_elicitations: true` allows plugin business forms to be forwarded from the MCP runtime to the Wework UI.
 - `mcp_servers.<name>.default_tools_approval_mode = "approve"` makes normal MCP tool calls not require approval cards.
 - `features.tool_call_mcp_elicitation: false` only means Codex should not wrap tool-call approval cards as MCP elicitation forms. If the tool approval mode still requires approval, Codex may fall back to a normal `request_user_input` approval card.
+- Full access mode automatically accepts approvals explicitly marked as `mcp_tool_call` while continuing to forward plugin business forms without that marker.
 
 ## Implementation Boundary
 
@@ -154,7 +155,7 @@ Keep these boundaries when supporting plugin forms so existing approval behavior
 
 - Do not switch `approvalPolicy` to broadly allow every approval type. Wework only needs `mcp_elicitations` enabled; the other approval gates stay disabled.
 - Wework-injected or Wework-managed MCP servers should default to `default_tools_approval_mode = "approve"` to preserve the previous no-prompt behavior for normal tool calls.
-- If an MCP server or tool explicitly declares `default_tools_approval_mode = "prompt"`, Wework must preserve that approval requirement.
+- If an MCP server or tool explicitly declares `default_tools_approval_mode = "prompt"`, Wework must preserve the configuration. Read-only and workspace modes show the approval card, while Full access automatically accepts the tool-call approval.
 - Wework-owned built-in MCP servers, such as `wework_browser` and `wegent_apps`, follow the same default no-normal-tool-approval rule.
 - `mcpServerOpenaiFormElicitation` is not required for standard `mode: "form"`. Do not advertise it in initialize capabilities unless Wework and the downstream client actually support the `openai/form` extension.
 - Shell, file, sandbox, rule, skill, and request-permission approvals should not change because plugin forms are enabled.
@@ -164,6 +165,7 @@ Code-level boundaries:
 - Codex thread/turn params use granular approval policy and only enable `mcp_elicitations`.
 - `features.tool_call_mcp_elicitation=false` prevents normal MCP tool approval from being wrapped as a business form.
 - Request/bot MCP config defaults to `default_tools_approval_mode = "approve"`, with explicit `prompt` taking precedence.
+- Full access recognizes `_meta.codex_approval_kind = "mcp_tool_call"` and returns `accept` without forwarding that approval event to the chat UI.
 - `mcp_servers.wegent_apps` is the Wework Connector Apps built-in persistent server, so Wework writes it and refreshes it during configure/app sync with the same default `approve` behavior.
 
 Use the error location to debug:
@@ -173,7 +175,8 @@ Use the error location to debug:
 | `The MCP client does not support openai/form requests.`                                      | The Codex MCP client connected to the plugin does not support `openai/form`; the request did not reach Wework | Switch to `mode: "form"`, or fall back to normal chat/tool parameters                                                                        |
 | Plugin receives `action: "decline"`, but logs do not contain `mcpServer/elicitation/request` | Codex MCP runtime rejected the request before Wework UI                                                       | Check `elicitations_auto_deny`, `approvalPolicy`, granular `mcp_elicitations`, and active-turn routing                                       |
 | No form appears, but logs contain `mcpServer/elicitation/request`                            | The request reached the runtime, but the schema may be unsupported                                            | Check `mode` and `requestedSchema.properties`                                                                                                |
-| Every MCP tool call shows an "Allow this MCP tool call" form                                 | The MCP server/tool approval mode still requires approval                                                     | Set `default_tools_approval_mode="approve"` for plugin servers that do not need approval; explicitly keep `prompt` for servers/tools that do |
+| Full access still shows an "Allow this MCP tool call" form                                   | The approval was not identified as `mcp_tool_call`, or the runtime did not receive the Full access profile    | Check `_meta.codex_approval_kind` and `runtime_permission_profile`; do not auto-accept ordinary business forms                               |
+| Every MCP tool call shows an approval form in read-only or workspace mode                    | The MCP server/tool approval mode still requires approval                                                     | Set `default_tools_approval_mode="approve"` for plugin servers that do not need approval; explicitly keep `prompt` for servers/tools that do |
 | The form appears but the plugin does not continue after submit                               | Response routing or plugin result handling is broken                                                          | Verify the plugin handles `accept`, `cancel`, and `decline`                                                                                  |
 
 ## Schema Mapping
