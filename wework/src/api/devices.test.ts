@@ -46,6 +46,37 @@ describe('createDeviceApi', () => {
     ])
   })
 
+  test('loads Git account summaries and syncs only a selected device', async () => {
+    const summary = {
+      accounts: [],
+      effective_count: 0,
+      duplicate_count: 0,
+    }
+    const result = {
+      device_id: 'remote/1',
+      status: 'synced',
+      synced_domains: [],
+      removed_domains: ['git.example.com'],
+      duplicate_domains: [],
+      identity_warning_domains: [],
+      cli: [],
+      warning_codes: [],
+    }
+    const client = {
+      get: vi.fn().mockResolvedValue(summary),
+      put: vi.fn().mockResolvedValue(result),
+    } as unknown as HttpClient
+    const api = createDeviceApi(client)
+
+    await expect(api.getGitAccountSyncSummary()).resolves.toBe(summary)
+    await expect(api.syncGitAccounts('remote/1', true)).resolves.toBe(result)
+
+    expect(client.get).toHaveBeenCalledWith('/users/me/git-accounts/sync-summary')
+    expect(client.put).toHaveBeenCalledWith('/devices/remote%2F1/git-accounts', {
+      allow_empty: true,
+    })
+  })
+
   test('uses cloud device endpoints for restart and delete actions', async () => {
     const client = {
       delete: vi.fn().mockResolvedValue({ message: 'deleted' }),

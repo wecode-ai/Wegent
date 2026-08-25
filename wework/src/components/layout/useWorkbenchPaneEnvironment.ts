@@ -555,7 +555,7 @@ export function useWorkbenchPaneEnvironment({
   const refreshEnvironmentInfo = useCallback(async () => {
     await Promise.all([
       loadCurrentEnvironmentInfo({ force: true, showLoading: true }),
-      changeRequestMonitor?.refresh(),
+      changeRequestMonitor?.refresh({ shareInflight: false }),
     ])
   }, [changeRequestMonitor, loadCurrentEnvironmentInfo])
 

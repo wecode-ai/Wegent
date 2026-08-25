@@ -500,6 +500,16 @@ classify_wework_path() {
       return
       ;;
 
+    # Git hosting preferences and explicit device synchronization share one
+    # independently bootstrapped real-Tauri checkpoint.
+    wework/src/api/devices* | \
+      wework/src/components/settings/GitHostingSettingsPage* | \
+      wework/src/types/gitCredentials.ts | \
+      wework/e2e/desktop/scenarios/change-request-status.scenario.mjs)
+      select_target "core:change-request-status"
+      return
+      ;;
+
     # Assistant/tool rendering and desktop extension surfaces.
     wework/src/components/chat/blocks/* | \
       wework/src/components/chat/AttachmentImagePreview* | \
