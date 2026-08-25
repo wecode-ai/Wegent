@@ -1,4 +1,5 @@
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
+const executorEventReconnectors = new Set<() => void>()
 
 export interface DshExecutorDescription {
   protocol_version: number
@@ -104,10 +105,12 @@ export function subscribeDshExecutorEvents(
 
   const connect = () => {
     if (closed) return
-    source = new EventSource(
+    const nextSource = new EventSource(
       `${EXECUTOR_BASE_PATH}/events?after=${encodeURIComponent(String(cursor))}`
     )
-    source.onmessage = message => {
+    source = nextSource
+    nextSource.onmessage = message => {
+      if (source !== nextSource) return
       const event = JSON.parse(message.data) as DshExecutorEventEnvelope
       if (
         event.protocolVersion !== 1 ||
@@ -119,8 +122,9 @@ export function subscribeDshExecutorEvents(
       cursor = Math.max(cursor, event.sequence)
       listener(event)
     }
-    source.onerror = () => {
-      source?.close()
+    nextSource.onerror = () => {
+      if (source !== nextSource) return
+      nextSource.close()
       source = null
       if (!closed) {
         reconnectTimer = window.setTimeout(connect, 500)
@@ -128,13 +132,30 @@ export function subscribeDshExecutorEvents(
     }
   }
 
+  const reconnect = () => {
+    if (closed) return
+    if (reconnectTimer !== null) {
+      window.clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    source?.close()
+    source = null
+    connect()
+  }
+
+  executorEventReconnectors.add(reconnect)
   connect()
   return () => {
     closed = true
+    executorEventReconnectors.delete(reconnect)
     if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
     source?.close()
     source = null
   }
+}
+
+export function reconnectDshExecutorEvents(): void {
+  executorEventReconnectors.forEach(reconnect => reconnect())
 }
 
 function transportError(status: number, body: DshExecutorErrorBody): DshExecutorTransportError {

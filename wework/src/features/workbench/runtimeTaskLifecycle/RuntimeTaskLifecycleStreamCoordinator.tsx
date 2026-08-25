@@ -8,12 +8,13 @@ import {
   reconcileRuntimeConversationSnapshot,
   runtimeConversationKey,
 } from '../runtimeConversationCache'
+import { subscribeSystemResume } from '@/desktop/systemResume'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import { runtimeTaskLifecycleTransitionChanged } from './RuntimeTaskLifecycleStore'
 import { isRuntimePaneTranscriptConfirmedIdle, projectRuntimePaneTranscript } from './projection'
 import type { RuntimeTaskAddress } from '@/types/api'
 
-type ReconciliationReason = 'event_lagged' | 'runtime_replaced'
+type ReconciliationReason = 'event_lagged' | 'runtime_replaced' | 'system_resume'
 
 interface TerminalEventPayload {
   taskId?: string
@@ -32,6 +33,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     () => createExecutorClientForWorkbenchServices(services),
     [services]
   )
+  const recoverRuntimeConnections = services.recoverRuntimeConnections
 
   useEffect(() => {
     let disposed = false
@@ -93,6 +95,15 @@ export function RuntimeTaskLifecycleStreamCoordinator({
         reconciliation = null
       })
     }
+
+    const unsubscribeSystemResume = subscribeSystemResume(() => {
+      void Promise.resolve()
+        .then(() => recoverRuntimeConnections?.())
+        .catch(error => {
+          console.warn('[Wework] Runtime transport recovery after system resume failed', error)
+        })
+        .finally(() => reconcile('system_resume'))
+    })
 
     const settleMatchingTask = (
       payload: TerminalEventPayload,
@@ -176,9 +187,10 @@ export function RuntimeTaskLifecycleStreamCoordinator({
 
     return () => {
       disposed = true
+      unsubscribeSystemResume()
       unsubscribe()
     }
-  }, [executorClient, services.chatStream, store])
+  }, [executorClient, recoverRuntimeConnections, services.chatStream, store])
 
   return null
 }
