@@ -765,6 +765,57 @@ describe('runtimeConversationCache', () => {
     })
   })
 
+  test('keeps a cancelled optimistic turn stopped when late stream events bind it', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: {
+        id: 'client-user-cancelled',
+        role: 'user',
+        content: 'Stop before the assistant starts',
+        status: 'done',
+      },
+    })
+
+    const interruption = optimisticallyInterruptRuntimeConversation(address)
+    expect(interruption).toMatchObject({
+      turnId: null,
+      clientUserMessageId: 'client-user-cancelled',
+      status: 'pending',
+    })
+
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-late',
+      clientUserMessageId: 'client-user-cancelled',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-late',
+      itemId: 'assistant-late',
+      content: 'Late content',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'turn-late',
+      itemId: 'assistant-late',
+      content: 'Late completion',
+    })
+
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      expect.objectContaining({
+        id: 'client-user-cancelled',
+        role: 'user',
+      }),
+      expect.objectContaining({
+        role: 'assistant',
+        runtimeStatus: 'cancelled',
+        stoppedNotice: true,
+        content: '',
+      }),
+    ])
+  })
+
   test('preserves multiple guidance messages applied during one assistant turn', () => {
     applyRuntimeConversationAction(address, {
       type: 'assistant_started',

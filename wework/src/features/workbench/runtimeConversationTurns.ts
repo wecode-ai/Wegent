@@ -603,6 +603,7 @@ function updateStartedTurn(
   if (!action.subtaskId) return turns
   const existingIndex = turns.findIndex(turn => turn.id === action.subtaskId)
   if (existingIndex >= 0) {
+    if (turns[existingIndex].status === 'cancelled') return turns
     return replaceAt(turns, existingIndex, {
       ...turns[existingIndex],
       status: 'streaming',
@@ -621,18 +622,20 @@ function updateStartedTurn(
           )
       )
     : turns.findLastIndex(
-        turn => turn.id === null && (turn.status === 'pending' || turn.status === 'streaming')
+        turn =>
+          turn.id === null &&
+          (turn.status === 'pending' || turn.status === 'streaming' || turn.status === 'cancelled')
       )
   if (optimisticIndex >= 0) {
     const optimistic = turns[optimisticIndex]
     return replaceAt(turns, optimisticIndex, {
       ...optimistic,
       id: action.subtaskId,
-      status: 'streaming',
-      completedAt: undefined,
-      error: undefined,
-      errorType: undefined,
-      stoppedNotice: undefined,
+      status: optimistic.status === 'cancelled' ? 'cancelled' : 'streaming',
+      completedAt: optimistic.status === 'cancelled' ? optimistic.completedAt : undefined,
+      error: optimistic.status === 'cancelled' ? optimistic.error : undefined,
+      errorType: optimistic.status === 'cancelled' ? optimistic.errorType : undefined,
+      stoppedNotice: optimistic.status === 'cancelled' ? optimistic.stoppedNotice : undefined,
       items: optimistic.items.map(item =>
         item.type === 'user_message'
           ? {
@@ -665,6 +668,7 @@ function updateTurn(
   if (!turnId) return turns
   const index = turns.findIndex(turn => turn.id === turnId)
   if (index < 0) return turns
+  if (turns[index].status === 'cancelled') return turns
   return replaceAt(turns, index, update(turns[index]))
 }
 

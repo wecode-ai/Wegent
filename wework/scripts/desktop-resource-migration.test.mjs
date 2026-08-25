@@ -59,6 +59,17 @@ describe('desktop resource migration', () => {
     expect(source).toContain("run('pnpm', ['prepare:execution-runtime', '--materialize']")
   })
 
+  test('desktop E2E reuses packaged Harness runtime assets', async () => {
+    const source = await readFile(
+      join(weworkRoot, 'e2e/desktop/modules/desktop-build-flows.mjs'),
+      'utf8'
+    )
+
+    expect(source).toContain('const packagedResources = join(')
+    expect(source).toContain("['resources', 'harness-runtime']")
+    expect(source).not.toContain("['prepare:harness-runtime', '--materialize']")
+  })
+
   test.each([
     'resources/icons/icon.icns',
     'resources/icons/icon.ico',

@@ -85,13 +85,16 @@ cloud_shards=(
   rendering-extensions
   project-automation
   window-lifecycle
-  cloud-worktree-queued-cancel,priority-filter,cloud-worktree-tools
+  priority-filter,cloud-worktree-tools
   resilience,telemetry-consent
   cloud-worktree-create,automation-lifecycle,browser-multi-tabs
-  workspace-attachments,workspace-tabs,cloud-worktree-capability
-  conversation-state,supervisor-lifecycle
+  workspace-tabs,cloud-worktree-capability
+  supervisor-lifecycle
   model-routing
   plugin-auto-update
+  conversation-state
+  cloud-worktree-queued-cancel
+  workspace-attachments
 )
 # Group checkpoints by observed Core CI duration so every serial shard stays
 # below the desktop suite's critical-path budget while reusing the same
@@ -100,7 +103,7 @@ cloud_shards=(
 core_shards=(
   harness-apps
   supervisor-lifecycle,remote-device-onboarding
-  model-routing,temporary-chat,local-file-preview
+  temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,permission-modes,tray-lifecycle
   conversation-state,project-ai-settings,offline-local-project-space,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
@@ -114,6 +117,7 @@ core_shards=(
   runtime-task-queue,native-window-startup
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation
+  model-routing
 )
 
 validate_core_shards() {
