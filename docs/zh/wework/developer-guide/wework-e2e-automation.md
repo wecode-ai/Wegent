@@ -133,19 +133,22 @@ node e2e/utils/mock-connector-upstream-server.mjs
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
-完整 Core 和 Cloud 套件各固定使用 5 个 GitHub Actions matrix job；每个 job
+完整 Core 和 Cloud 套件各固定使用 8 个 GitHub Actions matrix job；每个 job
 串行运行其 checkpoint，避免多个真实 Electron、WebView 和 Executor 栈在同一
 GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 10 秒门槛。
-跨 runner 的 10 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡，
+跨 runner 的 16 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡，
 新增或明显变慢的 checkpoint 必须重新校准分片，不能靠增加 runner、删覆盖或
 重跑失败用例来缩短关键路径。CI 会先构建一次 Core Electron
 应用、Executor 和 Codex artifact，其中 `--build-only` 会在同一 runner 内并行
 编译相互独立的 Electron 应用和 Executor；各 Core/Cloud 分片下载并复用该 artifact，
-不再重复执行 Vite、 Electron 和 Executor 构建。Rust 构建同时复用由 `main`
+不再重复执行 Vite、Electron 和 Executor 构建。Rust 构建同时复用由 `main`
 维护的 Cargo target cache 和 sccache 编译单元：target cache 保障 PR 与首次
 运行的延迟，sccache 降低依赖或源码变化后的增量编译成本。归档时只移除复制到
-artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 10 个分片的
-上传和下载时间。桌面 E2E 构建跳过由并行 Lint 工作流完整执行的重复 TypeScript
+artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 16 个分片的
+上传和下载时间。桌面 E2E 和对应的 cache warmup 显式设置
+`WEWORK_EXECUTOR_PROFILE=debug`，避免为测试 artifact 优化 Executor；正式打包
+不设置该变量，继续默认构建 `release` Executor。桌面 E2E 构建跳过由并行 Lint
+工作流完整执行的重复 TypeScript
 类型检查，只保留 Vite/ Electron 的真实产物构建；测试覆盖与类型门禁均保持不变。
 插件套件需要独立构建配置，仍作为
 单独 job 与共享 Core 构建并行。成功和失败诊断都保留完整证据；PNG 等已压缩文件

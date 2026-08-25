@@ -333,6 +333,7 @@ jobs:
       - name: Build Wework Electron E2E application
         env:
           CI: true
+          WEWORK_EXECUTOR_PROFILE: debug
         run: |
           pnpm --filter wework ai:verify:electron:build
           test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork
@@ -480,6 +481,7 @@ jobs:
       - name: Build Wework Electron E2E application
         env:
           CI: true
+          WEWORK_EXECUTOR_PROFILE: debug
         run: |
           pnpm --filter wework ai:verify:electron:build
           test -x wework/electron/release/WeWork-linux-x64/WeWork
