@@ -436,6 +436,12 @@ pub(super) fn validate_relative_arg(arg: &str) -> Result<(), AppIpcError> {
         ));
     }
     for component in path.components() {
+        if matches!(component, Component::RootDir | Component::Prefix(_)) {
+            return Err(AppIpcError::new(
+                "local_auth_invalid",
+                "Absolute paths are not allowed in localAuth commands",
+            ));
+        }
         if matches!(component, Component::ParentDir) {
             return Err(AppIpcError::new(
                 "local_auth_invalid",
