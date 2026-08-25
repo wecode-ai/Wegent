@@ -1,16 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import {
-  AlertCircle,
-  Check,
-  Copy,
-  FileText,
-  FolderOpen,
-  MessageSquareText,
-  MousePointer2,
-  RefreshCw,
-  Sparkles,
-} from 'lucide-react'
+import { AlertCircle, Check, Copy, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { getRuntimeConfig } from '@/config/runtime'
@@ -155,77 +145,6 @@ async function copyDebugInfoText(text: string): Promise<void> {
   }
 
   await copyLocalExecutorDebugInfo(text)
-}
-
-function WorkspaceSetupAnimation() {
-  const { t } = useTranslation('localRuntime')
-  const cards = [
-    {
-      key: 'project',
-      label: t('animation_project'),
-      Icon: FolderOpen,
-      className: 'local-runtime-card-project',
-    },
-    {
-      key: 'files',
-      label: t('animation_files'),
-      Icon: FileText,
-      className: 'local-runtime-card-files',
-    },
-    {
-      key: 'chat',
-      label: t('animation_chat'),
-      Icon: MessageSquareText,
-      className: 'local-runtime-card-chat',
-    },
-  ]
-
-  return (
-    <div
-      aria-hidden="true"
-      className="relative mb-8 h-[180px] w-full max-w-[360px] overflow-hidden"
-    >
-      <div className="absolute left-1/2 top-[112px] h-12 w-[260px] -translate-x-1/2 rounded-lg border border-border bg-surface/80" />
-      <div className="absolute left-1/2 top-[128px] h-1.5 w-[210px] -translate-x-1/2 overflow-hidden rounded-full bg-muted">
-        <div className="local-runtime-progress-track h-full w-1/2 rounded-full bg-primary/70" />
-      </div>
-      <Sparkles className="local-runtime-sparkle absolute left-[58%] top-4 h-5 w-5 text-primary" />
-      {cards.map(({ key, label, Icon, className }) => (
-        <div
-          key={key}
-          className={`local-runtime-setup-card ${className} absolute left-1/2 top-10 flex h-14 w-[132px] items-center gap-2 rounded-lg border border-border bg-base px-3 text-left shadow-[0_14px_34px_rgb(0_0_0_/_0.08)]`}
-        >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-            <Icon className="h-4 w-4" />
-          </span>
-          <span className="truncate text-sm font-medium text-text-primary">{label}</span>
-        </div>
-      ))}
-      <MousePointer2 className="local-runtime-cursor absolute h-5 w-5 text-text-primary" />
-    </div>
-  )
-}
-
-function StartupStatusList() {
-  const { t } = useTranslation('localRuntime')
-  const steps = [t('step_workspace'), t('step_files'), t('step_assistant')]
-
-  return (
-    <div className="mt-7 grid w-full max-w-[400px] grid-cols-3 gap-2" aria-hidden="true">
-      {steps.map((step, index) => (
-        <div
-          key={step}
-          className="flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-2 text-xs text-text-secondary"
-        >
-          <span
-            className="local-runtime-step-dot h-1.5 w-1.5 rounded-full bg-primary"
-            style={{ animationDelay: `${index * 0.22}s` }}
-          />
-          <span className="truncate">{step}</span>
-        </div>
-      ))}
-    </div>
-  )
 }
 
 interface SlowStartupHelpProps {
@@ -409,15 +328,13 @@ export function LocalRuntimeInitializer({
               <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-lg border border-border bg-surface text-text-secondary">
                 <AlertCircle className="h-6 w-6 text-amber-600" />
               </div>
-            ) : (
-              <WorkspaceSetupAnimation />
-            )}
+            ) : null}
             <h1 className="heading-base">{failed ? t('failed_title') : t('starting_title')}</h1>
             <p className="mt-3 max-w-[360px] text-sm leading-6 text-text-secondary">
               {failed ? t('failed_description') : t('starting_description')}
             </p>
 
-            {failed ? (
+            {failed && (
               <div className="mt-6 w-full rounded-lg border border-border bg-surface px-4 py-3 text-left">
                 {state.error && (
                   <p
@@ -434,8 +351,6 @@ export function LocalRuntimeInitializer({
                   </code>
                 </div>
               </div>
-            ) : (
-              <StartupStatusList />
             )}
 
             {!failed && slowStartupTimedOut && (

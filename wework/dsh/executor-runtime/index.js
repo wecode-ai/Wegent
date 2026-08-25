@@ -63,6 +63,14 @@ export async function handleExecutorEvents(req, res, client) {
   if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET')
   const after = eventCursor(req)
+  let active = true
+  let dispose = () => {}
+  const disconnect = () => {
+    if (!active) return
+    active = false
+    dispose()
+  }
+  req.once('close', disconnect)
   try {
     const replay = client.replay(after)
     res.writeHead(200, {
@@ -70,22 +78,35 @@ export async function handleExecutorEvents(req, res, client) {
       'cache-control': 'no-cache, no-store',
       connection: 'keep-alive',
     })
-    let dispose = () => {}
-    const write = event => {
-      const writable = res.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
-      if (!writable) {
-        dispose()
-        res.end()
+    const writeChunk = chunk => {
+      if (!active || res.writableEnded || res.destroyed) {
+        disconnect()
+        return false
       }
+      const writable = res.write(chunk)
+      if (!writable) {
+        disconnect()
+        if (!res.writableEnded && !res.destroyed) res.end()
+      }
+      return writable
     }
-    for (const event of replay) write(event)
-    if (res.writableEnded) return
+    const write = event => writeChunk(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
+    for (const event of replay) {
+      if (!write(event)) return
+    }
+    if (!active || res.writableEnded || res.destroyed) return
     dispose = client.listen(write)
-    req.on('close', dispose)
-    res.write(': connected\n\n')
+    if (!active) {
+      dispose()
+      return
+    }
+    writeChunk(': connected\n\n')
   } catch (error) {
+    disconnect()
     if (!res.headersSent) sendError(res, error)
-    else res.end(`event: error\ndata: ${JSON.stringify(errorBody(error))}\n\n`)
+    else if (!res.writableEnded && !res.destroyed) {
+      res.end(`event: error\ndata: ${JSON.stringify(errorBody(error))}\n\n`)
+    }
   }
 }
 

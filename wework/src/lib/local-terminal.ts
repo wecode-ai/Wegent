@@ -521,10 +521,10 @@ export async function openLocalWorkspace({
     throw new Error('Local workspace path is empty')
   }
 
-  if (opener !== 'file-manager') {
-    throw new Error(`Workspace opener ${opener} is not available in Electron yet`)
-  }
-  await invokeDesktopHost<void>('shell.openPath', { path: trimmedPath })
+  await invokeDesktopHost<void>('workspace.open', {
+    opener,
+    path: trimmedPath,
+  })
 }
 
 export interface LocalWorkspaceOpenerAvailability {
@@ -539,13 +539,7 @@ export async function listLocalWorkspaceOpeners(): Promise<LocalWorkspaceOpenerA
     return []
   }
 
-  return [
-    {
-      id: 'file-manager',
-      category: 'fileManager',
-      available: true,
-    },
-  ]
+  return invokeDesktopHost<LocalWorkspaceOpenerAvailability[]>('workspace.listOpeners')
 }
 
 export async function pickLocalWorkspaceOpenerExe(): Promise<string | null> {
@@ -553,7 +547,7 @@ export async function pickLocalWorkspaceOpenerExe(): Promise<string | null> {
     return null
   }
 
-  return null
+  return invokeDesktopHost<string | null>('workspace.pickOpener')
 }
 
 export async function openLocalFile(path?: string): Promise<void> {
