@@ -353,8 +353,10 @@ def test_submission_review_publishes_immutable_release_without_install_copy(
 
 
 def test_task_bound_submission_rejects_another_task_token(
-    test_db, test_user, monkeypatch
-):
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = PluginMarketplaceService()
     package = _plugin_zip()
     stored_packages: dict[str, bytes] = {}

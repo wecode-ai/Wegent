@@ -4,6 +4,7 @@ from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from pytest_mock import MockerFixture
 from sqlalchemy.orm import Session
 
 from app.models.plugin_marketplace import PluginRelease, PluginSubmission
@@ -103,7 +104,7 @@ def _submission(
 def test_task_token_can_initialize_personal_plugin_submission(
     test_client: TestClient,
     active_task_auth: tuple[str, TaskResource, Subtask],
-    mocker,
+    mocker: MockerFixture,
 ) -> None:
     token, task, subtask = active_task_auth
     init_submission = mocker.patch(
@@ -156,7 +157,7 @@ def test_task_token_cannot_initialize_after_subtask_finishes(
     test_client: TestClient,
     test_db: Session,
     active_task_auth: tuple[str, TaskResource, Subtask],
-    mocker,
+    mocker: MockerFixture,
 ) -> None:
     token, _task, subtask = active_task_auth
     subtask.status = SubtaskStatus.COMPLETED
