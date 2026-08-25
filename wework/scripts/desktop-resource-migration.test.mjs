@@ -16,6 +16,16 @@ const scripts = [
 ]
 
 describe('desktop resource migration', () => {
+  test('desktop entrypoints install the isolated Electron workspace', async () => {
+    const packageJson = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
+
+    expect(packageJson.scripts['prepare:electron']).toBe(
+      'pnpm --dir electron install --frozen-lockfile'
+    )
+    expect(packageJson.scripts['dev:desktop']).toContain('pnpm run prepare:electron')
+    expect(packageJson.scripts['ai:verify:electron:build']).toContain('pnpm run prepare:electron')
+  })
+
   test.each(scripts)('%s depends only on neutral desktop resources', async relativePath => {
     const source = await readFile(join(weworkRoot, relativePath), 'utf8')
 
