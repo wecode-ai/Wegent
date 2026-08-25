@@ -413,10 +413,16 @@ function isEquivalentAssistantTextRepresentation(
   local: RuntimeConversationItem,
   snapshot: RuntimeConversationItem
 ): boolean {
-  if (local.id === snapshot.id || local.type === snapshot.type) return false
+  if (local.id === snapshot.id) return false
   const localContent = assistantTextRepresentationContent(local)
   const snapshotContent = assistantTextRepresentationContent(snapshot)
-  return localContent !== undefined && localContent === snapshotContent
+  if (localContent === undefined || localContent !== snapshotContent) return false
+  if (local.type !== snapshot.type) return true
+  return (
+    local.type === 'assistant_text' &&
+    snapshot.type === 'assistant_text' &&
+    (local.id.startsWith('runtime-final:') || snapshot.id.startsWith('runtime-final:'))
+  )
 }
 
 function assistantTextRepresentationContent(item: RuntimeConversationItem): string | undefined {

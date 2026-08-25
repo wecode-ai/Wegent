@@ -801,10 +801,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         await control.command('getElementCount', `${moonshotTaskProjectPanel}[aria-hidden="true"]`)
       ) > 0
     ) {
-      const panelTestId = await control.command('getAttribute', moonshotTaskProjectPanel, {
-        value: 'data-testid',
-      })
-      const runtimeProjectItem = `${activeBoard} [data-testid="project-item"]:has([data-testid="${panelTestId}"])`
+      const runtimeProjectItem =
+        `${activeBoard} [data-testid="project-item"]:` +
+        `has([data-testid="runtime-local-task-row-${moonshotExecution.runtimeTaskId}"])`
       const runtimeProjectButton = `${runtimeProjectItem} [data-testid="project-item-button"]`
       await control.command('waitFor', runtimeProjectButton, {
         timeoutMs: uiTimeoutMs,

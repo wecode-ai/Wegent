@@ -2217,4 +2217,37 @@ describe('runtimeConversationTurns', () => {
       }),
     ])
   })
+
+  test('reconciles a synthetic terminal message with its canonical transcript item', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'runtime-final:turn-1',
+            type: 'assistant_text',
+            content: 'Complete answer',
+            createdAt: '2026-08-25T06:39:25.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'message-1',
+            type: 'assistant_text',
+            content: 'Complete answer',
+            createdAt: '2026-08-25T06:39:25.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    expect(mergeRuntimeConversationTurns(local, snapshot)[0].items).toEqual(snapshot[0].items)
+  })
 })
