@@ -103,15 +103,34 @@ describe('PluginWorkspaceConversationResult', () => {
   })
 
   test('loads publication capabilities only when the result first appears', async () => {
-    const messages = [
+    const messagesWithoutResult = [
       {
         id: 'assistant-1',
+        role: 'assistant',
+        status: 'sent',
+        content: 'Still creating the plugin',
+      },
+    ] as WorkbenchMessage[]
+    const { rerender } = render(
+      <PluginWorkspaceConversationResult
+        taskId="42"
+        messages={messagesWithoutResult}
+        waiting={true}
+        onSendAction={vi.fn().mockResolvedValue(true)}
+      />
+    )
+
+    expect(getCapabilities).not.toHaveBeenCalled()
+    const messages = [
+      ...messagesWithoutResult,
+      {
+        id: 'assistant-2',
         role: 'assistant',
         status: 'sent',
         content: resultMarker,
       },
     ] as WorkbenchMessage[]
-    const { rerender } = render(
+    rerender(
       <PluginWorkspaceConversationResult
         taskId="42"
         messages={messages}
@@ -127,7 +146,7 @@ describe('PluginWorkspaceConversationResult', () => {
         messages={[
           ...messages,
           {
-            id: 'assistant-2',
+            id: 'assistant-3',
             role: 'assistant',
             status: 'streaming',
             content: 'Continuing the conversation',

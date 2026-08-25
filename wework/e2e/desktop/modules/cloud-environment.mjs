@@ -13,6 +13,7 @@ import {
   CLOUD_VISION_SIDECAR_CASE,
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_API_KEY,
+  PLUGIN_CREATOR_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   appendFile,
   appendProcessOutput,
@@ -596,13 +597,34 @@ class RealCloudEnvironment {
         body: JSON.stringify({
           title: 'Cloud Plugin Creator E2E',
           team_id: team.id,
-          prompt: 'Create a plugin in this Task workspace',
+          prompt: PLUGIN_CREATOR_PROMPT,
           client_origin: 'wework',
         }),
       }
     )
     assert.match(String(task.id ?? ''), /^\d+$/, 'Cloud Plugin Creator task was not persisted')
     return String(task.id)
+  }
+
+  async waitForRuntimeTask(taskId) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      const task = await this.runtimeTask(taskId)
+      if (task?.workspacePath) return task
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+    throw new Error(`Cloud Task ${taskId} did not expose its runtime workspace`)
+  }
+
+  async appendPluginWorkspaceResult(taskId, marker) {
+    return fetchJson(`${this.backendUrl}/api/internal/chat/history/task:${taskId}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.backendEnv.INTERNAL_SERVICE_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ role: 'assistant', content: marker }),
+    })
   }
 
   async spawnExecutor(env, logPath) {

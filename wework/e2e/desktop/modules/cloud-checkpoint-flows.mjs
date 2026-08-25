@@ -325,10 +325,10 @@ async function verifyCloudWorkspacePathMentions({ composerSelector, control, wor
   )
 }
 
-async function verifyPluginWorkspacePublication({ cloudEnvironment, control, workspacePath }) {
+async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
   const taskId = await cloudEnvironment.createPluginWorkspaceTask()
-
-  const taskWorkspace = join(workspacePath, `.wework-e2e-plugin-task-${taskId}`)
+  const runtimeTask = await cloudEnvironment.waitForRuntimeTask(taskId)
+  const taskWorkspace = runtimeTask.workspacePath
   const pluginRoot = join(taskWorkspace, 'plugins', 'cloud-workspace-e2e')
   await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true })
   await mkdir(join(pluginRoot, 'skills', 'cloud-draft'), { recursive: true })
@@ -365,14 +365,29 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control, wor
   assert.equal(described.status, 'ready')
   assert.equal(described.relativePath, 'plugins/cloud-workspace-e2e')
   await cloudEnvironment.restartCloudExecutor()
-  const published = await cloudEnvironment.publishPluginWorkspace(
-    pluginRoot,
-    taskWorkspace,
-    taskId,
-    { visibility: 'personal', targets: [], allowCopy: false }
-  )
-  assert.equal(published.status, 'published')
-  assert.match(String(published.pluginId ?? ''), /^\d+$/)
+
+  const readyMarker = `[WEGENT_PLUGIN_RESULT]${JSON.stringify(described)}`
+  await cloudEnvironment.appendPluginWorkspaceResult(taskId, readyMarker)
+  await control.command('navigate', 'body', { value: '/' })
+  const taskRowSelector = `[data-testid="runtime-local-task-row-${taskId}"]`
+  await control.command('waitFor', taskRowSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', taskRowSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="plugin-workspace-result"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugin-creator-publish-plugin"]')
+  await control.command('waitFor', '[data-testid="plugin-publish-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugin-publish-confirm"]')
+  await control.command('waitFor', '[data-testid="plugin-workspace-result"]', {
+    text: '已发布',
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
 
   await control.command('navigate', 'body', { value: '/plugins' })
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
@@ -381,10 +396,16 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control, wor
   await control.command('fill', '[data-testid="plugins-search-input"]', {
     value: 'Cloud Workspace E2E',
   })
-  await control.command('waitFor', `[data-testid="plugin-marketplace-row-${published.pluginId}"]`, {
+  await control.command('waitFor', '[data-testid^="plugin-marketplace-row-"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const publishedRow = snapshot.testIds.find(testId => testId.startsWith('plugin-marketplace-row-'))
+  assert.match(
+    publishedRow ?? '',
+    /^plugin-marketplace-row-\d+$/,
+    'The result-card publication did not create a marketplace plugin row'
+  )
   assert.ok(snapshot.text.includes('Cloud Workspace E2E'))
   await captureVerificationScreenshot(control, 'cloud-plugin-workspace-published.png')
 }
@@ -469,7 +490,6 @@ async function verifyCloudCheckpoint({
     await verifyPluginWorkspacePublication({
       cloudEnvironment,
       control,
-      workspacePath,
     })
     return
   }

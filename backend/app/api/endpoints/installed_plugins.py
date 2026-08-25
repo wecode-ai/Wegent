@@ -114,19 +114,20 @@ def _get_plugin_submission_auth(
     if token_info is None:
         return PluginSubmissionAuth(user=current_user)
 
-    task = task_store.get_task_by_states(
+    task = task_store.get_by_id_for_update(
         db,
         task_id=token_info.task_id,
-        states=TaskResource.is_active_query(),
-        user_id=current_user.id,
+        owner_user_id=current_user.id,
     )
-    subtask = subtask_store.get_basic_by_id(
+    subtask = subtask_store.get_basic_by_id_for_update(
         db,
         subtask_id=token_info.subtask_id,
         owner_user_id=current_user.id,
     )
     if (
         task is None
+        or task.kind != "Task"
+        or task.is_active not in TaskResource.is_active_query()
         or subtask is None
         or subtask.task_id != token_info.task_id
         or subtask.user_id != current_user.id
