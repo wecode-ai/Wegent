@@ -1,6 +1,6 @@
 import { packager } from '@electron/packager'
 import { spawn } from 'node:child_process'
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -9,6 +9,7 @@ const output = join(electronRoot, 'release')
 const staging = join(electronRoot, '.package-staging')
 const electronZipDir = process.env.WEWORK_ELECTRON_ZIP_DIR?.trim() || undefined
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
+const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
 const icon =
   process.platform === 'darwin'
     ? join(sharedResourcesRoot, 'icons', 'icon.icns')
@@ -20,9 +21,17 @@ await Promise.all([
   rm(output, { recursive: true, force: true }),
   rm(staging, { recursive: true, force: true }),
 ])
-await mkdir(staging, { recursive: true, mode: 0o700 })
+await run(
+  'pnpm',
+  ['--filter', sourcePackage.name, 'deploy', '--prod', '--legacy', staging],
+  electronRoot
+)
+await Promise.all(
+  ['scripts', 'src', 'pnpm-workspace.yaml', 'tsconfig.json', 'vitest.config.ts'].map(path =>
+    rm(join(staging, path), { recursive: true, force: true })
+  )
+)
 await cp(join(electronRoot, 'dist'), join(staging, 'dist'), { recursive: true })
-const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
 await writeFile(
   join(staging, 'package.json'),
   `${JSON.stringify(
@@ -37,11 +46,6 @@ await writeFile(
     null,
     2
   )}\n`
-)
-await run(
-  'npm',
-  ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--no-package-lock'],
-  staging
 )
 const applications = await packager({
   dir: staging,
