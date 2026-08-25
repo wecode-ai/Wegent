@@ -38,6 +38,7 @@ export function WorkflowExecutionConfigFields({
       : 'standalone'
   const complete = workflowExecutionConfigComplete(value)
   const selectedModelKey = value.model ? `${value.model_type ?? ''}:${value.model}` : ''
+  const selectedDeviceId = value.execution_device_id?.trim() ?? ''
 
   return (
     <div
@@ -90,6 +91,9 @@ export function WorkflowExecutionConfigFields({
           className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
         >
           <option value="">{t('todo.workflow_execution_fill_later', '运行时填写')}</option>
+          {selectedDeviceId && !devices.some(device => device.device_id === selectedDeviceId) ? (
+            <option value={selectedDeviceId}>{selectedDeviceId}</option>
+          ) : null}
           {devices.map(device => (
             <option key={device.device_id} value={device.device_id}>
               {device.name || device.device_id}

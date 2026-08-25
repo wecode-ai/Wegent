@@ -245,6 +245,48 @@ describe('IssueExecutionConfigDialog', () => {
     )
   })
 
+  it('keeps the robot device visible while the live device list is catching up', async () => {
+    render(
+      <IssueExecutionConfigDialog
+        item={item}
+        projectChatAgentApi={
+          {
+            list: vi.fn().mockResolvedValue([
+              {
+                id: 'agent-1',
+                name: '本地机器人',
+                status: 'active',
+                model: 'custom-model',
+                defaultRuntimeProfileId: null,
+                executionDeviceId: 'configured-local-device',
+                localProjectId: null,
+                workspaceBinding: { type: 'standalone', status: 'ready' },
+              },
+            ]),
+          } as never
+        }
+        runtimeProfileApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        modelApi={{ listModels: vi.fn().mockResolvedValue({ data: [] }) } as never}
+        deviceApi={
+          {
+            listDevices: vi
+              .fn()
+              .mockResolvedValue([{ device_id: 'current-local-device', status: 'online' }]),
+          } as never
+        }
+        localProjects={[]}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('issue-execution-config-fields-device')).toHaveValue(
+        'configured-local-device'
+      )
+    )
+  })
+
   it('lists only runtime environments whose devices are online and submits inline', async () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined)
     render(
