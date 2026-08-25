@@ -407,12 +407,17 @@ function mergeRuntimeConversationItems(
   snapshotItems: RuntimeConversationItem[],
   preserveLocalTerminal = false
 ): RuntimeConversationItem[] {
-  const reconciledLocalItems = localItems.filter(
-    localItem =>
-      !snapshotItems.some(snapshotItem =>
+  const matchedSnapshotIndexes = new Set<number>()
+  const reconciledLocalItems = localItems.filter(localItem => {
+    const snapshotIndex = snapshotItems.findIndex(
+      (snapshotItem, index) =>
+        !matchedSnapshotIndexes.has(index) &&
         isEquivalentAssistantTextRepresentation(localItem, snapshotItem)
-      )
-  )
+    )
+    if (snapshotIndex < 0) return true
+    matchedSnapshotIndexes.add(snapshotIndex)
+    return false
+  })
   const localById = new Map(reconciledLocalItems.map(item => [item.id, item]))
   const mergedSnapshotItems = snapshotItems.map(item =>
     mergeRuntimeConversationItem(localById.get(item.id), item, preserveLocalTerminal)
@@ -449,7 +454,11 @@ function isEquivalentAssistantTextRepresentation(
   local: RuntimeConversationItem,
   snapshot: RuntimeConversationItem
 ): boolean {
-  if (local.id === snapshot.id || local.type === snapshot.type) return false
+  if (local.id === snapshot.id) return false
+  if (local.type === 'assistant_text' && snapshot.type === 'assistant_text') {
+    return local.content === snapshot.content
+  }
+  if (local.type === snapshot.type) return false
   const localContent = assistantTextRepresentationContent(local)
   const snapshotContent = assistantTextRepresentationContent(snapshot)
   return localContent !== undefined && localContent === snapshotContent

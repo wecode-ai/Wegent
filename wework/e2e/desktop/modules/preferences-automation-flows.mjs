@@ -27,6 +27,7 @@ import {
   captureVerificationScreenshot,
   normalizeComposerText,
   waitForAttribute,
+  waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
 
 async function waitForTelemetrySilence(control, options = {}) {
@@ -668,18 +669,15 @@ async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
         testId.startsWith('runtime-local-task-row-') && !initialSnapshot.testIds.includes(testId)
     )
     assert.ok(taskRow, 'The cloud automation run did not expose its runtime task')
-    if (!taskSnapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`)) {
-      await control.command('click', `[data-testid="${taskRow}"]`)
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: `${AUTOMATION_COMPLETION_TEXT}_1`,
-        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-      })
-    }
-    const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    assert.equal(
-      debugSnapshot.workbench?.currentRuntimeTask?.deviceId,
-      cloudDeviceId,
-      'The cloud automation task ran on the local device'
+    await control.command('click', `[data-testid="${taskRow}"]`)
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: `${AUTOMATION_COMPLETION_TEXT}_1`,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await waitForWorkbenchDebugState(
+      control,
+      snapshot => snapshot.workbench?.currentRuntimeTask?.deviceId === cloudDeviceId,
+      'The cloud automation task did not become active on the selected cloud device'
     )
     await captureVerificationScreenshot(control, 'automations-03-cloud-complete.png')
   } finally {
