@@ -1550,7 +1550,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         )
         .await;
         let outcome = outcome_result?;
-        if !request.ephemeral {
+        if !request.ephemeral && state.goal_is_active() {
             match client
                 .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
                 .await

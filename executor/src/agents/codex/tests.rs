@@ -3348,6 +3348,14 @@ fn authoritative_goal_response_replaces_stale_notification_status() {
 }
 
 #[test]
+fn completed_goal_does_not_require_authoritative_reconciliation() {
+    let mut state = CodexRunState::default();
+    state.set_goal_status("complete");
+
+    assert!(!state.goal_is_active());
+}
+
+#[test]
 fn root_turn_notification_uses_protocol_turn_id_and_ignores_child_turns() {
     let mut state = CodexRunState::default();
     state.set_root_thread_id("thread-root");
