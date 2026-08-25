@@ -77,7 +77,7 @@ const WINDOW_OPTIONS: Readonly<BrowserWindowConstructorOptions> = {
   center: true,
   alwaysOnTop: true,
   skipTaskbar: true,
-  hasShadow: true,
+  hasShadow: false,
   backgroundColor: '#00000000',
   webPreferences: {
     contextIsolation: true,
