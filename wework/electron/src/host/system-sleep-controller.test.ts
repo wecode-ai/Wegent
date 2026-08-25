@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { SystemSleepController } from './system-sleep-controller.js'
 
 const mocks = vi.hoisted(() => ({
@@ -16,6 +16,10 @@ describe('SystemSleepController', () => {
     vi.clearAllMocks()
     mocks.start.mockReturnValue(42)
     mocks.isStarted.mockImplementation(id => id === 42)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   test('holds one system sleep blocker while tasks are active', () => {
@@ -61,8 +65,12 @@ describe('SystemSleepController', () => {
 
   test('tracks executor response events independently from renderer surfaces', () => {
     const controller = new SystemSleepController()
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
 
     controller.handleExecutorEvent('response.created', { taskId: 'task-1' })
+    for (let index = 0; index < 2_200; index += 1) {
+      controller.handleExecutorEvent('response.block.updated', { taskId: 'task-1' })
+    }
     controller.setTaskActive('main', false)
 
     expect(mocks.start).toHaveBeenCalledOnce()
@@ -70,5 +78,6 @@ describe('SystemSleepController', () => {
 
     controller.handleExecutorEvent('response.completed', { taskId: 'task-1' })
     expect(mocks.stop).toHaveBeenCalledWith(42)
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('response.block.updated'))
   })
 })

@@ -77,8 +77,8 @@ assert_invalid_desktop_shards_rejected
 assert_invalid_cloud_shards_rejected
 
 if ! grep -Fq 'const NOISE_DELTA_COUNT = 2200' "$notification_isolation_scenario" ||
-  ! grep -Fq 'const BURST_RENDER_TIMEOUT_MS = 120_000' "$notification_isolation_scenario"; then
-  printf 'Codex notification isolation must retain its 2200-delta stress case and targeted 120-second render budget\n' >&2
+  ! grep -Fq 'const BURST_RENDER_TIMEOUT_MS = 30_000' "$notification_isolation_scenario"; then
+  printf 'Codex notification isolation must retain its 2200-delta stress case and targeted 30-second render budget\n' >&2
   exit 1
 fi
 
