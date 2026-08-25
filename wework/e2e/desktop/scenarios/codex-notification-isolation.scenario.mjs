@@ -255,6 +255,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         '[data-testid="project-new-conversation-button"]'
       await control.command('waitFor', newConversationSelector, { timeoutMs: uiTimeoutMs })
       const quiet = await sendTask(control, newConversationSelector, PROMPTS.quiet, uiTimeoutMs)
+      await waitForRequestCount(requests, 1, uiTimeoutMs)
       const noisy = await sendTask(control, newConversationSelector, PROMPTS.noisy, uiTimeoutMs)
       await waitForRequestCount(requests, 2, uiTimeoutMs)
 
