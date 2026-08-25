@@ -135,11 +135,11 @@ checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
-`ci:all` still run the complete desktop suites. The complete Core and Cloud
-Core uses thirteen fixed GitHub Actions matrix jobs and Cloud uses twelve. Every job runs its
+`ci:all` still run the complete desktop suites. Core uses fifteen fixed GitHub
+Actions matrix jobs and Cloud uses twelve. Every job runs its
 checkpoints serially so multiple real Electron, WebView, and Executor stacks do not
 contend for CPU and memory on the same GitHub runner and push normal asynchronous
-state beyond the shared 10-second step timeout. The twenty-five matrix jobs still provide
+state beyond the shared 10-second step timeout. The twenty-seven matrix jobs still provide
 suite-level parallelism across runners. Shards are balanced from observed CI
 durations and capped to keep the complete suite inside its ten-minute critical-path
 budget; a new or materially slower checkpoint requires rebalancing instead of
@@ -152,7 +152,7 @@ cache and sccache compiler units: the target cache bounds PR and first-run
 latency, while sccache reduces incremental compilation after dependency or
 source changes. Archiving strips Linux debug symbols only from the copied
 artifact binaries, leaving the original build outputs unchanged while reducing
-upload and download time across the twenty-five shards. Desktop E2E and its cache
+upload and download time across the twenty-seven shards. Desktop E2E and its cache
 warmup explicitly set `WEWORK_EXECUTOR_PROFILE=debug` so test artifacts do not
 spend time optimizing the Executor. Release packaging leaves the variable unset
 and continues to build the `release` Executor by default. Desktop E2E builds
@@ -160,9 +160,14 @@ skip the duplicate TypeScript typecheck that the parallel Lint workflow runs in 
 while retaining the real Vite and Electron artifact build; test coverage and the
 type gate remain unchanged. The plugin suite requires an independent build
 configuration and continues to run in parallel with the shared Core build.
-Both successful and failed runs retain complete diagnostics; uploads disable
-redundant compression for PNG and other already-compressed evidence so artifact
-archiving does not extend the pipeline tail. Merge queue validates
+Desktop shards use only the runtime tools already present in the immutable E2E
+image; ZIP fixtures use Python's standard library, so the jobs do not restore
+the full frontend dependency cache. Successful harness-app coverage keeps
+milestone screenshots, and every run retains logs, state snapshots, and other
+useful diagnostics. Before upload, CI removes only transient Chromium caches
+that cannot help reproduce a failure. Uploads disable redundant compression for
+PNG and other already-compressed evidence so artifact archiving does not extend
+the pipeline tail. Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
 do not repeat the same validation after the merge through a `push main` trigger. The
 mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new

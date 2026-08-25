@@ -163,11 +163,23 @@ async function waitForStableSnapshot(control, predicate, message) {
   throw new Error(`${message}: ${JSON.stringify(lastSnapshot)}`)
 }
 
+const HARNESS_MILESTONE_SCREENSHOTS = new Set([
+  'harness-apps-03-marketplace.png',
+  'harness-apps-03a-official-running.png',
+  'harness-apps-03b4-plugin-reloaded.png',
+  'harness-apps-04a-publish-dialog-zh.png',
+  'harness-apps-08-native-page.png',
+  'harness-apps-09-running.png',
+  'harness-apps-15-returned-to-marketplace.png',
+  'harness-apps-16-experimental-disabled.png',
+])
+
 async function captureVerificationScreenshot(control, name, selector = 'body') {
-  if (
-    process.env.WEWORK_E2E_SCREENSHOTS === 'final' &&
-    !name.endsWith('04-task-completed-after-reopen.png')
-  ) {
+  const screenshotMode = process.env.WEWORK_E2E_SCREENSHOTS
+  if (screenshotMode === 'final' && !name.endsWith('04-task-completed-after-reopen.png')) {
+    return null
+  }
+  if (screenshotMode === 'harness-milestones' && !HARNESS_MILESTONE_SCREENSHOTS.has(name)) {
     return null
   }
   const screenshotPath = join(resultDir, name)

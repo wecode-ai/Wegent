@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import JSZip from 'jszip'
+
+import { createZipFixture, extractSingleRootZipFixture } from '../modules/zip-fixtures.mjs'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
 const RC7_INSTALLATION_ID = 'dsh-e2e-smoke-rc7'
@@ -88,13 +89,11 @@ async function createHarnessPackage(
   { archiveName = installationId, version = '0.1.0' } = {}
 ) {
   const packagePath = join(resultDir, `${archiveName}.zip`)
-  const zip = new JSZip()
-  const root = zip.folder(`harness-e2e-plugin-${installationId}`)
-  root.file('PLUGIN.md', '# Harness desktop E2E\n')
-  root.file('INSTALL.zh-CN.md', '# 安装\n')
-  root.file(
-    'plugin-manifest.json',
-    JSON.stringify(
+  const root = `harness-e2e-plugin-${installationId}`
+  await createZipFixture(packagePath, {
+    [`${root}/PLUGIN.md`]: '# Harness desktop E2E\n',
+    [`${root}/INSTALL.zh-CN.md`]: '# 安装\n',
+    [`${root}/plugin-manifest.json`]: JSON.stringify(
       {
         name: installationId,
         displayName: `DSH E2E Smoke ${dshVersion}`,
@@ -118,12 +117,8 @@ async function createHarnessPackage(
       },
       null,
       2
-    )
-  )
-  const bundle = root.folder('packages/bundle/smoke-app')
-  bundle.file(
-    'package.json',
-    JSON.stringify(
+    ),
+    [`${root}/packages/bundle/smoke-app/package.json`]: JSON.stringify(
       {
         name: '@wework/dsh-e2e-smoke',
         version: '0.1.0',
@@ -133,33 +128,17 @@ async function createHarnessPackage(
       },
       null,
       2
-    )
-  )
-  bundle.file('lib/index.js', 'export default {}\n')
-  bundle.file(
-    'cordis.patch.yml',
-    '- id: ui-model-selection\n  config:\n    provider: fixture\n    model: fixture\n'
-  )
-  await writeFile(
-    packagePath,
-    await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
-  )
+    ),
+    [`${root}/packages/bundle/smoke-app/lib/index.js`]: 'export default {}\n',
+    [`${root}/packages/bundle/smoke-app/cordis.patch.yml`]:
+      '- id: ui-model-selection\n  config:\n    provider: fixture\n    model: fixture\n',
+  })
   return packagePath
 }
 
 async function createOfficialSource(resultDir, packagePath) {
   const source = join(resultDir, 'official-smart-app')
-  await rm(source, { recursive: true, force: true })
-  await mkdir(source, { recursive: true })
-  const archive = await JSZip.loadAsync(await readFile(packagePath))
-  for (const entry of Object.values(archive.files)) {
-    if (entry.dir) continue
-    const relative = entry.name.split('/').slice(1).join('/')
-    if (!relative) continue
-    const target = join(source, relative)
-    await mkdir(dirname(target), { recursive: true })
-    await writeFile(target, await entry.async('nodebuffer'))
-  }
+  await extractSingleRootZipFixture(packagePath, source)
   await writeFile(
     join(source, 'icon.png'),
     Buffer.from(

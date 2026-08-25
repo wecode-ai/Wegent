@@ -16,6 +16,7 @@ const COMPLETIONS = {
   noisy: 'WEWORK_E2E_CODEX_NOTIFICATION_NOISY_COMPLETE',
 }
 const NOISE_DELTA_COUNT = 2200
+const BURST_RENDER_TIMEOUT_MS = 30_000
 
 function sse(event) {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
@@ -258,6 +259,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await waitForRequestCount(requests, 2, uiTimeoutMs)
 
       const sidebar = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar"]`
+      const completionTimeoutMs = Math.max(uiTimeoutMs, BURST_RENDER_TIMEOUT_MS)
       for (const [task, completion] of [
         [quiet, COMPLETIONS.quiet],
         [noisy, COMPLETIONS.noisy],
@@ -266,7 +268,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-          { text: completion, timeoutMs: uiTimeoutMs }
+          { text: completion, timeoutMs: completionTimeoutMs }
         )
       }
 
@@ -275,7 +277,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     },
 
     diagnostics() {
-      return { active, emitted, requests, streamCount: streams.size }
+      return {
+        active,
+        burstRenderTimeoutMs: BURST_RENDER_TIMEOUT_MS,
+        emitted,
+        noiseDeltaCount: NOISE_DELTA_COUNT,
+        requests,
+        streamCount: streams.size,
+      }
     },
   }
 }

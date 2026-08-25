@@ -165,6 +165,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          filter: blob:none
 
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
@@ -213,6 +215,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          filter: blob:none
 
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
@@ -324,19 +328,15 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
-      max-parallel: 13
+      max-parallel: 15
       matrix: ${{ fromJSON(needs.changes.outputs.wework_desktop_core_e2e_matrix) }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          filter: blob:none
           persist-credentials: false
-
-      - name: Set up Node workspace
-        uses: ./.github/actions/setup-node-workspace
-        with:
-          setup-toolchain: "false"
 
       - name: Restore local harness CLIs
         if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')
@@ -372,6 +372,7 @@ jobs:
           WEWORK_E2E_ISOLATED_XVFB: "true"
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
           WEWORK_E2E_PARALLEL_SCOPE: core
+          WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
           test -x "$WEWORK_E2E_APP_BIN"
@@ -379,6 +380,10 @@ jobs:
           test -x "$WEWORK_E2E_CODEX_BIN"
           node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
+
+      - name: Prune transient Wework desktop E2E caches
+        if: always()
+        run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
       - name: Upload Wework desktop E2E diagnostics
         if: always()
@@ -422,12 +427,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          filter: blob:none
           persist-credentials: false
-
-      - name: Set up Node workspace
-        uses: ./.github/actions/setup-node-workspace
-        with:
-          setup-toolchain: "false"
 
       - name: Download shared Wework desktop E2E build
         uses: actions/download-artifact@v4
@@ -461,6 +462,10 @@ jobs:
           test -x "$WEWORK_E2E_CODEX_BIN"
           node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
+
+      - name: Prune transient Wework desktop E2E caches
+        if: always()
+        run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
       - name: Upload Wework desktop Cloud E2E diagnostics
         if: always()
@@ -502,11 +507,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up Node workspace
-        uses: ./.github/actions/setup-node-workspace
         with:
-          setup-toolchain: "false"
+          filter: blob:none
 
       - name: Download shared Wework desktop E2E build
         uses: actions/download-artifact@v4
@@ -537,6 +539,10 @@ jobs:
           fi
           xvfb-run -a --server-args="-screen 0 1280x720x24" \
             pnpm --filter wework "$E2E_COMMAND" "${args[@]}"
+
+      - name: Prune transient Wework desktop E2E caches
+        if: always()
+        run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
       - name: Upload Wework desktop E2E diagnostics
         if: always()
@@ -751,6 +757,10 @@ jobs:
             executor/target
             ~/Library/Caches/electron
           key: ${{ steps.wework-cargo-sources-cache.outputs.cache-primary-key }}
+
+      - name: Prune transient Wework desktop E2E caches
+        if: always()
+        run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
       - name: Upload Wework desktop memory diagnostics
         if: always()

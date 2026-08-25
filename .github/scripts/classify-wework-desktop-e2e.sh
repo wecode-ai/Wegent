@@ -98,7 +98,7 @@ cloud_shards=(
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
   harness-apps
-  supervisor-lifecycle,remote-device-onboarding,runtime-task-queue,native-window-startup
+  supervisor-lifecycle,remote-device-onboarding
   model-routing,temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,permission-modes,tray-lifecycle
   conversation-state,project-ai-settings,offline-local-project-space,cloud-space-mention
@@ -106,10 +106,12 @@ core_shards=(
   core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions
   project-automation
-  resilience,local-harness,running-conversation-history,native-window-chrome
+  resilience
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter
   rendering-extensions
+  runtime-task-queue,native-window-startup
+  local-harness,running-conversation-history,native-window-chrome
 )
 
 validate_core_shards() {
