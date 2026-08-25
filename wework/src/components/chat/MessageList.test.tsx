@@ -4136,6 +4136,35 @@ describe('MessageList', () => {
     expect(screen.getByTestId('copy-message-icon')).toBeInTheDocument()
   })
 
+  test('uses the Electron host clipboard when the browser clipboard is unavailable', async () => {
+    runtimeMock.electron = true
+    desktopHostMock.invoke.mockResolvedValue(undefined)
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'electron-copy',
+            role: 'user',
+            content: '复制到系统剪贴板',
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
+    await userEvent.click(screen.getByTestId('copy-message-button'))
+
+    await waitFor(() =>
+      expect(desktopHostMock.invoke).toHaveBeenCalledWith('clipboard.writeText', {
+        text: '复制到系统剪贴板',
+      })
+    )
+    expect(await screen.findByTestId('copy-message-success-icon')).toBeInTheDocument()
+  })
+
   test('shows edit action only for the final completed user turn and submits edited text', async () => {
     const onEditLastUserMessage = vi.fn().mockResolvedValue(true)
     render(

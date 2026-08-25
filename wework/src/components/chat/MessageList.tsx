@@ -50,6 +50,7 @@ import {
 import { openLocalFile } from '@/lib/local-terminal'
 import { getRecognizedLink } from '@/lib/link-preview'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
 import { ComposerLinkChip } from './ComposerLinkChip'
 import { ComposerTextarea } from './composer/ComposerTextarea'
@@ -967,22 +968,6 @@ function formatMessageTime(createdAt: string) {
   return `${date.getFullYear()}年${dateLabel} ${time}`
 }
 
-async function copyText(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  document.execCommand('copy')
-  document.body.removeChild(textarea)
-}
-
 function UserMessage({
   message,
   onOpenWorkspaceFile,
@@ -1584,7 +1569,7 @@ function MessageHoverActions({
     if (event.detail > 0) {
       event.currentTarget.blur()
     }
-    void copyText(copyContent).then(() => {
+    void copyTextToClipboard(copyContent).then(() => {
       setCopied(true)
       resetCopiedAfterHideRef.current = false
     })
