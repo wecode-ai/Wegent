@@ -49,10 +49,7 @@ Prepare the bundled resources and build the Electron application for the
 current platform:
 
 ```bash
-pnpm --filter wework run prepare:codex --materialize
-pnpm --filter wework run prepare:dws
-pnpm --filter wework run prepare:harness-runtime --materialize
-pnpm --filter wework build:desktop
+pnpm --filter wework build:release
 ```
 
 GitHub releases are built by `.github/workflows/wework-app.yml`.
