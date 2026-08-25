@@ -5,6 +5,14 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { requestWorkbenchComposerFocus } from '@/lib/workbenchComposerFocus'
 import { BufferedChatInput } from './BufferedChatInput'
 
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
+    if (capability === 'preferences.get') return {}
+    if (capability === 'preferences.update') return params.patch ?? {}
+    return {}
+  }),
+}))
+
 function createProjectChat(scopeKey: string) {
   return {
     models: [],

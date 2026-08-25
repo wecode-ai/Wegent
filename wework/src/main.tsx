@@ -14,17 +14,17 @@ import { installPageZoomGuard } from './lib/pageZoomGuard'
 import { installPerformanceDiagnostics, recordReactCommit } from './lib/performanceDiagnostics'
 import { installWeworkAutomationBridge } from './e2e/automation'
 import { installDesktopExtensions } from '@extensions/desktop'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
 import { initializeWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 
-const isSystemDragPanel = isTauriRuntime() && window.location.pathname === '/system-drag'
+const isSystemDragPanel = isDesktopRuntime() && window.location.pathname.endsWith('/system-drag')
 if (!isSystemDragPanel) {
   installDebugPanelLogCapture()
   installAppLogging()
   installFrontendRecoveryBridge()
   installDesktopExtensions()
-  if (isTauriRuntime()) {
+  if (isElectronRuntime()) {
     installExternalDropGuard()
   }
   installExternalLinkHandler()

@@ -6,7 +6,8 @@ import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 import type { LocalWorkItem } from '@/features/todo/todoModel'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import { readSelectedDeliveryFiles, type SelectedDeliveryFile } from '@/tauri/droppedFiles'
+import { readSelectedDeliveryFiles, type SelectedDeliveryFile } from '@/desktop/droppedFiles'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { track } from '@/telemetry/client'
 
 interface DeliveryDialogProps {
@@ -97,9 +98,16 @@ export function DeliveryDialog({
     chatScope !== 'selected' || selectedMessages.length > 0 || messages.length === 0
 
   async function choosePaths(directory: boolean) {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const selected = await open({ directory, multiple: !directory })
-    const paths = Array.isArray(selected) ? selected : selected ? [selected] : []
+    const selected = await invokeDesktopHost<{ canceled: boolean; filePaths: string[] }>(
+      'dialog.open',
+      {
+        properties: [
+          directory ? 'openDirectory' : 'openFile',
+          ...(!directory ? ['multiSelections'] : []),
+        ],
+      }
+    )
+    const paths = selected.canceled ? [] : selected.filePaths
     if (paths.length === 0) return
     const nextFiles = await readSelectedDeliveryFiles(paths)
     setFiles(current => {

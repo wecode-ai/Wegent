@@ -55,8 +55,10 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     'request_user_input'
   )
 
-  const requestInputDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const requestInputDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => Boolean(snapshot.workbench?.currentRuntimeTask?.taskId),
+    'The priority-filter fixture did not expose its runtime task ID'
   )
   const requestInputTaskId = requestInputDebugSnapshot.workbench?.currentRuntimeTask?.taskId
   assert.ok(requestInputTaskId, 'The priority-filter fixture did not expose its runtime task ID')

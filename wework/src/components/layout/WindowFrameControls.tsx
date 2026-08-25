@@ -1,6 +1,6 @@
 import { Minus, Square, Copy, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 
@@ -13,33 +13,26 @@ export function WindowFrameControls({ className }: { className?: string }) {
 
   const updateMaximized = useCallback(async () => {
     try {
-      const maximized = await getCurrentWindow().isMaximized()
-      setIsMaximized(maximized)
+      const state = await invokeDesktopHost<{ maximized: boolean }>('window.getState')
+      setIsMaximized(state.maximized)
     } catch {
       // Ignore if the window API is unavailable
     }
   }, [])
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined
-    const window = getCurrentWindow()
-    const listenPromise = window
-      .onResized(() => {
-        void updateMaximized()
-      })
-      .then(unlistenFn => {
-        unlisten = unlistenFn
-        void updateMaximized()
-      })
-
+    const handleResize = () => void updateMaximized()
+    const initialUpdateFrame = requestAnimationFrame(() => void updateMaximized())
+    window.addEventListener('resize', handleResize)
     return () => {
-      void listenPromise.then(() => unlisten?.())
+      cancelAnimationFrame(initialUpdateFrame)
+      window.removeEventListener('resize', handleResize)
     }
   }, [updateMaximized])
 
   const handleMinimize = useCallback(async () => {
     try {
-      await getCurrentWindow().minimize()
+      await invokeDesktopHost<void>('window.minimize')
     } catch {
       // Ignore
     }
@@ -47,19 +40,16 @@ export function WindowFrameControls({ className }: { className?: string }) {
 
   const handleMaximize = useCallback(async () => {
     try {
-      if (isMaximized) {
-        await getCurrentWindow().unmaximize()
-      } else {
-        await getCurrentWindow().maximize()
-      }
+      await invokeDesktopHost<void>('window.toggleMaximize')
+      await updateMaximized()
     } catch {
       // Ignore
     }
-  }, [isMaximized])
+  }, [updateMaximized])
 
   const handleClose = useCallback(async () => {
     try {
-      await getCurrentWindow().close()
+      await invokeDesktopHost<void>('window.close')
     } catch {
       // Ignore
     }
@@ -68,8 +58,10 @@ export function WindowFrameControls({ className }: { className?: string }) {
   return (
     <div
       data-testid="window-frame-controls"
-      data-tauri-drag-region={false}
-      className={cn('flex h-full shrink-0 items-center', className)}
+      className={cn(
+        'electron-titlebar-interactive-region flex h-full shrink-0 items-center',
+        className
+      )}
     >
       <button
         type="button"

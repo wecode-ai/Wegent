@@ -1,14 +1,13 @@
-import { invoke } from '@tauri-apps/api/core'
 import i18n from '@/i18n'
 import { getErrorMessage } from '@/lib/error-message'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { LocalPluginUninstallCleanupError } from './pluginUninstallError'
 import {
   ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
   requestLocalExecutor,
-} from '@/tauri/localExecutor'
+} from '@/desktop/localExecutor'
 import type {
   InstalledPlugin,
   InstalledPluginComponents,
@@ -136,6 +135,22 @@ export interface LocalPluginCloudLink {
   localPluginName: string
   cloudPluginId: number
   cloudReleaseId: number | null
+}
+
+async function readLocalPluginCloudLinks(marketplacePath: string): Promise<LocalPluginCloudLink[]> {
+  return requestLocalExecutor<LocalPluginCloudLink[]>('executor.plugins.links.list', {
+    marketplacePath,
+  })
+}
+
+async function unlinkLocalPluginRelease(
+  marketplacePath: string,
+  localPluginName: string
+): Promise<void> {
+  await requestLocalExecutor('executor.plugins.links.unlink', {
+    marketplacePath,
+    localPluginName,
+  })
 }
 
 export interface PluginIdentityReference {
@@ -815,7 +830,7 @@ export function isLocalCodexPluginsReadStateFresh(
  * loading the marketplace only when the Plugins page opens.
  */
 export function warmLocalCodexPluginsReadState(): Promise<LocalCodexPluginsState> | null {
-  if (!isTauriRuntime()) return null
+  if (!isDesktopRuntime()) return null
   if (!warmupReadStatePromise) {
     warmupReadStatePromise = readState({ mergeAllMarketplaces: true })
       .then(state => {
@@ -1067,10 +1082,7 @@ async function uninstallWeworkPersonalPluginLocally(
   }
   clearLocalCodexPluginsReadStateCache()
   try {
-    await invoke('local_executor_unlink_plugin_release', {
-      marketplacePath,
-      localPluginName: pluginName,
-    })
+    await unlinkLocalPluginRelease(marketplacePath, pluginName)
   } catch (error) {
     throw new LocalPluginUninstallCleanupError(
       getErrorMessage(error, 'Failed to unlink local plugin release'),
@@ -1085,14 +1097,12 @@ async function ensurePluginInWeworkPersonal(options: {
   installAfterMigrate?: boolean
 }): Promise<EnsurePersonalPluginResult> {
   const destinationMarketplacePath = await resolveWeworkPersonalMarketplacePath()
-  const ensured = await invoke<EnsurePersonalPluginResult>(
-    'local_executor_ensure_personal_plugin',
+  const ensured = await requestLocalExecutor<EnsurePersonalPluginResult>(
+    'executor.plugins.personal.ensure',
     {
-      options: {
-        sourceMarketplacePath: options.sourceMarketplacePath,
-        destinationMarketplacePath,
-        pluginName: options.pluginName,
-      },
+      sourceMarketplacePath: options.sourceMarketplacePath,
+      destinationMarketplacePath,
+      pluginName: options.pluginName,
     }
   )
   if (options.installAfterMigrate !== false && ensured.migrated) {
@@ -1106,7 +1116,7 @@ async function ensurePluginInWeworkPersonal(options: {
       console.warn('[Wework] Failed to install migrated personal plugin', error)
     }
   }
-  // `migrated: false` is a read-only idempotent hit in the Tauri command. Do not
+  // `migrated: false` is a read-only idempotent hit. Do not
   // erase the just-written OpenAI catalog on every personal-plugin reconciliation.
   // A real migration reloads and persists a fresh snapshot in readState below.
   if (ensured.migrated) clearLocalCodexPluginsReadStateCache()
@@ -1340,17 +1350,17 @@ function toDiskPersonalMarketplaceItem(
  * Lists wework-personal plugins from disk. Avoids Codex plugin/list (~10s reconcile)
  * so the personal-created tab can paint before app-server finishes.
  *
- * Does not wait for local executor startup: the Tauri command only reads disk and
- * resolves a default marketplace path when the in-memory bundled path is missing.
+ * Does not wait for Codex app-server startup: Executor only reads disk and resolves
+ * a default marketplace path when the in-memory bundled path is missing.
  */
 export async function listPersonalMarketplacePluginsFromDisk(): Promise<PluginMarketplaceItem[]> {
-  if (!isTauriRuntime()) {
-    console.info('[Wework] personal marketplace disk list skipped', { reason: 'not-tauri' })
+  if (!isElectronRuntime()) {
+    console.info('[Wework] personal marketplace disk list skipped', { reason: 'not-electron' })
     return []
   }
   const marketplacePath = getInitializedBundledPluginMarketplace()?.path?.trim() || ''
-  const listed = await invoke<PersonalMarketplaceListResult>(
-    'local_executor_list_personal_marketplace_plugins',
+  const listed = await requestLocalExecutor<PersonalMarketplaceListResult>(
+    'executor.plugins.personal.list',
     { marketplacePath }
   ).catch(error => {
     console.warn('[Wework] list personal marketplace from disk failed', error)
@@ -1863,9 +1873,9 @@ function toWegentStoreInstalledPlugin(
  * plugin/list so installed enterprise ZIPs can paint without scanning caches.
  */
 export async function listWegentStorePluginsFromDisk(): Promise<InstalledPlugin[]> {
-  if (!isTauriRuntime()) return []
+  if (!isElectronRuntime()) return []
   if (inflightWegentStoreList) return inflightWegentStoreList
-  const pending = invoke<WegentStoreListResult>('local_executor_list_wegent_store_plugins')
+  const pending = requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
     .catch(error => {
       console.warn('[Wework] list wegent store plugins from disk failed', error)
       return null
@@ -1997,8 +2007,8 @@ async function readPluginDetail(
   if (!localMarketplace) return response.plugin
 
   try {
-    const manifest = await invoke<{ connectors?: CodexPluginConnector[] }>(
-      'local_executor_read_plugin_manifest',
+    const manifest = await requestLocalExecutor<{ connectors?: CodexPluginConnector[] }>(
+      'executor.plugins.manifest.read',
       {
         marketplacePath: marketplace.path,
         pluginName,
@@ -2312,7 +2322,7 @@ async function readState(
     skipPersonalReconcile?: boolean
   } = {}
 ): Promise<LocalCodexPluginsState> {
-  if (!isTauriRuntime()) return emptyState
+  if (!isDesktopRuntime()) return emptyState
   hydrateReadStateCacheFromSession()
   const paramsKey = readStateParamsKey(params)
   if (
@@ -2407,9 +2417,9 @@ async function loadReadStateSnapshot(
       isLocalMarketplacePath(marketplace.path)
   )
   const cloudLinks = personalMarketplace?.path
-    ? await invoke<LocalPluginCloudLink[]>('local_executor_read_plugin_cloud_links', {
-        marketplacePath: personalMarketplace.path,
-      }).catch(() => [] as LocalPluginCloudLink[])
+    ? await readLocalPluginCloudLinks(personalMarketplace.path).catch(
+        () => [] as LocalPluginCloudLink[]
+      )
     : []
   const availableMarketplaceItems = selectedMarketplaces.flatMap(marketplace =>
     marketplace.plugins.map(plugin => toMarketplaceItem(marketplace, plugin, null, featuredIds))
@@ -2445,6 +2455,9 @@ async function loadReadStateSnapshot(
     cachedStateParamsKey === paramsKey ? cachedState : null,
     loadedState
   )
+  if (generation < cachedStateGeneration && cachedStateParamsKey === paramsKey && cachedState) {
+    return cachedState
+  }
   if (generation >= cachedStateGeneration) {
     // Always cache the unfiltered catalog so search queries can reuse it.
     rememberReadStateSnapshot(paramsKey, state, generation)
@@ -2632,9 +2645,7 @@ async function loadInstalledPluginsOnly(options: { shareInflight?: boolean } = {
   const personalPath =
     bundled?.path && isLocalMarketplacePath(bundled.path) ? bundled.path.trim() : ''
   const cloudLinks = personalPath
-    ? await invoke<LocalPluginCloudLink[]>('local_executor_read_plugin_cloud_links', {
-        marketplacePath: personalPath,
-      }).catch(() => [] as LocalPluginCloudLink[])
+    ? await readLocalPluginCloudLinks(personalPath).catch(() => [] as LocalPluginCloudLink[])
     : []
   // Composer / auth gates only need membership. Never call plugin/list here — it
   // reconciles for ~10s and stalls Codex turns on the shared app-server.
@@ -2664,45 +2675,44 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
   }
   return {
     async importExternalContent(source) {
-      if (!isTauriRuntime()) {
+      if (!isElectronRuntime()) {
         throw new Error('External content import requires the Wework desktop app')
       }
-      const imported = await invoke<ExternalContentImportResult>(
-        'local_executor_import_external_content',
-        {
-          options: { source },
-        }
+      const imported = await requestLocalExecutor<ExternalContentImportResult>(
+        'executor.codex_home.import_external_content',
+        { source }
       )
       clearLocalCodexPluginsReadStateCache()
       return imported
     },
     codexHomeMigrationStatus() {
-      if (!isTauriRuntime()) {
-        return Promise.resolve({
-          weworkCodexHome: '',
-          nativeCodexHome: '',
-          weworkCodexHomeExists: true,
-          nativeCodexHomeExists: false,
-          shouldPromptMigration: false,
-        })
+      if (isElectronRuntime()) {
+        return requestLocalExecutor<LocalCodexHomeMigrationStatus>('executor.codex_home.status')
       }
-      return invoke<LocalCodexHomeMigrationStatus>('local_executor_codex_home_migration_status')
+      return Promise.resolve({
+        weworkCodexHome: '',
+        nativeCodexHome: '',
+        weworkCodexHomeExists: true,
+        nativeCodexHomeExists: false,
+        shouldPromptMigration: false,
+      })
     },
     initializeCodexHome(options) {
-      if (!isTauriRuntime()) {
-        return Promise.resolve({
-          weworkCodexHome: '',
-          nativeCodexHome: '',
-          weworkCodexHomeExists: true,
-          nativeCodexHomeExists: false,
-          shouldPromptMigration: false,
-        })
+      if (isElectronRuntime()) {
+        return requestLocalExecutor<LocalCodexHomeMigrationStatus>(
+          'executor.codex_home.initialize',
+          {
+            migrateNativeHome: options.migrateNativeHome,
+            remoteAppsEnabled: options.remoteAppsEnabled ?? true,
+          }
+        )
       }
-      return invoke<LocalCodexHomeMigrationStatus>('local_executor_initialize_codex_home', {
-        options: {
-          ...options,
-          remoteAppsEnabled: options.remoteAppsEnabled ?? true,
-        },
+      return Promise.resolve({
+        weworkCodexHome: '',
+        nativeCodexHome: '',
+        weworkCodexHomeExists: true,
+        nativeCodexHomeExists: false,
+        shouldPromptMigration: false,
       })
     },
     migrateNativeCodexHome(remoteAppsEnabled = true) {
@@ -2712,19 +2722,21 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       })
     },
     readCodexLocalConfig() {
-      if (!isTauriRuntime()) {
+      if (!isElectronRuntime()) {
         return Promise.resolve(defaultCodexLocalConfig)
       }
-      return invoke<LocalCodexLocalConfig>('local_executor_read_codex_local_config')
+      return requestLocalExecutor<LocalCodexLocalConfig>('executor.codex_home.config.read')
     },
     updateCodexLocalConfig(patch) {
-      if (!isTauriRuntime()) {
+      if (!isElectronRuntime()) {
         return Promise.resolve({ ...defaultCodexLocalConfig, ...patch })
       }
-      return invoke<LocalCodexLocalConfig>('local_executor_update_codex_local_config', { patch })
+      return requestLocalExecutor<LocalCodexLocalConfig>('executor.codex_home.config.update', {
+        patch,
+      })
     },
     async ensureCreatedPluginInWeworkPersonal(plugin) {
-      if (!isTauriRuntime()) {
+      if (!isElectronRuntime()) {
         throw new Error('Migrating a local plugin requires the Wework desktop app')
       }
       const sourcePayload = plugin.spec.sourcePayload ?? {}
@@ -2768,13 +2780,13 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       }
     },
     async packageCreatedPlugin(plugin) {
-      if (!isTauriRuntime()) {
+      if (!isElectronRuntime()) {
         throw new Error('Packaging a local plugin requires the Wework desktop app')
       }
       const ensured = await this.ensureCreatedPluginInWeworkPersonal(plugin)
       try {
-        const packaged = await invoke<{ name: string; bytes: number[] }>(
-          'local_executor_package_plugin',
+        const packaged = await requestLocalExecutor<{ name: string; bytes: number[] }>(
+          'executor.plugins.personal.package',
           {
             marketplacePath: ensured.marketplacePath,
             pluginName: ensured.pluginName,
@@ -2790,7 +2802,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       }
     },
     async deletePersonalPlugin(pluginName, sourceMarketplacePath) {
-      if (!isTauriRuntime()) {
+      if (!isElectronRuntime()) {
         throw new Error('Deleting a personal plugin requires the Wework desktop app')
       }
       const marketplacePath =
@@ -2798,7 +2810,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           ? sourceMarketplacePath.trim()
           : await resolveWeworkPersonalMarketplacePath()
       try {
-        await invoke('local_executor_delete_personal_plugin', {
+        await requestLocalExecutor('executor.plugins.personal.delete', {
           marketplacePath,
           pluginName,
         })
@@ -2810,10 +2822,10 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       clearLocalCodexPluginsReadStateCache()
     },
     async linkPersonalPluginRelease(plugin, cloudPluginId, cloudReleaseId) {
-      if (!isTauriRuntime()) return
+      if (!isElectronRuntime()) return
       const ensured = await this.ensureCreatedPluginInWeworkPersonal(plugin)
       try {
-        await invoke('local_executor_link_plugin_release', {
+        await requestLocalExecutor('executor.plugins.links.link', {
           marketplacePath: ensured.marketplacePath,
           localPluginName: ensured.pluginName,
           cloudPluginId,
@@ -2828,7 +2840,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       clearLocalCodexPluginsReadStateCache()
     },
     async importMarketplaceCopy(descriptor) {
-      if (!isTauriRuntime()) {
+      if (!isElectronRuntime()) {
         throw new Error('Importing a plugin copy requires the Wework desktop app')
       }
       const currentState = cachedState ?? (await readState())
@@ -2838,13 +2850,11 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       if (!personalMarketplace || !isLocalMarketplacePath(personalMarketplace.path)) {
         throw new Error(`The ${WEWORK_PERSONAL_MARKETPLACE_ID} marketplace is unavailable`)
       }
-      const imported = await invoke<LocalPluginCopyImportResult>(
-        'local_executor_import_plugin_copy',
+      const imported = await requestLocalExecutor<LocalPluginCopyImportResult>(
+        'executor.plugins.personal.import_copy',
         {
-          options: {
-            marketplacePath: personalMarketplace.path,
-            ...descriptor,
-          },
+          marketplacePath: personalMarketplace.path,
+          ...descriptor,
         }
       )
       clearLocalCodexPluginsReadStateCache()
@@ -2855,7 +2865,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           pluginName: imported.pluginName,
         })
       } catch (error) {
-        await invoke('local_executor_rollback_plugin_copy', {
+        await requestLocalExecutor('executor.plugins.personal.rollback_copy', {
           marketplacePath: personalMarketplace.path,
           pluginName: imported.pluginName,
         }).catch(() => undefined)
@@ -2879,25 +2889,28 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return installed
     },
     async previewPluginImport(archivePath) {
-      if (!isTauriRuntime()) {
+      if (!isElectronRuntime()) {
         throw new Error('Importing a plugin package requires the Wework desktop app')
       }
       const marketplacePath = await resolveWeworkPersonalMarketplacePath()
-      return invoke<LocalPluginImportPreview>('local_executor_preview_plugin_import', {
-        archivePath,
-        marketplacePath,
-      })
+      return requestLocalExecutor<LocalPluginImportPreview>(
+        'executor.plugins.import_package.preview',
+        {
+          archivePath,
+          marketplacePath,
+        }
+      )
     },
     async importPluginPackage(preview, overwrite) {
-      if (!isTauriRuntime()) {
+      if (!isElectronRuntime()) {
         throw new Error('Importing a plugin package requires the Wework desktop app')
       }
       if (!preview.valid || !preview.name) {
         throw new Error('The selected plugin package did not pass validation')
       }
       const marketplacePath = await resolveWeworkPersonalMarketplacePath()
-      const imported = await invoke<LocalPluginPackageImportResult>(
-        'local_executor_import_plugin_package',
+      const imported = await requestLocalExecutor<LocalPluginPackageImportResult>(
+        'executor.plugins.import_package',
         {
           archivePath: preview.archivePath,
           marketplacePath,
@@ -2917,7 +2930,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         if (!commit.localCommitted) {
           throw new Error('Plugin package did not reach its local installation commit')
         }
-        await invoke('local_executor_finalize_plugin_import', {
+        await requestLocalExecutor('executor.plugins.import_package.finalize', {
           marketplacePath,
           rollbackId: imported.rollbackId,
         }).catch(error => {
@@ -2934,7 +2947,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           /local_plugin_commit_timeout/i.test(message) ||
           /runtime\.codex\.plugin\.install_local_first timed out/i.test(message)
         if (!commitMayStillBeRunning) {
-          await invoke('local_executor_rollback_plugin_import', {
+          await requestLocalExecutor('executor.plugins.import_package.rollback', {
             marketplacePath,
             rollbackId: imported.rollbackId,
           }).catch(() => undefined)
@@ -2944,10 +2957,10 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       }
     },
     savePluginExample(destinationPath) {
-      if (!isTauriRuntime()) {
+      if (!isElectronRuntime()) {
         throw new Error('Saving the plugin example requires the Wework desktop app')
       }
-      return invoke<string>('local_executor_save_plugin_example', { destinationPath })
+      return requestLocalExecutor<string>('executor.plugins.example.save', { destinationPath })
     },
     readState(params = {}) {
       return readState({
@@ -2958,7 +2971,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       })
     },
     async readMarketplacePluginDetail(marketplaceId, pluginName) {
-      if (!isTauriRuntime()) {
+      if (!isDesktopRuntime()) {
         throw new Error('Reading local plugin detail requires the Wework desktop app')
       }
       const normalizedMarketplaceId = marketplaceId.trim()
@@ -2984,7 +2997,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return detailed
     },
     async listInstalledPlugins(options) {
-      if (!isTauriRuntime()) return { items: [] }
+      if (!isDesktopRuntime()) return { items: [] }
       const mergeParams = { mergeAllMarketplaces: true as const }
       const peeked = peekLocalCodexPluginsReadState(mergeParams) || peekLocalCodexPluginsReadState()
       // Auto-sync / device inventory must bypass peek. Durable snapshots and a
@@ -3014,7 +3027,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return { items: installedPlugins, deviceId: loaded.deviceId }
     },
     async listSkills(params = {}) {
-      if (!isTauriRuntime()) return []
+      if (!isDesktopRuntime()) return []
       const response = await codexAppServerRequest<{ data: CodexSkillsListEntry[] }>(
         'skills/list',
         {
@@ -3027,7 +3040,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       )
     },
     async listApps(params = {}) {
-      if (!isTauriRuntime()) return []
+      if (!isDesktopRuntime()) return []
       const apps: LocalDeviceApp[] = []
       let cursor: string | null = null
       do {
@@ -3376,10 +3389,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         )
         if (personalMarketplace?.path) {
           try {
-            await invoke('local_executor_unlink_plugin_release', {
-              marketplacePath: personalMarketplace.path,
-              localPluginName: String(pluginName),
-            })
+            await unlinkLocalPluginRelease(personalMarketplace.path, String(pluginName))
           } catch (error) {
             throw new LocalPluginUninstallCleanupError(
               getErrorMessage(error, 'Failed to unlink local plugin release'),

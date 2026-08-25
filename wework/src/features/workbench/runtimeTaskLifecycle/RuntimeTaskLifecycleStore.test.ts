@@ -406,6 +406,37 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.turn.phase).toBe('awaiting')
   })
 
+  test('recovers a completed task from a confirmed active snapshot without a terminal Goal', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'done',
+          completedAt: 1_787_321_634_000,
+        })
+      )
+    )
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.turnStarted(address, 'follow-up-turn')
+    store.executorSettled(address)
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'running',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+        })
+      )
+    )
+
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
   test('keeps terminal executor snapshots idle even when running remains true', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const terminalTask = task({ running: true, status: 'complete' })

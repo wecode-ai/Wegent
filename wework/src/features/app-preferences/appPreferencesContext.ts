@@ -1,5 +1,5 @@
 import { createContext } from 'react'
-import type { AppPreferences } from '@/tauri/appPreferences'
+import type { AppPreferences } from '@/desktop/appPreferences'
 
 export interface AppPreferencesState {
   preferences: AppPreferences

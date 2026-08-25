@@ -12,7 +12,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({ projectChat: { addExistingAttachment } }),
 }))
 
-vi.mock('@/tauri/appshots', () => ({ subscribeToAppshots }))
+vi.mock('@/desktop/appshots', () => ({ subscribeToAppshots }))
 
 describe('AppshotBridge', () => {
   beforeEach(() => {

@@ -25,7 +25,6 @@ fn executor_build_entrypoints_use_rust_binary_build() {
         "../docker/standalone/Dockerfile",
         "../frontend/e2e/fixtures/claudecode-executor/Dockerfile",
         "../wework/scripts/dev-executor-sidecar.sh",
-        "../wework/src-tauri/build.rs",
         "local.sh",
         "build.sh",
     ];
@@ -78,24 +77,6 @@ fn executor_build_entrypoints_use_rust_binary_build() {
     assert!(dev_reload.contains("'--bin', 'wegent-executor'"));
     assert!(dev_reload.contains("watch(sourceDir, { recursive: true }"));
     assert!(!dev_reload.contains("wegent-executor-dev"));
-
-    let cloud_device = fs::read_to_string("scripts/dev-cloud-device.sh").unwrap();
-    assert!(cloud_device
-        .contains("configure_wegent_cargo_target_dir \"$PROJECT_DIR\" \"executor-dev\""));
-    assert!(cloud_device.contains("--features dev-reload"));
-    assert!(cloud_device.contains("--bin wegent-executor-dev"));
-    assert!(cloud_device.contains("--bin wegent-executor"));
-    assert!(cloud_device.contains("WEGENT_EXECUTOR_SOURCE_DIR=\"$EXECUTOR_DIR\""));
-    assert!(cloud_device.contains("WEGENT_EXECUTOR_PREBUILT=1"));
-    assert!(!cloud_device.contains("WEGENT_EXECUTOR_DEV_RELOAD=0"));
-
-    let windows_dev = fs::read_to_string("../wework/scripts/dev-windows-app.mjs").unwrap();
-    assert!(windows_dev.contains("Building executor dev-reload binaries"));
-    assert!(
-        windows_dev.contains("'wegent-executor-dev',\n        '--bin',\n        'wegent-executor'")
-    );
-    assert!(windows_dev.contains("process.env.WEGENT_EXECUTOR_BUILD_TARGET = target"));
-    assert!(windows_dev.contains("process.env.WEGENT_EXECUTOR_PREBUILT = '1'"));
 
     let device_dockerfile = fs::read_to_string("../docker/device/Dockerfile").unwrap();
     assert!(device_dockerfile.contains("pkg-config"));

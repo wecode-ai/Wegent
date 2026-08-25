@@ -67,7 +67,7 @@ import {
 import { priorityBadgeClasses } from './todoShared'
 import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
 import { getCurrentWorkflowNode, workflowNodeStatusLabel } from './workflowStagePresentation'
-import type { QuickPhrase } from '@/tauri/appPreferences'
+import type { QuickPhrase } from '@/desktop/appPreferences'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean

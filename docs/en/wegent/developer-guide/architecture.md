@@ -102,13 +102,13 @@ graph TB
 
 ### Architecture Layers
 
-| Layer | Responsibilities | Core Technologies |
-|-------|-----------------|-------------------|
-| **Management Platform Layer** | User interaction, resource management, API services, chat processing | Next.js 15, FastAPI, React 19, Chat Shell |
-| **Data Layer** | Data persistence, cache management, async task scheduling | MySQL 9.4, Redis 7, Celery |
-| **Execution Layer** | Task scheduling, container orchestration, resource isolation, local device management | Docker, Rust Executor, WebSocket, App IPC |
-| **Agent Layer** | AI capabilities, code execution, chat processing, external API integration | Claude Code, Agno, Dify |
-| **Knowledge Layer** | Knowledge base management, RAG retrieval, vectorization, document format conversion | KnowledgeOrchestrator, Embedding, Doc Converter |
+| Layer                         | Responsibilities                                                                      | Core Technologies                               |
+| ----------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| **Management Platform Layer** | User interaction, resource management, API services, chat processing                  | Next.js 15, FastAPI, React 19, Chat Shell       |
+| **Data Layer**                | Data persistence, cache management, async task scheduling                             | MySQL 9.4, Redis 7, Celery                      |
+| **Execution Layer**           | Task scheduling, container orchestration, resource isolation, local device management | Docker, Rust Executor, WebSocket, App IPC       |
+| **Agent Layer**               | AI capabilities, code execution, chat processing, external API integration            | Claude Code, Agno, Dify                         |
+| **Knowledge Layer**           | Knowledge base management, RAG retrieval, vectorization, document format conversion   | KnowledgeOrchestrator, Embedding, Doc Converter |
 
 ---
 
@@ -117,12 +117,14 @@ graph TB
 ### 1. 🌐 Frontend
 
 **Responsibilities**:
+
 - Provide user interface for resource definition and management
 - Implement task creation, monitoring, and result display
 - Provide real-time interaction and status updates
 - Manage local devices and executors
 
 **Technology Stack**:
+
 - **Framework**: Next.js 15 (App Router)
 - **UI Library**: React 19, shadcn/ui
 - **Styling**: Tailwind CSS 3.4
@@ -131,6 +133,7 @@ graph TB
 - **Icons**: Heroicons, Tabler Icons, Lucide React
 
 **Core Features**:
+
 - 🎨 Configuration-driven UI with YAML visualization
 - 🔄 Real-time task status updates (WebSocket)
 - 🌍 Multi-language support (Chinese/English)
@@ -139,6 +142,7 @@ graph TB
 - 💭 Thinking process visualization
 
 **Key File Structure**:
+
 ```
 frontend/src/
 ├── app/              # Next.js App Router
@@ -160,19 +164,20 @@ frontend/src/
 
 **Feature Modules**:
 
-| Module | Purpose |
-|--------|---------|
-| **tasks** | Task creation, chat, group chat, workbench |
-| **devices** | Local device management, executor guide |
-| **knowledge** | Knowledge base, documents, permissions |
-| **settings** | Agent, model, shell, skill configuration |
-| **feed** | Subscription market, trigger management |
+| Module        | Purpose                                    |
+| ------------- | ------------------------------------------ |
+| **tasks**     | Task creation, chat, group chat, workbench |
+| **devices**   | Local device management, executor guide    |
+| **knowledge** | Knowledge base, documents, permissions     |
+| **settings**  | Agent, model, shell, skill configuration   |
+| **feed**      | Subscription market, trigger management    |
 
 ---
 
 ### 2. ⚙️ Backend
 
 **Responsibilities**:
+
 - Implement declarative API for resource CRUD operations
 - Manage user authentication and authorization
 - Coordinate execution layer for task scheduling
@@ -181,6 +186,7 @@ frontend/src/
 - Manage local device connections
 
 **Technology Stack**:
+
 - **Framework**: FastAPI 0.68+
 - **ORM**: SQLAlchemy 2.0
 - **Database Driver**: PyMySQL
@@ -191,6 +197,7 @@ frontend/src/
 - **Async Tasks**: Celery
 
 **Core Features**:
+
 - 🚀 High-performance async API
 - 🔒 JWT-based authentication
 - 📝 Complete CRUD operation support
@@ -201,6 +208,7 @@ frontend/src/
 - 📱 Local device management (Device Provider)
 
 **API Design**:
+
 ```
 /api/v1/
 ├── /ghosts          # Ghost resource management
@@ -219,17 +227,18 @@ frontend/src/
 
 **Service Layer Architecture**:
 
-| Service | Responsibility |
-|---------|----------------|
-| **KindService** | Unified CRD resource management |
+| Service                   | Responsibility                                          |
+| ------------------------- | ------------------------------------------------------- |
+| **KindService**           | Unified CRD resource management                         |
 | **KnowledgeOrchestrator** | Knowledge management entry point (REST API + MCP tools) |
-| **DeviceService** | Local device management |
-| **ChatService** | Chat processing and RAG |
-| **SubtaskService** | Subtask management |
-| **GroupService** | Multi-tenant group management |
-| **UserService** | User management |
+| **DeviceService**         | Local device management                                 |
+| **ChatService**           | Chat processing and RAG                                 |
+| **SubtaskService**        | Subtask management                                      |
+| **GroupService**          | Multi-tenant group management                           |
+| **UserService**           | User management                                         |
 
 **Key Dependencies**:
+
 ```python
 FastAPI >= 0.68.0      # Web framework
 SQLAlchemy >= 2.0.28   # ORM
@@ -245,6 +254,7 @@ celery >= 5.0          # Async tasks
 ### 3. 💬 Chat Shell (Conversation Engine)
 
 **Responsibilities**:
+
 - Provide lightweight AI conversation engine
 - Support multiple LLM models (Anthropic, OpenAI, Google)
 - Manage conversation context and session storage
@@ -252,6 +262,7 @@ celery >= 5.0          # Async tasks
 - Support knowledge base retrieval augmentation (RAG)
 
 **Technology Stack**:
+
 - **Framework**: FastAPI
 - **Agent Framework**: LangGraph + LangChain
 - **LLM**: Anthropic, OpenAI, Google Gemini
@@ -260,13 +271,14 @@ celery >= 5.0          # Async tasks
 
 **Three Deployment Modes**:
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **HTTP** | Standalone HTTP service `/v1/response` | Production |
-| **Package** | Python package, imported by Backend | Monolithic deployment |
-| **CLI** | Command-line interactive interface | Development/Testing |
+| Mode        | Description                            | Use Case              |
+| ----------- | -------------------------------------- | --------------------- |
+| **HTTP**    | Standalone HTTP service `/v1/response` | Production            |
+| **Package** | Python package, imported by Backend    | Monolithic deployment |
+| **CLI**     | Command-line interactive interface     | Development/Testing   |
 
 **Core Features**:
+
 - 🤖 Multi-LLM support (Anthropic, OpenAI, Google)
 - 🛠️ MCP tool integration (Model Context Protocol)
 - 📚 Dynamic skill loading
@@ -275,6 +287,7 @@ celery >= 5.0          # Async tasks
 - 📈 OpenTelemetry integration
 
 **Module Structure**:
+
 ```
 chat_shell/chat_shell/
 ├── main.py           # FastAPI application entry
@@ -304,6 +317,7 @@ chat_shell/chat_shell/
 ### 4. 💯 Executor Manager
 
 **Responsibilities**:
+
 - Manage Executor lifecycle
 - Task queue and scheduling
 - Resource allocation and rate limiting
@@ -311,6 +325,7 @@ chat_shell/chat_shell/
 - Support multiple deployment modes
 
 **Technology Stack**:
+
 - **Language**: Python
 - **Container Management**: Docker SDK
 - **Networking**: Docker bridge network
@@ -318,12 +333,13 @@ chat_shell/chat_shell/
 
 **Deployment Modes**:
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **Docker** | Use Docker SDK to manage local containers | Standard deployment |
-| **Local Device** | Connect to local device for execution | Development environment |
+| Mode             | Description                               | Use Case                |
+| ---------------- | ----------------------------------------- | ----------------------- |
+| **Docker**       | Use Docker SDK to manage local containers | Standard deployment     |
+| **Local Device** | Connect to local device for execution     | Development environment |
 
 **Core Features**:
+
 - 🎯 Maximum concurrent task control (default: 5)
 - 🔧 Dynamic port allocation (10001-10100)
 - 🐳 Docker container orchestration
@@ -331,11 +347,12 @@ chat_shell/chat_shell/
 - 📱 Local device support
 
 **Configuration Parameters**:
+
 ```yaml
-MAX_CONCURRENT_TASKS: 5              # Maximum concurrent tasks
-EXECUTOR_PORT_RANGE_MIN: 10001      # Port range start
-EXECUTOR_PORT_RANGE_MAX: 10100      # Port range end
-NETWORK: wegent-network              # Docker network
+MAX_CONCURRENT_TASKS: 5 # Maximum concurrent tasks
+EXECUTOR_PORT_RANGE_MIN: 10001 # Port range start
+EXECUTOR_PORT_RANGE_MAX: 10100 # Port range end
+NETWORK: wegent-network # Docker network
 EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 ```
 
@@ -344,12 +361,14 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 ### 5. 🚀 Executor
 
 **Responsibilities**:
+
 - Provide isolated sandbox environment
 - Execute agent tasks
 - Manage workspace and code repositories
 - Report execution results
 
 **Technology Stack**:
+
 - **Container**: Docker
 - **Executor**: Rust (`executor/`)
 - **Runtime**: Claude Code, Agno, Dify
@@ -357,14 +376,14 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 
 **Agent Types**:
 
-| Agent | Type | Description |
-|-------|------|-------------|
-| **ClaudeCode** | local_engine | Claude Code SDK, supports Git, MCP, Skills |
-| **Agno** | local_engine | Multi-agent collaboration, SQLite session management |
-| **Dify** | external_api | Proxy to Dify platform |
-| **ImageValidator** | validator | Custom base image validation |
+| Agent              | Type         | Description                                          |
+| ------------------ | ------------ | ---------------------------------------------------- |
+| **ClaudeCode**     | local_engine | Claude Code SDK, supports Git, MCP, Skills           |
+| **Agno**           | local_engine | Multi-agent collaboration, SQLite session management |
+| **Dify**           | external_api | Proxy to Dify platform                               |
+| **ImageValidator** | validator    | Custom base image validation                         |
 
-Rust executor is the only executor runtime implementation. Backend Chat shell work may still use an in-process path, while other tasks run through standalone/local executor. In Wework packaged App local-first mode, the app does not start a local Backend; it calls the executor sidecar directly over Tauri app IPC. Codex runtime control uses `codex app-server --stdio` JSON-RPC to create, continue, read, archive, and rename threads. The executor stores only the local task index and the required `localTaskId -> threadId` mapping.
+Rust executor is the only executor runtime implementation. Backend Chat shell work may still use an in-process path, while other tasks run through standalone/local executor. In Wework packaged App local-first mode, the app does not start a local Backend; it calls the executor sidecar directly over Electron IPC. Codex runtime control uses `codex app-server --stdio` JSON-RPC to create, continue, read, archive, and rename threads. The executor stores only the local task index and the required `localTaskId -> threadId` mapping.
 
 When Claude Code resumes an interactive-form session, the executor treats a defer as stale resume output only when it has the same `tool_use_id` as the form being answered and is still an interactive-form tool. A later form with a different `tool_use_id` is a new clarification request; even if that response also contains text, the executor must proxy it to the interactive MCP and wait for user input instead of discarding it as stale.
 
@@ -378,7 +397,7 @@ The Codex runtime is separated by responsibility under `executor/src/agents/code
 
 Live Codex agent-message text must be classified by an explicit phase: only `final` or `final_answer` enters the final answer, while `analysis`, `commentary`, and missing phases enter processing first. Missing phases can occur before or after a tool call, so a default final classification must not trigger Wework's final-processing collapse. When a turn ends, the executor uses explicit final text; if a model never sends a phase, it uses the last unphased text as the terminal answer. Transcript restoration follows the same rule and uses later tools or other process items to distinguish unphased processing text from the final answer.
 
-Wework's built-in browser MCP is provided by the Rust executor's `browser-mcp-server` subcommand and controls the right-side browser through a local bridge address allocated independently for each Tauri instance. The packaged app does not require Node.js or a separately deployed browser MCP server, and multiple instances do not share a fixed port.
+Wework's built-in browser MCP is provided by the Rust executor's `browser-mcp-server` subcommand and controls the right-side browser through a local bridge address allocated independently for each Electron instance. The packaged app does not require Node.js or a separately deployed browser MCP server, and multiple instances do not share a fixed port.
 
 The project-space `wework_space` MCP is hosted persistently by the Rust executor started with Wework on a dynamically allocated loopback port. Codex receives only that instance's URL, instance credential, and optional ContextGrant; it no longer starts a `space-mcp-server` stdio child. Generic sessions remain unbound, while project or Issue sessions receive default `space_id/item_id` values and scope protection through ContextGrant.
 
@@ -417,6 +436,7 @@ Cloud model execution passes `modelConfig.env.model_id` from the Model spec to t
 `apply_patch` is not a command automatically supplied by the model service or the system shell. Only a Codex model catalog generated for the `custom` or `function` tool profile causes Codex to publish the tool in model requests; callers that invoke the Responses API directly must likewise provide the custom tool definition and grammar in `tools`. The `shell` profile does not publish it. After patch execution fails, the local model proxy preserves the original validation error and adds error-specific grammar guidance, correct Update/Add File examples, and an explicit retry instruction. Native Responses, Chat Completions, and Anthropic Messages conversions must preserve the same correction semantics, while successful results remain unchanged.
 
 **Core Features**:
+
 - 🔒 Fully isolated execution environment
 - 💼 Independent workspace
 - 🔄 Automatic cleanup mechanism (can be preserved with `preserveExecutor`)
@@ -426,6 +446,7 @@ Cloud model execution passes `modelConfig.env.model_id` from the Model spec to t
 - 🪝 [Pre-execute hooks](./pre-execute-hooks.md) for custom task initialization before execution
 
 **Lifecycle**:
+
 ```mermaid
 graph LR
     Created["Created"] --> Running["Running"]
@@ -442,6 +463,7 @@ graph LR
 ### 6. 💾 Database (MySQL)
 
 **Responsibilities**:
+
 - Persistent storage of all resource definitions
 - Manage user data and authentication information
 - Record task execution history
@@ -449,6 +471,7 @@ graph LR
 **Version**: MySQL 9.4
 
 **Core Table Structure**:
+
 ```
 wegent_db/
 ├── kinds            # CRD resources (Ghost, Model, Shell, Bot, Team, Skill, Device)
@@ -463,6 +486,7 @@ wegent_db/
 ```
 
 **Data Model Features**:
+
 - Uses SQLAlchemy ORM
 - Supports transactions and relational queries
 - Automatic timestamp management
@@ -474,6 +498,7 @@ wegent_db/
 ### 7. 🔴 Cache (Redis)
 
 **Responsibilities**:
+
 - Task status caching
 - Session management
 - Temporary real-time data storage
@@ -483,6 +508,7 @@ wegent_db/
 **Version**: Redis 7
 
 **Use Cases**:
+
 - 🔄 Chat task context caching (2-hour expiration)
 - 💻 Code task status caching (2-hour expiration)
 - 🎯 Executor deletion delay control
@@ -494,6 +520,7 @@ wegent_db/
 ### 8. ⚡ Celery (Async Tasks)
 
 **Responsibilities**:
+
 - Knowledge base document indexing (async)
 - Document summary generation
 - Document format conversion (PDF/PPTX → Markdown)
@@ -501,17 +528,17 @@ wegent_db/
 
 **Core Tasks**:
 
-| Task | Purpose |
-|------|---------|
-| `index_document_task` | Document vectorization indexing |
-| `generate_document_summary_task` | Document summary generation |
-| `convert_document_task` | Document format conversion (consumed by Knowledge Doc Converter) |
+| Task                             | Purpose                                                          |
+| -------------------------------- | ---------------------------------------------------------------- |
+| `index_document_task`            | Document vectorization indexing                                  |
+| `generate_document_summary_task` | Document summary generation                                      |
+| `convert_document_task`          | Document format conversion (consumed by Knowledge Doc Converter) |
 
 **Task Queues**:
 
-| Queue | Purpose | Consumer |
-|-------|---------|----------|
-| `celery` (default) | Document indexing, summary generation | Backend Worker |
+| Queue                  | Purpose                                  | Consumer                |
+| ---------------------- | ---------------------------------------- | ----------------------- |
+| `celery` (default)     | Document indexing, summary generation    | Backend Worker          |
 | `knowledge_conversion` | PDF/PPTX document conversion to Markdown | Knowledge Doc Converter |
 
 ---
@@ -519,11 +546,13 @@ wegent_db/
 ### 9. 🎼 KnowledgeOrchestrator
 
 **Responsibilities**:
+
 - Unify knowledge management for REST API and MCP tools
 - Automatically select retriever, embedding model, summary model
 - Coordinate Celery async tasks
 
 **Architecture**:
+
 ```
 Entry Layer (REST/MCP)
     ↓
@@ -535,6 +564,7 @@ Celery Tasks (async processing)
 ```
 
 **Core Features**:
+
 - 🔗 Unified entry point: REST API and MCP tools share the same business logic
 - 🤖 Auto model selection: Task → Team → Bot → Model chain resolution
 - 📚 Multi-scope support: Personal, group, organization knowledge bases
@@ -545,29 +575,32 @@ Celery Tasks (async processing)
 ### 10. 📄 Knowledge Doc Converter
 
 **Responsibilities**:
+
 - Convert PDF/PPTX documents to Markdown via MinerU OCR
 - Upload conversion results to S3 storage
 - Notify Backend of conversion status via callback endpoints
 
 **Technology Stack**:
+
 - **Task Queue**: Celery + Redis
 - **OCR Engine**: MinerU
 - **Object Storage**: S3
 - **Monitoring**: Prometheus (port 9090, multiprocess mode)
 
 **Core Features**:
+
 - 🔧 Standalone Celery Worker listening on the `knowledge_conversion` queue
 - 📊 Prometheus metrics exposure (multiprocess mode)
 - 🔄 Callback-driven async conversion flow
 
 **Internal API**:
 
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /api/internal/conversion/callback/status` | Conversion status callback |
+| Endpoint                                           | Purpose                       |
+| -------------------------------------------------- | ----------------------------- |
+| `POST /api/internal/conversion/callback/status`    | Conversion status callback    |
 | `POST /api/internal/conversion/callback/completed` | Conversion completed callback |
-| `POST /api/internal/conversion/callback/failed` | Conversion failed callback |
-| `GET /api/internal/attachments/{id}/download` | Attachment download |
+| `POST /api/internal/conversion/callback/failed`    | Conversion failed callback    |
+| `GET /api/internal/attachments/{id}/download`      | Attachment download           |
 
 **Document Conversion Flow**:
 
@@ -672,14 +705,14 @@ Core invariants:
 
 ### Communication Protocols
 
-| Communication Type | Protocol | Purpose |
-|-------------------|----------|---------|
-| **Frontend ↔ Backend** | HTTP/HTTPS, WebSocket (Socket.IO) | API calls, real-time chat streaming |
-| **Backend ↔ Database** | MySQL Protocol | Data persistence |
-| **Backend ↔ Redis** | Redis Protocol | Cache operations, Socket.IO adapter |
-| **Backend ↔ Executor Manager** | HTTP | Task scheduling |
-| **Executor Manager ↔ Executor** | Docker API | Container management |
-| **Executor ↔ Agent** | Process invocation | Task execution |
+| Communication Type              | Protocol                          | Purpose                             |
+| ------------------------------- | --------------------------------- | ----------------------------------- |
+| **Frontend ↔ Backend**          | HTTP/HTTPS, WebSocket (Socket.IO) | API calls, real-time chat streaming |
+| **Backend ↔ Database**          | MySQL Protocol                    | Data persistence                    |
+| **Backend ↔ Redis**             | Redis Protocol                    | Cache operations, Socket.IO adapter |
+| **Backend ↔ Executor Manager**  | HTTP                              | Task scheduling                     |
+| **Executor Manager ↔ Executor** | Docker API                        | Container management                |
+| **Executor ↔ Agent**            | Process invocation                | Task execution                      |
 
 ### WebSocket Architecture (Socket.IO)
 
@@ -711,6 +744,7 @@ The chat system uses Socket.IO for bidirectional real-time communication:
 | `task:status` | Task status update |
 
 **Room-based Message Routing**:
+
 - User Room: `user:{user_id}` - For personal notifications
 - Task Room: `task:{task_id}` - For chat streaming and group chat
 
@@ -824,12 +858,14 @@ executor_engines:
 ### 1. Declarative API Design
 
 Following Kubernetes CRD design patterns:
+
 - ✅ Resources defined declaratively in YAML
 - ✅ Clear resource hierarchy
 - ✅ Unified API version management
 - ✅ Separation of status and desired state
 
 **Example**:
+
 ```yaml
 apiVersion: agent.wecode.io/v1
 kind: Bot
@@ -883,6 +919,7 @@ status:
 ### Horizontal Scaling
 
 #### Frontend Scaling
+
 ```yaml
 # Multi-instance deployment
 frontend:
@@ -891,23 +928,26 @@ frontend:
 ```
 
 #### Backend Scaling
+
 ```yaml
 # Stateless design, supports multiple instances
 backend:
   replicas: 5
   session: redis
-  socket_adapter: redis  # Socket.IO multi-instance support
+  socket_adapter: redis # Socket.IO multi-instance support
 ```
 
 #### Chat Shell Scaling
+
 ```yaml
 # Standalone service, supports multiple instances
 chat_shell:
   replicas: 2
-  storage: remote  # Remote storage for multi-instance
+  storage: remote # Remote storage for multi-instance
 ```
 
 #### Executor Scaling
+
 ```yaml
 # Dynamic creation and destruction
 executor_manager:
@@ -918,11 +958,13 @@ executor_manager:
 ### Vertical Scaling
 
 #### Database Optimization
+
 - Read-write separation
 - Index optimization
 - Query caching
 
 #### Redis Optimization
+
 - Memory optimization
 - Persistence strategy
 - Cluster mode
@@ -930,16 +972,19 @@ executor_manager:
 ### Deployment Modes
 
 #### 1. Single-Machine Deployment (Development/Testing)
+
 ```bash
 docker-compose up -d
 ```
 
 **Use Cases**:
+
 - Local development
 - Feature testing
 - Small-scale usage
 
 #### 2. Distributed Deployment (Production)
+
 ```yaml
 architecture:
   frontend: "Multi-instance + Nginx load balancing"
@@ -950,6 +995,7 @@ architecture:
 ```
 
 **Use Cases**:
+
 - Production environment
 - High concurrency requirements
 - Large-scale teams
@@ -966,6 +1012,7 @@ architecture:
 ```
 
 #### 3. Cloud-Native Deployment (Kubernetes)
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -976,28 +1023,30 @@ spec:
   template:
     spec:
       containers:
-      - name: backend
-        image: wegent-backend:latest
+        - name: backend
+          image: wegent-backend:latest
 ```
 
 **Use Cases**:
+
 - Cloud environments
 - Auto-scaling
 - High availability requirements
 
 ### Performance Metrics
 
-| Metric | Target Value | Description |
-|--------|--------------|-------------|
-| **API Response Time** | < 200ms | P95 latency |
-| **Task Startup Time** | < 5s | From creation to execution |
-| **Concurrent Tasks** | 5-100 | Configurable |
-| **Database Connection Pool** | 20 | Default configuration |
-| **WebSocket Connections** | 1000+ | Concurrent online |
+| Metric                       | Target Value | Description                |
+| ---------------------------- | ------------ | -------------------------- |
+| **API Response Time**        | < 200ms      | P95 latency                |
+| **Task Startup Time**        | < 5s         | From creation to execution |
+| **Concurrent Tasks**         | 5-100        | Configurable               |
+| **Database Connection Pool** | 20           | Default configuration      |
+| **WebSocket Connections**    | 1000+        | Concurrent online          |
 
 ### Monitoring and Alerting
 
 #### Key Metrics
+
 - 📊 Task success rate
 - ⏱️ Task execution time
 - 💾 Database performance
@@ -1005,6 +1054,7 @@ spec:
 - 🐳 Container resource usage
 
 #### Log Collection
+
 ```python
 import structlog
 

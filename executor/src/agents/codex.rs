@@ -139,7 +139,6 @@ pub struct CodexAppServerTurnOptions {
     pub fork_thread_id: Option<String>,
     pub fork_thread_path: Option<String>,
     pub resume_thread_id: Option<String>,
-    pub initial_thread_name: Option<String>,
     pub initial_thread_goal: Option<Value>,
     pub notifications: Option<CodexNotificationSender>,
     pub cancellation: Option<oneshot::Receiver<()>>,
@@ -245,7 +244,7 @@ impl AgentEngine for CodexAppServerEngine {
     fn run(&self, request: ExecutionRequest) -> Self::RunFuture {
         let binary = self.binary.clone();
         Box::pin(async move {
-            match run_codex_app_server_turn(&binary, request, None, None, None, None).await {
+            match run_codex_app_server_turn(&binary, request, None, None, None).await {
                 Ok(turn) => turn.outcome,
                 Err(message) => ExecutionOutcome::Failed { message },
             }
@@ -1267,7 +1266,6 @@ pub async fn run_codex_app_server_turn(
     binary: &str,
     request: ExecutionRequest,
     resume_thread_id: Option<String>,
-    initial_thread_name: Option<String>,
     initial_thread_goal: Option<Value>,
     notifications: Option<CodexNotificationSender>,
 ) -> Result<CodexAppServerTurn, String> {
@@ -1276,7 +1274,6 @@ pub async fn run_codex_app_server_turn(
         request,
         CodexAppServerTurnOptions {
             resume_thread_id,
-            initial_thread_name,
             initial_thread_goal,
             notifications,
             ..CodexAppServerTurnOptions::default()
@@ -1362,10 +1359,6 @@ fn notify_thread_started(notifications: Option<&CodexNotificationSender>, thread
     }
 }
 
-fn normalized_thread_name(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|name| !name.is_empty())
-}
-
 fn codex_turn_fields(request: &ExecutionRequest, thread_id: &str) -> Vec<(&'static str, String)> {
     let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.push(("thread_id", thread_id.to_owned()));
@@ -1389,7 +1382,6 @@ async fn run_codex_app_server_turn_on_shared_client(
         fork_thread_id,
         fork_thread_path,
         resume_thread_id,
-        initial_thread_name,
         initial_thread_goal,
         notifications,
         mut cancellation,
@@ -1471,17 +1463,6 @@ async fn run_codex_app_server_turn_on_shared_client(
                     side_boundary_inject_params(&thread_id),
                 )
                 .await?;
-        }
-
-        if !request.ephemeral {
-            if let Some(name) = normalized_thread_name(initial_thread_name.as_deref()) {
-                client
-                    .request(
-                        "thread/name/set",
-                        json!({"threadId": thread_id.clone(), "name": name}),
-                    )
-                    .await?;
-            }
         }
 
         if awaits_initial_goal_turn {
@@ -1569,6 +1550,18 @@ async fn run_codex_app_server_turn_on_shared_client(
         )
         .await;
         let outcome = outcome_result?;
+        if !request.ephemeral && state.goal_is_active() {
+            match client
+                .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
+                .await
+            {
+                Ok(goal_response) => sync_goal_status_from_response(&mut state, &goal_response),
+                Err(error) => log_executor_event(
+                    "codex shared goal status reconciliation failed",
+                    &[("thread_id", thread_id.clone()), ("error", error)],
+                ),
+            }
+        }
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
             turn_fields.push(("error", message.clone()));
@@ -1671,7 +1664,6 @@ pub async fn run_codex_app_server_turn_with_cancel(
         fork_thread_id,
         fork_thread_path,
         resume_thread_id,
-        initial_thread_name,
         initial_thread_goal,
         notifications,
         mut cancellation,
@@ -1789,18 +1781,6 @@ pub async fn run_codex_app_server_turn_with_cancel(
                 )
                 .await?;
                 sync_goal_status_from_response(&mut state, &goal_response);
-            }
-            if let Some(name) = normalized_thread_name(initial_thread_name.as_deref()) {
-                with_rpc_timeout(
-                    "thread/name/set",
-                    timeout_seconds,
-                    rpc.request(
-                        "thread/name/set",
-                        json!({"threadId": thread_id.clone(), "name": name}),
-                        &mut state,
-                    ),
-                )
-                .await?;
             }
         }
 

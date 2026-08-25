@@ -9,7 +9,7 @@ import { useAppPreferencesState } from '@/features/app-preferences/useAppPrefere
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
-import { updateAppPreferences } from '@/tauri/appPreferences'
+import { updateAppPreferences } from '@/desktop/appPreferences'
 import {
   SettingsGroup,
   SettingsPage,

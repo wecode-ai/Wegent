@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { AppPreferences } from '@/tauri/appPreferences'
+import type { AppPreferences } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
@@ -68,7 +68,7 @@ vi.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-vi.mock('@/tauri/appPreferences', () => ({
+vi.mock('@/desktop/appPreferences', () => ({
   defaultAppPreferences: {
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,

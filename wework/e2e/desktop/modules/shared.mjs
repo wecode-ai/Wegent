@@ -22,14 +22,18 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
-import { stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
+import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
 import { waitForFolderPathReady, waitForFolderPickerInitialized } from './workspace-flows.mjs'
 
-const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
+const DESKTOP_READY_TIMEOUT_MS = readPositiveTimeout(
+  process.env.WEWORK_E2E_DESKTOP_READY_TIMEOUT_MS,
+  WORKBENCH_READY_TIMEOUT_MS,
+  'WEWORK_E2E_DESKTOP_READY_TIMEOUT_MS'
+)
 const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
   process.env.WEWORK_E2E_STEP_TIMEOUT_MS,
   10_000,
@@ -881,40 +885,6 @@ function commandOutput(command, args, options = {}) {
   return result.stdout.trim()
 }
 
-function macosFrontmostProcessId() {
-  const output = commandOutput('osascript', [
-    '-l',
-    'JavaScript',
-    '-e',
-    'ObjC.import("AppKit"); Number($.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier)',
-  ])
-  const processId = Number(output)
-  assert.ok(Number.isInteger(processId), `Invalid macOS frontmost process ID: ${output}`)
-  return processId
-}
-
-function macosApplicationProcessId(appIdentifier) {
-  const output = commandOutput('osascript', [
-    '-l',
-    'JavaScript',
-    '-e',
-    `ObjC.import("AppKit"); const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(${JSON.stringify(appIdentifier)}); apps.count > 0 ? Number(apps.objectAtIndex(0).processIdentifier) : 0`,
-  ])
-  const processId = Number(output)
-  assert.ok(Number.isInteger(processId), `Invalid macOS application process ID: ${output}`)
-  return processId
-}
-
-async function waitForMacosApplicationProcessId(appIdentifier, launcher) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < DESKTOP_READY_TIMEOUT_MS) {
-    const processId = macosApplicationProcessId(appIdentifier)
-    if (processId > 0) return processId
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  throw new Error(`Timed out waiting for macOS application ${appIdentifier}`)
-}
-
 async function stopDesktopAppProcess(app) {
   if (!app) return
   if (!app.launcher) {
@@ -1076,24 +1046,13 @@ async function appendProcessOutput(stream, destination) {
   })
 }
 
-function processIsAlive(processId) {
-  try {
-    process.kill(processId, 0)
-    return true
-  } catch {
-    return false
-  }
-}
-
 function macosSleepAssertionIds(appProcessId) {
   if (process.platform !== 'darwin') return []
   const output = commandOutput('/usr/bin/pmset', ['-g', 'assertions'])
   return output.split('\n').flatMap(line => {
     const match = line
       .trim()
-      .match(
-        /^pid (\d+)\([^)]+\): \[(0x[0-9a-f]+)\].*PreventUserIdleSystemSleep named: "Wework local task is running"/i
-      )
+      .match(/^pid (\d+)\([^)]+\): \[(0x[0-9a-f]+)\].*NoIdleSleepAssertion named: "Electron"/i)
     if (!match || Number(match[1]) !== appProcessId) {
       return []
     }
@@ -1113,21 +1072,25 @@ async function waitForMacosSleepAssertion(appProcessId, expectedRunning) {
   )
 }
 
-async function waitForExecutorReadyEvidence(
-  logPath,
+async function waitForExecutorRuntimeEvidence(
+  control,
+  _logPath,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
   minimumProcessCount = 1
 ) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    const content = await readFile(logPath, 'utf8').catch(() => '')
-    const processIds = [...content.matchAll(/app IPC stdio ready[^\n]*process_id=(\d+)/g)].map(
-      match => Number(match[1])
-    )
-    if (processIds.length >= minimumProcessCount) return { processIds, content }
+    const diagnostics = JSON.parse(await control.command('getDesktopRuntimeDiagnostics', 'body'))
+    const executorProcessId = Number(diagnostics.executorPid)
+    if (Number.isInteger(executorProcessId) && executorProcessId > 0) {
+      return {
+        processIds: [executorProcessId],
+        content: JSON.stringify(diagnostics),
+      }
+    }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(`Timed out waiting for executor stdio-ready evidence in ${logPath}`)
+  throw new Error('Timed out waiting for the Electron core runtime executor process')
 }
 
 async function waitForLogPattern(
@@ -1144,7 +1107,11 @@ async function waitForLogPattern(
   throw new Error(`Timed out waiting for ${pattern} in ${logPath} after offset ${fromOffset}`)
 }
 
-async function reactivateMacApplication(appIdentifier) {
+async function reactivateMacApplication(appIdentifier, appBundlePath = null) {
+  if (appBundlePath) {
+    await runChecked('open', ['-g', appBundlePath])
+    return
+  }
   await runChecked('open', ['-g', '-b', appIdentifier])
 }
 
@@ -1793,9 +1760,6 @@ export {
   isExecutable,
   pathExists,
   commandOutput,
-  macosFrontmostProcessId,
-  macosApplicationProcessId,
-  waitForMacosApplicationProcessId,
   stopDesktopAppProcess,
   runChecked,
   reservePort,
@@ -1807,7 +1771,7 @@ export {
   processIsAlive,
   macosSleepAssertionIds,
   waitForMacosSleepAssertion,
-  waitForExecutorReadyEvidence,
+  waitForExecutorRuntimeEvidence,
   waitForLogPattern,
   reactivateMacApplication,
   requestMacosApplicationQuit,

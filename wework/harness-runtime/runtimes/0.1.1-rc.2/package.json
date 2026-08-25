@@ -1,0 +1,9 @@
+{
+  "name": "@wework/harness-runtime-0.1.1-rc.2",
+  "private": true,
+  "version": "0.1.1-rc.2",
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.1.1-rc.2",
+    "pnpm": "11.7.0"
+  }
+}

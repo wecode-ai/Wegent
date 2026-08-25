@@ -242,12 +242,11 @@ async function loadGithubMergeQueue(
   group: RepositoryTargetGroup,
   pullRequests: ChangeRequest[]
 ): Promise<ChangeRequest[]> {
-  const openPullRequests = pullRequests.filter(pullRequest => pullRequest.state === 'open')
-  if (openPullRequests.length === 0) return pullRequests
+  if (pullRequests.length === 0) return pullRequests
   const response = await api.executeCommand(group.deviceId, {
     command_key: 'git_github_pull_request_merge_queue_batch',
     path: group.workspacePath,
-    args: ['-f', `query=${githubMergeQueueQuery(group, openPullRequests)}`],
+    args: ['-f', `query=${githubMergeQueueQuery(group, pullRequests)}`],
     timeout_seconds: 20,
     max_output_bytes: 256 * 1024,
   })
@@ -265,13 +264,9 @@ async function loadGithubMergeQueue(
     return pullRequests
   }
   const details = repositoryRecord as Record<string, unknown>
-  let openIndex = 0
-  return pullRequests.map(pullRequest => {
-    if (pullRequest.state !== 'open') return pullRequest
-    const result = applyGithubDetails(pullRequest, details[`pr${openIndex}`])
-    openIndex += 1
-    return result
-  })
+  return pullRequests.map((pullRequest, index) =>
+    applyGithubDetails(pullRequest, details[`pr${index}`])
+  )
 }
 
 async function loadRepository(

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { localHtmlBrowserUrl } from './assistantMarkdownLinks'
 import { joinDevicePath } from '@/lib/device-workspace-path'
-import { readInlineVisualizationHtml } from '@/tauri/inlineVisualization'
+import { readInlineVisualizationHtml } from '@/desktop/inlineVisualization'
 import type { TurnFileChangesSummary } from '@/types/api'
 
 const MIN_FRAME_HEIGHT = 120

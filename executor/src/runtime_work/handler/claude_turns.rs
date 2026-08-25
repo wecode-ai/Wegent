@@ -196,7 +196,6 @@ impl RuntimeWorkRpcHandler {
             fork_thread_id: None,
             fork_thread_path: None,
             resume_thread_id: None,
-            initial_thread_name: None,
             initial_thread_goal: None,
         })
         .await

@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core'
 import { ApiError, type HttpClient } from './http'
 import type { ProjectChatAgent } from './projectChatAgents'
 import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
@@ -13,9 +12,6 @@ import type {
   RuntimeTaskCreateRequest,
   SkillRef,
 } from '@/types/api'
-
-import { openLocalFile } from '@/lib/local-terminal'
-import { isTauriRuntime } from '@/lib/runtime-environment'
 
 export type CloudProjectId = string
 type CloudProjectIdInput = CloudProjectId | number
@@ -1062,15 +1058,6 @@ export function createDeliveryApi(client: HttpClient) {
     },
     async downloadLoopItemAttachment(attachmentId: string, filename: string): Promise<void> {
       const content = await client.getBlob(`/v1/loop-item-attachments/${attachmentId}/content`)
-      if (isTauriRuntime()) {
-        const path = await invoke<string>('save_local_attachment_file', {
-          workspacePath: null,
-          filename,
-          bytes: Array.from(new Uint8Array(await content.arrayBuffer())),
-        })
-        await openLocalFile(path)
-        return
-      }
       const url = URL.createObjectURL(content)
       const anchor = document.createElement('a')
       anchor.href = url

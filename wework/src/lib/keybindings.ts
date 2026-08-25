@@ -1,4 +1,4 @@
-import { isTauriRuntime } from './runtime-environment'
+import { isElectronRuntime } from './runtime-environment'
 import { navigateTo } from './navigation'
 import { getPlatform } from './platform'
 
@@ -238,7 +238,7 @@ export function dispatchResetFontSizeShortcut() {
 }
 
 export function shortcutsAvailable(): boolean {
-  return isTauriRuntime()
+  return isElectronRuntime()
 }
 
 function normalizeKeyPart(value: string): string {

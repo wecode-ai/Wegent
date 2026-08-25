@@ -3,7 +3,7 @@ import type {
   DesktopControlExtensionResult,
 } from '@/extensions/desktop-control-contract'
 import { getLocalTerminalSnapshot } from '@/lib/local-terminal'
-import { requestLocalExecutor } from '@/tauri/localExecutor'
+import { requestLocalExecutor } from '@/desktop/localExecutor'
 
 interface VerificationControlDependencies {
   elementEnabled: (element: HTMLElement) => boolean

@@ -13,7 +13,6 @@ on:
       - ".github/claude-code-cli/**"
       - ".github/scripts/classify-ci-cache-warmup.sh"
       - ".github/scripts/install-executor-rust-system-dependencies.sh"
-      - ".github/scripts/install-wework-tauri-system-dependencies.sh"
       - ".github/scripts/lib/apt-packages.sh"
       - ".github/workflows/ci-cache-warmup.yml"
       - ".github/workflows/e2e-tests.yml"
@@ -37,7 +36,9 @@ on:
       - "wegent-cli/requirements.txt"
       - "wework/package.json"
       - "wework/codex-binaries.lock.json"
-      - "wework/src-tauri/**"
+      - "wework/electron/package.json"
+      - "wework/electron/pnpm-lock.yaml"
+      - "wework/resources/**"
   workflow_dispatch:
 
 permissions:
@@ -57,7 +58,6 @@ jobs:
       executor_rust: ${{ steps.classify.outputs.executor_rust }}
       node: ${{ steps.classify.outputs.node }}
       python: ${{ steps.classify.outputs.python }}
-      wework_rust: ${{ steps.classify.outputs.wework_rust }}
       wework_target: ${{ steps.classify.outputs.wework_target }}
 
     steps:
@@ -259,45 +259,10 @@ jobs:
         working-directory: ./executor
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-  warm-wework-windows-rust:
-    name: Warm Wework Windows Rust Cache
+  warm-wework-macos-electron:
+    name: Warm Wework macOS Electron Build Cache
     needs: changes
-    if: needs.changes.outputs.wework_rust == 'true'
-    runs-on: windows-latest
-    timeout-minutes: 25
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          persist-credentials: false
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
-
-      - name: Cache Wework Cargo sources
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-${{ runner.arch }}-wework-cargo-sources-v2-${{ hashFiles('wework/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-wework-cargo-sources-v2-
-
-      - name: Compile Wework Rust for Windows
-        working-directory: ./wework/src-tauri
-        run: cargo check --locked --target x86_64-pc-windows-msvc
-
-  warm-wework-macos-rust:
-    name: Warm Wework macOS Rust Cache
-    needs: changes
-    if: needs.changes.outputs.wework_rust == 'true'
+    if: needs.changes.outputs.wework_target == 'true'
     runs-on: macos-14
     timeout-minutes: 25
 
@@ -335,7 +300,9 @@ jobs:
             ${{ runner.os }}-pnpm-store-v1-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir wework/electron install --frozen-lockfile
 
       - name: Save shared macOS pnpm store
         if: steps.macos-pnpm-cache.outputs.cache-hit != 'true'
@@ -344,16 +311,18 @@ jobs:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ steps.macos-pnpm-cache.outputs.cache-primary-key }}
 
-      - name: Restore shared Wework Cargo sources
+      - name: Restore shared Wework Electron build dependencies
         id: wework-cargo-sources-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-wework-app-cargo-sources-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+            executor/target
+            ~/Library/Caches/electron
+          key: ${{ runner.os }}-wework-electron-app-v1-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-wework-app-cargo-sources-v2-
+            ${{ runner.os }}-wework-electron-app-v1-
 
       - name: Prepare bundled sidecars
         working-directory: ./wework
@@ -361,22 +330,23 @@ jobs:
           pnpm run prepare:codex --materialize
           pnpm run prepare:dws
 
-      - name: Compile Wework desktop E2E binaries
+      - name: Build Wework Electron E2E application
         env:
           CI: true
-          WEWORK_E2E_BUILD_MANIFEST: ${{ github.workspace }}/.ci-artifacts/wework-macos-e2e-build.json
-          WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/aarch64-apple-darwin/vendor/aarch64-apple-darwin/bin/codex
-          WEWORK_E2E_CONTROL_SERVER_PORT: "43111"
-          WEWORK_E2E_MODEL_SERVER_PORT: "43112"
-        run: node wework/e2e/desktop/task-flow.e2e.mjs --build-only
+        run: |
+          pnpm --filter wework ai:verify:electron:build
+          test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork
+          test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
 
-      - name: Save shared Wework Cargo sources
+      - name: Save shared Wework Electron build dependencies
         if: steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            executor/target
+            ~/Library/Caches/electron
           key: ${{ steps.wework-cargo-sources-cache.outputs.cache-primary-key }}
 
   prepare-wework-desktop-image:
@@ -439,7 +409,7 @@ jobs:
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-desktop,mode=max
 
   warm-wework-desktop-target:
-    name: Warm Wework Desktop Rust Cache
+    name: Warm Wework Desktop Electron Build Cache
     needs:
       - changes
       - prepare-wework-desktop-image
@@ -451,7 +421,6 @@ jobs:
       packages: read
     env:
       HOME: /root
-      WEWORK_E2E_SKIP_TYPECHECK: "true"
     container:
       image: ${{ needs.prepare-wework-desktop-image.outputs.desktop_image }}
       credentials:
@@ -469,6 +438,9 @@ jobs:
         with:
           setup-toolchain: "false"
 
+      - name: Install Wework Electron dependencies
+        run: pnpm --dir wework/electron install --frozen-lockfile
+
       - name: Set up sccache
         uses: ./.github/actions/setup-sccache
 
@@ -479,7 +451,7 @@ jobs:
           path: ~/.cache/wegent/codex
           key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
 
-      - name: Restore shared Wework desktop E2E Cargo dependencies
+      - name: Restore shared Wework Electron E2E build dependencies
         id: wework-desktop-cargo-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -487,10 +459,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
-            wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+            ~/.cache/electron
+          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
+            ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
       - name: Prepare bundled sidecars
         working-directory: ./wework
@@ -505,16 +477,15 @@ jobs:
           wait "$dws_pid" || status=$?
           exit "$status"
 
-      - name: Build Wework desktop Core E2E binaries
+      - name: Build Wework Electron E2E application
         env:
           CI: true
-          WEWORK_E2E_BUILD_MANIFEST: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build.json
-          WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
-          WEWORK_E2E_CONTROL_SERVER_PORT: "43111"
-          WEWORK_E2E_MODEL_SERVER_PORT: "43112"
-        run: node wework/e2e/desktop/task-flow.e2e.mjs --build-only
+        run: |
+          pnpm --filter wework ai:verify:electron:build
+          test -x wework/electron/release/WeWork-linux-x64/WeWork
+          test -x wework/electron/release/WeWork-linux-x64/resources/bin/wegent-executor
 
-      - name: Save shared Wework desktop E2E Cargo dependencies
+      - name: Save shared Wework Electron E2E build dependencies
         if: steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -522,7 +493,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
-            wework/src-tauri/target
+            ~/.cache/electron
           key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}
 
       - name: Save bundled Codex cache

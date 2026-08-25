@@ -25,6 +25,8 @@ const automationApi = {
   listAutomationRuns: vi.fn().mockResolvedValue({ items: [] }),
   updateAutomation: vi.fn(),
 }
+const setRuntimeTaskPinned = vi.fn().mockResolvedValue(undefined)
+let desktopSidebarProps: Record<string, unknown> | null = null
 
 const workbenchMock = {
   state: {
@@ -36,6 +38,7 @@ const workbenchMock = {
     currentRuntimeTask: null,
     standaloneDeviceId: null,
     standaloneWorkspacePath: null,
+    defaultTeam: null,
   },
   services: { automationApi },
   projectChat: {
@@ -45,6 +48,7 @@ const workbenchMock = {
   },
   cloudWorkStatus: null,
   refreshWorkLists: vi.fn().mockResolvedValue(undefined),
+  setRuntimeTaskPinned,
 }
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
@@ -60,7 +64,7 @@ vi.mock('@/hooks/useIsMobile', () => ({
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: () => false,
+  isElectronRuntime: () => false,
 }))
 
 vi.mock('@/components/layout/useDesktopSidebarCollapsed', () => ({
@@ -71,7 +75,10 @@ vi.mock('@/components/layout/useDesktopSidebarCollapsed', () => ({
 }))
 
 vi.mock('@/components/layout/DesktopSidebar', () => ({
-  DesktopSidebar: () => <aside data-testid="desktop-sidebar" />,
+  DesktopSidebar: (props: Record<string, unknown>) => {
+    desktopSidebarProps = props
+    return <aside data-testid="desktop-sidebar" />
+  },
 }))
 
 vi.mock('@/components/layout/WorkbenchSearchDialog', () => ({
@@ -96,6 +103,15 @@ describe('AutomationsPage', () => {
     vi.clearAllMocks()
     automationApi.listAutomations.mockResolvedValue({ items: [automation] })
     automationApi.listAutomationRuns.mockResolvedValue({ items: [] })
+    workbenchMock.state.defaultTeam = null
+    desktopSidebarProps = null
+  })
+
+  test('keeps runtime task pinning available from the automations route sidebar', async () => {
+    render(<AutomationsPage />)
+
+    expect(screen.getByTestId('desktop-sidebar')).toBeInTheDocument()
+    expect(desktopSidebarProps?.onSetRuntimeTaskPinned).toBe(setRuntimeTaskPinned)
   })
 
   test('keeps the detail panel closed after the user dismisses it', async () => {
@@ -147,6 +163,7 @@ describe('AutomationsPage', () => {
       },
     }
     try {
+      workbenchMock.state.defaultTeam = { id: 1 }
       automationApi.listAutomations.mockResolvedValue({ items: [continuationAutomation] })
       automationApi.updateAutomation.mockResolvedValue({
         automation: continuationAutomation,

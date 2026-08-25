@@ -1,6 +1,6 @@
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
+import { ensureBundledPluginInstalled } from '@/desktop/localExecutor'
 import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
-import { ensureBundledPluginInstalled } from '@/tauri/localExecutor'
 import type { ProjectWithTasks } from '@/types/api'
 
 interface QueueSmartAppBuilderInput {

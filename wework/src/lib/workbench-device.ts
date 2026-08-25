@@ -83,14 +83,20 @@ export function workbenchDeviceMatchesId(device: DeviceInfo, deviceId: string): 
   const normalizedDeviceId = deviceId.trim()
   if (!normalizedDeviceId) return false
 
-  const ids = [
+  return getWorkbenchDeviceIds(device).includes(normalizedDeviceId)
+}
+
+export function getWorkbenchDeviceIds(device: DeviceInfo): string[] {
+  return [
     device.device_id,
     device.app_device_id,
     device.socket_device_id,
     device.runtime_instance_id,
     ...(device.runtime_routes?.flatMap(route => [route.device_id, route.runtime_device_id]) ?? []),
-  ]
-  return ids.some(id => id?.trim() === normalizedDeviceId)
+  ].flatMap(id => {
+    const normalized = id?.trim()
+    return normalized ? [normalized] : []
+  })
 }
 
 function extractNetworkHost(value?: string | null): string | null {

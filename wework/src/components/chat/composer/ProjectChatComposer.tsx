@@ -33,7 +33,7 @@ import { ProjectWorkBar } from './ProjectWorkBar'
 import { resolveBranchNameGenerationSource } from '@/lib/branch-name'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
-import type { QuickPhrase } from '@/tauri/appPreferences'
+import type { QuickPhrase } from '@/desktop/appPreferences'
 import type { CloudProject } from '@/api/deliveries'
 import {
   resolveDataTransferWorkspacePaths,
@@ -61,6 +61,7 @@ interface ProjectChatComposerProps {
   disabledReason?: string
   placeholder: string
   inputTestId?: string
+  nativeEmptyCaret?: boolean
   submitButtonTestId?: string
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
@@ -140,6 +141,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       disabledReason,
       placeholder,
       inputTestId,
+      nativeEmptyCaret,
       submitButtonTestId,
       models,
       selectedModel,
@@ -445,6 +447,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           <ComposerTextarea
             ref={composerRef}
             testId={inputTestId}
+            nativeEmptyCaret={nativeEmptyCaret}
             textareaRef={textareaRef}
             value={value}
             onChange={handleComposerChange}

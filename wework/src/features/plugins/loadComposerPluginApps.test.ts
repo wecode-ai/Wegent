@@ -79,7 +79,7 @@ describe('loadComposerPluginApps', () => {
     expect(readDetail).toHaveBeenCalledWith(localPlugin)
     expect(apps).toEqual([
       expect.objectContaining({
-        logoUrl: '/Users/test/.codex/plugins/cache/personal/dingtalk/1/assets/icon.png',
+        logoUrl: 'file:///Users/test/.codex/plugins/cache/personal/dingtalk/1/assets/icon.png',
       }),
     ])
   })

@@ -21,8 +21,8 @@ import {
   probeProjectWorktreeAvailability,
   worktreeWorkspaceDeviceId,
 } from '@/lib/worktree-availability'
-import { notifyMainRuntimeWorkChanged } from '@/tauri/runtimeWorkSync'
-import type { AppPreferences } from '@/tauri/appPreferences'
+import { notifyMainRuntimeWorkChanged } from '@/desktop/runtimeWorkSync'
+import type { AppPreferences } from '@/desktop/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import {
   findWorkbenchDevice,
@@ -87,7 +87,6 @@ import {
   resolveAutomaticModel,
   selectedModelExecutionFields,
 } from './runtimeModelSelection'
-
 export function buildRuntimeTaskCreateHandle(
   modelSelection: ModelSelectionConfig | null,
   request: Pick<RuntimeTaskCreateRequest, 'cloudProjectId' | 'origin'>
@@ -112,6 +111,7 @@ interface PreparedRuntimeTaskIntent {
   attachments?: Attachment[]
   execution?: RuntimeTaskCreateRequest['execution']
 }
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type { WorkbenchServices } from './workbenchServices'
 import { track } from '@/telemetry/client'
 import type { ExecutionTarget } from '@/telemetry/events'
@@ -1220,7 +1220,9 @@ export function useWorkbenchRuntimeMessaging({
       // Presentation work must never leave a visible pending task without a runtime request.
       const createResponsePromise = (async () => {
         const worktreeCreationDelayMs = Number(
-          import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ?? 0
+          getDesktopE2ERuntimeConfig().worktreeCreationDelayMs ??
+            import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ??
+            0
         )
         if (
           intent.execution?.workspace?.source === 'git_worktree' &&

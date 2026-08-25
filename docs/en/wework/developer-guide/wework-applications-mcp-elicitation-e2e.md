@@ -4,7 +4,7 @@ sidebar_position: 37
 
 # Applications and MCP Elicitation Desktop E2E
 
-This document defines the real desktop regression plan for Wework application entry points and MCP business forms. The tests reuse the existing desktop runner and checkpoints. They do not add local-only scripts or replace Tauri, Executor, or Codex with browser mocks.
+This document defines the real desktop regression plan for Wework application entry points and MCP business forms. The tests reuse the existing desktop runner and checkpoints. They do not add local-only scripts or replace Electron, Executor, or Codex with browser mocks.
 
 ## Scope
 
@@ -230,4 +230,4 @@ Typical failure meanings:
 | Form appears but fixture does not receive `accept`   | Executor enum-label to stable enum-value mapping and response routing                       |
 | Model never completes                                | Whether MCP tool output reaches the next model input and whether the success marker matches |
 
-At the end of the test, the existing runner terminates Tauri, Executor, Codex, and the stdio MCP child process and removes the isolated homes. The fixture must never read or write the user's personal Codex home.
+At the end of the test, the existing runner terminates Electron, Executor, Codex, and the stdio MCP child process and removes the isolated homes. The fixture must never read or write the user's personal Codex home.

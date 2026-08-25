@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { AppPreferences } from '@/tauri/appPreferences'
+import type { AppPreferences } from '@/desktop/appPreferences'
 import './../../../src/i18n'
 import { BrowserSettingsPage } from './BrowserSettingsPage'
 
@@ -31,8 +31,8 @@ const preferences: AppPreferences = vi.hoisted(() => ({
   browserAskBeforeDownload: false,
 }))
 
-vi.mock('@/tauri/appPreferences', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/tauri/appPreferences')>()
+vi.mock('@/desktop/appPreferences', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/desktop/appPreferences')>()
   return {
     ...actual,
     defaultAppPreferences: preferences,

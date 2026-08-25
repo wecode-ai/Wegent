@@ -1,25 +1,18 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { openNativeWorkspacePathPicker } from './native-workspace-path-picker'
 
-const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(),
-}))
+const desktopHostMock = vi.hoisted(() => vi.fn())
 
-vi.mock('./runtime-environment', () => ({
-  isTauriRuntime: () => true,
-}))
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: mocks.invoke,
-}))
+vi.mock('./runtime-environment', () => ({ isDesktopRuntime: () => true }))
+vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: desktopHostMock }))
 
 describe('openNativeWorkspacePathPicker', () => {
-  beforeEach(() => {
-    mocks.invoke.mockReset()
-  })
+  beforeEach(() => desktopHostMock.mockReset())
 
-  test('passes project picker constraints to the native command', async () => {
-    mocks.invoke.mockResolvedValue([{ path: '/Users/alice/repo', isDirectory: true }])
+  test('passes project picker constraints to the Electron host', async () => {
+    desktopHostMock
+      .mockResolvedValueOnce({ canceled: false, filePaths: ['/Users/alice/repo'] })
+      .mockResolvedValueOnce({ isDirectory: true })
 
     await expect(
       openNativeWorkspacePathPicker('/Users/alice', {
@@ -27,12 +20,12 @@ describe('openNativeWorkspacePathPicker', () => {
         multiple: false,
       })
     ).resolves.toEqual([{ path: '/Users/alice/repo', isDirectory: true }])
-
-    expect(mocks.invoke).toHaveBeenCalledWith('pick_workspace_paths', {
-      initialDirectory: '/Users/alice',
-      directoriesOnly: true,
-      multiple: false,
-      defaultToHome: false,
+    expect(desktopHostMock).toHaveBeenNthCalledWith(1, 'dialog.open', {
+      defaultPath: '/Users/alice',
+      properties: ['openDirectory', 'createDirectory'],
+    })
+    expect(desktopHostMock).toHaveBeenNthCalledWith(2, 'filesystem.stat', {
+      path: '/Users/alice/repo',
     })
   })
 })

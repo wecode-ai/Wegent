@@ -13,7 +13,7 @@ import type { CloudConnectionContextValue } from '@/features/cloud-connection/Cl
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
 import { saveLocalModelConfig } from '@/features/model-settings/localModelSettings'
 import { openExternalUrl } from '@/lib/external-links'
-import { requestLocalExecutor } from '@/tauri/localExecutor'
+import { requestLocalExecutor } from '@/desktop/localExecutor'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
 
@@ -61,7 +61,7 @@ vi.mock('@/config/runtime', () => ({
 
 vi.mock('@/api/http', () => ({
   createHttpClient: vi.fn((options: unknown) => ({ options })),
-  shouldUseTauriFetch: vi.fn(() => false),
+  shouldUseNativeFetch: vi.fn(() => false),
 }))
 
 vi.mock('@/api/models', () => ({
@@ -105,7 +105,7 @@ vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
 }))
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: vi.fn().mockResolvedValue({
     running: true,
     ready: true,
@@ -209,7 +209,7 @@ describe('ConnectionsSettingsPage', () => {
     experimentalFeatures.enabled = true
     vi.clearAllMocks()
     localStorage.clear()
-    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    delete window.__WEWORK_RUNTIME_CONFIG__
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {
@@ -407,11 +407,8 @@ describe('ConnectionsSettingsPage', () => {
     expect(settingsPage).not.toHaveClass('h-screen')
   })
 
-  test('does not duplicate titlebar clearance beneath the Tauri app chrome', () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+  test('does not duplicate titlebar clearance beneath the Electron app chrome', () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     api.getAllDevices.mockResolvedValue([])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)

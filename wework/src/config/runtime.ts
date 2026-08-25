@@ -2,6 +2,8 @@ export type RuntimeMode = 'local-first' | 'backend'
 
 export interface RuntimeConfig {
   appBasePath: string
+  desktopHost: 'browser' | 'electron'
+  desktopWindowLabel: string
   apiBaseUrl: string
   feedbackUrl: string
   plantumlServerUrl: string
@@ -154,6 +156,8 @@ export function getRuntimeConfig(): RuntimeConfig {
 
   return {
     appBasePath,
+    desktopWindowLabel: runtimeString(overrides, 'desktopWindowLabel') || 'main',
+    desktopHost: runtimeString(overrides, 'desktopHost') === 'electron' ? 'electron' : 'browser',
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
     feedbackUrl: trimTrailingSlash(import.meta.env.VITE_WEWORK_FEEDBACK_URL?.trim() || ''),
     plantumlServerUrl: trimTrailingSlash(

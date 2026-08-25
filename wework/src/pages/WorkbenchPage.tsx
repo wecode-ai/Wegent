@@ -13,12 +13,12 @@ import { DesktopWorkbenchLayout } from '@/components/layout/DesktopWorkbenchLayo
 import { MobileWorkbenchLayout } from '@/components/layout/MobileWorkbenchLayout'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { shouldUseMobileWorkbenchLayout } from '@/lib/workbench-layout-mode'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
-import { buildTrayMenuTaskGroups } from '@/tauri/trayMenuState'
-import { syncTrayMenuState } from '@/tauri/trayNavigation'
-import { buildTrayUsageTitle } from '@/tauri/trayUsageTitle'
+import { buildTrayMenuTaskGroups } from '@/desktop/trayMenuState'
+import { syncTrayMenuState } from '@/desktop/trayNavigation'
+import { buildTrayUsageTitle } from '@/desktop/trayUsageTitle'
 import { useRuntimeTaskRouteRestoration } from '@/features/workbench/useRuntimeTaskRouteRestoration'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -30,13 +30,13 @@ interface WorkbenchPageProps {
 
 export function WorkbenchPage({ routeActive = true, surfaceKind }: WorkbenchPageProps) {
   if (surfaceKind === 'board') {
-    return <WorkbenchPageLayout routeActive={routeActive} surfaceKind="board" />
+    return <DesktopWorkbenchLayout routeActive={routeActive} surfaceKind="board" />
   }
   return <TaskWorkbenchPage routeActive={routeActive} surfaceKind={surfaceKind} />
 }
 
 function TaskWorkbenchPage({ routeActive = true, surfaceKind }: WorkbenchPageProps) {
-  const isTauri = isTauriRuntime()
+  const isDesktop = isElectronRuntime()
   const cloudConnection = useOptionalCloudConnection()
   const { state, runtimeTaskReminders } = useWorkbench()
   const lifecycle = useRuntimeTaskLifecycleStoreSnapshot()
@@ -97,7 +97,7 @@ function TaskWorkbenchPage({ routeActive = true, surfaceKind }: WorkbenchPagePro
   }, [taskSurfaceActive, trayMenuTaskGroups, trayTooltip, trayUsageTitle])
 
   useEffect(() => {
-    if (!isTauri || !taskSurfaceActive) {
+    if (!isDesktop || !taskSurfaceActive) {
       return
     }
 
@@ -122,10 +122,10 @@ function TaskWorkbenchPage({ routeActive = true, surfaceKind }: WorkbenchPagePro
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [isTauri, taskSurfaceActive])
+  }, [isDesktop, taskSurfaceActive])
 
   useEffect(() => {
-    if (!isTauri || !cloudConnection.isConnected || !taskSurfaceActive) {
+    if (!isDesktop || !cloudConnection.isConnected || !taskSurfaceActive) {
       return
     }
 
@@ -159,30 +159,30 @@ function TaskWorkbenchPage({ routeActive = true, surfaceKind }: WorkbenchPagePro
     cloudConnection.isConnected,
     cloudConnection.serviceKey,
     cloudConnection.token,
-    isTauri,
+    isDesktop,
     taskSurfaceActive,
   ])
 
   return (
-    <WorkbenchPageLayout routeActive={routeActive} surfaceKind={surfaceKind} isTauri={isTauri} />
+    <WorkbenchPageLayout
+      routeActive={routeActive}
+      surfaceKind={surfaceKind}
+      isDesktop={isDesktop}
+    />
   )
 }
 
 interface WorkbenchPageLayoutProps extends WorkbenchPageProps {
-  isTauri?: boolean
+  isDesktop?: boolean
 }
 
 function WorkbenchPageLayout({
   routeActive = true,
   surfaceKind,
-  isTauri = isTauriRuntime(),
+  isDesktop = isElectronRuntime(),
 }: WorkbenchPageLayoutProps) {
   const isMobileViewport = useIsMobile()
-  return shouldUseMobileWorkbenchLayout({
-    isMobileViewport,
-    isTauri,
-    surfaceKind,
-  }) ? (
+  return shouldUseMobileWorkbenchLayout({ isMobileViewport, isDesktop }) ? (
     <MobileWorkbenchLayout />
   ) : (
     <DesktopWorkbenchLayout routeActive={routeActive} surfaceKind={surfaceKind} />
