@@ -154,17 +154,11 @@ jobs:
       - name: Install Wework Electron dependencies
         run: pnpm --dir wework/electron install --frozen-lockfile
 
-      - name: Prepare bundled sidecars
-        working-directory: wework
-        run: |
-          pnpm run prepare:codex --materialize
-          pnpm run prepare:dws
-
       - name: Build Electron application
         env:
           VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
           VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
-        run: pnpm --filter wework ai:verify:electron:build
+        run: pnpm --filter wework build:release
 
       - name: Resolve packaged application
         id: package
