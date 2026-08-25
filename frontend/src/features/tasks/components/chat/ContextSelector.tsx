@@ -278,7 +278,7 @@ export default function ContextSelector({
   }, [open])
 
   const selectedContextCount = selectedContexts.filter(context =>
-    ['knowledge_base', 'table', 'external_knowledge'].includes(context.type)
+    ['knowledge_base', 'table', 'dingtalk_doc', 'external_knowledge'].includes(context.type)
   ).length
 
   const selectorContent = (

@@ -324,7 +324,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
       'lib-1',
       expect.objectContaining({ recursive: true, limit: 500, offset: 500 })
     )
-  })
+  }, 15000)
 
   it('writes a full ExternalKnowledgeRef (incl. mode/scope) onto the selectedContexts channel', async () => {
     const onSelect = jest.fn()

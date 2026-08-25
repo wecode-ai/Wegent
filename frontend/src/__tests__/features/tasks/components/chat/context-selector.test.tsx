@@ -37,7 +37,8 @@ const mockGetDingTalkWikispaceNodes = jest.fn()
 const mockGetDingTalkWikispaceSyncStatus = jest.fn()
 let mockIsMobile = false
 
-const mockT = (key: string) => key
+const mockT = (key: string, options?: { count?: number }) =>
+  key === 'knowledge:picker.selectedCount' ? `${key}:${options?.count ?? 0}` : key
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: mockT,
@@ -297,7 +298,17 @@ describe('ContextSelector organization grouping', () => {
       <ContextSelector
         open={true}
         onOpenChange={onOpenChange}
-        selectedContexts={[]}
+        selectedContexts={[
+          {
+            id: 'docs:file-1',
+            name: 'DingTalk document',
+            type: 'dingtalk_doc',
+            doc_url: 'https://alidocs.dingtalk.com/i/nodes/file-1',
+            node_type: 'file',
+            dingtalk_node_id: 'file-1',
+            source: 'docs',
+          },
+        ]}
         onSelect={jest.fn()}
         onDeselect={jest.fn()}
       >
@@ -310,7 +321,9 @@ describe('ContextSelector organization grouping', () => {
     })
     expect(screen.getByTestId('context-selector-knowledge-tab')).toBeInTheDocument()
     expect(screen.getByTestId('context-selector-table-tab')).toBeInTheDocument()
-    expect(screen.getByTestId('context-selector-selected-count')).toBeInTheDocument()
+    expect(screen.getByTestId('context-selector-selected-count')).toHaveTextContent(
+      'knowledge:picker.selectedCount:1'
+    )
 
     fireEvent.click(screen.getByTestId('context-selector-done-button'))
     expect(onOpenChange).toHaveBeenCalledWith(false)
@@ -359,6 +372,7 @@ describe('ContextSelector organization grouping', () => {
   })
 
   it('uses a drill-down document view on narrow screens', async () => {
+    mockIsMobile = true
     render(
       <ContextSelector
         open={true}
