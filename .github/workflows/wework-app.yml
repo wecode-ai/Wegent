@@ -187,15 +187,6 @@ jobs:
       - name: Synchronize desktop build version
         run: node wework/scripts/sync-desktop-release-version.mjs "${{ needs.prepare-release.outputs.version }}"
 
-      - name: Prepare bundled sidecars
-        working-directory: wework
-        env:
-          WEWORK_CODEX_TARGET: ${{ matrix.codex_target }}
-          WEWORK_DWS_TARGET: ${{ matrix.cargo_target }}
-        run: |
-          pnpm run prepare:codex --materialize
-          pnpm run prepare:dws
-
       - name: Prepare Apple notarization key
         if: matrix.platform == 'macos'
         shell: bash
@@ -209,14 +200,6 @@ jobs:
           chmod 0600 "$key_path"
           echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
 
-      - name: Build renderer
-        working-directory: wework
-        env:
-          VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
-          VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
-          VITE_WEWORK_RUNTIME_MODE: local-first
-        run: pnpm run build:dsh-app
-
       - name: Build signed Electron release
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -225,11 +208,16 @@ jobs:
           CARGO_BUILD_TARGET: ${{ matrix.cargo_target }}
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           CSC_LINK: ${{ matrix.platform == 'macos' && secrets.MACOS_CERTIFICATE_BASE64 || '' }}
+          VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
+          VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+          VITE_WEWORK_RUNTIME_MODE: local-first
+          WEWORK_CODEX_TARGET: ${{ matrix.codex_target }}
+          WEWORK_DWS_TARGET: ${{ matrix.cargo_target }}
           WEWORK_RELEASE_ARCH: ${{ matrix.arch }}
           WEWORK_RELEASE_PLATFORM: ${{ matrix.platform }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-        run: pnpm --dir wework/electron build:release
+        run: pnpm --filter wework build:release
 
       - name: Prepare installer and legacy bridge assets
         shell: bash

@@ -150,6 +150,22 @@ function queueEvents(value: unknown): MergeQueueEvent[] {
   })
 }
 
+function latestHeadCommitAt(value: unknown): number | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const commits = (value as Record<string, unknown>).commits
+  if (!commits || typeof commits !== 'object' || Array.isArray(commits)) return null
+  const nodes = (commits as Record<string, unknown>).nodes
+  if (!Array.isArray(nodes)) return null
+  const node = nodes.at(-1)
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return null
+  const commit = (node as Record<string, unknown>).commit
+  if (!commit || typeof commit !== 'object' || Array.isArray(commit)) return null
+  const committedDate = (commit as Record<string, unknown>).committedDate
+  if (typeof committedDate !== 'string') return null
+  const timestamp = Date.parse(committedDate)
+  return Number.isNaN(timestamp) ? null : timestamp
+}
+
 function applyMergeQueueDetails(changeRequest: ChangeRequest, value: unknown): ChangeRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return changeRequest
   const record = value as Record<string, unknown>
@@ -166,6 +182,11 @@ function applyMergeQueueDetails(changeRequest: ChangeRequest, value: unknown): C
     (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)
   )[0]
   if (latest?.type !== 'removed') {
+    return { ...changeRequest, mergeQueue: 'not_queued', mergeQueueReason: null }
+  }
+  const removedAt = Date.parse(latest.createdAt)
+  const headCommitAt = latestHeadCommitAt(record)
+  if (headCommitAt !== null && !Number.isNaN(removedAt) && headCommitAt > removedAt) {
     return { ...changeRequest, mergeQueue: 'not_queued', mergeQueueReason: null }
   }
   const reason = latest.reason?.trim() || ''
@@ -216,6 +237,9 @@ function githubMergeQueueQuery(
           mergeable
           mergeStateStatus
           statusCheckRollup { state }
+          commits(last: 1) {
+            nodes { commit { committedDate } }
+          }
           mergeQueueEntry { state }
           timelineItems(
             last: 10

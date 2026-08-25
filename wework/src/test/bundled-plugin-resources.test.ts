@@ -145,12 +145,18 @@ describe('bundled plugin resources', () => {
       resolve(process.cwd(), '../.github/workflows/wework-app.yml'),
       'utf8'
     )
+    const packageManifest = JSON.parse(
+      readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')
+    ) as {
+      scripts: Record<string, string>
+    }
     const installerHooks = readFileSync(
       resolve(process.cwd(), 'electron/scripts/installer.nsh'),
       'utf8'
     )
 
-    expect(workflow).toContain('pnpm --dir wework/electron build:release')
+    expect(workflow).toContain('pnpm --filter wework build:release')
+    expect(packageManifest.scripts['build:release']).toContain('pnpm --dir electron build:release')
     expect(workflow).toContain('generate-desktop-update-manifests.mjs')
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY')
     expect(workflow).toContain('release-manifests/*')
