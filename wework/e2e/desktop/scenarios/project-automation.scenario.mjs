@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { ensureProjectExpandedInActiveSidebar } from '../modules/project-sidebar.mjs'
 
 import {
   CHECKPOINT_TASK_COMPLETION_TEXT,
@@ -805,11 +804,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const panelTestId = await control.command('getAttribute', moonshotTaskProjectPanel, {
         value: 'data-testid',
       })
-      const runtimeProjectId = panelTestId.replace('project-local-tasks-panel-', '')
-      await ensureProjectExpandedInActiveSidebar(control, {
-        projectId: runtimeProjectId,
+      const runtimeProjectItem = `${activeBoard} [data-testid="project-item"]:has([data-testid="${panelTestId}"])`
+      const runtimeProjectButton = `${runtimeProjectItem} [data-testid="project-item-button"]`
+      await control.command('waitFor', runtimeProjectButton, {
         timeoutMs: uiTimeoutMs,
+        visible: true,
       })
+      await control.command('click', runtimeProjectButton, { visible: true })
       await control.command('waitFor', `${moonshotTaskProjectPanel}[aria-hidden="false"]`, {
         timeoutMs: uiTimeoutMs,
         visible: true,

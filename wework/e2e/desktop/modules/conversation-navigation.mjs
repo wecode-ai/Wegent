@@ -70,6 +70,11 @@ import {
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
+const ACTIVE_TRANSCRIPT_SELECTOR =
+  '[data-workspace-tab-content][aria-hidden="false"] ' +
+  `${ACTIVE_WORKBENCH_SELECTOR}[data-active-workbench-pane="true"] ` +
+  '[data-testid="desktop-chat-scroll-content"]'
+
 async function waitForActiveTaskIdle(control) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
@@ -133,10 +138,7 @@ async function assertConversationMessageState(control, { assistantText, userText
     text: userText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const transcriptText = await control.command(
-    'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
-  )
+  const transcriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
   assert.equal(
     countTextOccurrences(transcriptText, userText),
     1,
@@ -148,10 +150,7 @@ async function assertConversationMessageState(control, { assistantText, userText
     text: assistantText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const completedTranscriptText = await control.command(
-    'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
-  )
+  const completedTranscriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
   const userIndex = completedTranscriptText.indexOf(userText)
   const assistantIndex = completedTranscriptText.indexOf(assistantText)
   assert.ok(userIndex >= 0, `The completed conversation lost "${userText}"`)
@@ -163,10 +162,7 @@ async function assertConversationMessageState(control, { assistantText, userText
 }
 
 async function assertConversationTextOccurrences(control, expectedOccurrences) {
-  const transcriptText = await control.command(
-    'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
-  )
+  const transcriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
   for (const [text, expectedCount] of Object.entries(expectedOccurrences)) {
     assert.equal(
       countTextOccurrences(transcriptText, text),
@@ -180,10 +176,7 @@ async function assertConversationTextOccurrences(control, expectedOccurrences) {
 }
 
 async function assertConversationTextNotDuplicated(control, texts) {
-  const transcriptText = await control.command(
-    'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
-  )
+  const transcriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
   for (const text of texts) {
     const occurrenceCount = countTextOccurrences(transcriptText, text)
     assert.ok(
