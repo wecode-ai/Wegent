@@ -108,7 +108,9 @@ describe('AttachmentImagePreview', () => {
     })
     await settleNextFetch()
     await waitFor(() => {
-      expect(screen.getByTestId('preview-image')).toBeInTheDocument()
+      const image = screen.getByTestId('preview-image')
+      expect(image).toHaveAttribute('data-context-image-filename', 'image-1.png')
+      expect(image).not.toHaveAttribute('data-context-image-local-path')
     })
 
     // Runtime turn/block projections produce a fresh attachment object with
@@ -162,27 +164,29 @@ describe('AttachmentImagePreview', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('preview-image')).toBeInTheDocument()
+      expect(screen.getByTestId('preview-image')).toHaveAttribute(
+        'data-context-image-local-path',
+        '/a.png'
+      )
     })
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('preview-button'))
     })
     await waitFor(() => {
-      expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
-        'src',
-        'blob:attachment-preview'
-      )
+      const image = screen.getByTestId('attachment-image-lightbox-image')
+      expect(image).toHaveAttribute('src', 'blob:attachment-preview')
+      expect(image).toHaveAttribute('data-context-image-filename', 'image-1.png')
+      expect(image).toHaveAttribute('data-context-image-local-path', '/a.png')
     })
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('attachment-image-next'))
     })
     await waitFor(() => {
-      expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
-        'src',
-        'blob:attachment-preview'
-      )
+      const image = screen.getByTestId('attachment-image-lightbox-image')
+      expect(image).toHaveAttribute('src', 'blob:attachment-preview')
+      expect(image).toHaveAttribute('data-context-image-local-path', '/b.png')
     })
   })
 
