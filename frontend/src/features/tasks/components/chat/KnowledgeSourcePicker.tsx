@@ -52,6 +52,7 @@ import { cn } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useDingTalkDocTrees } from './DingTalkDocContextSelector'
+import { buildExternalContextId } from './selectedKnowledge'
 import {
   countDingTalkNodes,
   DingTalkDocsRootRow,
@@ -158,15 +159,6 @@ function toKnowledgeContext(
     include_subfolders: folderIds.length > 0 ? (scope.includeSubfolders ?? true) : undefined,
     scope_restricted: scopeRestricted,
   }
-}
-
-function buildExternalContextId(ref: ExternalKnowledgeRef) {
-  const targetType = ref.target_type ?? 'knowledge_base'
-  if (targetType !== 'knowledge_base') {
-    const targetId = ref.node_id ?? ref.document_id ?? 'unknown'
-    return `external:${ref.provider}:${ref.mode}:${ref.id}:${targetType}:${targetId}`
-  }
-  return `external:${ref.provider}:${ref.mode}:${ref.id}`
 }
 
 function supportsExternalKnowledgeBaseSelection(source: ExternalKnowledgeSource) {
