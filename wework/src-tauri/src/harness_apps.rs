@@ -1,9 +1,12 @@
+use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::fs::{Dir as CapDir, OpenOptions as CapOpenOptions};
 use flate2::read::GzDecoder;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -29,6 +32,17 @@ const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 250 * 1024 * 1024;
 const MAX_ENTRIES: usize = 8_000;
+const SMART_APP_PACKAGE_TYPE: &str = "deepseek-harness-plugin-bundle";
+const IGNORED_EDITABLE_DIRECTORIES: [&str; 8] = [
+    ".git",
+    ".next",
+    ".turbo",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+];
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +66,14 @@ pub struct HarnessAppRequirements {
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HarnessAppPlugin {
+    spec: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HarnessAppManifest {
     name: String,
     display_name: String,
@@ -61,6 +83,8 @@ pub struct HarnessAppManifest {
     description: String,
     #[serde(default)]
     packages: Vec<HarnessAppPackage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    plugins: Vec<HarnessAppPlugin>,
     entry: HarnessAppEntry,
     requirements: HarnessAppRequirements,
     #[serde(default)]
@@ -85,6 +109,8 @@ pub struct HarnessAppInstallation {
     smart_app_id: Option<u64>,
     #[serde(default)]
     release_id: Option<u64>,
+    #[serde(default = "default_harness_app_source")]
+    source: String,
 }
 
 #[derive(Serialize)]
@@ -104,6 +130,10 @@ pub struct HarnessAppExport {
     sha256: String,
     size_bytes: u64,
     manifest: HarnessAppManifest,
+}
+
+fn default_harness_app_source() -> String {
+    "managed".to_string()
 }
 
 #[derive(Clone, Serialize)]
@@ -149,8 +179,16 @@ fn registry_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 fn read_registry(app: &tauri::AppHandle) -> Result<Vec<HarnessAppInstallation>, String> {
     let path = registry_path(app)?;
     match fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|error| format!("Harness app registry is invalid: {error}")),
+        Ok(bytes) => {
+            let mut installations: Vec<HarnessAppInstallation> = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("Harness app registry is invalid: {error}"))?;
+            for installation in &mut installations {
+                if installation.smart_app_id.is_some() && installation.source == "managed" {
+                    installation.source = "market".to_string();
+                }
+            }
+            Ok(installations)
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(format!("Failed to read Harness app registry: {error}")),
     }
@@ -288,7 +326,7 @@ fn inspect_archive(
 }
 
 fn validate_manifest(manifest: &HarnessAppManifest) -> Result<(), String> {
-    if manifest.package_type != "deepseek-harness-plugin-bundle" {
+    if manifest.package_type != SMART_APP_PACKAGE_TYPE {
         return Err("Unsupported Harness app package type".to_string());
     }
     Version::parse(&manifest.version)
@@ -345,7 +383,288 @@ fn validate_manifest(manifest: &HarnessAppManifest) -> Result<(), String> {
             );
         }
     }
+    let mut plugin_specs = HashSet::new();
+    let mut plugin_paths = HashSet::new();
+    for plugin in &manifest.plugins {
+        let spec = plugin.spec.trim();
+        if spec.is_empty() || spec.starts_with('-') || spec.len() > 2048 {
+            return Err("Harness app plugin spec is invalid".to_string());
+        }
+        if !plugin_specs.insert(spec) {
+            return Err(format!("Harness app plugin spec is duplicated: {spec}"));
+        }
+        if let Some(path) = plugin.path.as_deref() {
+            if !safe_relative(Path::new(path)) || !plugin_paths.insert(path) {
+                return Err("Harness app plugin path is invalid or duplicated".to_string());
+            }
+        }
+    }
     Ok(())
+}
+
+fn open_validated_package_directory(
+    path: &Path,
+) -> Result<(EditablePackageRoot, HarnessAppManifest, String), String> {
+    let root = EditablePackageRoot::open(path)?;
+    let manifest: HarnessAppManifest =
+        serde_json::from_slice(&root.read_file(Path::new("plugin-manifest.json"))?)
+            .map_err(|error| format!("plugin-manifest.json is invalid: {error}"))?;
+    validate_manifest(&manifest)?;
+    for required in ["PLUGIN.md", "INSTALL.zh-CN.md"] {
+        root.ensure_file(Path::new(required))
+            .map_err(|_| format!("Harness app directory is missing {required}"))?;
+    }
+    if root
+        .open_dir(Path::new(&manifest.entry.install_package))
+        .is_err()
+        || root
+            .ensure_file(&Path::new(&manifest.entry.install_package).join("package.json"))
+            .is_err()
+        || root
+            .ensure_file(&Path::new(&manifest.entry.install_package).join("cordis.patch.yml"))
+            .is_err()
+    {
+        return Err("Harness app profile bundle is incomplete".to_string());
+    }
+    let files = collect_editable_package_files(&root, &manifest)?;
+    let mut hash = Sha256::new();
+    let mut total = 0_u64;
+    for relative in files {
+        let bytes = root.read_file(&relative)?;
+        total = total.saturating_add(bytes.len() as u64);
+        if total > MAX_EXTRACTED_BYTES {
+            return Err("Harness app directory exceeds 250 MB".to_string());
+        }
+        hash.update(relative.to_string_lossy().replace('\\', "/").as_bytes());
+        hash.update([0]);
+        hash.update(&bytes);
+    }
+    Ok((root, manifest, format!("{:x}", hash.finalize())))
+}
+
+fn validate_package_directory(path: &Path) -> Result<(HarnessAppManifest, String), String> {
+    let (_, manifest, sha256) = open_validated_package_directory(path)?;
+    Ok((manifest, sha256))
+}
+
+fn write_json(path: &Path, value: &Value) -> Result<(), String> {
+    fs::write(
+        path,
+        serde_json::to_vec_pretty(value)
+            .map_err(|error| format!("Failed to serialize Harness app file: {error}"))?,
+    )
+    .map_err(|error| format!("Failed to write Harness app file: {error}"))
+}
+
+fn scaffold_web_smart_app(
+    path: &Path,
+    name: &str,
+    display_name: &str,
+    description: &str,
+    dsh_version: &str,
+) -> Result<(), String> {
+    let bundle = path.join("packages").join("bundle").join(name);
+    fs::create_dir_all(bundle.join("src"))
+        .map_err(|error| format!("Failed to create Smart app directory: {error}"))?;
+    let manifest = serde_json::json!({
+        "name": name,
+        "displayName": display_name,
+        "version": "0.1.0",
+        "type": SMART_APP_PACKAGE_TYPE,
+        "description": description,
+        "packages": [{
+            "name": format!("@wework-smart-app/{name}"),
+            "role": "profile-bundle",
+            "path": format!("packages/bundle/{name}")
+        }],
+        "entry": {
+            "installPackage": format!("packages/bundle/{name}"),
+            "profile": "web"
+        },
+        "requirements": {
+            "dsh": dsh_version,
+            "node": ">=22"
+        },
+        "plugins": []
+    });
+    write_json(&path.join("plugin-manifest.json"), &manifest)?;
+    write_json(
+        &bundle.join("package.json"),
+        &serde_json::json!({
+            "name": format!("@wework-smart-app/{name}"),
+            "version": "0.1.0",
+            "private": true,
+            "type": "module",
+            "files": ["cordis.patch.yml", "src"],
+            "dsh": {"bundle": {"patch": "./cordis.patch.yml"}}
+        }),
+    )?;
+    fs::write(bundle.join("cordis.patch.yml"), "[]\n")
+        .map_err(|error| format!("Failed to write Smart app profile patch: {error}"))?;
+    fs::write(
+        bundle.join("src/index.ts"),
+        "export const smartApp = { preset: 'web' as const }\n",
+    )
+    .map_err(|error| format!("Failed to write Smart app source: {error}"))?;
+    fs::write(
+        path.join("PLUGIN.md"),
+        format!(
+            "# {display_name}\n\n{description}\n\nThis Smart app uses the DeepSeek Harness Web preset.\n"
+        ),
+    )
+    .map_err(|error| format!("Failed to write Smart app guide: {error}"))?;
+    fs::write(
+        path.join("INSTALL.zh-CN.md"),
+        "# 安装\n\n可在 Wework 中直接关联此目录运行，或导出 ZIP 后安装。\n",
+    )
+    .map_err(|error| format!("Failed to write Smart app installation guide: {error}"))
+}
+
+fn plugin_package_metadata(path: &Path) -> Result<(String, String), String> {
+    let manifest_path = path.join("package.json");
+    let manifest: Value = serde_json::from_slice(
+        &fs::read(&manifest_path)
+            .map_err(|error| format!("Failed to read DSH plugin package.json: {error}"))?,
+    )
+    .map_err(|error| format!("DSH plugin package.json is invalid: {error}"))?;
+    let name = manifest
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "DSH plugin package has no name".to_string())?;
+    let patch = manifest
+        .pointer("/dsh/bundle/patch")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Selected package does not declare dsh.bundle.patch".to_string())?;
+    if !safe_relative(Path::new(patch)) || !path.join(patch).is_file() {
+        return Err("Selected DSH plugin bundle patch is missing".to_string());
+    }
+    let directory_name = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    if directory_name.is_empty() {
+        return Err("DSH plugin package name cannot be used as a directory".to_string());
+    }
+    Ok((name.to_string(), directory_name))
+}
+
+#[tauri::command]
+pub fn add_harness_app_plugin(
+    app: tauri::AppHandle,
+    state: State<'_, HarnessAppRuntimeState>,
+    installation_id: String,
+    plugin_spec: String,
+) -> Result<HarnessAppInstallation, String> {
+    let plugin_spec = plugin_spec.trim();
+    if plugin_spec.is_empty() || plugin_spec.starts_with('-') || plugin_spec.len() > 2048 {
+        return Err("Enter a valid DSH plugin package, URL, or directory".to_string());
+    }
+    let _registry = state
+        .registry
+        .lock()
+        .map_err(|_| "Harness app registry lock failed")?;
+    let mut installations = read_registry(&app)?;
+    let index = installations
+        .iter()
+        .position(|item| item.id == installation_id)
+        .ok_or_else(|| "Harness app installation is missing".to_string())?;
+    if installations[index].source == "market" {
+        return Err("Copy the marketplace Smart app before editing its plugins".to_string());
+    }
+    if installations[index].state == "running" {
+        return Err("Stop the Smart app before adding a DSH plugin".to_string());
+    }
+    let package_root = PathBuf::from(&installations[index].package_path);
+    let manifest_path = package_root.join("plugin-manifest.json");
+    let original_manifest = fs::read(&manifest_path)
+        .map_err(|error| format!("Failed to read Smart app manifest: {error}"))?;
+    let mut manifest: HarnessAppManifest = serde_json::from_slice(&original_manifest)
+        .map_err(|error| format!("Smart app manifest is invalid: {error}"))?;
+
+    let source_path = Path::new(plugin_spec);
+    let (plugin, local_copy) = if source_path.is_dir() {
+        let canonical = fs::canonicalize(source_path)
+            .map_err(|error| format!("Failed to resolve DSH plugin directory: {error}"))?;
+        let (_package_name, directory_name) = plugin_package_metadata(&canonical)?;
+        let relative = PathBuf::from("plugins").join(directory_name);
+        let destination = package_root.join(&relative);
+        if destination.exists() {
+            return Err("This local DSH plugin is already included".to_string());
+        }
+        (
+            HarnessAppPlugin {
+                spec: format!("file:{}", relative.to_string_lossy().replace('\\', "/")),
+                path: Some(relative.to_string_lossy().replace('\\', "/")),
+            },
+            Some((canonical, destination)),
+        )
+    } else {
+        (
+            HarnessAppPlugin {
+                spec: plugin_spec.to_string(),
+                path: None,
+            },
+            None,
+        )
+    };
+    if manifest
+        .plugins
+        .iter()
+        .any(|existing| existing.spec == plugin.spec)
+    {
+        return Err("This DSH plugin is already included".to_string());
+    }
+    manifest.plugins.push(plugin);
+    let next_manifest = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("Failed to serialize Smart app manifest: {error}"))?;
+    let copied_directory = if let Some((source, destination)) = local_copy {
+        if let Err(error) = copy_directory(&source, &destination) {
+            let _ = fs::remove_dir_all(&destination);
+            return Err(error);
+        }
+        Some(destination)
+    } else {
+        None
+    };
+    if let Err(error) = fs::write(&manifest_path, next_manifest) {
+        if let Some(directory) = copied_directory.as_deref() {
+            let _ = fs::remove_dir_all(directory);
+        }
+        return Err(format!("Failed to write Smart app manifest: {error}"));
+    }
+    let (refreshed_manifest, sha256) = match validate_package_directory(&package_root) {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = fs::write(&manifest_path, &original_manifest);
+            if let Some(directory) = copied_directory.as_deref() {
+                let _ = fs::remove_dir_all(directory);
+            }
+            return Err(error);
+        }
+    };
+    installations[index].manifest = refreshed_manifest;
+    installations[index].sha256 = sha256;
+    installations[index].error = None;
+    if let Err(error) = write_registry(&app, &installations) {
+        let _ = fs::write(&manifest_path, original_manifest);
+        if let Some(directory) = copied_directory.as_deref() {
+            let _ = fs::remove_dir_all(directory);
+        }
+        return Err(error);
+    }
+    Ok(installations[index].clone())
 }
 
 fn dsh_version_requirement(raw: &str) -> Result<VersionReq, semver::Error> {
@@ -360,6 +679,222 @@ fn market_installation_id(smart_app_id: Option<u64>, manifest_name: &str) -> Str
     smart_app_id
         .map(|value| format!("market-{value}"))
         .unwrap_or_else(|| manifest_name.to_string())
+}
+
+fn preferred_dsh_version(app: &tauri::AppHandle) -> Result<String, String> {
+    if let Ok(source_root) = std::env::var("WEWORK_DEEPSEEK_HARNESS_ROOT") {
+        return read_package_version(&PathBuf::from(source_root).join("package.json"))
+            .map(|version| version.to_string());
+    }
+    let root = bundled_runtime_descriptor_root(app)?;
+    read_runtime_catalog(&root)?
+        .runtimes
+        .into_iter()
+        .map(|runtime| runtime.dsh_version)
+        .max()
+        .map(|version| version.to_string())
+        .ok_or_else(|| "Managed Harness runtime catalog is empty".to_string())
+}
+
+fn register_linked_directory(
+    app: &tauri::AppHandle,
+    directory: &Path,
+    model_key: Option<String>,
+) -> Result<HarnessAppInstallation, String> {
+    let canonical = fs::canonicalize(directory)
+        .map_err(|error| format!("Failed to resolve Harness app directory: {error}"))?;
+    let (manifest, sha256) = validate_package_directory(&canonical)?;
+    let id = manifest.name.clone();
+    let mut installations = read_registry(app)?;
+    if installations.iter().any(|item| item.id == id) {
+        return Err(format!("A Harness app named {id} is already registered"));
+    }
+    let installation = HarnessAppInstallation {
+        id,
+        manifest,
+        package_path: canonical.display().to_string(),
+        sha256,
+        model_key: model_key
+            .and_then(|value| (!value.trim().is_empty()).then(|| value.trim().to_string())),
+        resident: false,
+        runtime_version: None,
+        state: "installed".to_string(),
+        web_url: None,
+        error: None,
+        smart_app_id: None,
+        release_id: None,
+        source: "linked".to_string(),
+    };
+    installations.push(installation.clone());
+    write_registry(app, &installations)?;
+    Ok(installation)
+}
+
+fn refresh_linked_installation(installation: &mut HarnessAppInstallation) -> bool {
+    if installation.source != "linked" {
+        return false;
+    }
+    match validate_package_directory(Path::new(&installation.package_path)) {
+        Ok((manifest, sha256)) => {
+            if manifest.name != installation.id {
+                let error = "Linked Smart app name changed; remove and link the folder again";
+                let changed =
+                    installation.state != "failed" || installation.error.as_deref() != Some(error);
+                installation.state = "failed".to_string();
+                installation.web_url = None;
+                installation.error = Some(error.to_string());
+                return changed;
+            }
+            let changed = installation.manifest.name != manifest.name
+                || installation.manifest.version != manifest.version
+                || installation.sha256 != sha256
+                || installation.error.is_some();
+            installation.manifest = manifest;
+            installation.sha256 = sha256;
+            installation.error = None;
+            if installation.state == "failed" {
+                installation.state = "installed".to_string();
+            }
+            changed
+        }
+        Err(error) => {
+            let changed = installation.state != "failed"
+                || installation.error.as_deref() != Some(error.as_str());
+            installation.state = "failed".to_string();
+            installation.web_url = None;
+            installation.error = Some(error);
+            changed
+        }
+    }
+}
+
+#[tauri::command]
+pub fn create_harness_app_directory(
+    app: tauri::AppHandle,
+    state: State<'_, HarnessAppRuntimeState>,
+    parent_path: String,
+    name: String,
+    display_name: String,
+    description: String,
+) -> Result<HarnessAppInstallation, String> {
+    let name = name.trim();
+    if name.is_empty()
+        || !name.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+    {
+        return Err("Smart app name must use lowercase letters, numbers, and hyphens".to_string());
+    }
+    let display_name = display_name.trim();
+    if display_name.is_empty() {
+        return Err("Smart app display name is required".to_string());
+    }
+    let _registry = state
+        .registry
+        .lock()
+        .map_err(|_| "Harness app registry lock failed")?;
+    let parent = fs::canonicalize(parent_path.trim())
+        .map_err(|error| format!("Failed to resolve Smart app parent directory: {error}"))?;
+    if !parent.is_dir() {
+        return Err("Smart app parent path must be a directory".to_string());
+    }
+    let target = parent.join(name);
+    fs::create_dir(&target).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            "Smart app destination already exists".to_string()
+        } else {
+            format!("Failed to create Smart app destination: {error}")
+        }
+    })?;
+    let result = (|| {
+        let dsh_version = preferred_dsh_version(&app)?;
+        scaffold_web_smart_app(
+            &target,
+            name,
+            display_name,
+            description.trim(),
+            &dsh_version,
+        )?;
+        register_linked_directory(&app, &target, None)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&target);
+    }
+    result
+}
+
+#[tauri::command]
+pub fn link_harness_app_directory(
+    app: tauri::AppHandle,
+    state: State<'_, HarnessAppRuntimeState>,
+    directory_path: String,
+) -> Result<HarnessAppInstallation, String> {
+    let _registry = state
+        .registry
+        .lock()
+        .map_err(|_| "Harness app registry lock failed")?;
+    register_linked_directory(&app, Path::new(directory_path.trim()), None)
+}
+
+#[tauri::command]
+pub fn copy_harness_app_to_directory(
+    app: tauri::AppHandle,
+    state: State<'_, HarnessAppRuntimeState>,
+    installation_id: String,
+    parent_path: String,
+    name: String,
+    display_name: String,
+) -> Result<HarnessAppInstallation, String> {
+    let name = name.trim();
+    if name.is_empty()
+        || !name.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+    {
+        return Err("Smart app name must use lowercase letters, numbers, and hyphens".to_string());
+    }
+    let _registry = state
+        .registry
+        .lock()
+        .map_err(|_| "Harness app registry lock failed")?;
+    let parent = fs::canonicalize(parent_path.trim())
+        .map_err(|error| format!("Failed to resolve Smart app parent directory: {error}"))?;
+    if !parent.is_dir() {
+        return Err("Smart app parent path must be a directory".to_string());
+    }
+    let target = parent.join(name);
+    let source = read_registry(&app)?
+        .into_iter()
+        .find(|item| item.id == installation_id)
+        .ok_or_else(|| "Harness app installation not found".to_string())?;
+    if source.smart_app_id.is_none() {
+        return Err("Only marketplace Smart apps need to be copied before editing".to_string());
+    }
+    fs::create_dir(&target).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            "Smart app destination already exists".to_string()
+        } else {
+            format!("Failed to create Smart app destination: {error}")
+        }
+    })?;
+    let result = (|| {
+        copy_directory(Path::new(&source.package_path), &target)?;
+        let manifest_path = target.join("plugin-manifest.json");
+        let mut manifest: Value = serde_json::from_slice(
+            &fs::read(&manifest_path)
+                .map_err(|error| format!("Failed to read copied Smart app manifest: {error}"))?,
+        )
+        .map_err(|error| format!("Copied Smart app manifest is invalid: {error}"))?;
+        manifest["name"] = Value::String(name.to_string());
+        manifest["displayName"] = Value::String(display_name.trim().to_string());
+        manifest["version"] = Value::String("0.1.0".to_string());
+        write_json(&manifest_path, &manifest)?;
+        register_linked_directory(&app, &target, None)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&target);
+    }
+    result
 }
 
 fn write_verified_download<R: Read>(
@@ -401,31 +936,194 @@ fn write_verified_download<R: Read>(
     Ok(())
 }
 
-fn collect_package_files(
-    root: &Path,
-    directory: &Path,
+struct EditablePackageRoot {
+    directory: CapDir,
+}
+
+impl EditablePackageRoot {
+    fn open(path: &Path) -> Result<Self, String> {
+        let root = fs::canonicalize(path)
+            .map_err(|error| format!("Failed to resolve Harness app directory: {error}"))?;
+        let mut options = fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+            options.custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        }
+        let file = options
+            .open(&root)
+            .map_err(|error| format!("Failed to open Harness app directory: {error}"))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("Failed to inspect Harness app directory: {error}"))?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return Err("Harness app source paths cannot contain symbolic links".to_string());
+            }
+        }
+        if !metadata.is_dir() {
+            return Err("Harness app path must be a directory".to_string());
+        }
+        Ok(Self {
+            directory: CapDir::from_std_file(file),
+        })
+    }
+
+    fn open_parent(&self, relative: &Path) -> Result<(CapDir, OsString), String> {
+        let components = editable_path_components(relative)?;
+        let (name, parents) = components
+            .split_last()
+            .ok_or_else(|| "Harness app package path is empty".to_string())?;
+        let mut directory = self
+            .directory
+            .try_clone()
+            .map_err(|error| format!("Failed to clone Harness app directory handle: {error}"))?;
+        for parent in parents {
+            directory = directory
+                .open_dir_nofollow(parent)
+                .map_err(|error| format!("Failed to open Harness app source directory: {error}"))?;
+        }
+        Ok((directory, name.clone()))
+    }
+
+    fn open_dir(&self, relative: &Path) -> Result<CapDir, String> {
+        let mut directory = self
+            .directory
+            .try_clone()
+            .map_err(|error| format!("Failed to clone Harness app directory handle: {error}"))?;
+        for component in editable_path_components(relative)? {
+            directory = directory
+                .open_dir_nofollow(&component)
+                .map_err(|error| format!("Failed to open Harness app source directory: {error}"))?;
+        }
+        Ok(directory)
+    }
+
+    fn open_file(&self, relative: &Path) -> Result<cap_std::fs::File, String> {
+        let (directory, name) = self.open_parent(relative)?;
+        let mut options = CapOpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        let file = directory
+            .open_with(name, &options)
+            .map_err(|error| format!("Failed to open Harness app package file: {error}"))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("Failed to inspect Harness app package file: {error}"))?;
+        if !metadata.is_file() {
+            return Err("Harness app package path must be a regular file".to_string());
+        }
+        Ok(file)
+    }
+
+    fn ensure_file(&self, relative: &Path) -> Result<(), String> {
+        self.open_file(relative).map(|_| ())
+    }
+
+    fn read_file(&self, relative: &Path) -> Result<Vec<u8>, String> {
+        let mut file = self.open_file(relative)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|error| format!("Failed to read Harness app package file: {error}"))?;
+        Ok(bytes)
+    }
+}
+
+fn editable_path_components(path: &Path) -> Result<Vec<OsString>, String> {
+    path.components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(Ok(value.to_os_string())),
+            Component::CurDir => None,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => Some(Err(
+                "Harness app package path must stay relative".to_string(),
+            )),
+        })
+        .collect()
+}
+
+fn collect_editable_directory_files(
+    directory: &CapDir,
+    relative: &Path,
     files: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
-    let entries = fs::read_dir(directory)
-        .map_err(|error| format!("Failed to read Harness app package: {error}"))?;
+    let entries = directory
+        .entries()
+        .map_err(|error| format!("Failed to read Harness app source package: {error}"))?;
     for entry in entries {
         let entry =
-            entry.map_err(|error| format!("Failed to read Harness app package: {error}"))?;
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path)
-            .map_err(|error| format!("Failed to inspect Harness app package: {error}"))?;
-        if metadata.file_type().is_symlink() {
-            return Err("Harness app packages cannot contain symbolic links".to_string());
+            entry.map_err(|error| format!("Failed to read Harness app source package: {error}"))?;
+        let name = entry.file_name();
+        if name
+            .to_str()
+            .is_some_and(|name| IGNORED_EDITABLE_DIRECTORIES.contains(&name))
+        {
+            continue;
         }
-        if metadata.is_dir() {
-            collect_package_files(root, &path, files)?;
-        } else if metadata.is_file() {
-            path.strip_prefix(root)
-                .map_err(|_| "Harness app package path escaped its root".to_string())?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Failed to inspect Harness app source package: {error}"))?;
+        if file_type.is_symlink() {
+            return Err("Harness app source packages cannot contain symbolic links".to_string());
+        }
+        let path = relative.join(&name);
+        if file_type.is_dir() {
+            let child = directory
+                .open_dir_nofollow(&name)
+                .map_err(|error| format!("Failed to open Harness app source directory: {error}"))?;
+            collect_editable_directory_files(&child, &path, files)?;
+        } else if file_type.is_file() {
             files.push(path);
         }
     }
     Ok(())
+}
+
+fn collect_editable_package_files(
+    root: &EditablePackageRoot,
+    manifest: &HarnessAppManifest,
+) -> Result<Vec<PathBuf>, String> {
+    let mut files = ["plugin-manifest.json", "PLUGIN.md", "INSTALL.zh-CN.md"]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    let package_paths = if manifest.packages.is_empty() {
+        vec![manifest.entry.install_package.as_str()]
+    } else {
+        manifest
+            .packages
+            .iter()
+            .map(|package| package.path.as_str())
+            .collect()
+    };
+    let plugin_paths = manifest
+        .plugins
+        .iter()
+        .filter_map(|plugin| plugin.path.as_deref());
+    for relative in package_paths.into_iter().chain(plugin_paths) {
+        let relative = Path::new(relative);
+        match root.open_dir(relative) {
+            Ok(directory) => {
+                collect_editable_directory_files(&directory, relative, &mut files)?;
+            }
+            Err(_) => {
+                root.ensure_file(relative)?;
+                files.push(relative.to_path_buf());
+            }
+        }
+    }
+    files.sort();
+    files.dedup();
+    Ok(files)
 }
 
 fn export_package_directory(
@@ -438,23 +1136,15 @@ fn export_package_directory(
         fs::create_dir_all(parent)
             .map_err(|error| format!("Failed to create Harness app export directory: {error}"))?;
     }
-    let mut files = Vec::new();
-    collect_package_files(package_root, package_root, &mut files)?;
-    files.sort_by_key(|path| {
-        path.strip_prefix(package_root)
-            .unwrap_or(path)
-            .to_path_buf()
-    });
+    let (root, manifest, _) = open_validated_package_directory(package_root)?;
+    let files = collect_editable_package_files(&root, &manifest)?;
     let output = fs::File::create(&temporary)
         .map_err(|error| format!("Failed to create Harness app export: {error}"))?;
     let mut archive = zip::ZipWriter::new(output);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .last_modified_time(zip::DateTime::default());
-    for path in files {
-        let relative = path
-            .strip_prefix(package_root)
-            .map_err(|_| "Harness app package path escaped its root".to_string())?;
+    for relative in files {
         let name = relative
             .components()
             .map(|component| component.as_os_str().to_string_lossy())
@@ -463,8 +1153,7 @@ fn export_package_directory(
         archive
             .start_file(name, options)
             .map_err(|error| format!("Failed to write Harness app export: {error}"))?;
-        let value = fs::read(&path)
-            .map_err(|error| format!("Failed to read Harness app package file: {error}"))?;
+        let value = root.read_file(&relative)?;
         archive
             .write_all(&value)
             .map_err(|error| format!("Failed to write Harness app export: {error}"))?;
@@ -649,6 +1338,15 @@ pub fn list_harness_apps(
     let mut changed = false;
     for installation in &mut installations {
         let running = children.contains_key(&installation.id);
+        let linked_changed = if running {
+            false
+        } else {
+            refresh_linked_installation(installation)
+        };
+        changed |= linked_changed;
+        if installation.state == "failed" {
+            continue;
+        }
         let next_state = if running { "running" } else { "installed" };
         if installation.state != next_state || (!running && installation.web_url.is_some()) {
             installation.state = next_state.to_string();
@@ -735,6 +1433,11 @@ pub async fn install_harness_app(
         error: None,
         smart_app_id,
         release_id,
+        source: if smart_app_id.is_some() {
+            "market".to_string()
+        } else {
+            "managed".to_string()
+        },
     };
     installations.retain(|item| item.id != id);
     installations.push(installation.clone());
@@ -1350,14 +2053,23 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
     {
         let entry = entry
             .map_err(|error| format!("Failed to inspect Harness app bundle entry: {error}"))?;
-        let target = destination.join(entry.file_name());
         if entry
-            .file_type()
-            .map_err(|error| format!("Failed to inspect Harness app bundle type: {error}"))?
-            .is_dir()
+            .file_name()
+            .to_str()
+            .is_some_and(|name| IGNORED_EDITABLE_DIRECTORIES.contains(&name))
         {
+            continue;
+        }
+        let target = destination.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Failed to inspect Harness app bundle type: {error}"))?;
+        if file_type.is_symlink() {
+            return Err("Harness app bundle paths cannot contain symbolic links".to_string());
+        }
+        if file_type.is_dir() {
             copy_directory(&entry.path(), &target)?;
-        } else {
+        } else if file_type.is_file() {
             fs::copy(entry.path(), target)
                 .map_err(|error| format!("Failed to copy Harness app bundle file: {error}"))?;
         }
@@ -1545,6 +2257,10 @@ fn prepare_instance_bundle(
         }
         let model_patch = if replaced_provider {
             format!("{patched}\n")
+        } else if patched.trim() == "[]" {
+            "- id: agent-default-model\n  config:\n    provider: wework-local\n    model: \
+             wework-selected\n"
+                .to_string()
         } else {
             format!(
                 "{patched}\n\n- id: agent-default-model\n  config:\n    provider: \
@@ -1597,7 +2313,7 @@ fn prepare_web_profile(home: &Path, profile: &str) -> Result<(), String> {
         .map_err(|error| format!("Failed to write Harness app profile patch: {error}"))?;
     fs::write(
         profile_dir.join("pnpm-workspace.yaml"),
-        "packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n",
+        "packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\nallowBuilds:\n  node-pty: true\n",
     )
     .map_err(|error| format!("Failed to write Harness app profile workspace: {error}"))
 }
@@ -1612,6 +2328,20 @@ fn install_harness_plugin(
     install_harness_plugins(runtime, home, profile, &[package.to_path_buf()], label)
 }
 
+fn dsh_plugin_add_args(profile: &str, specs: &[String], ignore_scripts: bool) -> Vec<String> {
+    let mut args = vec![
+        "plugin".to_string(),
+        "--profile".to_string(),
+        profile.to_string(),
+        "add".to_string(),
+    ];
+    if ignore_scripts {
+        args.push("--ignore-scripts".to_string());
+    }
+    args.extend(specs.iter().cloned());
+    args
+}
+
 fn install_harness_plugins(
     runtime: &DshRuntime,
     home: &Path,
@@ -1619,18 +2349,11 @@ fn install_harness_plugins(
     packages: &[PathBuf],
     label: &str,
 ) -> Result<(), String> {
-    let mut args = vec![
-        "plugin".to_string(),
-        "--profile".to_string(),
-        profile.to_string(),
-        "add".to_string(),
-        "--ignore-scripts".to_string(),
-    ];
-    args.extend(
-        packages
-            .iter()
-            .map(|package| format!("file:{}", package.display())),
-    );
+    let specs = packages
+        .iter()
+        .map(|package| format!("file:{}", package.display()))
+        .collect::<Vec<_>>();
+    let args = dsh_plugin_add_args(profile, &specs, true);
     let output = dsh_command(runtime, &args, home)
         .output()
         .map_err(|error| format!("Failed to install {label}: {error}"))?;
@@ -1641,6 +2364,48 @@ fn install_harness_plugins(
     let stderr = String::from_utf8_lossy(&output.stderr);
     Err(format!(
         "DeepSeek Harness rejected {label}: {}{}{}",
+        stdout.trim(),
+        if stdout.trim().is_empty() || stderr.trim().is_empty() {
+            ""
+        } else {
+            "\n"
+        },
+        stderr.trim()
+    ))
+}
+
+fn install_declared_harness_app_plugins(
+    runtime: &DshRuntime,
+    home: &Path,
+    profile: &str,
+    manifest: &HarnessAppManifest,
+    package_root: &Path,
+) -> Result<(), String> {
+    if manifest.plugins.is_empty() {
+        return Ok(());
+    }
+    let specs = manifest
+        .plugins
+        .iter()
+        .map(|plugin| {
+            plugin
+                .path
+                .as_deref()
+                .map(|path| format!("file:{}", package_root.join(path).display()))
+                .unwrap_or_else(|| plugin.spec.clone())
+        })
+        .collect::<Vec<_>>();
+    let args = dsh_plugin_add_args(profile, &specs, false);
+    let output = dsh_command(runtime, &args, home)
+        .output()
+        .map_err(|error| format!("Failed to install declared DSH plugins: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "DeepSeek Harness rejected a declared plugin: {}{}{}",
         stdout.trim(),
         if stdout.trim().is_empty() || stderr.trim().is_empty() {
             ""
@@ -1706,11 +2471,21 @@ pub async fn start_harness_app(
             .registry
             .lock()
             .map_err(|_| "Harness app registry lock failed")?;
-        let installation = read_registry(&app)?
-            .into_iter()
-            .find(|item| item.id == installation_id)
+        let mut installations = read_registry(&app)?;
+        let index = installations
+            .iter()
+            .position(|item| item.id == installation_id)
             .ok_or_else(|| "Harness app installation is missing".to_string())?;
-        dsh_version_requirement(&installation.manifest.requirements.dsh)
+        let changed = refresh_linked_installation(&mut installations[index]);
+        let error = installations[index].error.clone();
+        let requirement = installations[index].manifest.requirements.dsh.clone();
+        if changed {
+            write_registry(&app, &installations)?;
+        }
+        if let Some(error) = error {
+            return Err(error);
+        }
+        dsh_version_requirement(&requirement)
             .map_err(|error| format!("DeepSeek Harness version requirement is invalid: {error}"))?
     };
     let runtime_app = app.clone();
@@ -1766,6 +2541,7 @@ pub async fn start_harness_app(
         _ => return Err("Smart app context registration is incomplete".to_string()),
     };
     let install_packages = prepare_instance_bundle(&installation, &home, use_wework_model)?;
+    let instance_package_root = home.join("wework-package");
     prepare_web_profile(&home, &installation.manifest.entry.profile)?;
     if let Some(base_url) = model_base_url.as_deref() {
         write_wework_model_settings(&home, base_url)?;
@@ -1786,6 +2562,13 @@ pub async fn start_harness_app(
             "Wework model context plugin",
         )?;
     }
+    install_declared_harness_app_plugins(
+        &runtime,
+        &home,
+        &installation.manifest.entry.profile,
+        &installation.manifest,
+        &instance_package_root,
+    )?;
     install_harness_plugins(
         &runtime,
         &home,
@@ -1931,12 +2714,14 @@ pub fn delete_harness_app(
         .ok_or_else(|| "Harness app installation is missing".to_string())?;
     installations.retain(|item| item.id != installation_id);
     write_registry(&app, &installations)?;
-    let package_path = PathBuf::from(removed.package_path);
-    let package_root = package_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or(package_path);
-    let _ = fs::remove_dir_all(package_root);
+    if removed.source != "linked" {
+        let package_path = PathBuf::from(removed.package_path);
+        let package_root = package_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or(package_path);
+        let _ = fs::remove_dir_all(package_root);
+    }
     if delete_data {
         let _ = fs::remove_dir_all(root(&app)?.join("instances").join(removed.id));
     }

@@ -22,7 +22,7 @@ For an existing task, open the right-side **Environment** panel and select **Lin
 
 The linked-task progress area does not repeat the runtime task title. While a task is running, the first row shows the latest AI text or thinking state, and a second indented row with a short vertical guide shows the most recent tool or edit action. PR/MR status remains a trailing action. After execution stops, the card shows only the last non-empty line from the final response of the latest turn and never falls back to an older turn. Unread cards use a subtle background in addition to the unread indicator.
 
-Hover anywhere on a card to open a wider progress preview. The preview shows the complete multiline final response from the latest turn, with longer content scrolling inside the response area. When one board task has several tasks running, the preview initially lists a summary for each one. Hovering an individual task narrows the preview to that task's progress.
+Hover anywhere on a card to open a lightweight task workspace. It initially shows the latest user message and AI response, reusing the Task conversation's thinking, tool-call, and file-edit rendering. Longer conversations scroll inside the transcript area, and **Load earlier history** fetches older turns. The composer stays on one line until clicked, then expands with the same quick phrases and actions available in Task conversations. While the composer is active, the preview stays pinned until its top-right close button is clicked. When one board task has several tasks running, the preview initially lists a summary for each one. Hovering an individual task narrows the preview to that task's progress.
 
 ## Manage project-space automation
 

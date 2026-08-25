@@ -639,10 +639,6 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     )
 
     useEffect(() => {
-      loadLocalApps()
-    }, [loadLocalApps])
-
-    useEffect(() => {
       // Publish whatever slash autocomplete is currently showing so the toolbar
       // plugin picker cannot diverge into an empty “no plugins” state.
       if (apps.length > 0) publishComposerApps(apps)
