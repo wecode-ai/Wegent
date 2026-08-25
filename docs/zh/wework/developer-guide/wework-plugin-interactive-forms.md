@@ -133,7 +133,7 @@ default_tools_approval_mode = "approve"
 
 request-level、bot-level 以及 Wework 内置持久 MCP server 都应遵循这个规则。`mcp_servers.wegent_apps` 是 Wegent Connector Apps 的内置持久 server，Wework 会写成同样的 `default_tools_approval_mode = "approve"`，并在 Connector 配置或应用同步时刷新旧配置。
 
-如某个插件工具确实需要每次授权，插件配置可以显式声明 `default_tools_approval_mode = "prompt"`，Wework 必须保留该显式配置。
+如某个插件工具确实需要每次授权，插件配置可以显式声明 `default_tools_approval_mode = "prompt"`，Wework 必须保留该显式配置。在只读或工作区权限模式下，这类工具调用仍会显示授权卡；在完整访问模式下，Wework 会自动接受带有 `_meta.codex_approval_kind = "mcp_tool_call"` 的授权请求，不再把它显示给用户。
 
 另外，Wework runtime 应保持：
 
@@ -147,6 +147,7 @@ tool_call_mcp_elicitation = false
 - `approvalPolicy.granular.mcp_elicitations: true` 允许插件业务表单从 MCP runtime 转发到 Wework UI。
 - `mcp_servers.<name>.default_tools_approval_mode = "approve"` 让普通 MCP tool call 不需要授权卡。
 - `features.tool_call_mcp_elicitation: false` 只表示不要把 Codex tool-call 授权卡包装成 MCP elicitation 表单；如果 tool approval mode 仍然要求审批，Codex 还可能退回普通 `request_user_input` 授权卡。
+- 完整访问模式会自动接受明确标记为 `mcp_tool_call` 的审批，同时继续转发没有该标记的插件业务表单。
 
 ## 实现边界
 
@@ -154,7 +155,7 @@ tool_call_mcp_elicitation = false
 
 - 不要把 `approvalPolicy` 简单改成允许所有审批。Wework 只需要把 `mcp_elicitations` 打开，其它审批项继续关闭。
 - Wework 注入或托管的 MCP server 应默认写 `default_tools_approval_mode = "approve"`，以保持旧的普通 tool call 不弹授权行为。
-- 如果 MCP server 或 tool 显式声明 `default_tools_approval_mode = "prompt"`，Wework 必须保留显式授权要求。
+- 如果 MCP server 或 tool 显式声明 `default_tools_approval_mode = "prompt"`，Wework 必须保留该配置；只读和工作区模式显示授权卡，完整访问模式自动接受工具调用审批。
 - Wework 自己生成并托管的内置 MCP server，例如 `wework_browser` 和 `wegent_apps`，也遵循同一条默认免普通 tool approval 规则。
 - `mcpServerOpenaiFormElicitation` 不是标准 `mode: "form"` 的必要 capability。除非 Wework 和下游 client 都真正支持 `openai/form` extension，否则不要在 initialize capability 中声明它。
 - 普通 shell、文件、sandbox、规则、技能或 request permission 的审批不应因为表单能力而改变。
@@ -164,6 +165,7 @@ tool_call_mcp_elicitation = false
 - Codex thread/turn 参数使用 granular approval policy，只打开 `mcp_elicitations`。
 - `features.tool_call_mcp_elicitation=false` 防止普通 MCP tool approval 被包装成业务表单。
 - request/bot MCP config 默认补 `default_tools_approval_mode = "approve"`，显式 `prompt` 优先。
+- 完整访问模式识别 `_meta.codex_approval_kind = "mcp_tool_call"` 并直接返回 `accept`，不向聊天界面发送该授权事件。
 - `mcp_servers.wegent_apps` 是 Wework Connector Apps 的内置持久 server，由 Wework 写入并在 configure/app sync 时刷新，同样默认 `approve`。
 
 因此，排查问题时可以按错误位置判断：
@@ -173,7 +175,8 @@ tool_call_mcp_elicitation = false
 | `The MCP client does not support openai/form requests.`                      | 插件连接到的 Codex MCP client 不支持 `openai/form`，请求没有进入 Wework | 改用 `mode: "form"`，或走普通对话/tool 参数降级                                                                      |
 | 插件收到 `action: "decline"`，但运行日志没有 `mcpServer/elicitation/request` | Codex MCP runtime 在 Wework UI 之前提前拒绝                             | 检查 `elicitations_auto_deny`、`approvalPolicy`、granular `mcp_elicitations`、是否 active turn                       |
 | 表单没有出现，但运行日志里有 `mcpServer/elicitation/request`                 | 请求到达运行时，可能 schema 不受支持                                    | 检查 `mode` 和 `requestedSchema.properties`                                                                          |
-| 每次 MCP tool call 都弹出“Allow this MCP tool call”表单                      | 该 MCP server/tool 的 tool approval mode 仍然要求审批                   | 对不需要授权的插件 server 设置 `default_tools_approval_mode="approve"`；确实需要授权的 server/tool 显式保留 `prompt` |
+| 完整访问下仍弹出“Allow this MCP tool call”表单                               | 工具审批没有被识别为 `mcp_tool_call`，或 full-access 标记未传入运行时   | 检查 `_meta.codex_approval_kind` 和 `runtime_permission_profile`；不要自动接受普通业务表单                           |
+| 只读或工作区模式下每次 MCP tool call 都弹出授权表单                          | 该 MCP server/tool 的 tool approval mode 仍然要求审批                   | 对不需要授权的插件 server 设置 `default_tools_approval_mode="approve"`；确实需要授权的 server/tool 显式保留 `prompt` |
 | 表单出现但提交后插件没有继续                                                 | 响应路由或插件侧结果处理有问题                                          | 检查插件是否处理 `accept`、`cancel`、`decline`                                                                       |
 
 ## Schema 到界面的映射
