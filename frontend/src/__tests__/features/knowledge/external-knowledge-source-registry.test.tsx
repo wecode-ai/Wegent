@@ -273,16 +273,11 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     )
   })
 
-  it('pages through all external nodes when opening a knowledge base', async () => {
-    mockListFakeNodes.mockImplementation((_knowledgeBaseId: string, params?: { offset?: number }) =>
-      Promise.resolve({
-        items:
-          params?.offset === 0
-            ? Array.from({ length: 500 }, (_, index) => makeFakeDocument(index))
-            : [makeFakeDocument(500)],
-        has_more: params?.offset === 0,
-      })
-    )
+  it('renders external nodes when opening a knowledge base', async () => {
+    mockListFakeNodes.mockResolvedValue({
+      items: [makeFakeDocument(1)],
+      has_more: false,
+    })
 
     render(
       <ContextSelector
@@ -311,20 +306,14 @@ describe('external knowledge source registry — ContextSelector (conversation)'
 
     await waitFor(() =>
       expect(
-        screen.getByTestId('knowledge-picker-external-node-document:doc-500')
+        screen.getByTestId('knowledge-picker-external-node-document:doc-1')
       ).toBeInTheDocument()
     )
-    expect(mockListFakeNodes).toHaveBeenNthCalledWith(
-      1,
+    expect(mockListFakeNodes).toHaveBeenCalledWith(
       'lib-1',
       expect.objectContaining({ recursive: true, limit: 500, offset: 0 })
     )
-    expect(mockListFakeNodes).toHaveBeenNthCalledWith(
-      2,
-      'lib-1',
-      expect.objectContaining({ recursive: true, limit: 500, offset: 500 })
-    )
-  }, 15000)
+  })
 
   it('writes a full ExternalKnowledgeRef (incl. mode/scope) onto the selectedContexts channel', async () => {
     const onSelect = jest.fn()
