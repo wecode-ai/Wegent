@@ -135,21 +135,16 @@ async function createCloudProjectFixture(control, workspacePath) {
     'The cloud checkpoint folder picker did not retain the workspace path'
   )
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
-  await waitForCloudProject(
+  const projectMenuTestId = await waitForStableCloudProjectMenu(
     control,
     projectMenusBeforeCreate,
     'The cloud checkpoint project was not shown in the sidebar'
   )
-  await control.command('waitFor', '[data-testid^="project-device-status-"]', {
+  const projectId = projectMenuTestId.slice('project-menu-'.length)
+  await control.command('waitFor', `[data-testid="project-device-status-${projectId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS * 2,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const stableProjectSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  const projectMenuTestId = stableProjectSnapshot.testIds.find(
-    testId => testId.startsWith('project-menu-') && !projectMenusBeforeCreate.has(testId)
-  )
-  assert.ok(projectMenuTestId, 'The stable cloud checkpoint project identity was unavailable')
-  const projectId = projectMenuTestId.slice('project-menu-'.length)
   const projectRowSelector = `[data-testid="project-row-${projectId}"]`
   await control.command(
     'clickWhenEnabled',
@@ -250,6 +245,30 @@ async function waitForCloudProject(control, previousProjectMenus, message) {
       )
     ) {
       return snapshot
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(message)
+}
+
+async function waitForStableCloudProjectMenu(control, previousProjectMenus, message) {
+  const startedAt = Date.now()
+  let candidate = null
+  let candidateSince = 0
+  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const current = snapshot.testIds.filter(
+      testId => testId.startsWith('project-menu-') && !previousProjectMenus.has(testId)
+    )
+    const projectMenuTestId = current.length === 1 ? current[0] : null
+    if (projectMenuTestId !== candidate) {
+      candidate = projectMenuTestId
+      candidateSince = Date.now()
+    } else if (
+      projectMenuTestId &&
+      Date.now() - candidateSince >= COMPOSER_READY_STABILITY_MS * 2
+    ) {
+      return projectMenuTestId
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
