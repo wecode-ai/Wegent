@@ -49,6 +49,7 @@ const queuedMessagesPausedByConversation = new Map<string, boolean>()
 const interruptedGuidanceIdsByConversation = new Map<string, Set<string>>()
 const scrollSnapshotsByConversation = new Map<string, ConversationScrollSnapshot>()
 const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
+const pendingStreamingNotifications = new Map<string, () => void>()
 
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
@@ -315,7 +316,7 @@ export function applyRuntimeConversationAction(
   const currentTurns = turnsByConversation.get(key) ?? []
   const nextTurns = reduceRuntimeConversationTurns(currentTurns, action)
   cacheBoundedEntry(turnsByConversation, key, nextTurns)
-  notifyRuntimeConversation(key, action)
+  publishRuntimeConversationAction(key, action)
   return projectRuntimeConversationTurns(nextTurns)
 }
 
@@ -834,6 +835,7 @@ function shortRuntimeAgentId(agentId: string): string {
 
 export function evictRuntimeConversation(address: RuntimeTaskAddress) {
   const key = runtimeConversationKey(address)
+  cancelPendingStreamingNotification(key)
   turnsByConversation.delete(key)
   metadataByConversation.delete(key)
   hydrationByConversation.delete(key)
@@ -853,6 +855,8 @@ export function getRuntimeConversationCacheStats() {
 }
 
 export function clearRuntimeConversationCacheForTests() {
+  pendingStreamingNotifications.forEach(cancel => cancel())
+  pendingStreamingNotifications.clear()
   turnsByConversation.clear()
   metadataByConversation.clear()
   listenersByConversation.clear()
@@ -869,6 +873,43 @@ function notifyRuntimeConversation(key: string, action?: RuntimePaneMessageActio
   listenersByConversation.get(key)?.forEach(listener => listener(action))
 }
 
+function publishRuntimeConversationAction(key: string, action: RuntimePaneMessageAction): void {
+  if (isStreamingConversationAction(action)) {
+    scheduleStreamingConversationNotification(key)
+    return
+  }
+  cancelPendingStreamingNotification(key)
+  notifyRuntimeConversation(key, action)
+}
+
+function scheduleStreamingConversationNotification(key: string): void {
+  if (pendingStreamingNotifications.has(key)) return
+
+  const flush = () => {
+    pendingStreamingNotifications.delete(key)
+    notifyRuntimeConversation(key)
+  }
+  if (typeof requestAnimationFrame === 'function') {
+    const frame = requestAnimationFrame(flush)
+    pendingStreamingNotifications.set(key, () => cancelAnimationFrame(frame))
+    return
+  }
+
+  const timer = globalThis.setTimeout(flush, 16)
+  pendingStreamingNotifications.set(key, () => globalThis.clearTimeout(timer))
+}
+
+function cancelPendingStreamingNotification(key: string): void {
+  const cancel = pendingStreamingNotifications.get(key)
+  if (!cancel) return
+  pendingStreamingNotifications.delete(key)
+  cancel()
+}
+
+function isStreamingConversationAction(action: RuntimePaneMessageAction): boolean {
+  return action.type === 'assistant_chunk' || action.type === 'block_updated'
+}
+
 function notifyHydratedRuntimeConversation(
   key: string,
   bufferedActions: RuntimePaneMessageAction[]
@@ -877,7 +918,7 @@ function notifyHydratedRuntimeConversation(
     notifyRuntimeConversation(key)
     return
   }
-  bufferedActions.forEach(action => notifyRuntimeConversation(key, action))
+  bufferedActions.forEach(action => publishRuntimeConversationAction(key, action))
 }
 
 function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {

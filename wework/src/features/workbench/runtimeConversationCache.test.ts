@@ -157,6 +157,47 @@ describe('runtimeConversationCache', () => {
     unsubscribe()
   })
 
+  test('coalesces burst streaming notifications before the terminal update', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'subtask-1',
+    })
+    const notifications: Array<string | undefined> = []
+    const unsubscribe = subscribeRuntimeConversation(address, action => {
+      notifications.push(action?.type)
+    })
+
+    for (let index = 0; index < 2200; index += 1) {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_chunk',
+        subtaskId: 'subtask-1',
+        itemId: 'assistant-item-1',
+        content: 'x',
+      })
+    }
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'subtask-1',
+      itemId: 'assistant-item-1',
+      content: 'complete',
+      contentMode: 'snapshot',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'subtask-1',
+    })
+
+    expect(notifications).toEqual(['assistant_done'])
+    expect(getRuntimeConversationMessages(address)).toMatchObject([
+      {
+        content: 'complete',
+        status: 'done',
+      },
+    ])
+    unsubscribe()
+  })
+
   test('settles an accepted queued message when its runtime turn starts', () => {
     cacheRuntimeConversationQueuedMessages(address, [
       {

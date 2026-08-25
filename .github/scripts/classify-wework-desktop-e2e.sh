@@ -76,7 +76,8 @@ cloud_segments=(
   plugin-auto-update
 )
 # Group checkpoints by observed Cloud CI duration so every serial shard stays
-# below the desktop suite's critical-path budget.
+# below the desktop suite's critical-path budget. Keep 15 Cloud shards so the
+# 17 Core shards and Plugins job fit the observed 33-runner Linux capacity.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
   core-task-flow
@@ -89,10 +90,9 @@ cloud_shards=(
   resilience,telemetry-consent
   cloud-worktree-create,automation-lifecycle,browser-multi-tabs
   workspace-tabs,cloud-worktree-capability
-  supervisor-lifecycle
+  supervisor-lifecycle,conversation-state
   model-routing
   plugin-auto-update
-  conversation-state
   cloud-worktree-queued-cancel
   workspace-attachments
 )
