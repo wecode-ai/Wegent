@@ -1135,8 +1135,10 @@ export function CloudTodoWorkspace({
   }
   const [selectedTaskBinding, setSelectedTaskBinding] = useState<SelectedTaskBinding | null>(null)
   const [taskComposerRequest, setTaskComposerRequest] = useState<TaskComposerRequest | null>(null)
+  const taskPanelOpenRef = useRef(false)
   const openTaskComposer = (request: TaskComposerRequest) => {
     workbench?.projectChat.requestCatalogs?.()
+    taskPanelOpenRef.current = true
     setTaskComposerRequest(request)
   }
   const [aitableFields, setAitableFields] = useState<AITableField[]>([])
@@ -3058,6 +3060,9 @@ export function CloudTodoWorkspace({
     (selectedTaskBinding?.work_item_id === selectedItem.id ||
       taskComposerRequest?.workItemId === selectedItem.id)
   )
+  useEffect(() => {
+    if (taskPanelOpen) taskPanelOpenRef.current = true
+  }, [taskPanelOpen])
   const taskStartingInBackground = backgroundTaskItemId === selectedItem?.id
   const [issueResourceAttachmentState, setIssueResourceAttachmentState] = useState<{
     itemId: string | null
@@ -3093,6 +3098,7 @@ export function CloudTodoWorkspace({
   }, [selectedItem, selectedItemApi, taskPanelOpen])
 
   function closeTaskPanel() {
+    taskPanelOpenRef.current = false
     setSelectedTaskBinding(null)
     setTaskComposerRequest(null)
   }
@@ -4281,8 +4287,7 @@ export function CloudTodoWorkspace({
                                       onClick={() => {
                                         if (item.can_view_detail !== false) {
                                           setBackgroundTaskItemId(null)
-                                          setSelectedTaskBinding(null)
-                                          setTaskComposerRequest(null)
+                                          closeTaskPanel()
                                           setSelectedItem(item)
                                         }
                                       }}
@@ -4732,6 +4737,7 @@ export function CloudTodoWorkspace({
                 }}
                 onClose={closeIssuePanelStack}
                 onOpenTaskConversation={task => {
+                  taskPanelOpenRef.current = true
                   setTaskComposerRequest(null)
                   setSelectedTaskBinding({
                     ...task,
@@ -4804,6 +4810,7 @@ export function CloudTodoWorkspace({
                 onClose={closeIssuePanelStack}
                 onBack={closeTaskPanel}
                 onAddressChange={address => {
+                  if (!taskPanelOpenRef.current) return
                   const backgroundAfterSend =
                     taskComposerRequest?.workItemId === selectedItem.id &&
                     taskComposerRequest.backgroundAfterSend
