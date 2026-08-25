@@ -1554,6 +1554,18 @@ function ArchiveRuntimeTaskProbe() {
       <button
         type="button"
         onClick={() =>
+          void workbench.openRuntimeTask({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/worktrees/9/project-alpha',
+            taskId: 'runtime-worktree',
+          })
+        }
+      >
+        open archive target
+      </button>
+      <button
+        type="button"
+        onClick={() =>
           void workbench
             .archiveRuntimeTask({
               deviceId: 'device-1',
@@ -9274,6 +9286,48 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(screen.getByTestId('current-runtime-task')).toHaveTextContent('runtime-b')
+  })
+
+  test('preserves a newer non-task route when the current task finishes archiving', async () => {
+    const archiveRequest = deferred<{
+      accepted: boolean
+      taskId: string
+      workspacePath: string
+      runtime: 'codex'
+    }>()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork()),
+      archiveConversation: vi.fn().mockReturnValue(archiveRequest.promise),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ArchiveRuntimeTaskProbe />, services)
+
+    await waitFor(() => expect(screen.getByText('open archive target')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('open archive target'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task')).toHaveTextContent('runtime-worktree')
+    )
+    await userEvent.click(screen.getByText('archive worktree task'))
+    await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
+
+    window.history.pushState({}, '', '/settings/archived-conversations')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+
+    await act(async () => {
+      archiveRequest.resolve({
+        accepted: true,
+        taskId: 'runtime-worktree',
+        workspacePath: '/workspace/worktrees/9/project-alpha',
+        runtime: 'codex',
+      })
+      await archiveRequest.promise
+    })
+
+    await waitFor(() => expect(screen.getByTestId('current-runtime-task')).toHaveTextContent(''))
+    expect(window.location.pathname).toBe('/settings/archived-conversations')
   })
 
   test('force archive also uses the snapshot-capable worktree API', async () => {

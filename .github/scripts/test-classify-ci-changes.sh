@@ -362,6 +362,23 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx"
 
+assert_desktop_case "startup splash selects native startup coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"native-window-startup"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/electron/src/host/startup-splash.ts" \
+  "wework/electron/src/shell/startup-splash/styles.css"
+
+assert_desktop_case "Wework documentation skips desktop E2E" \
+  'wework_desktop_e2e=false
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/README.md"
+
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow,remote-device-onboarding,runtime-terminal-convergence,browser-toolbar-actions,temporary-chat"},{"id":"core-2","name":"Core / shard 2","segments":"conversation-state,supervisor-lifecycle,project-ai-settings,change-request-status,task-attachments"},{"id":"core-3","name":"Core / shard 3","segments":"goal-lifecycle,project-assignment-notification,split-workbench,runtime-task-queue,context-compaction"},{"id":"core-4","name":"Core / shard 4","segments":"window-lifecycle,project-automation,running-conversation-history,permission-modes,local-file-preview"},{"id":"core-5","name":"Core / shard 5","segments":"harness-apps,workspace-tabs,priority-filter,codex-notification-isolation,cloud-space-mention"},{"id":"core-6","name":"Core / shard 6","segments":"model-routing,workspace-attachments,offline-local-project-space,native-window-startup"},{"id":"core-7","name":"Core / shard 7","segments":"rendering-extensions,embedded-browser,native-window-chrome,tray-lifecycle"},{"id":"core-8","name":"Core / shard 8","segments":"resilience,claude-runtime,automation-lifecycle,local-harness"}]}
@@ -602,7 +619,16 @@ for workflow in e2e-tests.yml wework-e2e.yml; do
       "$workflow" >&2
     exit 1
   fi
-  if ! grep -Fq \
+  if [[ "$workflow" == "wework-e2e.yml" ]]; then
+    if ! grep -Fq "github.event.merge_group.base_sha" "$workflow_path" ||
+      ! grep -Fq "github.event.merge_group.head_sha" "$workflow_path" ||
+      ! grep -Fq "github.event_name != 'merge_group'" "$workflow_path" ||
+      ! grep -Fq "grep -v '^\\.github/'" "$workflow_path"; then
+      printf '%s must classify merge groups from their product diff\n' \
+        "$workflow" >&2
+      exit 1
+    fi
+  elif ! grep -Fq \
     "FORCE_ALL: \${{ github.event_name != 'pull_request'" \
     "$workflow_path"; then
     printf '%s must force all E2E outside pull request events\n' \
@@ -753,6 +779,10 @@ if [[ "$wework_browser_job" != *"needs.changes.outputs.wework_e2e == 'true'"* ]]
   printf 'Wework browser E2E must use the broad Wework change classification\n' >&2
   exit 1
 fi
+if [[ "$wework_browser_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
+  printf 'Wework browser E2E must honor merge-group change classification\n' >&2
+  exit 1
+fi
 
 wework_changes_job="$(
   sed -n '/^  changes:/,/^  wework-e2e:/p' "$wework_workflow"
@@ -776,6 +806,10 @@ if [[ "$wework_desktop_job" != *"needs.changes.outputs.wework_desktop_other_e2e 
   printf 'Wework non-Core desktop E2E must use its segment classification\n' >&2
   exit 1
 fi
+if [[ "$wework_desktop_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
+  printf 'Wework non-Core desktop E2E must honor merge-group change classification\n' >&2
+  exit 1
+fi
 
 wework_desktop_cloud_job="$(
   sed -n '/^  wework-desktop-cloud-e2e:/,/^  wework-desktop-e2e:/p' "$wework_workflow"
@@ -792,6 +826,10 @@ if [[ "$wework_desktop_cloud_job" != *"needs.changes.outputs.wework_desktop_clou
   printf 'Wework Cloud desktop E2E must use five prebuilt serial shards\n' >&2
   exit 1
 fi
+if [[ "$wework_desktop_cloud_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
+  printf 'Wework Cloud desktop E2E must honor merge-group change classification\n' >&2
+  exit 1
+fi
 
 wework_desktop_core_job="$(
   sed -n '/^  wework-desktop-core-e2e:/,/^  wework-desktop-cloud-e2e:/p' \
@@ -801,6 +839,21 @@ if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_
   [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
   [[ "$wework_desktop_core_job" != *"compression-level: 0"* ]]; then
   printf 'Wework Core desktop E2E must use its segment classification\n' >&2
+  exit 1
+fi
+if [[ "$wework_desktop_core_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
+  printf 'Wework Core desktop E2E must honor merge-group change classification\n' >&2
+  exit 1
+fi
+
+wework_summary_job="$(
+  sed -n '/^  wework-e2e-summary:/,/^  wework-desktop-memory-e2e:/p' \
+    "$wework_workflow"
+)"
+if [[ "$wework_summary_job" == *"RUN_DESKTOP_CORE_E2E: \${{ github.event_name != 'pull_request' ||"* ]] ||
+  [[ "$wework_summary_job" == *"RUN_DESKTOP_CLOUD_E2E: \${{ github.event_name != 'pull_request' ||"* ]] ||
+  [[ "$wework_summary_job" == *"RUN_DESKTOP_OTHER_E2E: \${{ github.event_name != 'pull_request' ||"* ]]; then
+  printf 'Wework E2E summary must honor merge-group change classification\n' >&2
   exit 1
 fi
 
