@@ -443,7 +443,7 @@ async def test_device_runtime_events_preserve_socket_order(monkeypatch):
     release_first_persist = asyncio.Event()
     sio = AsyncMock()
 
-    async def project_event(_func, _device_id, payload):
+    async def project_event(_func, _device_id, payload, _user_id):
         event_name = payload["event"]
         calls.append(f"persist:{event_name}")
         if event_name == "response.block.created":
@@ -469,7 +469,7 @@ async def test_device_runtime_events_preserve_socket_order(monkeypatch):
             {"event": "response.block.created", "payload": {}},
         )
     )
-    await first_persist_started.wait()
+    await asyncio.wait_for(first_persist_started.wait(), timeout=1)
     updated = asyncio.create_task(
         namespace.on_runtime_event(
             "device-sid",
@@ -481,8 +481,8 @@ async def test_device_runtime_events_preserve_socket_order(monkeypatch):
     assert calls == ["persist:response.block.created"]
 
     release_first_persist.set()
-    assert await created == {"success": True}
-    assert await updated == {"success": True}
+    assert await asyncio.wait_for(created, timeout=1) == {"success": True}
+    assert await asyncio.wait_for(updated, timeout=1) == {"success": True}
     assert calls == [
         "persist:response.block.created",
         "emit:response.block.created",
