@@ -11,7 +11,7 @@ import {
   type LocalProxyConfig,
 } from '@/features/model-settings/localProxySettings'
 import { useTranslation } from '@/hooks/useTranslation'
-import { requestLocalExecutor } from '@/tauri/localExecutor'
+import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 
 const RESTART_CODEX_APP_SERVER_METHOD = 'runtime.codex.app_server.restart'

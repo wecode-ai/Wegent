@@ -1,0 +1,35 @@
+{
+  "name": "@wegent/wework-electron",
+  "private": true,
+  "version": "0.2.5",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
+    "build:package": "pnpm run prepare:package && pnpm run build && node scripts/package-app.mjs",
+    "dev": "pnpm run build && electron .",
+    "prepare:package": "node scripts/prepare-package-assets.mjs",
+    "start": "electron .",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify:core-dsh-host": "pnpm run build && node scripts/verify-core-dsh-host.mjs",
+    "verify:core-runtime": "pnpm run build && node scripts/verify-core-runtime.mjs",
+    "verify:core-ui": "pnpm run build && electron scripts/verify-core-ui.mjs",
+    "verify:workbench-runtime": "pnpm run build && node scripts/verify-workbench-runtime.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "@types/archiver": "8.0.0",
+    "@types/node": "24.13.3",
+    "@types/semver": "7.8.0",
+    "electron": "43.4.1",
+    "typescript": "~6.0.2",
+    "vitest": "4.1.7"
+  },
+  "dependencies": {
+    "archiver": "8.0.0",
+    "extract-zip": "2.0.1",
+    "semver": "7.8.5",
+    "tar": "7.5.22"
+  }
+}

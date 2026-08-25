@@ -13,12 +13,34 @@ import {
   signPreparedMacOsBinaries,
 } from './lib/deepseek-harness-signing.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+import { normalizeFileViewerAssetManifest } from './lib/harness-runtime-metadata.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const coreDshVersion = '0.1.1-rc.2'
+const workbenchDshVersions = new Set(['0.1.0-rc.7', '0.1.0-rc.8'])
 const source = path.join(root, 'harness-runtime')
 const runtimesDirectory = path.join(source, 'runtimes')
 const pluginsDirectory = path.join(source, 'plugins')
-const targetDirectory = path.join(root, 'src-tauri', 'bundled-harness-runtime')
+const dshPlugins = [
+  {
+    source: path.join(root, 'dsh', 'app-wework'),
+    target: path.join('plugins', 'wework-app'),
+  },
+  {
+    source: path.join(root, 'dsh', 'electron-host'),
+    target: path.join('plugins', 'wework-electron-host'),
+  },
+  {
+    source: path.join(root, 'dsh', 'executor-runtime'),
+    target: path.join('plugins', 'wework-executor-runtime'),
+  },
+  {
+    source: path.join(root, 'dsh', 'terminal-runtime'),
+    target: path.join('plugins', 'wework-terminal-runtime'),
+  },
+]
+const dshAppOutput = path.join(root, 'dsh', 'app-wework', 'web')
+const targetDirectory = path.join(root, 'resources', 'bundled-harness-runtime')
 const catalogPath = path.join(targetDirectory, 'runtimes.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
 const cacheDirectory = path.join(root, 'node_modules', '.cache')
@@ -79,6 +101,20 @@ async function sha256(pathname) {
   return hash.digest('hex')
 }
 
+async function normalizeDshAppBuildMetadata() {
+  const manifestPath = path.join(dshAppOutput, 'flyfish-viewer-assets.json')
+  let manifest
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  } catch (error) {
+    throw new Error(`Failed to normalize DSH app asset manifest: ${error}`)
+  }
+  await writeFile(
+    manifestPath,
+    `${JSON.stringify(normalizeFileViewerAssetManifest(manifest, dshAppOutput), null, 2)}\n`
+  )
+}
+
 async function resetTargetDirectory() {
   await rm(targetDirectory, { recursive: true, force: true })
   await mkdir(targetDirectory, { recursive: true })
@@ -96,6 +132,21 @@ async function runtimeSources() {
       content: await readFile(path.join(pluginsDirectory, name)),
     }))
   )
+  const dshPluginEntries = (
+    await Promise.all(
+      dshPlugins.map(async plugin => {
+        const files = await listFiles(plugin.source)
+        return Promise.all(
+          files
+            .filter(name => !name.endsWith('.test.mjs'))
+            .map(async name => ({
+              name: path.join(plugin.target, name),
+              content: await readFile(path.join(plugin.source, name)),
+            }))
+        )
+      })
+    )
+  ).flat()
   const runtimeDirectories = (await readdir(runtimesDirectory, { withFileTypes: true }))
     .filter(entry => entry.isDirectory())
     .map(entry => entry.name)
@@ -112,14 +163,24 @@ async function runtimeSources() {
       }
       return {
         dshVersion,
+        role:
+          dshVersion === coreDshVersion
+            ? 'core'
+            : workbenchDshVersions.has(dshVersion)
+              ? 'workbench'
+              : 'legacy',
         runtimeRoot,
         entries: [
           { name: 'package.json', content: packageContent },
           { name: 'pnpm-lock.yaml', content: lockContent },
           ...sharedEntries,
           ...pluginEntries,
+          ...(dshVersion === coreDshVersion ? dshPluginEntries : []),
         ],
-        pluginFiles,
+        pluginFiles: [
+          ...pluginFiles,
+          ...(dshVersion === coreDshVersion ? dshPluginEntries.map(entry => entry.name) : []),
+        ],
       }
     })
   )
@@ -152,6 +213,7 @@ function validateDescriptor(descriptor, runtime) {
   const downloadUrl = `${baseUrl}/${runtime.assetName}`
   if (
     descriptor.dshVersion !== runtime.dshVersion ||
+    descriptor.role !== runtime.role ||
     descriptor.sourceFingerprint !== runtime.sourceFingerprint ||
     descriptor.assetName !== runtime.assetName ||
     descriptor.downloadUrl !== downloadUrl ||
@@ -245,6 +307,26 @@ async function materializeRuntime(runtime, descriptor) {
   }
 }
 
+async function pruneMaterializedRuntimes(descriptors) {
+  const retained = new Set(descriptors.map(descriptor => descriptor.sourceFingerprint))
+  let entries
+  try {
+    entries = await readdir(materializedRoot, { withFileTypes: true })
+  } catch {
+    return
+  }
+  await Promise.all(
+    entries
+      .filter(entry => entry.isDirectory() && !retained.has(entry.name))
+      .map(entry =>
+        rm(path.join(materializedRoot, entry.name), {
+          recursive: true,
+          force: true,
+        })
+      )
+  )
+}
+
 async function buildRuntime(runtime) {
   const staging = path.join(
     cacheDirectory,
@@ -268,6 +350,7 @@ async function buildRuntime(runtime) {
       `${JSON.stringify(
         {
           dshVersion: runtime.dshVersion,
+          role: runtime.role,
           sourceFingerprint: runtime.sourceFingerprint,
         },
         null,
@@ -287,6 +370,7 @@ async function buildRuntime(runtime) {
     )
     const descriptor = {
       dshVersion: runtime.dshVersion,
+      role: runtime.role,
       sourceFingerprint: runtime.sourceFingerprint,
       archiveSha256: await sha256(temporaryArchive),
       archiveBytes: (await stat(temporaryArchive)).size,
@@ -319,6 +403,8 @@ if (process.env.WEWORK_HARNESS_RUNTIME_URL?.trim()) {
 }
 
 await mkdir(assetDirectory, { recursive: true })
+await run(pnpmCommand, ['run', 'build:dsh-app'], root)
+await normalizeDshAppBuildMetadata()
 const runtimes = (await runtimeSources()).map(runtimeIdentity)
 if (runtimes.length === 0) {
   throw new Error('Harness runtime must declare at least one DSH version')
@@ -347,6 +433,7 @@ await resetTargetDirectory()
 await writeFile(catalogPath, `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`)
 if (materializeRequested) {
   await mkdir(materializedRoot, { recursive: true })
+  await pruneMaterializedRuntimes(descriptors)
   await writeFile(
     path.join(materializedRoot, 'runtimes.json'),
     `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`

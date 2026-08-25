@@ -26,10 +26,80 @@ const corsHeaders = {
   'access-control-allow-origin': '*',
 }
 
+export const AI_VERIFY_ACTIONS = Object.freeze({
+  capture: 'capture',
+  'capture-browser': 'captureEmbeddedBrowser',
+  'capture-popout': 'capturePopoutWindow',
+  'capture-workspace': 'captureWorkspaceWindow',
+  snapshot: 'snapshot',
+  debug: 'getWorkbenchDebugSnapshot',
+  'active-element': 'getActiveElementTestId',
+  click: 'click',
+  'click-at': 'clickAt',
+  'click-then-macrotask': 'clickThenMacrotask',
+  'context-menu': 'contextMenu',
+  'seed-local-project': 'seedLocalProject',
+  'preview-plugin-import': 'previewPluginImport',
+  'import-plugin-package': 'importPluginPackage',
+  'set-local-proxy-url': 'setLocalProxyUrl',
+  'terminal-snapshot': 'readLocalTerminalSnapshot',
+  reload: 'reloadApp',
+  'close-to-tray': 'closeMainWindowToTray',
+  'request-close': 'requestMainWindowClose',
+  'dismiss-popout': 'dismissPopoutWindow',
+  drag: 'drag',
+  'drop-file': 'dropFile',
+  'drop-paths': 'dropPaths',
+  fill: 'fill',
+  'get-attribute': 'getAttribute',
+  hover: 'hover',
+  metrics: 'getElementMetrics',
+  navigate: 'navigate',
+  'paste-paths': 'pastePaths',
+  'pointer-move': 'pointerMove',
+  press: 'press',
+  submit: 'submit',
+  'scroll-into-view': 'scrollIntoView',
+  'select-text': 'selectText',
+  'show-popout': 'showPopoutWindow',
+  'system-drag-drop': 'completeSystemDragDrop',
+  'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
+  'wait-for': 'waitFor',
+  'window-focus-snapshot': 'getWindowFocusSnapshot',
+  text: 'getText',
+})
+
+const SELECTOR_OPTIONAL_COMMANDS = new Set([
+  'capture',
+  'capture-browser',
+  'capture-popout',
+  'capture-workspace',
+  'snapshot',
+  'debug',
+  'active-element',
+  'click-at',
+  'seed-local-project',
+  'preview-plugin-import',
+  'import-plugin-package',
+  'set-local-proxy-url',
+  'terminal-snapshot',
+  'reload',
+  'navigate',
+  'text',
+  'pointer-move',
+  'dismiss-popout',
+  'show-popout',
+  'system-drag-drop',
+  'window-focus-snapshot',
+  'close-to-tray',
+  'request-close',
+  'verify-browser-inspector',
+])
+
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|capture-browser|capture-popout|capture-workspace|snapshot|debug|active-element|click|click-at|click-then-macrotask|context-menu|seed-local-project|preview-plugin-import|import-plugin-package|set-local-proxy-url|terminal-snapshot|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|get-attribute|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|verify-browser-inspector|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <${Object.keys(AI_VERIFY_ACTIONS).join('|')}|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
@@ -49,7 +119,7 @@ Options:
                             command timeout otherwise (default: ${defaultTimeoutMs})`)
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const [command, ...rest] = argv
   const options = {}
   for (let index = 0; index < rest.length; index += 1) {
@@ -57,7 +127,9 @@ function parseArgs(argv) {
     if (!value.startsWith('--')) throw new Error(`Unexpected argument: ${value}`)
     const key = value.slice(2)
     const next = rest[index + 1]
-    if (!next || next.startsWith('--')) throw new Error(`Missing value for --${key}`)
+    if (next === undefined || next.startsWith('--')) {
+      throw new Error(`Missing value for --${key}`)
+    }
     options[key] = next
     index += 1
   }
@@ -77,6 +149,21 @@ export function resolveCommandTimeout(timeout) {
   return Number.isFinite(configuredTimeout) && configuredTimeout > 0
     ? configuredTimeout
     : defaultTimeoutMs
+}
+
+export function resolveOptionalBoolean(value, optionName) {
+  if (value === undefined) return undefined
+  if (value === 'true') return true
+  if (value === 'false') return false
+  throw new Error(`--${optionName} must be "true" or "false"`)
+}
+
+export function validateStartOptions(options) {
+  const allowedOptions = new Set(['codex-home-initialization', 'timeout'])
+  const unexpectedOption = Object.keys(options).find(option => !allowedOptions.has(option))
+  if (unexpectedOption) {
+    throw new Error(`Unexpected option for start: --${unexpectedOption}`)
+  }
 }
 
 function json(response, status, value) {
@@ -192,9 +279,20 @@ export function startupFailureMessage(status, timeoutMs) {
     })} before its WebView connected to AI verification`
   }
   const phase = status?.pid
-    ? 'the Tauri launcher was still waiting for its WebView'
-    : 'the Tauri launcher had not started'
+    ? 'the desktop launcher was still waiting for its renderer'
+    : 'the desktop launcher had not started'
   return `Timed out after ${timeoutMs}ms while ${phase}`
+}
+
+export function resolveElectronAppBinary(platform = process.platform, arch = process.arch) {
+  const configured = process.env.WEWORK_ELECTRON_APP_BIN?.trim()
+  if (configured) return resolve(configured)
+  const platformName = platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win32' : 'linux'
+  const executable = platform === 'win32' ? 'WeWork.exe' : 'WeWork'
+  const appRoot = join(weworkDir, 'electron', 'release', `WeWork-${platformName}-${arch}`)
+  return platform === 'darwin'
+    ? join(appRoot, 'WeWork.app', 'Contents', 'MacOS', executable)
+    : join(appRoot, executable)
 }
 
 export function monitorAppProcess(app, pending, onExit) {
@@ -348,20 +446,26 @@ async function runServer(sessionPath, token) {
     await writeFile(join(nativeCodexHome, 'auth.json'), '{"test":"isolated-auth"}\n')
     await writeFile(join(nativeCodexHome, 'config.toml'), 'model = "gpt-5"\n')
   }
-  app = spawn('bash', ['scripts/dev-mac-app.sh'], {
+  const environment = buildAiVerifyEnvironment(process.env, {
+    controlUrl,
+    token,
+    codexHome,
+    nativeCodexHome,
+    verifyCodexHomeInitialization: session.verifyCodexHomeInitialization,
+    deviceId: session.deviceId,
+    appIdentifier: `io.wecode.wework.ai-verify.${session.deviceId.replaceAll('-', '')}`,
+    executorHome,
+    sessionDirectory: session.directory,
+  })
+  app = spawn(resolveElectronAppBinary(), [], {
     cwd: weworkDir,
     detached: true,
-    env: buildAiVerifyEnvironment(process.env, {
-      controlUrl,
-      token,
-      codexHome,
-      nativeCodexHome,
-      verifyCodexHomeInitialization: session.verifyCodexHomeInitialization,
-      deviceId: session.deviceId,
-      appIdentifier: `io.wecode.wework.ai-verify.${session.deviceId.replaceAll('-', '')}`,
-      executorHome,
-      sessionDirectory: session.directory,
-    }),
+    env: {
+      ...environment,
+      WEWORK_DESKTOP_RUNTIME: 'electron',
+      WEWORK_E2E_CONTROL_TOKEN: token,
+      WEWORK_USER_DATA_DIR: join(session.directory, 'user-data'),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   monitorAppProcess(app, pending, exit => {
@@ -405,6 +509,7 @@ async function main() {
   const { command, options } = parseArgs(process.argv.slice(2))
   if (command === 'serve') return runServer(options.session, options.token)
   if (command === 'start') {
+    validateStartOptions(options)
     const directory = join(
       weworkDir,
       'test-results',
@@ -413,6 +518,7 @@ async function main() {
     )
     await mkdir(directory, { recursive: true })
     const token = randomBytes(32).toString('hex')
+    await readFile(resolveElectronAppBinary())
     const sessionPath = join(directory, 'session.json')
     await writeFile(
       sessionPath,
@@ -506,80 +612,13 @@ async function main() {
     console.log(JSON.stringify(await request(session, session.token, '/status'), null, 2))
     return
   }
-  const action = {
-    capture: 'capture',
-    'capture-browser': 'captureEmbeddedBrowser',
-    'capture-popout': 'capturePopoutWindow',
-    'capture-workspace': 'captureWorkspaceWindow',
-    snapshot: 'snapshot',
-    debug: 'getWorkbenchDebugSnapshot',
-    'active-element': 'getActiveElementTestId',
-    click: 'click',
-    'click-at': 'clickAt',
-    'click-then-macrotask': 'clickThenMacrotask',
-    'context-menu': 'contextMenu',
-    'seed-local-project': 'seedLocalProject',
-    'preview-plugin-import': 'previewPluginImport',
-    'import-plugin-package': 'importPluginPackage',
-    'set-local-proxy-url': 'setLocalProxyUrl',
-    'terminal-snapshot': 'readLocalTerminalSnapshot',
-    reload: 'reloadApp',
-    'close-to-tray': 'closeMainWindowToTray',
-    'request-close': 'requestMainWindowClose',
-    'dismiss-popout': 'dismissPopoutWindow',
-    drag: 'drag',
-    'drop-file': 'dropFile',
-    'drop-paths': 'dropPaths',
-    fill: 'fill',
-    'get-attribute': 'getAttribute',
-    hover: 'hover',
-    metrics: 'getElementMetrics',
-    navigate: 'navigate',
-    'paste-paths': 'pastePaths',
-    'pointer-move': 'pointerMove',
-    press: 'press',
-    'scroll-into-view': 'scrollIntoView',
-    'select-text': 'selectText',
-    'show-popout': 'showPopoutWindow',
-    'system-drag-drop': 'completeSystemDragDrop',
-    'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
-    'wait-for': 'waitFor',
-    'window-focus-snapshot': 'getWindowFocusSnapshot',
-    text: 'getText',
-  }[command]
+  const action = AI_VERIFY_ACTIONS[command]
   if (!action) {
     usage()
     process.exitCode = 2
     return
   }
-  const selector =
-    options.selector ??
-    (command === 'capture' ||
-    command === 'capture-browser' ||
-    command === 'capture-popout' ||
-    command === 'capture-workspace' ||
-    command === 'snapshot' ||
-    command === 'debug' ||
-    command === 'active-element' ||
-    command === 'click-at' ||
-    command === 'seed-local-project' ||
-    command === 'preview-plugin-import' ||
-    command === 'import-plugin-package' ||
-    command === 'set-local-proxy-url' ||
-    command === 'terminal-snapshot' ||
-    command === 'reload' ||
-    command === 'navigate' ||
-    command === 'text' ||
-    command === 'pointer-move' ||
-    command === 'dismiss-popout' ||
-    command === 'show-popout' ||
-    command === 'system-drag-drop' ||
-    command === 'window-focus-snapshot' ||
-    command === 'close-to-tray' ||
-    command === 'request-close' ||
-    command === 'verify-browser-inspector'
-      ? 'body'
-      : null)
+  const selector = options.selector ?? (SELECTOR_OPTIONAL_COMMANDS.has(command) ? 'body' : null)
   if (!selector) throw new Error('--selector is required')
   const dropFilePath = command === 'drop-file' ? options.file : undefined
   if (command === 'drop-file' && !dropFilePath) throw new Error('--file is required')
@@ -604,7 +643,7 @@ async function main() {
     mimeType: dropFilePath ? dropFileMimeType : undefined,
     key: options.key,
     text: options.text,
-    visible: options.visible === 'true',
+    visible: resolveOptionalBoolean(options.visible, 'visible'),
     stableMs: options.stable ? Number(options.stable) : undefined,
     timeoutMs: effectiveTimeoutMs,
   })

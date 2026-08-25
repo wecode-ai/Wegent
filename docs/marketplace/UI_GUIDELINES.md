@@ -82,5 +82,5 @@ pending.
 ## Verification
 
 Run focused unit tests, TypeScript checks, formatting, and linting. Changes to
-desktop behavior or Tauri integration also require the isolated real-Tauri
+desktop behavior or Electron integration also require the isolated real-Electron
 workflow documented in `wework/AGENTS.md`.

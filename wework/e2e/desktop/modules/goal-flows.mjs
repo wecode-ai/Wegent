@@ -42,7 +42,7 @@ import {
   readFile,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
-  waitForExecutorReadyEvidence,
+  waitForExecutorRuntimeEvidence,
   withTimeout,
 } from './shared.mjs'
 
@@ -698,13 +698,14 @@ async function verifyGoalRestartRecoveryLifecycle({
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
-  const executorReadyBeforeRestart = await waitForExecutorReadyEvidence(executorLogPath)
+  const executorReadyBeforeRestart = await waitForExecutorRuntimeEvidence(control, executorLogPath)
   const executorProcessIdBeforeRestart = executorReadyBeforeRestart.processIds.at(-1)
   assert.ok(executorProcessIdBeforeRestart, 'The original executor process ID was not recorded')
 
   await restartDesktopApp()
 
-  const executorReadyAfterRestart = await waitForExecutorReadyEvidence(
+  const executorReadyAfterRestart = await waitForExecutorRuntimeEvidence(
+    control,
     executorLogPath,
     DEFAULT_STEP_TIMEOUT_MS,
     executorReadyBeforeRestart.processIds.length + 1

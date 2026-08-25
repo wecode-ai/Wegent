@@ -4,7 +4,7 @@ sidebar_position: 19
 
 # 项目执行状态真实性重构
 
-> 实现状态：状态真实性主链与并发扩展已完成；Backend、Wework、Executor 全量回归、MySQL 迁移升降级及真实 Tauri 桌面验收均已通过。
+> 实现状态：状态真实性主链与并发扩展已完成；Backend、Wework、Executor 全量回归、MySQL 迁移升降级及真实 Electron 桌面验收均已通过。
 >
 > 硬约束：不新建数据库表。本次只扩展已有 MySQL/SQLite `loop_item_executions`，并继续使用已有 `loop_items`、`project_chat_messages` 和 Automation Run。
 

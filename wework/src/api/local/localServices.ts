@@ -115,15 +115,19 @@ import {
   subscribeLocalExecutorEvents,
   type LocalExecutorEvent,
   type LocalExecutorStatus,
-} from '@/tauri/localExecutor'
+} from '@/desktop/localExecutor'
 import {
   listLocalWorkspaceEntries,
   readLocalWorkspaceFileChunk,
   readLocalWorkspaceTextFile,
-} from '@/tauri/localWorkspaceFiles'
+} from '@/desktop/localWorkspaceFiles'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import {
+  normalizeWorkspaceTextFile,
+  splitAbsoluteWorkspaceFilePath,
+} from '@/lib/workspace-file-contract'
 import {
   runtimePermissionMode,
   runtimePermissionProfile,
@@ -1281,90 +1285,6 @@ function skillName(skill: unknown): string | null {
 
 function isNonEmptyString(value: string | null): value is string {
   return Boolean(value)
-}
-
-function normalizeAbsoluteWorkspacePath(path: string, errorMessage: string): string {
-  const normalizedSegments: string[] = []
-  const normalizedPath = path.trim().replace(/\/+/g, '/')
-  if (!normalizedPath.startsWith('/')) {
-    throw new Error(errorMessage)
-  }
-
-  for (const segment of normalizedPath.split('/')) {
-    if (!segment || segment === '.') continue
-    if (segment === '..') {
-      if (normalizedSegments.length === 0) {
-        throw new Error(errorMessage)
-      }
-      normalizedSegments.pop()
-      continue
-    }
-    normalizedSegments.push(segment)
-  }
-
-  return `/${normalizedSegments.join('/')}`
-}
-
-function normalizeModifiedAt(value: unknown, errorMessage: string): string | null {
-  if (value === undefined || value === null) return null
-  if (typeof value === 'string') return value
-  throw new Error(errorMessage)
-}
-
-function normalizeWorkspaceTextFile(
-  output: unknown,
-  requestedFilePath: string
-): WorkspaceTextFileResponse {
-  const normalizedRequestedFilePath = normalizeAbsoluteWorkspacePath(
-    requestedFilePath,
-    'Workspace file path must be absolute'
-  )
-  const record = recordValue(output)
-  if (
-    typeof record.path !== 'string' ||
-    typeof record.name !== 'string' ||
-    typeof record.content !== 'string' ||
-    typeof record.truncated !== 'boolean' ||
-    typeof record.size !== 'number'
-  ) {
-    throw new Error('Invalid workspace text file response')
-  }
-  const responsePath = normalizeAbsoluteWorkspacePath(
-    record.path,
-    'Invalid workspace text file response'
-  )
-  const requestedName = normalizedRequestedFilePath.split('/').pop()
-  if (record.name !== requestedName || responsePath.split('/').pop() !== requestedName) {
-    throw new Error('Invalid workspace text file response')
-  }
-  return {
-    path: normalizedRequestedFilePath,
-    name: record.name,
-    content: record.content,
-    editable: record.editable === true && typeof record.revision === 'string',
-    revision: typeof record.revision === 'string' ? record.revision : '',
-    truncated: record.truncated,
-    size: record.size,
-    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace text file response'),
-  }
-}
-
-function splitAbsoluteWorkspaceFilePath(filePath: string): {
-  parentPath: string
-  fileName: string
-} {
-  const normalizedFilePath = normalizeAbsoluteWorkspacePath(
-    filePath,
-    'Workspace file path must be absolute'
-  )
-  const separatorIndex = normalizedFilePath.lastIndexOf('/')
-  const parentPath = separatorIndex > 0 ? normalizedFilePath.slice(0, separatorIndex) : '/'
-  const fileName =
-    separatorIndex >= 0 ? normalizedFilePath.slice(separatorIndex + 1) : normalizedFilePath
-  if (!fileName) {
-    throw new Error('Workspace file name is required')
-  }
-  return { parentPath, fileName }
 }
 
 interface LocalRuntimeWorkspace {

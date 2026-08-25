@@ -170,7 +170,6 @@ struct SpawnTurnRequest {
     fork_thread_id: Option<String>,
     fork_thread_path: Option<String>,
     resume_thread_id: Option<String>,
-    initial_thread_name: Option<String>,
     initial_thread_goal: Option<Value>,
 }
 

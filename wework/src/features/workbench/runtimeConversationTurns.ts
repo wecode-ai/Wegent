@@ -812,8 +812,26 @@ function upsertBlocks(
           ? preserveProcessingBlockTiming(next[index].block, block)
           : block,
     }
-    next = index < 0 ? [...next, canonicalItem] : replaceAt(next, index, canonicalItem)
+    next =
+      index < 0
+        ? insertRuntimeBlockBeforeLaterGuidance(next, canonicalItem)
+        : replaceAt(next, index, canonicalItem)
   }
+  return next
+}
+
+function insertRuntimeBlockBeforeLaterGuidance(
+  items: RuntimeConversationItem[],
+  blockItem: Extract<RuntimeConversationItem, { type: 'block' }>
+): RuntimeConversationItem[] {
+  const guidanceIndex = items.findIndex(item => {
+    if (item.type !== 'user_message' || item.message.runtimeGuidance !== true) return false
+    const guidanceCreatedAt = Date.parse(item.message.createdAt ?? '')
+    return Number.isFinite(guidanceCreatedAt) && blockItem.block.createdAt <= guidanceCreatedAt
+  })
+  if (guidanceIndex < 0) return [...items, blockItem]
+  const next = [...items]
+  next.splice(guidanceIndex, 0, blockItem)
   return next
 }
 

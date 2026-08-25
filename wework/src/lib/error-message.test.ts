@@ -6,7 +6,7 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(new Error('boom'), 'fallback')).toBe('boom')
   })
 
-  test('accepts Tauri string rejections', () => {
+  test('accepts desktop string rejections', () => {
     expect(getErrorMessage('Local plugin is missing .codex-plugin/plugin.json', 'fallback')).toBe(
       'Local plugin is missing .codex-plugin/plugin.json'
     )

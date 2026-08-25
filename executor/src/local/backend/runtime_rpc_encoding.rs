@@ -11,24 +11,55 @@ use serde_json::{json, Value};
 use crate::logging::{format_executor_log, write_executor_error_line, write_executor_log_line};
 
 const RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES: usize = 512 * 1024;
+const APP_IPC_COMPRESSION_THRESHOLD_BYTES: usize = 1024 * 1024;
 const RUNTIME_RPC_MAX_ENCODED_BYTES: usize = 980_000;
+const APP_IPC_MAX_ENCODED_BYTES: usize = 15 * 1024 * 1024;
 const RUNTIME_RPC_COMPRESSED_ENCODING: &str = "gzip+base64+json";
 
 pub(super) fn encode_runtime_rpc_response(method: &str, response: Value) -> Value {
+    encode_json_response(
+        "runtime:rpc",
+        method,
+        response,
+        RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES,
+        RUNTIME_RPC_MAX_ENCODED_BYTES,
+        "runtime_rpc",
+    )
+}
+
+pub(crate) fn encode_app_ipc_response(method: &str, response: Value) -> Value {
+    encode_json_response(
+        "app IPC",
+        method,
+        response,
+        APP_IPC_COMPRESSION_THRESHOLD_BYTES,
+        APP_IPC_MAX_ENCODED_BYTES,
+        "app_ipc",
+    )
+}
+
+fn encode_json_response(
+    log_prefix: &str,
+    method: &str,
+    response: Value,
+    compression_threshold_bytes: usize,
+    max_encoded_bytes: usize,
+    error_prefix: &str,
+) -> Value {
     let raw = match serde_json::to_vec(&response) {
         Ok(raw) => raw,
         Err(error) => {
             write_executor_error_line(&format_executor_log(
-                "runtime:rpc response serialization failed",
+                &format!("{log_prefix} response serialization failed"),
                 &[("method", method.to_owned()), ("error", error.to_string())],
             ));
             return encoding_error_response(
-                "runtime_rpc_response_encoding_failed",
-                "Runtime RPC response could not be encoded",
+                &format!("{error_prefix}_response_encoding_failed"),
+                "Response could not be encoded",
             );
         }
     };
-    if raw.len() <= RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES {
+    if raw.len() <= compression_threshold_bytes {
         return response;
     }
 
@@ -36,7 +67,7 @@ pub(super) fn encode_runtime_rpc_response(method: &str, response: Value) -> Valu
         Ok(compressed) => compressed,
         Err(error) => {
             write_executor_error_line(&format_executor_log(
-                "runtime:rpc response compression failed",
+                &format!("{log_prefix} response compression failed"),
                 &[
                     ("method", method.to_owned()),
                     ("raw_bytes", raw.len().to_string()),
@@ -44,8 +75,8 @@ pub(super) fn encode_runtime_rpc_response(method: &str, response: Value) -> Valu
                 ],
             ));
             return encoding_error_response(
-                "runtime_rpc_response_encoding_failed",
-                "Runtime RPC response could not be encoded",
+                &format!("{error_prefix}_response_encoding_failed"),
+                "Response could not be encoded",
             );
         }
     };
@@ -60,9 +91,9 @@ pub(super) fn encode_runtime_rpc_response(method: &str, response: Value) -> Valu
         .map(|value| value.len())
         .unwrap_or(usize::MAX);
 
-    if envelope_bytes > RUNTIME_RPC_MAX_ENCODED_BYTES {
+    if envelope_bytes > max_encoded_bytes {
         write_executor_error_line(&format_executor_log(
-            "runtime:rpc compressed response exceeds socket limit",
+            &format!("{log_prefix} compressed response exceeds transport limit"),
             &[
                 ("method", method.to_owned()),
                 ("raw_bytes", raw.len().to_string()),
@@ -71,13 +102,13 @@ pub(super) fn encode_runtime_rpc_response(method: &str, response: Value) -> Valu
             ],
         ));
         return encoding_error_response(
-            "runtime_rpc_response_too_large",
-            "Runtime RPC response exceeded the Socket.IO payload limit",
+            &format!("{error_prefix}_response_too_large"),
+            "Response exceeded the transport payload limit",
         );
     }
 
     write_executor_log_line(&format_executor_log(
-        "runtime:rpc response compressed",
+        &format!("{log_prefix} response compressed"),
         &[
             ("method", method.to_owned()),
             ("raw_bytes", raw.len().to_string()),
@@ -169,6 +200,19 @@ mod tests {
         );
         assert!(encoded_bytes > 900_000);
         assert!(encoded_bytes < RUNTIME_RPC_MAX_ENCODED_BYTES);
+    }
+
+    #[test]
+    fn app_ipc_accepts_compressed_responses_larger_than_socket_io_budget() {
+        let response = json!({"items": vec!["plugin metadata"; 200_000]});
+        let encoded = encode_app_ipc_response("plugin/list", response);
+
+        assert_eq!(
+            encoded["__runtimeRpcEncoding"],
+            RUNTIME_RPC_COMPRESSED_ENCODING
+        );
+        assert!(encoded["rawBytes"].as_u64().unwrap() > 980_000);
+        assert!(encoded["payload"].as_str().unwrap().len() < APP_IPC_MAX_ENCODED_BYTES);
     }
 
     #[test]

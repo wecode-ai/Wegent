@@ -1,16 +1,14 @@
-import { listen } from '@tauri-apps/api/event'
 import { Box, Download, RefreshCw, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
   installExecutionEnvironment,
   listExecutionEnvironments,
   removeExecutionEnvironment,
   type ExecutionEnvironmentStatus,
-} from '@/tauri/executionEnvironments'
+} from '@/desktop/executionEnvironments'
 
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 
@@ -34,10 +32,6 @@ export function ExecutionEnvironmentsSettingsPage() {
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
-    if (!isTauriRuntime()) {
-      setLoading(false)
-      return
-    }
     try {
       setEnvironments(await listExecutionEnvironments())
       setError(null)
@@ -50,21 +44,8 @@ export function ExecutionEnvironmentsSettingsPage() {
 
   useEffect(() => {
     const initialRefresh = window.setTimeout(() => void refresh(), 0)
-    if (!isTauriRuntime()) {
-      return () => window.clearTimeout(initialRefresh)
-    }
-    let disposed = false
-    let unlisten: (() => void) | undefined
-    void listen('execution-environment-status-changed', () => {
-      if (!disposed) void refresh()
-    }).then(dispose => {
-      if (disposed) dispose()
-      else unlisten = dispose
-    })
     return () => {
       window.clearTimeout(initialRefresh)
-      disposed = true
-      unlisten?.()
     }
   }, [refresh])
 

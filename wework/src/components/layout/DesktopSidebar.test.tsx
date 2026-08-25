@@ -170,11 +170,11 @@ function renderSidebar(
   return render(tree)
 }
 
-function enableTauri() {
-  Object.defineProperty(window, '__TAURI_INTERNALS__', {
-    configurable: true,
-    value: {},
-  })
+function enableElectron() {
+  window.__WEWORK_RUNTIME_CONFIG__ = {
+    ...window.__WEWORK_RUNTIME_CONFIG__,
+    desktopHost: 'electron',
+  }
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,
     value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
@@ -205,7 +205,7 @@ describe('DesktopSidebar', () => {
   beforeEach(() => {
     experimentalFeatures.enabled = true
     localStorage.clear()
-    enableTauri()
+    enableElectron()
     setActiveKeybindings([])
     Element.prototype.scrollIntoView = vi.fn()
     vi.mocked(openLocalWorkspace).mockReset()
@@ -277,7 +277,6 @@ describe('DesktopSidebar', () => {
   })
 
   test('keeps the sidebar color stable across browser focus changes', () => {
-    Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
     renderSidebar()
     const sidebar = screen.getByTestId('desktop-sidebar')
 
@@ -289,10 +288,7 @@ describe('DesktopSidebar', () => {
   })
 
   test('keeps the shared right border and forces an opaque sidebar on Windows', () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+    enableElectron()
     Object.defineProperty(navigator, 'userAgent', {
       configurable: true,
       value:

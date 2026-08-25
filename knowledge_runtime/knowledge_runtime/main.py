@@ -12,12 +12,12 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-
-from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
 from knowledge_runtime.api.router import router
 from knowledge_runtime.config import get_settings
 from knowledge_runtime.core.logging import setup_logging
 from knowledge_runtime.middleware.auth import require_internal_service_token_configured
+
+from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
 from shared.models import RemoteRagError
 
 logger = logging.getLogger(__name__)

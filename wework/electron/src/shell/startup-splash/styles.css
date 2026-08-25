@@ -1,0 +1,179 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  background: transparent;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+}
+
+body {
+  display: grid;
+  place-items: center;
+}
+
+.splash {
+  position: relative;
+  display: flex;
+  width: 392px;
+  height: 232px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  overflow: hidden;
+  color: #171717;
+  border: 1px solid rgb(23 23 23 / 8%);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 50% 0%, rgb(134 59 255 / 13%), transparent 52%),
+    rgb(250 250 250 / 96%);
+  box-shadow:
+    0 24px 64px rgb(0 0 0 / 20%),
+    inset 0 1px 0 rgb(255 255 255 / 70%);
+  -webkit-app-region: drag;
+}
+
+.brand-mark {
+  position: relative;
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+}
+
+.brand-mark img {
+  position: relative;
+  z-index: 1;
+  width: 48px;
+  height: 46px;
+  filter: drop-shadow(0 8px 18px rgb(126 20 255 / 22%));
+  animation: logo-breathe 1.8s ease-in-out infinite;
+}
+
+.brand-glow {
+  position: absolute;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: rgb(134 59 255 / 14%);
+  filter: blur(12px);
+  animation: glow-breathe 1.8s ease-in-out infinite;
+}
+
+h1 {
+  margin: 14px 0 22px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.loading-track {
+  width: 128px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(23 23 23 / 8%);
+}
+
+.loading-bar {
+  display: block;
+  width: 44%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #863bff, #47bfff);
+  animation: loading-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes logo-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+
+  50% {
+    transform: translateY(-2px) scale(1.025);
+  }
+}
+
+@keyframes glow-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.86);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes loading-slide {
+  0% {
+    transform: translateX(-115%);
+  }
+
+  50% {
+    transform: translateX(75%);
+  }
+
+  100% {
+    transform: translateX(235%);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .splash {
+    color: #f5f5f5;
+    border-color: rgb(255 255 255 / 10%);
+    background:
+      radial-gradient(circle at 50% 0%, rgb(134 59 255 / 20%), transparent 52%), rgb(23 23 23 / 96%);
+    box-shadow:
+      0 24px 64px rgb(0 0 0 / 45%),
+      inset 0 1px 0 rgb(255 255 255 / 8%);
+  }
+
+  .loading-track {
+    background: rgb(255 255 255 / 12%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-mark img,
+  .brand-glow {
+    animation: none;
+  }
+
+  .loading-bar {
+    width: 100%;
+    animation: loading-pulse 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes loading-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}

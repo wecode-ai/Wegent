@@ -1006,10 +1006,11 @@ export function DesktopWorkbenchLayout({
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         {!routeWorkItemsOpen && <WorkbenchBackground />}
-        {!settingsOpen &&
+        {routeActive &&
+          !settingsOpen &&
           !routeWorkItemsOpen &&
           renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
-        {!settingsOpen && !routeWorkItemsOpen && effectiveSidebarCollapsed && (
+        {routeActive && !settingsOpen && !routeWorkItemsOpen && effectiveSidebarCollapsed && (
           <>
             <div
               data-testid="desktop-sidebar-hover-edge"

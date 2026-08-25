@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "Release channel. Beta users receive both Beta and stable updates."
+        description: "Release channel"
         type: choice
         options:
           - stable
@@ -12,14 +12,15 @@ on:
         required: true
         default: stable
       version:
-        description: "Optional stable version override, for example 1.2.3. Beta versions are always generated automatically."
+        description: "Optional stable version override, for example 1.2.3"
         type: string
         required: false
       publish_release:
-        description: "Create the formal GitHub Release. Leave disabled to build test artifacts only."
+        description: "Create the formal GitHub Release"
         type: boolean
         required: false
         default: false
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -32,11 +33,10 @@ jobs:
     name: Prepare build
     runs-on: ubuntu-latest
     outputs:
-      release_tag: ${{ steps.version.outputs.release_tag }}
       release_sha: ${{ steps.version-files.outputs.release_sha }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
       version: ${{ steps.version.outputs.value }}
       channel: ${{ steps.version.outputs.channel }}
-      prerelease: ${{ steps.version.outputs.prerelease }}
       publish_release: ${{ steps.version.outputs.publish_release }}
 
     steps:
@@ -56,93 +56,37 @@ jobs:
 
       - name: Resolve Wework release version
         id: version
-        shell: bash
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
           INPUT_CHANNEL: ${{ github.event.inputs.channel || 'stable' }}
-          PUBLISH_RELEASE: ${{ github.event_name == 'push' || github.event.inputs.publish_release == 'true' }}
+          PUBLISH_RELEASE: ${{ github.event.inputs.publish_release == 'true' }}
         run: node wework/scripts/resolve-release-version.mjs
 
       - name: Commit Wework version files
         id: version-files
-        shell: bash
         env:
           PUBLISH_RELEASE: ${{ steps.version.outputs.publish_release }}
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises'
 
-          sync_version_files() {
-            python3 - <<'PY'
-          import json
-          import os
-          import re
-          from pathlib import Path
-
-          version = os.environ["RELEASE_VERSION"]
-
-          package_path = Path("wework/package.json")
-          package_data = json.loads(package_path.read_text(encoding="utf-8"))
-          package_data["version"] = version
-          package_path.write_text(
-              json.dumps(package_data, ensure_ascii=False, indent=2) + "\n",
-              encoding="utf-8",
-          )
-
-          tauri_config_path = Path("wework/src-tauri/tauri.conf.json")
-          tauri_config = json.loads(tauri_config_path.read_text(encoding="utf-8"))
-          tauri_config["version"] = version
-          tauri_config_path.write_text(
-              json.dumps(tauri_config, ensure_ascii=False, indent=2) + "\n",
-              encoding="utf-8",
-          )
-
-          cargo_toml_path = Path("wework/src-tauri/Cargo.toml")
-          cargo_toml = cargo_toml_path.read_text(encoding="utf-8")
-          cargo_toml = re.sub(
-              r'(?m)^version = "[^"]+"',
-              f'version = "{version}"',
-              cargo_toml,
-              count=1,
-          )
-          cargo_toml_path.write_text(cargo_toml, encoding="utf-8")
-
-          cargo_lock_path = Path("wework/src-tauri/Cargo.lock")
-          cargo_lock = cargo_lock_path.read_text(encoding="utf-8")
-          cargo_lock = re.sub(
-              r'(?ms)(\[\[package\]\]\nname = "app"\nversion = ")[^"]+(")',
-              rf'\g<1>{version}\2',
-              cargo_lock,
-              count=1,
-          )
-          cargo_lock_path.write_text(cargo_lock, encoding="utf-8")
-          PY
+          const version = process.env.RELEASE_VERSION
+          for (const path of ['wework/package.json', 'wework/electron/package.json']) {
+            const manifest = JSON.parse(await readFile(path, 'utf8'))
+            manifest.version = version
+            await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`)
           }
+          NODE
 
-          if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
-            sync_version_files
-            if ! git diff --quiet -- wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock; then
-              echo "Error: tag release version files do not match ${RELEASE_VERSION}. Update the files before creating the tag." >&2
-              git diff -- wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock >&2
-              exit 1
-            fi
+          if [[ "$PUBLISH_RELEASE" != "true" ]]; then
+            git checkout -- wework/package.json wework/electron/package.json
             echo "release_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [[ "${PUBLISH_RELEASE}" != "true" ]]; then
-            echo "release_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [[ "${GITHUB_REF_TYPE:-}" != "branch" ]]; then
-            echo "release_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          sync_version_files
-          if git diff --quiet -- wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock; then
+          if git diff --quiet -- wework/package.json wework/electron/package.json; then
             echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -150,79 +94,53 @@ jobs:
           app_user_id="$(gh api "/users/${{ steps.release-app-token.outputs.app-slug }}[bot]" --jq .id)"
           git config user.name "${{ steps.release-app-token.outputs.app-slug }}[bot]"
           git config user.email "${app_user_id}+${{ steps.release-app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
-          git add wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock
+          git add wework/package.json wework/electron/package.json
           git commit -m "chore(wework): bump app version to ${RELEASE_VERSION}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
           echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Create or update GitHub Release
         if: steps.version.outputs.publish_release == 'true'
-        shell: bash
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
           RELEASE_SHA: ${{ steps.version-files.outputs.release_sha }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
           RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
         run: |
           set -euo pipefail
-          release_title="Wework $RELEASE_VERSION"
-          if [ "$RELEASE_CHANNEL" = "beta" ]; then
-            release_title="$release_title Beta"
-          fi
-          release_notes="$(mktemp)"
-          generated_notes="$(mktemp)"
-          previous_tag="$(node wework/scripts/resolve-previous-release-tag.mjs)"
-
-          if [ -n "$previous_tag" ]; then
-            export PREVIOUS_TAG="$previous_tag"
-          fi
-
-          node wework/scripts/generate-release-notes.mjs > "$generated_notes"
-
-          if [ ! -s "$generated_notes" ]; then
-            echo "- No Wework app bundle changes detected under \`wework/\` or \`executor/\` since the previous Wework release." > "$generated_notes"
-          fi
-
-          {
-            echo "## Changes"
-            echo ""
-            if [ -n "$previous_tag" ]; then
-              echo "Changes under \`wework/\` or \`executor/\` since \`$previous_tag\`."
-            else
-              echo "Initial Wework release changes under \`wework/\` or \`executor/\`."
-            fi
-            echo ""
-            cat "$generated_notes"
-          } > "$release_notes"
-
+          title="Wework $RELEASE_VERSION"
+          [[ "$RELEASE_CHANNEL" == "beta" ]] && title="$title Beta"
+          notes="$(mktemp)"
+          node wework/scripts/generate-release-notes.mjs > "$notes"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" \
-              --title "$release_title" \
-              --notes-file "$release_notes"
+            gh release edit "$RELEASE_TAG" --title "$title" --notes-file "$notes"
           else
             gh release create "$RELEASE_TAG" \
               --target "$RELEASE_SHA" \
-              --title "$release_title" \
-              --notes-file "$release_notes" \
+              --title "$title" \
+              --notes-file "$notes" \
               --draft
           fi
 
-  build-macos:
-    name: Build macOS ${{ matrix.arch }}
-    runs-on: macos-14
-    timeout-minutes: 90
+  build:
+    name: Build ${{ matrix.name }}
     needs: prepare-release
-
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: arm64
-            rust_target: aarch64-apple-darwin
-          - arch: x64
-            rust_target: x86_64-apple-darwin
+          - name: macOS
+            runner: macos-14
+            artifact: macos
+          - name: Windows
+            runner: windows-latest
+            artifact: windows
+          - name: Linux
+            runner: ubuntu-latest
+            artifact: linux
 
     steps:
       - name: Checkout code
@@ -230,411 +148,40 @@ jobs:
         with:
           ref: ${{ needs.prepare-release.outputs.release_sha }}
 
-      - name: Install Rosetta 2
-        if: matrix.arch == 'x64'
-        run: |
-          if ! /usr/bin/pgrep -q oahd; then
-            sudo softwareupdate --install-rosetta --agree-to-license || true
-          fi
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-        with:
-          targets: ${{ matrix.rust_target }}
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          architecture: ${{ matrix.arch }}
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Cache Cargo sources
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-wework-app-cargo-sources-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-wework-app-cargo-sources-v2-
-
-      - name: Build local executor sidecar
-        working-directory: executor
-        run: |
-          set -euo pipefail
-          cargo build --release --locked --target "${{ matrix.rust_target }}"
-          binary="target/${{ matrix.rust_target }}/release/wegent-executor"
-          mkdir -p dist
-          cp "$binary" dist/wegent-executor
-          chmod 0755 dist/wegent-executor
-          dist/wegent-executor --version
+      - name: Install Wework Electron dependencies
+        run: pnpm --dir wework/electron install --frozen-lockfile
 
       - name: Prepare bundled sidecars
         working-directory: wework
-        env:
-          WEWORK_CODEX_TARGET: ${{ matrix.rust_target }}
-          WEWORK_DWS_TARGET: ${{ matrix.rust_target }}
         run: |
-          pnpm run prepare:codex
+          pnpm run prepare:codex --materialize
           pnpm run prepare:dws
 
-      - name: Sync Wework version files
-        working-directory: wework
+      - name: Build Electron application
         env:
-          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import os
-          import re
-          from pathlib import Path
-
-          version = os.environ["RELEASE_VERSION"]
-
-          package_path = Path("package.json")
-          package_data = json.loads(package_path.read_text(encoding="utf-8"))
-          package_data["version"] = version
-          package_path.write_text(
-              json.dumps(package_data, ensure_ascii=False, indent=2) + "\n",
-              encoding="utf-8",
-          )
-
-          tauri_config_path = Path("src-tauri/tauri.conf.json")
-          tauri_config = json.loads(tauri_config_path.read_text(encoding="utf-8"))
-          tauri_config["version"] = version
-          tauri_config_path.write_text(
-              json.dumps(tauri_config, ensure_ascii=False, indent=2) + "\n",
-              encoding="utf-8",
-          )
-
-          cargo_toml_path = Path("src-tauri/Cargo.toml")
-          cargo_toml = cargo_toml_path.read_text(encoding="utf-8")
-          cargo_toml = re.sub(
-              r'(?m)^version = "[^"]+"',
-              f'version = "{version}"',
-              cargo_toml,
-              count=1,
-          )
-          cargo_toml_path.write_text(cargo_toml, encoding="utf-8")
-
-          cargo_lock_path = Path("src-tauri/Cargo.lock")
-          cargo_lock = cargo_lock_path.read_text(encoding="utf-8")
-          cargo_lock = re.sub(
-              r'(?ms)(\[\[package\]\]\nname = "app"\nversion = ")[^"]+(")',
-              rf'\g<1>{version}\2',
-              cargo_lock,
-              count=1,
-          )
-          cargo_lock_path.write_text(cargo_lock, encoding="utf-8")
-          PY
-
-      - name: Import Apple signing certificate
-        shell: bash
-        env:
-          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-
-          for required_name in \
-            MACOS_CERTIFICATE_BASE64 \
-            MACOS_CERTIFICATE_PASSWORD \
-            MACOS_SIGNING_IDENTITY \
-            APPLE_TEAM_ID; do
-            if [ -z "${!required_name:-}" ]; then
-              echo "Missing GitHub secret: $required_name" >&2
-              exit 1
-            fi
-          done
-
-          certificate_path="$RUNNER_TEMP/wework-signing-certificate.p12"
-          keychain_path="$RUNNER_TEMP/wework-signing.keychain-db"
-          keychain_password="$(openssl rand -hex 32)"
-          cleanup_certificate() {
-            rm -f "$certificate_path"
-          }
-          trap cleanup_certificate EXIT
-
-          printf '%s' "$MACOS_CERTIFICATE_BASE64" | base64 -D > "$certificate_path"
-          chmod 0600 "$certificate_path"
-          security create-keychain -p "$keychain_password" "$keychain_path"
-          security set-keychain-settings -lut 21600 "$keychain_path"
-          security unlock-keychain -p "$keychain_password" "$keychain_path"
-          security import "$certificate_path" \
-            -k "$keychain_path" \
-            -P "$MACOS_CERTIFICATE_PASSWORD" \
-            -A \
-            -t cert \
-            -f pkcs12
-          security set-key-partition-list \
-            -S apple-tool:,apple: \
-            -s \
-            -k "$keychain_password" \
-            "$keychain_path"
-          security list-keychains -d user -s "$keychain_path"
-
-          imported_identity="$(
-            security find-identity -v -p codesigning "$keychain_path" \
-              | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' \
-              | head -n 1
-          )"
-          if [ -z "$imported_identity" ]; then
-            echo "The imported p12 does not contain a Developer ID Application identity." >&2
-            exit 1
-          fi
-          if [ "$imported_identity" != "$MACOS_SIGNING_IDENTITY" ]; then
-            echo "The imported signing identity does not match MACOS_SIGNING_IDENTITY." >&2
-            exit 1
-          fi
-          if [[ "$imported_identity" != *"($APPLE_TEAM_ID)" ]]; then
-            echo "The imported signing identity does not belong to APPLE_TEAM_ID." >&2
-            exit 1
-          fi
-
-          echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
-          echo "MACOS_SIGNING_IDENTITY=$imported_identity" >> "$GITHUB_ENV"
-
-      - name: Build Wework app bundle
-        working-directory: wework
-        env:
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-          VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
           VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
-        run: |
-          set -euo pipefail
-          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            echo "Missing GitHub secret: TAURI_SIGNING_PRIVATE_KEY" >&2
-            exit 1
-          fi
-          if [ -z "${TAURI_UPDATER_PUBKEY:-}" ]; then
-            echo "Missing GitHub secret: TAURI_UPDATER_PUBKEY" >&2
-            exit 1
-          fi
+          VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+        run: pnpm --filter wework ai:verify:electron:build
 
-          source scripts/lib/wework-macos-signing.sh
-          wework_sign_prepared_codex_macos_binaries \
-            "$PWD" \
-            "${{ matrix.rust_target }}" \
-            "$MACOS_SIGNING_IDENTITY"
-          export APPLE_SIGNING_IDENTITY="$MACOS_SIGNING_IDENTITY"
-
-          config_override="$(mktemp "$PWD/src-tauri/tauri.ci.XXXXXX.json")"
-          cleanup() {
-            rm -f "$config_override"
-          }
-          trap cleanup EXIT
-          CONFIG_OVERRIDE="$config_override" \
-          BASE_CONFIG="$PWD/src-tauri/tauri.conf.json" \
-          VERSION="${{ needs.prepare-release.outputs.version }}" \
-          UPDATER_ENDPOINT="https://github.com/${GH_REPO}/releases/download/wework-updater/{{target}}-{{arch}}.json" \
-          UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
-          SIGNING_IDENTITY="$MACOS_SIGNING_IDENTITY" \
-          ENABLE_INSECURE_TRANSPORT="false" \
-          node scripts/generate-release-config.mjs
-          pnpm exec tauri build \
-            --target "${{ matrix.rust_target }}" \
-            --bundles app,dmg \
-            --features release-devtools \
-            --config "$config_override"
-
-      - name: Sign and notarize macOS disk image
-        shell: bash
-        env:
-          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        run: |
-          set -euo pipefail
-
-          for required_name in APPLE_API_KEY_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER; do
-            if [ -z "${!required_name:-}" ]; then
-              echo "Missing GitHub secret: $required_name" >&2
-              exit 1
-            fi
-          done
-
-          dmg_source="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -type f | sort | tail -1)"
-          if [ -z "$dmg_source" ]; then
-            echo "No .dmg bundle found for signing and notarization." >&2
-            exit 1
-          fi
-
-          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-          notary_result_path="$RUNNER_TEMP/notary-result-${{ matrix.arch }}.json"
-          cleanup_notary_key() {
-            rm -f "$api_key_path"
-          }
-          trap cleanup_notary_key EXIT
-
-          printf '%s' "$APPLE_API_KEY_BASE64" | base64 -D > "$api_key_path"
-          chmod 0600 "$api_key_path"
-
-          codesign --force \
-            --timestamp \
-            --keychain "$MACOS_KEYCHAIN_PATH" \
-            --sign "$MACOS_SIGNING_IDENTITY" \
-            "$dmg_source"
-          codesign --verify --strict --verbose=2 "$dmg_source"
-
-          set +e
-          xcrun notarytool submit "$dmg_source" \
-            --key "$api_key_path" \
-            --key-id "$APPLE_API_KEY_ID" \
-            --issuer "$APPLE_API_ISSUER" \
-            --wait \
-            --output-format json > "$notary_result_path"
-          notary_exit_code=$?
-          set -e
-
-          cat "$notary_result_path"
-          if ! jq -e . "$notary_result_path" >/dev/null; then
-            echo "Apple notarization returned an invalid response." >&2
-            exit 1
-          fi
-          submission_id="$(jq -r '.id // empty' "$notary_result_path")"
-          notary_status="$(jq -r '.status // empty' "$notary_result_path")"
-          if [ "$notary_exit_code" -ne 0 ] || [ "$notary_status" != "Accepted" ]; then
-            if [ -n "$submission_id" ]; then
-              xcrun notarytool log "$submission_id" \
-                --key "$api_key_path" \
-                --key-id "$APPLE_API_KEY_ID" \
-                --issuer "$APPLE_API_ISSUER" || true
-            fi
-            echo "Apple notarization did not accept the DMG." >&2
-            exit 1
-          fi
-
-          xcrun stapler staple "$dmg_source"
-          xcrun stapler validate "$dmg_source"
-          {
-            echo "APPLE_NOTARY_SUBMISSION_ID=$submission_id"
-            echo "APPLE_NOTARY_STATUS=$notary_status"
-          } >> "$GITHUB_ENV"
-
-      - name: Verify and collect release assets
+      - name: Resolve packaged application
         id: package
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+          ARTIFACT_PLATFORM: ${{ matrix.artifact }}
         run: |
           set -euo pipefail
-          archive_source="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -maxdepth 1 -name '*.app.tar.gz' -type f | sort | tail -1)"
-          if [ -z "$archive_source" ]; then
-            echo "No updater .app.tar.gz archive found" >&2
+          package_dir="$(find wework/electron/release -mindepth 1 -maxdepth 1 -type d -name 'WeWork-*' -print -quit)"
+          if [[ -z "$package_dir" ]]; then
+            echo "Electron package directory was not produced" >&2
             exit 1
           fi
-          signature_source="$archive_source.sig"
-          if [ ! -f "$signature_source" ]; then
-            echo "No updater signature found: $signature_source" >&2
-            exit 1
-          fi
-
-          dmg_source="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -type f | sort | tail -1)"
-          if [ -z "$dmg_source" ]; then
-            echo "No .dmg bundle found" >&2
-            exit 1
-          fi
-          hdiutil verify "$dmg_source"
-
-          mount_dir="$RUNNER_TEMP/wework-dmg-${{ matrix.arch }}"
-          rm -rf "$mount_dir"
-          mkdir -p "$mount_dir"
-          cleanup_mount() {
-            hdiutil detach "$mount_dir" -quiet || true
-          }
-          trap cleanup_mount EXIT
-
-          hdiutil attach "$dmg_source" -mountpoint "$mount_dir" -nobrowse -readonly
-          app_path="$(find "$mount_dir" -maxdepth 1 -name '*.app' -type d | sort | tail -1)"
-          if [ -z "$app_path" ]; then
-            echo "No .app bundle found inside DMG" >&2
-            exit 1
-          fi
-          codesign --verify --deep --strict --verbose=2 "$app_path"
-          codesign --display --verbose=4 "$app_path"
-          spctl --assess --type execute --verbose=2 "$app_path"
-          spctl --assess \
-            --type open \
-            --context context:primary-signature \
-            --verbose=2 \
-            "$dmg_source"
-          cleanup_mount
-          trap - EXIT
-
-          artifact_dir="$RUNNER_TEMP/wework-macos-${{ matrix.arch }}"
-          mkdir -p "$artifact_dir"
-          dmg_path="$artifact_dir/WeWork_${{ needs.prepare-release.outputs.version }}_macos_${{ matrix.arch }}.dmg"
-          archive_path="$artifact_dir/WeWork_${{ needs.prepare-release.outputs.version }}_macos_${{ matrix.arch }}.app.tar.gz"
-          signature_path="$archive_path.sig"
-          cp "$dmg_source" "$dmg_path"
-          cp "$archive_source" "$archive_path"
-          cp "$signature_source" "$signature_path"
-          runtime_publish_dir="$artifact_dir/runtime-assets"
-          mkdir -p "$runtime_publish_dir"
-          node <<'NODE'
-          const fs = require('fs')
-          const path = require('path')
-          const catalog = require('./wework/src-tauri/bundled-harness-runtime/runtimes.json')
-          const source = 'wework/node_modules/.cache/harness-runtime-assets'
-          const destination = process.env.RUNTIME_PUBLISH_DIR
-          for (const runtime of catalog.runtimes) {
-            fs.copyFileSync(
-              path.join(source, runtime.assetName),
-              path.join(destination, runtime.assetName)
-            )
-            const descriptorName = runtime.assetName.replace(/\.tar\.gz$/, '.json')
-            fs.copyFileSync(
-              path.join(source, descriptorName),
-              path.join(destination, descriptorName)
-            )
-          }
-          NODE
-          node_runtime_asset_name="$(node -p "require('./wework/src-tauri/bundled-execution-runtimes/node.json').assetName")"
-          node_runtime_source="wework/node_modules/.cache/execution-runtime-assets/$node_runtime_asset_name"
-          node_runtime_path="$runtime_publish_dir/$node_runtime_asset_name"
-          cp "$node_runtime_source" "$node_runtime_path"
-          node_runtime_descriptor_path="$runtime_publish_dir/${node_runtime_asset_name%.tar.gz}.json"
-          cp "wework/src-tauri/bundled-execution-runtimes/node.json" "$node_runtime_descriptor_path"
-          shasum -a 256 "$dmg_path"
-          shasum -a 256 "$archive_path"
-          while IFS= read -r runtime_file; do
-            shasum -a 256 "$runtime_file"
-          done < <(find "$runtime_publish_dir" -maxdepth 1 -type f | sort)
-          {
-            echo "### Wework macOS ${{ matrix.arch }} release asset"
-            echo ""
-            echo "- DMG: $(basename "$dmg_path")"
-            echo "- Updater archive: $(basename "$archive_path")"
-            echo "- Signed with an Apple Developer ID Application certificate."
-            echo "- Apple notarization status: $APPLE_NOTARY_STATUS"
-            echo "- Apple notarization submission: $APPLE_NOTARY_SUBMISSION_ID"
-            echo "- Gatekeeper accepted both the application and DMG."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          {
-            echo "dmg_path=$dmg_path"
-            echo "archive_path=$archive_path"
-            echo "signature_path=$signature_path"
-            echo "runtime_publish_dir=$runtime_publish_dir"
-          } >> "$GITHUB_OUTPUT"
-        env:
-          RUNTIME_PUBLISH_DIR: ${{ runner.temp }}/wework-macos-${{ matrix.arch }}/runtime-assets
+          archive="$RUNNER_TEMP/WeWork_${RELEASE_VERSION}_${ARTIFACT_PLATFORM}.tar.gz"
+          tar -C "$(dirname "$package_dir")" -czf "$archive" "$(basename "$package_dir")"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
 
       - name: Create release app token
         if: needs.prepare-release.outputs.publish_release == 'true'
@@ -645,529 +192,17 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
-      - name: Upload macOS assets to GitHub Release
+      - name: Upload release asset
         if: needs.prepare-release.outputs.publish_release == 'true'
-        shell: bash
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-        run: |
-          set -euo pipefail
-          gh release upload "$RELEASE_TAG" \
-            "${{ steps.package.outputs.dmg_path }}" \
-            "${{ steps.package.outputs.archive_path }}" \
-            "${{ steps.package.outputs.signature_path }}" \
-            --clobber
-          release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
-          {
-            echo ""
-            echo "- Direct DMG and updater downloads are available from: $release_url"
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: gh release upload "$RELEASE_TAG" "${{ steps.package.outputs.archive }}" --clobber
 
-      - name: Publish changed runtime assets
-        if: needs.prepare-release.outputs.publish_release == 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          assets_json="$(mktemp)"
-          gh release view wework-updater --json assets > "$assets_json"
-
-          asset_exists() {
-            local name="$1"
-            jq -e --arg name "$name" 'any(.assets[]; .name == $name)' "$assets_json" >/dev/null
-          }
-
-          publish_pair() {
-            local descriptor_path="$1"
-            local asset_path="${descriptor_path%.json}.tar.gz"
-            local descriptor_name
-            local asset_name
-            descriptor_name="$(basename "$descriptor_path")"
-            asset_name="$(basename "$asset_path")"
-            if asset_exists "$asset_name" && asset_exists "$descriptor_name"; then
-              echo "Reusing published runtime: $asset_name"
-              return
-            fi
-            if asset_exists "$asset_name" || asset_exists "$descriptor_name"; then
-              echo "Runtime publication is incomplete for $asset_name" >&2
-              exit 1
-            fi
-            gh release upload wework-updater "$asset_path"
-            gh release upload wework-updater "$descriptor_path"
-          }
-
-          while IFS= read -r path; do
-            publish_pair "$path"
-          done < <(find "${{ steps.package.outputs.runtime_publish_dir }}" -maxdepth 1 -type f -name '*.json' | sort)
-
-      - name: Upload macOS test artifacts
+      - name: Upload test artifact
         if: needs.prepare-release.outputs.publish_release != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: wework-${{ needs.prepare-release.outputs.version }}-macos-${{ matrix.arch }}
-          path: |
-            ${{ steps.package.outputs.dmg_path }}
-            ${{ steps.package.outputs.archive_path }}
-            ${{ steps.package.outputs.signature_path }}
+          name: wework-${{ needs.prepare-release.outputs.version }}-${{ matrix.artifact }}
+          path: ${{ steps.package.outputs.archive }}
           if-no-files-found: error
-
-      - name: Remove temporary signing keychain
-        if: always()
-        shell: bash
-        run: |
-          if [ -n "${MACOS_KEYCHAIN_PATH:-}" ] && [ -f "$MACOS_KEYCHAIN_PATH" ]; then
-            security delete-keychain "$MACOS_KEYCHAIN_PATH"
-          fi
-
-  build-windows:
-    name: Build Windows x64
-    runs-on: windows-latest
-    timeout-minutes: 45
-    needs: prepare-release
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare-release.outputs.release_sha }}
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Cache Cargo sources
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-wework-app-cargo-sources-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-wework-app-cargo-sources-v2-
-
-      - name: Build local executor sidecar
-        shell: pwsh
-        working-directory: executor
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $env:RUSTFLAGS = '-C target-feature=+crt-static'
-          cargo build --release --locked --target x86_64-pc-windows-msvc
-          New-Item -ItemType Directory -Force ../wework/src-tauri/binaries | Out-Null
-          Copy-Item target/x86_64-pc-windows-msvc/release/wegent-executor.exe ../wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe
-          & ../wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe --version
-
-      - name: Prepare bundled sidecars
-        working-directory: wework
-        env:
-          WEWORK_CODEX_TARGET: x86_64-pc-windows-msvc
-          WEWORK_DWS_TARGET: x86_64-pc-windows-msvc
-        run: |
-          pnpm run prepare:codex
-          pnpm run prepare:dws
-
-      - name: Build Wework app bundle
-        shell: pwsh
-        working-directory: wework
-        env:
-          GH_REPO: ${{ github.repository }}
-          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
-          VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
-          VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Missing GitHub secret: TAURI_SIGNING_PRIVATE_KEY' }
-          if (-not $env:TAURI_UPDATER_PUBKEY) { throw 'Missing GitHub secret: TAURI_UPDATER_PUBKEY' }
-          $package = Get-Content package.json -Raw | ConvertFrom-Json
-          $package.version = $env:RELEASE_VERSION
-          $package | ConvertTo-Json -Depth 100 | Set-Content package.json -Encoding utf8
-
-          $configPath = Join-Path $env:RUNNER_TEMP 'tauri-windows-ci.json'
-          @{
-            version = $env:RELEASE_VERSION
-            bundle = @{ createUpdaterArtifacts = $true }
-            plugins = @{
-              updater = @{
-                endpoints = @("https://github.com/$env:GH_REPO/releases/download/wework-updater/{{target}}-{{arch}}.json")
-                pubkey = $env:TAURI_UPDATER_PUBKEY
-              }
-            }
-          } | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding utf8
-
-          pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --features release-devtools --config $configPath
-
-      - name: Verify and collect release assets
-        id: package
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $bundleDir = 'wework/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis'
-          $installer = Get-ChildItem $bundleDir -Filter '*.exe' | Sort-Object LastWriteTime | Select-Object -Last 1
-          if (-not $installer) { throw 'No Windows NSIS installer found' }
-          $signature = Get-Item "$($installer.FullName).sig" -ErrorAction Stop
-
-          $artifactDir = Join-Path $env:RUNNER_TEMP 'wework-windows-x64'
-          New-Item -ItemType Directory -Force $artifactDir | Out-Null
-          $installerPath = Join-Path $artifactDir 'WeWork_${{ needs.prepare-release.outputs.version }}_windows_x64-setup.exe'
-          $signaturePath = "$installerPath.sig"
-          Copy-Item $installer.FullName $installerPath
-          Copy-Item $signature.FullName $signaturePath
-          $runtimePublishDir = Join-Path $artifactDir 'runtime-assets'
-          New-Item -ItemType Directory -Force $runtimePublishDir | Out-Null
-          $runtimeCatalog = Get-Content 'wework/src-tauri/bundled-harness-runtime/runtimes.json' -Raw | ConvertFrom-Json
-          foreach ($runtime in $runtimeCatalog.runtimes) {
-            $runtimeSource = Join-Path 'wework/node_modules/.cache/harness-runtime-assets' $runtime.assetName
-            Copy-Item $runtimeSource (Join-Path $runtimePublishDir $runtime.assetName)
-            $descriptorName = $runtime.assetName -replace '\.tar\.gz$', '.json'
-            $descriptorSource = Join-Path 'wework/node_modules/.cache/harness-runtime-assets' $descriptorName
-            Copy-Item $descriptorSource (Join-Path $runtimePublishDir $descriptorName)
-          }
-          $nodeRuntimeMetadata = Get-Content 'wework/src-tauri/bundled-execution-runtimes/node.json' -Raw | ConvertFrom-Json
-          $nodeRuntimeSource = Join-Path 'wework/node_modules/.cache/execution-runtime-assets' $nodeRuntimeMetadata.assetName
-          $nodeRuntimePath = Join-Path $runtimePublishDir $nodeRuntimeMetadata.assetName
-          Copy-Item $nodeRuntimeSource $nodeRuntimePath
-          $nodeRuntimeDescriptorPath = Join-Path $runtimePublishDir ($nodeRuntimeMetadata.assetName -replace '\.tar\.gz$', '.json')
-          Copy-Item 'wework/src-tauri/bundled-execution-runtimes/node.json' $nodeRuntimeDescriptorPath
-          Get-FileHash $installerPath -Algorithm SHA256
-          Get-ChildItem $runtimePublishDir -File | Sort-Object Name | Get-FileHash -Algorithm SHA256
-
-          "installer_path=$installerPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "signature_path=$signaturePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "runtime_publish_dir=$runtimePublishDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-      - name: Create release app token
-        if: needs.prepare-release.outputs.publish_release == 'true'
-        id: release-app-token
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-
-      - name: Upload Windows assets to GitHub Release
-        if: needs.prepare-release.outputs.publish_release == 'true'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-        run: gh release upload $env:RELEASE_TAG '${{ steps.package.outputs.installer_path }}' '${{ steps.package.outputs.signature_path }}' --clobber
-
-      - name: Publish changed runtime assets
-        if: needs.prepare-release.outputs.publish_release == 'true'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $assets = gh release view wework-updater --json assets | ConvertFrom-Json
-          $published = @{}
-          foreach ($asset in $assets.assets) { $published[$asset.name] = $true }
-
-          foreach ($descriptor in Get-ChildItem '${{ steps.package.outputs.runtime_publish_dir }}' -Filter '*.json' -File | Sort-Object Name) {
-            $descriptorName = $descriptor.Name
-            $assetName = $descriptorName -replace '\.json$', '.tar.gz'
-            $assetPath = Join-Path $descriptor.DirectoryName $assetName
-            $hasDescriptor = $published.ContainsKey($descriptorName)
-            $hasAsset = $published.ContainsKey($assetName)
-            if ($hasDescriptor -and $hasAsset) {
-              Write-Host "Reusing published runtime: $assetName"
-              continue
-            }
-            if ($hasDescriptor -or $hasAsset) {
-              throw "Runtime publication is incomplete for $assetName"
-            }
-            gh release upload wework-updater $assetPath
-            gh release upload wework-updater $descriptor.FullName
-          }
-
-      - name: Upload Windows test artifacts
-        if: needs.prepare-release.outputs.publish_release != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: wework-${{ needs.prepare-release.outputs.version }}-windows-x64
-          path: |
-            ${{ steps.package.outputs.installer_path }}
-            ${{ steps.package.outputs.signature_path }}
-          if-no-files-found: error
-
-  publish-updater-manifest:
-    name: Publish updater manifest
-    runs-on: ubuntu-latest
-    if: needs.prepare-release.outputs.publish_release == 'true'
-    needs:
-      - prepare-release
-      - build-macos
-      - build-windows
-
-    steps:
-      - name: Create release app token
-        id: release-app-token
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-
-      - name: Generate latest.json
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
-        run: |
-          set -euo pipefail
-          work_dir="$(mktemp -d)"
-          gh release download "$RELEASE_TAG" \
-            --pattern "WeWork_${RELEASE_VERSION}_macos_*.app.tar.gz.sig" \
-            --dir "$work_dir"
-          gh release download "$RELEASE_TAG" \
-            --pattern "WeWork_${RELEASE_VERSION}_windows_x64-setup.exe.sig" \
-            --dir "$work_dir"
-
-          arm64_sig_path="$work_dir/WeWork_${RELEASE_VERSION}_macos_arm64.app.tar.gz.sig"
-          x64_sig_path="$work_dir/WeWork_${RELEASE_VERSION}_macos_x64.app.tar.gz.sig"
-          windows_x64_sig_path="$work_dir/WeWork_${RELEASE_VERSION}_windows_x64-setup.exe.sig"
-          if [ ! -f "$arm64_sig_path" ] || [ ! -f "$x64_sig_path" ] || [ ! -f "$windows_x64_sig_path" ]; then
-            echo "Missing updater signatures for latest.json" >&2
-            ls -la "$work_dir" >&2
-            exit 1
-          fi
-
-          export LATEST_JSON="$work_dir/latest.json"
-          export RELEASE_NOTES
-          RELEASE_NOTES="$(gh release view "$RELEASE_TAG" --json body --jq .body)"
-          export ARM64_URL="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}/WeWork_${RELEASE_VERSION}_macos_arm64.app.tar.gz"
-          export X64_URL="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}/WeWork_${RELEASE_VERSION}_macos_x64.app.tar.gz"
-          export WINDOWS_X64_URL="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}/WeWork_${RELEASE_VERSION}_windows_x64-setup.exe"
-          export ARM64_SIGNATURE
-          export X64_SIGNATURE
-          export WINDOWS_X64_SIGNATURE
-          ARM64_SIGNATURE="$(cat "$arm64_sig_path")"
-          X64_SIGNATURE="$(cat "$x64_sig_path")"
-          WINDOWS_X64_SIGNATURE="$(cat "$windows_x64_sig_path")"
-          python3 - <<'PY'
-          import json
-          import os
-          from datetime import datetime, timezone
-
-          data = {
-              "version": os.environ["RELEASE_VERSION"],
-              "notes": os.environ["RELEASE_NOTES"],
-              "pub_date": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-              "platforms": {
-                  "darwin-aarch64": {
-                      "signature": os.environ["ARM64_SIGNATURE"],
-                      "url": os.environ["ARM64_URL"],
-                  },
-                  "darwin-x86_64": {
-                      "signature": os.environ["X64_SIGNATURE"],
-                      "url": os.environ["X64_URL"],
-                  },
-                  "windows-x86_64": {
-                      "signature": os.environ["WINDOWS_X64_SIGNATURE"],
-                      "url": os.environ["WINDOWS_X64_URL"],
-                  },
-              },
-          }
-
-          with open(os.environ["LATEST_JSON"], "w", encoding="utf-8") as handle:
-              json.dump(data, handle, ensure_ascii=False, indent=2)
-              handle.write("\n")
-          PY
-
-          gh release upload "$RELEASE_TAG" "$work_dir/latest.json" --clobber
-          {
-            echo "### Wework updater manifest"
-            echo ""
-            echo "- Version release manifest: https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}/latest.json"
-            echo "- Version: ${RELEASE_VERSION}"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  publish-release:
-    name: Publish release
-    runs-on: ubuntu-latest
-    if: needs.prepare-release.outputs.publish_release == 'true'
-    needs:
-      - prepare-release
-      - build-macos
-      - build-windows
-      - publish-updater-manifest
-
-    steps:
-      - name: Create release app token
-        id: release-app-token
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-
-      - name: Publish GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
-          PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
-        run: |
-          set -euo pipefail
-          release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq .databaseId)"
-          make_latest="true"
-          if [ "$RELEASE_CHANNEL" = "beta" ]; then
-            make_latest="false"
-          fi
-          gh api \
-            --method PATCH \
-            "repos/${GH_REPO}/releases/${release_id}" \
-            --field draft=false \
-            --field prerelease="$PRERELEASE" \
-            --raw-field make_latest="$make_latest" >/dev/null
-          release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
-          echo "Published Wework ${RELEASE_CHANNEL} release and updater manifest: $release_url" >> "$GITHUB_STEP_SUMMARY"
-
-  publish-channel-manifests:
-    name: Publish channel manifests
-    runs-on: ubuntu-latest
-    if: needs.prepare-release.outputs.publish_release == 'true'
-    needs:
-      - prepare-release
-      - publish-release
-
-    steps:
-      - name: Create release app token
-        id: release-app-token
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-
-      - name: Checkout release scripts
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare-release.outputs.release_sha }}
-          persist-credentials: false
-
-      - name: Publish rolling update manifests
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
-          RELEASE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
-        run: |
-          set -euo pipefail
-          work_dir="$(mktemp -d)"
-          gh release download "$RELEASE_TAG" \
-            --pattern latest.json \
-            --dir "$work_dir"
-
-          if ! gh release view wework-updater >/dev/null 2>&1; then
-            gh release create wework-updater \
-              --target "$RELEASE_SHA" \
-              --title "Wework updater manifests" \
-              --notes "Rolling manifests for the stable and Beta update channels." \
-              --prerelease
-          fi
-
-          is_newer_than_channel() {
-            local channel="$1"
-            local asset_name="${channel}-darwin-aarch64.json"
-            local current_manifest="$work_dir/current-${channel}.json"
-            local assets_file="$work_dir/wework-updater-assets.json"
-            local required_asset
-
-            if ! gh release view wework-updater --json assets > "$assets_file"; then
-              echo "Failed to inspect existing Wework updater assets." >&2
-              return 2
-            fi
-            for required_asset in \
-              "${channel}-darwin-aarch64.json" \
-              "${channel}-darwin-x86_64.json" \
-              "${channel}-windows-x86_64.json"; do
-              if ! jq -e --arg name "$required_asset" \
-                'any(.assets[]; .name == $name)' "$assets_file" >/dev/null; then
-                return 0
-              fi
-            done
-            if ! gh release download wework-updater \
-              --pattern "$asset_name" \
-              --output "$current_manifest" \
-              --clobber; then
-              echo "Failed to download existing ${channel} channel manifest." >&2
-              return 2
-            fi
-
-            current_version="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$current_manifest")"
-            node wework/scripts/update-channel-manifests.mjs \
-              is-newer "$RELEASE_VERSION" "$current_version"
-          }
-
-          publish_channel() {
-            local channel="$1"
-            local comparison_status=0
-            is_newer_than_channel "$channel" || comparison_status=$?
-            case "$comparison_status" in
-              0) ;;
-              1)
-                echo "Keeping newer ${channel} channel manifest."
-                return
-                ;;
-              *)
-                return "$comparison_status"
-                ;;
-            esac
-
-            node wework/scripts/update-channel-manifests.mjs \
-              generate "$work_dir/latest.json" "$work_dir" "$channel"
-
-            gh release upload wework-updater \
-              "$work_dir/${channel}-darwin-aarch64.json" \
-              "$work_dir/${channel}-darwin-x86_64.json" \
-              "$work_dir/${channel}-windows-x86_64.json" \
-              --clobber
-          }
-
-          publish_channel "$RELEASE_CHANNEL"
-          if [ "$RELEASE_CHANNEL" = "stable" ]; then
-            publish_channel beta
-          fi
-
-          {
-            echo "### Wework update channels"
-            echo ""
-            echo "- Published release channel: ${RELEASE_CHANNEL}"
-            echo "- Rolling endpoint: https://github.com/${GH_REPO}/releases/download/wework-updater/{{target}}-{{arch}}.json"
-            if [ "$RELEASE_CHANNEL" = "stable" ]; then
-              echo "- Stable releases also advance the Beta channel when they are newer."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"

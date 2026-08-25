@@ -1,9 +1,9 @@
-import { invoke } from '@tauri-apps/api/core'
-import { isTauriRuntime } from './runtime-environment'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { isElectronRuntime } from './runtime-environment'
 
 const PERFORMANCE_DIAGNOSTICS_STORAGE_KEY = 'wework:perf-debug'
 const PERFORMANCE_DIAGNOSTICS_QUERY_PARAM = 'weworkPerf'
-const PROCESS_SNAPSHOT_COMMAND = 'get_wework_process_snapshot'
+const PROCESS_SNAPSHOT_COMMAND = 'e2e.getProcessSnapshot'
 const TOGGLE_SHORTCUT_KEY = 'P'
 const MAX_EVENTS = 300
 const SAMPLE_INTERVAL_MS = 5000
@@ -254,7 +254,7 @@ function installPeriodicSampler(
 }
 
 function installProcessDiagnosticsSampler(cleanupCallbacks: Array<() => void>) {
-  if (!isTauriRuntime()) return
+  if (!isElectronRuntime()) return
 
   void refreshProcessDiagnostics()
   const timer = window.setInterval(() => {
@@ -264,10 +264,12 @@ function installProcessDiagnosticsSampler(cleanupCallbacks: Array<() => void>) {
 }
 
 function refreshProcessDiagnostics(): Promise<ProcessDiagnosticsSnapshot | null> {
-  if (!isTauriRuntime()) return Promise.resolve(null)
+  if (!isElectronRuntime()) return Promise.resolve(null)
   if (processDiagnosticsInFlight) return processDiagnosticsInFlight
 
-  processDiagnosticsInFlight = invoke<ProcessDiagnosticsSnapshot>(PROCESS_SNAPSHOT_COMMAND)
+  processDiagnosticsInFlight = invokeDesktopHost<ProcessDiagnosticsSnapshot>(
+    PROCESS_SNAPSHOT_COMMAND
+  )
     .then(snapshot => {
       latestProcessDiagnostics = snapshot
       return snapshot

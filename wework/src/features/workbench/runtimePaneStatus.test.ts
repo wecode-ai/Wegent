@@ -99,6 +99,18 @@ describe('runtime pane status from task lifecycle machine', () => {
     expect(status.isWaitingForAssistantIndicator).toBe(false)
   })
 
+  test('shows the waiting indicator until a streaming turn has visible assistant output', () => {
+    const machine = new RuntimeTaskMachine(runtimeAddress)
+    machine.dispatch({ type: 'turn_started' })
+
+    const status = statusFor(machine, [assistantMessage('done')])
+
+    expect(status.taskExecution.running).toBe(true)
+    expect(status.isAssistantStreaming).toBe(true)
+    expect(status.activeAssistantMessage).toBeNull()
+    expect(status.isWaitingForAssistantIndicator).toBe(true)
+  })
+
   test('ignores a stale streaming message after the machine settles the turn', () => {
     const machine = new RuntimeTaskMachine(runtimeAddress)
     machine.dispatch({

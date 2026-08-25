@@ -23,7 +23,7 @@ These values are written only when the Terminal session is created. Existing Ter
 `wework/scripts/dev-mac-app.sh` reads the parent variables and generates debug instance variables:
 
 - `WEWORK_DEV_TITLE`: the short debug instance label. It uses `WEWORK_PARENT_TITLE` first, then the Git branch, then the worktree directory name.
-- `WEWORK_DEV_PORT`: the current Vite/Tauri dev server port.
+- `WEWORK_DEV_PORT`: the current Vite/ Electron dev server port.
 - `WEWORK_DEV_WORKTREE`: the current worktree root path.
 - `WEWORK_DEV_BRANCH`: the current Git branch, or empty when running on a detached HEAD.
 

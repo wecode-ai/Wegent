@@ -3,13 +3,16 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 
-const tauriCoreMock = vi.hoisted(() => ({
-  convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
-  invoke: vi.fn(),
-  isTauri: vi.fn(() => false),
+const runtimeMock = vi.hoisted(() => ({
+  electron: false,
 }))
-
-vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
+const desktopHostMock = vi.hoisted(() => ({
+  invokeDesktopHost: vi.fn(),
+}))
+vi.mock('@/api/dsh/desktopHost', () => desktopHostMock)
+vi.mock('@/lib/runtime-environment', () => ({
+  isElectronRuntime: () => runtimeMock.electron,
+}))
 
 interface PendingFetch {
   resolve: (response: Response) => void
@@ -60,6 +63,8 @@ describe('AttachmentImagePreview', () => {
   let fetchMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
+    runtimeMock.electron = false
+    desktopHostMock.invokeDesktopHost.mockReset()
     pendingFetches = []
     fetchMock = vi.fn(() => {
       let resolveFetch: (response: Response) => void = () => {}
@@ -133,6 +138,13 @@ describe('AttachmentImagePreview', () => {
   })
 
   test('lightbox loads the selected attachment when equal ids differ by local_path', async () => {
+    runtimeMock.electron = true
+    desktopHostMock.invokeDesktopHost.mockResolvedValue({
+      chunkBase64: Buffer.from('preview').toString('base64'),
+      bytesRead: 7,
+      eof: true,
+      size: 7,
+    })
     const first = localPathAttachment(1, '/a.png')
     const second = localPathAttachment(1, '/b.png')
     render(
@@ -159,7 +171,7 @@ describe('AttachmentImagePreview', () => {
     await waitFor(() => {
       expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
         'src',
-        'asset://localhost/a.png'
+        'blob:attachment-preview'
       )
     })
 
@@ -169,8 +181,59 @@ describe('AttachmentImagePreview', () => {
     await waitFor(() => {
       expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
         'src',
-        'asset://localhost/b.png'
+        'blob:attachment-preview'
       )
     })
+  })
+
+  test('loads an Electron local image through declared bounded file chunks', async () => {
+    runtimeMock.electron = true
+    const observe = vi.fn()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe = observe
+        disconnect = vi.fn()
+      }
+    )
+    const payload = Buffer.from('electron-preview')
+    desktopHostMock.invokeDesktopHost
+      .mockResolvedValueOnce({
+        chunkBase64: payload.subarray(0, 8).toString('base64'),
+        bytesRead: 8,
+        eof: false,
+        size: payload.length,
+      })
+      .mockResolvedValueOnce({
+        chunkBase64: payload.subarray(8).toString('base64'),
+        bytesRead: payload.length - 8,
+        eof: true,
+        size: payload.length,
+      })
+
+    render(previewElement(localPathAttachment(7, '/tmp/electron-image.png')))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-image')).toHaveAttribute('src', 'blob:attachment-preview')
+    })
+    expect(observe).not.toHaveBeenCalled()
+    expect(desktopHostMock.invokeDesktopHost).toHaveBeenNthCalledWith(
+      1,
+      'filesystem.readFileChunk',
+      {
+        path: '/tmp/electron-image.png',
+        offset: 0,
+        length: 512 * 1024,
+      }
+    )
+    expect(desktopHostMock.invokeDesktopHost).toHaveBeenNthCalledWith(
+      2,
+      'filesystem.readFileChunk',
+      {
+        path: '/tmp/electron-image.png',
+        offset: 8,
+        length: 512 * 1024,
+      }
+    )
   })
 })

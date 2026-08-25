@@ -37,6 +37,7 @@ import type {
   SmartAppsApi,
 } from '@/api/smartApps'
 import { ApiError } from '@/api/http'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import {
   harnessAppsApi,
   type HarnessAppInstallation,
@@ -53,16 +54,14 @@ import {
   type SmartAppDevelopmentInput,
 } from '@/features/harness-apps/SmartAppDevelopmentDialog'
 import { SmartAppPluginDialog } from '@/features/harness-apps/SmartAppPluginDialog'
-import {
-  queueSmartAppBuilder,
-  smartAppBuilderPrompt,
-} from '@/features/harness-apps/smartAppBuilder'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { useHarnessAppManagement } from '@/features/harness-apps/useHarnessAppManagement'
+import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { getLocalExecutorDeviceId, revealLocalFile } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
+import { ensureBundledPluginInstalled } from '@/desktop/localExecutor'
 import type { CreateProjectRequest, ProjectWithTasks } from '@/types/api'
 import type { ProjectMutationOptions } from '@/features/workbench/workbenchContextTypes'
 
@@ -513,19 +512,23 @@ export function SmartAppsMarketplacePage({
               'workbench.smart_apps_builder_intent_develop',
               '请在现有工作台上继续增量开发；先读取已有 manifest、依赖和 cordis.patch.yml。'
             )
-      await queueSmartAppBuilder({
+      await ensureBundledPluginInstalled('smart-app-builder')
+      const queued = queuePluginReferenceTrial({
+        pluginName: 'smart-app-builder',
+        marketplaceName: 'wework-personal',
         displayName: t('workbench.smart_apps_builder_name', '智能工作台开发助手'),
-        prompt: smartAppBuilderPrompt(
-          installation,
-          t('workbench.smart_apps_builder_directory_prefix', '智能工作台目录：'),
+        prompt: [
+          `${t('workbench.smart_apps_builder_directory_prefix', '智能工作台目录：')}${installation.packagePath}`,
           intentPrompt,
           t(
             'workbench.smart_apps_builder_completion',
             '完成后运行验证；需要分发时导出 ZIP，日常开发继续直接使用此目录。'
-          )
-        ),
+          ),
+        ].join('\n'),
+        openInNewChat: true,
         targetProject,
       })
+      if (!queued) throw new Error('Smart App Builder reference could not be queued')
       queueSmartAppDevelopmentPreview({
         installationId: installation.id,
         displayName: installation.manifest.displayName,
@@ -604,9 +607,14 @@ export function SmartAppsMarketplacePage({
   }
 
   async function linkSmartAppDirectory() {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const path = await open({ directory: true, multiple: false })
-    if (typeof path !== 'string') return
+    const selected = await invokeDesktopHost<{ canceled: boolean; filePaths: string[] }>(
+      'dialog.open',
+      {
+        properties: ['openDirectory', 'createDirectory'],
+      }
+    )
+    const path = selected.filePaths[0]
+    if (selected.canceled || !path) return
     setImporting(true)
     setError(null)
     try {
@@ -652,15 +660,17 @@ export function SmartAppsMarketplacePage({
   }
 
   async function chooseCreatedPackage() {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const path = await open({
-      multiple: false,
-      directory: false,
-      filters: [
-        { name: t('workbench.smart_apps_package', '智能工作台安装包'), extensions: ['zip'] },
-      ],
-    })
-    if (typeof path === 'string') await importCreatedPackage(path)
+    const selected = await invokeDesktopHost<{ canceled: boolean; filePaths: string[] }>(
+      'dialog.open',
+      {
+        properties: ['openFile'],
+        filters: [
+          { name: t('workbench.smart_apps_package', '智能工作台安装包'), extensions: ['zip'] },
+        ],
+      }
+    )
+    const path = selected.filePaths[0]
+    if (!selected.canceled && path) await importCreatedPackage(path)
   }
 
   async function dropCreatedPackage(event: DragEvent<HTMLElement>) {

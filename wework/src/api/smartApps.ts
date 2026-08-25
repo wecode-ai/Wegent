@@ -1,6 +1,4 @@
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import type { HttpClient } from './http'
-import { shouldUseTauriFetch } from './http'
 import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from './plugins'
 
 export interface SmartAppMarketplaceTag {
@@ -169,7 +167,7 @@ export function createSmartAppsApi(client: HttpClient) {
         metadata
       )
       try {
-        const transport = shouldUseTauriFetch() ? tauriFetch : globalThis.fetch.bind(globalThis)
+        const transport = globalThis.fetch.bind(globalThis)
         const upload = await transport(initialized.uploadUrl, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/zip' },

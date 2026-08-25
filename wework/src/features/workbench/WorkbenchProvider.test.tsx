@@ -1,6 +1,14 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createContext, StrictMode, useContext, useEffect, useState } from 'react'
+import {
+  createContext,
+  StrictMode,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LOCAL_USER } from '@/api/local/localSession'
@@ -101,7 +109,7 @@ vi.mock('@/api/plugins', () => ({
   }),
 }))
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   connectLocalExecutorToBackend: localExecutorMocks.connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend: localExecutorMocks.disconnectLocalExecutorFromBackend,
   ensureBundledPluginMarketplaceRegistered:
@@ -112,17 +120,17 @@ vi.mock('@/tauri/localExecutor', () => ({
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
 }))
 
-vi.mock('@/tauri/runtimeWorkSync', () => runtimeWorkSyncMocks)
+vi.mock('@/desktop/runtimeWorkSync', () => runtimeWorkSyncMocks)
 
-function setTauriRuntime() {
-  Object.defineProperty(window, '__TAURI_INTERNALS__', {
-    value: {},
-    configurable: true,
-  })
+function setElectronRuntime() {
+  window.__WEWORK_RUNTIME_CONFIG__ = {
+    ...window.__WEWORK_RUNTIME_CONFIG__,
+    desktopHost: 'electron',
+  }
 }
 
-function clearTauriRuntime() {
-  delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+function clearElectronRuntime() {
+  delete window.__WEWORK_RUNTIME_CONFIG__
 }
 
 function deferred<T>() {
@@ -771,6 +779,39 @@ function RuntimeTaskPinProbe() {
         }
       >
         unpin runtime task
+      </button>
+    </div>
+  )
+}
+
+function RuntimeTaskPinDuringRefreshProbe() {
+  const workbench = useWorkbench()
+  const pinRequestedRef = useRef(false)
+  const task = workbench.state.runtimeWork?.projects[0]?.deviceWorkspaces[0]?.tasks[0]
+  const automationTaskIds = buildAutomationTaskOptions(workbench.state.runtimeWork).map(
+    option => option.address.taskId
+  )
+
+  useLayoutEffect(() => {
+    if (!task || task.pinned || pinRequestedRef.current) return
+    pinRequestedRef.current = true
+    void workbench.setRuntimeTaskPinned({
+      deviceId: 'state-device',
+      threadId: 'thread-a',
+      pinned: true,
+    })
+  }, [task, workbench])
+
+  return (
+    <div>
+      <span data-testid="runtime-task-pin-state">{task?.pinned ? 'pinned' : 'unpinned'}</span>
+      <span data-testid="automation-task-options">{automationTaskIds.join('|') || 'none'}</span>
+      <button
+        type="button"
+        data-testid="refresh-runtime-work"
+        onClick={() => void workbench.refreshWorkLists()}
+      >
+        refresh runtime work
       </button>
     </div>
   )
@@ -1878,6 +1919,11 @@ function FollowUpProbe() {
       <span data-testid="queued-notices">
         {paneSession.queuedMessages.map(message => message.notice ?? '').join('|')}
       </span>
+      <span data-testid="queued-guidance-acceptance">
+        {paneSession.queuedMessages
+          .map(message => (message.awaitingGuidanceAcceptance ? 'pending' : 'accepted'))
+          .join('|')}
+      </span>
       <span data-testid="runtime-attachment-count">{workbench.projectChat.attachments.length}</span>
       <span data-testid="code-comment-context-count">{paneSession.codeCommentContexts.length}</span>
       <span data-testid="browser-annotation-command">
@@ -2177,7 +2223,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await i18n.changeLanguage('zh-CN')
     vi.useRealTimers()
     delete window.__WEWORK_RUNTIME_CONFIG__
-    clearTauriRuntime()
+    clearElectronRuntime()
     window.history.pushState({}, '', '/')
     localStorage.clear()
     sessionStorage.clear()
@@ -2200,8 +2246,9 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('bootstraps with local app services in local-first runtime mode', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     window.__WEWORK_RUNTIME_CONFIG__ = {
+      desktopHost: 'electron',
       runtimeMode: 'local-first',
     }
 
@@ -2277,6 +2324,65 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
     expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('pinned')
     expect(screen.getByTestId('automation-task-options')).toHaveTextContent('runtime-a')
+  })
+
+  test('pins a task exposed by refresh before the rendered runtime-work ref synchronizes', async () => {
+    const pinRequest = deferred<void>()
+    const refreshedRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: {
+            key: 'local:/workspace/project-alpha',
+            name: 'Wegent',
+            stateDeviceId: 'state-device',
+          },
+          deviceWorkspaces: [
+            {
+              deviceId: 'device-1',
+              workspacePath: '/workspace/project-alpha',
+              available: true,
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  threadId: 'thread-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Fresh automation target',
+                  runtime: 'codex',
+                  pinned: false,
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(createRuntimeWork({ projects: [], chats: [], totalTasks: 0 }))
+        .mockResolvedValue(refreshedRuntimeWork),
+      setRuntimeTaskPinned: vi.fn(() => pinRequest.promise),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeTaskPinDuringRefreshProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('refresh-runtime-work')).toBeInTheDocument())
+    await userEvent.click(screen.getByTestId('refresh-runtime-work'))
+
+    await waitFor(() => expect(runtimeWorkApi.setRuntimeTaskPinned).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('runtime-task-pin-state')).toHaveTextContent('pinned')
+    expect(screen.getByTestId('automation-task-options')).toHaveTextContent('runtime-a')
+
+    await act(async () => {
+      pinRequest.resolve()
+      await pinRequest.promise
+    })
   })
 
   test('rolls back a project task pin when executor persistence fails', async () => {
@@ -2543,8 +2649,9 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('keeps the runtime event subscription across connected user preference updates', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     window.__WEWORK_RUNTIME_CONFIG__ = {
+      desktopHost: 'electron',
       runtimeMode: 'local-first',
     }
     const user = {
@@ -2601,7 +2708,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('warms Codex composer apps once during workbench startup', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') {
@@ -2642,7 +2749,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('allows retained non-composer workbenches to skip Codex app prewarming', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') {
@@ -2742,7 +2849,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('clears composer plugin apps after plugin state refresh returns no current-device installs', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') {
@@ -2811,7 +2918,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('coalesces repeated local plugin change events into one composer refresh', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') {
@@ -2982,7 +3089,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<ProjectWorkPreferenceProbe />, services)
 
     await screen.findByText('select project 7 workspace 22')
-    setTauriRuntime()
+    setElectronRuntime()
     await userEvent.click(screen.getByText('select project 7 workspace 22'))
     await waitFor(() =>
       expect(
@@ -3218,7 +3325,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('starts a fresh blank chat with a requested local skill mentioned', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') {
@@ -3275,7 +3382,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('does not resolve local skills for a Backend-only skill chat', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') {
@@ -14544,6 +14651,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(cancelRuntimeTask).not.toHaveBeenCalled()
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
+    expect(screen.getByTestId('queued-guidance-acceptance')).toHaveTextContent('pending')
     expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
       'first message|working\n\nbefore '
     )
@@ -14562,6 +14670,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
+    expect(screen.getByTestId('queued-guidance-acceptance')).toHaveTextContent('accepted')
     expect(screen.getByTestId('runtime-open-blocks')).not.toHaveTextContent(
       'tool:conversation_guidance:done'
     )
@@ -15962,7 +16071,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('loads local skills and apps from Codex app-server', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') {

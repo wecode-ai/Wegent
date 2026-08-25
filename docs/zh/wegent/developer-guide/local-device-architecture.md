@@ -36,26 +36,26 @@ flowchart LR
 
 ### Wework 打包 App 本地优先通道
 
-打包后的 Wework Tauri App 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Tauri WebView 内，Tauri Rust 侧只作为 app 内部命令层存在。
+打包后的 Wework Electron app 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Electron renderer 内，Electron 主进程提供 app 内部命令层。
 
 本地优先模式只需要两个本机进程：
 
 ```mermaid
 flowchart LR
     subgraph "用户电脑"
-        APP["Wework Tauri App"]
+        APP["Wework Electron app"]
         UI["React UI"]
-        TAURI["Tauri Commands"]
+        ELECTRON["Electron IPC"]
         EX["Executor Sidecar"]
         FS["本地文件"]
     end
 
-    UI --> TAURI
-    TAURI <-->|"stdio JSONL"| EX
+    UI --> ELECTRON
+    ELECTRON <-->|"stdio JSONL"| EX
     EX --> FS
 ```
 
-Tauri 无参数启动 executor sidecar，并通过子进程 stdin/stdout 交换换行分隔 JSON。stdout 只承载协议响应和事件，诊断信息写入 stderr 和 `~/.wegent-executor/logs/executor.log`。App 自己启动的 sidecar 归 Tauri 进程管理：macOS/Linux 下会放入独立进程组，关闭或重启 App 时先发送 `SIGTERM`，短暂等待后再用 `SIGKILL` 清理剩余子进程；开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。Wework renderer 通过 Tauri command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
+Electron 无参数启动 executor sidecar，并通过子进程 stdin/stdout 交换换行分隔 JSON。stdout 只承载协议响应和事件，诊断信息写入 stderr 和 `~/.wegent-executor/logs/executor.log`。App 自己启动的 sidecar 归 Electron 进程管理：macOS/Linux 下会放入独立进程组，关闭或重启 App 时先发送 `SIGTERM`，短暂等待后再用 `SIGKILL` 清理剩余子进程；开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。Wework renderer 通过 Electron IPC command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
 
 stdio 生命周期由父子进程关系直接确定：写入失败、stdout EOF 或子进程退出才表示本地 IPC 失效。普通请求超时只结束对应请求，不销毁通道，因此系统休眠或调度延迟不会触发端口重连或误切换到其他 executor。
 
@@ -73,7 +73,7 @@ Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过�
 
 Wework 使用独立 Codex Home 隔离本地运行时配置。首次初始化时，用户可以把原生 Codex Home 中的配置、插件、技能和插件市场复制到该目录。初始化完成后，Wework 默认在 `[features]` 中写入 `apps = true`，使迁移后的插件 Apps 能力立即可用；用户之后在设置中明确关闭 Apps 时，后续普通启动不会覆盖该选择。
 
-Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。Tauri 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
+Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。 Electron 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
 
 ### 运行时任务与目标状态
 

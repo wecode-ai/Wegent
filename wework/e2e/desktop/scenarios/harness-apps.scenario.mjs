@@ -36,6 +36,8 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
 async function setExperimentalFeatures(control, enabled, uiTimeoutMs) {
   await control.command('navigate', 'body', { value: '/settings/general' })
   await control.command('waitFor', '[data-testid="general-experimental-features-toggle"]', {
+    enabled: true,
+    stableMs: 300,
     timeoutMs: uiTimeoutMs,
   })
   const expected = String(enabled)

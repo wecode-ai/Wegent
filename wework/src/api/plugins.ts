@@ -21,8 +21,6 @@ import type {
   PluginSubmissionItem,
 } from '@/types/api'
 import type { HttpClient } from './http'
-import { shouldUseTauriFetch } from './http'
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 
 export interface PluginShareUserSearchItem {
   id: number
@@ -181,9 +179,7 @@ export function createPluginApi(client: HttpClient) {
         }
       )
       try {
-        const uploadTransport = shouldUseTauriFetch()
-          ? tauriFetch
-          : globalThis.fetch.bind(globalThis)
+        const uploadTransport = globalThis.fetch.bind(globalThis)
         const upload = await uploadTransport(initialized.uploadUrl, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/zip' },

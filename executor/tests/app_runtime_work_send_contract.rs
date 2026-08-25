@@ -199,6 +199,10 @@ async fn runtime_task_forwards_all_local_project_roots_to_codex() {
         .find(|call| call["method"] == "thread/start")
         .expect("thread/start should be recorded");
     assert_eq!(thread_start["params"]["historyMode"], "paginated");
+    assert!(
+        calls.iter().all(|call| call["method"] != "thread/name/set"),
+        "new paginated threads must not use the unsupported legacy name mutation"
+    );
 
     let listed = handler
         .handle_runtime_rpc(json!({
@@ -953,7 +957,9 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_and_rejects_missi
         .expect("completed turn should fork");
     assert_eq!(forked["accepted"], true);
     assert_eq!(forked["source"]["taskId"], "source-task-1");
+    assert_eq!(forked["source"]["workspacePath"], "/tmp/project");
     assert_eq!(forked["target"]["taskId"], "thread-fork-1");
+    assert_eq!(forked["target"]["workspacePath"], "/tmp/project");
 
     let listed = handler
         .handle_runtime_rpc(json!({"method": "runtime.tasks.list", "payload": {}}))

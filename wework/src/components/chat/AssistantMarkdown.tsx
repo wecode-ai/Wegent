@@ -22,7 +22,7 @@ import { splitCodexInlineVisualizations } from '@/lib/codex-directives'
 import { openExternalUrl } from '@/lib/external-links'
 import { getRecognizedLink } from '@/lib/link-preview'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
 import { useAttachmentDownload } from './AttachmentDownloadContext'
@@ -109,7 +109,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     () => stripUnsupportedContentReferenceCitations(bufferedContent),
     [bufferedContent]
   )
-  const windowMarkdown = isTauriRuntime() && variant === 'default'
+  const windowMarkdown = isElectronRuntime() && variant === 'default'
   const contentParts = useMemo(() => {
     const parts = splitCodexInlineVisualizations(displayContent)
     return parts.flatMap<AssistantMarkdownPart>(part => {

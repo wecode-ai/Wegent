@@ -2,10 +2,13 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const OUTPUT_TIMEOUT_MS = 15_000
+const PROCESS_EXIT_TIMEOUT_MS = 10_000
+const weworkDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 function waitForOutput(stream, pattern, diagnostics = () => '') {
   return new Promise((resolveOutput, rejectOutput) => {
@@ -45,7 +48,7 @@ async function stopProcess(process) {
 }
 
 async function waitForProcessExit(pid) {
-  const deadline = Date.now() + 2_500
+  const deadline = Date.now() + PROCESS_EXIT_TIMEOUT_MS
   while (Date.now() < deadline) {
     try {
       process.kill(pid, 0)
@@ -103,9 +106,9 @@ chmodSync(output, 0o755)
 
     watcher = spawn(
       process.execPath,
-      [resolve('scripts/dev-executor-reload.mjs'), 'app-ipc-server'],
+      [join(weworkDirectory, 'scripts', 'dev-executor-reload.mjs'), 'app-ipc-server'],
       {
-        cwd: resolve('.'),
+        cwd: weworkDirectory,
         env: {
           ...process.env,
           CARGO_TARGET_DIR: targetDirectory,

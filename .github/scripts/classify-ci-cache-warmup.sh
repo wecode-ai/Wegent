@@ -7,7 +7,6 @@ declare -A changed=(
   [executor_rust]=false
   [node]=false
   [python]=false
-  [wework_rust]=false
   [wework_target]=false
 )
 
@@ -30,27 +29,29 @@ classify_path() {
       changed[executor_rust]=true
       changed[node]=true
       changed[python]=true
-      changed[wework_rust]=true
       ;;
     .github/workflows/e2e-tests.yml)
       changed[docker]=true
       changed[node]=true
       changed[python]=true
       ;;
-    .github/workflows/wework-e2e.yml | \
-      .github/scripts/install-wework-tauri-system-dependencies.sh)
+    .github/workflows/wework-e2e.yml)
       changed[node]=true
       changed[python]=true
-      changed[wework_rust]=true
       changed[wework_target]=true
       ;;
     .github/scripts/install-executor-rust-system-dependencies.sh)
       changed[executor_rust]=true
       ;;
     .github/claude-code-cli/* | frontend/src/* | package.json | \
-      pnpm-lock.yaml | pnpm-workspace.yaml | \
+      pnpm-workspace.yaml | \
       frontend/package.json | wework/package.json | packages/*/package.json)
       changed[node]=true
+      ;;
+    pnpm-lock.yaml | wework/electron/package.json | \
+      wework/electron/pnpm-lock.yaml)
+      changed[node]=true
+      changed[wework_target]=true
       ;;
     backend/uv.lock | executor_manager/uv.lock | \
       knowledge_engine/uv.lock | shared/uv.lock | \
@@ -73,13 +74,6 @@ classify_path() {
     frontend/e2e/fixtures/claudecode-executor/* | shared/assets/*)
       changed[docker]=true
       ;;
-    wework/src-tauri/Cargo.lock)
-      changed[wework_rust]=true
-      changed[wework_target]=true
-      ;;
-    wework/src-tauri/*)
-      changed[wework_rust]=true
-      ;;
   esac
 }
 
@@ -96,6 +90,6 @@ else
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-for key in docker executor_rust node python wework_rust wework_target; do
+for key in docker executor_rust node python wework_target; do
   printf '%s=%s\n' "$key" "${changed[$key]}" >> "$output_file"
 done

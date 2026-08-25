@@ -391,7 +391,7 @@ The right workspace **Temporary chat** feature starts a short side conversation 
 
 Maintenance rule: do not add UI fallbacks that insert temporary chats into the left task list, and do not fabricate rollout records for temporary threads in the executor. The primary path is `ephemeral + sideSource + direct_thread_id`.
 
-After changing this path, run `pnpm --filter wework e2e:desktop --segment temporary-chat`. The independent real-Tauri scenario holds an assistant response open, asserts that a regular follow-up stays above the Thinking indicator, switches the main conversation, and verifies that both temporary-chat user messages are restored after switching back. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
+After changing this path, run `pnpm --filter wework e2e:desktop --segment temporary-chat`. The independent real Electron scenario holds an assistant response open, asserts that a regular follow-up stays above the Thinking indicator, switches the main conversation, and verifies that both temporary-chat user messages are restored after switching back. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
 
 ## Top-Level Page Transitions
 

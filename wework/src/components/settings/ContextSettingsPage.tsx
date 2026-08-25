@@ -14,7 +14,7 @@ import {
   getAppPreferences,
   updateAppPreferences,
   type AppPreferences,
-} from '@/tauri/appPreferences'
+} from '@/desktop/appPreferences'
 import { CodexPersonalitySettings } from './CodexPersonalitySettings'
 
 export function ContextSettingsPage() {

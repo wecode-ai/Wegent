@@ -511,19 +511,27 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
       'click',
       '[data-testid="automation-conversation-mode-option-continue_thread"]'
     )
+    await control.command('waitFor', '[data-testid="automation-target-task-select"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     await control.command('click', '[data-testid="automation-target-task-select"]')
-    await waitForSnapshot(
+    const targetTaskSnapshot = await waitForSnapshot(
       control,
       snapshot =>
-        snapshot.testIds.includes(
-          `automation-target-task-select-option-local-device:${manualTaskId}`
-        ),
+        snapshot.testIds.filter(
+          testId =>
+            testId.startsWith('automation-target-task-select-option-') &&
+            testId.endsWith(`:${manualTaskId}`)
+        ).length === 1,
       'The existing-task selector did not list the pinned local task'
     )
-    await control.command(
-      'click',
-      `[data-testid="automation-target-task-select-option-local-device:${manualTaskId}"]`
+    const targetTaskOption = targetTaskSnapshot.testIds.find(
+      testId =>
+        testId.startsWith('automation-target-task-select-option-') &&
+        testId.endsWith(`:${manualTaskId}`)
     )
+    assert.ok(targetTaskOption, 'The existing-task selector did not expose a unique pinned task')
+    await control.command('click', `[data-testid="${targetTaskOption}"]`)
     await control.command('click', '[data-testid="automation-repeat-menu"]')
     await control.command('click', '[data-testid="automation-repeat-menu-option-one_time"]')
     const scheduledFor = new Date(Date.now() + 5_000)
@@ -947,7 +955,7 @@ function sitesMarketplacePlugin(installed) {
   }
 }
 
-function installedSitesPlugin() {
+function installedSitesPlugin(deviceId = 'local-device') {
   const marketplacePlugin = sitesMarketplacePlugin(true)
   return {
     apiVersion: 'agent.wecode.io/v1',
@@ -984,7 +992,7 @@ function installedSitesPlugin() {
     },
     status: {
       state: 'Available',
-      devices: [{ deviceId: 'local-device', state: 'installed' }],
+      devices: [{ deviceId, state: 'installed' }],
     },
   }
 }
@@ -1031,7 +1039,7 @@ function miniProgramMarketplacePlugin(installed) {
   }
 }
 
-function installedMiniProgramPlugin() {
+function installedMiniProgramPlugin(deviceId = 'local-device') {
   const marketplacePlugin = miniProgramMarketplacePlugin(true)
   return {
     apiVersion: 'agent.wecode.io/v1',
@@ -1068,7 +1076,7 @@ function installedMiniProgramPlugin() {
     },
     status: {
       state: 'Available',
-      devices: [{ deviceId: 'local-device', state: 'installed' }],
+      devices: [{ deviceId, state: 'installed' }],
     },
   }
 }
