@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
@@ -9,6 +10,18 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('managed executor runtime', () => {
+  test('reuses the Tauri executor home by default', () => {
+    const environment = prepareManagedExecutorEnvironment({
+      environment: {
+        VITE_WEWORK_E2E: 'true',
+      },
+    })
+
+    expect(environment.WEGENT_EXECUTOR_HOME).toBe(join(homedir(), '.wework'))
+    expect(environment.WEGENT_CODEX_HOME).toBe(join(homedir(), '.wework', 'codex'))
+    expect(environment.CODEX_HOME).toBe(join(homedir(), '.wework', 'codex'))
+  })
+
   test('isolates Codex home and imports auth from the configured user home', async () => {
     const directory = await temporaryDirectory('managed-executor-environment-')
     const nativeCodexHome = join(directory.path, 'native-codex')
@@ -17,7 +30,6 @@ describe('managed executor runtime', () => {
     await writeFile(join(nativeCodexHome, 'auth.json'), '{"auth":"native"}\n')
 
     const environment = prepareManagedExecutorEnvironment({
-      dataDirectory: join(directory.path, 'data'),
       environment: {
         CODEX_HOME: '/must-not-leak',
         VITE_WEWORK_E2E: 'true',
@@ -41,7 +53,6 @@ describe('managed executor runtime', () => {
     await writeFile(join(launchingCodexHome, 'auth.json'), '{"auth":"launching"}\n')
 
     const environment = prepareManagedExecutorEnvironment({
-      dataDirectory: join(directory.path, 'data'),
       environment: {
         CODEX_HOME: launchingCodexHome,
         VITE_WEWORK_E2E: 'true',

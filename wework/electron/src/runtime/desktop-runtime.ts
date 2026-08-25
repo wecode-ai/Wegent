@@ -120,7 +120,6 @@ export class DesktopRuntime {
       command: executorPath,
       args: jsonArrayEnvironment(this.options.environment, 'WEWORK_EXECUTOR_ARGS_JSON'),
       environment: this.options.environment,
-      dataDirectory: this.options.dataDirectory,
       logDirectory: this.options.logDirectory,
       deviceId:
         this.options.environment.WEGENT_APP_IPC_DEVICE_ID?.trim() || `electron-${randomUUID()}`,
