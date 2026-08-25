@@ -291,14 +291,17 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                let goal = result
+                    .get("goal")
+                    .cloned()
+                    .map(normalize_runtime_goal_timestamps)
+                    .unwrap_or(Value::Null);
                 self.hydrate_runtime_task_goal_status(
                     &link.local_task_id,
-                    result
-                        .get("goal")
-                        .and_then(|goal| string_field(goal, "status")),
+                    string_field(&goal, "status"),
                 );
                 let mut response = task_action_success(&link);
-                response["goal"] = result.get("goal").cloned().unwrap_or(Value::Null);
+                response["goal"] = goal;
                 Ok(response)
             }
             Err(error) => Ok(task_action_failure(&link, error)),
@@ -338,14 +341,17 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                let goal = result
+                    .get("goal")
+                    .cloned()
+                    .map(normalize_runtime_goal_timestamps)
+                    .unwrap_or(Value::Null);
                 self.sync_runtime_task_goal_status(
                     &link.local_task_id,
-                    result
-                        .get("goal")
-                        .and_then(|goal| string_field(goal, "status")),
+                    string_field(&goal, "status"),
                 );
                 let mut response = task_action_success(&link);
-                response["goal"] = result.get("goal").cloned().unwrap_or(Value::Null);
+                response["goal"] = goal;
                 Ok(response)
             }
             Err(error) => Ok(task_action_failure(&link, error)),
