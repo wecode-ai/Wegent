@@ -259,7 +259,10 @@ struct ProcessTextStream {
     process_kind: String,
     item_id: Option<String>,
     content: String,
+    emitted_content_len: usize,
 }
+
+const PROCESS_TEXT_UPDATE_MIN_CHARS: usize = 16;
 
 impl CodexNotificationEventMapper {
     pub(crate) fn map(
@@ -740,6 +743,16 @@ impl CodexNotificationEventMapper {
             process_text.accepts(block_type, process_kind, item_id.as_deref())
         }) {
             process_text.content.push_str(&delta);
+            if delta.len() == 1
+                && process_text
+                    .content
+                    .len()
+                    .saturating_sub(process_text.emitted_content_len)
+                    < PROCESS_TEXT_UPDATE_MIN_CHARS
+            {
+                return;
+            }
+            process_text.emitted_content_len = process_text.content.len();
             emit_response_event(
                 emit_context.event_tx,
                 emit_context.device_id,
@@ -772,6 +785,7 @@ impl CodexNotificationEventMapper {
             process_kind: process_kind.to_owned(),
             item_id: item_id.clone(),
             content: delta.clone(),
+            emitted_content_len: delta.len(),
         });
         emit_response_event(
             emit_context.event_tx,
@@ -2798,6 +2812,87 @@ mod tests {
         assert!(completed["payload"]["data"]["updates"]["content_delta"].is_null());
         assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
         assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn coalesces_dense_process_text_deltas_before_the_terminal_update() {
+        let (event_tx, mut event_rx) = broadcast::channel(256);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "msg-noisy",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": ""
+                    }
+                }
+            }),
+        );
+        for _ in 0..2_200 {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device-1",
+                "local-1",
+                &request,
+                json!({
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "itemId": "msg-noisy",
+                        "delta": "x"
+                    }
+                }),
+            );
+        }
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-noisy",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "NOISY_COMPLETE"
+                    }
+                }
+            }),
+        );
+
+        let mut events = Vec::new();
+        while let Ok(event) = event_rx.try_recv() {
+            events.push(event);
+        }
+
+        assert!(
+            events.len() < 160,
+            "dense text deltas should not flood the desktop transport"
+        );
+        assert_eq!(events[0]["event"], "response.block.created");
+        let completed = events
+            .last()
+            .expect("terminal block update should be emitted");
+        assert_eq!(completed["event"], "response.block.updated");
+        assert_eq!(
+            completed["payload"]["data"]["updates"]["content"],
+            "NOISY_COMPLETE"
+        );
+        assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
     }
 
     #[test]

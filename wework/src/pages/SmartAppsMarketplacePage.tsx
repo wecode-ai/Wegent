@@ -62,16 +62,10 @@ import { getErrorMessage } from '@/lib/error-message'
 import { getLocalExecutorDeviceId, revealLocalFile } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import { ensureBundledPluginInstalled } from '@/desktop/localExecutor'
-import type { CreateProjectRequest, ProjectWithTasks } from '@/types/api'
-import type { ProjectMutationOptions } from '@/features/workbench/workbenchContextTypes'
 
 interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
   mode?: 'marketplace' | 'owned'
-  onCreateProject?: (
-    data: CreateProjectRequest,
-    options?: ProjectMutationOptions
-  ) => Promise<ProjectWithTasks>
 }
 
 interface PendingInstall {
@@ -224,7 +218,6 @@ async function readManifest(
 export function SmartAppsMarketplacePage({
   api,
   mode = 'marketplace',
-  onCreateProject,
 }: SmartAppsMarketplacePageProps) {
   const { t, i18n } = useTranslation('common')
   const [items, setItems] = useState<SmartAppMarketplaceItem[]>([])
@@ -498,7 +491,7 @@ export function SmartAppsMarketplacePage({
   async function openBuilder(
     installation: HarnessAppInstallation,
     intent: 'develop' | 'created',
-    targetProject?: ProjectWithTasks
+    targetWorkspace?: { deviceId: string; path: string }
   ) {
     setCreateError(null)
     try {
@@ -526,7 +519,7 @@ export function SmartAppsMarketplacePage({
           ),
         ].join('\n'),
         openInNewChat: true,
-        targetProject,
+        targetWorkspace,
       })
       if (!queued) throw new Error('Smart App Builder reference could not be queued')
       queueSmartAppDevelopmentPreview({
@@ -566,23 +559,11 @@ export function SmartAppsMarketplacePage({
         installationId: installation.id,
         installation,
       })
-      const project = await onCreateProject?.(
-        {
-          name: installation.manifest.displayName,
-          description: installation.manifest.description,
-          config: {
-            mode: 'workspace',
-            execution: { targetType: 'local', deviceId: localDeviceId },
-            workspace: {
-              source: 'local_path',
-              localPath: installation.packagePath,
-            },
-          },
-        },
-        { refreshWorkLists: false }
-      )
       await refresh()
-      await openBuilder(installation, 'created', project)
+      await openBuilder(installation, 'created', {
+        deviceId: localDeviceId,
+        path: installation.packagePath,
+      })
     } finally {
       setCreating(false)
     }
