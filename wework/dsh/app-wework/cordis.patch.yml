@@ -1,0 +1,6 @@
+- insert:
+    - id: wework-app
+      name: '@wegent/dsh-app-wework'
+      inject:
+        - webServer
+        - weworkDesktop

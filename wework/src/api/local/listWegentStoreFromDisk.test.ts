@@ -5,33 +5,30 @@ import {
 } from './codexPlugins'
 
 const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(),
-}))
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => mocks.invoke(...args),
+  requestLocalExecutor: vi.fn(),
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: () => true,
+  isDesktopRuntime: () => true,
+  isElectronRuntime: () => true,
 }))
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: vi.fn(),
   ensureBundledPluginMarketplaceRegistered: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn(),
-  requestLocalExecutor: vi.fn(),
+  requestLocalExecutor: (...args: unknown[]) => mocks.requestLocalExecutor(...args),
   resetLocalExecutorStateForTests: vi.fn(),
 }))
 
 describe('listWegentStorePluginsFromDisk', () => {
   beforeEach(() => {
-    mocks.invoke.mockReset()
+    mocks.requestLocalExecutor.mockReset()
     clearLocalCodexPluginsReadStateCache()
   })
 
   test('maps unpacked store directories as local Codex membership', async () => {
-    mocks.invoke.mockResolvedValue({
+    mocks.requestLocalExecutor.mockResolvedValue({
       storePath: '/Users/test/.wework/apps/com.weibo.wework/capabilities/store/plugins',
       plugins: [
         {
@@ -78,11 +75,11 @@ describe('listWegentStorePluginsFromDisk', () => {
       },
     })
     expect(plugins[0]?.spec.pluginId).toBeUndefined()
-    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_list_wegent_store_plugins')
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.store.list')
   })
 
   test('treats a missing disk listing as empty membership', async () => {
-    mocks.invoke.mockResolvedValue(undefined)
+    mocks.requestLocalExecutor.mockResolvedValue(undefined)
 
     await expect(listWegentStorePluginsFromDisk()).resolves.toEqual([])
   })

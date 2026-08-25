@@ -102,13 +102,13 @@ graph TB
 
 ### 架构层次说明
 
-| 层次 | 职责 | 核心技术 |
-|------|------|----------|
-| **管理平台层** | 用户交互、资源管理、API 服务、对话处理 | Next.js 15, FastAPI, React 19, Chat Shell |
-| **数据层** | 数据持久化、缓存管理、异步任务调度 | MySQL 9.4, Redis 7, Celery |
-| **执行层** | 任务调度、容器编排、资源隔离、本地设备管理 | Docker, Rust Executor, WebSocket, App IPC |
-| **智能体层** | AI 能力提供、代码执行、对话处理、外部 API 集成 | Claude Code, Agno, Dify |
-| **知识层** | 知识库管理、RAG 检索、向量化服务、文档格式转换 | KnowledgeOrchestrator, Embedding, Doc Converter |
+| 层次           | 职责                                           | 核心技术                                        |
+| -------------- | ---------------------------------------------- | ----------------------------------------------- |
+| **管理平台层** | 用户交互、资源管理、API 服务、对话处理         | Next.js 15, FastAPI, React 19, Chat Shell       |
+| **数据层**     | 数据持久化、缓存管理、异步任务调度             | MySQL 9.4, Redis 7, Celery                      |
+| **执行层**     | 任务调度、容器编排、资源隔离、本地设备管理     | Docker, Rust Executor, WebSocket, App IPC       |
+| **智能体层**   | AI 能力提供、代码执行、对话处理、外部 API 集成 | Claude Code, Agno, Dify                         |
+| **知识层**     | 知识库管理、RAG 检索、向量化服务、文档格式转换 | KnowledgeOrchestrator, Embedding, Doc Converter |
 
 ---
 
@@ -117,12 +117,14 @@ graph TB
 ### 1. 🌐 前端 (Frontend)
 
 **职责**：
+
 - 提供用户界面，支持资源定义和管理
 - 实现任务创建、监控和结果展示
 - 提供实时交互和状态更新
 - 管理本地设备和执行器
 
 **技术栈**：
+
 - **框架**: Next.js 15 (App Router)
 - **UI 库**: React 19, shadcn/ui
 - **样式**: Tailwind CSS 3.4
@@ -131,6 +133,7 @@ graph TB
 - **图标**: Heroicons, Tabler Icons, Lucide React
 
 **核心特性**：
+
 - 🎨 配置驱动的 UI，支持 YAML 可视化编辑
 - 🔄 实时任务状态更新（WebSocket）
 - 🌍 多语言支持（中文/英文）
@@ -139,6 +142,7 @@ graph TB
 - 💭 思考过程可视化
 
 **关键文件结构**：
+
 ```
 frontend/src/
 ├── app/              # Next.js App Router
@@ -160,19 +164,20 @@ frontend/src/
 
 **功能模块**：
 
-| 模块 | 用途 |
-|------|------|
-| **tasks** | 任务创建、聊天、群聊、工作台 |
-| **devices** | 本地设备管理、执行器指南 |
-| **knowledge** | 知识库、文档、权限管理 |
-| **settings** | 智能体、模型、Shell、技能配置 |
-| **feed** | 订阅市场、触发器管理 |
+| 模块          | 用途                          |
+| ------------- | ----------------------------- |
+| **tasks**     | 任务创建、聊天、群聊、工作台  |
+| **devices**   | 本地设备管理、执行器指南      |
+| **knowledge** | 知识库、文档、权限管理        |
+| **settings**  | 智能体、模型、Shell、技能配置 |
+| **feed**      | 订阅市场、触发器管理          |
 
 ---
 
 ### 2. ⚙️ 后端 (Backend)
 
 **职责**：
+
 - 实现声明式 API，处理资源 CRUD 操作
 - 管理用户认证和授权
 - 协调执行层进行任务调度
@@ -181,6 +186,7 @@ frontend/src/
 - 管理本地设备连接
 
 **技术栈**：
+
 - **框架**: FastAPI 0.68+
 - **ORM**: SQLAlchemy 2.0
 - **数据库驱动**: PyMySQL
@@ -191,6 +197,7 @@ frontend/src/
 - **异步任务**: Celery
 
 **核心特性**：
+
 - 🚀 高性能异步 API
 - 🔒 基于 JWT 的认证机制
 - 📝 完整的 CRUD 操作支持
@@ -201,6 +208,7 @@ frontend/src/
 - 📱 本地设备管理（Device Provider）
 
 **API 设计**：
+
 ```
 /api/v1/
 ├── /ghosts          # Ghost 资源管理
@@ -219,17 +227,18 @@ frontend/src/
 
 **服务层架构**：
 
-| 服务 | 职责 |
-|------|------|
-| **KindService** | CRD 资源统一管理 |
+| 服务                      | 职责                                    |
+| ------------------------- | --------------------------------------- |
+| **KindService**           | CRD 资源统一管理                        |
 | **KnowledgeOrchestrator** | 知识管理统一入口（REST API + MCP 工具） |
-| **DeviceService** | 本地设备管理 |
-| **ChatService** | 聊天处理和 RAG |
-| **SubtaskService** | 子任务管理 |
-| **GroupService** | 多租户分组管理 |
-| **UserService** | 用户管理 |
+| **DeviceService**         | 本地设备管理                            |
+| **ChatService**           | 聊天处理和 RAG                          |
+| **SubtaskService**        | 子任务管理                              |
+| **GroupService**          | 多租户分组管理                          |
+| **UserService**           | 用户管理                                |
 
 **关键依赖**：
+
 ```python
 FastAPI >= 0.68.0      # Web 框架
 SQLAlchemy >= 2.0.28   # ORM
@@ -245,6 +254,7 @@ celery >= 5.0          # 异步任务
 ### 3. 💬 Chat Shell（对话引擎）
 
 **职责**：
+
 - 提供轻量级 AI 对话引擎
 - 支持多种 LLM 模型（Anthropic、OpenAI、Google）
 - 管理对话上下文和会话存储
@@ -252,6 +262,7 @@ celery >= 5.0          # 异步任务
 - 支持知识库检索增强（RAG）
 
 **技术栈**：
+
 - **框架**: FastAPI
 - **代理框架**: LangGraph + LangChain
 - **LLM**: Anthropic, OpenAI, Google Gemini
@@ -260,13 +271,14 @@ celery >= 5.0          # 异步任务
 
 **三种部署模式**：
 
-| 模式 | 描述 | 使用场景 |
-|------|------|----------|
-| **HTTP** | 独立 HTTP 服务 `/v1/response` | 生产环境 |
-| **Package** | Python 包，被 Backend 导入 | 单体部署 |
-| **CLI** | 命令行交互界面 | 开发测试 |
+| 模式        | 描述                          | 使用场景 |
+| ----------- | ----------------------------- | -------- |
+| **HTTP**    | 独立 HTTP 服务 `/v1/response` | 生产环境 |
+| **Package** | Python 包，被 Backend 导入    | 单体部署 |
+| **CLI**     | 命令行交互界面                | 开发测试 |
 
 **核心特性**：
+
 - 🤖 多 LLM 支持（Anthropic、OpenAI、Google）
 - 🛠️ MCP 工具集成（Model Context Protocol）
 - 📚 技能动态加载
@@ -275,6 +287,7 @@ celery >= 5.0          # 异步任务
 - 📈 OpenTelemetry 集成
 
 **模块结构**：
+
 ```
 chat_shell/chat_shell/
 ├── main.py           # FastAPI 应用入口
@@ -304,6 +317,7 @@ chat_shell/chat_shell/
 ### 4. 💯 Executor Manager (执行管理器)
 
 **职责**：
+
 - 管理 Executor 生命周期
 - 任务队列和调度
 - 资源分配和限流
@@ -311,6 +325,7 @@ chat_shell/chat_shell/
 - 支持多种部署模式
 
 **技术栈**：
+
 - **语言**: Python
 - **容器管理**: Docker SDK
 - **网络**: Docker 网络桥接
@@ -318,12 +333,13 @@ chat_shell/chat_shell/
 
 **部署模式**：
 
-| 模式 | 描述 | 使用场景 |
-|------|------|----------|
-| **Docker** | 使用 Docker SDK 管理本地容器 | 标准部署 |
-| **Local Device** | 连接本地设备执行 | 开发环境 |
+| 模式             | 描述                         | 使用场景 |
+| ---------------- | ---------------------------- | -------- |
+| **Docker**       | 使用 Docker SDK 管理本地容器 | 标准部署 |
+| **Local Device** | 连接本地设备执行             | 开发环境 |
 
 **核心特性**：
+
 - 🎯 最大并发任务数控制（默认 5）
 - 🔧 动态端口分配（10001-10100）
 - 🐳 Docker 容器编排
@@ -331,11 +347,12 @@ chat_shell/chat_shell/
 - 📱 本地设备支持
 
 **配置参数**：
+
 ```yaml
-MAX_CONCURRENT_TASKS: 5              # 最大并发任务数
-EXECUTOR_PORT_RANGE_MIN: 10001      # 端口范围起始
-EXECUTOR_PORT_RANGE_MAX: 10100      # 端口范围结束
-NETWORK: wegent-network              # Docker 网络
+MAX_CONCURRENT_TASKS: 5 # 最大并发任务数
+EXECUTOR_PORT_RANGE_MIN: 10001 # 端口范围起始
+EXECUTOR_PORT_RANGE_MAX: 10100 # 端口范围结束
+NETWORK: wegent-network # Docker 网络
 EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 ```
 
@@ -344,12 +361,14 @@ EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 ### 5. 🚀 Executor (执行器)
 
 **职责**：
+
 - 提供隔离的沙箱环境
 - 执行智能体任务
 - 管理工作空间和代码仓库
 - 上报执行结果
 
 **技术栈**：
+
 - **容器**: Docker
 - **执行器**: Rust (`executor/`)
 - **运行时**: Claude Code, Agno, Dify
@@ -357,14 +376,14 @@ EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 
 **Agent 类型**：
 
-| Agent | 类型 | 说明 |
-|-------|------|------|
-| **ClaudeCode** | local_engine | Claude Code SDK，支持 Git、MCP、技能 |
-| **Agno** | local_engine | 多代理协作，SQLite 会话管理 |
-| **Dify** | external_api | 代理到 Dify 平台 |
-| **ImageValidator** | validator | 自定义基础镜像验证 |
+| Agent              | 类型         | 说明                                 |
+| ------------------ | ------------ | ------------------------------------ |
+| **ClaudeCode**     | local_engine | Claude Code SDK，支持 Git、MCP、技能 |
+| **Agno**           | local_engine | 多代理协作，SQLite 会话管理          |
+| **Dify**           | external_api | 代理到 Dify 平台                     |
+| **ImageValidator** | validator    | 自定义基础镜像验证                   |
 
-Rust executor 是唯一的 executor 运行时实现。Backend 的 Chat shell 仍可走进程内路径，其他任务由 standalone/local executor 执行；Wework 打包 App 的 local-first 模式不启动本地 Backend，而是通过 Tauri app IPC 直接调用 executor。Codex 运行时通过 `codex app-server --stdio` 的 JSON-RPC 协议创建、继续、读取、归档和重命名线程，executor 只保存必要的本地任务索引和 `localTaskId -> threadId` 关联。
+Rust executor 是唯一的 executor 运行时实现。Backend 的 Chat shell 仍可走进程内路径，其他任务由 standalone/local executor 执行；Wework 打包 App 的 local-first 模式不启动本地 Backend，而是通过 Electron IPC 直接调用 executor。Codex 运行时通过 `codex app-server --stdio` 的 JSON-RPC 协议创建、继续、读取、归档和重命名线程，executor 只保存必要的本地任务索引和 `localTaskId -> threadId` 关联。
 
 Claude Code 恢复交互表单会话时，executor 只把与本次已回答表单具有相同 `tool_use_id`、且工具类型仍为交互表单的 defer 视为恢复阶段残留结果。模型随后返回不同 `tool_use_id` 的表单表示新的用户澄清，即使同一响应还包含文本，也必须继续代理到交互 MCP 并等待用户输入，不能按旧 defer 丢弃。
 
@@ -378,7 +397,7 @@ Codex 运行时在 `executor/src/agents/codex/` 下按职责拆分：`home` 管�
 
 Codex agent message 的实时文本必须按显式 phase 分类：只有 `final` 或 `final_answer` 才能进入最终回答，`analysis`、`commentary` 以及缺失 phase 的文本都先进入 processing。缺失 phase 的文本可能出现在工具调用前后，不能因为默认值而触发 Wework 的 final-processing 折叠；轮次结束时，executor 使用明确的 final 文本，若模型始终没有发送 phase，则使用最后一段未标 phase 的文本作为终态回答。转录恢复沿用同一规则，并根据后续是否存在工具或其他过程项判断未标文本属于 processing 还是 final。
 
-Wework 的内置浏览器 MCP 由 Rust executor 的 `browser-mcp-server` 子命令提供，并通过每个 Tauri 实例独立分配的本地桥接地址控制右侧浏览器。打包 App 无需安装 Node.js 或单独部署 browser MCP server，多实例也不会共享固定端口。
+Wework 的内置浏览器 MCP 由 Rust executor 的 `browser-mcp-server` 子命令提供，并通过每个 Electron 实例独立分配的本地桥接地址控制右侧浏览器。打包 App 无需安装 Node.js 或单独部署 browser MCP server，多实例也不会共享固定端口。
 
 项目空间的 `wework_space` MCP 由 Wework 启动的 Rust executor 通过动态 loopback 端口常驻提供。Codex 只接收该实例的 URL、实例凭证和可选 ContextGrant，不再启动 `space-mcp-server` stdio 子进程。普通会话保持未绑定；项目或 Issue 会话通过 ContextGrant 获得默认 `space_id/item_id` 与越界保护。
 
@@ -417,6 +436,7 @@ Codex fork 会重建父线程的历史请求。`reasoning`、`compaction`、`com
 `apply_patch` 不是模型服务或系统 shell 自动提供的命令。只有 `custom` 或 `function` 工具模式生成的 Codex model catalog 才会让 Codex 在模型请求中发布该工具；直接调用 Responses API 时，调用方也必须在 `tools` 中提供相应的 custom tool 定义和 grammar。`shell` 模式不会发布它。补丁执行失败后，本地模型代理保留原始校验错误，并按错误类型补充 grammar 解释、正确的 Update/Add File 示例和重新调用要求；原生 Responses、Chat Completions 与 Anthropic Messages 转换必须保持同一纠错语义，成功结果不得追加提示。
 
 **核心特性**：
+
 - 🔒 完全隔离的执行环境
 - 💼 独立的工作空间
 - 🔄 自动清理机制（可通过 `preserveExecutor` 保留）
@@ -426,6 +446,7 @@ Codex fork 会重建父线程的历史请求。`reasoning`、`compaction`、`com
 - 🪝 [预执行钩子](./pre-execute-hooks.md) 支持任务启动前自定义初始化
 
 **生命周期**：
+
 ```mermaid
 graph LR
     Created["创建"] --> Running["运行中"]
@@ -442,6 +463,7 @@ graph LR
 ### 6. 💾 数据库 (MySQL)
 
 **职责**：
+
 - 持久化存储所有资源定义
 - 管理用户数据和认证信息
 - 记录任务执行历史
@@ -449,6 +471,7 @@ graph LR
 **版本**: MySQL 9.4
 
 **核心表结构**：
+
 ```
 wegent_db/
 ├── kinds            # CRD 资源（Ghost, Model, Shell, Bot, Team, Skill, Device）
@@ -463,6 +486,7 @@ wegent_db/
 ```
 
 **数据模型特点**：
+
 - 使用 SQLAlchemy ORM
 - 支持事务和关联查询
 - 自动时间戳管理
@@ -474,6 +498,7 @@ wegent_db/
 ### 7. 🔴 缓存 (Redis)
 
 **职责**：
+
 - 任务状态缓存
 - 会话管理
 - 实时数据临时存储
@@ -483,6 +508,7 @@ wegent_db/
 **版本**: Redis 7
 
 **使用场景**：
+
 - 🔄 对话任务上下文缓存（2小时过期）
 - 💻 代码任务状态缓存（2小时过期）
 - 🎯 执行器删除延迟控制
@@ -494,6 +520,7 @@ wegent_db/
 ### 8. ⚡ Celery（异步任务）
 
 **职责**：
+
 - 知识库文档索引（异步）
 - 文档摘要生成
 - 文档格式转换（PDF/PPTX → Markdown）
@@ -501,17 +528,17 @@ wegent_db/
 
 **核心任务**：
 
-| 任务 | 用途 |
-|------|------|
-| `index_document_task` | 文档向量化索引 |
-| `generate_document_summary_task` | 文档摘要生成 |
-| `convert_document_task` | 文档格式转换（知识文档转换器消费） |
+| 任务                             | 用途                               |
+| -------------------------------- | ---------------------------------- |
+| `index_document_task`            | 文档向量化索引                     |
+| `generate_document_summary_task` | 文档摘要生成                       |
+| `convert_document_task`          | 文档格式转换（知识文档转换器消费） |
 
 **任务队列**：
 
-| 队列 | 用途 | 消费者 |
-|------|------|--------|
-| `celery` (默认) | 文档索引、摘要生成 | Backend Worker |
+| 队列                   | 用途                         | 消费者                  |
+| ---------------------- | ---------------------------- | ----------------------- |
+| `celery` (默认)        | 文档索引、摘要生成           | Backend Worker          |
 | `knowledge_conversion` | PDF/PPTX 文档转换为 Markdown | Knowledge Doc Converter |
 
 ---
@@ -519,11 +546,13 @@ wegent_db/
 ### 9. 🎼 KnowledgeOrchestrator（知识编排器）
 
 **职责**：
+
 - 统一 REST API 和 MCP 工具的知识管理
 - 自动选择 retriever、embedding model、summary model
 - 协调 Celery 异步任务
 
 **架构**：
+
 ```
 Entry Layer (REST/MCP)
     ↓
@@ -535,6 +564,7 @@ Celery Tasks (异步处理)
 ```
 
 **核心特性**：
+
 - 🔗 统一入口：REST API 和 MCP 工具共享相同的业务逻辑
 - 🤖 自动模型选择：Task → Team → Bot → Model 链式解析
 - 📚 多作用域支持：个人、组、组织三级知识库
@@ -545,29 +575,32 @@ Celery Tasks (异步处理)
 ### 10. 📄 知识文档转换器 (Knowledge Doc Converter)
 
 **职责**：
+
 - 将 PDF/PPTX 文档通过 MinerU OCR 转换为 Markdown
 - 上传转换结果至 S3 存储
 - 通过回调接口通知 Backend 转换状态
 
 **技术栈**：
+
 - **任务队列**: Celery + Redis
 - **OCR 引擎**: MinerU
 - **对象存储**: S3
 - **监控**: Prometheus（端口 9090，multiprocess 模式）
 
 **核心特性**：
+
 - 🔧 独立 Celery Worker，监听 `knowledge_conversion` 队列
 - 📊 Prometheus 指标暴露（multiprocess 模式）
 - 🔄 回调驱动的异步转换流程
 
 **内部 API**：
 
-| 端点 | 用途 |
-|------|------|
-| `POST /api/internal/conversion/callback/status` | 转换状态回调 |
+| 端点                                               | 用途         |
+| -------------------------------------------------- | ------------ |
+| `POST /api/internal/conversion/callback/status`    | 转换状态回调 |
 | `POST /api/internal/conversion/callback/completed` | 转换完成回调 |
-| `POST /api/internal/conversion/callback/failed` | 转换失败回调 |
-| `GET /api/internal/attachments/{id}/download` | 附件下载 |
+| `POST /api/internal/conversion/callback/failed`    | 转换失败回调 |
+| `GET /api/internal/attachments/{id}/download`      | 附件下载     |
 
 **文档转换流程**：
 
@@ -661,14 +694,14 @@ sequenceDiagram
 
 ### 通信协议
 
-| 通信类型 | 协议 | 用途 |
-|----------|------|------|
-| **前端 ↔ 后端** | HTTP/HTTPS, WebSocket (Socket.IO) | API 调用、实时聊天流式传输 |
-| **后端 ↔ 数据库** | MySQL 协议 | 数据持久化 |
-| **后端 ↔ Redis** | Redis 协议 | 缓存操作、Socket.IO 适配器 |
-| **后端 ↔ Executor Manager** | HTTP | 任务调度 |
-| **Executor Manager ↔ Executor** | Docker API | 容器管理 |
-| **Executor ↔ 智能体** | 进程调用 | 任务执行 |
+| 通信类型                        | 协议                              | 用途                       |
+| ------------------------------- | --------------------------------- | -------------------------- |
+| **前端 ↔ 后端**                 | HTTP/HTTPS, WebSocket (Socket.IO) | API 调用、实时聊天流式传输 |
+| **后端 ↔ 数据库**               | MySQL 协议                        | 数据持久化                 |
+| **后端 ↔ Redis**                | Redis 协议                        | 缓存操作、Socket.IO 适配器 |
+| **后端 ↔ Executor Manager**     | HTTP                              | 任务调度                   |
+| **Executor Manager ↔ Executor** | Docker API                        | 容器管理                   |
+| **Executor ↔ 智能体**           | 进程调用                          | 任务执行                   |
 
 ### WebSocket 架构（Socket.IO）
 
@@ -700,6 +733,7 @@ sequenceDiagram
 | `task:status` | 任务状态更新 |
 
 **基于房间的消息路由**:
+
 - 用户房间: `user:{user_id}` - 用于个人通知
 - 任务房间: `task:{task_id}` - 用于聊天流式传输和群聊
 
@@ -813,12 +847,14 @@ executor_engines:
 ### 1. 声明式 API 设计
 
 遵循 Kubernetes CRD 设计模式：
+
 - ✅ 资源以 YAML 声明式定义
 - ✅ 清晰的资源层次关系
 - ✅ 统一的 API 版本管理
 - ✅ 状态与期望分离
 
 **示例**：
+
 ```yaml
 apiVersion: agent.wecode.io/v1
 kind: Bot
@@ -872,6 +908,7 @@ status:
 ### 水平扩展
 
 #### 前端扩展
+
 ```yaml
 # 多实例部署
 frontend:
@@ -880,23 +917,26 @@ frontend:
 ```
 
 #### 后端扩展
+
 ```yaml
 # 无状态设计，支持多实例
 backend:
   replicas: 5
   session: redis
-  socket_adapter: redis  # Socket.IO 多实例支持
+  socket_adapter: redis # Socket.IO 多实例支持
 ```
 
 #### Chat Shell 扩展
+
 ```yaml
 # 独立服务，支持多实例
 chat_shell:
   replicas: 2
-  storage: remote  # 远程存储支持多实例
+  storage: remote # 远程存储支持多实例
 ```
 
 #### 执行器扩展
+
 ```yaml
 # 动态创建和销毁
 executor_manager:
@@ -907,11 +947,13 @@ executor_manager:
 ### 垂直扩展
 
 #### 数据库优化
+
 - 读写分离
 - 索引优化
 - 查询缓存
 
 #### Redis 优化
+
 - 内存优化
 - 持久化策略
 - 集群模式
@@ -919,16 +961,19 @@ executor_manager:
 ### 部署模式
 
 #### 1. 单机部署（开发/测试）
+
 ```bash
 docker-compose up -d
 ```
 
 **适用场景**：
+
 - 本地开发
 - 功能测试
 - 小规模使用
 
 #### 2. 分布式部署（生产）
+
 ```yaml
 architecture:
   frontend: "多实例 + Nginx 负载均衡"
@@ -939,6 +984,7 @@ architecture:
 ```
 
 **适用场景**：
+
 - 生产环境
 - 高并发需求
 - 大规模团队
@@ -955,6 +1001,7 @@ architecture:
 ```
 
 #### 3. 云原生部署（Kubernetes）
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -965,28 +1012,30 @@ spec:
   template:
     spec:
       containers:
-      - name: backend
-        image: wegent-backend:latest
+        - name: backend
+          image: wegent-backend:latest
 ```
 
 **适用场景**：
+
 - 云环境
 - 自动扩展
 - 高可用需求
 
 ### 性能指标
 
-| 指标 | 目标值 | 说明 |
-|------|--------|------|
-| **API 响应时间** | < 200ms | P95 延迟 |
-| **任务启动时间** | < 5s | 从创建到执行 |
-| **并发任务数** | 5-100 | 可配置 |
-| **数据库连接池** | 20 | 默认配置 |
-| **WebSocket 连接** | 1000+ | 同时在线 |
+| 指标               | 目标值  | 说明         |
+| ------------------ | ------- | ------------ |
+| **API 响应时间**   | < 200ms | P95 延迟     |
+| **任务启动时间**   | < 5s    | 从创建到执行 |
+| **并发任务数**     | 5-100   | 可配置       |
+| **数据库连接池**   | 20      | 默认配置     |
+| **WebSocket 连接** | 1000+   | 同时在线     |
 
 ### 监控与告警
 
 #### 关键指标
+
 - 📊 任务成功率
 - ⏱️ 任务执行时间
 - 💾 数据库性能
@@ -994,6 +1043,7 @@ spec:
 - 🐳 容器资源使用
 
 #### 日志收集
+
 ```python
 import structlog
 

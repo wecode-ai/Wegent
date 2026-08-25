@@ -1,4 +1,4 @@
-import { isTauriRuntime } from './runtime-environment'
+import { isElectronRuntime } from './runtime-environment'
 import { getPlatform } from './platform'
 
 export type WeworkUpdateChannel = 'stable' | 'beta'
@@ -41,87 +41,13 @@ export function getWeworkUpdateTarget(channel: WeworkUpdateChannel): string {
 export async function checkForWeworkUpdate(
   channel: WeworkUpdateChannel
 ): Promise<WeworkUpdateInfo | null> {
-  if (!isTauriRuntime()) {
+  if (!isElectronRuntime()) {
     throw new Error('Wework updater is only available in the desktop app.')
   }
 
-  try {
-    const { check } = await import('@tauri-apps/plugin-updater')
-    const update = await check({ target: getWeworkUpdateTarget(channel) })
-    if (!update) {
-      pendingUpdate = null
-      return null
-    }
-
-    let downloaded = false
-    let downloadPromise: Promise<void> | null = null
-    let progress: WeworkUpdateDownloadProgress = {
-      downloadedBytes: 0,
-      totalBytes: null,
-    }
-    const progressListeners = new Set<(value: WeworkUpdateDownloadProgress) => void>()
-
-    const notifyProgress = () => {
-      for (const listener of progressListeners) {
-        listener(progress)
-      }
-    }
-
-    pendingUpdate = {
-      version: update.version,
-      currentVersion: update.currentVersion,
-      body: update.body,
-      download: async onProgress => {
-        if (onProgress) {
-          progressListeners.add(onProgress)
-          onProgress(progress)
-        }
-
-        try {
-          if (downloaded) return
-          if (!downloadPromise) {
-            downloadPromise = update
-              .download(event => {
-                if (event.event === 'Started') {
-                  progress = {
-                    downloadedBytes: 0,
-                    totalBytes: event.data.contentLength ?? null,
-                  }
-                } else if (event.event === 'Progress') {
-                  progress = {
-                    ...progress,
-                    downloadedBytes: progress.downloadedBytes + event.data.chunkLength,
-                  }
-                } else {
-                  downloaded = true
-                }
-                notifyProgress()
-              })
-              .catch(error => {
-                downloadPromise = null
-                throw error
-              })
-          }
-          await downloadPromise
-          downloaded = true
-        } finally {
-          if (onProgress) {
-            progressListeners.delete(onProgress)
-          }
-        }
-      },
-      install: () => update.install(),
-    }
-
-    return {
-      version: update.version,
-      currentVersion: update.currentVersion,
-      body: update.body,
-    }
-  } catch (error) {
-    pendingUpdate = null
-    throw new Error(errorMessage(error), { cause: error })
-  }
+  void channel
+  pendingUpdate = null
+  throw new Error('Automatic updates are not yet available in the Electron desktop host.')
 }
 
 export async function downloadPendingWeworkUpdate(
@@ -148,8 +74,6 @@ export async function installPendingWeworkUpdate(
   try {
     await pendingUpdate.download(onProgress)
     await pendingUpdate.install()
-    const { relaunch } = await import('@tauri-apps/plugin-process')
-    await relaunch()
   } catch (error) {
     pendingUpdate = null
     throw new Error(errorMessage(error), { cause: error })

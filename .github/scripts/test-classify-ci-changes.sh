@@ -15,7 +15,7 @@ assert_invalid_desktop_shards_rejected() {
   temp_dir="$(mktemp -d)"
   local broken_classifier="$temp_dir/classify-wework-desktop-e2e.sh"
   sed \
-    's/,local-file-preview$//' \
+    's/,local-file-preview,context-compaction$/,context-compaction/' \
     "$desktop_classifier" > "$broken_classifier"
   chmod +x "$broken_classifier"
 
@@ -212,7 +212,6 @@ shared=false
 knowledge_engine=false
 frontend=false
 wework=false
-wework_rust=false
 wegent_cli=false
 platform_e2e=false
 wework_e2e=false
@@ -225,10 +224,6 @@ wework_expected="${all_false/wework=false/wework=true}"
 wework_expected="${wework_expected/wework_e2e=false/wework_e2e=true}"
 assert_case "wework only" "$wework_expected" "wework/src/App.tsx"
 
-wework_rust_expected="${wework_expected/wework_rust=false/wework_rust=true}"
-assert_case "wework Rust only" "$wework_rust_expected" \
-  "wework/src-tauri/src/lib.rs"
-
 shared_expected=$(
   cat <<'EOF'
 backend=true
@@ -238,7 +233,6 @@ shared=true
 knowledge_engine=true
 frontend=false
 wework=false
-wework_rust=false
 wegent_cli=true
 platform_e2e=true
 wework_e2e=false
@@ -290,9 +284,6 @@ assert_case "Wework workflow changes run Wework E2E" "$wework_e2e_expected" \
 
 assert_case "Wework artifact scripts run Wework E2E" "$wework_e2e_expected" \
   ".github/scripts/archive-wework-core-e2e-build.sh"
-
-assert_case "Wework dependency setup runs Wework E2E" "$wework_e2e_expected" \
-  ".github/scripts/install-wework-tauri-system-dependencies.sh"
 
 assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
   "docker/wework-e2e/desktop.Dockerfile"
@@ -373,7 +364,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"rendering-extensions,runtime-task-queue,local-file-preview"},{"id":"core-2","name":"Core / shard 2","segments":"project-ai-settings,window-lifecycle,permission-modes"},{"id":"core-3","name":"Core / shard 3","segments":"core-task-flow,temporary-chat,codex-notification-isolation"},{"id":"core-4","name":"Core / shard 4","segments":"claude-runtime,workspace-attachments,local-harness"},{"id":"core-5","name":"Core / shard 5","segments":"conversation-state,goal-lifecycle,workspace-tabs"},{"id":"core-6","name":"Core / shard 6","segments":"resilience,supervisor-lifecycle"},{"id":"core-7","name":"Core / shard 7","segments":"model-routing,project-automation,automation-lifecycle"},{"id":"core-8","name":"Core / shard 8","segments":"embedded-browser,browser-toolbar-actions,priority-filter"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"rendering-extensions,runtime-task-queue,local-file-preview,context-compaction"},{"id":"core-2","name":"Core / shard 2","segments":"project-ai-settings,window-lifecycle,permission-modes,cloud-space-mention,project-assignment-notification"},{"id":"core-3","name":"Core / shard 3","segments":"core-task-flow,temporary-chat,codex-notification-isolation,task-attachments"},{"id":"core-4","name":"Core / shard 4","segments":"claude-runtime,workspace-attachments,local-harness,harness-apps"},{"id":"core-5","name":"Core / shard 5","segments":"conversation-state,goal-lifecycle,workspace-tabs,running-conversation-history"},{"id":"core-6","name":"Core / shard 6","segments":"resilience,supervisor-lifecycle,runtime-terminal-convergence"},{"id":"core-7","name":"Core / shard 7","segments":"model-routing,project-automation,automation-lifecycle,offline-local-project-space"},{"id":"core-8","name":"Core / shard 8","segments":"embedded-browser,browser-toolbar-actions,priority-filter,remote-device-onboarding,split-workbench,native-window-startup,native-window-chrome,tray-lifecycle,change-request-status"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"goal-lifecycle,telemetry-consent,cloud-worktree-capability"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"model-routing,plugin-auto-update,priority-filter"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"embedded-browser,cloud-worktree-device-restart,cloud-project-creation"},{"id":"cloud-4","name":"Cloud / shard 4","segments":"resilience,cloud-worktree-queued-cancel,browser-multi-tabs"},{"id":"cloud-5","name":"Cloud / shard 5","segments":"core-task-flow,supervisor-lifecycle,automation-lifecycle"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"window-lifecycle,cloud-worktree-tools,cloud-worktree-archive-restore"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"project-automation,workspace-attachments,cloud-worktree-create"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"conversation-state,rendering-extensions,workspace-tabs"}]}
 wework_desktop_other_e2e=true
@@ -682,12 +673,9 @@ if ! grep -q "name: Wework E2E Summary" "$wework_workflow"; then
   exit 1
 fi
 
-if ! grep -Fq "process.env.WEWORK_E2E_SKIP_TYPECHECK !== 'true'" \
-  "$desktop_build_flows" ||
-  ! grep -Fq 'WEWORK_E2E_SKIP_TYPECHECK: "true"' "$wework_workflow" ||
-  ! grep -Fq 'run: pnpm --filter wework typecheck' \
-    "$script_dir/../workflows/lint.yml"; then
-  printf 'Wework desktop E2E may skip duplicate typechecking only while Lint owns the gate\n' >&2
+if grep -Fq 'WEWORK_E2E_SKIP_TYPECHECK' "$desktop_build_flows" ||
+  grep -Fq 'WEWORK_E2E_SKIP_TYPECHECK' "$wework_workflow"; then
+  printf 'Prebuilt Electron E2E must not retain the obsolete typecheck bypass\n' >&2
   exit 1
 fi
 
@@ -697,98 +685,63 @@ if ! grep -q "wework_desktop_core_e2e_matrix" "$wework_workflow" ||
   exit 1
 fi
 
-core_cache_step="$(
+core_build_job="$(
+  sed -n '/^  build-wework-desktop-core-e2e:/,/^  wework-desktop-core-e2e:/p' \
+    "$wework_workflow"
+)"
+desktop_other_job="$(
+  sed -n '/^  wework-desktop-e2e:/,/^  wework-e2e-summary:/p' \
+    "$wework_workflow"
+)"
+if [[ "$core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
+  [[ "$core_build_job" != *"wework/electron/release/WeWork-linux-x64/WeWork"* ]] ||
+  [[ "$core_build_job" != *"resources/bin/wegent-executor"* ]]; then
+  printf 'The shared desktop E2E artifact must be built from the Electron package\n' >&2
+  exit 1
+fi
+
+if [[ "$desktop_other_job" != *"build-wework-desktop-core-e2e"* ]] ||
+  [[ "$desktop_other_job" != *"download-artifact@v4"* ]] ||
+  [[ "$desktop_other_job" != *"electron-app/WeWork"* ]] ||
+  [[ "$desktop_other_job" != *"electron-app/resources/bin/wegent-executor"* ]]; then
+  printf 'Non-Core desktop E2E must consume the shared Electron package\n' >&2
+  exit 1
+fi
+
+electron_cache_step="$(
   extract_named_workflow_step_from_job \
     "$wework_workflow" \
     "  build-wework-desktop-core-e2e:" \
     "  wework-desktop-core-e2e:" \
-    "Restore shared Wework desktop E2E Cargo dependencies"
+    "Restore shared Wework Electron E2E build dependencies"
 )"
-desktop_cache_step="$(
-  extract_named_workflow_step_from_job \
-    "$wework_workflow" \
-    "  wework-desktop-e2e:" \
-    "  wework-e2e-summary:" \
-    "Restore shared Wework desktop E2E Cargo dependencies"
-)"
-core_cache_key="$(
-  printf '%s\n' "$core_cache_step" |
+electron_cache_key="$(
+  printf '%s\n' "$electron_cache_step" |
     sed -n 's/^          key:[[:space:]]*//p'
 )"
-desktop_cache_key="$(
-  printf '%s\n' "$desktop_cache_step" |
-    sed -n 's/^          key:[[:space:]]*//p'
-)"
-core_cache_restore_keys="$(
-  printf '%s\n' "$core_cache_step" |
-    awk '
-    /^          restore-keys:/ {
-      in_restore_keys = 1
-      next
-    }
-    in_restore_keys && /^          [[:alnum:]_-]+:/ {
-      exit
-    }
-    in_restore_keys {
-      print
-    }
-  '
-)"
-desktop_cache_restore_keys="$(
-  printf '%s\n' "$desktop_cache_step" |
-    awk '
-    /^          restore-keys:/ {
-      in_restore_keys = 1
-      next
-    }
-    in_restore_keys && /^          [[:alnum:]_-]+:/ {
-      exit
-    }
-    in_restore_keys {
-      print
-    }
-  '
-)"
-if [[ "$(grep -c \
-  "name: Restore shared Wework desktop E2E Cargo dependencies" \
-  "$wework_workflow")" -ne 2 ]]; then
-  printf 'Wework desktop E2E build jobs must restore the shared Cargo cache\n' >&2
-  exit 1
-fi
-
-if [[ "$core_cache_key" != "$desktop_cache_key" ]] ||
-  [[ "$core_cache_restore_keys" != "$desktop_cache_restore_keys" ]]; then
-  printf 'Wework desktop E2E build jobs must share one Cargo cache key\n' >&2
-  exit 1
-fi
-
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-if ! grep -Fq '${{ runner.os }}-wework-desktop-e2e-v3-' \
-  <<<"$desktop_cache_key" ||
+if ! grep -Fq '${{ runner.os }}-wework-electron-e2e-v1-' \
+  <<<"$electron_cache_key" ||
   ! grep -Fq "hashFiles('docker/wework-e2e/desktop.Dockerfile')" \
-    <<<"$desktop_cache_key" ||
-  grep -Fq '${{ matrix.command }}' <<<"$desktop_cache_key"; then
-  printf 'Wework desktop E2E Cargo cache key must follow the desktop image\n' >&2
+    <<<"$electron_cache_key"; then
+  printf 'Wework Electron E2E cache key must follow the desktop image\n' >&2
   exit 1
 fi
 
-desktop_cache_save_step="$(
+electron_cache_save_step="$(
   extract_named_workflow_step \
     "$wework_workflow" \
-    "Save shared Wework desktop E2E Cargo dependencies"
+    "Save shared Wework Electron E2E build dependencies"
 )"
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-if [[ "$(grep -c \
-  "name: Save shared Wework desktop E2E Cargo dependencies" \
-  "$wework_workflow")" -ne 1 ]] ||
-  ! grep -Fq "if: github.ref == 'refs/heads/main'" \
-    <<<"$desktop_cache_save_step" ||
+if ! grep -Fq "if: github.ref == 'refs/heads/main'" \
+  <<<"$electron_cache_save_step" ||
   ! grep -Fq \
     'key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}' \
-    <<<"$desktop_cache_save_step"; then
-  printf 'Only main may save the shared Wework desktop E2E Cargo cache\n' >&2
+    <<<"$electron_cache_save_step"; then
+  printf 'Only main may save the shared Wework Electron E2E cache\n' >&2
   exit 1
 fi
 
@@ -850,6 +803,19 @@ if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_
   printf 'Wework Core desktop E2E must use its segment classification\n' >&2
   exit 1
 fi
+
+for generated_path_exclusion in \
+  '!wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**' \
+  '!wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**' \
+  '!wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**' \
+  '!wework/test-results/desktop-e2e/**/harness-runtime/**' \
+  '!wework/test-results/desktop-e2e/**/node-runtime/**' \
+  '!wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**'; do
+  if [[ "$(grep -Fc "$generated_path_exclusion" "$wework_workflow")" -ne 4 ]]; then
+    printf 'Wework desktop diagnostics must exclude generated Electron runtime files\n' >&2
+    exit 1
+  fi
+done
 
 if ! grep -Fq 'const DEFAULT_PARALLEL_CHECKPOINTS = 1' "$desktop_checkpoint_runner"; then
   printf 'Wework desktop E2E must default to one checkpoint per runner\n' >&2

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { HooksSettingsPage } from './HooksSettingsPage'
 
 const request = vi.hoisted(() => vi.fn())
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   requestLocalExecutor: request,
   subscribeLocalExecutorEvents: vi.fn().mockResolvedValue(vi.fn()),
 }))

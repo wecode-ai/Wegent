@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getAppPreferences, updateAppPreferences, type QuickPhrase } from '@/tauri/appPreferences'
+import { getAppPreferences, updateAppPreferences, type QuickPhrase } from '@/desktop/appPreferences'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { track } from '@/telemetry/client'
 import { QuickPhrasesEditor, type QuickPhraseChangeAction } from './QuickPhrasesEditor'

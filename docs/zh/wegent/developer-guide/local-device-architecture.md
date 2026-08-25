@@ -36,26 +36,26 @@ flowchart LR
 
 ### Wework 打包 App 本地优先通道
 
-打包后的 Wework Tauri App 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Tauri WebView 内，Tauri Rust 侧只作为 app 内部命令层存在。
+打包后的 Wework Electron app 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Electron renderer 内，Electron 主进程提供 app 内部命令层。
 
 本地优先模式只需要两个本机进程：
 
 ```mermaid
 flowchart LR
     subgraph "用户电脑"
-        APP["Wework Tauri App"]
+        APP["Wework Electron app"]
         UI["React UI"]
-        TAURI["Tauri Commands"]
+        ELECTRON["Electron IPC"]
         EX["Executor Sidecar"]
         FS["本地文件"]
     end
 
-    UI --> TAURI
-    TAURI <-->|"stdio JSONL"| EX
+    UI --> ELECTRON
+    ELECTRON <-->|"stdio JSONL"| EX
     EX --> FS
 ```
 
-Tauri 无参数启动 executor sidecar，并通过子进程 stdin/stdout 交换换行分隔 JSON。stdout 只承载协议响应和事件，诊断信息写入 stderr 和 `~/.wegent-executor/logs/executor.log`。App 自己启动的 sidecar 归 Tauri 进程管理：macOS/Linux 下会放入独立进程组，关闭或重启 App 时先发送 `SIGTERM`，短暂等待后再用 `SIGKILL` 清理剩余子进程；开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。Wework renderer 通过 Tauri command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
+Electron 无参数启动 executor sidecar，并通过子进程 stdin/stdout 交换换行分隔 JSON。stdout 只承载协议响应和事件，诊断信息写入 stderr 和 `~/.wegent-executor/logs/executor.log`。App 自己启动的 sidecar 归 Electron 进程管理：macOS/Linux 下会放入独立进程组，关闭或重启 App 时先发送 `SIGTERM`，短暂等待后再用 `SIGKILL` 清理剩余子进程；开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。Wework renderer 通过 Electron IPC command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
 
 stdio 生命周期由父子进程关系直接确定：写入失败、stdout EOF 或子进程退出才表示本地 IPC 失效。普通请求超时只结束对应请求，不销毁通道，因此系统休眠或调度延迟不会触发端口重连或误切换到其他 executor。
 
@@ -73,7 +73,7 @@ Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过�
 
 Wework 使用独立 Codex Home 隔离本地运行时配置。首次初始化时，用户可以把原生 Codex Home 中的配置、插件、技能和插件市场复制到该目录。初始化完成后，Wework 默认在 `[features]` 中写入 `apps = true`，使迁移后的插件 Apps 能力立即可用；用户之后在设置中明确关闭 Apps 时，后续普通启动不会覆盖该选择。
 
-Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。Tauri 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
+Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。 Electron 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
 
 ### 运行时任务与目标状态
 
@@ -112,6 +112,10 @@ OpenAI 返回的推理和远程压缩条目可能包含只对原 provider 有效
 Wework 在发送用户消息前生成稳定的 `clientUserMessageId`，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求原样传入 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留同一个 `clientUserMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
 
 实时发送响应中的回合 ID 可能是 executor 在 provider 回合出现前分配的临时 ID，而随后 transcript 会返回 Codex 的规范回合 ID。Wework 合并实时会话和 transcript 时必须先按规范回合 ID 对账；两者不同时，再按稳定的 `clientUserMessageId` 合并为同一个回合，并采用 transcript 的规范回合 ID。不能因为本地回合已经有非空 ID 就跳过客户端消息 ID 对账，否则 Goal 自动续轮等竞态会把同一轮用户消息和后续输出重复渲染。
+
+终态事件与 transcript 刷新并发时，同一个 provider assistant item 也可能短暂出现在临时回合和规范回合中。provider item ID 在该场景中是跨回合别名的稳定身份：当一个 assistant item ID 在快照中只属于一个规范回合时，Wework 必须把携带该 item 的本地别名回合并入规范回合，同时保留别名回合中尚未进入快照的工具块等实时内容。不能仅按回合 ID 保留两份表示，也不能按文本内容跨回合去重；后者会误删模型使用不同 item ID 真实输出的重复文本。
+
+Codex Goal 协议返回的 `createdAt` 和 `updatedAt` 使用 Unix 秒，而 Wework 的 `RuntimeGoal` 契约使用 Unix 毫秒。executor 必须在 `thread/goal/get`、`thread/goal/set` 和 `thread/goal/updated` 的 provider 边界统一转换为毫秒，再交给前端按 `updatedAt` 对账；否则乐观 Goal 的毫秒时间戳会始终大于规范完成态的秒时间戳，导致已完成 Goal 继续显示为活动状态。
 
 Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 transcript 时，executor 先用 `thread/read(includeTurns=false)` 读取线程元数据，再用 `thread/turns/list` 按时间倒序读取回合，并对每个回合调用 `thread/items/list` 按正序加载完整 item。分页游标是 Codex 生成的不透明值，前后端不得解析或改写为本地 offset；普通页面只读取一页，搜索、Supervisor 和其他完整历史消费者会沿 `nextCursor` 读取到末尾。executor 会拒绝重复游标、缺失回合 ID、跨回合 item 等无效响应，避免静默产生缺失或错序的历史。
 

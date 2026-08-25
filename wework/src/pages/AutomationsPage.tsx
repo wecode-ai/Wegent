@@ -34,9 +34,10 @@ import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSideba
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCloudDevice } from '@/lib/device-capabilities'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import type { RuntimeSendRequest, RuntimeTaskAddress, RuntimeTaskCreateRequest } from '@/types/api'
@@ -55,7 +56,7 @@ export function AutomationsPage() {
   const { t, i18n } = useTranslation('common')
   const { logout } = useAuth()
   const isMobile = useIsMobile()
-  const isTauri = isTauriRuntime()
+  const isDesktop = isElectronRuntime()
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const {
     state,
@@ -85,6 +86,7 @@ export function AutomationsPage() {
     listGitBranches,
     updateProjectName,
     removeProject,
+    setRuntimeTaskPinned,
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
@@ -517,6 +519,7 @@ export function AutomationsPage() {
           onRefreshDevices={refreshDevices}
           onUpdateProjectName={updateProjectName}
           onRemoveProject={removeProject}
+          onSetRuntimeTaskPinned={setRuntimeTaskPinned}
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
@@ -566,7 +569,7 @@ export function AutomationsPage() {
       )}
 
       <main className="relative flex min-w-0 flex-1 overflow-hidden">
-        {!isMobile && isTauri && (
+        {!isMobile && isDesktop && (
           <DesktopCollapsedSidebarToggle
             collapsed={sidebarCollapsed}
             onToggle={() => setSidebarCollapsed(false)}
@@ -602,7 +605,7 @@ export function AutomationsPage() {
                 models={projectChat.models}
                 currentRuntimeTask={state.currentRuntimeTask}
                 runtimeWork={state.runtimeWork}
-                localDeviceIds={localDevices.map(device => device.device_id)}
+                localDeviceIds={localDevices.flatMap(getWorkbenchDeviceIds)}
                 cloudAvailable={cloudDevices.length > 0}
                 saving={saving}
                 dirty={dirty}

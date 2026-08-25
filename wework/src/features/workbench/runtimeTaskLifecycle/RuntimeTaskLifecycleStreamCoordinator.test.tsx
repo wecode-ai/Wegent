@@ -304,13 +304,42 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     )
   })
 
-  test('settles a matching turn without projecting executor execution as idle', async () => {
+  test('reconciles a provider-renamed terminal turn from the authoritative transcript', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
     store.syncRuntimeWork(runtimeWork(true))
     store.turnStarted(address, 'provisional-turn')
     let streamHandlers: ChatStreamHandlers = {}
     const listRuntimeWork = vi.fn()
+    const getRuntimeTranscript = vi.fn().mockResolvedValue({
+      taskId: address.taskId,
+      workspacePath: address.workspacePath,
+      runtime: address.runtime,
+      running: false,
+      messages: [
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: 'fast completed answer',
+          status: 'done',
+        },
+      ],
+      turns: [
+        {
+          id: 'provider-renamed-turn',
+          status: 'completed',
+          completedAt: 1_786_692_066_192,
+          items: [
+            {
+              id: 'assistant-item-1',
+              type: 'assistant_text',
+              content: 'fast completed answer',
+              createdAt: 1_786_692_066_192,
+            },
+          ],
+        },
+      ],
+    })
     const services = {
       chatStream: {
         subscribe: vi.fn((handlers: ChatStreamHandlers) => {
@@ -321,7 +350,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       executorClient: {
         runtime: {
           listRuntimeWork,
-          getRuntimeTranscript: vi.fn(),
+          getRuntimeTranscript,
         },
       },
     } as unknown as WorkbenchServices
@@ -337,9 +366,172 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     })
 
     expect(listRuntimeWork).not.toHaveBeenCalled()
-    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
+    await waitFor(() =>
+      expect(getRuntimeTranscript).toHaveBeenCalledWith({
+        ...address,
+        limit: 50,
+        refresh: true,
+      })
+    )
+    await waitFor(() => expect(store.getTask(address)?.turn.outcome).toBe('succeeded'))
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
+  })
+
+  test('does not settle a newer turn from a repeated old terminal event', async () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const address = runtimeTaskAddress()
+    store.syncRuntimeWork(runtimeWork(true))
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
+    store.turnStarted(address, 'turn-2')
+    let streamHandlers: ChatStreamHandlers = {}
+    const getRuntimeTranscript = vi.fn().mockResolvedValue({
+      ...runtimeTranscript(true),
+      turns: [
+        {
+          id: 'turn-1',
+          status: 'completed',
+          completedAt: 1_786_692_066_192,
+          items: [],
+        },
+        {
+          id: 'turn-2',
+          status: 'streaming',
+          items: [],
+        },
+      ],
+    })
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: {
+          listRuntimeWork: vi.fn(),
+          getRuntimeTranscript,
+        },
+      },
+    } as unknown as WorkbenchServices
+
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        subtaskId: 'turn-1',
+        result: { value: 'old answer' },
+      })
+    })
+
+    await waitFor(() =>
+      expect(getRuntimeTranscript).toHaveBeenCalledWith({
+        ...address,
+        limit: 50,
+        refresh: true,
+      })
+    )
+    expect(store.getTask(address)?.turn.id).toBe('turn-2')
+    expect(store.getTask(address)?.turn.outcome).toBeNull()
     expect(store.getTask(address)?.execution.phase).toBe('running')
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
+  test('does not apply a terminal transcript after a newer turn starts', async () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const address = runtimeTaskAddress()
+    store.syncRuntimeWork(runtimeWork(true))
+    store.turnStarted(address, 'turn-1')
+    let streamHandlers: ChatStreamHandlers = {}
+    let resolveTranscript: ((value: RuntimeTranscriptResponse) => void) | undefined
+    const getRuntimeTranscript = vi.fn(
+      () =>
+        new Promise<RuntimeTranscriptResponse>(resolve => {
+          resolveTranscript = resolve
+        })
+    )
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: {
+          listRuntimeWork: vi.fn(),
+          getRuntimeTranscript,
+        },
+      },
+    } as unknown as WorkbenchServices
+
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        subtaskId: 'turn-1',
+        result: {},
+      })
+    })
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+
+    act(() => store.turnStarted(address, 'turn-2'))
+    await act(async () => {
+      resolveTranscript?.(runtimeTranscript(false))
+    })
+
+    expect(store.getTask(address)?.turn.id).toBe('turn-2')
+    expect(store.getTask(address)?.turn.outcome).toBeNull()
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
+  test('reconciles executor state when completion already carries content', async () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const address = runtimeTaskAddress()
+    store.syncRuntimeWork(runtimeWork(true, 'executor-device'))
+    store.turnStarted(address, 'turn-1')
+    let streamHandlers: ChatStreamHandlers = {}
+    const getRuntimeTranscript = vi.fn().mockResolvedValue(runtimeTranscript(false))
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: {
+          listRuntimeWork: vi.fn(),
+          getRuntimeTranscript,
+        },
+      },
+    } as unknown as WorkbenchServices
+
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: address.taskId,
+        deviceId: 'executor-device',
+        subtaskId: 'turn-1',
+        result: { value: 'streamed answer' },
+      } as never)
+    })
+
+    await waitFor(() =>
+      expect(getRuntimeTranscript).toHaveBeenCalledWith({
+        ...address,
+        limit: 50,
+        refresh: true,
+      })
+    )
+    await waitFor(() => expect(store.getTask(address)?.execution.phase).toBe('idle'))
+    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
   })
 
   test('settles a matching cancellation without projecting executor execution as idle', async () => {
@@ -369,7 +561,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       streamHandlers.onChatError?.({
         taskId: address.taskId,
         deviceId: address.deviceId,
-        subtaskId: 'provider-turn',
+        subtaskId: 'turn-1',
         error: 'cancelled',
         type: 'cancelled',
       } as never)
@@ -425,13 +617,14 @@ function runtimeTaskAddress() {
   }
 }
 
-function runtimeWork(running: boolean): RuntimeWorkListResponse {
+function runtimeWork(running: boolean, remoteHostId?: string): RuntimeWorkListResponse {
   const address = runtimeTaskAddress()
   return {
     projects: [],
     chats: [
       {
         deviceId: address.deviceId,
+        ...(remoteHostId ? { remoteHostId } : {}),
         workspacePath: address.workspacePath,
         available: true,
         tasks: [

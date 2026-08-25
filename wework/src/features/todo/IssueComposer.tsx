@@ -494,6 +494,7 @@ export function IssueComposer({
         error={error}
         placeholder={t('workbench.input_placeholder', '随心输入')}
         inputTestId="workspace-issue-input"
+        nativeEmptyCaret
         submitButtonTestId="workspace-issue-submit"
         variant="desktop"
         projectChat={projectChat}

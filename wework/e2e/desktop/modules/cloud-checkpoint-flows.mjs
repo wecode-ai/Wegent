@@ -1,3 +1,4 @@
+import { access } from 'node:fs/promises'
 import { basename } from 'node:path'
 
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
@@ -227,13 +228,15 @@ async function verifyCloudProjectCreationSources(control, workspacePath) {
     value: workspacePath,
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-git-submit"]')
-  await waitForCloudProject(
+  const clonedProjectPath = join(homePath, basename(workspacePath))
+  await waitForGitCloneProject(
     control,
     gitMenus,
+    clonedProjectPath,
     'Cloning a Git cloud project did not add it to the sidebar'
   )
   await runChecked('git', ['rev-parse', '--is-inside-work-tree'], {
-    cwd: join(homePath, basename(workspacePath)),
+    cwd: clonedProjectPath,
   })
 }
 
@@ -246,6 +249,27 @@ async function waitForCloudProject(control, previousProjectMenus, message) {
         testId => testId.startsWith('project-menu-') && !previousProjectMenus.has(testId)
       )
     ) {
+      return snapshot
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(message)
+}
+
+async function waitForGitCloneProject(control, previousProjectMenus, targetPath, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const projectAdded = snapshot.testIds.some(
+      testId => testId.startsWith('project-menu-') && !previousProjectMenus.has(testId)
+    )
+    const clonePending = snapshot.testIds.some(testId =>
+      testId.startsWith('git-clone-project-operation-')
+    )
+    const targetExists = await access(targetPath)
+      .then(() => true)
+      .catch(() => false)
+    if (projectAdded && !clonePending && targetExists) {
       return snapshot
     }
     await new Promise(resolve => setTimeout(resolve, 100))
@@ -298,6 +322,7 @@ async function verifyCloudWorkspacePathMentions({ composerSelector, control, wor
 
 async function verifyCloudCheckpoint({
   app,
+  appBundlePath,
   appIdentifier,
   cloudEnvironment,
   codexHome,
@@ -361,7 +386,7 @@ async function verifyCloudCheckpoint({
     assert.equal(
       noticeKind,
       'success',
-      'Plugin auto-update did not finish successfully in the real Tauri application'
+      'Plugin auto-update did not finish successfully in the real Electron application'
     )
     await cloudEnvironment.assertPluginAutoUpdateComplete(codexHome, 6)
     setPhase('cloud-plugin-auto-update-without-codex-rpc')
@@ -425,6 +450,7 @@ async function verifyCloudCheckpoint({
       setPhase('cloud-window-lifecycle')
       await verifyBackgroundTaskWindowLifecycle({
         app,
+        appBundlePath,
         appIdentifier,
         composerSelector,
         control,
@@ -491,6 +517,7 @@ async function verifyCloudCheckpoint({
       setPhase('cloud-attachment-sidebar')
       await verifyAttachmentOnlySidebarLifecycle({
         app,
+        appBundlePath,
         appIdentifier,
         composerSelector,
         control,

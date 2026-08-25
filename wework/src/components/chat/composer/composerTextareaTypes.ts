@@ -36,6 +36,7 @@ export interface ComposerTextareaProps {
   rows: number
   textareaRef: RefObject<HTMLElement | null>
   className: string
+  nativeEmptyCaret?: boolean
   skillMenuClassName?: string
   disableAutocomplete?: boolean
   onKeyDown?: (event: KeyboardEvent, snapshot: ComposerEditorSnapshot) => boolean | void

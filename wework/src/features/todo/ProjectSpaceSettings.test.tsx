@@ -12,7 +12,7 @@ const clipboardMocks = vi.hoisted(() => ({
   copyTextToClipboard: vi.fn(),
 }))
 
-vi.mock('@/tauri/localExecutor', () => localExecutorMocks)
+vi.mock('@/desktop/localExecutor', () => localExecutorMocks)
 vi.mock('@/lib/clipboard', () => clipboardMocks)
 
 describe('ProjectSpaceSettings', () => {

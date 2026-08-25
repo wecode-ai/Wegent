@@ -6,9 +6,9 @@ import json
 
 import pytest
 from fastapi import Request
+from knowledge_runtime.main import embedding_dimension_mismatch_handler
 
 from knowledge_engine.embedding.errors import EmbeddingDimensionMismatchError
-from knowledge_runtime.main import embedding_dimension_mismatch_handler
 
 
 @pytest.mark.asyncio

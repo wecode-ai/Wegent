@@ -1,4 +1,4 @@
-import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
+import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 
 export type CodexPersonality = 'friendly' | 'pragmatic'
 

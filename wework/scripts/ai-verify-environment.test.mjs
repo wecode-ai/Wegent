@@ -33,6 +33,8 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.WEWORK_E2E_NATIVE_CODEX_HOME).toBe('/tmp/session/native-codex')
     expect(environment.VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION).toBe('true')
     expect(environment.WEWORK_APP_IDENTIFIER).toBe('io.wecode.wework.ai-verify.test')
+    expect(environment.WEWORK_E2E_CONTROL_TOKEN).toBe('control-token')
+    expect(environment.WEWORK_E2E_CONTROL_URL).toBe('http://127.0.0.1:9999')
     expect(environment.DEVICE_SESSION_GATEWAY_HOST).toBe('127.0.0.1')
     expect(environment.DEVICE_SESSION_GATEWAY_PORT).toBe('0')
     expect(environment.WEGENT_EXECUTOR_HOME).toBe('/tmp/session/executor-home')

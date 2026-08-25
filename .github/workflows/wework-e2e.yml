@@ -192,12 +192,11 @@ jobs:
     name: Build Shared Wework Desktop E2E Artifact
     needs:
       - changes
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true' || needs.changes.outputs.wework_desktop_other_e2e == 'true') && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       HOME: /root
-      WEWORK_E2E_SKIP_TYPECHECK: "true"
     container:
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
@@ -214,6 +213,9 @@ jobs:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
           setup-toolchain: "false"
 
+      - name: Install Wework Electron dependencies
+        run: pnpm --dir wework/electron install --frozen-lockfile
+
       - name: Set up sccache
         uses: ./.github/actions/setup-sccache
 
@@ -224,7 +226,7 @@ jobs:
           path: ~/.cache/wegent/codex
           key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
 
-      - name: Restore shared Wework desktop E2E Cargo dependencies
+      - name: Restore shared Wework Electron E2E build dependencies
         id: wework-desktop-cargo-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -232,10 +234,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
-            wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+            ~/.cache/electron
+          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
+            ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
       - name: Prepare bundled sidecars
         working-directory: ./wework
@@ -250,14 +252,15 @@ jobs:
           wait "$dws_pid" || status=$?
           exit "$status"
 
-      - name: Build Wework desktop Core E2E binaries
+      - name: Build Wework Electron E2E application
         env:
           CI: true
-          WEWORK_E2E_BUILD_MANIFEST: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build.json
-          WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
-        run: node wework/e2e/desktop/task-flow.e2e.mjs --build-only
+        run: |
+          pnpm --filter wework ai:verify:electron:build
+          test -x wework/electron/release/WeWork-linux-x64/WeWork
+          test -x wework/electron/release/WeWork-linux-x64/resources/bin/wegent-executor
 
-      - name: Save shared Wework desktop E2E Cargo dependencies
+      - name: Save shared Wework Electron E2E build dependencies
         if: github.ref == 'refs/heads/main' && steps.wework-desktop-cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -265,7 +268,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             executor/target
-            wework/src-tauri/target
+            ~/.cache/electron
           key: ${{ steps.wework-desktop-cargo-cache.outputs.cache-primary-key }}
 
       - name: Save bundled Codex cache
@@ -322,6 +325,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
+        with:
+          setup-toolchain: "false"
+
       - name: Restore local harness CLIs
         if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')
         id: local-harness-clis-cache
@@ -350,8 +358,8 @@ jobs:
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
-          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/WeWork
-          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/wegent-executor
+          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
+          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           WEWORK_E2E_ISOLATED_XVFB: "true"
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
@@ -372,6 +380,12 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/harness-runtime/**
+            !wework/test-results/desktop-e2e/**/node-runtime/**
+            !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
           compression-level: 0
@@ -402,6 +416,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
+        with:
+          setup-toolchain: "false"
+
       - name: Download shared Wework desktop E2E build
         uses: actions/download-artifact@v4
         with:
@@ -421,9 +440,9 @@ jobs:
       - name: Run Wework desktop Cloud E2E checkpoints
         env:
           CI: true
-          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/WeWork
+          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
-          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/wegent-executor
+          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_ISOLATED_XVFB: "true"
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
           WEWORK_E2E_PARALLEL_SCOPE: cloud
@@ -443,6 +462,12 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/harness-runtime/**
+            !wework/test-results/desktop-e2e/**/node-runtime/**
+            !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
           compression-level: 0
@@ -451,12 +476,12 @@ jobs:
     name: Wework Desktop E2E (${{ matrix.name }})
     needs:
       - changes
+      - build-wework-desktop-core-e2e
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       HOME: /root
-      WEWORK_E2E_SKIP_TYPECHECK: "true"
     container:
       image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
@@ -475,49 +500,29 @@ jobs:
         with:
           setup-toolchain: "false"
 
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
-
-      - name: Restore bundled Codex cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Download shared Wework desktop E2E build
+        uses: actions/download-artifact@v4
         with:
-          path: ~/.cache/wegent/codex
-          key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
+          name: wework-desktop-core-e2e-build
+          path: .ci-artifacts
 
-      - name: Restore shared Wework desktop E2E Cargo dependencies
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            executor/target
-            wework/src-tauri/target
-          key: ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-wework-desktop-e2e-v3-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
-
-      - name: Prepare bundled sidecars
-        working-directory: ./wework
-        run: |
-          node scripts/prepare-codex-binary.mjs &
-          codex_pid=$!
-          node scripts/prepare-dws-binary.mjs &
-          dws_pid=$!
-
-          status=0
-          wait "$codex_pid" || status=$?
-          wait "$dws_pid" || status=$?
-          exit "$status"
+      - name: Restore shared Wework desktop E2E build
+        run: .github/scripts/restore-wework-core-e2e-build.sh
 
       - name: Run Wework desktop ${{ matrix.name }} E2E
         env:
           CI: true
-          CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
+          CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
           E2E_COMMAND: ${{ matrix.command }}
           E2E_SEGMENT: ${{ matrix.segment }}
+          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
+          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
           WEWORK_E2E_DESKTOP_SCENARIO_MODULE: ${{ matrix.segment == 'embedded-browser' && './scenarios/embedded-browser-agent.scenario.mjs' || matrix.segment == 'browser-multi-tabs' && './scenarios/embedded-browser-multi-tabs.scenario.mjs' || matrix.segment == 'browser-toolbar-actions' && './scenarios/embedded-browser-toolbar-actions.scenario.mjs' || '' }}
+          WEWORK_E2E_ISOLATED_XVFB: "true"
         run: |
           test -x "$CODEX_BIN"
+          test -x "$WEWORK_E2E_APP_BIN"
+          test -x "$WEWORK_E2E_EXECUTOR_BIN"
           args=()
           if [[ -n "$E2E_SEGMENT" ]]; then
             args=(-- --segment "$E2E_SEGMENT")
@@ -533,6 +538,12 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/harness-runtime/**
+            !wework/test-results/desktop-e2e/**/node-runtime/**
+            !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
           compression-level: 0
@@ -582,7 +593,8 @@ jobs:
           fi
 
           if [[ ( "$RUN_DESKTOP_CORE_E2E" == "true" || \
-            "$RUN_DESKTOP_CLOUD_E2E" == "true" ) && \
+            "$RUN_DESKTOP_CLOUD_E2E" == "true" || \
+            "$RUN_DESKTOP_OTHER_E2E" == "true" ) && \
             "$DESKTOP_CORE_BUILD_RESULT" != "success" ]]; then
             echo "Shared Wework desktop E2E build completed with: $DESKTOP_CORE_BUILD_RESULT"
             exit 1
@@ -618,8 +630,6 @@ jobs:
     if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
     runs-on: macos-14
     timeout-minutes: 45
-    env:
-      WEWORK_E2E_SKIP_TYPECHECK: "true"
 
     steps:
       - name: Checkout code
@@ -653,7 +663,9 @@ jobs:
             ${{ runner.os }}-pnpm-store-v1-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir wework/electron install --frozen-lockfile
 
       - name: Save shared macOS pnpm store
         if: github.ref == 'refs/heads/main' && steps.macos-pnpm-cache.outputs.cache-hit != 'true'
@@ -662,25 +674,38 @@ jobs:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ steps.macos-pnpm-cache.outputs.cache-primary-key }}
 
-      - name: Restore shared Wework Cargo sources
+      - name: Restore shared Wework Electron build dependencies
         id: wework-cargo-sources-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-wework-app-cargo-sources-v2-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+            executor/target
+            ~/Library/Caches/electron
+          key: ${{ runner.os }}-wework-electron-app-v1-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-wework-app-cargo-sources-v2-
+            ${{ runner.os }}-wework-electron-app-v1-
 
       - name: Prepare bundled sidecars
         working-directory: ./wework
         run: |
           pnpm run prepare:codex --materialize
           pnpm run prepare:dws
-          codex_bin="$(find -L "$PWD/src-tauri/binaries/codex" -type f -path '*/bin/codex' -perm -u+x -print -quit)"
+          codex_bin="$(find -L "$PWD/resources/binaries/codex" -type f -path '*/bin/codex' -perm -u+x -print -quit)"
           test -n "$codex_bin"
           echo "CODEX_BIN=$codex_bin" >> "$GITHUB_ENV"
+          echo "WEWORK_E2E_CODEX_BIN=$codex_bin" >> "$GITHUB_ENV"
+
+      - name: Build Wework Electron E2E application
+        run: |
+          pnpm --filter wework ai:verify:electron:build
+          app_bin="$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork"
+          executor_bin="$PWD/wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor"
+          test -x "$app_bin"
+          test -x "$executor_bin"
+          echo "WEWORK_E2E_APP_BIN=$app_bin" >> "$GITHUB_ENV"
+          echo "WEWORK_E2E_EXECUTOR_BIN=$executor_bin" >> "$GITHUB_ENV"
 
       - name: Run Wework desktop memory E2E
         if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all')
@@ -688,6 +713,8 @@ jobs:
           CI: true
         run: |
           test -x "$CODEX_BIN"
+          test -x "$WEWORK_E2E_APP_BIN"
+          test -x "$WEWORK_E2E_EXECUTOR_BIN"
           pnpm --filter wework e2e:desktop:memory
 
       - name: Run Wework desktop macOS Inspector E2E
@@ -696,15 +723,19 @@ jobs:
           CI: true
         run: |
           test -x "$CODEX_BIN"
+          test -x "$WEWORK_E2E_APP_BIN"
+          test -x "$WEWORK_E2E_EXECUTOR_BIN"
           pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
 
-      - name: Save shared Wework Cargo sources
+      - name: Save shared Wework Electron build dependencies
         if: github.ref == 'refs/heads/main' && steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            executor/target
+            ~/Library/Caches/electron
           key: ${{ steps.wework-cargo-sources-cache.outputs.cache-primary-key }}
 
       - name: Upload Wework desktop memory diagnostics
@@ -715,6 +746,12 @@ jobs:
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/harness-runtime/**
+            !wework/test-results/desktop-e2e/**/node-runtime/**
+            !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
           if-no-files-found: ignore
           retention-days: 7
           compression-level: 0

@@ -2,15 +2,11 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { harnessAppsApi, type HarnessAppExport } from './harnessApps'
 
 const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(),
+  desktopInvoke: vi.fn(),
 }))
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => mocks.invoke(...args),
-}))
-
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(),
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: (...args: unknown[]) => mocks.desktopInvoke(...args),
 }))
 
 const exported: HarnessAppExport = {
@@ -33,24 +29,19 @@ const exported: HarnessAppExport = {
 
 describe('harnessAppsApi', () => {
   beforeEach(() => {
-    mocks.invoke.mockReset()
+    mocks.desktopInvoke.mockReset()
   })
 
   test('exports an installation and copies the archive to Downloads', async () => {
-    mocks.invoke
-      .mockResolvedValueOnce(exported)
-      .mockResolvedValueOnce('/Users/test/Downloads/research-desk-1.2.0.zip')
-
-    await expect(harnessAppsApi.exportToDownloads('research-desk')).resolves.toEqual({
+    const saved = {
       ...exported,
       destinationPath: '/Users/test/Downloads/research-desk-1.2.0.zip',
-    })
-    expect(mocks.invoke).toHaveBeenNthCalledWith(1, 'export_harness_app_package', {
+    }
+    mocks.desktopInvoke.mockResolvedValue(saved)
+
+    await expect(harnessAppsApi.exportToDownloads('research-desk')).resolves.toEqual(saved)
+    expect(mocks.desktopInvoke).toHaveBeenCalledWith('smartApps.exportToDownloads', {
       installationId: 'research-desk',
-    })
-    expect(mocks.invoke).toHaveBeenNthCalledWith(2, 'download_local_file_to_downloads', {
-      sourcePath: exported.archivePath,
-      filename: 'research-desk-1.2.0.zip',
     })
   })
 })

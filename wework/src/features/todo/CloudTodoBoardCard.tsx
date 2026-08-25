@@ -55,7 +55,7 @@ import {
   latestAssistantMessage,
 } from './runtimeTaskResponsePreview'
 import { priorityBadgeClasses } from './todoShared'
-import type { QuickPhrase } from '@/tauri/appPreferences'
+import type { QuickPhrase } from '@/desktop/appPreferences'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean

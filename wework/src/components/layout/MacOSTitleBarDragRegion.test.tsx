@@ -1,35 +1,21 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { describe, expect, test } from 'vitest'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 
-const startDragging = vi.fn().mockResolvedValue(undefined)
-
-vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({ startDragging }),
-}))
-
 describe('MacOSTitleBarDragRegion', () => {
-  beforeEach(() => {
-    startDragging.mockClear()
-  })
-
-  test('starts native dragging from the primary mouse button', async () => {
+  test('marks the region for native Electron dragging', () => {
     render(<MacOSTitleBarDragRegion className="flex-1" />)
 
-    fireEvent.mouseDown(screen.getByTestId('macos-titlebar-drag-region'), {
-      button: 0,
-    })
-
-    await waitFor(() => expect(startDragging).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('macos-titlebar-drag-region')).toHaveClass(
+      'electron-titlebar-drag-region',
+      'pointer-events-auto',
+      'flex-1'
+    )
   })
 
-  test('ignores non-primary mouse buttons', () => {
+  test('uses the full available titlebar area by default', () => {
     render(<MacOSTitleBarDragRegion />)
 
-    fireEvent.mouseDown(screen.getByTestId('macos-titlebar-drag-region'), {
-      button: 1,
-    })
-
-    expect(startDragging).not.toHaveBeenCalled()
+    expect(screen.getByTestId('macos-titlebar-drag-region')).toHaveClass('h-full', 'w-full')
   })
 })

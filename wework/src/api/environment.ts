@@ -10,7 +10,7 @@ import type {
   ChangeRequestState,
   EnvironmentInfo,
 } from '@/types/environment'
-import { getAppPreferences } from '@/tauri/appPreferences'
+import { getAppPreferences } from '@/desktop/appPreferences'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import {
   configuredWorkspacePath,

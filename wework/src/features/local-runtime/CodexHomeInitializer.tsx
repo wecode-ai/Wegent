@@ -2,12 +2,15 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import type { LocalCodexHomeMigrationStatus } from '@/api/local/codexPlugins'
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 
 const CODEX_MIGRATION_DISMISSED_STORAGE_KEY = 'wework.plugins.codexMigrationDismissed'
 const SHOULD_SKIP_CODEX_HOME_INITIALIZATION =
-  import.meta.env.VITE_WEWORK_E2E === 'true' &&
-  import.meta.env.VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION !== 'true'
+  import.meta.env.VITE_WEWORK_E2E === 'true'
+    ? getDesktopE2ERuntimeConfig().codexHomeInitialization !== true
+    : isElectronRuntime()
 
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) return error.message

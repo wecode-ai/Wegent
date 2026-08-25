@@ -7,11 +7,11 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from knowledge_runtime.services.config_resolver import (
     ConfigResolutionError,
     ConfigResolver,
 )
+
 from shared.models import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrieverConfig,

@@ -4,17 +4,17 @@ sidebar_position: 38
 
 # Embedded Browser
 
-Wework's embedded browser displays an interactive web page inside the desktop workbench right panel and lets the local runtime control the same page through the WKWebView bridge. It is not a screenshot preview, and it should not open a separate external Chrome window.
+Wework's embedded browser displays an interactive web page inside the desktop workbench right panel and lets the local runtime control the same page through the Electron browser view bridge. It is not a screenshot preview, and it should not open a separate external Chrome window.
 
 ## Architecture
 
 The embedded browser has three layers:
 
-- The Wework Tauri native layer creates the embedded WebView and updates its bounds, navigation URL, and visibility through commands.
+- The Wework Electron main process creates the embedded WebView and updates its bounds, navigation URL, and visibility through commands.
 - The Wework React workbench mounts the browser panel into the right workspace pane and owns panel, task, and annotation state.
-- `executor/src/browser_mcp` exposes browser MCP tools to Codex and uses the Wework bridge to operate the WKWebView bound to the current task.
+- `executor/src/browser_mcp` exposes browser MCP tools to Codex and uses the Wework bridge to operate the Electron browser view bound to the current task.
 
-When Executor launches Codex, it injects the browser MCP server configuration. Browser tool calls from the model read the current bridge identity and send controlled requests to the Wework process's loopback bridge. The bridge then schedules WKWebView navigation, page inspection, DOM actions, waits, and screenshots on the main thread.
+When Executor launches Codex, it injects the browser MCP server configuration. Browser tool calls from the model read the current bridge identity and send controlled requests to the Wework process's loopback bridge. The bridge then schedules Electron browser view navigation, page inspection, DOM actions, waits, and screenshots on the main thread.
 
 Each Wework process binds an independent random local bridge port and atomically writes the bridge identity to `runtime/embedded-browser-bridge.json` under the active Executor home. The identity contains a schema version, process PID, loopback address, authentication token, and start time. Directory and file permissions should be restricted to the current user, and the token must not be logged. The MCP server reads the latest identity before each request and accepts only loopback addresses, so multiple Wework instances do not route browser requests to the wrong window.
 
@@ -34,7 +34,7 @@ flowchart LR
     BRIDGE -->|first open, host absent| PENDING[(pending_open_requests)]
     PENDING -->|open-request event / pending snapshot| MAIN[DesktopWorkbenchMain]
     MAIN -->|create top-level browser:N + select| PANEL[WorkspaceBrowserPanel]
-    PANEL -->|embedded_browser_open| NATIVE[native WKWebView for logical label]
+    PANEL -->|embedded_browser_open| NATIVE[native Electron browser view for logical label]
     NATIVE --> ENTRY
 
     BRIDGE -->|navigate after host is ready| NATIVE
@@ -51,16 +51,16 @@ flowchart LR
 
 Connection ownership is fixed as follows:
 
-| Connection                               | Sole responsibility                                                                                          | Current code owner                                                                                                                              |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| E2E/MCP → bridge                         | Read the latest identity, authenticate the request, and carry the base label plus optional session ID        | `e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`, `executor/src/browser_mcp`, `src-tauri/src/embedded_browser/bridge_server.rs` |
-| bridge → routing                         | Resolve the base label to exactly one active logical label; tests must not guess native labels               | `active_tabs` and `agent_tabs` in `src-tauri/src/embedded_browser.rs`                                                                           |
-| bridge → pending open                    | Persist an ID-bearing request before notifying React to create the host                                      | `request_browser_open`, `embedded_browser_pending_open_requests`                                                                                |
-| React → top-level tab                    | Create independent state and a logical label for every `browser:N`, then synchronize the active tab          | `DesktopWorkbenchMain.tsx`, `RightWorkspacePanel.tsx`                                                                                           |
-| panel → native WebView                   | Create or reuse the WebView for the logical label after the host has usable bounds                           | `WorkspaceBrowserPanel.tsx`, `embedded_browser_open`                                                                                            |
-| native load → execution truth            | Only `PageLoadEvent::Finished` writes `loaded_url`; `url` represents navigation intent only                  | `on_page_load` in `embedded_browser.rs`                                                                                                         |
-| load truth → bridge                      | `open` succeeds only after the target entry has a `loaded_url`                                               | `wait_for_browser_navigation`                                                                                                                   |
-| tab select/close → routing and lifecycle | Selection updates base-label routing; close may destroy only the instance matching the expected native label | `DesktopWorkbenchMain.tsx`, `embedded_browser_set_active_tab`, `embedded_browser_close(_many)`                                                  |
+| Connection                               | Sole responsibility                                                                                          | Current code owner                                                                                                                           |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| E2E/MCP → bridge                         | Read the latest identity, authenticate the request, and carry the base label plus optional session ID        | `e2e/desktop/scenarios/embedded-browser-multi-tabs.scenario.mjs`, `executor/src/browser_mcp`, `electron/src/host/embedded-browser-bridge.ts` |
+| bridge → routing                         | Resolve the base label to exactly one active logical label; tests must not guess native labels               | `electron/src/host/embedded-browser-manager.ts`                                                                                              |
+| bridge → pending open                    | Persist an ID-bearing request before notifying React to create the host                                      | `request_browser_open`, `embedded_browser_pending_open_requests`                                                                             |
+| React → top-level tab                    | Create independent state and a logical label for every `browser:N`, then synchronize the active tab          | `DesktopWorkbenchMain.tsx`, `RightWorkspacePanel.tsx`                                                                                        |
+| panel → native WebView                   | Create or reuse the WebView for the logical label after the host has usable bounds                           | `WorkspaceBrowserPanel.tsx`, `embedded_browser_open`                                                                                         |
+| native load → execution truth            | Only `PageLoadEvent::Finished` writes `loaded_url`; `url` represents navigation intent only                  | `on_page_load` in `embedded_browser.rs`                                                                                                      |
+| load truth → bridge                      | `open` succeeds only after the target entry has a `loaded_url`                                               | `wait_for_browser_navigation`                                                                                                                |
+| tab select/close → routing and lifecycle | Selection updates base-label routing; close may destroy only the instance matching the expected native label | `DesktopWorkbenchMain.tsx`, `embedded_browser_set_active_tab`, `embedded_browser_close(_many)`                                               |
 
 ### First multi-tab navigation sequence
 
@@ -71,7 +71,7 @@ sequenceDiagram
     participant S as EmbeddedBrowserState
     participant R as React workbench
     participant P as WorkspaceBrowserPanel
-    participant W as native WKWebView
+    participant W as native Electron browser view
     participant H as target HTTP service
 
     T->>B: open(base label, URL, timeout)
@@ -118,7 +118,7 @@ This path must preserve these invariants:
 
 ## Agent Browser Capabilities
 
-The model sees browser action tools, not raw WebKit APIs. Common capabilities include:
+The model sees browser action tools, not raw Chromium APIs. Common capabilities include:
 
 - `browser_open` / `browser_navigate`: open or navigate pages.
 - `browser_inspect`: return a structured page inspection result.
@@ -126,7 +126,7 @@ The model sees browser action tools, not raw WebKit APIs. Common capabilities in
 - `browser_scroll`, `browser_scroll_into_view`, `browser_select_option`, `browser_set_checked`: cover common scrolling and form controls.
 - `browser_wait`: wait for page stability, URL conditions, text, or element state.
 - `browser_take_screenshot`: capture a real browser screenshot.
-- `browser_capabilities`, `browser_native_input_probe`, `browser_ax_probe`, `browser_present_probe`: report WKWebView capability boundaries and diagnostics.
+- `browser_capabilities`, `browser_native_input_probe`, `browser_ax_probe`, `browser_present_probe`: report Electron browser view capability boundaries and diagnostics.
 
 Combined tools may collapse frequent flows into one model call, such as `browser_open_and_inspect`, `browser_click_and_inspect`, and `browser_wait_and_inspect`. Combined tools must appear in MCP `tools/list` so the protocol remains self-describing.
 
@@ -169,13 +169,13 @@ Page-state polling owns the browser's actual URL, while the address field owns t
 
 ## WebView Compatibility
 
-- Built-in-browser child WebViews enable Web Inspector only in debug builds; an explicit build cfg disables it in release builds. On macOS debug builds, Wework saves the child-WebView frame before the Inspector frontend first appears, detaches the Inspector, and restores the frame exactly. F12 therefore opens only a separate window and cannot dock, resize the browser, or cover the workbench. The main-WebView Inspector remains available only through Developer Commands.
+- Built-in-browser child WebViews enable DevTools only in debug builds; an explicit build cfg disables it in release builds. On macOS debug builds, Wework saves the child-WebView frame before the Inspector frontend first appears, detaches the Inspector, and restores the frame exactly. F12 therefore opens only a separate window and cannot dock, resize the browser, or cover the workbench. The main-WebView Inspector remains available only through Developer Commands.
 - Browser WebViews use a fixed isolated data-store identifier and app data directory. They must not share Wework's main-interface sign-in storage, and the browser settings clear action only targets this store.
-- Wegent Agent application tabs in Tauri also use native child WebViews instead of cross-origin iframes. All application tabs share the same fixed data-store identifier, so the complete website storage for an origin, including every `localStorage` key, cookies, and IndexedDB, remains available after closing and reopening a tab or restarting the application. A tab label identifies only the WebView lifecycle; it does not partition storage. On macOS 14 and later, `data_store_identifier` selects the persistent `WKWebsiteDataStore`, while `data_directory` primarily serves other platforms. Do not mirror or restore page storage key by key in the Wework main interface.
-- Browser WebViews use a Safari-compatible User-Agent so websites do not treat a WebKit User-Agent without a browser product identifier as an unsupported client.
+- Wegent Agent application tabs in Electron also use native child WebViews instead of cross-origin iframes. All application tabs share the same fixed data-store identifier, so the complete website storage for an origin, including every `localStorage` key, cookies, and IndexedDB, remains available after closing and reopening a tab or restarting the application. A tab label identifies only the WebView lifecycle; it does not partition storage. On macOS 14 and later, `data_store_identifier` selects the persistent `WKWebsiteDataStore`, while `data_directory` primarily serves other platforms. Do not mirror or restore page storage key by key in the Wework main interface.
+- Browser WebViews use a Chromium-compatible User-Agent so websites do not treat a Chromium User-Agent without a browser product identifier as an unsupported client.
 - Popups, OAuth, SSO, and payment flows may use `window.open` or new-window navigation. Implementations should route them to a controlled browser window or explicitly hand them to the system; the Agent must not operate invisible hidden pages.
 - The download handler reads the download directory and ask-before-download preference. Cancelling the system save dialog must cancel that download.
-- Page-load events write the current URL into application state. Do not synchronously read the native WebView URL while handling IPC or custom protocols because macOS WebKit may temporarily have no URL while creating or destroying a WebView.
+- Page-load events write the current URL into application state. Do not synchronously read the native WebView URL while handling IPC or custom protocols because macOS Chromium may temporarily have no URL while creating or destroying a WebView.
 - Page action scripts may only perform behavior that matches the current tool semantics. Do not wrap arbitrary DOM mutations in internal evaluate calls to bypass safety checks.
 - macOS App Transport Security permits HTTP only for embedded web content. An invalid server certificate must first fail system trust evaluation; only then may the browser continue that server-trust challenge and publish risk state containing the native WebView identity and origin to the frontend. Register the TLS handler before the first navigation so initial loading cannot race asynchronous `with_webview` configuration. Keep the warning across same-origin pages, and clear it after cross-origin navigation or WebView closure.
 
@@ -205,16 +205,16 @@ After changing embedded browser code, run at least:
 pnpm --filter wework typecheck
 pnpm --filter wework lint
 cargo check --manifest-path executor/Cargo.toml
-cargo check --manifest-path wework/src-tauri/Cargo.toml
 cargo test --manifest-path executor/Cargo.toml browser_mcp
-cargo test --manifest-path wework/src-tauri/Cargo.toml embedded_browser
+pnpm --dir wework/electron typecheck
+pnpm --dir wework/electron test
 pnpm --filter wework e2e:desktop:embedded-browser
 pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
 ```
 
 `e2e:desktop:embedded-browser` must create task A, switch to task B, and then use task A's specific label for the first bridge `open`, `waitFor`, and `inspect`. It verifies that the inactive task completes background navigation before the tool timeout without taking over task B's browser, and that the same page state is visible after switching back to task A. A test that covers only a second open, an active-task open, or a manually exposed browser panel does not exercise the first-open and inactive-task routing races.
 
-When the browser change touches Tauri commands, native WebView behavior, IPC, or the Agent action path, also start an isolated real Tauri session with `pnpm --filter wework ai:verify start` and record evidence for opening a page, inspect, actions, and screenshot. If the full E2E is too slow locally, document why it was not run and make sure CI runs `e2e:desktop:embedded-browser`.
+When the browser change touches Electron IPC commands, native WebView behavior, IPC, or the Agent action path, also start an isolated real Electron session with `pnpm --filter wework ai:verify start` and record evidence for opening a page, inspect, actions, and screenshot. If the full E2E is too slow locally, document why it was not run and make sure CI runs `e2e:desktop:embedded-browser`.
 
 macOS Inspector changes must also run the `browser-toolbar-actions` checkpoint. It serves a local HTTP simulation page, opens and closes the Inspector twice, and verifies that a separate native window appears, becomes invisible after close, and leaves the child-WebView frame unchanged.
 

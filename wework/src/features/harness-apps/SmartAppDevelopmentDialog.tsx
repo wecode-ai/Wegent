@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
 
 export interface SmartAppDevelopmentInput {
   parentPath: string
@@ -50,9 +51,8 @@ export function SmartAppDevelopmentDialog({
   useEscapeKey(onClose, !submitting)
 
   async function chooseDirectory() {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const selected = await open({ directory: true, multiple: false })
-    if (typeof selected === 'string') {
+    const selected = await openNativeDirectoryPicker()
+    if (selected) {
       setParentPath(selected)
       setError(null)
     }

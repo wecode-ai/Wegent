@@ -33,7 +33,7 @@ import {
   type AppPreferences,
   type AppPreferencesPatch,
   type FixedWorkspaceTabPreference,
-} from '@/tauri/appPreferences'
+} from '@/desktop/appPreferences'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'

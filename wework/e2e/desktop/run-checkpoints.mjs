@@ -10,6 +10,7 @@ import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const CHECKPOINT_SCENARIO_MODULES = {
+  'cloud-space-mention': './scenarios/cloud-space-mention.scenario.mjs',
   'conversation-state': './scenarios/conversation-mention.scenario.mjs',
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
@@ -27,12 +28,16 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'codex-notification-isolation': './scenarios/codex-notification-isolation.scenario.mjs',
   'context-compaction': './scenarios/context-compaction.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
+  'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
+  'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
+  'tray-lifecycle': './scenarios/tray-lifecycle.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
+  'cloud-space-mention',
   'change-request-status',
   'claude-runtime',
   'local-file-preview',
@@ -47,6 +52,9 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'codex-notification-isolation',
   'context-compaction',
   'split-workbench',
+  'native-window-startup',
+  'native-window-chrome',
+  'tray-lifecycle',
   'temporary-chat',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
@@ -76,6 +84,7 @@ const DEFAULT_DESKTOP_CHECKPOINTS = DESKTOP_CHECKPOINTS.filter(
 )
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const taskFlowPath = join(scriptDir, 'task-flow.e2e.mjs')
+const isolatedXvfbPath = join(scriptDir, 'run-with-openbox.sh')
 const cliArgs = process.argv.slice(2)
 const requestedArgs = cliArgs[0] === '--' ? cliArgs.slice(1) : cliArgs
 
@@ -144,7 +153,15 @@ function runTaskFlow(args, env, label) {
     const isolateDisplay = process.platform === 'linux' && env.WEWORK_E2E_ISOLATED_XVFB === 'true'
     const command = isolateDisplay ? 'xvfb-run' : process.execPath
     const commandArgs = isolateDisplay
-      ? ['-a', '--server-args=-screen 0 1280x720x24', process.execPath, taskFlowPath, ...args]
+      ? [
+          '-a',
+          '--server-args=-screen 0 1280x720x24',
+          'sh',
+          isolatedXvfbPath,
+          process.execPath,
+          taskFlowPath,
+          ...args,
+        ]
       : [taskFlowPath, ...args]
     const child = spawn(command, commandArgs, {
       env,

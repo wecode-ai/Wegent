@@ -1,7 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { invoke, isTauri } from '@tauri-apps/api/core'
 import {
   clearPluginMarketplaceCache,
   pluginMarketplaceCacheKey,
@@ -12,12 +11,6 @@ import '@/i18n'
 import { PluginManagementWorkspace } from './PluginManagementWorkspace'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import type { PluginMarketplaceItem } from '@/types/api'
-
-vi.mock('@tauri-apps/api/core', () => ({
-  convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
-  invoke: vi.fn(),
-  isTauri: vi.fn(() => false),
-}))
 
 vi.mock('@/lib/navigation', () => ({
   navigateTo: vi.fn(),
@@ -79,8 +72,6 @@ function cachedInstalledPlugin(): InstalledPluginItem {
 describe('PluginManagementWorkspace cache', () => {
   beforeEach(() => {
     clearPluginMarketplaceCache()
-    vi.mocked(invoke).mockReset()
-    vi.mocked(isTauri).mockReturnValue(false)
     vi.mocked(navigateTo).mockReset()
     window.localStorage.clear()
   })

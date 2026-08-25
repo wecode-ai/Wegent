@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   requestLocalExecutor: vi.fn(),
 }))
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: () => mocks.ensureLocalExecutorStarted(),
   requestLocalExecutor: (...args: unknown[]) => mocks.requestLocalExecutor(...args),
 }))

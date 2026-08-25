@@ -49,7 +49,7 @@ import {
 } from '@/lib/attachments'
 import { openLocalFile } from '@/lib/local-terminal'
 import { getRecognizedLink } from '@/lib/link-preview'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
 import { ComposerLinkChip } from './ComposerLinkChip'
 import { ComposerTextarea } from './composer/ComposerTextarea'
@@ -240,7 +240,7 @@ export const MessageList = memo(function MessageList({
   const [layoutWidth, setLayoutWidth] = useState(0)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
-  const isTauri = isTauriRuntime()
+  const isDesktop = isElectronRuntime()
   const visibleMessages = useMemo(() => messages.filter(shouldRenderMessage), [messages])
   const editableLastUserMessageId = useMemo(
     () =>
@@ -268,7 +268,7 @@ export const MessageList = memo(function MessageList({
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
-  const virtualMessages = isTauri && Boolean(scrollElementRef)
+  const virtualMessages = isDesktopRuntime() && Boolean(scrollElementRef)
   const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
   const forcedVirtualMessageIndex = useMemo(
     () =>
@@ -452,7 +452,7 @@ export const MessageList = memo(function MessageList({
   }, [virtualMessages])
 
   useEffect(() => {
-    if (isTauri && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
+    if (isDesktop && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
 
     const updateSelectionState = (preserveCapturedSelection = false) => {
       const selection = document.getSelection?.()
@@ -468,7 +468,7 @@ export const MessageList = memo(function MessageList({
       const selectionTouchesList =
         isNodeInsideElement(selection.anchorNode, root) ||
         isNodeInsideElement(selection.focusNode, root)
-      setIsTextSelectionActive(!isTauri && selectionTouchesList)
+      setIsTextSelectionActive(!isDesktop && selectionTouchesList)
       if (!onAddSelectionToConversation || !onAskSelectionInSidebar) return
 
       const range = selection.getRangeAt(0)
@@ -531,7 +531,7 @@ export const MessageList = memo(function MessageList({
       window.removeEventListener('scroll', handleScroll, true)
       window.removeEventListener('blur', handleBlur)
     }
-  }, [conversationKey, isTauri, onAddSelectionToConversation, onAskSelectionInSidebar])
+  }, [conversationKey, isDesktop, onAddSelectionToConversation, onAskSelectionInSidebar])
 
   const applySelectionAction = (action: (text: string) => void) => {
     if (!textSelection) return
@@ -612,7 +612,7 @@ export const MessageList = memo(function MessageList({
           <article
             className={cn(
               'min-w-0',
-              !isTauri &&
+              !isDesktop &&
                 !disableContentVisibility &&
                 !isTextSelectionActive &&
                 '[content-visibility:auto]',

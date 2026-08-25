@@ -861,7 +861,7 @@ export function useWorkbenchDataRefresh({
 
   const updateLocalRuntimeTaskPinned = useCallback(
     (request: RuntimeTaskPinRequest): number | null => {
-      const currentRuntimeWork = runtimeWorkRef.current ?? localRuntimeWorkRef.current
+      const currentRuntimeWork = localRuntimeWorkRef.current ?? runtimeWorkRef.current
       const task = findRuntimeTaskForPinRequest(currentRuntimeWork, request)
       if (!task) return null
 

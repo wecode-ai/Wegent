@@ -3,27 +3,41 @@
 set -euo pipefail
 
 core_segments=(
+  remote-device-onboarding
   workspace-tabs
+  cloud-space-mention
   priority-filter
   automation-lifecycle
   project-automation
+  project-assignment-notification
+  offline-local-project-space
   project-ai-settings
   model-routing
   permission-modes
   core-task-flow
+  task-attachments
   window-lifecycle
   goal-lifecycle
   supervisor-lifecycle
   resilience
   runtime-task-queue
+  runtime-terminal-convergence
+  running-conversation-history
   codex-notification-isolation
+  context-compaction
+  split-workbench
+  native-window-startup
+  native-window-chrome
+  tray-lifecycle
   conversation-state
   temporary-chat
   workspace-attachments
   rendering-extensions
+  change-request-status
   claude-runtime
   local-file-preview
   local-harness
+  harness-apps
   embedded-browser
   browser-toolbar-actions
 )
@@ -79,14 +93,14 @@ cloud_shards=(
 # application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  rendering-extensions,runtime-task-queue,local-file-preview
-  project-ai-settings,window-lifecycle,permission-modes
-  core-task-flow,temporary-chat,codex-notification-isolation
-  claude-runtime,workspace-attachments,local-harness
-  conversation-state,goal-lifecycle,workspace-tabs
-  resilience,supervisor-lifecycle
-  model-routing,project-automation,automation-lifecycle
-  embedded-browser,browser-toolbar-actions,priority-filter
+  rendering-extensions,runtime-task-queue,local-file-preview,context-compaction
+  project-ai-settings,window-lifecycle,permission-modes,cloud-space-mention,project-assignment-notification
+  core-task-flow,temporary-chat,codex-notification-isolation,task-attachments
+  claude-runtime,workspace-attachments,local-harness,harness-apps
+  conversation-state,goal-lifecycle,workspace-tabs,running-conversation-history
+  resilience,supervisor-lifecycle,runtime-terminal-convergence
+  model-routing,project-automation,automation-lifecycle,offline-local-project-space
+  embedded-browser,browser-toolbar-actions,priority-filter,remote-device-onboarding,split-workbench,native-window-startup,native-window-chrome,tray-lifecycle,change-request-status
 )
 
 validate_core_shards() {
@@ -167,6 +181,33 @@ validate_cloud_shards() {
 
 validate_cloud_shards
 
+validate_registered_checkpoint_coverage() {
+  declare -A covered=()
+  local segment
+  for segment in "${core_segments[@]}" "${cloud_segments[@]}"; do
+    covered["$segment"]=true
+  done
+
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local repository_root
+  repository_root="$(cd "$script_dir/../.." && pwd)"
+  local registered
+  while IFS= read -r registered; do
+    [[ "$registered" == "cloud-git-worktree" ]] && continue
+    if [[ -z "${covered[$registered]+set}" ]]; then
+      printf 'Registered desktop checkpoint missing from CI catalogs: %s\n' "$registered" >&2
+      return 1
+    fi
+  done < <(
+    cd "$repository_root"
+    node --input-type=module -e \
+      "import { DESKTOP_CHECKPOINTS } from './wework/e2e/desktop/checkpoints.mjs'; console.log(DESKTOP_CHECKPOINTS.join('\\n'))"
+  )
+}
+
+validate_registered_checkpoint_coverage
+
 declare -A selected=()
 desktop_runner_changed=false
 macos_inspector_e2e=false
@@ -239,11 +280,13 @@ classify_wework_path() {
       ;;
 
     # Window and native lifecycle behavior.
-    wework/src/tauri/tray* | \
-      wework/src/tauri/runtimeTaskCloseGuard* | \
+    wework/src/desktop/tray* | \
+      wework/src/desktop/runtimeTaskCloseGuard* | \
       wework/src/components/layout/WindowFrameControls* | \
       wework/src/components/layout/DesktopWindowsTitlebar.tsx)
       select_target "core:window-lifecycle"
+      select_target "core:tray-lifecycle"
+      select_target "core:native-window-chrome"
       return
       ;;
 
@@ -264,6 +307,10 @@ classify_wework_path() {
       select_target "core:automation-lifecycle"
       select_target "core:project-automation"
       select_target "cloud:all"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)
+      select_target "core:cloud-space-mention"
       return
       ;;
     wework/src/features/todo/ProjectAutomation* | \
@@ -378,7 +425,7 @@ classify_wework_path() {
       ;;
 
     # The embedded browser has a dedicated agent scenario checkpoint.
-    wework/src-tauri/src/embedded_browser* | \
+    wework/electron/src/host/browser-runtime/* | \
       wework/src/lib/embedded-browser* | \
       wework/src/lib/browser-url* | \
       wework/src/lib/browser-device-toolbar* | \
@@ -402,8 +449,8 @@ classify_wework_path() {
       return
       ;;
 
-    # Local PTY-backed coding harnesses have dedicated real-Tauri scenarios.
-    wework/src-tauri/src/local_terminal* | \
+    # Local PTY-backed coding harnesses have dedicated desktop scenarios.
+    wework/electron/src/host/local-terminal* | \
       wework/src/lib/local-harness* | \
       wework/src/lib/local-terminal* | \
       wework/src/components/layout/CentralHarnessTerminal* | \
@@ -417,10 +464,10 @@ classify_wework_path() {
       return
       ;;
 
-    # Local file browsing, preview, editing, and review share one real-Tauri
+    # Local file browsing, preview, editing, and review share one desktop
     # checkpoint so theme and loading regressions are covered together.
-    wework/src-tauri/src/local_workspace_files* | \
-      wework/src/tauri/localWorkspaceFiles* | \
+    wework/electron/src/host/local-workspace-files* | \
+      wework/src/desktop/localWorkspaceFiles* | \
       wework/src/components/layout/workspace-panels/FileWorkspacePanel* | \
       wework/src/components/layout/workspace-panels/WorkspaceFilePreview* | \
       wework/src/components/layout/workspace-panels/WorkspaceFileTree* | \

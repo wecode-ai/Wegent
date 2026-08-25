@@ -11,7 +11,7 @@ import { spawn } from 'node:child_process'
 import { macosSigningFingerprint } from './lib/deepseek-harness-signing.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const resourceDirectory = path.join(root, 'src-tauri', 'bundled-execution-runtimes')
+const resourceDirectory = path.join(root, 'resources', 'bundled-execution-runtimes')
 const descriptorPath = path.join(resourceDirectory, 'node.json')
 const cacheDirectory = path.join(root, 'node_modules', '.cache')
 const assetDirectory = path.join(cacheDirectory, 'execution-runtime-assets')

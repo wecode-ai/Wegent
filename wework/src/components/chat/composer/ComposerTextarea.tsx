@@ -116,6 +116,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       rows,
       textareaRef,
       className,
+      nativeEmptyCaret = false,
       skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
       disableAutocomplete = false,
       onKeyDown,
@@ -1466,6 +1467,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
           rows={rows}
           textareaRef={textareaRef}
           className={className}
+          nativeEmptyCaret={nativeEmptyCaret}
         />
         {showSkillMenu && (
           <ComposerMentionMenu

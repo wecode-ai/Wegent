@@ -1,5 +1,3 @@
-import { invoke } from '@tauri-apps/api/core'
-import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 import type { TodoViewState } from './TodoDetailPanel'
 
@@ -206,60 +204,31 @@ export function loadLocalWorkItems(userId: number | undefined): LocalWorkItem[] 
 }
 
 export async function hydrateLocalWorkItems(userId: number | undefined): Promise<LocalWorkItem[]> {
-  if (!isTauriRuntime()) return loadLocalWorkItems(userId)
-  try {
-    const raw = await invoke<string | null>('load_todo_store', { scope: scope(userId) })
-    if (!raw) return loadLocalWorkItems(userId)
-    const items = (JSON.parse(raw) as LocalWorkItem[]).map(normalizeWorkItem)
-    window.localStorage.setItem(storageKey(userId), JSON.stringify(items))
-    return items
-  } catch {
-    return loadLocalWorkItems(userId)
-  }
+  return loadLocalWorkItems(userId)
 }
 
 export function saveLocalWorkItems(userId: number | undefined, items: LocalWorkItem[]): void {
   const contents = JSON.stringify(items)
   window.localStorage.setItem(storageKey(userId), contents)
-  if (isTauriRuntime()) {
-    void invoke('save_todo_store', { scope: scope(userId), contents }).catch(error => {
-      console.error('Failed to persist local TODO store', error)
-    })
-  }
 }
 
 export async function ensureTodoWorkspace(item: LocalWorkItem): Promise<string | null> {
-  if (!isTauriRuntime()) return null
-  try {
-    return await invoke<string>('ensure_todo_workspace', {
-      itemId: item.id,
-      title: item.title,
-      objective: item.objective || item.description,
-    })
-  } catch {
-    return null
-  }
+  void item
+  return null
 }
 
 export async function ensureTodoWorkDirectory(
   rootItemId: string,
   workType: string
 ): Promise<string | null> {
-  if (!isTauriRuntime()) return null
-  try {
-    return await invoke<string>('ensure_todo_work_directory', { itemId: rootItemId, workType })
-  } catch {
-    return null
-  }
+  void rootItemId
+  void workType
+  return null
 }
 
 export async function listTodoWorkspace(itemId: string): Promise<TodoWorkspaceEntry[]> {
-  if (!isTauriRuntime()) return []
-  try {
-    return await invoke<TodoWorkspaceEntry[]>('list_todo_workspace', { itemId })
-  } catch {
-    return []
-  }
+  void itemId
+  return []
 }
 
 export async function writeTodoWorkspaceFile(
@@ -267,16 +236,10 @@ export async function writeTodoWorkspaceFile(
   relativePath: string,
   file: File
 ): Promise<string | null> {
-  if (!isTauriRuntime()) return null
-  try {
-    return await invoke<string>('write_todo_workspace_file', {
-      itemId,
-      relativePath,
-      bytes: [...new Uint8Array(await file.arrayBuffer())],
-    })
-  } catch {
-    return null
-  }
+  void itemId
+  void relativePath
+  void file
+  return null
 }
 
 export async function renameTodoWorkspaceEntry(
@@ -284,25 +247,22 @@ export async function renameTodoWorkspaceEntry(
   fromPath: string,
   toPath: string
 ): Promise<void> {
-  if (!isTauriRuntime()) return
-  await invoke('rename_todo_workspace_entry', { itemId, fromPath, toPath })
+  void itemId
+  void fromPath
+  void toPath
 }
 
 export async function deleteTodoWorkspaceEntry(
   itemId: string,
   relativePath: string
 ): Promise<void> {
-  if (!isTauriRuntime()) return
-  await invoke('delete_todo_workspace_entry', { itemId, relativePath })
+  void itemId
+  void relativePath
 }
 
 export async function getTodoWorkspacePath(itemId: string): Promise<string | null> {
-  if (!isTauriRuntime()) return null
-  try {
-    return await invoke<string>('get_todo_workspace_path', { itemId })
-  } catch {
-    return null
-  }
+  void itemId
+  return null
 }
 
 export function createLocalWorkItemId(): string {

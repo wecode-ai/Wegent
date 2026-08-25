@@ -48,6 +48,7 @@ pub(crate) mod test_env {
     // must survive.
     const HOST_STATE_VARS: &[&str] = &[
         "WEGENT_BUNDLED_HOOKS_DIR",
+        "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR",
         "WEGENT_MANAGED_HOOKS_DIR",
         "WEGENT_EXECUTOR_HOME",
     ];

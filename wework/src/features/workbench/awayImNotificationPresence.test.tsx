@@ -16,7 +16,7 @@ const lockState = vi.hoisted(() => ({
   listener: null as ((locked: boolean) => void) | null,
 }))
 
-vi.mock('@/tauri/windowFocus', () => ({
+vi.mock('@/desktop/windowFocus', () => ({
   isMainWindowFocused: () => focusState.focused,
   subscribeMainWindowFocus: (listener: (focused: boolean) => void) => {
     focusState.listener = listener
@@ -26,7 +26,7 @@ vi.mock('@/tauri/windowFocus', () => ({
   },
 }))
 
-vi.mock('@/tauri/systemLock', () => ({
+vi.mock('@/desktop/systemLock', () => ({
   isSystemSessionLocked: () => lockState.locked,
   subscribeSystemSessionLock: (listener: (locked: boolean) => void) => {
     lockState.listener = listener

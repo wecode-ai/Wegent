@@ -1,14 +1,3 @@
-function matchesTauriAppOrigin(url: URL, appUrl: string | undefined): boolean {
-  if (url.protocol !== 'tauri:' || !appUrl) return false
-
-  try {
-    const currentUrl = new URL(appUrl)
-    return url.protocol === currentUrl.protocol && url.host === currentUrl.host
-  } catch {
-    return false
-  }
-}
-
 function isLocalAssetUrl(url: URL): boolean {
   return url.protocol === 'asset:' && url.hostname === 'localhost'
 }
@@ -49,7 +38,7 @@ function localPathToFileUrl(value: string): string | null {
   return null
 }
 
-export function normalizeBrowserUrl(value: string, appUrl?: string): string | null {
+export function normalizeBrowserUrl(value: string): string | null {
   const trimmed = value.trim()
   if (!trimmed) return null
 
@@ -63,8 +52,7 @@ export function normalizeBrowserUrl(value: string, appUrl?: string): string | nu
       url.protocol !== 'http:' &&
       url.protocol !== 'https:' &&
       url.protocol !== 'file:' &&
-      !isLocalAssetUrl(url) &&
-      !matchesTauriAppOrigin(url, appUrl)
+      !isLocalAssetUrl(url)
     ) {
       return null
     }

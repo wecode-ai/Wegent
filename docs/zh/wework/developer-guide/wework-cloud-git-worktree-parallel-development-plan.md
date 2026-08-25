@@ -7,7 +7,7 @@ sidebar_position: 20
 ## 1. 文档状态
 
 - 制定日期：2026-08-17
-- 状态：核心代码、真实 Tauri 云端闭环和 Remote Docker 容器生命周期验收完成；仅托管生产持久卷与实例重建待目标环境验收
+- 状态：核心代码、真实 Electron 云端闭环和 Remote Docker 容器生命周期验收完成；仅托管生产持久卷与实例重建待目标环境验收
 - 目标：让 Wework 的本地设备、托管云设备和 Remote Docker 设备共用同一套托管 Git Worktree 能力
 - 开发方式：一个主 Agent 负责目标、公共契约和集成；多个子 Agent 在互斥写入范围内并行实现
 
@@ -81,7 +81,7 @@ flowchart LR
 - 补齐云端归档、快照、恢复、自动清理和设置。
 - 确保 Terminal、code-server、文件树和 Git 操作使用任务 Worktree 路径。
 - 明确并验证托管云设备持久卷要求。
-- 增加单元、契约、Backend、桌面 E2E 和真实 Tauri 验证。
+- 增加单元、契约、Backend、桌面 E2E 和真实 Electron 验证。
 
 ### 3.2 非目标
 
@@ -150,7 +150,7 @@ flowchart TD
 
   D1["D1 跨层契约测试"]
   D2["D2 Desktop E2E"]
-  D3["D3 真实 Tauri 和云设备验收"]
+  D3["D3 真实 Electron 和云设备验收"]
 
   A0 --> A1
   A0 --> A2
@@ -183,7 +183,7 @@ flowchart TD
 - 管理任务依赖、Agent 写入范围和合并顺序。
 - 处理跨模块公共类型、协议命名和冲突。
 - 审查所有子 Agent 变更。
-- 运行跨模块测试、真实 Tauri 验证和最终验收。
+- 运行跨模块测试、真实 Electron 验证和最终验收。
 - 在目标真正完成后才将目标标记为完成。
 
 主 Agent 独占写入范围：
@@ -327,7 +327,7 @@ flowchart TD
 - 增加本地、云端和 Remote Docker 的完整场景。
 - 增加排队取消、归档恢复、设备离线和重启场景。
 - 保证所有新增 E2E 由 GitHub CI 调用。
-- 输出真实 Tauri 验收步骤和证据要求。
+- 输出真实 Electron 验收步骤和证据要求。
 
 限制：
 
@@ -463,7 +463,7 @@ Wave 3 门禁：
 ### Wave 4：验证 Agent 与主 Agent集成
 
 - Agent F 编写和运行 CI 覆盖的桌面 E2E。
-- 主 Agent运行跨模块测试、真实 Tauri 和实际云/Remote 设备验收。
+- 主 Agent运行跨模块测试、真实 Electron 和实际云/Remote 设备验收。
 - 主 Agent修复集成缺陷；不得通过跳过、重跑或放宽断言获得通过。
 
 ## 8. 公共协议冻结建议
@@ -641,7 +641,7 @@ cd backend && uv run pytest
 cd executor && cargo test
 ```
 
-Wework UI、Runtime IPC、Tauri 或本地运行时行为发生变化时，必须使用隔离的真实 Tauri 会话执行完整 QA 计划，并在结束后停止会话。
+Wework UI、Runtime IPC、Electron 或本地运行时行为发生变化时，必须使用隔离的真实 Electron 会话执行完整 QA 计划，并在结束后停止会话。
 
 ## 13. E2E Checkpoint
 
@@ -707,7 +707,7 @@ cloud-worktree-device-restart
 - Terminal、IDE、文件树和 Git 操作使用任务最终工作区路径。
 - 云设备持久卷和稳定路径要求已实现并验证。
 - 新增 E2E 被 GitHub CI 调用。
-- 聚焦测试、完整回归和真实 Tauri 验证通过。
+- 聚焦测试、完整回归和真实 Electron 验证通过。
 - 没有跳过、重试或 fallback 用于掩盖失败。
 
 ## 16. 启动执行时的主 Agent Prompt
@@ -738,9 +738,9 @@ cloud-worktree-device-restart
 | A3   | Backend 已实现逻辑设备路由、所有权校验、结构化 RPC 错误和 `runtime_features` 投影           |
 | B    | Hybrid 创建路径、计划/最终路径对账、工具路径跟随和 DeviceWorkspace 偏好已完成               |
 | C    | 归档停止确认、快照删除、反归档恢复、设置和自动清理链路已完成                                |
-| D    | 跨层契约、CI 分类、六个原子 checkpoint 和真实 Tauri 云端闭环已完成；目标环境验收见下文      |
+| D    | 跨层契约、CI 分类、六个原子 checkpoint 和真实 Electron 云端闭环已完成；目标环境验收见下文      |
 
-真实 Tauri 的 `cloud-git-worktree` 聚合入口已并行展开并验证六个可独立运行的 checkpoint：
+真实 Electron 的 `cloud-git-worktree` 聚合入口已并行展开并验证六个可独立运行的 checkpoint：
 
 1. `cloud-worktree-capability`：在线能力、协议版本、目标工作区 preflight 和不可用原因。
 2. `cloud-worktree-create`：选择“新工作树”，由目标 Executor 创建隔离 Worktree，并以最终路径运行任务。
@@ -759,7 +759,7 @@ Executor: cargo fmt --check and cargo test passed
   unit layer: 869 passed, 1 ignored
   app_runtime_work_send_contract: 37 passed in 3.54s
 CI desktop classifier contract: passed
-Real Tauri aggregate:
+Real Electron aggregate:
   node e2e/desktop/run-checkpoints.mjs --parallel-segments cloud-git-worktree
   all six atomic checkpoints passed with three isolated workers
 Evidence:

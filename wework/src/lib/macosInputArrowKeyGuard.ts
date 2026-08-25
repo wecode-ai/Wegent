@@ -1,9 +1,8 @@
 import { isImeComposingEvent } from './ime'
-import { isTauriRuntime } from './runtime-environment'
+import { isElectronRuntime } from './runtime-environment'
 
-// Work around a macOS WKWebView/Tauri bug where arrow keys at the start/end of
-// a native text input leak through AppKit's insertText: path and insert U+FFFC
-// (object replacement character) / tofu glyphs. See tauri-apps/tauri#5685.
+// Prevent macOS native text input handling from inserting U+FFFC when an arrow
+// key is pressed at the start or end of a controlled input.
 const ARROW_LEFT = 'ArrowLeft'
 const ARROW_RIGHT = 'ArrowRight'
 
@@ -39,7 +38,7 @@ function shouldSwallowArrowKey(event: KeyboardEvent): boolean {
 }
 
 export function installMacOSInputArrowKeyGuard(): () => void {
-  if (!isTauriRuntime() || !isMacOsPlatform()) {
+  if (!isElectronRuntime() || !isMacOsPlatform()) {
     return () => undefined
   }
 

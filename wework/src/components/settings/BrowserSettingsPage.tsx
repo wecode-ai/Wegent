@@ -12,7 +12,7 @@ import {
   type AppPreferences,
   type AppPreferencesPatch,
   type BrowserLinkTarget,
-} from '@/tauri/appPreferences'
+} from '@/desktop/appPreferences'
 import { BrowserHistoryPage } from './BrowserHistoryPage'
 import { ClearBrowserDataDialog } from './ClearBrowserDataDialog'
 import {
