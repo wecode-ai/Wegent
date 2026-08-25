@@ -69,7 +69,10 @@ collect_wework_test_scope() {
                     WEWORK_RELATED_FILES+=("${changed_file#wework/}")
                 fi
                 ;;
-            wework/src/*|wework/wecode/*|wework/package.json|wework/vite.config.*|wework/tsconfig*.json|wework/eslint.config.*)
+            wework/package.json)
+                WEWORK_RENDERER_CHANGED=1
+                ;;
+            wework/src/*|wework/wecode/*|wework/vite.config.*|wework/tsconfig*.json|wework/eslint.config.*)
                 WEWORK_RENDERER_CHANGED=1
                 WEWORK_RENDERER_FULL_TESTS=1
                 ;;

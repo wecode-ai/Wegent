@@ -11,6 +11,7 @@ DEFAULT_TEST_OUT="$(mktemp "${TMP_DIR}/default-test.XXXXXX")"
 FULL_TEST_OUT="$(mktemp "${TMP_DIR}/full-test.XXXXXX")"
 WEWORK_TEST_OUT="$(mktemp "${TMP_DIR}/wework-test.XXXXXX")"
 WEWORK_ELECTRON_TEST_OUT="$(mktemp "${TMP_DIR}/wework-electron-test.XXXXXX")"
+WEWORK_MIXED_TEST_OUT="$(mktemp "${TMP_DIR}/wework-mixed-test.XXXXXX")"
 FRONTEND_TEST_OUT="$(mktemp "${TMP_DIR}/frontend-test.XXXXXX")"
 EXECUTOR_TEST_OUT="$(mktemp "${TMP_DIR}/executor-test.XXXXXX")"
 EXECUTOR_FULL_TEST_OUT="$(mktemp "${TMP_DIR}/executor-full-test.XXXXXX")"
@@ -246,6 +247,58 @@ fi
 
 if grep -qE '^pnpm --filter wework (typecheck|test)$|^pnpm --filter wework exec vitest ' "$CALL_LOG"; then
     echo "Expected Electron-only changes to skip unrelated renderer checks."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+: > "$CALL_LOG"
+
+# Build a merge-like synthetic commit containing Electron code, package metadata,
+# and renderer files with direct tests. Package metadata must not promote these
+# already-focused checks into the full renderer suite.
+MIXED_BASE_SHA=$(git rev-parse HEAD)
+MIXED_INDEX="$TMP_DIR/mixed.index"
+GIT_INDEX_FILE="$MIXED_INDEX" git read-tree "$MIXED_BASE_SHA"
+for source_file in \
+    wework/package.json \
+    wework/src/api/changeRequests.ts \
+    wework/src/api/changeRequests.test.ts; do
+    fixture_file="$TMP_DIR/$(basename "$source_file").fixture"
+    cp "$PROJECT_ROOT/$source_file" "$fixture_file"
+    printf '\n' >> "$fixture_file"
+    fixture_blob=$(git hash-object -w "$fixture_file")
+    GIT_INDEX_FILE="$MIXED_INDEX" git update-index --cacheinfo \
+        100644 "$fixture_blob" "$source_file"
+done
+GIT_INDEX_FILE="$MIXED_INDEX" git update-index --add --cacheinfo \
+    100644 "$ELECTRON_FIXTURE_BLOB" wework/electron/src/pre-push-mixed-fixture.ts
+MIXED_TREE=$(GIT_INDEX_FILE="$MIXED_INDEX" git write-tree)
+MIXED_LOCAL_SHA=$(printf 'mixed pre-push fixture\n' |
+    git commit-tree "$MIXED_TREE" -p "$MIXED_BASE_SHA")
+
+AI_VERIFIED=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_MIXED_TEST_OUT" 2>&1
+refs/heads/topic $MIXED_LOCAL_SHA refs/heads/topic $MIXED_BASE_SHA
+EOF
+
+if ! grep -qE '^pnpm --filter wework exec vitest run src/api/changeRequests.test.ts$' "$CALL_LOG"; then
+    echo "Expected merge-like Wework changes to run only the related renderer test."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
+    echo "Expected package metadata changes not to force the full renderer suite."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if ! grep -qE '^pnpm --dir wework/electron test$' "$CALL_LOG"; then
+    echo "Expected merge-like Wework changes to retain Electron-owned tests."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1
