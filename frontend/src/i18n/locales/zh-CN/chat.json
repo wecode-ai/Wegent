@@ -117,6 +117,7 @@
   "cards": {
     "video_director": {
       "title": "视频生成",
+      "completed": "视频已生成",
       "processing": "正在创建视频",
       "failed": "视频生成失败",
       "view_detail": "查看详情"

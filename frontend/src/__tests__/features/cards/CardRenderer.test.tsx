@@ -96,6 +96,28 @@ describe('CardRenderer', () => {
     )
   })
 
+  it('does not reuse the pending preview title after completion', () => {
+    render(
+      <CardRenderer
+        block={buildCard({
+          status: 'done',
+          card_status: 'populated',
+          card_data: {
+            video_url: 'https://cdn.example.com/video.mp4',
+          },
+          card_preview_data: {
+            title: '视频生成中',
+            progress: 100,
+            progress_text: '正在合成最终视频',
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByText('cards.video_director.completed')).toBeInTheDocument()
+    expect(screen.queryByText('视频生成中')).not.toBeInTheDocument()
+  })
+
   it('renders errors and rejects non-HTTP links', () => {
     render(
       <CardRenderer

@@ -117,6 +117,7 @@
   "cards": {
     "video_director": {
       "title": "Video generation",
+      "completed": "Video generated",
       "processing": "Creating your video",
       "failed": "Video generation failed",
       "view_detail": "View details"

@@ -532,25 +532,7 @@ export interface TaskViewStatusMap {
   [taskId: string]: TaskViewStatus
 }
 
-// Clarification Types
-export interface ClarificationOption {
-  value: string
-  label: string
-  recommended?: boolean
-}
-
-export interface ClarificationQuestion {
-  question_id: string
-  question_text: string
-  question_type: 'single_choice' | 'multiple_choice' | 'text_input'
-  options?: ClarificationOption[]
-}
-
-export interface ClarificationData {
-  type: 'clarification'
-  questions: ClarificationQuestion[]
-}
-
+// Clarification answer summary types
 export interface ClarificationAnswer {
   question_id: string
   question_text: string
