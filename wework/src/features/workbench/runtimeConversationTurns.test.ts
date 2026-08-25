@@ -1226,6 +1226,91 @@ describe('runtimeConversationTurns', () => {
     ])
   })
 
+  test('reconciles completed assistant text when the snapshot uses a different item id', () => {
+    const content = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'streamed-assistant-item',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-25T07:20:37.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'canonical-assistant-item',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-25T07:20:37.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged[0].items).toEqual(snapshot[0].items)
+    expect(projectRuntimeConversationTurns(merged).map(message => message.content)).toEqual([
+      content,
+    ])
+  })
+
+  test('matches duplicate completed assistant text one-to-one', () => {
+    const content = 'Repeated completion'
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'live-message-1',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-01T00:00:00.000Z',
+          },
+          {
+            id: 'live-message-2',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-01T00:00:01.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'snapshot-message-1',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-01T00:00:00.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged[0].items).toHaveLength(2)
+    expect(merged[0].items.map(item => item.id)).toEqual(['live-message-2', 'snapshot-message-1'])
+    expect(projectRuntimeConversationTurns(merged).map(message => message.content)).toEqual([
+      `${content}\n\n${content}`,
+    ])
+  })
+
   test('keeps realtime tail items temporarily missing from a full Codex snapshot', () => {
     const local: RuntimeConversationTurn[] = [
       {
