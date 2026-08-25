@@ -7,6 +7,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Building2,
+  ChevronLeft,
   ChevronRight,
   Cloud,
   Database,
@@ -1203,6 +1204,108 @@ export function KnowledgeSourcePicker({
     }
   }
 
+  const selectGroup = (name: string) => {
+    setActiveSource('group')
+    setActiveGroup(name)
+    setExternalScope(null)
+    setActiveKnowledgeBase(null)
+    setActiveDingTalkSpace(null)
+  }
+
+  const selectExternalScope = (source: ExternalKnowledgeSource, scope: ExternalKnowledgeScope) => {
+    setActiveSource(`external:${source.providerId}`)
+    setActiveGroup(null)
+    setExternalScope(scope)
+    setActiveKnowledgeBase(null)
+    setActiveDingTalkSpace(null)
+    void loadExternalKnowledgeBases(source, scope, searchValue)
+  }
+
+  const selectDingTalkSection = (source: 'dingtalk:docs' | 'dingtalk:wikispace') => {
+    setActiveSource(source)
+    setActiveGroup(null)
+    setExternalScope(null)
+    setActiveKnowledgeBase(null)
+    setActiveDingTalkSpace(null)
+  }
+
+  const filteredGroupEntries = groupEntries.filter(([, group]) =>
+    groupMatchesSearch([group.name, group.displayName].join(' '), searchValue)
+  )
+
+  const dingtalkSections = [
+    {
+      key: 'dingtalk:docs' as const,
+      label: tChat('dingtalkDocs.myDocsTab'),
+      count: dingtalkTrees.totalCount,
+      icon: FileText,
+    },
+    {
+      key: 'dingtalk:wikispace' as const,
+      label: tChat('dingtalkDocs.wikispaceTab'),
+      count: dingtalkTrees.wikispaceTotalCount,
+      icon: Database,
+    },
+  ]
+
+  const renderResponsiveGroupOptions = () => {
+    if (filteredGroupEntries.length === 0) {
+      return (
+        <div className="lg:hidden">
+          <PickerEmpty label={t('picker.emptyGroups')} />
+        </div>
+      )
+    }
+
+    return (
+      <ResponsiveSecondaryOptions title={t('picker.selectGroup')} testId="group">
+        {filteredGroupEntries.map(([name, group]) => (
+          <ResponsiveSecondaryOption
+            key={name}
+            icon={Users}
+            label={group.displayName}
+            count={group.items.length}
+            onClick={() => selectGroup(name)}
+            testId={`knowledge-picker-responsive-group-${name}`}
+          />
+        ))}
+      </ResponsiveSecondaryOptions>
+    )
+  }
+
+  const renderResponsiveDingTalkOptions = () => (
+    <ResponsiveSecondaryOptions title={t('picker.selectCategory')} testId="dingtalk">
+      {dingtalkSections.map(section => (
+        <ResponsiveSecondaryOption
+          key={section.key}
+          icon={section.icon}
+          label={section.label}
+          count={section.count}
+          onClick={() => selectDingTalkSection(section.key)}
+          testId={
+            section.key === 'dingtalk:docs'
+              ? 'knowledge-picker-responsive-dingtalk-docs'
+              : 'knowledge-picker-responsive-dingtalk-wikispace'
+          }
+        />
+      ))}
+    </ResponsiveSecondaryOptions>
+  )
+
+  const renderResponsiveExternalScopeOptions = (source: ExternalKnowledgeSource) => (
+    <ResponsiveSecondaryOptions title={t('picker.selectScope')} testId="external">
+      {getExternalKnowledgeScopes(source).map(scope => (
+        <ResponsiveSecondaryOption
+          key={scope.key}
+          icon={getExternalScopeIcon(scope)}
+          label={getExternalScopeLabel(scope, t)}
+          onClick={() => selectExternalScope(source, scope.key)}
+          testId={`knowledge-picker-responsive-external-scope-${scope.key}`}
+        />
+      ))}
+    </ResponsiveSecondaryOptions>
+  )
+
   const renderMiddleColumn = () => {
     const isInternalSource =
       activeSource === 'personal' || activeSource === 'group' || activeSource === 'organization'
@@ -1226,6 +1329,11 @@ export function KnowledgeSourcePicker({
                 items={boundKnowledgeBaseItems}
                 query={searchValue}
                 selectedContexts={selectedContexts}
+                activeId={
+                  activeKnowledgeBase?.source === 'internal'
+                    ? activeKnowledgeBase.knowledgeBase.id
+                    : undefined
+                }
                 onOpen={selectInternalKb}
                 onToggle={toggleInternalKnowledgeBase}
               />
@@ -1235,6 +1343,11 @@ export function KnowledgeSourcePicker({
             items={groupedKnowledgeBases.personal}
             query={searchValue}
             selectedContexts={selectedContexts}
+            activeId={
+              activeKnowledgeBase?.source === 'internal'
+                ? activeKnowledgeBase.knowledgeBase.id
+                : undefined
+            }
             onOpen={selectInternalKb}
             onToggle={toggleInternalKnowledgeBase}
           />
@@ -1247,6 +1360,11 @@ export function KnowledgeSourcePicker({
           items={groupedKnowledgeBases.organization}
           query={searchValue}
           selectedContexts={selectedContexts}
+          activeId={
+            activeKnowledgeBase?.source === 'internal'
+              ? activeKnowledgeBase.knowledgeBase.id
+              : undefined
+          }
           onOpen={selectInternalKb}
           onToggle={toggleInternalKnowledgeBase}
         />
@@ -1254,15 +1372,35 @@ export function KnowledgeSourcePicker({
     }
     if (activeSource === 'group') {
       if (!activeGroup) {
-        return <PickerEmpty label={t('picker.selectKnowledgeBase')} />
+        return (
+          <>
+            {renderResponsiveGroupOptions()}
+            <div className="hidden h-full lg:block">
+              <PickerEmpty label={t('picker.selectKnowledgeBase')} />
+            </div>
+          </>
+        )
       }
       const group = groupedKnowledgeBases.group.get(activeGroup)
       return (
         <div className="flex h-full min-h-0 flex-col">
+          <ResponsiveDrilldownHeader
+            label={group?.displayName ?? activeGroup}
+            onBack={() => {
+              setActiveGroup(null)
+              setActiveKnowledgeBase(null)
+            }}
+            testId="knowledge-picker-responsive-group-back"
+          />
           <KnowledgeBaseRows
             items={group?.items ?? []}
             query={searchValue}
             selectedContexts={selectedContexts}
+            activeId={
+              activeKnowledgeBase?.source === 'internal'
+                ? activeKnowledgeBase.knowledgeBase.id
+                : undefined
+            }
             onOpen={selectInternalKb}
             onToggle={toggleInternalKnowledgeBase}
           />
@@ -1271,7 +1409,14 @@ export function KnowledgeSourcePicker({
     }
 
     if (activeSource === 'dingtalk') {
-      return <PickerEmpty label={t('picker.selectKnowledgeBase')} />
+      return (
+        <>
+          {renderResponsiveDingTalkOptions()}
+          <div className="hidden h-full lg:block">
+            <PickerEmpty label={t('picker.selectKnowledgeBase')} />
+          </div>
+        </>
+      )
     }
 
     if (activeSource === 'dingtalk:docs') {
@@ -1314,13 +1459,35 @@ export function KnowledgeSourcePicker({
 
     if (activeExternalSource) {
       if (!externalScope) {
-        return <PickerEmpty label={t('picker.selectKnowledgeBase')} />
+        return (
+          <>
+            {renderResponsiveExternalScopeOptions(activeExternalSource)}
+            <div className="hidden h-full lg:block">
+              <PickerEmpty label={t('picker.selectKnowledgeBase')} />
+            </div>
+          </>
+        )
       }
 
       const cacheKey = `${activeExternalSource.providerId}:${externalScope}`
       const state = externalKbByScope.get(cacheKey)
+      const activeScope = getExternalKnowledgeScopes(activeExternalSource).find(
+        scope => scope.key === externalScope
+      )
       return (
         <div className="flex min-h-0 flex-col">
+          <ResponsiveDrilldownHeader
+            label={
+              activeScope
+                ? getExternalScopeLabel(activeScope, t)
+                : (activeExternalSource.label ?? activeExternalSource.providerId)
+            }
+            onBack={() => {
+              setExternalScope(null)
+              setActiveKnowledgeBase(null)
+            }}
+            testId="knowledge-picker-responsive-external-scope-back"
+          />
           {state?.loading ? (
             <PickerLoading label={t('picker.loading')} />
           ) : state?.error ? (
@@ -1335,6 +1502,11 @@ export function KnowledgeSourcePicker({
               source={activeExternalSource}
               items={state?.items ?? []}
               selectedContexts={selectedContexts}
+              activeId={
+                activeKnowledgeBase?.source === 'external'
+                  ? activeKnowledgeBase.knowledgeBase.knowledge_base_id
+                  : undefined
+              }
               onOpen={kb => selectExternalKb(activeExternalSource, kb)}
               onToggle={kb => toggleExternalKnowledgeBase(activeExternalSource, kb)}
             />
@@ -1347,7 +1519,7 @@ export function KnowledgeSourcePicker({
   }
 
   const renderSourceColumn = () => (
-    <div className="space-y-1 p-2">
+    <div className="flex gap-2 overflow-x-auto p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:block lg:space-y-1 lg:overflow-x-visible">
       {sourceRows.map(row => {
         const Icon = row.icon
         const active =
@@ -1364,7 +1536,9 @@ export function KnowledgeSourcePicker({
             <button
               type="button"
               className={cn(
-                'flex min-h-11 w-full items-center justify-between rounded-md px-3 py-2 text-left',
+                'flex min-h-11 items-center py-2 text-left',
+                'max-lg:w-auto max-lg:shrink-0 max-lg:justify-start max-lg:gap-2 max-lg:rounded-lg max-lg:border max-lg:border-border max-lg:px-3',
+                'lg:w-full lg:justify-between lg:rounded-md lg:px-3',
                 active ? 'bg-primary/10 text-primary' : 'hover:bg-surface text-text-primary'
               )}
               onClick={() => {
@@ -1390,45 +1564,36 @@ export function KnowledgeSourcePicker({
             </button>
 
             {isGroupSource && active
-              ? groupEntries
-                  .filter(([, group]) =>
-                    groupMatchesSearch([group.name, group.displayName].join(' '), searchValue)
+              ? filteredGroupEntries.map(([name, group]) => {
+                  const groupActive = activeGroup === name
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      className={cn(
+                        'hidden min-h-11 items-center py-2 text-left lg:flex',
+                        'lg:w-full lg:justify-between lg:rounded-md lg:pl-8 lg:pr-3',
+                        groupActive
+                          ? 'bg-primary/10 text-primary'
+                          : 'hover:bg-surface text-text-primary'
+                      )}
+                      onClick={() => selectGroup(name)}
+                      data-testid={`knowledge-picker-group-${name}`}
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Users className="h-4 w-4 shrink-0 text-text-muted" />
+                        <TruncatedText
+                          text={group.displayName}
+                          focusable={false}
+                          className="text-sm font-medium"
+                        />
+                      </span>
+                      <Badge variant="secondary" size="sm">
+                        {group.items.length}
+                      </Badge>
+                    </button>
                   )
-                  .map(([name, group]) => {
-                    const groupActive = activeGroup === name
-                    return (
-                      <button
-                        key={name}
-                        type="button"
-                        className={cn(
-                          'flex min-h-11 w-full items-center justify-between rounded-md py-2 pl-8 pr-3 text-left',
-                          groupActive
-                            ? 'bg-primary/10 text-primary'
-                            : 'hover:bg-surface text-text-primary'
-                        )}
-                        onClick={() => {
-                          setActiveSource('group')
-                          setActiveGroup(name)
-                          setExternalScope(null)
-                          setActiveKnowledgeBase(null)
-                          setActiveDingTalkSpace(null)
-                        }}
-                        data-testid={`knowledge-picker-group-${name}`}
-                      >
-                        <span className="flex min-w-0 items-center gap-2">
-                          <Users className="h-4 w-4 shrink-0 text-text-muted" />
-                          <TruncatedText
-                            text={group.displayName}
-                            focusable={false}
-                            className="text-sm font-medium"
-                          />
-                        </span>
-                        <Badge variant="secondary" size="sm">
-                          {group.items.length}
-                        </Badge>
-                      </button>
-                    )
-                  })
+                })
               : null}
 
             {externalSource
@@ -1440,19 +1605,13 @@ export function KnowledgeSourcePicker({
                       key={scope.key}
                       type="button"
                       className={cn(
-                        'flex min-h-11 w-full items-center justify-between rounded-md py-2 pl-8 pr-3 text-left',
+                        'hidden min-h-11 items-center py-2 text-left lg:flex',
+                        'lg:w-full lg:justify-between lg:rounded-md lg:pl-8 lg:pr-3',
                         scopeActive
                           ? 'bg-primary/10 text-primary'
                           : 'hover:bg-surface text-text-primary'
                       )}
-                      onClick={() => {
-                        setActiveSource(`external:${externalSource.providerId}`)
-                        setActiveGroup(null)
-                        setExternalScope(scope.key)
-                        setActiveKnowledgeBase(null)
-                        setActiveDingTalkSpace(null)
-                        void loadExternalKnowledgeBases(externalSource, scope.key, searchValue)
-                      }}
+                      onClick={() => selectExternalScope(externalSource, scope.key)}
                       data-testid={`knowledge-picker-external-scope-${scope.key}`}
                     >
                       <span className="flex min-w-0 items-center gap-2">
@@ -1470,22 +1629,7 @@ export function KnowledgeSourcePicker({
               : null}
 
             {row.key === 'dingtalk' && activeSource.startsWith('dingtalk')
-              ? (
-                  [
-                    {
-                      key: 'dingtalk:docs' as SourceKey,
-                      label: tChat('dingtalkDocs.myDocsTab'),
-                      count: dingtalkTrees.totalCount,
-                      icon: FileText,
-                    },
-                    {
-                      key: 'dingtalk:wikispace' as SourceKey,
-                      label: tChat('dingtalkDocs.wikispaceTab'),
-                      count: dingtalkTrees.wikispaceTotalCount,
-                      icon: Database,
-                    },
-                  ] as const
-                ).map(section => {
+              ? dingtalkSections.map(section => {
                   const SectionIcon = section.icon
                   const sectionActive = activeSource === section.key
                   return (
@@ -1493,18 +1637,13 @@ export function KnowledgeSourcePicker({
                       key={section.key}
                       type="button"
                       className={cn(
-                        'flex min-h-11 w-full items-center justify-between rounded-md py-2 pl-8 pr-3 text-left',
+                        'hidden min-h-11 items-center py-2 text-left lg:flex',
+                        'lg:w-full lg:justify-between lg:rounded-md lg:pl-8 lg:pr-3',
                         sectionActive
                           ? 'bg-primary/10 text-primary'
                           : 'hover:bg-surface text-text-primary'
                       )}
-                      onClick={() => {
-                        setActiveSource(section.key)
-                        setActiveGroup(null)
-                        setExternalScope(null)
-                        setActiveKnowledgeBase(null)
-                        setActiveDingTalkSpace(null)
-                      }}
+                      onClick={() => selectDingTalkSection(section.key)}
                       data-testid={
                         section.key === 'dingtalk:docs'
                           ? 'knowledge-picker-dingtalk-docs'
@@ -1711,23 +1850,69 @@ export function KnowledgeSourcePicker({
     )
   }
 
+  const hasResponsiveDocumentView =
+    activeKnowledgeBase !== null ||
+    activeSource === 'dingtalk:docs' ||
+    (activeSource === 'dingtalk:wikispace' && activeDingTalkSpace !== null)
+
+  const closeResponsiveDocumentView = () => {
+    setActiveKnowledgeBase(null)
+    setActiveDingTalkSpace(null)
+    if (activeSource === 'dingtalk:docs') {
+      setActiveSource('dingtalk')
+    }
+  }
+
   return (
     <div
-      className="grid min-h-0 grid-cols-1 grid-rows-[minmax(0,4fr)_minmax(0,5fr)_minmax(0,7fr)] overflow-hidden md:grid-cols-[180px_220px_minmax(0,1fr)] md:grid-rows-1"
-      style={{
-        height: 'min(520px, calc(var(--radix-popover-content-available-height) - 72px))',
-      }}
+      className={cn(
+        'grid h-full min-h-0 grid-cols-1 overflow-hidden',
+        'md:grid-cols-[minmax(280px,0.9fr)_minmax(0,1.1fr)] md:grid-rows-[auto_minmax(0,1fr)]',
+        'lg:h-[min(520px,calc(var(--radix-popover-content-available-height,592px)-72px))] lg:grid-cols-[180px_220px_minmax(0,1fr)] lg:grid-rows-1',
+        hasResponsiveDocumentView ? 'grid-rows-1' : 'grid-rows-[auto_minmax(0,1fr)]'
+      )}
       data-testid="knowledge-source-picker"
     >
-      <div className="min-h-0 border-b border-border md:border-b-0 md:border-r">
+      <div
+        className={cn(
+          'min-h-0 border-b border-border md:col-start-1 md:row-start-1 md:block md:border-r lg:col-auto lg:row-auto lg:border-b-0',
+          hasResponsiveDocumentView && 'hidden md:block'
+        )}
+        data-testid="knowledge-picker-source-column"
+      >
         <div className="h-full min-h-0 overflow-y-auto">{renderSourceColumn()}</div>
       </div>
 
-      <div className="min-h-0 border-b border-border md:border-b-0 md:border-r">
+      <div
+        className={cn(
+          'min-h-0 border-b border-border md:col-start-1 md:row-start-2 md:block md:border-b-0 md:border-r lg:col-auto lg:row-auto',
+          hasResponsiveDocumentView && 'hidden md:block'
+        )}
+        data-testid="knowledge-picker-knowledge-base-column"
+      >
         <div className="h-full min-h-0 overflow-y-auto">{renderMiddleColumn()}</div>
       </div>
 
-      <div className="min-h-0 overflow-hidden">{renderDocumentColumn()}</div>
+      <div
+        className={cn(
+          'min-h-0 overflow-hidden md:col-start-2 md:row-span-2 md:row-start-1 md:flex md:flex-col lg:col-auto lg:row-auto lg:row-span-1',
+          hasResponsiveDocumentView ? 'flex flex-col' : 'hidden'
+        )}
+        data-testid="knowledge-picker-document-column"
+      >
+        {hasResponsiveDocumentView ? (
+          <button
+            type="button"
+            className="flex min-h-11 shrink-0 items-center gap-2 border-b border-border px-3 text-sm font-medium text-text-primary md:hidden"
+            onClick={closeResponsiveDocumentView}
+            data-testid="knowledge-picker-mobile-back"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            {t('document.backToList')}
+          </button>
+        ) : null}
+        <div className="min-h-0 flex-1 overflow-hidden">{renderDocumentColumn()}</div>
+      </div>
     </div>
   )
 }
@@ -1736,12 +1921,14 @@ function KnowledgeBaseRows({
   items,
   query,
   selectedContexts,
+  activeId,
   onOpen,
   onToggle,
 }: {
   items: KnowledgeBase[]
   query: string
   selectedContexts: ContextItem[]
+  activeId?: number
   onOpen: (kb: KnowledgeBase) => void
   onToggle: (kb: KnowledgeBase) => void
 }) {
@@ -1765,7 +1952,10 @@ function KnowledgeBaseRows({
         return (
           <div
             key={item.id}
-            className="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left hover:bg-surface"
+            className={cn(
+              'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left hover:bg-surface',
+              activeId === item.id && 'bg-primary/10 lg:bg-transparent'
+            )}
           >
             <button
               type="button"
@@ -1784,6 +1974,7 @@ function KnowledgeBaseRows({
                   {t('picker.count.documents', { count: item.document_count ?? 0 })}
                 </span>
               </span>
+              <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted lg:hidden" />
             </button>
             <KnowledgeSelectionControl
               state={selectionState}
@@ -1802,12 +1993,14 @@ function ExternalKnowledgeBaseRows({
   source,
   items,
   selectedContexts,
+  activeId,
   onOpen,
   onToggle,
 }: {
   source: ExternalKnowledgeSource
   items: ExternalKnowledgeBase[]
   selectedContexts: ContextItem[]
+  activeId?: string
   onOpen: (kb: ExternalKnowledgeBase) => void
   onToggle: (kb: ExternalKnowledgeBase) => void
 }) {
@@ -1829,7 +2022,10 @@ function ExternalKnowledgeBaseRows({
         return (
           <div
             key={item.knowledge_base_id}
-            className="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left hover:bg-surface"
+            className={cn(
+              'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left hover:bg-surface',
+              activeId === item.knowledge_base_id && 'bg-primary/10 lg:bg-transparent'
+            )}
           >
             <button
               type="button"
@@ -1848,6 +2044,7 @@ function ExternalKnowledgeBaseRows({
                   {t('picker.count.documents', { count: item.document_count ?? 0 })}
                 </span>
               </span>
+              <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted lg:hidden" />
             </button>
             {canSelectKnowledgeBase ? (
               <KnowledgeSelectionControl
@@ -2307,6 +2504,87 @@ function ExternalDocumentNode({
           ))
         : null}
     </div>
+  )
+}
+
+function ResponsiveSecondaryOptions({
+  title,
+  testId,
+  children,
+}: {
+  title: string
+  testId: string
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      className="space-y-1 p-2 lg:hidden"
+      data-testid={`knowledge-picker-responsive-${testId}-options`}
+    >
+      <div className="px-3 pb-2 pt-1 text-xs font-medium text-text-muted">{title}</div>
+      {children}
+    </div>
+  )
+}
+
+function ResponsiveSecondaryOption({
+  icon: Icon,
+  label,
+  count,
+  onClick,
+  testId,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  count?: number
+  onClick: () => void
+  testId: string
+}) {
+  return (
+    <button
+      type="button"
+      className="flex min-h-11 w-full items-center gap-3 rounded-md px-3 py-2 text-left text-text-primary hover:bg-surface"
+      onClick={onClick}
+      data-testid={testId}
+    >
+      <Icon className="h-4 w-4 shrink-0 text-text-muted" />
+      <TruncatedText
+        text={label}
+        focusable={false}
+        className="min-w-0 flex-1 text-sm font-medium"
+      />
+      {count !== undefined ? (
+        <Badge variant="secondary" size="sm">
+          {count}
+        </Badge>
+      ) : null}
+      <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+    </button>
+  )
+}
+
+function ResponsiveDrilldownHeader({
+  label,
+  onBack,
+  testId,
+}: {
+  label: string
+  onBack: () => void
+  testId: string
+}) {
+  const { t } = useTranslation('knowledge')
+
+  return (
+    <button
+      type="button"
+      className="flex min-h-11 shrink-0 items-center gap-2 border-b border-border px-3 text-left text-sm font-medium text-text-primary hover:bg-surface lg:hidden"
+      onClick={onBack}
+      aria-label={t('picker.changeSelection', { name: label })}
+      data-testid={testId}
+    >
+      <ChevronLeft className="h-4 w-4 shrink-0" />
+      <TruncatedText text={label} focusable={false} className="min-w-0 flex-1" />
+    </button>
   )
 }
 

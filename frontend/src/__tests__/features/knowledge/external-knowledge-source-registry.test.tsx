@@ -26,6 +26,21 @@ const mockListFakeNodes = jest.fn()
 
 const mockT = (key: string, fallback?: string | Record<string, unknown>) =>
   typeof fallback === 'string' ? fallback : key
+
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: jest.fn().mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  })),
+})
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: mockT }),
 }))

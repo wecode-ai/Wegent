@@ -5,8 +5,10 @@
 'use client'
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
-import { Check, Database, Table2 } from 'lucide-react'
+import { Check, Database, Table2, X } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
   Command,
@@ -26,6 +28,7 @@ import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
 import type { ContextItem, TableContext } from '@/types/context'
 import { useExternalKnowledgeSources } from '@/features/knowledge/externalKnowledgeSourceRegistry'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import { KnowledgeSourcePicker, type GroupedKnowledgeBases } from './KnowledgeSourcePicker'
 
@@ -113,6 +116,7 @@ export default function ContextSelector({
   const [searchValue, setSearchValue] = useState('')
   const [activeTab, setActiveTab] = useState('knowledge')
   const knowledgeBaseError = error
+  const isMobile = useIsMobile()
 
   const fetchKnowledgeBases = useCallback(async () => {
     setLoading(true)
@@ -273,14 +277,224 @@ export default function ContextSelector({
     }
   }, [open])
 
+  const selectedContextCount = selectedContexts.filter(context =>
+    ['knowledge_base', 'table', 'external_knowledge'].includes(context.type)
+  ).length
+
+  const selectorContent = (
+    <Tabs
+      value={activeTab}
+      onValueChange={handleTabChange}
+      className="flex min-h-0 flex-1 flex-col"
+    >
+      <div className="flex min-h-11 shrink-0 items-center justify-between border-b border-border px-4 lg:hidden">
+        <h2 className="text-base font-semibold text-text-primary">
+          {t('knowledge:picker.selectContent')}
+        </h2>
+        <button
+          type="button"
+          aria-label={t('common:actions.close')}
+          className="flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-surface hover:text-text-primary"
+          onClick={() => onOpenChange(false)}
+          data-testid="context-selector-close-button"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      <TabsList className="h-11 w-full shrink-0 rounded-none border-b border-border bg-transparent p-0 lg:h-9">
+        <TabsTrigger
+          value="knowledge"
+          className={cn(
+            'h-full flex-1 rounded-none border-b-2 border-transparent text-sm font-medium',
+            'data-[state=active]:border-primary data-[state=active]:text-primary',
+            'data-[state=inactive]:text-text-muted hover:text-text-primary'
+          )}
+          data-testid="context-selector-knowledge-tab"
+        >
+          <Database className="mr-1.5 h-3.5 w-3.5" />
+          {t('knowledge:title')}
+        </TabsTrigger>
+        <TabsTrigger
+          value="table"
+          className={cn(
+            'h-full flex-1 rounded-none border-b-2 border-transparent text-sm font-medium',
+            'data-[state=active]:border-blue-500 data-[state=active]:text-blue-600',
+            'data-[state=inactive]:text-text-muted hover:text-text-primary'
+          )}
+          data-testid="context-selector-table-tab"
+        >
+          <Table2 className="mr-1.5 h-3.5 w-3.5" />
+          {t('knowledge:table.title')}
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="knowledge" className="m-0 min-h-0 flex-1 overflow-hidden">
+        <div className="flex h-full min-h-0 flex-1 flex-col">
+          <Input
+            placeholder={t('knowledge:search_placeholder')}
+            value={searchValue}
+            onChange={event => setSearchValue(event.target.value)}
+            className={cn(
+              'h-11 shrink-0 rounded-none border-b border-border text-sm lg:h-9',
+              'placeholder:text-text-muted'
+            )}
+            data-testid="context-selector-knowledge-search-input"
+          />
+          <KnowledgeSourcePicker
+            groupedKnowledgeBases={groupedKnowledgeBases}
+            boundKnowledgeBases={boundKnowledgeBases}
+            externalSources={externalSources}
+            selectedContexts={selectedContexts}
+            searchValue={searchValue}
+            loading={loading}
+            error={knowledgeBaseError}
+            onRetry={handleKnowledgeBaseRetry}
+            onSelect={onSelect}
+            onDeselect={onDeselect}
+            onSelectMultiple={onSelectMultiple}
+            onDeselectMultiple={onDeselectMultiple}
+            onReplaceContexts={onReplaceContexts}
+          />
+        </div>
+      </TabsContent>
+
+      <TabsContent value="table" className="m-0 min-h-0 flex-1 overflow-hidden">
+        <Command className="flex min-h-0 flex-1 flex-col border-0">
+          <CommandInput
+            placeholder={t('knowledge:search_placeholder')}
+            value={searchValue}
+            onValueChange={setSearchValue}
+            className={cn(
+              'h-11 shrink-0 rounded-none border-b border-border text-sm lg:h-9',
+              'placeholder:text-text-muted'
+            )}
+          />
+          <CommandList className="min-h-0 max-h-none flex-1 overflow-y-auto lg:max-h-[calc(var(--radix-popover-content-available-height)-72px)]">
+            {tableLoading ? (
+              <div className="px-3 py-4 text-center text-sm text-text-muted">
+                {t('common:actions.loading')}
+              </div>
+            ) : tableError ? (
+              <div className="px-3 py-4 text-center">
+                <p className="mb-2 text-sm text-red-500">{tableError}</p>
+                <button onClick={fetchTables} className="text-xs text-primary hover:underline">
+                  {t('common:actions.retry')}
+                </button>
+              </div>
+            ) : tables.length === 0 ? (
+              <div className="px-4 py-6 text-center">
+                <p className="mb-2 text-sm text-text-muted">{t('knowledge:table.empty')}</p>
+                <p className="text-xs text-text-muted">{t('knowledge:table.emptyHint')}</p>
+              </div>
+            ) : (
+              <>
+                <CommandEmpty className="py-4 text-center text-sm text-text-muted">
+                  {t('common:branches.no_match')}
+                </CommandEmpty>
+
+                <CommandGroup>
+                  {tables.map(doc => {
+                    const tableContextId = `table-${doc.id}`
+                    const selected = isSelected(tableContextId)
+
+                    return (
+                      <CommandItem
+                        key={`table-${doc.id}`}
+                        value={`${doc.name} ${doc.id}`}
+                        onSelect={() => handleTableSelect(doc)}
+                        className={cn(
+                          'group mx-1 my-[2px] cursor-pointer select-none rounded-md',
+                          'max-lg:min-h-11 px-3 py-2 text-sm text-text-primary',
+                          'data-[selected=true]:bg-blue-500/10 data-[selected=true]:text-blue-600',
+                          'aria-selected:bg-hover',
+                          '!flex !flex-row !items-start !justify-between !gap-2'
+                        )}
+                      >
+                        <div className="flex min-w-0 flex-1 items-start gap-2">
+                          <Table2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-500" />
+                          <div className="flex min-w-0 flex-1 flex-col">
+                            <span
+                              className="truncate text-sm font-medium text-text-primary"
+                              title={doc.name}
+                            >
+                              {doc.name}
+                            </span>
+                            {doc.source_config?.url && (
+                              <span
+                                className="truncate text-xs text-text-muted"
+                                title={doc.source_config.url}
+                              >
+                                {(() => {
+                                  try {
+                                    const url = new URL(doc.source_config.url)
+                                    return url.hostname
+                                  } catch {
+                                    return doc.source_config.url
+                                  }
+                                })()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <Check
+                          className={cn(
+                            'mt-0.5 h-3.5 w-3.5 shrink-0',
+                            selected ? 'text-blue-500 opacity-100' : 'opacity-0'
+                          )}
+                        />
+                      </CommandItem>
+                    )
+                  })}
+                </CommandGroup>
+              </>
+            )}
+          </CommandList>
+        </Command>
+      </TabsContent>
+
+      <div className="flex min-h-16 shrink-0 items-center justify-between border-t border-border px-4 lg:hidden">
+        <span className="text-sm text-text-primary" data-testid="context-selector-selected-count">
+          {t('knowledge:picker.selectedCount', { count: selectedContextCount })}
+        </span>
+        <Button
+          type="button"
+          variant="primary"
+          className="min-h-11 min-w-24"
+          onClick={() => onOpenChange(false)}
+          data-testid="context-selector-done-button"
+        >
+          {t('common:actions.done')}
+        </Button>
+      </div>
+    </Tabs>
+  )
+
+  if (isMobile) {
+    return (
+      <Drawer open={open} onOpenChange={onOpenChange} shouldScaleBackground={false}>
+        <DrawerTrigger asChild>{children}</DrawerTrigger>
+        <DrawerContent
+          className="h-[82dvh] max-h-[680px] overflow-hidden rounded-t-2xl border-border bg-base p-0"
+          handleClassName="mt-2 h-1 w-9 bg-text-muted/30"
+          overlayClassName="bg-black/45"
+          data-testid="context-selector-drawer"
+        >
+          <DrawerTitle className="sr-only">{t('knowledge:picker.selectContent')}</DrawerTitle>
+          {selectorContent}
+        </DrawerContent>
+      </Drawer>
+    )
+  }
+
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent
         className={cn(
-          'p-0 w-[760px] max-w-[calc(100vw-24px)] border border-border bg-base',
-          'max-h-[var(--radix-popover-content-available-height)] shadow-xl rounded-xl overflow-hidden',
-          'flex flex-col'
+          'flex w-[760px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl border border-border bg-base p-0 shadow-xl',
+          'max-h-[var(--radix-popover-content-available-height)]',
+          'md:h-[min(680px,var(--radix-popover-content-available-height))] lg:h-auto'
         )}
         align="start"
         side="top"
@@ -290,164 +504,7 @@ export default function ContextSelector({
         sticky="partial"
         data-testid="context-selector-popover"
       >
-        <Tabs
-          value={activeTab}
-          onValueChange={handleTabChange}
-          className="flex flex-col flex-1 min-h-0"
-        >
-          {/* Tab list: Knowledge | Table — fixed height, no flex tricks needed */}
-          <TabsList className="w-full rounded-none border-b border-border bg-transparent h-9 p-0 flex-shrink-0">
-            <TabsTrigger
-              value="knowledge"
-              className={cn(
-                'flex-1 rounded-none border-b-2 border-transparent h-full text-sm font-medium',
-                'data-[state=active]:border-primary data-[state=active]:text-primary',
-                'data-[state=inactive]:text-text-muted hover:text-text-primary'
-              )}
-            >
-              <Database className="w-3.5 h-3.5 mr-1.5" />
-              {t('knowledge:title')}
-            </TabsTrigger>
-            <TabsTrigger
-              value="table"
-              className={cn(
-                'flex-1 rounded-none border-b-2 border-transparent h-full text-sm font-medium',
-                'data-[state=active]:border-blue-500 data-[state=active]:text-blue-600',
-                'data-[state=inactive]:text-text-muted hover:text-text-primary'
-              )}
-            >
-              <Table2 className="w-3.5 h-3.5 mr-1.5" />
-              {t('knowledge:table.title')}
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Knowledge Base Tab */}
-          <TabsContent value="knowledge" className="m-0 min-h-0 flex-1 overflow-hidden">
-            <div className="flex min-h-0 flex-1 flex-col">
-              <Input
-                placeholder={t('knowledge:search_placeholder')}
-                value={searchValue}
-                onChange={event => setSearchValue(event.target.value)}
-                className={cn(
-                  'h-9 rounded-none border-b border-border flex-shrink-0',
-                  'placeholder:text-text-muted text-sm'
-                )}
-                data-testid="context-selector-knowledge-search-input"
-              />
-              <KnowledgeSourcePicker
-                groupedKnowledgeBases={groupedKnowledgeBases}
-                boundKnowledgeBases={boundKnowledgeBases}
-                externalSources={externalSources}
-                selectedContexts={selectedContexts}
-                searchValue={searchValue}
-                loading={loading}
-                error={knowledgeBaseError}
-                onRetry={handleKnowledgeBaseRetry}
-                onSelect={onSelect}
-                onDeselect={onDeselect}
-                onSelectMultiple={onSelectMultiple}
-                onDeselectMultiple={onDeselectMultiple}
-                onReplaceContexts={onReplaceContexts}
-              />
-            </div>
-          </TabsContent>
-
-          {/* Table Tab */}
-          <TabsContent value="table" className="m-0 min-h-0 flex-1 overflow-hidden">
-            <Command className="border-0 flex min-h-0 flex-1 flex-col">
-              <CommandInput
-                placeholder={t('knowledge:search_placeholder')}
-                value={searchValue}
-                onValueChange={setSearchValue}
-                className={cn(
-                  'h-9 rounded-none border-b border-border flex-shrink-0',
-                  'placeholder:text-text-muted text-sm'
-                )}
-              />
-              <CommandList className="min-h-0 max-h-[calc(var(--radix-popover-content-available-height)-72px)] flex-1 overflow-y-auto">
-                {tableLoading ? (
-                  <div className="py-4 px-3 text-center text-sm text-text-muted">
-                    {t('common:actions.loading')}
-                  </div>
-                ) : tableError ? (
-                  <div className="py-4 px-3 text-center">
-                    <p className="text-sm text-red-500 mb-2">{tableError}</p>
-                    <button onClick={fetchTables} className="text-xs text-primary hover:underline">
-                      {t('common:actions.retry')}
-                    </button>
-                  </div>
-                ) : tables.length === 0 ? (
-                  <div className="py-6 px-4 text-center">
-                    <p className="text-sm text-text-muted mb-2">{t('knowledge:table.empty')}</p>
-                    <p className="text-xs text-text-muted">{t('knowledge:table.emptyHint')}</p>
-                  </div>
-                ) : (
-                  <>
-                    <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                      {t('common:branches.no_match')}
-                    </CommandEmpty>
-
-                    <CommandGroup>
-                      {tables.map(doc => {
-                        const tableContextId = `table-${doc.id}`
-                        const selected = isSelected(tableContextId)
-
-                        return (
-                          <CommandItem
-                            key={`table-${doc.id}`}
-                            value={`${doc.name} ${doc.id}`}
-                            onSelect={() => handleTableSelect(doc)}
-                            className={cn(
-                              'group cursor-pointer select-none',
-                              'px-3 py-2 text-sm text-text-primary',
-                              'rounded-md mx-1 my-[2px]',
-                              'data-[selected=true]:bg-blue-500/10 data-[selected=true]:text-blue-600',
-                              'aria-selected:bg-hover',
-                              '!flex !flex-row !items-start !justify-between !gap-2'
-                            )}
-                          >
-                            <div className="flex items-start gap-2 min-w-0 flex-1">
-                              <Table2 className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
-                              <div className="flex flex-col min-w-0 flex-1">
-                                <span
-                                  className="font-medium text-sm text-text-primary truncate"
-                                  title={doc.name}
-                                >
-                                  {doc.name}
-                                </span>
-                                {doc.source_config?.url && (
-                                  <span
-                                    className="text-xs text-text-muted truncate"
-                                    title={doc.source_config.url}
-                                  >
-                                    {(() => {
-                                      try {
-                                        const url = new URL(doc.source_config.url)
-                                        return url.hostname
-                                      } catch {
-                                        return doc.source_config.url
-                                      }
-                                    })()}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <Check
-                              className={cn(
-                                'h-3.5 w-3.5 shrink-0 mt-0.5',
-                                selected ? 'opacity-100 text-blue-500' : 'opacity-0'
-                              )}
-                            />
-                          </CommandItem>
-                        )
-                      })}
-                    </CommandGroup>
-                  </>
-                )}
-              </CommandList>
-            </Command>
-          </TabsContent>
-        </Tabs>
+        {selectorContent}
       </PopoverContent>
     </Popover>
   )
