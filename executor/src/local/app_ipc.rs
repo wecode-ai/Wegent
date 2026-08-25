@@ -941,10 +941,28 @@ impl AppIpcServer {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
+        self.serve_io_with_bulk_write_buffer_capacity(
+            reader,
+            writer,
+            APP_IPC_BULK_WRITE_BUFFER_CAPACITY,
+        )
+        .await
+    }
+
+    async fn serve_io_with_bulk_write_buffer_capacity<R, W>(
+        &self,
+        reader: R,
+        writer: W,
+        bulk_write_buffer_capacity: usize,
+    ) -> Result<(), String>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         let (priority_write_tx, mut priority_write_rx) =
             mpsc::channel::<Value>(APP_IPC_WRITE_BUFFER_CAPACITY);
         let (event_write_tx, mut event_write_rx) =
-            mpsc::channel::<Value>(APP_IPC_BULK_WRITE_BUFFER_CAPACITY);
+            mpsc::channel::<Value>(bulk_write_buffer_capacity);
         let mut writer_task = tokio::spawn(async move {
             let mut writer = writer;
             loop {
@@ -1084,7 +1102,7 @@ impl AppIpcServer {
                                                 "app IPC bulk event backpressure; transcript recovery requested",
                                                 &[(
                                                     "capacity",
-                                                    APP_IPC_BULK_WRITE_BUFFER_CAPACITY.to_string(),
+                                                    bulk_write_buffer_capacity.to_string(),
                                                 )],
                                             ));
                                             let lagged = self.event_message(
@@ -1111,7 +1129,7 @@ impl AppIpcServer {
                                         "app IPC ordered event backpressure",
                                         &[(
                                             "capacity",
-                                            APP_IPC_BULK_WRITE_BUFFER_CAPACITY.to_string(),
+                                            bulk_write_buffer_capacity.to_string(),
                                         )],
                                     ));
                                 }
@@ -3216,6 +3234,74 @@ mod tests {
         assert_eq!(messages[1]["payload"]["data"]["block_id"], "block-2");
         assert_eq!(messages[2]["payload"]["data"]["block_id"], "block-3");
         assert_eq!(messages[3]["event"], "response.completed");
+
+        client_writer
+            .shutdown()
+            .await
+            .expect("client input should close");
+        serving.await.expect("app IPC task should finish");
+    }
+
+    #[tokio::test]
+    async fn queues_backpressure_recovery_after_buffered_runtime_events() {
+        let server = AppIpcServer::new();
+        let event_tx = server.event_tx.clone();
+        let (client, executor) = duplex(128);
+        let (client_reader, mut client_writer) = split(client);
+        let (executor_reader, executor_writer) = split(executor);
+        let serving = tokio::spawn(async move {
+            server
+                .serve_io_with_bulk_write_buffer_capacity(executor_reader, executor_writer, 2)
+                .await
+                .expect("app IPC should recover from bulk event backpressure");
+        });
+        let mut client_reader = BufReader::new(client_reader);
+        let mut ready = String::new();
+        client_reader
+            .read_line(&mut ready)
+            .await
+            .expect("executor.ready should be readable");
+
+        event_tx
+            .send(json!({
+                "type": "event",
+                "event": "runtime.plan.updated",
+                "payload": {
+                    "sequence": 1,
+                    "delta": "x".repeat(1_024),
+                }
+            }))
+            .expect("bulk event should have an app IPC receiver");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        for sequence in 2..=4 {
+            event_tx
+                .send(json!({
+                    "type": "event",
+                    "event": "runtime.plan.updated",
+                    "payload": {
+                        "sequence": sequence,
+                        "delta": "x".repeat(1_024),
+                    }
+                }))
+                .expect("bulk event should have an app IPC receiver");
+        }
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let mut messages = Vec::new();
+        for _ in 0..4 {
+            let mut line = String::new();
+            tokio::time::timeout(Duration::from_secs(1), client_reader.read_line(&mut line))
+                .await
+                .expect("runtime event should arrive before the timeout")
+                .expect("runtime event should be readable");
+            messages.push(serde_json::from_str::<Value>(&line).expect("valid app IPC JSON"));
+        }
+        assert_eq!(messages[0]["payload"]["sequence"], 1);
+        assert_eq!(messages[1]["payload"]["sequence"], 2);
+        assert_eq!(messages[2]["payload"]["sequence"], 3);
+        assert_eq!(messages[3]["event"], "executor.event_lagged");
+        assert_eq!(messages[3]["payload"]["reason"], "ipc_backpressure");
 
         client_writer
             .shutdown()
