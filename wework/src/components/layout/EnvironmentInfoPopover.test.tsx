@@ -608,6 +608,7 @@ describe('EnvironmentInfoPopover', () => {
       .getByTestId('environment-change-request-status')
       .querySelector('[aria-hidden="true"]')
     expect(screen.getByTestId('change-request-state')).toHaveTextContent('已合并')
+    expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查通过')
     expect(icon).toHaveClass('text-violet-500')
     expect(icon).not.toHaveClass('text-green-500')
     expect(screen.getByTestId('change-request-merged-icon')).toBeInTheDocument()

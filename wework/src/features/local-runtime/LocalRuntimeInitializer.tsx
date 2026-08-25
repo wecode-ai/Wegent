@@ -27,7 +27,7 @@ import {
   readLocalExecutorLog,
   type LocalExecutorLog,
   type LocalExecutorStatus,
-} from '@/tauri/localExecutor'
+} from '@/desktop/localExecutor'
 
 function getLocalExecutorLogDisplayPath(): string {
   return getPlatform() === 'win'
@@ -85,7 +85,7 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 function sanitizeLocalRuntimeDebugText(text: string): string {
-  return text.replace(/\btauri\b/gi, 'desktop app').replace(/\bsidecar\b/gi, 'executor process')
+  return text.replace(/\bsidecar\b/gi, 'executor process')
 }
 
 async function resolveLocalRuntimeState(

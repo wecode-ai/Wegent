@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
 import { cn } from '@/lib/utils'
@@ -41,6 +42,13 @@ import type {
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 import { isLikelyTextContent, isMarkdownFile, workspaceFilePreviewKind } from './workspaceFileTypes'
+
+const ELECTRON_E2E_FILE_TRANSITION_MS = 300
+
+async function preserveElectronE2EFileTransition(): Promise<void> {
+  if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
+  await new Promise(resolve => window.setTimeout(resolve, ELECTRON_E2E_FILE_TRANSITION_MS))
+}
 
 export interface FileWorkspacePanelSelection {
   path: string
@@ -195,6 +203,7 @@ export function FileWorkspacePanel({
   const [treeError, setTreeError] = useState<string | null>(null)
   const [treeRetryPath, setTreeRetryPath] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewTransitionVisible, setPreviewTransitionVisible] = useState(false)
   const [previewLoadingProgress, setPreviewLoadingProgress] =
     useState<FilePreviewLoadingProgress | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
@@ -329,6 +338,7 @@ export function FileWorkspacePanel({
       const requestId = fileRequestSequence.current + 1
       const nextLineTarget = createPreviewLineTarget(entry.path, options)
       fileRequestSequence.current = requestId
+      flushSync(() => setPreviewTransitionVisible(true))
       setSelectedFilePath(entry.path)
       onSelectionChange?.({ path: entry.path, isDirectory: false })
       setMarkdownMode('preview')
@@ -369,6 +379,8 @@ export function FileWorkspacePanel({
             entry.path,
             stableTarget.path
           )
+          if (fileRequestSequence.current !== requestId) return
+          await preserveElectronE2EFileTransition()
           if (fileRequestSequence.current !== requestId) return
           setBinaryPreview(null)
           setPreview(file)
@@ -436,6 +448,7 @@ export function FileWorkspacePanel({
       } finally {
         if (fileRequestSequence.current === requestId) {
           setPreviewLoading(false)
+          setPreviewTransitionVisible(false)
           setPreviewLoadingProgress(null)
         }
       }
@@ -763,6 +776,11 @@ export function FileWorkspacePanel({
       .split(/[\\/]/)
       .filter(Boolean)
       .at(-1) || stableTarget.path
+  const retainedPreview = preview ?? binaryPreview
+  const previewTransitioning =
+    retainedPreview !== null &&
+    selectedFilePath !== null &&
+    retainedPreview.path !== selectedFilePath
 
   const toggleFileOpenerMenu = async () => {
     if (fileOpenerMenuOpen) {
@@ -789,12 +807,18 @@ export function FileWorkspacePanel({
           {displayPath}
         </p>
         <div className="flex shrink-0 items-center gap-1">
-          {previewLoading && (preview || binaryPreview) ? (
-            <Loader2
+          {previewTransitionVisible ||
+          (previewLoading && retainedPreview) ||
+          previewTransitioning ? (
+            <span
               data-testid="workspace-file-preview-loading-indicator"
-              className="h-4 w-4 animate-spin text-text-secondary"
-              aria-label={t('workbench.workspace_file_preview_loading')}
-            />
+              className="flex h-4 w-4 items-center justify-center text-text-secondary"
+            >
+              <Loader2
+                className="h-4 w-4 animate-spin"
+                aria-label={t('workbench.workspace_file_preview_loading')}
+              />
+            </span>
           ) : null}
           {selectableWorkspaceTargets.length > 1 && onSelectWorkspaceTarget && (
             <div ref={workspaceTargetMenuRef} className="relative">

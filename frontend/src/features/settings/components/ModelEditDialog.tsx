@@ -70,6 +70,7 @@ import {
   visionSidecarModelKey,
   visionSidecarModels,
 } from '@/features/settings/utils/vision-sidecar-model'
+import { preventSelectCloseFromStealingFocus } from '@/features/settings/utils/select-focus'
 
 // Model form data that can be used by callers
 export interface ModelFormData {
@@ -436,6 +437,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     useState<VisionSidecarModelRef | null>(null)
   const [availableVisionModels, setAvailableVisionModels] = useState<UnifiedModel[]>([])
   const [loadingVisionModels, setLoadingVisionModels] = useState(false)
+  const visionSidecarTriggerRef = React.useRef<HTMLButtonElement>(null)
+  const visionSidecarContentRef = React.useRef<HTMLDivElement>(null)
 
   // Video capabilities state
   const [capRatios, setCapRatios] = useState<AspectRatioOption[]>([])
@@ -1716,6 +1719,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 disabled={loadingVisionModels}
               >
                 <SelectTrigger
+                  ref={visionSidecarTriggerRef}
                   id="vision-sidecar-model"
                   data-testid="vision-sidecar-model-select"
                   className="bg-base"
@@ -1728,7 +1732,17 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     }
                   />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent
+                  ref={visionSidecarContentRef}
+                  onCloseAutoFocus={event =>
+                    preventSelectCloseFromStealingFocus(
+                      event,
+                      document.activeElement,
+                      visionSidecarTriggerRef.current,
+                      visionSidecarContentRef.current
+                    )
+                  }
+                >
                   <SelectItem value="disabled">
                     {t('common:models.vision_sidecar_disabled')}
                   </SelectItem>

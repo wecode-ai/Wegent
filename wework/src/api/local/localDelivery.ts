@@ -1,5 +1,3 @@
-import { convertFileSrc } from '@tauri-apps/api/core'
-
 import {
   createProjectTaskTrackingSingleFlight,
   DEFAULT_WORK_ITEM_PROJECT_ID,
@@ -32,13 +30,14 @@ import {
 } from '@/api/issueWorkflow'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
-import { readDroppedFiles } from '@/tauri/droppedFiles'
+import { readDroppedFiles } from '@/desktop/droppedFiles'
 import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 import {
   localProjectAssociationFromTags,
   localProjectAssociationTag,
   visibleLoopItemTags,
 } from '@/api/localProjectAssociation'
+import { desktopFileUrl } from '@/components/chat/assistantMarkdownLinks'
 
 type LocalRequest = <T>(
   method: string,
@@ -705,7 +704,7 @@ async function fileInput(file: File) {
 
 function localAccess(record: LocalAccessRecord) {
   return {
-    url: convertFileSrc(record.path),
+    url: desktopFileUrl(record.path),
     expires_in_seconds: 0,
   }
 }

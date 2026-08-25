@@ -1,0 +1,10 @@
+{
+  "id": "node",
+  "version": "24.1.0",
+  "fingerprint": "f1401cea7fb75244c47af6ac014598ace3a6560e285249e812665341396ccb0a",
+  "archiveSha256": "d3495b02a21d3501bf3e61a1cb752d101647f821c056398bb08b019822fe1c16",
+  "archiveBytes": 40380052,
+  "downloadUrl": "https://github.com/wecode-ai/Wegent/releases/download/wework-updater/node-runtime-macos-arm64-f1401cea7fb75244c47af6ac014598ace3a6560e285249e812665341396ccb0a.tar.gz",
+  "assetName": "node-runtime-macos-arm64-f1401cea7fb75244c47af6ac014598ace3a6560e285249e812665341396ccb0a.tar.gz",
+  "installedBytes": 115158592
+}

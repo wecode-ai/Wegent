@@ -4,14 +4,65 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import {
+  AI_VERIFY_ACTIONS,
   acknowledgeStartedCommand,
   appExitMessage,
   monitorAppProcess,
+  parseArgs,
   readSessionForCleanup,
   resolveCommandTimeout,
+  resolveOptionalBoolean,
   resolveStartupTimeout,
   startupFailureMessage,
+  validateStartOptions,
 } from './ai-verify.mjs'
+
+describe('AI_VERIFY_ACTIONS', () => {
+  test('preserves the complete legacy command surface', () => {
+    expect(AI_VERIFY_ACTIONS).toEqual({
+      capture: 'capture',
+      'capture-browser': 'captureEmbeddedBrowser',
+      'capture-popout': 'capturePopoutWindow',
+      'capture-workspace': 'captureWorkspaceWindow',
+      snapshot: 'snapshot',
+      debug: 'getWorkbenchDebugSnapshot',
+      'active-element': 'getActiveElementTestId',
+      click: 'click',
+      'click-at': 'clickAt',
+      'click-then-macrotask': 'clickThenMacrotask',
+      'context-menu': 'contextMenu',
+      'seed-local-project': 'seedLocalProject',
+      'preview-plugin-import': 'previewPluginImport',
+      'import-plugin-package': 'importPluginPackage',
+      'set-local-proxy-url': 'setLocalProxyUrl',
+      'terminal-snapshot': 'readLocalTerminalSnapshot',
+      reload: 'reloadApp',
+      'close-to-tray': 'closeMainWindowToTray',
+      'request-close': 'requestMainWindowClose',
+      'dismiss-popout': 'dismissPopoutWindow',
+      drag: 'drag',
+      'drop-file': 'dropFile',
+      'drop-paths': 'dropPaths',
+      fill: 'fill',
+      'get-attribute': 'getAttribute',
+      hover: 'hover',
+      metrics: 'getElementMetrics',
+      navigate: 'navigate',
+      'paste-paths': 'pastePaths',
+      'pointer-move': 'pointerMove',
+      press: 'press',
+      submit: 'submit',
+      'scroll-into-view': 'scrollIntoView',
+      'select-text': 'selectText',
+      'show-popout': 'showPopoutWindow',
+      'system-drag-drop': 'completeSystemDragDrop',
+      'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
+      'wait-for': 'waitFor',
+      'window-focus-snapshot': 'getWindowFocusSnapshot',
+      text: 'getText',
+    })
+  })
+})
 
 describe('acknowledgeStartedCommand', () => {
   test('accepts the start acknowledgement for a pending command', () => {
@@ -33,6 +84,19 @@ describe('acknowledgeStartedCommand', () => {
       status: 404,
       value: { error: 'Unknown command missing-command' },
     })
+  })
+})
+
+describe('parseArgs', () => {
+  test('preserves explicit empty values', () => {
+    expect(parseArgs(['set-local-proxy-url', '--value', ''])).toEqual({
+      command: 'set-local-proxy-url',
+      options: { value: '' },
+    })
+  })
+
+  test('still rejects a missing value', () => {
+    expect(() => parseArgs(['set-local-proxy-url', '--value'])).toThrow('Missing value for --value')
   })
 })
 
@@ -79,10 +143,10 @@ describe('startupFailureMessage', () => {
 
   test('distinguishes launcher preparation from WebView connection', () => {
     expect(startupFailureMessage({ pid: null }, 120000)).toContain(
-      'the Tauri launcher had not started'
+      'the desktop launcher had not started'
     )
     expect(startupFailureMessage({ pid: 42 }, 120000)).toContain(
-      'the Tauri launcher was still waiting for its WebView'
+      'the desktop launcher was still waiting for its renderer'
     )
   })
 })
@@ -156,4 +220,38 @@ describe('resolveCommandTimeout', () => {
       expect(resolveCommandTimeout(timeout)).toBe(30000)
     }
   )
+})
+
+describe('resolveOptionalBoolean', () => {
+  test('preserves an omitted option', () => {
+    expect(resolveOptionalBoolean(undefined, 'visible')).toBeUndefined()
+  })
+
+  test('parses explicit boolean values', () => {
+    expect(resolveOptionalBoolean('true', 'visible')).toBe(true)
+    expect(resolveOptionalBoolean('false', 'visible')).toBe(false)
+  })
+
+  test('rejects ambiguous values', () => {
+    expect(() => resolveOptionalBoolean('yes', 'visible')).toThrow(
+      '--visible must be "true" or "false"'
+    )
+  })
+})
+
+describe('validateStartOptions', () => {
+  test('accepts the Electron start options', () => {
+    expect(() =>
+      validateStartOptions({
+        'codex-home-initialization': 'true',
+        timeout: '180000',
+      })
+    ).not.toThrow()
+  })
+
+  test('rejects the removed desktop runtime option', () => {
+    expect(() => validateStartOptions({ runtime: 'electron' })).toThrow(
+      'Unexpected option for start: --runtime'
+    )
+  })
 })

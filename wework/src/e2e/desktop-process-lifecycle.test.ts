@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 interface ProcessLifecycle {
+  processIsAliveFromLinuxStat: (stat: string) => boolean | null
   processGroupHasLiveMembersFromLinuxStats: (
     stats: string[],
     processGroupId: number
@@ -64,6 +65,15 @@ afterEach(() => {
 })
 
 describe('desktop process lifecycle', () => {
+  test('treats Linux zombie and dead process states as exited', async () => {
+    const { processIsAliveFromLinuxStat } = await loadProcessLifecycle()
+
+    expect(processIsAliveFromLinuxStat('321 (wegent-executor) Z 1 321 321 0 -1 0')).toBe(false)
+    expect(processIsAliveFromLinuxStat('321 (wegent-executor) X 1 321 321 0 -1 0')).toBe(false)
+    expect(processIsAliveFromLinuxStat('321 (wegent-executor) S 1 321 321 0 -1 0')).toBe(true)
+    expect(processIsAliveFromLinuxStat('invalid stat')).toBeNull()
+  })
+
   test('treats a Linux process group with only zombie members as exited', async () => {
     const { processGroupHasLiveMembersFromLinuxStats } = await loadProcessLifecycle()
     const stats = [
@@ -102,6 +112,35 @@ describe('desktop process lifecycle', () => {
       ).resolves.toBeUndefined()
 
       expect(kill).toHaveBeenCalledWith(-42, 'SIGTERM')
+    } finally {
+      kill.mockRestore()
+    }
+  })
+
+  test('observes a process that exits while the exit listener is being installed', async () => {
+    const { stopProcessGroup } = await loadProcessLifecycle()
+    const child = {
+      pid: 42,
+      exitCode: null,
+      signalCode: null,
+      once: vi.fn(function (this: { exitCode: number | null }) {
+        this.exitCode = 0
+        return this
+      }),
+      off: vi.fn(),
+    } as unknown as ChildProcess
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === -42 && signal === 0) {
+        const error = Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
+        throw error
+      }
+      return true
+    })
+
+    try {
+      await expect(stopProcessGroup(child)).resolves.toBeUndefined()
+      expect(child.once).toHaveBeenCalledWith('exit', expect.any(Function))
+      expect(child.off).toHaveBeenCalledWith('exit', expect.any(Function))
     } finally {
       kill.mockRestore()
     }

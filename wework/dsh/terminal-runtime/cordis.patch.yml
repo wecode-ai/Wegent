@@ -1,0 +1,5 @@
+- insert:
+    - id: wework-terminal-runtime
+      name: '@wegent/dsh-terminal-runtime'
+      inject:
+        - webServer

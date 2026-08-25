@@ -107,7 +107,7 @@ pnpm --filter wework dev:mac
 
 | 目录                       | 职责                                 |
 | -------------------------- | ------------------------------------ |
-| `wework/`                  | Wegent Desktop（Tauri、Vite、React） |
+| `wework/`                  | Wegent Desktop（Electron、Vite、React） |
 | `executor/`                | 本地与远程的智能体任务执行环境       |
 | `frontend/`                | Wegent 平台 Web 管理界面             |
 | `backend/`                 | REST API 和核心业务逻辑              |

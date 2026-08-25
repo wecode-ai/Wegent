@@ -26,7 +26,7 @@ import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
 import { getRuntimeConfig } from '@/config/runtime'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
@@ -250,7 +250,7 @@ export function createDefaultWorkbenchServices(
   }
 
   const cloudServices = createBackendWorkbenchServices()
-  if (!isTauriRuntime()) return cloudServices
+  if (!isDesktopRuntime()) return cloudServices
 
   const localServices = createLocalAppServices({ user: cloudConnection?.user })
   const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)

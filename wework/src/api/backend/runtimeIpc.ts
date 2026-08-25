@@ -1,5 +1,5 @@
 import { createSocketClient, type AuthenticatedSocketClient } from '@wegent/chat-core'
-import type { LocalExecutorEvent } from '@/tauri/localExecutor'
+import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 
 const WEWORK_RUNTIME_NAMESPACE = '/wework-runtime'
 const REQUEST_EVENT = 'runtime:request'

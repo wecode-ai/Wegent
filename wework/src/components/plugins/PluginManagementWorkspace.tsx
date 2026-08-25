@@ -58,6 +58,7 @@ import {
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 import { getRuntimeConfig } from '@/config/runtime'
+import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
 
 interface PluginShareState {
   plugin: PluginMarketplaceItem
@@ -420,7 +421,7 @@ export function PluginManagementWorkspace({
       .then(outcome => {
         setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
         setSelectedPluginId(current => (String(current) === String(id) ? null : current))
-        notifyLocalPluginSkillsChanged()
+        notifyLocalPluginSkillsChanged([String(id), pluginName, plugin.raw.spec.source.pluginKey])
         const warningDetails = pluginUninstallWarningDetails(outcome)
         setPluginOperationNotice({
           id: `uninstalled-${id}`,
@@ -939,6 +940,7 @@ export function PluginManagementWorkspace({
             </p>
           </div>
         </header>
+        <CoreDshPluginManagementSection />
         {isLoadingPlugins ? (
           <div className="py-10 text-sm text-text-secondary">
             {t('workbench.plugins_loading_plugins', '正在加载插件')}

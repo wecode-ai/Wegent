@@ -3,8 +3,8 @@ import type {
   RuntimeIMNotificationPresenceResponse,
   RuntimeIMNotificationPresenceUpdateRequest,
 } from '@/types/api'
-import { isMainWindowFocused, subscribeMainWindowFocus } from '@/tauri/windowFocus'
-import { isSystemSessionLocked, subscribeSystemSessionLock } from '@/tauri/systemLock'
+import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
+import { isSystemSessionLocked, subscribeSystemSessionLock } from '@/desktop/systemLock'
 
 const CLIENT_ID_STORAGE_KEY = 'wework:im-notification-presence-client-id'
 export const IM_NOTIFICATION_PRESENCE_HEARTBEAT_MS = 30_000

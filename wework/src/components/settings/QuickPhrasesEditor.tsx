@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, GripVertical, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { QuickPhrase, QuickPhraseMode } from '@/tauri/appPreferences'
+import type { QuickPhrase, QuickPhraseMode } from '@/desktop/appPreferences'
 
 export type QuickPhraseChangeAction = 'create' | 'update' | 'delete' | 'move'
 

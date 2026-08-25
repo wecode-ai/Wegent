@@ -101,7 +101,7 @@ resolve_executor_binary() {
 resolve_codex_binary() {
   local host
   host="$(rustc -vV | awk '$1 == "host:" { print $2 }')"
-  local bin="$WEWORK_DIR/src-tauri/binaries/codex/$host/vendor/$host/bin/codex"
+  local bin="$WEWORK_DIR/resources/binaries/codex/$host/vendor/$host/bin/codex"
   if [ ! -x "$bin" ]; then
     echo "Error: prepared Codex binary missing at $bin" >&2
     echo "Run: pnpm --filter wework prepare:codex" >&2

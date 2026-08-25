@@ -25,6 +25,7 @@ def _device(
     logical_id: str = "cloud-logical",
     runtime_id: str = "runtime-cloud",
     runtime_instance_id: str = "runtime-instance-1",
+    app_device_id: str | None = None,
 ) -> Kind:
     return Kind(
         user_id=user_id,
@@ -40,12 +41,31 @@ def _device(
                 "deviceId": runtime_id,
                 "deviceType": "cloud",
                 "runtimeInstanceId": runtime_instance_id,
+                "appDeviceId": app_device_id,
                 "cloudConfig": {
                     "sandboxId": logical_id,
                     "deviceId": runtime_id,
                 },
             },
         },
+    )
+
+
+def test_resolve_runtime_route_identity_accepts_app_device_id(test_db):
+    test_db.add(_device(app_device_id="electron-app"))
+    test_db.commit()
+
+    identity = resolve_runtime_route_identity(
+        test_db,
+        user_id=7,
+        submitted_device_id="electron-app",
+    )
+
+    assert identity == RuntimeRouteIdentity(
+        logical_device_id="electron-app",
+        runtime_device_id="runtime-cloud",
+        runtime_instance_id="runtime-instance-1",
+        device_type=DeviceType.CLOUD,
     )
 
 

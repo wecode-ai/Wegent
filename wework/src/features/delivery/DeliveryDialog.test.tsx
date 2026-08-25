@@ -12,7 +12,7 @@ const deliveryFileMocks = vi.hoisted(() => ({
   readSelectedDeliveryFiles: vi.fn(),
 }))
 
-vi.mock('@/tauri/droppedFiles', () => ({
+vi.mock('@/desktop/droppedFiles', () => ({
   readSelectedDeliveryFiles: deliveryFileMocks.readSelectedDeliveryFiles,
 }))
 

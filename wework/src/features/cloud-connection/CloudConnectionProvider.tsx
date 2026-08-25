@@ -156,7 +156,7 @@ function rawErrorMessage(error: unknown): string {
   return 'Cloud connection failed'
 }
 
-function isTauriHttpScopeError(error: unknown): boolean {
+function isDesktopHttpPermissionError(error: unknown): boolean {
   const message = rawErrorMessage(error).toLowerCase()
   return message.includes('scope') || message.includes('not allowed') || message.includes('denied')
 }
@@ -168,7 +168,7 @@ function cloudStepErrorMessage(
   error: unknown
 ): string {
   const url = cloudRequestUrl(config, endpoint)
-  if (isTauriHttpScopeError(error)) {
+  if (isDesktopHttpPermissionError(error)) {
     return `${stage}失败（${url}）：桌面端 HTTP 权限拦截了这个 Backend 地址。请重启 App 后再试。`
   }
   return `${stage}失败（${url}）：${rawErrorMessage(error)}`

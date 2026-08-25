@@ -30,15 +30,12 @@ vi.mock('@/hooks/useAppVersion', () => ({
   useAppVersion: () => appVersionMock.value,
 }))
 
-function enableTauri() {
-  Object.defineProperty(window, '__TAURI_INTERNALS__', {
-    configurable: true,
-    value: {},
-  })
+function enableElectron() {
+  window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
 }
 
-function disableTauri() {
-  delete (window as Window & { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
+function disableElectron() {
+  delete window.__WEWORK_RUNTIME_CONFIG__
 }
 
 describe('AppUpdateProvider', () => {
@@ -46,14 +43,14 @@ describe('AppUpdateProvider', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-16T00:00:00Z'))
     localStorage.clear()
-    enableTauri()
+    enableElectron()
     appVersionMock.value = '0.1.0'
     vi.mocked(checkForWeworkUpdate).mockResolvedValue(null)
     vi.mocked(downloadPendingWeworkUpdate).mockResolvedValue()
   })
 
   afterEach(() => {
-    disableTauri()
+    disableElectron()
     vi.useRealTimers()
     vi.clearAllMocks()
   })

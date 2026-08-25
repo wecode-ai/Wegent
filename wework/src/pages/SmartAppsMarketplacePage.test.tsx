@@ -36,7 +36,7 @@ vi.mock('@/features/plugins/pluginTrial', () => ({
 vi.mock('@/features/harness-apps/smartAppDevelopmentPreview', () => ({
   queueSmartAppDevelopmentPreview: (options: unknown) => queueSmartAppDevelopmentPreview(options),
 }))
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   ensureBundledPluginInstalled: (name: string) => ensureBundledPluginInstalled(name),
 }))
 vi.mock('@/features/workbench/useWorkbench', () => ({

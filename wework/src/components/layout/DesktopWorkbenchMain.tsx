@@ -26,7 +26,7 @@ import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorA
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { updateAppPreferences } from '@/tauri/appPreferences'
+import { updateAppPreferences } from '@/desktop/appPreferences'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { getPopoutComposerPlaceholder } from '@/features/workbench/popoutWorkspaceContext'
 import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
@@ -76,6 +76,19 @@ import {
   type RightWorkspacePanelView,
   type RightWorkspaceTerminalTab,
 } from './workspace-panels/RightWorkspacePanel'
+import {
+  attachRightWorkspaceSidebarController,
+  encodeRightWorkspaceExtensionTabId,
+  isRightWorkspaceExtensionTab,
+  invokeWeworkWorkspaceSidebarLifecycle,
+  rightWorkspaceBetterSidebar,
+  titleOfWeworkWorkspaceSidebarTab,
+  type WeworkWorkspaceSidebarOpenTabSeed,
+  type WeworkWorkspaceScope,
+  type WeworkWorkspaceSidebarSnapshot,
+  type RightWorkspaceExtensionTab,
+  type RightWorkspaceExtensionTabState,
+} from './workspace-panels/rightWorkspaceSidebarRegistry'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
@@ -103,7 +116,7 @@ import {
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import {
@@ -269,6 +282,9 @@ interface WorkbenchPaneWorkspaceState {
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
+  rightPanelExtensionTabs?: Partial<
+    Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>
+  >
   temporaryChatAddresses?: Partial<Record<RightWorkspaceChatTab, RuntimeTaskAddress>>
   browserStates?: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   reviewState: DesktopReviewState
@@ -564,7 +580,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
-  const isTauri = isTauriRuntime()
+  const isDesktop = isDesktopRuntime()
   const splitMode = props.splitGroups.splitMode
   const [environmentInfoVisibilityByPane, setEnvironmentInfoVisibilityByPane] = useState<
     Record<string, EnvironmentInfoVisibilityState>
@@ -795,7 +811,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       layout={props.splitGroups.activeLayout}
       validRuntimeKeys={runtimePaneKeys}
       retainedResourceKeys={retainedResourceKeys}
-      activeTestId="desktop-workbench-main"
+      activeTestId={props.visible === false ? null : 'desktop-workbench-main'}
       workbenchVisible={props.visible ?? true}
       resolvePane={resolvePane}
       getPaneTitle={getPaneTitle}
@@ -813,7 +829,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">{paneStack}</div>
   )
 
-  if (!isTauri) return mainContent
+  if (!isDesktop) return mainContent
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -1308,6 +1324,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       []) as Array<RightWorkspacePanelTab | 'browser' | 'terminal'>
     return restoredTabs.map(normalizeRightWorkspacePanelTab)
   })
+  const [rightPanelExtensionTabs, setRightPanelExtensionTabs] = useState<
+    Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
+  >(() => initialWorkspaceState?.rightPanelExtensionTabs ?? {})
+  const rightPanelExtensionTabsRef = useRef(rightPanelExtensionTabs)
+  useEffect(() => {
+    rightPanelExtensionTabsRef.current = rightPanelExtensionTabs
+  }, [rightPanelExtensionTabs])
   const terminalTabSequence = useRef(
     Math.max(
       0,
@@ -1425,6 +1448,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       rightPanelExpanded,
       rightPanelTabs,
       rightPanelView,
+      rightPanelExtensionTabs,
       temporaryChatAddresses,
       browserStates,
       reviewState,
@@ -1438,6 +1462,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
+    rightPanelExtensionTabs,
     temporaryChatAddresses,
     browserStates,
     reviewState,
@@ -1458,10 +1483,28 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
-  const isTauri = isTauriRuntime()
+  const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
   const workbenchScrollRef = useRef<HTMLDivElement | null>(null)
   const [workbenchContentWidth, setWorkbenchContentWidth] = useState(0)
+  const workbenchResizeObserverRef = useRef<ResizeObserver | null>(null)
+  const setWorkbenchMainRef = useCallback((element: HTMLElement | null) => {
+    workbenchResizeObserverRef.current?.disconnect()
+    workbenchResizeObserverRef.current = null
+    workbenchMainRef.current = element
+    if (!element) return
+
+    const updateWorkbenchContentWidth = () => {
+      setWorkbenchContentWidth(element.getBoundingClientRect().width)
+    }
+
+    updateWorkbenchContentWidth()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(updateWorkbenchContentWidth)
+    observer.observe(element)
+    workbenchResizeObserverRef.current = observer
+  }, [])
   const environmentInfoPanelRef = useRef<HTMLElement | null>(null)
   const [environmentInfoPanelElement, setEnvironmentInfoPanelElement] =
     useState<HTMLElement | null>(null)
@@ -1482,6 +1525,27 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       workbenchScroll.scrollLeft = 0
     }
   }, [activeLocalHarnessSession?.sessionId, paneActive, paneVisible])
+  useLayoutEffect(() => {
+    if (!paneActive || !paneVisible || !workbenchVisible) return
+
+    let retryTimeout: number | null = null
+    const updateWorkbenchContentWidth = () => {
+      const workbenchMain = workbenchMainRef.current
+      if (!workbenchMain) return
+      const width = workbenchMain.getBoundingClientRect().width
+      setWorkbenchContentWidth(width)
+      if (width <= 0) {
+        retryTimeout = window.setTimeout(updateWorkbenchContentWidth, 50)
+      }
+    }
+
+    updateWorkbenchContentWidth()
+    return () => {
+      if (retryTimeout !== null) {
+        window.clearTimeout(retryTimeout)
+      }
+    }
+  }, [currentRuntimeTask?.taskId, paneActive, paneVisible, workbenchVisible])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const closeRightPanel = () => {
     setRightPanelExpanded(false)
@@ -1491,21 +1555,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelTabs.length === 1 &&
     rightPanelTabs[0].startsWith('chat:') &&
     rightPanelView === rightPanelTabs[0]
-  useLayoutEffect(() => {
-    const workbenchMain = workbenchMainRef.current
-    if (!workbenchMain) return
-
-    const updateWorkbenchContentWidth = () => {
-      setWorkbenchContentWidth(workbenchMain.getBoundingClientRect().width)
-    }
-
-    updateWorkbenchContentWidth()
-    if (typeof ResizeObserver === 'undefined') return
-
-    const observer = new ResizeObserver(updateWorkbenchContentWidth)
-    observer.observe(workbenchMain)
-    return () => observer.disconnect()
-  }, [])
   const {
     width: rightSplitChatWidth,
     resizing: rightSplitResizing,
@@ -2710,6 +2759,65 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
+  const rightWorkspaceExtensionSessionId = currentRuntimeConversationSource
+    ? `${currentRuntimeConversationSource.deviceId}:${currentRuntimeConversationSource.taskId}`
+    : paneKey
+  const rightWorkspaceExtensionCwd = workspacePanelTarget?.path
+  const rightWorkspaceExtensionScope = useMemo<WeworkWorkspaceScope>(
+    () => ({
+      sessionId: rightWorkspaceExtensionSessionId,
+      ...(rightWorkspaceExtensionCwd ? { cwd: rightWorkspaceExtensionCwd } : {}),
+    }),
+    [rightWorkspaceExtensionCwd, rightWorkspaceExtensionSessionId]
+  )
+  const openRightWorkspaceExtensionTab = useCallback(
+    (seed: WeworkWorkspaceSidebarOpenTabSeed, scope = rightWorkspaceExtensionScope) => {
+      const descriptor = rightWorkspaceBetterSidebar.getTab(seed.type)
+      if (!descriptor) return
+
+      const currentTabs = Object.values(rightPanelExtensionTabsRef.current).filter(
+        (state): state is RightWorkspaceExtensionTabState => Boolean(state)
+      )
+      const sidebarState = {
+        panelOpen: rightPanelOpen,
+        tabs: currentTabs.map(state => state.tab),
+        activeTabId: isRightWorkspaceExtensionTab(rightPanelView)
+          ? (rightPanelExtensionTabsRef.current[rightPanelView]?.tab.id ?? null)
+          : null,
+      }
+      const created = descriptor.createTab?.(sidebarState)
+      if (descriptor.createTab && !created) return
+      const tab = created?.tab ?? {
+        id: seed.id ?? descriptor.id,
+        type: descriptor.id,
+        title: seed.title ?? titleOfWeworkWorkspaceSidebarTab(descriptor),
+        ...(seed.path || seed.url ? { path: seed.path ?? seed.url } : {}),
+        ...(seed.diff !== undefined ? { diff: seed.diff } : {}),
+        ...(seed.meta !== undefined ? { meta: seed.meta } : {}),
+      }
+      const dedupeKey = descriptor.dedupeKey ?? (descriptor.single ? item => item.type : undefined)
+      const existing = currentTabs.find(candidate => {
+        if (candidate.tab.id === tab.id) return true
+        if (!dedupeKey) return false
+        const nextKey = dedupeKey(tab)
+        return nextKey !== undefined && dedupeKey(candidate.tab) === nextKey
+      })
+      if (existing) {
+        openRightPanelTab(existing.internalId)
+        invokeWeworkWorkspaceSidebarLifecycle(descriptor, 'onActivate', existing.tab, scope)
+        return
+      }
+
+      const internalId = encodeRightWorkspaceExtensionTabId(tab.id)
+      setRightPanelExtensionTabs(current => ({
+        ...current,
+        [internalId]: { internalId, tab },
+      }))
+      openRightPanelTab(internalId)
+      invokeWeworkWorkspaceSidebarLifecycle(descriptor, 'onOpen', tab, scope)
+    },
+    [openRightPanelTab, rightPanelOpen, rightPanelView, rightWorkspaceExtensionScope]
+  )
   const currentWorkItemGuideProject =
     boundCloudProject ?? pendingCloudProject ?? defaultProject ?? defaultWorkItemPreviewProject
   const availableWorkItemProjects =
@@ -3278,6 +3386,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [openRightPanelTab, setSelectedAssistantPlan]
   )
   const closeRightPanelTab = (tab: RightWorkspacePanelTab) => {
+    const extensionState = isRightWorkspaceExtensionTab(tab)
+      ? rightPanelExtensionTabsRef.current[tab]
+      : undefined
+    const extensionDescriptor = extensionState
+      ? rightWorkspaceBetterSidebar.getTab(extensionState.tab.type)
+      : undefined
     const browserState = isRightWorkspaceBrowserTab(tab) ? browserStates[tab] : null
     if (
       browserState?.hasActiveDownload &&
@@ -3329,6 +3443,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         return next
       })
     }
+    if (extensionState) {
+      setRightPanelExtensionTabs(current => {
+        if (!current[tab as RightWorkspaceExtensionTab]) return current
+        const next = { ...current }
+        delete next[tab as RightWorkspaceExtensionTab]
+        return next
+      })
+      if (extensionDescriptor) {
+        invokeWeworkWorkspaceSidebarLifecycle(
+          extensionDescriptor,
+          'onClose',
+          extensionState.tab,
+          rightWorkspaceExtensionScope
+        )
+      }
+    }
     setRightPanelTabs(current => {
       const currentTabs = current.includes(tab) ? current : [...current, tab]
       const next = currentTabs.filter(openTab => openTab !== tab)
@@ -3344,6 +3474,76 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       return next
     })
   }
+  const closeRightPanelTabFromExtension = useEffectEvent((tab: RightWorkspacePanelTab) => {
+    closeRightPanelTab(tab)
+  })
+  const extensionStateListenersRef = useRef(new Set<() => void>())
+  useEffect(() => {
+    for (const listener of [...extensionStateListenersRef.current]) listener()
+  }, [rightPanelExtensionTabs, rightPanelOpen, rightPanelView])
+  useEffect(
+    () =>
+      attachRightWorkspaceSidebarController({
+        active: () => paneActive && paneVisible && workbenchVisible,
+        openTab: openRightWorkspaceExtensionTab,
+        closeTab: tabId => {
+          const state = Object.values(rightPanelExtensionTabsRef.current).find(
+            candidate => candidate?.tab.id === tabId
+          )
+          if (state) closeRightPanelTabFromExtension(state.internalId)
+        },
+        activateTab: (tabId, scope = rightWorkspaceExtensionScope) => {
+          const state = Object.values(rightPanelExtensionTabsRef.current).find(
+            candidate => candidate?.tab.id === tabId
+          )
+          if (!state) return
+          openRightPanelTab(state.internalId)
+          const descriptor = rightWorkspaceBetterSidebar.getTab(state.tab.type)
+          if (descriptor) {
+            invokeWeworkWorkspaceSidebarLifecycle(descriptor, 'onActivate', state.tab, scope)
+          }
+        },
+        updateTab: (tabId, patch) => {
+          setRightPanelExtensionTabs(current => {
+            const state = Object.values(current).find(candidate => candidate?.tab.id === tabId)
+            if (!state) return current
+            return {
+              ...current,
+              [state.internalId]: {
+                ...state,
+                tab: { ...state.tab, ...patch },
+              },
+            }
+          })
+        },
+        snapshot: (): WeworkWorkspaceSidebarSnapshot => ({
+          sessionId: rightWorkspaceExtensionScope.sessionId,
+          state: {
+            panelOpen: rightPanelOpen,
+            tabs: Object.values(rightPanelExtensionTabsRef.current)
+              .filter((state): state is RightWorkspaceExtensionTabState => Boolean(state))
+              .map(state => state.tab),
+            activeTabId: isRightWorkspaceExtensionTab(rightPanelView)
+              ? (rightPanelExtensionTabsRef.current[rightPanelView]?.tab.id ?? null)
+              : null,
+          },
+        }),
+        subscribe: listener => {
+          extensionStateListenersRef.current.add(listener)
+          return () => extensionStateListenersRef.current.delete(listener)
+        },
+      }),
+    [
+      openRightPanelTab,
+      openRightWorkspaceExtensionTab,
+      paneActive,
+      paneVisible,
+      rightPanelOpen,
+      rightPanelView,
+      rightWorkspaceExtensionScope,
+      workbenchVisible,
+    ]
+  )
 
   const openReviewFromDiffLoader = useCallback(
     async (loadDiff: () => Promise<string>, metadata: DesktopReviewMetadata = {}) => {
@@ -3812,7 +4012,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
   const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
   const paneTaskTitle =
-    workbenchTitle && !isTauri ? (
+    workbenchTitle && !isDesktop ? (
       <div
         data-testid="workbench-pane-task-title"
         className={cn(
@@ -3825,7 +4025,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <span className="block w-full min-w-0 truncate">{workbenchTitle}</span>
       </div>
     ) : undefined
-  const topBarLeftActions = !isTauri ? (
+  const topBarLeftActions = !isDesktop ? (
     sidebarCollapsed ? (
       <DesktopWindowControls
         sidebarCollapsed
@@ -3840,7 +4040,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     )
   ) : undefined
   const topBarLeftContent = topBarLeftActions ? <>{topBarLeftActions}</> : undefined
-  const showPageTopBar = !isTauri && (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
+  const showPageTopBar = !isDesktop && (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
   const hasSubagentStatuses = (paneSession.subagentStatuses?.length ?? 0) > 0
   const canForkCurrentRuntimeTask = Boolean(
     experimentalFeaturesEnabled &&
@@ -3873,7 +4073,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <MessageCircle />
     </button>
   ) : undefined
-  const feedbackButton = isTauri ? (
+  const feedbackButton = isDesktop ? (
     <button
       type="button"
       data-testid="task-feedback-button"
@@ -3917,7 +4117,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <X />
       </button>
     ) : undefined
-  const feedbackInChromeTitlebar = isTauri && getPlatform() === 'mac'
+  const feedbackInChromeTitlebar = isDesktop && getPlatform() === 'mac'
   const mainHeaderActions = activeLocalHarnessSession ? (
     <>{closeHarnessButton}</>
   ) : (
@@ -3929,7 +4129,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       {mainHeaderEnvironmentAction}
     </>
   )
-  const topRightActions = isTauri ? (
+  const topRightActions = isDesktop ? (
     <>{panelChromeActions}</>
   ) : activeLocalHarnessSession ? (
     <>
@@ -3943,14 +4143,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       {workspacePanelActions}
     </>
   )
-  const tauriMainHeaderContent = isTauri ? (
+  const desktopMainHeaderContent = isDesktop ? (
     <div className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden">
       <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
       {sidebarCollapsed && (
         <div
           data-testid="workbench-main-header-left-controls"
           className={cn(
-            'relative z-0 flex h-full shrink-0 items-center gap-1 pr-1',
+            'electron-titlebar-interactive-region relative z-0 flex h-full shrink-0 items-center gap-1 pr-1',
             MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS
           )}
         >
@@ -3977,7 +4177,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <div
         data-testid="titlebar-main-actions"
         className={cn(
-          'relative z-0 flex h-full shrink-0 items-center justify-end gap-1 pr-1',
+          'electron-titlebar-interactive-region relative z-0 flex h-full shrink-0 items-center justify-end gap-1 pr-1',
           rightPanelExpanded && 'invisible'
         )}
       >
@@ -4021,7 +4221,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         id={TITLEBAR_ACTIONS_PORTAL_ID}
         data-testid="titlebar-actions"
         className={cn(
-          'pointer-events-auto absolute top-0 z-chrome flex h-full min-w-[5rem] items-center justify-end gap-1 pr-2',
+          'electron-titlebar-interactive-region pointer-events-auto absolute top-0 z-chrome flex h-full min-w-[5rem] items-center justify-end gap-1 pr-2',
           rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
@@ -4072,19 +4272,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
   return (
     <main
-      ref={workbenchMainRef}
+      ref={setWorkbenchMainRef}
       className={cn(
         'absolute inset-x-0 bottom-0 flex min-w-0 flex-1 flex-col overflow-hidden',
         hasMainBackground ? 'bg-background/20' : 'bg-background',
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
         sidebarResizing && 'transition-none',
         'top-0',
-        !isTauri && 'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
+        !isDesktop &&
+          'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
       )}
     >
       {/* Portals escape the hidden cached pane, so only the visible active pane may own the header. */}
-      {tauriMainHeaderContent && paneActive && workbenchVisible && !splitMode ? (
-        <WorkbenchMainHeaderPortal>{tauriMainHeaderContent}</WorkbenchMainHeaderPortal>
+      {desktopMainHeaderContent && paneActive && workbenchVisible && !splitMode ? (
+        <WorkbenchMainHeaderPortal>{desktopMainHeaderContent}</WorkbenchMainHeaderPortal>
       ) : null}
       {paneHeaderActionsPortalId && paneVisible && workbenchVisible ? (
         <WorkbenchPaneHeaderActionsPortal targetId={paneHeaderActionsPortalId}>
@@ -4099,7 +4300,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <TitlebarFeedbackPortal>{feedbackButton}</TitlebarFeedbackPortal>
       ) : null}
       <>
-        {!isTauri && (
+        {!isDesktop && (
           <div
             data-testid="workspace-panel-floating-actions"
             className="pointer-events-auto absolute right-8 top-1.5 z-popover flex shrink-0 items-center gap-1"
@@ -4113,12 +4314,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             className={cn(
               'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 pr-7',
               background.imagePath && background.inTopBar ? 'bg-background/20' : 'bg-background/95',
-              isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
+              isDesktop && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
               rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
             style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
             left={topBarLeftContent}
-            leftClassName={cn('min-w-0 gap-2', isTauri ? 'contents' : 'max-w-[calc(100%-12rem)]')}
+            leftClassName={cn('min-w-0 gap-2', isDesktop ? 'contents' : 'max-w-[calc(100%-12rem)]')}
           />
         )}
         {paneTaskTitle}
@@ -4740,6 +4941,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               workspaceTargetError={openFileRequest?.target ? null : workspaceTargetError}
               review={reviewState}
               planContent={rightPanelPlanContent}
+              extensionTabs={rightPanelExtensionTabs}
+              extensionScope={rightWorkspaceExtensionScope}
               workItemPanel={
                 workItemContextAvailable &&
                 currentProjectSpaceRuntimeTask &&

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
+  cors,
   mcpToolRequestEvents,
   selectMcpTool,
   selectMcpToolRequest,
@@ -23,6 +24,21 @@ function namespace(name, ...toolNames) {
 function functionTool(name) {
   return { type: 'function', name }
 }
+
+describe('cors', () => {
+  test('allows every HTTP method used by desktop application APIs', () => {
+    const headers = new Map()
+    cors({
+      setHeader(name, value) {
+        headers.set(name, value)
+      },
+    })
+
+    expect(headers.get('Access-Control-Allow-Methods')).toBe(
+      'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+    )
+  })
+})
 
 describe('selectMcpTool', () => {
   test('selects a tool from a later result for the same namespace', () => {

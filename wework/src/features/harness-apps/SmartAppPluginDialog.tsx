@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
+import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
 
 interface SmartAppPluginDialogProps {
   displayName: string
@@ -21,9 +22,8 @@ export function SmartAppPluginDialog({
   const [error, setError] = useState<string | null>(null)
 
   async function chooseDirectory() {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const path = await open({ directory: true, multiple: false })
-    if (typeof path === 'string') {
+    const path = await openNativeDirectoryPicker()
+    if (path) {
       setPluginSpec(path)
       setError(null)
     }

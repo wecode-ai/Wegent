@@ -702,22 +702,24 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: GUIDANCE_SCROLL_MESSAGE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
+  await control.command('expandProcessingSummaries', 'body')
+  const assistantProcessTextSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="process-text-block"]`
+  await control.command('waitFor', assistantProcessTextSelector, {
     text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('markElementWithText', '[data-testid="message-assistant"]', {
+  await control.command('markElementWithText', assistantProcessTextSelector, {
     text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
     value: 'guidance-scroll-pre-tool-assistant',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const assistantAfterGuidanceText = await control.command(
+  const assistantTranscriptText = await control.command(
     'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]:not([data-e2e-anchor-id])`
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="assistant-message-content"], ${assistantProcessTextSelector}`
   )
   assert.equal(
-    assistantAfterGuidanceText.includes(GUIDANCE_SCROLL_PRE_TOOL_TEXT),
-    false,
+    countTextOccurrences(assistantTranscriptText, GUIDANCE_SCROLL_PRE_TOOL_TEXT),
+    1,
     'The final text from before guidance was duplicated after the guidance message'
   )
 

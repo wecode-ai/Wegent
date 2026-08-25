@@ -18,7 +18,7 @@ The communication path is:
 6. The executor returns the completed result as the Socket.IO ack.
 7. Backend optionally post-processes the result according to the command definition's `post_processor`.
 
-This RPC is decoupled from `task:execute`, so it is suitable for short commands and one-shot diagnostics. Long-running interactive terminals and streaming stdout/stderr are not carried by this RPC. The macOS WeWork App embeds local project terminals through a Tauri local PTY, as described in "macOS App Local Terminal" below.
+This RPC is decoupled from `task:execute`, so it is suitable for short commands and one-shot diagnostics. Long-running interactive terminals and streaming stdout/stderr are not carried by this RPC. The macOS WeWork App embeds local project terminals through a Electron local PTY, as described in "macOS App Local Terminal" below.
 
 ## API
 
@@ -109,14 +109,14 @@ The local executor prefers Backend-provided `argv`; it falls back to the system 
 
 ## macOS App Local Terminal
 
-When the WeWork macOS App opens a project that is bound to a local executor on the same Mac, it can embed a local terminal in the workspace panel. The App creates a local PTY through Tauri commands and renders the input/output stream with the frontend `xterm` component; it does not use the `/devices/{device_id}/commands` RPC.
+When the WeWork macOS App opens a project that is bound to a local executor on the same Mac, it can embed a local terminal in the workspace panel. The App creates a local PTY through Electron IPC commands and renders the input/output stream with the frontend `xterm` component; it does not use the `/devices/{device_id}/commands` RPC.
 
 Enablement rules:
 
-- The runtime must be the macOS Tauri App. Regular browsers and the iOS App do not enable this path.
+- The runtime must be the macOS Electron app. Regular browsers and the iOS App do not enable this path.
 - The project device must be a local Claude Code device.
 - The App and executor must correspond to the same backend. The frontend passes the current `apiBaseUrl` to the native layer; the native layer first scans running `wegent-executor` processes and matches their `WEGENT_BACKEND_URL`.
 - If no matching process is found, the native layer falls back to local configuration files such as `WEGENT_EXECUTOR_HOME`, `~/.wecode/wegent-executor/device-config.json`, and `~/.wegent-executor/device-config.json`.
-- For project terminals, an existing current task execution workspace path or project `localPath` on the current Mac is also accepted as a same-machine signal. This handles cases where multiple executor config files are temporarily out of sync. The same path is passed as the Tauri PTY `cwd` when the terminal starts.
+- For project terminals, an existing current task execution workspace path or project `localPath` on the current Mac is also accepted as a same-machine signal. This handles cases where multiple executor config files are temporarily out of sync. The same path is passed as the Electron-hosted PTY `cwd` when the terminal starts.
 
 This check intentionally does not use IP or MAC addresses. IPs can be duplicated or distorted by proxies, VPNs, container networks, and loopback routing. MAC addresses can also be unstable because of permissions, virtual interfaces, and privacy behavior. Matching a running executor process to the backend URL is closer to the executor connection that the App is actually using.

@@ -227,6 +227,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await captureScreenshot(control, 'context-compaction-03-running.png', 'body')
       releaseCompaction()
       await control.command('waitFor', '[data-testid="context-compaction-indicator"]', {
+        text: '上下文已自动压缩',
         timeoutMs: uiTimeoutMs,
       })
       assert.match(

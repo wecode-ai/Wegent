@@ -10,13 +10,13 @@ Wework includes an opt-in frontend performance diagnostics switch for investigat
 
 For everyday development, `pnpm --filter wework dev:mac` uses the release app's Executor Home by default, so projects and tasks are shared with the locally installed release Wework. Each Wework process still communicates with its own executor child through stdio, preventing endpoint collisions or attachment to another executor. Use `pnpm --filter wework dev:mac -- --executor-isolation` when projects and tasks must be isolated temporarily.
 
-`ai:verify` and desktop E2E do not use that shared default. They explicitly create a temporary Executor Home, projects directory, device ID, and unique Tauri identifier, isolating tasks, projects, application data, and the single-instance lock from release and other verification sessions.
+`ai:verify` and desktop E2E do not use that shared default. They explicitly create a temporary Executor Home, projects directory, device ID, and unique Electron app-data namespace, isolating tasks, projects, application data, and the single-instance lock from release and other verification sessions.
 
 Development instances share one Cargo target directory by default so executor source changes can reuse incremental build artifacts. Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use the project's default target directory when investigating shared build-cache issues.
 
 ## Diagnosing Startup Time
 
-The desktop startup screen waits only for the local executor to report ready through stdout; debug builds do not delay the workbench to finish an animation cycle. On a cold start, Tauri starts a new sidecar directly and does not discover or attach to an existing executor.
+The desktop startup screen waits only for the local executor to report ready through stdout; debug builds do not delay the workbench to finish an animation cycle. On a cold start, Electron starts a new sidecar directly and does not discover or attach to an existing executor.
 
 When the startup screen remains visible, align `Frontend logging initialized` in the frontend log with `app IPC stdio ready` in the executor log. The interval primarily measures local executor cold startup. Later entries such as `runtime work list finished` identify workbench data-loading time. Do not mistake a background cloud synchronization timeout for the local startup gate.
 
@@ -76,7 +76,7 @@ Debug Panel snapshots include a lightweight memory summary for the active runtim
 - Queued messages, guidance messages, code-comment context count, and transcript range state.
 - The raw `running` value from the runtime work list and the running state derived by the pane.
 
-Snapshots only include summaries. They do not copy full command output, raw Codex events, or full transcript content into the Debug Panel. When raw payloads are needed, inspect executor logs or Web Inspector samples instead of moving large text through the frontend snapshot path.
+Snapshots only include summaries. They do not copy full command output, raw Codex events, or full transcript content into the Debug Panel. When raw payloads are needed, inspect executor logs or DevTools samples instead of moving large text through the frontend snapshot path.
 
 ## Runtime Transcript and List Payloads
 
@@ -92,7 +92,7 @@ Codex filters `<codex_internal_context>` from history APIs, so Wework must prese
 
 The desktop workbench caches at most 10 ordinary panes and evicts them in least-recently-used order. An inactive pane that is no longer running releases transcript messages, historical DOM, pagination ranges, navigation indexes, and processing expansion state; returning to it reloads from the original runtime transcript.
 
-Tauri conversations use one `@tanstack/react-virtual` message-row virtualizer for every conversation size instead of switching implementations at a message-count threshold. While the user remains at the bottom, the virtualizer uses `anchorTo: 'end'` to follow the list end. After the user scrolls upward, it must switch to `anchorTo: 'start'` so streaming row growth cannot make TanStack Virtual keep rewriting the scroll position. Scroll snapshots are consistently represented as the distance from the viewport bottom to the list bottom. Its shared `ResizeObserver` measures mounted message rows. An active streaming message must remain in the virtual range even when it is outside the visible range and overscan, so its growth continues to reach TanStack Virtual's measurement pipeline; otherwise, replacing its estimated height with its real height when it remounts can corrupt the historical reading position. While the user remains at the bottom, height changes preserve the end distance. After the user scrolls upward, the list instead records the first visible text scroll anchor and its viewport offset, then restores that text anchor when streaming content is remeasured. This keeps bottom-follow behavior without allowing the text being read to drift upward during streaming. The rendered range keeps 2 rows of overscan on each side. Message rows no longer use `IntersectionObserver` as a second windowing layer; an individual oversized Markdown response retains independent chunk windowing to bound the DOM inside one visible message. Remaining `IntersectionObserver` usage covers independent behavior such as bottom-follow state and attachment previews.
+Electron conversations use one `@tanstack/react-virtual` message-row virtualizer for every conversation size instead of switching implementations at a message-count threshold. While the user remains at the bottom, the virtualizer uses `anchorTo: 'end'` to follow the list end. After the user scrolls upward, it must switch to `anchorTo: 'start'` so streaming row growth cannot make TanStack Virtual keep rewriting the scroll position. Scroll snapshots are consistently represented as the distance from the viewport bottom to the list bottom. Its shared `ResizeObserver` measures mounted message rows. An active streaming message must remain in the virtual range even when it is outside the visible range and overscan, so its growth continues to reach TanStack Virtual's measurement pipeline; otherwise, replacing its estimated height with its real height when it remounts can corrupt the historical reading position. While the user remains at the bottom, height changes preserve the end distance. After the user scrolls upward, the list instead records the first visible text scroll anchor and its viewport offset, then restores that text anchor when streaming content is remeasured. This keeps bottom-follow behavior without allowing the text being read to drift upward during streaming. The rendered range keeps 2 rows of overscan on each side. Message rows no longer use `IntersectionObserver` as a second windowing layer; an individual oversized Markdown response retains independent chunk windowing to bound the DOM inside one visible message. Remaining `IntersectionObserver` usage covers independent behavior such as bottom-follow state and attachment previews.
 
 A single assistant message may contain many tool blocks and be split into multiple `ToolBlocksDisplay` segments. Derived data that depends on the complete message, such as file-edit durations, must be computed once at message scope and then mapped into each display segment; each segment must not rescan the complete message. Use an empty-result fast path when the corresponding display blocks are absent, and avoid creating split arrays or sets while matching every block's tool name.
 
@@ -128,7 +128,7 @@ Distinguish these cases when investigating streaming stalls:
 
 - The frame rate is stable but output alternates between fast and slow: inspect stream `message` event intervals. Executor batching or network/IPC delivery gaps are usually responsible.
 - Long frames, dense style recalculation, or Markdown parsing appear: check whether code bypasses the text buffer, destabilizes Streamdown component references, or reintroduces per-character DOM animation.
-- GC time is unexpectedly high: verify whether Web Inspector has **Heap Allocations** enabled. That instrument can significantly amplify GC during longer recordings and should be disabled when diagnosing interaction smoothness alone.
+- GC time is unexpectedly high: verify whether DevTools has **Heap Allocations** enabled. That instrument can significantly amplify GC during longer recordings and should be disabled when diagnosing interaction smoothness alone.
 
 Streaming-buffer unit tests live in `wework/src/components/chat/useBufferedStreamingText.test.ts`. Changes to the reserve or advance rate must continue to cover Unicode boundaries, non-append updates, and immediate alignment when streaming ends.
 
@@ -146,19 +146,19 @@ The latest 300 events are kept in memory and exposed through `window.__WEWORK_PE
 
 ## Capturing Evidence
 
-Release builds compile Tauri Web Inspector support by default, while the main WebView remains non-inspectable so its native WebKit context menu does not contain Inspect Element. When the user selects **Open Web Inspector** from the hidden **Developer Commands** menu, the native command dynamically enables `WKWebView.isInspectable` and opens the Inspector. This command is independent of the Performance Diagnostics switch and requires macOS 13.3 or newer. Built-in-browser child WebViews enable Inspector only in debug builds. On macOS, the Inspector is forcibly detached before its frontend is first shown, so F12 opens a separate window without docking, resetting the child dimensions, or covering the workbench. Release builds disable the child-WebView Inspector through an explicit build cfg. Set `WEWORK_RELEASE_DEVTOOLS=0` when a distribution must omit main-WebView Inspector support. To open the main-WebView Inspector automatically for a local diagnostic launch, use:
+Release builds compile Electron DevTools support by default, while the main WebView remains non-inspectable so its native Chromium context menu does not contain Inspect Element. When the user selects **Open DevTools** from the hidden **Developer Commands** menu, the native command dynamically enables `webContents.openDevTools()` and opens the Inspector. This command is independent of the Performance Diagnostics switch and requires macOS 13.3 or newer. Built-in-browser child WebViews enable Inspector only in debug builds. On macOS, the Inspector is forcibly detached before its frontend is first shown, so F12 opens a separate window without docking, resetting the child dimensions, or covering the workbench. Release builds disable the child-WebView Inspector through an explicit build cfg. Set `WEWORK_RELEASE_DEVTOOLS=0` when a distribution must omit main-WebView Inspector support. To open the main-WebView Inspector automatically for a local diagnostic launch, use:
 
 ```bash
 WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork
 ```
 
-After Web Inspector opens, run this when the app becomes slow:
+After DevTools opens, run this when the app becomes slow:
 
 ```js
 window.__WEWORK_PERF__.snapshot();
 ```
 
-The snapshot includes the current URL, page visibility, DOM node count, memory snapshot, navigation timing, resource count, recent events, and Wework process-group data. macOS reparents WebKit XPC processes to PID 1; diagnostics use LaunchServices to associate the current Wework instance with its Web Content, GPU, and Networking processes.
+The snapshot includes the current URL, page visibility, DOM node count, memory snapshot, navigation timing, resource count, recent events, and Wework process-group data. macOS reparents Chromium XPC processes to PID 1; diagnostics use LaunchServices to associate the current Wework instance with its Web Content, GPU, and Networking processes.
 
 Each process group reports both `rss_kib` and `physical_footprint_kib`. RSS includes shared mappings and reclaimable resident pages and is commonly much larger than actual memory pressure. Prefer `physical_footprint_kib` when investigating leaks or system resource usage, and treat RSS as a secondary residency metric. When comparing multiple snapshots, focus on:
 
@@ -169,7 +169,7 @@ Each process group reports both `rss_kib` and `physical_footprint_kib`. RSS incl
 - Dense `longtask` or `event-loop-lag` events.
 - Repeated `slow-react-commit` events.
 
-The workbench's full-height sidebar and content-wide top bar should use ordinary semantic backgrounds instead of applying `backdrop-filter` to large persistent surfaces. These filters can cause WebKit to retain additional graphics backing stores for the entire region. When investigating Web Content memory, compare `physical_footprint_kib` before and after the change at the same window size and page state, and exclude the temporary reclaimable high-water mark created by Web Inspector heap snapshots from the steady-state baseline.
+The workbench's full-height sidebar and content-wide top bar should use ordinary semantic backgrounds instead of applying `backdrop-filter` to large persistent surfaces. These filters can cause Chromium to retain additional graphics backing stores for the entire region. When investigating Web Content memory, compare `physical_footprint_kib` before and after the change at the same window size and page state, and exclude the temporary reclaimable high-water mark created by DevTools heap snapshots from the steady-state baseline.
 
 Manual marks can also be added:
 

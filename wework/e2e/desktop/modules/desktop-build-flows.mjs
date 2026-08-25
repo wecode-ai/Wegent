@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { tmpdir } from 'node:os'
+
 import {
   closeBottomWorkspacePanel,
   openBottomWorkspaceTerminal,
@@ -39,15 +42,12 @@ import {
   CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
-  CLOUD_FEATURES_ONLY,
-  CLOUD_ONLY,
   CLOUD_TASK_PROMPT,
   CLOUD_VISION_SIDECAR_CASE,
   COMPOSER_READY_STABILITY_MS,
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
-  E2E_TRANSCRIPT_PAGE_SIZE,
   LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES,
   LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
   MACOS_LAUNCH_SERVICES_REGISTER,
@@ -60,7 +60,6 @@ import {
   RETRY_PROMPT,
   RUNS_PLUGIN_E2E,
   SELECTED_DESKTOP_SEGMENT,
-  TELEMETRY_TEST_PROJECT_KEY,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   chmod,
@@ -84,7 +83,6 @@ import {
   runChecked,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
-  symlink,
   toolDetailsMcpServerPath,
   weworkDir,
   withTimeout,
@@ -344,90 +342,45 @@ async function resolveDesktopCodexBinary() {
     cwd: weworkDir,
   })
   const lock = JSON.parse(await readFile(join(weworkDir, 'codex-binaries.lock.json'), 'utf8'))
-  const binaryRelativePath = lock.targets?.[target]?.binaryPath
+  const entry = lock.targets?.[target]
+  const binaryRelativePath = entry?.binaryPath
   assert.equal(typeof binaryRelativePath, 'string', `Codex lock is missing target ${target}`)
+  assert.equal(typeof entry.version, 'string', `Codex lock is missing the version for ${target}`)
+  assert.equal(typeof entry.integrity, 'string', `Codex lock is missing integrity for ${target}`)
+  const integrityKey = createHash('sha256').update(entry.integrity).digest('hex').slice(0, 16)
+  const tarballName = `codex-${entry.version}-${target}-${integrityKey}`
   return resolveExecutable(
-    join(weworkDir, 'src-tauri', 'binaries', 'codex', target, binaryRelativePath),
+    join(codexCacheRoot(), 'extracted', tarballName, binaryRelativePath),
     'codex',
     'Repository Codex'
   )
 }
 
-async function readTauriMainBinaryName() {
-  const configPath = join(weworkDir, 'src-tauri', 'tauri.conf.json')
-  try {
-    const raw = await readFile(configPath, 'utf8')
-    const config = JSON.parse(raw)
-    return config.mainBinaryName || 'app'
-  } catch {
-    return 'app'
+function codexCacheRoot() {
+  if (process.env.WEGENT_CODEX_CACHE_DIR?.trim()) {
+    return resolve(process.env.WEGENT_CODEX_CACHE_DIR.trim())
   }
-}
-
-async function readTauriE2EWindowConfig() {
-  const configPath = join(weworkDir, 'src-tauri', 'tauri.conf.json')
-  const config = JSON.parse(await readFile(configPath, 'utf8'))
-  const windows = config.app?.windows
-  assert.ok(Array.isArray(windows) && windows.length > 0, 'Tauri main window config is missing')
-  return windows.map(windowConfig => ({
-    ...windowConfig,
-    backgroundThrottling: 'disabled',
-  }))
-}
-
-function macCodexBundleLayout() {
-  const target = process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin'
-  return {
-    binaryRelativePath: join('vendor', target, 'bin', 'codex'),
-    target,
+  if (process.platform === 'darwin') {
+    return join(process.env.HOME || tmpdir(), 'Library', 'Caches', 'wegent', 'codex')
   }
-}
-
-function findCodexPackageRoot(codexBinary, binaryRelativePath) {
-  const parts = binaryRelativePath.split('/')
-  let packageRoot = codexBinary
-  for (const _part of parts) packageRoot = dirname(packageRoot)
-  return resolve(packageRoot, binaryRelativePath) === resolve(codexBinary) ? packageRoot : null
-}
-
-async function bundleMacCodex(contentsPath, codexBinary) {
-  const { binaryRelativePath, target } = macCodexBundleLayout()
-  const bundledPackageRoot = join(contentsPath, 'Resources', 'binaries', 'codex', target)
-  const bundledCodexBinary = join(bundledPackageRoot, binaryRelativePath)
-  const packageRoot = findCodexPackageRoot(codexBinary, binaryRelativePath)
-
-  await mkdir(dirname(bundledPackageRoot), { recursive: true })
-  if (packageRoot) {
-    await symlink(packageRoot, bundledPackageRoot, 'dir')
-  } else {
-    await mkdir(dirname(bundledCodexBinary), { recursive: true })
-    await copyFile(codexBinary, bundledCodexBinary)
-    await chmod(bundledCodexBinary, 0o755)
+  if (process.platform === 'win32') {
+    return join(process.env.LOCALAPPDATA || process.env.USERPROFILE || tmpdir(), 'wegent', 'codex')
   }
-
-  assert.equal(
-    await isExecutable(bundledCodexBinary),
-    true,
-    `The isolated macOS app did not contain an executable Codex at ${bundledCodexBinary}`
+  return join(
+    process.env.XDG_CACHE_HOME || join(process.env.HOME || tmpdir(), '.cache'),
+    'wegent',
+    'codex'
   )
-  console.log(`Bundled E2E Codex: ${bundledCodexBinary}`)
-  return bundledCodexBinary
-}
-
-async function bundleMacHarnessRuntime(contentsPath) {
-  if (SELECTED_DESKTOP_SEGMENT !== 'harness-apps') return null
-
-  const source = join(weworkDir, 'src-tauri', 'bundled-harness-runtime')
-  const bundledRuntime = join(contentsPath, 'Resources', 'bundled-harness-runtime')
-  await mkdir(dirname(bundledRuntime), { recursive: true })
-  await rm(bundledRuntime, { recursive: true, force: true })
-  await symlink(source, bundledRuntime, 'dir')
-  console.log(`Bundled E2E Harness runtime: ${bundledRuntime}`)
-  return bundledRuntime
 }
 
 async function prepareHarnessRuntimeRoots() {
-  const catalogPath = join(weworkDir, 'src-tauri', 'bundled-harness-runtime', 'runtimes.json')
+  const catalogPath = join(
+    weworkDir,
+    'node_modules',
+    '.cache',
+    'harness-runtime-dev',
+    'runtimes.json'
+  )
   const catalog = JSON.parse(await readFile(catalogPath, 'utf8'))
   const runtimeRoot = join(resultDir, 'harness-runtime')
   await rm(runtimeRoot, { recursive: true, force: true })
@@ -461,173 +414,50 @@ async function prepareHarnessRuntimeRoots() {
   return { harnessRuntimeRoot: runtimeRoot, nodeRuntimeRoot }
 }
 
-async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier, codexBinary) {
+async function cloneMacElectronApp(binaryPath, appIdentifier, codexBinary) {
   if (process.platform !== 'darwin') {
-    return { binaryPath, appBundlePath: null, codexBinaryPath: null }
+    return { binaryPath, appBundlePath: null, codexBinaryPath: codexBinary }
   }
 
-  const appBundlePath = join(resultDir, `WeWork-E2E-${process.pid}.app`)
-  const contentsPath = join(appBundlePath, 'Contents')
-  const bundledBinaryPath = join(contentsPath, 'MacOS', binaryName)
-  await mkdir(join(contentsPath, 'MacOS'), { recursive: true })
-  await copyFile(binaryPath, bundledBinaryPath)
-  await chmod(bundledBinaryPath, 0o755)
-  await writeFile(
-    join(contentsPath, 'Info.plist'),
-    `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key><string>en</string>
-  <key>CFBundleExecutable</key><string>${binaryName}</string>
-  <key>CFBundleIdentifier</key><string>${appIdentifier}</string>
-  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>CFBundleName</key><string>WeWork E2E ${process.pid}</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0.0</string>
-  <key>CFBundleVersion</key><string>1</string>
-  <key>LSUIElement</key><true/>
-  <key>NSHighResolutionCapable</key><true/>
-</dict>
-</plist>
-    `,
-    'utf8'
-  )
-  const bundledCodexBinary = await bundleMacCodex(contentsPath, codexBinary)
-  await bundleMacHarnessRuntime(contentsPath)
+  const sourceBundlePath = resolve(binaryPath, '..', '..', '..')
+  const appBundlePath = join(resultDir, `WeWork-Electron-E2E-${process.pid}.app`)
+  const binaryName = binaryPath.split('/').at(-1)
+  assert.ok(binaryName, `Unable to determine the Electron executable name from ${binaryPath}`)
+  await rm(appBundlePath, { recursive: true, force: true })
+  await runChecked('/bin/cp', ['-cR', sourceBundlePath, appBundlePath])
+  await runChecked('/usr/libexec/PlistBuddy', [
+    '-c',
+    `Set :CFBundleIdentifier ${appIdentifier}`,
+    join(appBundlePath, 'Contents', 'Info.plist'),
+  ])
   commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
   return {
-    binaryPath: bundledBinaryPath,
+    binaryPath: join(appBundlePath, 'Contents', 'MacOS', binaryName),
     appBundlePath,
-    codexBinaryPath: bundledCodexBinary,
+    codexBinaryPath: codexBinary,
   }
 }
 
-async function buildDesktopApp(
-  controlUrl,
-  cloudBackendUrl,
-  cloudToken,
-  appIdentifier,
-  modelServerUrl,
-  codexBinary
-) {
+async function buildDesktopApp(appIdentifier, codexBinary) {
   if (SELECTED_DESKTOP_SEGMENT === 'harness-apps') {
-    await runChecked('pnpm', ['run', 'prepare:harness-runtime'], { cwd: weworkDir })
+    await runChecked('pnpm', ['run', 'prepare:harness-runtime', '--materialize'], {
+      cwd: weworkDir,
+      env: {
+        ...process.env,
+        VITE_WEWORK_E2E: 'true',
+        VITE_WEWORK_RELEASE_CHANNEL: 'stable',
+        VITE_WEWORK_RUNTIME_MODE: 'local-first',
+      },
+    })
   }
 
   const configured = process.env.WEWORK_E2E_APP_BIN
-  if (configured) {
-    const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework desktop app')
-    return wrapMacDesktopApp(binaryPath, binaryPath.split('/').at(-1), appIdentifier, codexBinary)
-  }
-
-  const windows = (await readTauriE2EWindowConfig()).map(window => ({
-    ...window,
-    backgroundThrottling: 'disabled',
-    focus: false,
-  }))
-  const buildEnv = {
-    ...process.env,
-    VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
-    VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
-    VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
-    VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
-    VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY:
-      CLOUD_ONLY || CLOUD_FEATURES_ONLY ? 'true' : 'false',
-    VITE_WEWORK_E2E: 'true',
-    VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS: '1500',
-    VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: String(E2E_TRANSCRIPT_PAGE_SIZE),
-    VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
-    VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
-    VITE_WEWORK_POSTHOG_HOST: modelServerUrl,
-    VITE_WEWORK_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
-    VITE_WEWORK_RELEASE_CHANNEL: 'stable',
-    VITE_WEWORK_RUNTIME_MODE: 'local-first',
-  }
-  if (process.env.WEWORK_E2E_SKIP_TYPECHECK !== 'true') {
-    await runChecked(
-      process.execPath,
-      [join(weworkDir, 'node_modules', 'typescript', 'bin', 'tsc'), '-b'],
-      {
-        cwd: weworkDir,
-        env: buildEnv,
-      }
-    )
-  }
-  await runChecked(
-    process.execPath,
-    [join(weworkDir, 'node_modules', 'vite', 'bin', 'vite.js'), 'build'],
-    {
-      cwd: weworkDir,
-      env: buildEnv,
-    }
+  assert.ok(
+    configured,
+    'Electron desktop E2E requires WEWORK_E2E_APP_BIN from pnpm ai:verify:electron:build'
   )
-  await runChecked(
-    process.execPath,
-    [
-      join(weworkDir, 'node_modules', '@tauri-apps', 'cli', 'tauri.js'),
-      'build',
-      '--debug',
-      '--no-bundle',
-      '--config',
-      JSON.stringify({
-        identifier: appIdentifier,
-        build: {
-          beforeBuildCommand: null,
-        },
-        app: {
-          windows,
-          security: {
-            capabilities: [
-              'default',
-              'workspace-window',
-              {
-                identifier: 'desktop-e2e-window',
-                description: 'Allows the desktop E2E runner to manage test window visibility',
-                windows: ['main'],
-                permissions: [
-                  'core:window:allow-set-size',
-                  'core:window:allow-show',
-                  'core:window:allow-unminimize',
-                ],
-              },
-            ],
-          },
-        },
-      }),
-    ],
-    {
-      cwd: weworkDir,
-      env: buildEnv,
-    }
-  )
-  const mainBinaryName = await readTauriMainBinaryName()
-  const binaryName = process.platform === 'win32' ? `${mainBinaryName}.exe` : mainBinaryName
-  const cargoTargetDir = process.env.CARGO_TARGET_DIR?.trim()
-  const candidates = [
-    ...(cargoTargetDir ? [join(cargoTargetDir, 'debug', binaryName)] : []),
-    join(weworkDir, 'src-tauri', 'target', 'debug', binaryName),
-    join(
-      weworkDir,
-      'src-tauri',
-      'target',
-      'debug',
-      'bundle',
-      'macos',
-      'WeWork.app',
-      'Contents',
-      'MacOS',
-      binaryName
-    ),
-  ]
-  for (const candidate of candidates) {
-    if (await isExecutable(candidate)) {
-      return wrapMacDesktopApp(candidate, binaryName, appIdentifier, codexBinary)
-    }
-  }
-  throw new Error(
-    `Tauri build did not produce an executable app. Checked: ${candidates.join(', ')}`
-  )
+  const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework Electron app')
+  return cloneMacElectronApp(binaryPath, appIdentifier, codexBinary)
 }
 
 async function verifyConnectedModelsOnLocalExecution({
@@ -1460,14 +1290,7 @@ export {
   buildExecutor,
   hostCodexTarget,
   resolveDesktopCodexBinary,
-  readTauriMainBinaryName,
-  readTauriE2EWindowConfig,
-  macCodexBundleLayout,
-  findCodexPackageRoot,
-  bundleMacCodex,
-  bundleMacHarnessRuntime,
   prepareHarnessRuntimeRoots,
-  wrapMacDesktopApp,
   buildDesktopApp,
   verifyConnectedModelsOnLocalExecution,
   verifyCloudProjectFlow,

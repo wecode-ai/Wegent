@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { defaultAppPreferences } from '@/tauri/appPreferences'
+import { defaultAppPreferences } from '@/desktop/appPreferences'
 import './../../../src/i18n'
 import { GitHostingSettingsPage } from './GitHostingSettingsPage'
 
@@ -21,8 +21,8 @@ vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
   }),
 }))
 
-vi.mock('@/tauri/appPreferences', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/tauri/appPreferences')>()
+vi.mock('@/desktop/appPreferences', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/desktop/appPreferences')>()
   return { ...actual, updateAppPreferences }
 })
 

@@ -30,7 +30,6 @@ declare global {
     __WEWORK_E2E__?: {
       version: 1
       isEnabled: true
-      isTauri: () => boolean
       getRuntimeConfig: () => BridgeRuntimeConfig
       getRoute: () => string
       navigate: (path: string) => string

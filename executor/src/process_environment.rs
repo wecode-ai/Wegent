@@ -346,6 +346,7 @@ fn protected_executor_env_key(key: &str) -> bool {
                 | "CODEX_BINARY_PATH"
                 | "CODEX_BIN"
                 | "CODEX_HOME"
+                | "HOME"
                 | "LOCAL_WORKSPACE_ROOT"
                 | "TASK_API_DOMAIN"
         )
@@ -445,6 +446,7 @@ mod tests {
     fn merged_shell_environment_preserves_shell_path_order_and_executor_values() {
         let process_environment = HashMap::from([
             ("PATH".to_string(), "/usr/bin:/bin".to_string()),
+            ("HOME".to_string(), "/isolated/wework".to_string()),
             ("DEVICE_ID".to_string(), "parent-device".to_string()),
             (
                 "CODEX_HOME".to_string(),
@@ -459,6 +461,7 @@ mod tests {
                     "/Users/test/.npm-global/bin:/usr/bin:/bin".to_string(),
                 ),
                 ("SHELL".to_string(), "/bin/zsh".to_string()),
+                ("HOME".to_string(), "/Users/test".to_string()),
                 ("DEVICE_ID".to_string(), "profile-device".to_string()),
                 ("CODEX_HOME".to_string(), "/Users/test/.codex".to_string()),
             ]),
@@ -469,6 +472,7 @@ mod tests {
         assert!(merged["PATH"].starts_with("/Users/test/.npm-global/bin:/usr/bin:/bin"));
         assert!(merged["PATH"].contains("/opt/homebrew/bin"));
         assert_eq!(merged["SHELL"], "/bin/zsh");
+        assert_eq!(merged["HOME"], "/isolated/wework");
         assert_eq!(merged["DEVICE_ID"], "parent-device");
         assert_eq!(merged["CODEX_HOME"], "/isolated/wework/codex");
     }

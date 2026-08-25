@@ -256,7 +256,7 @@ Run the cloud-device feature E2E from the repository root:
 pnpm --filter wework e2e:desktop:cloud-features
 ```
 
-This scenario starts a real backend, Redis, cloud-device executor, and Tauri
+This scenario starts a real backend, Redis, cloud-device executor, and Electron
 application. It verifies cloud project tasks, Goal auto-continuation and unread
 state, busy-turn Goal handoff, and the local/cloud model protocol matrix. On
 failure, use the reported `wework/test-results/desktop-e2e/<run-id>/` directory
@@ -342,7 +342,7 @@ runs may restore the default-branch cache, but they do not save another copy:
 - Platform E2E, Release, and Snapshot Docker BuildKit caches live in
   corresponding GHCR build-cache tags instead of consuming GitHub Actions
   dependency cache storage.
-- Outside Wework E2E, Executor and Tauri system dependency installers first
+- Outside Wework E2E, Executor and Electron system dependency installers first
   check packages already present on the runner. Only `main` writes the APT
   download cache; PRs restore it read-only.
 

@@ -109,7 +109,7 @@ Select **+** in the bottom tab bar to choose **Terminal**, **IDE**, or **Desktop
 
 When diagnosing a terminal that does not repaint after a task switch, frontend logs record the terminal type, task and session identifiers, activation phase, xterm row and column count, container dimensions, and hidden state. They never record terminal output, commands, or workspace paths.
 
-To diagnose `[Terminal connection failed]`, correlate `Local terminal start`, `Local terminal connection`, `Tauri local terminal attach`, and `Local terminal close` logs by session identifier. The logs include the host process, child process, task, workspace path, connection stage, and close reason so output-listener, exit-listener, native-attach, missing-session, and intentional-close cases can be distinguished. They never include terminal input, output, executed commands, or environment-variable contents.
+To diagnose `[Terminal connection failed]`, correlate `Local terminal start`, `Local terminal connection`, ` Electron local terminal attach`, and `Local terminal close` logs by session identifier. The logs include the host process, child process, task, workspace path, connection stage, and close reason so output-listener, exit-listener, native-attach, missing-session, and intentional-close cases can be distinguished. They never include terminal input, output, executed commands, or environment-variable contents.
 
 ## Expand the right workspace
 
