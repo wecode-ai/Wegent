@@ -3,9 +3,12 @@
 
 import json
 import os
+import queue
 import subprocess
 import sys
-from typing import Any
+import threading
+import time
+from typing import Any, TextIO
 
 
 def parse_response(stdout: str, request_id: str) -> dict[str, Any] | None:
@@ -17,6 +20,26 @@ def parse_response(stdout: str, request_id: str) -> dict[str, Any] | None:
         if message.get("type") == "response" and message.get("id") == request_id:
             return message
     return None
+
+
+def enqueue_lines(stream: TextIO, lines: queue.Queue[str | None]) -> None:
+    for line in stream:
+        lines.put(line)
+    lines.put(None)
+
+
+def collect_lines(stream: TextIO, lines: list[str]) -> None:
+    lines.extend(stream)
+
+
+def stop_process(process: subprocess.Popen[str]) -> None:
+    if process.poll() is None:
+        process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
 
 def main() -> int:
@@ -47,21 +70,58 @@ def main() -> int:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        bufsize=1,
         env=env,
     )
+    assert process.stdin is not None
+    assert process.stdout is not None
+    assert process.stderr is not None
+
+    stdout_lines: queue.Queue[str | None] = queue.Queue()
+    stderr_lines: list[str] = []
+    stdout_reader = threading.Thread(
+        target=enqueue_lines,
+        args=(process.stdout, stdout_lines),
+        daemon=True,
+    )
+    stderr_reader = threading.Thread(
+        target=collect_lines,
+        args=(process.stderr, stderr_lines),
+        daemon=True,
+    )
+    stdout_reader.start()
+    stderr_reader.start()
+
+    process.stdin.write(json.dumps(request, separators=(",", ":")) + "\n")
+    process.stdin.flush()
+
+    deadline = time.monotonic() + 20
+    response = None
+    timed_out = False
     try:
-        stdout, stderr = process.communicate(
-            json.dumps(request, separators=(",", ":")) + "\n",
-            timeout=20,
-        )
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.communicate(timeout=5)
+        while response is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                line = stdout_lines.get(timeout=remaining)
+            except queue.Empty:
+                timed_out = True
+                break
+            if line is None:
+                break
+            response = parse_response(line, request_id)
+    finally:
+        stop_process(process)
+        stdout_reader.join(timeout=1)
+        stderr_reader.join(timeout=1)
+
+    if timed_out:
         raise SystemExit(f"Executor RPC {method} timed out")
 
-    response = parse_response(stdout, request_id)
     if response is None:
-        detail = stderr.strip()
+        detail = "".join(stderr_lines).strip()
         raise SystemExit(
             f"Executor RPC {method} produced no response"
             + (f": {detail}" if detail else "")
