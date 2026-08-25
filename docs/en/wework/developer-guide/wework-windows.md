@@ -31,16 +31,24 @@ process stdin/stdout, without a Unix domain socket or fixed TCP port.
 ## Build
 
 ```powershell
-cd wework
-pnpm run prepare:codex --materialize
-pnpm run prepare:dws
-pnpm run build:windows
+pnpm --dir wework/electron build:release
 ```
 
-The package is written under
-`wework/electron/release/WeWork-win32-<arch>/`. Icons, plugins, runtime
-descriptors, and sidecars come from `wework/resources/` and are copied into the
-application by `wework/electron/scripts/prepare-package-assets.mjs`.
+The NSIS installer is written to
+`wework/electron/release-installer/WeWork_<version>_windows_x64-setup.exe`.
+Icons, plugins, runtime descriptors, and sidecars come from
+`wework/resources/` and are copied into the application by
+`wework/electron/scripts/prepare-package-assets.mjs`.
+
+The installer also migrates legacy Tauri installations to Electron. It accepts
+the `/P` argument passed by the Tauri updater, reads the legacy
+`Software\you\WeWork` registry entry, and keeps the
+`%LOCALAPPDATA%\WeWork` installation directory. After the Update action
+installs Electron, the legacy client relaunches the same `WeWork.exe` path.
+This avoids a second installation directory and preserves user data.
+The Executor started by Electron continues to use the existing `.wework`
+directory under the user's home directly; no directory copy or data migration
+is performed.
 
 ## Verification
 
@@ -48,11 +56,11 @@ application by `wework/electron/scripts/prepare-package-assets.mjs`.
 pnpm --filter wework typecheck
 pnpm --dir wework/electron typecheck
 pnpm --dir wework/electron test
-pnpm --filter wework build:windows
+pnpm --dir wework/electron build:release
 ```
 
-`.github/workflows/wework-app.yml` creates the formal cross-platform archive on
-`windows-latest`.
+`.github/workflows/wework-app.yml` creates the signed installer, Electron YAML
+update manifest, and legacy Tauri JSON/signature bridge on `windows-latest`.
 
 ## Troubleshooting
 

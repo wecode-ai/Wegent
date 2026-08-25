@@ -54,18 +54,17 @@ if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
 console.log(`Electron package resources: ${resourcesRoot}`)
 
 async function buildExecutor() {
-  await run(
-    'cargo',
-    [
-      'build',
-      '--manifest-path',
-      join(executorRoot, 'Cargo.toml'),
-      '--release',
-      '--bin',
-      'wegent-executor',
-    ],
-    repositoryRoot
-  )
+  const target = process.env.CARGO_BUILD_TARGET?.trim()
+  const buildArgs = [
+    'build',
+    '--manifest-path',
+    join(executorRoot, 'Cargo.toml'),
+    '--release',
+    '--bin',
+    'wegent-executor',
+  ]
+  if (target) buildArgs.push('--target', target)
+  await run('cargo', buildArgs, repositoryRoot)
   const metadata = JSON.parse(
     await capture(
       'cargo',
@@ -82,6 +81,7 @@ async function buildExecutor() {
   )
   return join(
     metadata.target_directory,
+    ...(target ? [target] : []),
     'release',
     process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
   )

@@ -2,6 +2,10 @@ export const HOST_PROTOCOL_VERSION = 1
 
 export const HOST_CAPABILITIES = [
   'app.getVersion',
+  'appUpdate.check',
+  'appUpdate.download',
+  'appUpdate.downloadProgress',
+  'appUpdate.install',
   'attachment.abort',
   'attachment.append',
   'attachment.begin',

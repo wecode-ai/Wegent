@@ -34,12 +34,14 @@ import { WorkbenchPluginManager } from './workbench-plugin-manager.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { TrayActivation, TrayAction, TrayMenuState, TraySnapshot } from './tray-manager.js'
 import type { StartupSplashSnapshot } from './startup-splash.js'
+import type { AppUpdateService, WeworkUpdateChannel } from './app-update-service.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
 export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
 
 export interface ElectronDesktopServices {
+  appUpdates?: AppUpdateService
   feedback: FeedbackBundleManager
   plugins: WorkbenchPluginManager
 }
@@ -151,6 +153,7 @@ export function createElectronCapabilityRouter(
   router.grant(WEWORK_APP_PRINCIPAL, HOST_CAPABILITIES)
 
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
+  registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
     attachments.begin(stringParam(params, 'filename'), requiredIntegerParam(params, 'size'))
   )
@@ -604,6 +607,20 @@ export function createElectronCapabilityRouter(
   return router
 }
 
+export function registerAppUpdateCapabilities(
+  router: HostCapabilityRouter,
+  appUpdates: AppUpdateService | undefined
+): void {
+  router.register('appUpdate.check', params =>
+    requiredAppUpdates(appUpdates).check(updateChannelParam(params))
+  )
+  router.register('appUpdate.download', () => requiredAppUpdates(appUpdates).download())
+  router.register('appUpdate.downloadProgress', () =>
+    requiredAppUpdates(appUpdates).downloadProgress()
+  )
+  router.register('appUpdate.install', () => requiredAppUpdates(appUpdates).install())
+}
+
 export function registerDesktopServiceCapabilities(
   router: HostCapabilityRouter,
   services: ElectronDesktopServices,
@@ -1039,6 +1056,17 @@ function fileFiltersParam(params: Record<string, unknown>): FileFilter[] | undef
 
 function compact<Value extends object>(value: Value): Value {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as Value
+}
+
+function requiredAppUpdates(value: AppUpdateService | undefined): AppUpdateService {
+  if (!value) throw new HostCapabilityError('capability_unavailable', 'App updates are unavailable')
+  return value
+}
+
+function updateChannelParam(params: Record<string, unknown>): WeworkUpdateChannel {
+  const channel = stringParam(params, 'channel')
+  if (channel !== 'stable' && channel !== 'beta') invalidParam('channel')
+  return channel
 }
 
 function invalidParam(key: string): never {

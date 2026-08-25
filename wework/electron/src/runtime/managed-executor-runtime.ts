@@ -19,7 +19,6 @@ export interface ManagedExecutorRuntimeOptions {
   command: string
   args: string[]
   environment: NodeJS.ProcessEnv
-  dataDirectory: string
   logDirectory: string
   deviceId: string
   onEvent?: (event: string, payload: Record<string, unknown>) => void
@@ -78,10 +77,11 @@ export class ManagedExecutorRuntime {
 }
 
 export function prepareManagedExecutorEnvironment(
-  options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'>
+  options: Pick<ManagedExecutorRuntimeOptions, 'environment'>
 ): NodeJS.ProcessEnv {
   const executorHome =
-    options.environment.WEGENT_EXECUTOR_HOME?.trim() || join(options.dataDirectory, 'executor')
+    options.environment.WEGENT_EXECUTOR_HOME?.trim() ||
+    join(options.environment.HOME?.trim() || homedir(), '.wework')
   const codexHome = options.environment.WEGENT_CODEX_HOME?.trim() || join(executorHome, 'codex')
   const nativeCodexHome = resolveNativeCodexHome(options.environment, codexHome)
   if (nativeCodexHome) prepareCodexAuth(nativeCodexHome, codexHome)

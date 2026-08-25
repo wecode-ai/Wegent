@@ -8,10 +8,12 @@ import type {
 } from './capability-router.js'
 import {
   captureWebContentsDataUrl,
+  registerAppUpdateCapabilities,
   registerBrowserHistoryCapabilities,
   registerDesktopServiceCapabilities,
 } from './electron-capabilities.js'
 import { HOST_CAPABILITIES } from './capability-router.js'
+import type { AppUpdateService } from './app-update-service.js'
 import type { FeedbackBundleManager } from './feedback-bundle-manager.js'
 import type { WorkbenchPluginManager } from './workbench-plugin-manager.js'
 
@@ -115,6 +117,58 @@ describe('registerBrowserHistoryCapabilities', () => {
       maxResults: 25,
     })
     expect(browser.removeHistory).toHaveBeenCalledWith(['one', 'two'])
+  })
+})
+
+describe('registerAppUpdateCapabilities', () => {
+  test('validates channels and forwards the updater lifecycle', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const appUpdates = {
+      check: vi.fn(async () => ({ currentVersion: '0.2.6', version: '0.2.7' })),
+      download: vi.fn(async () => undefined),
+      downloadProgress: vi.fn(() => ({ downloadedBytes: 25, totalBytes: 100 })),
+      install: vi.fn(async () => undefined),
+    } as unknown as AppUpdateService
+
+    registerAppUpdateCapabilities(router, appUpdates)
+
+    await expect(
+      handlers.get('appUpdate.check')?.({ channel: 'stable' }, { principal: 'test' })
+    ).resolves.toEqual({ currentVersion: '0.2.6', version: '0.2.7' })
+    await handlers.get('appUpdate.download')?.({}, { principal: 'test' })
+    expect(await handlers.get('appUpdate.downloadProgress')?.({}, { principal: 'test' })).toEqual({
+      downloadedBytes: 25,
+      totalBytes: 100,
+    })
+    await handlers.get('appUpdate.install')?.({}, { principal: 'test' })
+
+    expect(appUpdates.check).toHaveBeenCalledWith('stable')
+    expect(appUpdates.download).toHaveBeenCalledOnce()
+    expect(appUpdates.downloadProgress).toHaveBeenCalledOnce()
+    expect(appUpdates.install).toHaveBeenCalledOnce()
+    expect(() =>
+      handlers.get('appUpdate.check')?.({ channel: 'nightly' }, { principal: 'test' })
+    ).toThrow('channel is invalid')
+  })
+
+  test('reports update capabilities as unavailable without an updater service', () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+
+    registerAppUpdateCapabilities(router, undefined)
+
+    expect(() => handlers.get('appUpdate.download')?.({}, { principal: 'test' })).toThrow(
+      'App updates are unavailable'
+    )
   })
 })
 
