@@ -17,6 +17,7 @@ import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   BACKGROUND_GUIDANCE,
+  BACKGROUND_GUIDANCE_CONTINUATION,
   COMPLETION_TEXT,
   COMPOSER_READY_STABILITY_MS,
   DEFAULT_MODEL_ID,
@@ -331,7 +332,9 @@ async function ensurePlanMode(control) {
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (snapshot.testIds.includes('plan-mode-pill')) return
 
-  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="add-context-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="set-plan-mode-button"]')
   await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -466,8 +469,9 @@ async function verifyBackgroundGuidanceNavigation({
     text: BACKGROUND_GUIDANCE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const assistantContinuationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-file-changes-block"]`
+  const assistantContinuationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
   await control.command('waitFor', assistantContinuationSelector, {
+    text: BACKGROUND_GUIDANCE_CONTINUATION,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const activeGuidanceUserMessages = await getElementMetrics(
