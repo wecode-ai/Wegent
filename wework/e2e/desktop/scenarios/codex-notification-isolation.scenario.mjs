@@ -127,7 +127,7 @@ async function waitForRequestCount(requests, count, timeoutMs) {
   throw new Error(`Timed out waiting for ${count} notification isolation requests`)
 }
 
-async function selectTask(control, sidebar, task, timeoutMs) {
+async function selectTask(control, sidebar, task, completion, timeoutMs) {
   const rowSelector = `${sidebar} [data-testid="${task.rowTestId}"]`
   await control.command('scrollIntoView', rowSelector)
   await control.command('waitFor', rowSelector, { timeoutMs, visible: true })
@@ -135,14 +135,30 @@ async function selectTask(control, sidebar, task, timeoutMs) {
 
   const startedAt = Date.now()
   let lastTaskId = null
+  let transcriptLoading = null
+  let taskRunning = null
+  let lastMessage = null
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     lastTaskId = snapshot.workbench?.currentRuntimeTask?.taskId ?? null
-    if (lastTaskId === task.taskId) return
+    transcriptLoading = snapshot.pane?.transcript?.loading ?? null
+    taskRunning = snapshot.pane?.status?.taskExecution?.running ?? null
+    lastMessage = snapshot.pane?.messageSummary?.lastMessage ?? null
+    if (
+      lastTaskId === task.taskId &&
+      transcriptLoading === false &&
+      taskRunning === false &&
+      lastMessage?.status === 'done' &&
+      lastMessage?.contentLength === completion.length
+    ) {
+      return
+    }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(
-    `Timed out selecting notification isolation task ${task.taskId}; active task was ${lastTaskId}`
+    `Timed out waiting for notification isolation task ${task.taskId}; ` +
+      `active task was ${lastTaskId}, transcript loading was ${transcriptLoading}, ` +
+      `task running was ${taskRunning}, last message was ${JSON.stringify(lastMessage)}`
   )
 }
 
@@ -254,15 +270,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         '[data-testid="project-new-conversation-button"]'
       await control.command('waitFor', newConversationSelector, { timeoutMs: uiTimeoutMs })
       const quiet = await sendTask(control, newConversationSelector, PROMPTS.quiet, uiTimeoutMs)
+      await waitForRequestCount(requests, 1, uiTimeoutMs)
       const noisy = await sendTask(control, newConversationSelector, PROMPTS.noisy, uiTimeoutMs)
       await waitForRequestCount(requests, 2, uiTimeoutMs)
+      const burstSettleTimeoutMs = Math.max(uiTimeoutMs * 3, 60_000)
 
       const sidebar = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar"]`
       for (const [task, completion] of [
         [quiet, COMPLETIONS.quiet],
         [noisy, COMPLETIONS.noisy],
       ]) {
-        await selectTask(control, sidebar, task, uiTimeoutMs)
+        await selectTask(control, sidebar, task, completion, burstSettleTimeoutMs)
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
