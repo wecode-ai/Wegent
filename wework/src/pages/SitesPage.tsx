@@ -660,13 +660,9 @@ export function SitesPage() {
           smartAppsMode={smartAppsView === 'owned' ? 'owned' : 'marketplace'}
           smartAppsContent={
             smartAppsView === 'owned' ? (
-              <SmartAppsMarketplacePage
-                api={smartAppsApi}
-                mode="owned"
-                onCreateProject={createProject}
-              />
+              <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />
             ) : (
-              <SmartAppsMarketplacePage api={smartAppsApi} onCreateProject={createProject} />
+              <SmartAppsMarketplacePage api={smartAppsApi} />
             )
           }
           sidebarCollapsed={sidebarCollapsed && !isMobile}

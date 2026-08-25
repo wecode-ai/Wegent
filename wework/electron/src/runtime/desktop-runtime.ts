@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:net'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import { prepareCoreDshLaunch } from './core-dsh-runtime.js'
+import { resolveDesktopDeviceId } from './desktop-device-id.js'
 import { DshRuntime } from './dsh-runtime.js'
-import { ManagedExecutorRuntime } from './managed-executor-runtime.js'
+import { ManagedExecutorRuntime, managedExecutorHome } from './managed-executor-runtime.js'
 import {
   WorkbenchRuntimeManager,
   type WorkbenchRuntimeLaunch,
@@ -116,13 +116,18 @@ export class DesktopRuntime {
   private async startExecutor(): Promise<void> {
     const executorPath = this.options.environment.WEWORK_EXECUTOR_PATH?.trim()
     if (!executorPath) return
+    const deviceId = await resolveDesktopDeviceId({
+      environment: this.options.environment,
+      dataDirectory: this.options.dataDirectory,
+      executorHome: managedExecutorHome(this.options),
+    })
     this.executor = new ManagedExecutorRuntime({
       command: executorPath,
       args: jsonArrayEnvironment(this.options.environment, 'WEWORK_EXECUTOR_ARGS_JSON'),
       environment: this.options.environment,
+      dataDirectory: this.options.dataDirectory,
       logDirectory: this.options.logDirectory,
-      deviceId:
-        this.options.environment.WEGENT_APP_IPC_DEVICE_ID?.trim() || `electron-${randomUUID()}`,
+      deviceId,
       onEvent: this.options.onExecutorEvent,
     })
     await this.executor.start()

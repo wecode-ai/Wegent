@@ -12,6 +12,7 @@ import { temporaryDirectory } from './test-helpers.js'
 describe('managed executor runtime', () => {
   test('reuses the Tauri executor home by default', () => {
     const environment = prepareManagedExecutorEnvironment({
+      dataDirectory: '/unused-electron-data',
       environment: {
         VITE_WEWORK_E2E: 'true',
       },
@@ -30,6 +31,7 @@ describe('managed executor runtime', () => {
     await writeFile(join(nativeCodexHome, 'auth.json'), '{"auth":"native"}\n')
 
     const environment = prepareManagedExecutorEnvironment({
+      dataDirectory: join(directory.path, 'data'),
       environment: {
         CODEX_HOME: '/must-not-leak',
         VITE_WEWORK_E2E: 'true',
@@ -53,6 +55,7 @@ describe('managed executor runtime', () => {
     await writeFile(join(launchingCodexHome, 'auth.json'), '{"auth":"launching"}\n')
 
     const environment = prepareManagedExecutorEnvironment({
+      dataDirectory: join(directory.path, 'data'),
       environment: {
         CODEX_HOME: launchingCodexHome,
         VITE_WEWORK_E2E: 'true',

@@ -5,11 +5,13 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
+  powerMonitor,
   screen,
   session,
   shell,
   Tray,
   WebContentsView,
+  webContents,
   type MenuItemConstructorOptions,
   type WebContents,
 } from 'electron'
@@ -56,6 +58,7 @@ import {
   resolveRendererImageContext,
   scheduleTemporaryImageCleanup,
 } from './host/image-context-actions.js'
+import { SystemResumeBridge } from './host/system-resume-bridge.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
@@ -104,6 +107,7 @@ const pendingEmbeddedBrowserAttachments = new Map<
 >()
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
+const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (!hasSingleInstanceLock) app.quit()
@@ -746,6 +750,7 @@ function installIpc(): void {
 }
 
 async function shutdown(): Promise<void> {
+  systemResume.stop()
   systemSleep.stop()
   trayManager?.destroy()
   trayManager = null
@@ -992,6 +997,7 @@ if (hasSingleInstanceLock) {
     })
     installDshWindowLabelHeaders()
     installIpc()
+    systemResume.start()
     preferences = new PreferencesStore(app.getPath('userData'))
     windowClosePolicy = new WindowClosePolicy({
       read: async () => {

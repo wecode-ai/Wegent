@@ -586,11 +586,14 @@ export function WorkbenchProvider({
         currentRuntimeTask: null,
         standaloneChatKey: nextStandaloneChatKey,
       })
-      const project =
-        trial.targetProject ??
-        (state.currentProject
-          ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
-          : null)
+      const project = trial.targetWorkspace
+        ? null
+        : (trial.targetProject ??
+          (state.currentProject
+            ? findFirstSelectableProject(state.projects, state.runtimeWork, [
+                state.currentProject.id,
+              ])
+            : null))
 
       if (project) {
         writeLastProjectId(user.id, project.id)
@@ -604,12 +607,10 @@ export function WorkbenchProvider({
         writeLastProjectId(user.id, null)
         dispatch({
           type: 'project_cleared',
-          standaloneDeviceId: getRememberedStandaloneDeviceId(
-            user,
-            state.devices,
-            state.standaloneDeviceId
-          ),
-          standaloneWorkspacePath: null,
+          standaloneDeviceId:
+            trial.targetWorkspace?.deviceId ??
+            getRememberedStandaloneDeviceId(user, state.devices, state.standaloneDeviceId),
+          standaloneWorkspacePath: trial.targetWorkspace?.path ?? null,
           startFreshChat: true,
         })
       }
