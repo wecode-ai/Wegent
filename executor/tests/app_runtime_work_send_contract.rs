@@ -555,34 +555,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     }));
 
     let runtime_events = recv_events_until(&mut events, |runtime_events| {
-        find_runtime_event(runtime_events, "response.created", |event| {
-            event["payload"]["source"] == source
-        })
-        .is_some()
-            && find_runtime_event(runtime_events, "response.block.created", |event| {
-                let block = &event["payload"]["data"]["block"];
-                block["type"] == "text"
-                    && block["content"] == "Inspecting "
-                    && block["status"] == "streaming"
-            })
-            .is_some()
-            && find_runtime_event(runtime_events, "response.block.updated", |event| {
-                let data = &event["payload"]["data"];
-                data["updates"]["content"] == "Inspecting workspace."
-                    && data["updates"]["status"] == "streaming"
-            })
-            .is_some()
-            && find_runtime_event(runtime_events, "response.block.created", |event| {
-                let block = &event["payload"]["data"]["block"];
-                block["type"] == "text"
-                    && block["content"] == "done"
-                    && block["status"] == "streaming"
-            })
-            .is_some()
-            && find_runtime_event(runtime_events, "response.completed", |event| {
-                event["payload"]["data"]["value"] == "done"
-            })
-            .is_some()
+        find_runtime_event(runtime_events, "response.completed", |_| true).is_some()
     })
     .await;
 
@@ -624,12 +597,37 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         process_block_id
     );
     assert_eq!(
-        process_updated["payload"]["data"]["updates"]["content"],
-        "Inspecting workspace."
+        process_updated["payload"]["data"]["updates"]["content_delta"], "workspace.",
+        "unexpected process update: {process_updated}"
+    );
+    assert!(
+        process_updated["payload"]["data"]["updates"]
+            .get("content")
+            .is_none(),
+        "streaming updates should not repeat the cumulative content snapshot"
     );
     assert_eq!(
         process_updated["payload"]["data"]["updates"]["status"],
         "streaming"
+    );
+    let process_completed =
+        find_runtime_event(&runtime_events, "response.block.updated", |event| {
+            let data = &event["payload"]["data"];
+            data["block_id"].as_str() == Some(process_block_id.as_str())
+                && data["updates"]["status"] == "done"
+        })
+        .expect("completed commentary should settle the process text block");
+    assert!(
+        process_completed["payload"]["data"]["updates"]
+            .get("content")
+            .is_none(),
+        "terminal updates should not repeat an unchanged content snapshot"
+    );
+    assert!(
+        process_completed["payload"]["data"]["updates"]
+            .get("content_delta")
+            .is_none(),
+        "terminal updates should omit an empty content delta"
     );
 
     let final_process_block =

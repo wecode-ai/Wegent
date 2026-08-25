@@ -42,6 +42,9 @@ fi
 if [ "$state" = "pending" ]; then
   checks_state='PENDING'
   pr_state='OPEN'
+elif [ "$state" = "failure" ]; then
+  checks_state='FAILURE'
+  pr_state='OPEN'
 elif [ "$state" = "success" ]; then
   checks_state='SUCCESS'
   pr_state='OPEN'
@@ -206,6 +209,26 @@ export async function createDesktopScenario({
         /feat\(wework\): show pull request status/
       )
       await capture(control, 'change-request-status-02-pending.png')
+
+      await writeFile(statePath, 'failure\n')
+      await refreshEnvironment(control)
+      await control.command('waitFor', '[data-testid="change-request-checks"]', {
+        text: '检查失败',
+      })
+      await control.command('click', '[data-testid^="runtime-local-task-change-request-"]')
+      await control.command(
+        'waitFor',
+        '[data-testid^="runtime-local-task-change-request-"][data-testid$="-repair"]'
+      )
+      await control.command(
+        'click',
+        '[data-testid^="runtime-local-task-change-request-"][data-testid$="-repair"]'
+      )
+      await control.command('waitFor', '[data-testid="message-user"]', {
+        text: '修复 PR/MR #2631',
+        timeoutMs: uiTimeoutMs,
+      })
+      await capture(control, 'change-request-status-02-ai-repair-message.png')
 
       await writeFile(statePath, 'success\n')
       await refreshEnvironment(control)

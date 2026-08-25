@@ -30,6 +30,7 @@ import {
 import {
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
+  getRuntimeConversationMessages,
 } from '@/features/workbench/runtimeConversationCache'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import * as changeRequestMonitor from '@/features/workbench/changeRequestMonitor'
@@ -4077,6 +4078,96 @@ describe('DesktopSidebar', () => {
         screen.getByTestId('runtime-local-task-change-request-project-task').parentElement
           ?.parentElement
       ).toHaveClass('-ml-7', 'mr-1')
+    } finally {
+      changeRequestSpy.mockRestore()
+    }
+  })
+
+  test('shows the AI repair prompt as a user message in the task conversation', async () => {
+    const snapshot: TaskChangeRequestSnapshot = {
+      target: {
+        deviceId: 'local-device',
+        taskId: 'task-with-pr',
+        workspacePath: '/repo/Wegent',
+        remoteUrl: 'https://github.com/wecode-ai/Wegent.git',
+        branch: 'fix/sidebar-pr-message',
+      },
+      changeRequest: {
+        provider: 'github',
+        number: 2875,
+        url: 'https://github.com/wecode-ai/Wegent/pull/2875',
+        title: 'Show the repair prompt',
+        state: 'open',
+        draft: false,
+        checks: 'failure',
+        mergeability: 'mergeable',
+        mergeQueue: 'not_queued',
+      },
+      fetchedAt: '2026-08-25T00:00:00Z',
+      stale: false,
+      error: null,
+    }
+    const changeRequestSpy = vi
+      .spyOn(changeRequestMonitor, 'useTaskChangeRequest')
+      .mockReturnValue(snapshot)
+    const sendRuntimePaneMessage = vi.fn().mockResolvedValue(true)
+
+    try {
+      renderSidebar(
+        {
+          runtimeWork: {
+            projects: [
+              {
+                project: { id: 7, name: 'Wegent' },
+                totalTasks: 1,
+                deviceWorkspaces: [
+                  {
+                    id: 91,
+                    deviceId: 'local-device',
+                    deviceName: 'Local Mac',
+                    deviceStatus: 'online',
+                    available: true,
+                    workspacePath: '/repo/Wegent',
+                    tasks: [
+                      {
+                        taskId: 'task-with-pr',
+                        workspacePath: '/repo/Wegent',
+                        title: 'Repair PR checks',
+                        runtime: 'codex',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            chats: [],
+            totalTasks: 1,
+          },
+        },
+        undefined,
+        undefined,
+        { sendRuntimePaneMessage }
+      )
+
+      await userEvent.click(screen.getByTestId('project-item-button'))
+      await userEvent.click(screen.getByTestId('runtime-local-task-change-request-task-with-pr'))
+      await userEvent.click(
+        screen.getByTestId('runtime-local-task-change-request-task-with-pr-repair')
+      )
+
+      await waitFor(() => expect(sendRuntimePaneMessage).toHaveBeenCalledTimes(1))
+      expect(
+        getRuntimeConversationMessages({
+          deviceId: 'local-device',
+          taskId: 'task-with-pr',
+          workspacePath: '/repo/Wegent',
+        })
+      ).toEqual([
+        expect.objectContaining({
+          role: 'user',
+          content: expect.stringContaining('修复 PR/MR #2875'),
+        }),
+      ])
     } finally {
       changeRequestSpy.mockRestore()
     }

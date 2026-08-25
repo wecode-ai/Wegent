@@ -68,6 +68,7 @@ import {
   autoRepairStatus,
   buildChangeRequestRepairPrompt,
 } from '@/features/workbench/changeRequestStatus'
+import { sendOptimisticRuntimeUserMessage } from '@/features/workbench/runtimeConversationSend'
 import {
   getRuntimeConversationQueuePaused,
   subscribeRuntimeConversation,
@@ -1638,11 +1639,14 @@ function RuntimeTaskRow({
     if (!workbench || !changeRequest || !autoRepairStatus(changeRequest)) return
     setRepairingChangeRequest(true)
     try {
-      await workbench.sendRuntimePaneMessage({
-        address: taskAddress,
-        message: buildChangeRequestRepairPrompt(changeRequest, task.title),
-        source: { source: 'manual' },
-      })
+      await sendOptimisticRuntimeUserMessage(
+        {
+          address: taskAddress,
+          message: buildChangeRequestRepairPrompt(changeRequest, task.title),
+          source: { source: 'manual' },
+        },
+        workbench.sendRuntimePaneMessage
+      )
     } finally {
       setRepairingChangeRequest(false)
     }

@@ -99,6 +99,7 @@ import {
   claimChangeRequestAutoRepair,
   completeChangeRequestAutoRepair,
 } from '@/features/workbench/changeRequestStatus'
+import { sendOptimisticRuntimeUserMessage } from '@/features/workbench/runtimeConversationSend'
 import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import {
   resolveAutomaticModel,
@@ -1606,16 +1607,19 @@ export function CloudTodoWorkspace({
       deviceId: binding.device_id,
       taskId: binding.task_id,
     })
-    const accepted = await workbench.sendRuntimePaneMessage({
-      address,
-      message: buildChangeRequestRepairPrompt(
-        changeRequest,
-        binding.task_title || binding.task_id,
-        selectedProject.pull_request_automation?.prompt
-      ),
-      source: { source: 'manual' },
-      cloudProjectId: String(selectedProject.id),
-    })
+    const accepted = await sendOptimisticRuntimeUserMessage(
+      {
+        address,
+        message: buildChangeRequestRepairPrompt(
+          changeRequest,
+          binding.task_title || binding.task_id,
+          selectedProject.pull_request_automation?.prompt
+        ),
+        source: { source: 'manual' },
+        cloudProjectId: String(selectedProject.id),
+      },
+      workbench.sendRuntimePaneMessage
+    )
     if (!accepted) {
       throw new Error(t('workbench.change_request_continue_repair_failed', '无法继续任务'))
     }
