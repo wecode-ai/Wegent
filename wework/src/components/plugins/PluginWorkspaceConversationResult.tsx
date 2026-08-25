@@ -46,7 +46,7 @@ export function PluginWorkspaceConversationResult({
   const pluginApi = useMemo(() => createDefaultPluginApi(), [])
 
   useEffect(() => {
-    if (!result) return undefined
+    if (!hasResult) return undefined
     let active = true
     void pluginApi
       .getCapabilities()
