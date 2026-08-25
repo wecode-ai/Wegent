@@ -830,6 +830,19 @@ if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_
   exit 1
 fi
 
+for generated_path_exclusion in \
+  '!wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**' \
+  '!wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**' \
+  '!wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**' \
+  '!wework/test-results/desktop-e2e/**/harness-runtime/**' \
+  '!wework/test-results/desktop-e2e/**/node-runtime/**' \
+  '!wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**'; do
+  if [[ "$(grep -Fc "$generated_path_exclusion" "$wework_workflow")" -ne 4 ]]; then
+    printf 'Wework desktop diagnostics must exclude generated Electron runtime files\n' >&2
+    exit 1
+  fi
+done
+
 if ! grep -Fq 'const DEFAULT_PARALLEL_CHECKPOINTS = 1' "$desktop_checkpoint_runner"; then
   printf 'Wework desktop E2E must default to one checkpoint per runner\n' >&2
   exit 1
