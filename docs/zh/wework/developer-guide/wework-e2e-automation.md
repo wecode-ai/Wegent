@@ -140,7 +140,7 @@ GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 
 上限，以确保完整套件处于 10 分钟关键路径预算内；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。包含 2200 个增量的
 Codex 通知隔离压力场景和耗时较长的插件自动更新 checkpoint 各自使用独立分片；
-通知场景使用定向的 60 秒渲染预算，不改变共享的 10 秒 UI 超时。CI 会先构建一次 Core Electron
+通知场景使用定向的 120 秒渲染预算，不改变共享的 10 秒 UI 超时。CI 会先构建一次 Core Electron
 应用、Executor 和 Codex artifact。Electron 打包会并行准备 Harness runtime、
 Node execution runtime 和 Executor；Harness 准备流程负责唯一一次 DSH 应用 Vite
 构建，避免重复编译同一前端。各 Core/Cloud 分片下载并复用该 artifact，不再重复
@@ -154,7 +154,8 @@ artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短
 工作流完整执行的重复 TypeScript
 类型检查，只保留 Vite/ Electron 的真实产物构建；测试覆盖与类型门禁均保持不变。
 macOS 内存任务会同时使用 workspace 与 Electron lockfile 生成 pnpm store key，
-并离线安装依赖，避免 registry 卡顿耗尽关键路径预算。插件套件需要独立构建配置，仍作为
+并离线安装依赖，避免 registry 卡顿耗尽关键路径预算。其大段流式 Markdown 响应使用
+定向的 30 秒完成预算，普通内存测试交互仍保持共享的 10 秒超时。插件套件需要独立构建配置，仍作为
 单独 job 与共享 Core 构建并行。桌面分片只使用不可变 E2E 镜像中已有的运行时工具；
 ZIP fixture 改用 Python 标准库，因此不再恢复完整前端依赖缓存。Harness app 的成功
 路径保留关键里程碑截图，每次运行仍保留日志、状态快照和其他有效诊断；上传前只清理

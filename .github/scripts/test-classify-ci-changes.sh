@@ -9,6 +9,7 @@ desktop_classifier="$script_dir/classify-wework-desktop-e2e.sh"
 cloud_checkpoint_flows="$repo_root/wework/e2e/desktop/modules/cloud-checkpoint-flows.mjs"
 desktop_build_flows="$repo_root/wework/e2e/desktop/modules/desktop-build-flows.mjs"
 desktop_checkpoint_runner="$repo_root/wework/e2e/desktop/run-checkpoints.mjs"
+memory_tool_flows="$repo_root/wework/e2e/desktop/modules/memory-tool-flows.mjs"
 notification_isolation_scenario="$repo_root/wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs"
 
 assert_invalid_desktop_shards_rejected() {
@@ -76,8 +77,14 @@ assert_invalid_desktop_shards_rejected
 assert_invalid_cloud_shards_rejected
 
 if ! grep -Fq 'const NOISE_DELTA_COUNT = 2200' "$notification_isolation_scenario" ||
-  ! grep -Fq 'const BURST_RENDER_TIMEOUT_MS = 60_000' "$notification_isolation_scenario"; then
-  printf 'Codex notification isolation must retain its 2200-delta stress case and targeted 60-second render budget\n' >&2
+  ! grep -Fq 'const BURST_RENDER_TIMEOUT_MS = 120_000' "$notification_isolation_scenario"; then
+  printf 'Codex notification isolation must retain its 2200-delta stress case and targeted 120-second render budget\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'const MEMORY_RESPONSE_TIMEOUT_MS = 30_000' "$memory_tool_flows" ||
+  ! grep -Fq 'Date.now() - startedAt < MEMORY_RESPONSE_TIMEOUT_MS' "$memory_tool_flows"; then
+  printf 'Wework memory E2E must use its targeted 30-second streaming response budget\n' >&2
   exit 1
 fi
 

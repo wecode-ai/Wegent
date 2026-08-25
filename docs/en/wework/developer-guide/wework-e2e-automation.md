@@ -145,7 +145,7 @@ durations and capped to keep the complete suite inside its ten-minute critical-p
 budget; a new or materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures. The 2,200-delta Codex notification
 isolation stress case and the long plugin auto-update checkpoint each have a
-dedicated shard; the notification scenario uses a targeted 60-second render
+dedicated shard; the notification scenario uses a targeted 120-second render
 budget without changing the shared 10-second UI timeout. CI first builds one Core Electron
 application, Executor, and Codex artifact. Electron package preparation builds
 the Harness runtime, Node execution runtime, and Executor concurrently; the
@@ -164,7 +164,9 @@ skip the duplicate TypeScript typecheck that the parallel Lint workflow runs in 
 while retaining the real Vite and Electron artifact build; test coverage and the
 type gate remain unchanged. The macOS memory job keys its pnpm store from both
 the workspace and Electron lockfiles, then installs offline so registry stalls
-cannot consume the critical-path budget. The plugin suite requires an independent build
+cannot consume the critical-path budget. Its large streaming Markdown response
+uses a targeted 30-second completion budget while ordinary memory interactions
+retain the shared 10-second timeout. The plugin suite requires an independent build
 configuration and continues to run in parallel with the shared Core build.
 Desktop shards use only the runtime tools already present in the immutable E2E
 image; ZIP fixtures use Python's standard library, so the jobs do not restore
