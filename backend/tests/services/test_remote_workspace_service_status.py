@@ -111,7 +111,9 @@ def test_executor_alive_returns_true_on_success_payload() -> None:
         "_get_executor_payload",
         return_value={"status": "success", "base_url": "http://runtime"},
     ):
-        assert service.executor_alive("executor-1", "default") is True
+        result = service.executor_alive("executor-1", "default")
+
+    assert result is True
 
 
 def test_executor_alive_returns_false_on_no_pod_found() -> None:
@@ -124,14 +126,18 @@ def test_executor_alive_returns_false_on_no_pod_found() -> None:
             "error_msg": "No pod found for executor executor-1",
         },
     ):
-        assert service.executor_alive("executor-1", "default") is False
+        result = service.executor_alive("executor-1", "default")
+
+    assert result is False
 
 
 def test_executor_alive_treats_transport_failure_as_alive() -> None:
     """A None payload (network error, non-200, invalid JSON) must NOT trigger recovery."""
     service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
     with patch.object(service, "_get_executor_payload", return_value=None):
-        assert service.executor_alive("executor-1", "default") is True
+        result = service.executor_alive("executor-1", "default")
+
+    assert result is True
 
 
 def test_executor_alive_treats_unknown_error_as_alive() -> None:
@@ -142,7 +148,9 @@ def test_executor_alive_treats_unknown_error_as_alive() -> None:
         "_get_executor_payload",
         return_value={"status": "failed", "error_msg": "Pod is not running"},
     ):
-        assert service.executor_alive("executor-1", "default") is True
+        result = service.executor_alive("executor-1", "default")
+
+    assert result is True
 
 
 def test_status_prefers_latest_non_deleted_executor_binding():
