@@ -151,8 +151,11 @@ cache and sccache compiler units: the target cache bounds PR and first-run
 latency, while sccache reduces incremental compilation after dependency or
 source changes. Archiving strips Linux debug symbols only from the copied
 artifact binaries, leaving the original build outputs unchanged while reducing
-upload and download time across the ten shards. Desktop E2E builds skip the
-duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
+upload and download time across the ten shards. Desktop E2E and its cache
+warmup explicitly set `WEWORK_EXECUTOR_PROFILE=debug` so test artifacts do not
+spend time optimizing the Executor. Release packaging leaves the variable unset
+and continues to build the `release` Executor by default. Desktop E2E builds
+skip the duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
 while retaining the real Vite and Electron artifact build; test coverage and the
 type gate remain unchanged. The plugin suite requires an independent build
 configuration and continues to run in parallel with the shared Core build.
