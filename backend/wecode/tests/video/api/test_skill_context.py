@@ -28,17 +28,43 @@ def test_public_skill_receives_chat_generation_settings() -> None:
     inject_generation_into_public_skills(
         resolved_skills=skills,
         team_user_id=0,
-        generation={"model": "happyhorse-1-0", "ratio": "16:9"},
+        generation={
+            "model": "happyhorse-1-0",
+            "model_display_name": "HappyHorse 1.0",
+            "resolution": "720p",
+            "ratio": "16:9",
+            "generation_mode_id": "omni_reference",
+            "content": [
+                {"type": "input_image", "file_id": "image-pid"},
+                {"type": "input_video", "file_id": "video-media-id"},
+            ],
+        },
         prompt="制作一分钟视频",
     )
 
+    generation = {
+        "modelName": "happyhorse-1-0",
+        "modelDisplayName": "HappyHorse 1.0",
+        "content": [
+            {"type": "input_image", "file_id": "image-pid"},
+            {"type": "input_video", "file_id": "video-media-id"},
+            {
+                "type": "generate_params",
+                "value": {
+                    "resolution": "720p",
+                    "ratio": "16:9",
+                    "generation_mode_id": "omni_reference",
+                },
+            },
+        ],
+    }
     assert skills[0]["config"] == {
         "existing": True,
-        "generation": {"model": "happyhorse-1-0", "ratio": "16:9"},
+        "generation": generation,
         "prompt": "制作一分钟视频",
     }
     assert skills[1]["config"] == {
-        "generation": {"model": "happyhorse-1-0", "ratio": "16:9"},
+        "generation": generation,
         "prompt": "制作一分钟视频",
     }
     assert "config" not in skills[2]

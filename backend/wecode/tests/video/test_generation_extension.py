@@ -201,7 +201,10 @@ def test_resolves_uploaded_video_to_fresh_playback_url(monkeypatch) -> None:
     monkeypatch.setattr(
         "wecode.video.services.generation_extension.fetch_playback",
         lambda media_ids, uid: {
-            "media-1": PlaybackInfo(url="http://cdn.example.com/video.mp4")
+            "media-1": PlaybackInfo(
+                url="http://cdn.example.com/video.mp4",
+                cover_url="http://cdn.example.com/video-cover.jpg",
+            )
         },
     )
 
@@ -213,6 +216,8 @@ def test_resolves_uploaded_video_to_fresh_playback_url(monkeypatch) -> None:
     assert playback is not None
     assert playback.url == "https://cdn.example.com/video.mp4"
     assert playback.media_type == "video/mp4"
+    assert playback.cover_url == "https://cdn.example.com/video-cover.jpg"
+    assert playback.delivery_mode == "direct"
 
 
 def test_resolves_uploaded_audio_to_fresh_playback_url(monkeypatch) -> None:
@@ -237,6 +242,40 @@ def test_resolves_uploaded_audio_to_fresh_playback_url(monkeypatch) -> None:
     assert playback is not None
     assert playback.url == "https://cdn.example.com/audio.mp3"
     assert playback.media_type == "audio/mpeg"
+    assert playback.delivery_mode == "direct"
+
+
+def test_resolves_legacy_weibo_video_inside_internal_adapter(monkeypatch) -> None:
+    resolver = WeiboMediaAttachmentPlaybackResolver()
+    owner = MagicMock(id=7)
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = owner
+    get_download_url = MagicMock(return_value="http://cdn.example.com/legacy.mp4")
+    monkeypatch.setattr(
+        "wecode.video.services.generation_extension.SessionLocal",
+        lambda: db,
+    )
+    monkeypatch.setattr(
+        "wecode.video.services.generation_extension.weibo_media_service."
+        "get_download_url",
+        get_download_url,
+    )
+
+    playback = resolver.resolve_playback(
+        type_data={
+            "storage_backend": "weibo",
+            "fid": 12345,
+            "mime_type": "video/mp4",
+        },
+        user_id=7,
+    )
+
+    assert playback is not None
+    assert playback.url == "https://cdn.example.com/legacy.mp4"
+    assert playback.media_type == "video/mp4"
+    assert playback.delivery_mode == "direct"
+    get_download_url.assert_called_once_with(12345, owner)
+    db.close.assert_called_once_with()
 
 
 def test_refresh_result_replaces_expired_url(monkeypatch) -> None:

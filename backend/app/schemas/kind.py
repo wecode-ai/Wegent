@@ -907,6 +907,15 @@ class SkillProviderConfig(BaseModel):
     )
 
 
+class SkillRuntimeConfig(BaseModel):
+    """Optional execution policies declared by a Skill."""
+
+    returnDirectTools: List[str] = Field(
+        default_factory=list,
+        description="Tool names whose successful result should end the current turn.",
+    )
+
+
 class SkillSpec(BaseModel):
     """Skill specification"""
 
@@ -939,6 +948,10 @@ class SkillSpec(BaseModel):
         None,
         description="Provider configuration for dynamic loading. "
         "If specified, the provider will be loaded from the skill .",
+    )
+    runtime: Optional[SkillRuntimeConfig] = Field(
+        None,
+        description="Optional Chat runtime policies for this Skill.",
     )
     mcpServers: Optional[Dict[str, Any]] = Field(
         None,

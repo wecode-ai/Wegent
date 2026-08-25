@@ -10,6 +10,7 @@ import math
 import uuid
 from dataclasses import dataclass
 from typing import Any, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -304,8 +305,15 @@ def sign_urls(urls: list[str], uid: str) -> dict[str, Optional[str]]:
             break
         result_data = item.get("result_data") or {}
         if item.get("result") == 0 and result_data.get("ssig_url"):
-            signed[unique_urls[index]] = str(result_data["ssig_url"])
+            signed[unique_urls[index]] = _force_https_url(str(result_data["ssig_url"]))
     return signed
+
+
+def _force_https_url(url: str) -> str:
+    parsed = urlsplit(url)
+    if parsed.scheme == "http":
+        parsed = parsed._replace(scheme="https")
+    return urlunsplit(parsed)
 
 
 def _parse_playback_info(item: dict[str, Any]) -> Optional[PlaybackInfo]:

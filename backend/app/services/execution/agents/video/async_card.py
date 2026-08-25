@@ -39,6 +39,7 @@ _PUBLIC_URL_KEYS = {
     "video_url",
 }
 _QUERY_URL_VALIDATORS: list[Callable[[str], bool]] = []
+_CARD_DATA_NORMALIZERS: list[Callable[[dict[str, Any]], dict[str, Any]]] = []
 
 
 class AsyncCardError(RuntimeError):
@@ -80,6 +81,14 @@ def register_async_card_url_validator(validator: Callable[[str], bool]) -> None:
     """Register a trusted internal URL policy for private workflow endpoints."""
     if validator not in _QUERY_URL_VALIDATORS:
         _QUERY_URL_VALIDATORS.append(validator)
+
+
+def register_async_card_data_normalizer(
+    normalizer: Callable[[dict[str, Any]], dict[str, Any]],
+) -> None:
+    """Register an internal adapter for external workflow card data."""
+    if normalizer not in _CARD_DATA_NORMALIZERS:
+        _CARD_DATA_NORMALIZERS.append(normalizer)
 
 
 def validate_async_card_query_url(value: Any) -> str:
@@ -137,11 +146,24 @@ def sanitize_card_data(raw: Any) -> dict[str, Any]:
     return sanitized if isinstance(sanitized, dict) else {}
 
 
+def _normalize_card_data(raw: Any) -> dict[str, Any]:
+    card = dict(raw) if isinstance(raw, dict) else {}
+    for normalizer in tuple(_CARD_DATA_NORMALIZERS):
+        try:
+            normalized = normalizer(card)
+        except Exception:
+            logger.exception("Async card data normalizer failed")
+            continue
+        if isinstance(normalized, dict):
+            card = normalized
+    return card
+
+
 def normalize_async_card_payload(raw: dict[str, Any]) -> AsyncCardSnapshot:
     """Normalize the generic ``wb_data`` card polling envelope."""
     data = raw.get("wb_data") if isinstance(raw.get("wb_data"), dict) else raw
     raw_status = str(data.get("status") or "").strip().lower()
-    card = sanitize_card_data(data.get("card"))
+    card = sanitize_card_data(_normalize_card_data(data.get("card")))
 
     for key in ("video_url", "cover_url"):
         value = data.get(key)

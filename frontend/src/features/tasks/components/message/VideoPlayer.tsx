@@ -23,6 +23,10 @@ export interface VideoPlayerProps {
   attachmentId?: number
   /** Additional CSS classes */
   className?: string
+  /** Additional CSS classes for the video element */
+  videoClassName?: string
+  /** Optional test identifier for the underlying video element */
+  videoTestId?: string
   /** Whether this is a placeholder video (still being generated) */
   isPlaceholder?: boolean
   /** Video generation progress (0-100) when in placeholder mode */
@@ -47,6 +51,8 @@ export function VideoPlayer({
   duration,
   attachmentId,
   className,
+  videoClassName,
+  videoTestId,
   isPlaceholder = false,
   progress = 0,
 }: VideoPlayerProps) {
@@ -94,17 +100,21 @@ export function VideoPlayer({
   }, [])
 
   const togglePlay = useCallback(() => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        videoRef.current.pause()
-        showPlaybackFeedback('pause')
-      } else {
-        videoRef.current.play()
-        showPlaybackFeedback('play')
-      }
-      setIsPlaying(!isPlaying)
+    const video = videoRef.current
+    if (!video) return
+
+    if (!video.paused) {
+      video.pause()
+      showPlaybackFeedback('pause')
+      return
     }
-  }, [isPlaying, showPlaybackFeedback])
+
+    if (video.ended) {
+      video.currentTime = 0
+    }
+    void video.play().catch(() => setIsPlaying(false))
+    showPlaybackFeedback('play')
+  }, [showPlaybackFeedback])
 
   const seekBy = useCallback(
     (seconds: number) => {
@@ -248,7 +258,8 @@ export function VideoPlayer({
         ref={videoRef}
         src={playbackUrl}
         poster={posterUrl}
-        className="w-full h-auto"
+        data-testid={videoTestId}
+        className={cn('w-full h-auto', videoClassName)}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onEnded={() => setIsPlaying(false)}

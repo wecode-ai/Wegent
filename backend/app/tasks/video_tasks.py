@@ -690,6 +690,23 @@ def _poll_async_card(
             "poll_count": poll_count,
         }
         _update_subtask_video_job_sync(subtask_id, video_job_data, block)
+        logger.info(
+            "[video_tasks] Async card snapshot persisted: task_id=%s "
+            "subtask_id=%s job_id=%s poll_count=%s/%s job_status=%s "
+            "provider_status=%s progress=%s block_status=%s card_status=%s "
+            "card_keys=%s",
+            task_id,
+            subtask_id,
+            job_id,
+            poll_count,
+            MAX_POLL_COUNT,
+            job_status,
+            snapshot.status,
+            snapshot.progress,
+            block["status"],
+            block["card_status"],
+            sorted(snapshot.card),
+        )
         return block
 
     def fail(error_message: str, progress: int) -> None:

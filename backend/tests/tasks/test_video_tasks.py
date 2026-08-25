@@ -18,7 +18,11 @@ from app.tasks.video_tasks import (
     _poll_async_card,
     dispatch_video_polling_task,
 )
-from app.tasks.video_websocket import emit_video_chunk, emit_video_error
+from app.tasks.video_websocket import (
+    _event_log_context,
+    emit_video_chunk,
+    emit_video_error,
+)
 
 
 def test_handle_completion_persists_standard_video_result() -> None:
@@ -157,6 +161,36 @@ def test_video_progress_blocks_do_not_include_status_copy() -> None:
 
     block = emit_chat_event.call_args.args[1]["result"]["blocks"][0]
     assert block["content"] == ""
+
+
+def test_card_event_log_context_excludes_card_values() -> None:
+    context = _event_log_context(
+        {
+            "subtask_id": 20,
+            "result": {
+                "blocks": [
+                    {
+                        "id": "card-1",
+                        "status": "done",
+                        "card_status": "populated",
+                        "card_data": {
+                            "video_url": "https://example.com/video.mp4?token=secret"
+                        },
+                        "card_preview_data": {"progress": 100},
+                    }
+                ]
+            },
+        }
+    )
+
+    assert context == {
+        "subtask_id": 20,
+        "block_id": "card-1",
+        "status": "done",
+        "card_status": "populated",
+        "progress": 100,
+    }
+    assert "secret" not in str(context)
 
 
 def test_video_progress_reaches_99_percent_after_ten_minutes() -> None:

@@ -95,7 +95,7 @@ async def test_runtime_error_does_not_override_terminal_async_card_poll() -> Non
 
 
 @pytest.mark.asyncio
-async def test_done_event_is_not_forwarded_when_async_card_poll_owns_status() -> None:
+async def test_done_event_is_forwarded_when_async_card_poll_owns_status() -> None:
     from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 
     wrapped = AsyncMock()
@@ -127,7 +127,45 @@ async def test_done_event_is_not_forwarded_when_async_card_poll_owns_status() ->
     ):
         await emitter.emit(done)
 
-    wrapped.emit.assert_not_awaited()
+    assert done.result == card_result
+    wrapped.emit.assert_awaited_once_with(done)
+
+
+@pytest.mark.asyncio
+async def test_emit_done_forwards_when_async_card_poll_owns_status() -> None:
+    from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    card_result = {
+        "video_job": {
+            "card_type": "video_director_generation",
+            "query_url": "https://workflow.example.com/task/1",
+            "status": "polling",
+        },
+        "blocks": [{"id": "card-1", "type": "card", "card_status": "pending"}],
+    }
+
+    async def defer_status(result):
+        emitter._status_updated = True
+        emitter._terminal_event_deferred = True
+        return result
+
+    emitter._update_status_completed = AsyncMock(side_effect=defer_status)
+
+    await emitter.emit_done(
+        task_id=101,
+        subtask_id=202,
+        result=card_result,
+        message_id=303,
+    )
+
+    wrapped.emit_done.assert_awaited_once_with(
+        101,
+        202,
+        card_result,
+        message_id=303,
+    )
 
 
 @pytest.mark.asyncio

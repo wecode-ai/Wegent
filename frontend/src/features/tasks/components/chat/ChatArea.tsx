@@ -254,6 +254,8 @@ interface ChatAreaProps {
   guidedQuestions?: string[]
   /** When true, input is always positioned at bottom even when there are no messages (used in knowledge notebook mode) */
   inputAlwaysAtBottom?: boolean
+  /** When true, render the message list and input inside a narrow split-view chat pane. */
+  isSplitViewOpen?: boolean
   /** Custom content to display when there are no messages (used in knowledge notebook mode for KnowledgeBaseSummaryCard) */
   emptyStateContent?: React.ReactNode
   /** Extension for team editing functionality (injected from parent to avoid module coupling) */
@@ -288,6 +290,7 @@ function ChatAreaContent({
   onGenerateModeChange,
   guidedQuestions,
   inputAlwaysAtBottom,
+  isSplitViewOpen = false,
   emptyStateContent,
   extension,
   externalPromptRequest,
@@ -944,12 +947,12 @@ function ChatAreaContent({
     [chatState.attachmentState.attachments, selectVideoModelByKey, t, toast]
   )
 
-  const hasVideoAttachment = useMemo(() => {
-    if (taskType === 'video') {
+  const hasChatModelVideoAttachment = useMemo(() => {
+    if (usesVideoModel) {
       return false
     }
     return chatState.attachmentState.attachments.some(hasVideoInputAttachment)
-  }, [taskType, chatState.attachmentState.attachments])
+  }, [usesVideoModel, chatState.attachmentState.attachments])
 
   const selectedModelVideoInputSupport = useMemo(
     () => getVideoInputSupport(chatState.selectedModel),
@@ -995,7 +998,7 @@ function ChatAreaContent({
 
   const previousVideoMetadataOnlyRef = useRef(false)
   useEffect(() => {
-    const active = hasVideoAttachment && selectedModelVideoInputSupport === false
+    const active = hasChatModelVideoAttachment && selectedModelVideoInputSupport === false
 
     if (active && !previousVideoMetadataOnlyRef.current) {
       toast({
@@ -1005,7 +1008,7 @@ function ChatAreaContent({
     }
 
     previousVideoMetadataOnlyRef.current = active
-  }, [hasVideoAttachment, selectedModelVideoInputSupport, toast, t])
+  }, [hasChatModelVideoAttachment, selectedModelVideoInputSupport, toast, t])
 
   // Video mode specific state - resolution, aspect ratio, and duration
   // These are kept separate from useModelSelection as they are video-specific parameters
@@ -1597,7 +1600,8 @@ function ChatAreaContent({
 
   // Collapse selectors when space is limited
   const shouldCollapseSelectors =
-    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD
+    isSplitViewOpen ||
+    (controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD)
 
   // Keep latest mutable values in refs so callbacks passed to MessagesArea remain stable.
   const taskInputMessageRef = useRef(chatState.taskInputMessage)
@@ -1639,7 +1643,7 @@ function ChatAreaContent({
     if (isGenerateMode(effectiveTaskType)) {
       isExitingGenerationRef.current = true
       removeGenerationModeQueryParam(url.searchParams)
-      chatState.handleTeamChange(null)
+      handleTeamChange(null)
       router.replace(`${url.pathname}${url.search}${url.hash}`)
       return
     }
@@ -1652,7 +1656,7 @@ function ChatAreaContent({
       )
     }
     restoreDefaultTeam()
-  }, [chatState.handleTeamChange, effectiveTaskType, restoreDefaultTeam, router, teamIdFromUrl])
+  }, [effectiveTaskType, handleTeamChange, restoreDefaultTeam, router, teamIdFromUrl])
 
   const shouldConfirmPendingReplacement =
     runtimeTaskStatus === 'PENDING' &&
@@ -2589,7 +2593,9 @@ function ChatAreaContent({
   return (
     <div
       ref={chatAreaRef}
-      className="flex-1 flex flex-col min-h-0 w-full relative"
+      className={`flex-1 flex flex-col min-h-0 w-full relative ${
+        isSplitViewOpen ? 'overflow-hidden' : ''
+      }`}
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
       {/* Queue Message Handler - processes process_message URL parameter from inbox */}
@@ -2640,14 +2646,26 @@ function ChatAreaContent({
         <div
           ref={scrollContainerRef}
           className={
-            (hasMessages ? 'h-full overflow-y-auto custom-scrollbar' : 'overflow-y-hidden') +
+            (hasMessages
+              ? `h-full overflow-x-hidden overflow-y-auto ${
+                  isSplitViewOpen ? 'scrollbar-hide' : 'custom-scrollbar'
+                }`
+              : 'overflow-y-hidden') +
             ' transition-opacity duration-200 ' +
             (hasMessages ? 'opacity-100' : 'opacity-0 pointer-events-none h-0')
           }
           aria-hidden={!hasMessages}
-          style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
+          style={{
+            paddingBottom: hasMessages && !isSplitViewOpen ? `${inputHeight + 16}px` : '0',
+          }}
         >
-          <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 pt-12">
+          <div
+            className={
+              isSplitViewOpen
+                ? 'w-full px-[18px] pt-12'
+                : 'w-full max-w-5xl mx-auto px-4 sm:px-6 pt-12'
+            }
+          >
             <MessagesArea
               selectedTeam={chatState.selectedTeam}
               selectedRepo={chatState.selectedRepo}
@@ -2759,10 +2777,11 @@ function ChatAreaContent({
 
         {/* Floating Input Area for messages view or inputAlwaysAtBottom mode */}
         {/* Width is reduced by 12px to avoid overlapping the scrollbar */}
-        {(hasMessages || inputAlwaysAtBottom) && (
+        {(hasMessages || inputAlwaysAtBottom) && !isSplitViewOpen && (
           <div
             ref={floatingInputRef}
             className="fixed bottom-0 z-50 bg-base"
+            data-testid="chat-floating-input"
             style={{
               left: floatingMetrics.left,
               width:
@@ -2814,6 +2833,20 @@ function ChatAreaContent({
           </div>
         )}
       </div>
+
+      {hasMessages && isSplitViewOpen && (
+        <div
+          ref={floatingInputRef}
+          className="w-full shrink-0 overflow-hidden bg-base"
+          data-testid="chat-split-input"
+        >
+          <div className="relative w-full px-[18px]">
+            <div className="pb-3 pt-[41px]">
+              <ChatInputCard {...inputCardProps} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Team Edit Dialog - rendered via extension if provided */}
       {selectedTaskDetail?.id && (

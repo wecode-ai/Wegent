@@ -1715,6 +1715,9 @@ class TaskRequestBuilder:
         if skill_crd.spec.config:
             skill_data["config"] = skill_crd.spec.config
 
+        if skill_crd.spec.runtime:
+            skill_data["runtime"] = skill_crd.spec.runtime.model_dump(exclude_none=True)
+
         if skill_crd.spec.mcpServers:
             skill_data["mcpServers"] = skill_crd.spec.mcpServers
 

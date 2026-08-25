@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { ExternalLink, Film, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
+import { VideoPlayer } from '@/features/tasks/components/message/VideoPlayer'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CardRendererProps,
@@ -30,6 +31,20 @@ export function safeCardUrl(value?: string): string | null {
   }
 }
 
+function safeCardMediaUrl(value?: string): string | null {
+  const absoluteUrl = safeCardUrl(value)
+  if (absoluteUrl || !value?.startsWith('/')) return absoluteUrl
+
+  try {
+    const baseUrl = new URL('https://wegent.invalid')
+    const relativeUrl = new URL(value, baseUrl)
+    if (relativeUrl.origin !== baseUrl.origin) return null
+    return `${relativeUrl.pathname}${relativeUrl.search}${relativeUrl.hash}`
+  } catch {
+    return null
+  }
+}
+
 export function VideoDirectorGenerationCard({
   block,
   onChatButtonClick,
@@ -44,8 +59,8 @@ export function VideoDirectorGenerationCard({
   const progress = Math.min(100, Math.max(0, preview.progress || 0))
   const title = card.title || preview.title || t('cards.video_director.title')
   const detailUrl = safeCardUrl(card.link)
-  const videoUrl = safeCardUrl(card.video_url || preview.video_url)
-  const coverUrl = safeCardUrl(card.cover_url || preview.cover_url)
+  const videoUrl = safeCardMediaUrl(card.video_url || preview.video_url)
+  const coverUrl = safeCardMediaUrl(card.cover_url || preview.cover_url)
   const linkButtons = (card.buttons || [])
     .map(button => ({
       ...button,
@@ -75,18 +90,20 @@ export function VideoDirectorGenerationCard({
 
   return (
     <div
-      className="w-full max-w-xl overflow-hidden rounded-xl border bg-card shadow-sm"
+      className="w-full max-w-[359px] overflow-hidden rounded-xl border bg-card shadow-sm"
       data-testid="card-video-director-generation"
     >
       {videoUrl ? (
-        <video
-          className="aspect-video w-full bg-black object-cover"
-          controls
-          poster={coverUrl || undefined}
-          src={videoUrl}
-          data-testid="card-video-director-player"
+        <VideoPlayer
+          videoUrl={videoUrl}
+          coverUrl={coverUrl || undefined}
+          duration={card.duration}
+          className="max-w-none rounded-none"
+          videoTestId="card-video-director-player"
         />
       ) : coverUrl ? (
+        // Dynamic card media intentionally bypasses Next image optimization.
+        // eslint-disable-next-line @next/next/no-img-element
         <img
           className="aspect-video w-full object-cover"
           src={coverUrl}

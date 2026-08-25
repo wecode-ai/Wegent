@@ -114,15 +114,25 @@ describe('VideoPlayer', () => {
     const play = jest.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
     const pause = jest.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation()
 
-    render(<VideoPlayer videoUrl="https://example.com/result.mp4" />)
+    const { container } = render(<VideoPlayer videoUrl="https://example.com/result.mp4" />)
 
     const overlay = screen.getByTestId('video-toggle-overlay')
+    const video = container.querySelector('video') as HTMLVideoElement
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      value: true,
+    })
+
     fireEvent.click(overlay)
     expect(play).toHaveBeenCalledTimes(1)
     expect(
       screen.getByTestId('video-playback-feedback').querySelector('.lucide-play')
     ).not.toBeNull()
 
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      value: false,
+    })
     fireEvent.click(overlay)
     expect(pause).toHaveBeenCalledTimes(1)
     expect(
@@ -133,5 +143,28 @@ describe('VideoPlayer', () => {
       jest.advanceTimersByTime(450)
     })
     expect(screen.queryByTestId('video-playback-feedback')).not.toBeInTheDocument()
+  })
+
+  it('restarts an ended video before replaying it', () => {
+    const play = jest.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
+    const { container } = render(<VideoPlayer videoUrl="https://example.com/result.mp4" />)
+    const video = container.querySelector('video') as HTMLVideoElement
+
+    Object.defineProperties(video, {
+      paused: {
+        configurable: true,
+        value: true,
+      },
+      ended: {
+        configurable: true,
+        value: true,
+      },
+    })
+    video.currentTime = 12
+
+    fireEvent.click(screen.getByTestId('video-toggle-overlay'))
+
+    expect(video.currentTime).toBe(0)
+    expect(play).toHaveBeenCalledTimes(1)
   })
 })

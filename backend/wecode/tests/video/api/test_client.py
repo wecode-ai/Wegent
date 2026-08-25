@@ -46,7 +46,7 @@ def test_validate_task_url_rejects_urls_outside_configured_service(monkeypatch, 
 def test_validate_playback_url_accepts_weibo_video_cdn():
     result = validate_playback_url("http://f.video.weibocdn.com/o0/example-video")
 
-    assert result.endswith("example-video")
+    assert result == "http://f.video.weibocdn.com/o0/example-video"
 
 
 @pytest.mark.parametrize(
@@ -117,3 +117,28 @@ def test_parse_card_status_flattens_aigc_buttons():
     assert "prompt" not in parsed.card["buttons"][0]
     assert "skill" not in parsed.card["buttons"][0]
     assert parsed.card["progress_text"] == "正在创建剧本"
+
+
+def test_parse_card_status_resolves_relative_video_detail_link(monkeypatch):
+    monkeypatch.setattr(
+        "wecode.video.api.client.settings.FRONTEND_URL",
+        "https://wegent.example.com",
+    )
+
+    parsed = parse_card_status(
+        {
+            "wb_data": {
+                "status": "completed",
+                "card": {
+                    "link": (
+                        "/chat?mode=video&taskId=10" "&openPanel=script&scriptId=5"
+                    ),
+                },
+            },
+        }
+    )
+
+    assert parsed.card["link"] == (
+        "https://wegent.example.com/chat?mode=video&taskId=10"
+        "&openPanel=script&scriptId=5"
+    )

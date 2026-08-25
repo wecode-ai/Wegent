@@ -12,6 +12,7 @@ const mockToast = jest.fn()
 const mockSendChatGuidance = jest.fn().mockResolvedValue({ success: true })
 const mockRefreshSelectedTaskDetail = jest.fn()
 const mockCheckHealth = jest.fn().mockResolvedValue(undefined)
+const mockRouterPush = jest.fn()
 
 let isMachineStreamingMock = true
 let derivedIsStreamingMock: boolean | undefined
@@ -24,12 +25,13 @@ let selectedTaskDetailMock: TaskDetail | null = {
   is_group_chat: false,
   subtasks: [],
 } as unknown as TaskDetail
+let searchParamsMock = new URLSearchParams()
 
 const getTaskStatusMock = () => selectedTaskDetailMock?.status ?? 'COMPLETED'
 
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: jest.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: mockRouterPush }),
+  useSearchParams: () => searchParamsMock,
   usePathname: () => '/chat',
 }))
 
@@ -157,6 +159,7 @@ describe('useChatStreamHandlers queue integration', () => {
     activeStreamSubtaskIdMock = 77
     taskInputMessageMock = 'next question'
     currentTaskIdMock = 42
+    searchParamsMock = new URLSearchParams()
     selectedTaskDetailMock = {
       id: 42,
       status: 'RUNNING',
@@ -164,6 +167,30 @@ describe('useChatStreamHandlers queue integration', () => {
       subtasks: [],
     } as unknown as TaskDetail
     mockSendChatGuidance.mockResolvedValue({ success: true })
+  })
+
+  it('repairs a stale task id in the URL after a message is accepted', async () => {
+    isMachineStreamingMock = false
+    currentTaskIdMock = 42
+    searchParamsMock = new URLSearchParams('taskId=41')
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'COMPLETED',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+    mockContextSendMessage.mockImplementation(async (_request, options) => {
+      options?.onMessageSent?.('local-user-1', 42, 77)
+      return 42
+    })
+
+    const { result } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(mockRouterPush).toHaveBeenCalledWith('?taskId=42')
   })
 
   it('queues a follow-up outside the chat message stream while the active task is streaming', async () => {

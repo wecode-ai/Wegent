@@ -35,7 +35,7 @@ export interface UseFloatingInputReturn {
    * Ref to attach to the floating input container element.
    * Used to measure height for scroll padding calculation.
    */
-  floatingInputRef: React.RefObject<HTMLDivElement | null>
+  floatingInputRef: React.RefCallback<HTMLDivElement>
 
   /**
    * Ref to attach to the input controls container element.
@@ -75,8 +75,11 @@ export interface UseFloatingInputReturn {
  */
 export function useFloatingInput({ hasMessages }: UseFloatingInputOptions): UseFloatingInputReturn {
   const chatAreaRef = useRef<HTMLDivElement>(null)
-  const floatingInputRef = useRef<HTMLDivElement>(null)
   const inputControlsRef = useRef<HTMLDivElement>(null)
+  const [floatingInputElement, setFloatingInputElement] = useState<HTMLDivElement | null>(null)
+  const floatingInputRef = useCallback((element: HTMLDivElement | null) => {
+    setFloatingInputElement(element)
+  }, [])
 
   // Track previous hasMessages state to detect transitions
   const prevHasMessagesRef = useRef(hasMessages)
@@ -178,25 +181,24 @@ export function useFloatingInput({ hasMessages }: UseFloatingInputOptions): UseF
    * Tracks height changes for scroll padding calculation.
    */
   useEffect(() => {
-    if (!hasMessages || !floatingInputRef.current) {
+    if (!hasMessages || !floatingInputElement) {
       setInputHeight(0)
       return
     }
 
-    const element = floatingInputRef.current
-    const updateHeight = () => setInputHeight(element.offsetHeight)
+    const updateHeight = () => setInputHeight(floatingInputElement.offsetHeight)
 
     updateHeight()
 
     if (typeof ResizeObserver !== 'undefined') {
       const resizeObserver = new ResizeObserver(updateHeight)
-      resizeObserver.observe(element)
+      resizeObserver.observe(floatingInputElement)
       return () => resizeObserver.disconnect()
     }
 
     window.addEventListener('resize', updateHeight)
     return () => window.removeEventListener('resize', updateHeight)
-  }, [hasMessages])
+  }, [floatingInputElement, hasMessages])
 
   return {
     chatAreaRef,

@@ -6,7 +6,7 @@
 
 import { useState } from 'react'
 import { MoreHorizontal } from 'lucide-react'
-import type { RefObject } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import { ActionButton } from '@/components/ui/action-button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -40,6 +40,7 @@ interface InputMoreActionsMenuProps {
   showExternalWebContent?: boolean
   attachments?: Attachment[]
   onAttachmentAdd?: (attachment: Attachment) => void
+  additionalItems?: ReactNode
 }
 
 export function InputMoreActionsMenu({
@@ -63,13 +64,20 @@ export function InputMoreActionsMenu({
   showExternalWebContent = false,
   attachments = [],
   onAttachmentAdd = () => {},
+  additionalItems,
 }: InputMoreActionsMenuProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const showSkillSelector = availableSkills.length > 0 && Boolean(onToggleSkill)
   const selectedSkillCount = selectedSkillNames.length
 
-  if (!showClarification && !showCorrection && !showSkillSelector && !showExternalWebContent) {
+  if (
+    !additionalItems &&
+    !showClarification &&
+    !showCorrection &&
+    !showSkillSelector &&
+    !showExternalWebContent
+  ) {
     return null
   }
 
@@ -105,6 +113,8 @@ export function InputMoreActionsMenu({
           className="w-56 p-1"
           data-testid="desktop-input-more-actions-menu"
         >
+          {additionalItems}
+
           {showExternalWebContent && (
             <ExternalWebContentButton
               attachments={attachments}

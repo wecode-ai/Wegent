@@ -366,7 +366,7 @@ def _handle_tool_end(
                 skill_name,
             )
 
-    _emit_card_block(state, emitter, tool_name, serializable_output)
+    _store_card_block(state, tool_name, serializable_output)
 
     # Emit tool_done event via ResponsesAPIEmitter
     # Only include arguments if tool is in whitelist
@@ -480,13 +480,12 @@ def _extract_card_result(value: Any) -> dict[str, Any] | None:
     return None
 
 
-def _emit_card_block(
+def _store_card_block(
     state: Any,
-    emitter: ResponsesAPIEmitter,
     tool_name: str,
     tool_output: Any,
 ) -> None:
-    """Publish a card MCP result through the current chat response stream."""
+    """Store a backend-owned card in the final response without re-emitting it."""
     if not tool_name.endswith("create_async_video_card"):
         return
     card = _extract_card_result(tool_output)
@@ -523,11 +522,11 @@ def _emit_card_block(
             str(card["card_error"]) if card.get("card_error") is not None else None
         ),
     )
-    _run_async(emitter.block_created(block))
     if hasattr(state, "add_block"):
         state.add_block(block)
     logger.info(
-        "[TOOL_END] Emitted CardBlock: card_id=%s card_type=%s card_status=%s",
+        "[TOOL_END] Stored backend-owned CardBlock: "
+        "card_id=%s card_type=%s card_status=%s",
         block["card_id"],
         block["card_type"],
         block["card_status"],

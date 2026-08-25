@@ -89,6 +89,7 @@ describe('CardRenderer', () => {
       'poster',
       'https://cdn.example.com/cover.jpg'
     )
+    expect(screen.getByTestId('card-video-director-generation')).toHaveClass('max-w-[359px]')
     expect(screen.getByTestId('card-video-director-detail')).toHaveAttribute(
       'href',
       'https://workflow.example.com/tasks/1'

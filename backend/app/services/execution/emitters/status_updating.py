@@ -383,9 +383,6 @@ class StatusUpdatingEmitter(ResultEmitter):
                 if final_result is not None:
                     event.result = final_result
 
-            if self._terminal_event_deferred:
-                return
-
         # Forward event to wrapped emitter
         await self._wrapped.emit(event)
 
@@ -427,8 +424,6 @@ class StatusUpdatingEmitter(ResultEmitter):
         await self._cancel_pending_storage_flush_task()
         if not self._status_updated:
             await self._update_status_completed(result)
-        if self._terminal_event_deferred:
-            return
         await self._wrapped.emit_done(task_id, subtask_id, result, **kwargs)
 
     async def emit_error(

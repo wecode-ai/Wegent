@@ -5,7 +5,7 @@
 """Extension points for attachment storage selected by file type."""
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,8 @@ class ExternalAttachmentPlayback:
 
     url: str
     media_type: str
+    cover_url: str | None = None
+    delivery_mode: Literal["proxy", "direct"] = "proxy"
 
 
 class ExternalAttachmentStorageAdapter(Protocol):
