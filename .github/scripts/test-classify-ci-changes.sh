@@ -362,6 +362,23 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx"
 
+assert_desktop_case "startup splash selects native startup coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"native-window-startup"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/electron/src/host/startup-splash.ts" \
+  "wework/electron/src/shell/startup-splash/styles.css"
+
+assert_desktop_case "Wework documentation skips desktop E2E" \
+  'wework_desktop_e2e=false
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/README.md"
+
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"rendering-extensions,runtime-task-queue,local-file-preview,context-compaction"},{"id":"core-2","name":"Core / shard 2","segments":"project-ai-settings,window-lifecycle,permission-modes,cloud-space-mention,project-assignment-notification"},{"id":"core-3","name":"Core / shard 3","segments":"core-task-flow,temporary-chat,codex-notification-isolation,task-attachments"},{"id":"core-4","name":"Core / shard 4","segments":"claude-runtime,workspace-attachments,local-harness,harness-apps"},{"id":"core-5","name":"Core / shard 5","segments":"conversation-state,goal-lifecycle,workspace-tabs,running-conversation-history"},{"id":"core-6","name":"Core / shard 6","segments":"resilience,supervisor-lifecycle,runtime-terminal-convergence"},{"id":"core-7","name":"Core / shard 7","segments":"model-routing,project-automation,automation-lifecycle,offline-local-project-space"},{"id":"core-8","name":"Core / shard 8","segments":"embedded-browser,browser-toolbar-actions,priority-filter,remote-device-onboarding,split-workbench,native-window-startup,native-window-chrome,tray-lifecycle,change-request-status"}]}
@@ -602,7 +619,16 @@ for workflow in e2e-tests.yml wework-e2e.yml; do
       "$workflow" >&2
     exit 1
   fi
-  if ! grep -Fq \
+  if [[ "$workflow" == "wework-e2e.yml" ]]; then
+    if ! grep -Fq "github.event.merge_group.base_sha" "$workflow_path" ||
+      ! grep -Fq "github.event.merge_group.head_sha" "$workflow_path" ||
+      ! grep -Fq "github.event_name != 'merge_group'" "$workflow_path" ||
+      ! grep -Fq "grep -v '^\\.github/'" "$workflow_path"; then
+      printf '%s must classify merge groups from their product diff\n' \
+        "$workflow" >&2
+      exit 1
+    fi
+  elif ! grep -Fq \
     "FORCE_ALL: \${{ github.event_name != 'pull_request'" \
     "$workflow_path"; then
     printf '%s must force all E2E outside pull request events\n' \
