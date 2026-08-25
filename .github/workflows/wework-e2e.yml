@@ -22,6 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  actions: read
   contents: read
   packages: read
 
@@ -355,10 +356,12 @@ jobs:
         run: .github/scripts/verify-local-harness-clis.sh
 
       - name: Download Wework desktop Core E2E build
-        uses: actions/download-artifact@v4
-        with:
-          name: wework-desktop-core-e2e-build
-          path: .ci-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            wework-desktop-core-e2e-build \
+            .ci-artifacts
 
       - name: Restore Wework desktop Core E2E build
         run: .github/scripts/restore-wework-core-e2e-build.sh
@@ -431,10 +434,12 @@ jobs:
           persist-credentials: false
 
       - name: Download shared Wework desktop E2E build
-        uses: actions/download-artifact@v4
-        with:
-          name: wework-desktop-core-e2e-build
-          path: .ci-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            wework-desktop-core-e2e-build \
+            .ci-artifacts
 
       - name: Restore shared Wework desktop E2E build
         run: .github/scripts/restore-wework-core-e2e-build.sh
@@ -511,10 +516,12 @@ jobs:
           filter: blob:none
 
       - name: Download shared Wework desktop E2E build
-        uses: actions/download-artifact@v4
-        with:
-          name: wework-desktop-core-e2e-build
-          path: .ci-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            wework-desktop-core-e2e-build \
+            .ci-artifacts
 
       - name: Restore shared Wework desktop E2E build
         run: .github/scripts/restore-wework-core-e2e-build.sh

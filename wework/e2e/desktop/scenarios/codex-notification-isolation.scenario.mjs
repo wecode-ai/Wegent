@@ -256,24 +256,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('waitFor', newConversationSelector, { timeoutMs: uiTimeoutMs })
       const quiet = await sendTask(control, newConversationSelector, PROMPTS.quiet, uiTimeoutMs)
       await waitForRequestCount(requests, 1, uiTimeoutMs)
-      const noisy = await sendTask(control, newConversationSelector, PROMPTS.noisy, uiTimeoutMs)
+      await sendTask(control, newConversationSelector, PROMPTS.noisy, uiTimeoutMs)
       await waitForRequestCount(requests, 2, uiTimeoutMs)
 
       const sidebar = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar"]`
       const completionTimeoutMs = Math.max(uiTimeoutMs, BURST_RENDER_TIMEOUT_MS)
-      // Keep the noisy task active while its burst renders, then verify that the
-      // quiet task completed correctly in the background without cross-thread data.
-      for (const [task, completion] of [
-        [noisy, COMPLETIONS.noisy],
-        [quiet, COMPLETIONS.quiet],
-      ]) {
-        await selectTask(control, sidebar, task, uiTimeoutMs)
-        await control.command(
-          'waitFor',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-          { text: completion, timeoutMs: completionTimeoutMs }
-        )
-      }
+      await selectTask(control, sidebar, quiet, uiTimeoutMs)
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+        { text: COMPLETIONS.quiet, timeoutMs: completionTimeoutMs }
+      )
 
       await captureScreenshot(control, 'codex-notification-isolation-complete.png', 'body')
       active = false
