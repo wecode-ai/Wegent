@@ -352,6 +352,46 @@ def test_submission_review_publishes_immutable_release_without_install_copy(
     )
 
 
+def test_task_bound_submission_rejects_another_task_token(
+    test_db, test_user, monkeypatch
+):
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages, package)
+    initialized = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest(
+            slug="task-bound",
+            displayName="Task Bound",
+            version="1.0.0",
+            filename="task-bound.zip",
+            sha256=hashlib.sha256(package).hexdigest(),
+            sizeBytes=len(package),
+        ),
+        task_binding=(101, 202),
+    )
+
+    service.ensure_submission_task_binding(
+        test_db,
+        user_id=test_user.id,
+        submission_id=initialized.submissionId,
+        task_id=101,
+        subtask_id=202,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        service.ensure_submission_task_binding(
+            test_db,
+            user_id=test_user.id,
+            submission_id=initialized.submissionId,
+            task_id=101,
+            subtask_id=203,
+        )
+
+    assert exc_info.value.status_code == 404
+
+
 def test_submission_cannot_be_reviewed_twice(test_db, test_user, monkeypatch):
     service = PluginMarketplaceService()
     package = _plugin_zip()

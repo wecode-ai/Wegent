@@ -35,6 +35,7 @@ export function PluginWorkspaceConversationResult({
 }: PluginWorkspaceConversationResultProps) {
   const { t } = useTranslation('common')
   const result = useMemo(() => latestPluginWorkspaceResult(messages, taskId), [messages, taskId])
+  const hasResult = Boolean(result)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,7 +61,7 @@ export function PluginWorkspaceConversationResult({
     return () => {
       active = false
     }
-  }, [pluginApi, result])
+  }, [hasResult, pluginApi])
 
   const searchUsers = useCallback(
     async (query: string) => (await pluginApi.searchPluginShareUsers(query)).users,

@@ -12,12 +12,15 @@ use std::{
     env, fs,
     io::{Cursor, Write},
     path::{Path, PathBuf},
+    time::Duration,
 };
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
 const COMMAND_PREFIX: &str = "plugin-workspace";
 const RESULT_MARKER: &str = "[WEGENT_PLUGIN_RESULT]";
 const MAX_PACKAGE_BYTES: usize = 50 * 1024 * 1024;
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 
 pub fn is_plugin_workspace_command() -> bool {
     env::args().nth(1).as_deref() == Some(COMMAND_PREFIX)
@@ -91,7 +94,7 @@ async fn publish(args: &[String]) -> Result<(), String> {
         "pending_review",
     )?;
 
-    let client = reqwest::Client::new();
+    let client = http_client()?;
     let backend = backend_url()?;
     let token = auth_token()?;
     let initialized = send_json(
@@ -312,6 +315,14 @@ async fn send_json(request: reqwest::RequestBuilder, action: &str) -> Result<Val
     serde_json::from_str(&body).map_err(|error| format!("invalid {action} response: {error}"))
 }
 
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(HTTP_CONNECT_TIMEOUT)
+        .timeout(HTTP_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|error| format!("build plugin publication HTTP client failed: {error}"))
+}
+
 fn ensure_success(status: StatusCode, body: String, action: &str) -> Result<(), String> {
     if status.is_success() {
         return Ok(());
@@ -459,7 +470,12 @@ fn task_workspace(task_id: &str) -> Result<PathBuf, String> {
             return Ok(PathBuf::from(normalized));
         }
     }
-    Ok(PathBuf::from("/workspace").join(task_id))
+    let root = env::var("WORKSPACE_ROOT")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "/workspace".to_owned());
+    Ok(PathBuf::from(root).join(task_id))
 }
 
 fn backend_url() -> Result<String, String> {
@@ -536,5 +552,10 @@ mod tests {
         let request = publish_request(&["--request-base64".to_owned(), encoded]).unwrap();
 
         assert_eq!(request["visibility"], "personal");
+    }
+
+    #[test]
+    fn publication_http_client_has_valid_configuration() {
+        assert!(http_client().is_ok());
     }
 }
