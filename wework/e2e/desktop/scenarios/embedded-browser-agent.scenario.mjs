@@ -1730,15 +1730,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       zipBytes.set([0x50, 0x4b, 0x03, 0x04])
       await writeFile(localZipPath, zipBytes)
       const localZipUrl = pathToFileURL(localZipPath).href
-      await control.command('fill', BROWSER_INPUT_SELECTOR, { value: localZipUrl })
-      await waitForControlValue(
-        control,
-        BROWSER_INPUT_SELECTOR,
-        localZipUrl,
-        uiTimeoutMs,
-        'Browser URL input did not receive local zip URL before submit'
-      )
-      await control.command('submit', BROWSER_INPUT_SELECTOR)
+      await control.command('submit', BROWSER_INPUT_SELECTOR, { value: localZipUrl })
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: LOCAL_TOAST_TEXT,
         timeoutMs: uiTimeoutMs,
