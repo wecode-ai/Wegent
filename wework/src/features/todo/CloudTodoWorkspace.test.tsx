@@ -1443,6 +1443,58 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
   })
 
+  it('ignores a task address that resolves after reopening the task panel', async () => {
+    const workbenchServices = services()
+    let resolveBinding: (() => void) | null = null
+    const binding = new Promise<void>(resolve => {
+      resolveBinding = resolve
+    })
+    workbenchServices.deliveryApi!.bindTask = vi.fn(() => binding)
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    await userEvent.click(screen.getByTestId('mock-create-runtime-task'))
+    await waitFor(() => expect(workbenchServices.deliveryApi!.bindTask).toHaveBeenCalledTimes(1))
+
+    await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
+    expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
+      'data-conversation-open',
+      'true'
+    )
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute(
+      'data-runtime-task-id',
+      'runtime-created'
+    )
+
+    await act(async () => {
+      resolveBinding?.()
+      await binding
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute(
+        'data-runtime-task-id',
+        'runtime-created'
+      )
+    )
+    expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
+      'data-conversation-open',
+      'true'
+    )
+  })
+
   it('aggregates every bound task and creates another current-user task in the issue detail', async () => {
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [

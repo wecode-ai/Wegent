@@ -1165,9 +1165,21 @@ export function CloudTodoWorkspace({
   }
   const [selectedTaskBinding, setSelectedTaskBinding] = useState<SelectedTaskBinding | null>(null)
   const [taskComposerRequest, setTaskComposerRequest] = useState<TaskComposerRequest | null>(null)
+  const [taskPanelSessionId, setTaskPanelSessionId] = useState(0)
+  const taskPanelSessionIdRef = useRef(0)
+  const advanceTaskPanelSession = useCallback(() => {
+    taskPanelSessionIdRef.current += 1
+    setTaskPanelSessionId(taskPanelSessionIdRef.current)
+  }, [])
   const openTaskComposer = (request: TaskComposerRequest) => {
     workbench?.projectChat.requestCatalogs?.()
+    advanceTaskPanelSession()
     setTaskComposerRequest(request)
+  }
+  const openTaskBinding = (binding: SelectedTaskBinding) => {
+    advanceTaskPanelSession()
+    setTaskComposerRequest(null)
+    setSelectedTaskBinding(binding)
   }
   const [aitableFields, setAitableFields] = useState<AITableField[]>([])
   const [aitableGroupFieldId, setAitableGroupFieldId] = useState('')
@@ -3226,16 +3238,17 @@ export function CloudTodoWorkspace({
     }
   }, [selectedItem, selectedItemApi, taskPanelOpen])
 
-  function closeTaskPanel() {
+  const closeTaskPanel = useCallback(() => {
+    advanceTaskPanelSession()
     setSelectedTaskBinding(null)
     setTaskComposerRequest(null)
-  }
+  }, [advanceTaskPanelSession])
 
-  function closeIssuePanelStack() {
+  const closeIssuePanelStack = useCallback(() => {
     setBackgroundTaskItemId(null)
     setSelectedItem(null)
     closeTaskPanel()
-  }
+  }, [closeTaskPanel])
 
   function closeTopPanel() {
     closeIssuePanelStack()
@@ -3314,14 +3327,11 @@ export function CloudTodoWorkspace({
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
-      setBackgroundTaskItemId(null)
-      setSelectedItem(null)
-      setSelectedTaskBinding(null)
-      setTaskComposerRequest(null)
+      closeIssuePanelStack()
     }
     window.addEventListener('keydown', handleEscape, true)
     return () => window.removeEventListener('keydown', handleEscape, true)
-  }, [backgroundTaskItemId, selectedItem])
+  }, [backgroundTaskItemId, closeIssuePanelStack, selectedItem])
 
   return (
     <div
@@ -4425,8 +4435,7 @@ export function CloudTodoWorkspace({
                                       onClick={() => {
                                         if (item.can_view_detail !== false) {
                                           setBackgroundTaskItemId(null)
-                                          setSelectedTaskBinding(null)
-                                          setTaskComposerRequest(null)
+                                          closeTaskPanel()
                                           setSelectedItem(item)
                                         }
                                       }}
@@ -4443,7 +4452,7 @@ export function CloudTodoWorkspace({
                                         if (!binding) return
                                         setBackgroundTaskItemId(null)
                                         setSelectedItem(item)
-                                        setSelectedTaskBinding({
+                                        openTaskBinding({
                                           id: binding.id,
                                           device_id: binding.device_id,
                                           task_id: binding.task_id,
@@ -4651,8 +4660,7 @@ export function CloudTodoWorkspace({
                           data-testid={`cloud-todo-resource-conversation-${binding.id}`}
                           data-selected={selected ? 'true' : 'false'}
                           onClick={() => {
-                            setTaskComposerRequest(null)
-                            setSelectedTaskBinding({
+                            openTaskBinding({
                               ...binding,
                               work_item_id: selectedItem.id,
                             })
@@ -4694,8 +4702,7 @@ export function CloudTodoWorkspace({
                           type="button"
                           data-testid={`cloud-todo-resource-child-${child.id}`}
                           onClick={() => {
-                            setSelectedTaskBinding(null)
-                            setTaskComposerRequest(null)
+                            closeTaskPanel()
                             setSelectedItem(child)
                           }}
                           className="task-conversation-resource-row"
@@ -4751,8 +4758,7 @@ export function CloudTodoWorkspace({
                     ...child,
                     project_store: selectedItem.project_store,
                   }
-                  setSelectedTaskBinding(null)
-                  setTaskComposerRequest(null)
+                  closeTaskPanel()
                   setSelectedItem(locatedChild)
                 }}
                 onCreateTask={async workflowNodeId => {
@@ -4896,8 +4902,7 @@ export function CloudTodoWorkspace({
                 }}
                 onClose={closeIssuePanelStack}
                 onOpenTaskConversation={task => {
-                  setTaskComposerRequest(null)
-                  setSelectedTaskBinding({
+                  openTaskBinding({
                     ...task,
                     work_item_id: selectedItem.id,
                   })
@@ -4975,9 +4980,11 @@ export function CloudTodoWorkspace({
                 onClose={closeIssuePanelStack}
                 onBack={closeTaskPanel}
                 onAddressChange={address => {
+                  if (taskPanelSessionId !== taskPanelSessionIdRef.current) return
                   const activeTaskComposerRequest =
                     taskComposerRequest?.workItemId === selectedItem.id ? taskComposerRequest : null
                   if (!activeTaskComposerRequest) return
+                  advanceTaskPanelSession()
                   if (activeTaskComposerRequest.backgroundAfterSend) {
                     setBackgroundTaskItemId(null)
                     setSelectedItem(null)
@@ -5017,10 +5024,7 @@ export function CloudTodoWorkspace({
             inheritFromTask={taskComposerRequest.inheritFromTask}
             workflowNodeId={taskComposerRequest.workflowNodeId}
             onAddressChange={() => {
-              setBackgroundTaskItemId(null)
-              setSelectedItem(null)
-              setSelectedTaskBinding(null)
-              setTaskComposerRequest(null)
+              closeIssuePanelStack()
               setBoardRefreshNonce(value => value + 1)
             }}
             prepareTask={prepareSelectedItemTask}

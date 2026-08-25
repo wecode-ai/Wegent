@@ -352,7 +352,11 @@ export function useWorkbenchPaneSession({
   const queuedMessageBusyBlockSnapshotsRef = useRef(
     new Map<string, RuntimeTaskLifecycleSnapshot | null>()
   )
-  const resumePausedQueueAfterTurnRef = useRef<string | null>(null)
+  const resumePausedQueueAfterTurnRef = useRef<{
+    scopeKey: string
+    previousLifecycle: RuntimeTaskLifecycleSnapshot | null
+    observedManualTurn: boolean
+  } | null>(null)
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
@@ -494,12 +498,22 @@ export function useWorkbenchPaneSession({
 
   useEffect(() => {
     const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-    if (
-      resumePausedQueueAfterTurnRef.current !== queuedMessageScopeKey ||
-      (lifecycle?.turn.phase !== 'streaming' && lifecycle?.turn.outcome === null)
-    ) {
-      return
+    const pendingResume = resumePausedQueueAfterTurnRef.current
+    if (!pendingResume || pendingResume.scopeKey !== queuedMessageScopeKey || !lifecycle) return
+
+    if (!pendingResume.observedManualTurn) {
+      const previousTurn = pendingResume.previousLifecycle?.turn
+      const turnChanged =
+        !previousTurn ||
+        previousTurn.id !== lifecycle.turn.id ||
+        previousTurn.phase !== lifecycle.turn.phase ||
+        previousTurn.outcome !== lifecycle.turn.outcome
+      if (!turnChanged) return
+      pendingResume.observedManualTurn = true
     }
+
+    if (lifecycle.turn.phase === 'streaming' || lifecycle.turn.outcome === null) return
+
     resumePausedQueueAfterTurnRef.current = null
     setQueuedMessagesPaused(false)
   }, [
@@ -2333,18 +2347,23 @@ export function useWorkbenchPaneSession({
       const interruptedGuidance = queuedMessages.find(isInterruptedGuidance)
       if (!interruptedGuidance) {
         const queuedMessage = queuedMessages.find(message => message.status === 'queued')
+        const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
+        if (queuedMessage && queuedMessageScopeKey) {
+          resumePausedQueueAfterTurnRef.current = {
+            scopeKey: queuedMessageScopeKey,
+            previousLifecycle: lifecycle,
+            observedManualTurn: false,
+          }
+        }
         const sent = await send(inputOverride, options)
-        if (!sent) return
+        if (!sent) {
+          resumePausedQueueAfterTurnRef.current = null
+          return
+        }
         if (!queuedMessage) {
           setQueuedMessagesPaused(false)
           return
         }
-        const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-        if (lifecycle?.turn.phase === 'streaming' || lifecycle?.turn.outcome !== null) {
-          setQueuedMessagesPaused(false)
-          return
-        }
-        resumePausedQueueAfterTurnRef.current = queuedMessageScopeKey
         return
       }
 
@@ -2463,7 +2482,9 @@ export function useWorkbenchPaneSession({
       setError('当前对话还没有可压缩的 Codex 线程')
       return false
     }
-    if (paneStatus.isBusy) {
+    const currentTaskIsBusy =
+      lifecycleStore.getTask(currentRuntimeTask)?.derived.isBusy ?? paneStatus.isBusy
+    if (currentTaskIsBusy) {
       setError('当前回复进行中，完成后再压缩上下文')
       return false
     }
@@ -2471,7 +2492,14 @@ export function useWorkbenchPaneSession({
       return send('/compact')
     }
     return compactRuntimePaneTask(currentRuntimeTask, { onError: setError })
-  }, [compactRuntimePaneTask, currentRuntimeTask, paneStatus.isBusy, send, setError])
+  }, [
+    compactRuntimePaneTask,
+    currentRuntimeTask,
+    lifecycleStore,
+    paneStatus.isBusy,
+    send,
+    setError,
+  ])
 
   const setCurrentGoal = useCallback(async () => {
     projectChat.setSelectedModelOption('collaborationMode', 'default')

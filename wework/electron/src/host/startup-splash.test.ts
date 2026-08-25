@@ -61,12 +61,24 @@ describe('StartupSplash', () => {
       asset('splash.js'),
     ])
 
-    expect(html).toContain('class="loading-track"')
-    expect(html).toContain('class="loading-bar"')
-    expect(styles).toContain('@keyframes loading-slide')
-    expect(styles).toContain('animation: loading-slide')
-    expect(script.match(/requestAnimationFrame/g)).toHaveLength(2)
-    expect(script).toContain("dataset.animationReady = 'true'")
+    expect(html).toContain('class="workbench-scene"')
+    expect(html).toContain('id="morph-primary"')
+    expect(html).toContain('class="stage-indicator"')
+    expect(html).toContain('class="robot"')
+    expect(html).toContain('class="human"')
+    expect(html).toContain('class="monitor"')
+    expect(html).toContain('aria-valuemax="3"')
+    expect(styles).toContain('@keyframes robot-bob')
+    expect(styles).toContain('@keyframes working-arm')
+    expect(styles).toContain('@media (prefers-color-scheme: dark)')
+    expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
+    expect(script).toContain('const stages =')
+    expect(script).toContain('requestAnimationFrame(animateMorph)')
+    expect(script).toContain("navigator.language.toLowerCase().startsWith('zh')")
+    expect(script).toContain("stageIndicator.setAttribute('aria-valuenow'")
+    expect(script).toMatch(
+      /requestAnimationFrame\(\(\) => \{\s+requestAnimationFrame\(\(\) => \{\s+document\.documentElement\.dataset\.animationReady = 'true'/
+    )
   })
 
   test('creates a secure branded splash and records its visible animation timeline', async () => {
@@ -84,6 +96,7 @@ describe('StartupSplash', () => {
         resizable: false,
         alwaysOnTop: true,
         skipTaskbar: true,
+        hasShadow: false,
         backgroundColor: '#00000000',
         webPreferences: {
           contextIsolation: true,
