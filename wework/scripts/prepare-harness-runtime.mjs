@@ -1,6 +1,16 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  access,
+  cp,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -14,6 +24,7 @@ import {
 } from './lib/deepseek-harness-signing.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { normalizeFileViewerAssetManifest } from './lib/harness-runtime-metadata.mjs'
+import { assertPortableHarnessRuntime } from './lib/portable-runtime.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const coreDshVersion = '0.1.1-rc.2'
@@ -47,7 +58,7 @@ const cacheDirectory = path.join(root, 'node_modules', '.cache')
 const assetDirectory = path.join(cacheDirectory, 'harness-runtime-assets')
 const materializedRoot = path.join(cacheDirectory, 'harness-runtime-dev')
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
-const archiveFormatVersion = 'dsh-runtime-tar-gzip-v4'
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v5'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -344,7 +355,19 @@ async function buildRuntime(runtime) {
       await mkdir(path.dirname(destination), { recursive: true })
       await writeFile(destination, entry.content)
     }
-    await run(pnpmCommand, ['install', '--prod', '--frozen-lockfile'], staging)
+    await run(
+      pnpmCommand,
+      [
+        'install',
+        '--prod',
+        '--frozen-lockfile',
+        '--virtual-store-dir=node_modules/.pnpm',
+        '--package-import-method=copy',
+        '--config.enable-global-virtual-store=false',
+      ],
+      staging
+    )
+    await assertPortableHarnessRuntime(staging)
     await writeFile(
       path.join(staging, 'runtime.json'),
       `${JSON.stringify(

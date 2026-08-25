@@ -13,6 +13,16 @@ workflows. It is built with Electron, Vite, React, and TypeScript.
 - Package macOS, Windows, and Linux applications with Executor, Codex, DWS,
   plugins, and runtime resources.
 
+## Startup Experience
+
+Wework 启动时以“人和机器人共同准备工作台”为核心语义，依次呈现整理项目、连接工具和唤醒智能体三个阶段。启动动效必须保持文案与阶段图形同步，支持深色模式和减少动态效果偏好，并避免原生窗口阴影形成额外黑色边框。
+
+The Wework startup experience represents a person and a robot preparing the
+workbench together. It progresses through project organization, tool
+connection, and agent activation. Keep the copy synchronized with the visual
+stage, support dark mode and reduced motion, and avoid native window shadows
+that create an extra dark outline.
+
 ## Development
 
 Requires Node.js 20+ and pnpm.
@@ -39,10 +49,7 @@ Prepare the bundled resources and build the Electron application for the
 current platform:
 
 ```bash
-pnpm --filter wework run prepare:codex --materialize
-pnpm --filter wework run prepare:dws
-pnpm --filter wework run prepare:harness-runtime --materialize
-pnpm --filter wework build:desktop
+pnpm --filter wework build:release
 ```
 
 GitHub releases are built by `.github/workflows/wework-app.yml`.
