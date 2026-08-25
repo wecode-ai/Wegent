@@ -202,8 +202,8 @@ def test_resolves_uploaded_video_to_fresh_playback_url(monkeypatch) -> None:
         "wecode.video.services.generation_extension.fetch_playback",
         lambda media_ids, uid: {
             "media-1": PlaybackInfo(
-                url="http://cdn.example.com/video.mp4",
-                cover_url="http://cdn.example.com/video-cover.jpg",
+                url="http://f.video.weibocdn.com/video.mp4",
+                cover_url="http://wx1.sinaimg.cn/video-cover.jpg",
             )
         },
     )
@@ -214,10 +214,48 @@ def test_resolves_uploaded_video_to_fresh_playback_url(monkeypatch) -> None:
     )
 
     assert playback is not None
-    assert playback.url == "https://cdn.example.com/video.mp4"
+    assert playback.url == "https://f.video.weibocdn.com/video.mp4"
     assert playback.media_type == "video/mp4"
-    assert playback.cover_url == "https://cdn.example.com/video-cover.jpg"
+    assert playback.cover_url == "https://wx1.sinaimg.cn/video-cover.jpg"
     assert playback.delivery_mode == "direct"
+
+
+def test_converts_uploaded_weibo_internal_oss_url_for_browser(monkeypatch) -> None:
+    resolver = WeiboMediaAttachmentPlaybackResolver()
+    monkeypatch.setattr(
+        "wecode.video.services.generation_extension.video_media_settings."
+        "WEIBO_MEDIA_UPLOAD_DEFAULT_UID",
+        "1234567890",
+    )
+    monkeypatch.setattr(
+        "wecode.video.services.generation_extension.fetch_playback",
+        lambda media_ids, uid: {
+            "media-1": PlaybackInfo(
+                url=(
+                    "http://weibo-short-video-tmp."
+                    "oss-cn-beijing-internal.aliyuncs.com/video.mp4"
+                ),
+                cover_url=(
+                    "https://weibo-short-video-tmp."
+                    "oss-cn-beijing-internal.aliyuncs.com/video-cover.jpg"
+                ),
+            )
+        },
+    )
+
+    playback = resolver.resolve_playback(
+        type_data={"weibo_video_upload": {"media_id": "media-1"}},
+        user_id=1,
+    )
+
+    assert playback is not None
+    assert playback.url == (
+        "https://weibo-short-video-tmp." "oss-cn-beijing.aliyuncs.com/video.mp4"
+    )
+    assert playback.delivery_mode == "direct"
+    assert playback.cover_url == (
+        "https://weibo-short-video-tmp." "oss-cn-beijing.aliyuncs.com/video-cover.jpg"
+    )
 
 
 def test_resolves_uploaded_audio_to_fresh_playback_url(monkeypatch) -> None:
@@ -230,7 +268,7 @@ def test_resolves_uploaded_audio_to_fresh_playback_url(monkeypatch) -> None:
     monkeypatch.setattr(
         "wecode.video.services.generation_extension.fetch_playback",
         lambda media_ids, uid: {
-            "media-2": PlaybackInfo(url="https://cdn.example.com/audio.mp3")
+            "media-2": PlaybackInfo(url="https://f.video.weibocdn.com/audio.mp3")
         },
     )
 
@@ -240,7 +278,7 @@ def test_resolves_uploaded_audio_to_fresh_playback_url(monkeypatch) -> None:
     )
 
     assert playback is not None
-    assert playback.url == "https://cdn.example.com/audio.mp3"
+    assert playback.url == "https://f.video.weibocdn.com/audio.mp3"
     assert playback.media_type == "audio/mpeg"
     assert playback.delivery_mode == "direct"
 
@@ -250,7 +288,12 @@ def test_resolves_legacy_weibo_video_inside_internal_adapter(monkeypatch) -> Non
     owner = MagicMock(id=7)
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = owner
-    get_download_url = MagicMock(return_value="http://cdn.example.com/legacy.mp4")
+    get_download_url = MagicMock(
+        return_value=(
+            "http://weibo-short-video-tmp."
+            "oss-cn-beijing-internal.aliyuncs.com/legacy.mp4"
+        )
+    )
     monkeypatch.setattr(
         "wecode.video.services.generation_extension.SessionLocal",
         lambda: db,
@@ -271,7 +314,9 @@ def test_resolves_legacy_weibo_video_inside_internal_adapter(monkeypatch) -> Non
     )
 
     assert playback is not None
-    assert playback.url == "https://cdn.example.com/legacy.mp4"
+    assert playback.url == (
+        "https://weibo-short-video-tmp." "oss-cn-beijing.aliyuncs.com/legacy.mp4"
+    )
     assert playback.media_type == "video/mp4"
     assert playback.delivery_mode == "direct"
     get_download_url.assert_called_once_with(12345, owner)

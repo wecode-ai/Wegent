@@ -76,6 +76,36 @@ describe('VideoPlayer', () => {
     expect(download.closest('.absolute.bottom-0')).toBeNull()
   })
 
+  it.each([
+    { label: 'landscape', videoWidth: 1280, videoHeight: 720, width: '359px', height: '202px' },
+    { label: 'portrait', videoWidth: 720, videoHeight: 1280, width: '202px', height: '359px' },
+    { label: 'square', videoWidth: 1024, videoHeight: 1024, width: '202px', height: '202px' },
+  ])('uses the compact weibo message size for $label video', dimensions => {
+    const { container } = render(
+      <VideoPlayer videoUrl="https://example.com/result.mp4" useMessageDisplaySize />
+    )
+    const player = screen.getByTestId('generated-video-player')
+    const video = container.querySelector('video') as HTMLVideoElement
+    Object.defineProperties(video, {
+      videoWidth: {
+        configurable: true,
+        value: dimensions.videoWidth,
+      },
+      videoHeight: {
+        configurable: true,
+        value: dimensions.videoHeight,
+      },
+    })
+
+    fireEvent.loadedMetadata(video)
+
+    expect(player).toHaveStyle({
+      width: dimensions.width,
+      height: dimensions.height,
+    })
+    expect(video).toHaveClass('h-full', 'object-contain')
+  })
+
   it('seeks backward and forward with the arrow keys', () => {
     const { container } = render(
       <VideoPlayer videoUrl="https://example.com/result.mp4" duration={20} />

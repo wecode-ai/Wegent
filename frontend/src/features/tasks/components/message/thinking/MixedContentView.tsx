@@ -702,6 +702,7 @@ const MixedContentView = memo(function MixedContentView({
                 coverUrl={item.coverUrl ?? undefined}
                 duration={item.duration ?? undefined}
                 attachmentId={item.attachmentId ?? undefined}
+                useMessageDisplaySize
                 isPlaceholder={item.isPlaceholder}
                 progress={item.progress}
               />
