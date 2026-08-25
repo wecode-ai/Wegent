@@ -28,9 +28,6 @@ export class SystemSleepController {
 
   handleExecutorEvent(event: string, payload: Record<string, unknown>): void {
     const taskId = typeof payload.taskId === 'string' ? payload.taskId : null
-    if (event.startsWith('response.')) {
-      console.log(`Executor sleep event: event=${event} task_id=${taskId ?? 'missing'}`)
-    }
     if (!taskId) return
     const source = `executor:${taskId}`
     if (event === 'response.created') {
