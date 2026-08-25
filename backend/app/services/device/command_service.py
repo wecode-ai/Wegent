@@ -71,6 +71,7 @@ REMOTE_MUTATING_COMMAND_KEYS = frozenset(
         "git_add_all",
         "git_commit",
         "git_push",
+        "sync_git_credentials",
         "turn_file_changes_revert",
     }
 )
@@ -81,6 +82,7 @@ CLOUD_DEVICE_COMMAND_KEYS = REMOTE_DEVICE_COMMAND_KEYS | frozenset(
     {"read_runtime_auth_file", "sync_runtime_auth_file"}
 )
 LOCAL_COMMAND_DEVICE_TYPES = frozenset({DeviceType.LOCAL, DeviceType.APP})
+INTERNAL_DEVICE_COMMAND_KEYS = frozenset({"sync_git_credentials"})
 
 
 class DeviceCommandError(RuntimeError):
@@ -327,12 +329,18 @@ async def execute_configured_device_command(
     timeout_seconds: int = DEFAULT_COMMAND_TIMEOUT_SECONDS,
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
     command_config: Optional[Mapping[str, Any]] = None,
+    allow_internal: bool = False,
 ) -> dict[str, Any]:
     """Execute a configured local device command for internal Backend callers."""
     device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
     if not device_kind:
         raise DeviceCommandNotFoundError("Device not found or access denied")
     device_type = _device_kind_type(device_kind)
+
+    if command_key in INTERNAL_DEVICE_COMMAND_KEYS and not allow_internal:
+        raise DeviceCommandUnknownKeyError(
+            f"Device command key '{command_key}' is not available through the command API"
+        )
 
     try:
         command_definition = resolve_local_device_command(

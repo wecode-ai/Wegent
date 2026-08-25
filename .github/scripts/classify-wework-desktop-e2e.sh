@@ -21,6 +21,7 @@ core_segments=(
   temporary-chat
   workspace-attachments
   rendering-extensions
+  change-request-status
   claude-runtime
   local-file-preview
   local-harness
@@ -82,7 +83,7 @@ core_shards=(
   rendering-extensions,runtime-task-queue,local-file-preview
   project-ai-settings,window-lifecycle,permission-modes
   core-task-flow,temporary-chat,codex-notification-isolation
-  claude-runtime,workspace-attachments,local-harness
+  claude-runtime,workspace-attachments,local-harness,change-request-status
   conversation-state,goal-lifecycle,workspace-tabs
   resilience,supervisor-lifecycle
   model-routing,project-automation,automation-lifecycle
@@ -438,6 +439,16 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs)
       select_target "core:codex-notification-isolation"
+      return
+      ;;
+
+    # Git hosting preferences and explicit device synchronization share one
+    # independently bootstrapped real-Tauri checkpoint.
+    wework/src/api/devices* | \
+      wework/src/components/settings/GitHostingSettingsPage* | \
+      wework/src/types/gitCredentials.ts | \
+      wework/e2e/desktop/scenarios/change-request-status.scenario.mjs)
+      select_target "core:change-request-status"
       return
       ;;
 

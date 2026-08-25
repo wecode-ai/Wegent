@@ -33,7 +33,6 @@ from app.schemas.device import DeviceConnectionMode, DeviceType
 from app.services.device.base_provider import BaseDeviceProvider
 from app.services.device.version_service import executor_version_service
 from wecode.config.nevis_config import nevis_settings
-from wecode.service.cloud_device_git_tokens import build_git_token_envs
 from wecode.service.cloud_device_script import (
     build_cloud_device_runtime_envs,
     generate_simple_startup_script,
@@ -120,7 +119,6 @@ class CloudDeviceProvider(BaseDeviceProvider):
         auth_token: str,
         backend_url: str,
         user_jwt_token: str = "",
-        git_tokens: Optional[List[Dict[str, Any]]] = None,
         mail_email: str = "",
         mail_password: str = "",
     ) -> Dict[str, Any]:
@@ -133,7 +131,6 @@ class CloudDeviceProvider(BaseDeviceProvider):
             auth_token: Auth token for executor to connect
             backend_url: Backend URL for executor connection
             user_jwt_token: Current user's JWT token for user-scoped integrations.
-            git_tokens: User git tokens passed through to the cloud device.
             mail_email: Optional mail account username for himalaya mail skill.
             mail_password: Optional mail account password (pass-through only).
 
@@ -182,10 +179,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
                 )
 
         # Generate startup script with server-generated device info
-        sandbox_envs = {
-            **build_git_token_envs(git_tokens),
-            **build_cloud_device_runtime_envs(server_device_id),
-        }
+        sandbox_envs = build_cloud_device_runtime_envs(server_device_id)
         user_data = generate_simple_startup_script(
             user_name=user_name,
             backend_url=backend_url,
@@ -195,7 +189,6 @@ class CloudDeviceProvider(BaseDeviceProvider):
             install_script_token=nevis_settings.NEVIS_EXECUTOR_DOWNLOAD_TOKEN,
             mail_email=mail_email,
             mail_password=mail_password,
-            git_tokens=git_tokens,
             device_id=server_device_id,
             device_name=server_device_name,
             ubuntu_password=ubuntu_password,

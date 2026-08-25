@@ -2,18 +2,18 @@
 sidebar_position: 1
 ---
 
-# Cloud Device Git Token Clone
+# Manually Sync Device Git Configuration
 
-If the current user has GitLab tokens configured in the internal secret service, cloud device creation injects supported-domain tokens into the Nevis VM environment and the startup script environment:
+Cloud device creation no longer reads or injects Git tokens. In Wework, the user opens Git hosting settings, selects one online ClaudeCode cloud or remote device, and clicks **Sync Git configuration**.
 
-| Variable | Git Domain | Purpose |
-|----------|------------|---------|
-| `GIT_INTRA_WEIBO_COM_TOKEN` | `git.intra.weibo.com` | Allows processes on the cloud device to access the matching GitLab repositories |
-| `GIT_STAFF_SINA_COM_CN_TOKEN` | `git.staff.sina.com.cn` | Allows processes on the cloud device to access the matching GitLab repositories |
-| `GITLAB_WEIBO_CN_TOKEN` | `gitlab.weibo.cn` | Allows processes on the cloud device to access the matching GitLab repositories |
+The Backend selects the first configured account for each domain and resolves every token before synchronization. If any effective token is unavailable, the request fails before changing the device. Tokens are never returned to Wework or written to URLs, command arguments, Device CRDs, cloud-init, or logs.
 
-These Git tokens are read from the external secret service only during cloud device creation and injected into the runtime environment. They are not written to the Device CRD, database, or logs. Failure to fetch the tokens does not block cloud device creation.
+The device stores Wegent-managed state under `~/.wecode/git-auth/`:
 
-The startup script configures Git for the `ubuntu` user: supported-domain `ssh://git@...` and `git@...:` repository URLs are automatically rewritten to HTTPS through `url.*.insteadOf`, and `~/.wecode/git-askpass.sh` authenticates with the current Wegent username and the token from the environment variables above.
+- Directories use `0700`; tokens and CLI configuration use `0600`.
+- The Git credential helper returns credentials only for exact HTTPS domain matches.
+- Common GitHub, GitLab, Gitee, and Gitea SSH URLs are rewritten to credential-free HTTPS. Gerrit SSH URLs remain unchanged.
+- Commit identity uses conditional Git includes based on remote domains and does not override repository-local configuration.
+- When `gh` or `glab` is installed, synchronization also configures a separate Wegent CLI directory. A missing CLI or failed CLI login produces a warning without disabling Git authentication.
 
-To ensure newly opened interactive shells can also clone repositories, the startup script writes the Git username and token environment variables to `~/.wecode/git-token-env` with `0600` permissions and loads it from `~/.bashrc`. Tokens are not written into Git remote URLs or `.gitconfig`.
+Each synchronization atomically replaces the Wegent-managed desired state and removes stale domains. When the cloud account list is empty, Wework asks for confirmation and then removes only Wegent-managed Git and CLI configuration, preserving user-owned configuration.

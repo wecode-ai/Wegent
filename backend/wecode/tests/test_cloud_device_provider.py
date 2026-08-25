@@ -73,23 +73,10 @@ async def test_create_device_passes_runtime_envs_to_nevis(test_db, monkeypatch):
         user_name="alice",
         auth_token="device-api-key",
         backend_url="https://backend.example.com",
-        git_tokens=[
-            {
-                "type": "gitlab",
-                "git_domain": "git.intra.weibo.com",
-                "git_token": "git-intra-token",
-            },
-            {
-                "type": "gitlab",
-                "git_domain": "gitlab.weibo.cn",
-                "git_token": "gitlab-weibo-token",
-            },
-        ],
     )
 
     envs = client.create_sandbox_kwargs["envs"]
-    assert envs["GIT_INTRA_WEIBO_COM_TOKEN"] == "git-intra-token"
-    assert envs["GITLAB_WEIBO_CN_TOKEN"] == "gitlab-weibo-token"
+    assert all("GIT" not in key or "WEGENT" in key for key in envs)
     assert envs["DEVICE_TYPE"] == "cloud"
     assert envs["WEGENT_EXECUTOR_HOME"] == "/home/ubuntu/.wegent-executor"
     assert envs["LOCAL_WORKSPACE_ROOT"] == ("/home/ubuntu/.wegent-executor/workspace")

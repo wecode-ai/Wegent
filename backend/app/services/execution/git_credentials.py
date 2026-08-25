@@ -14,7 +14,7 @@ from shared.models.execution import (
     GIT_AUTH_TRANSPORT_LEGACY_USER_SECRET,
     GIT_AUTH_TRANSPORT_NONE,
 )
-from shared.utils.crypto import encrypt_git_token, is_token_encrypted
+from shared.utils.crypto import decrypt_git_token, encrypt_git_token, is_token_encrypted
 from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,26 @@ def classify_git_auth_transport(user_info: dict) -> str:
     if is_token_encrypted(token):
         return GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN
     return GIT_AUTH_TRANSPORT_NONE
+
+
+def resolve_plaintext_git_token(user: User, account: dict) -> str:
+    """Resolve one stored Git account token without logging secret contents."""
+
+    raw_token = str(account.get("git_token") or "").strip()
+    if raw_token == "***":
+        raw_token = _resolve_placeholder_token(
+            user,
+            str(account.get("git_domain") or ""),
+            account,
+        )
+    elif raw_token and is_token_encrypted(raw_token):
+        decrypted = decrypt_git_token(raw_token)
+        if not decrypted or decrypted == raw_token:
+            return ""
+        raw_token = decrypted
+
+    raw_token = str(raw_token or "").strip()
+    return "" if raw_token == "***" else raw_token
 
 
 def extract_git_domain(git_url: str | None) -> str | None:
