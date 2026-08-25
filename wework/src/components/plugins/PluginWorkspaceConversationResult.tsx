@@ -45,6 +45,7 @@ export function PluginWorkspaceConversationResult({
   const pluginApi = useMemo(() => createDefaultPluginApi(), [])
 
   useEffect(() => {
+    if (!result) return undefined
     let active = true
     void pluginApi
       .getCapabilities()
@@ -59,7 +60,7 @@ export function PluginWorkspaceConversationResult({
     return () => {
       active = false
     }
-  }, [pluginApi])
+  }, [pluginApi, result])
 
   const searchUsers = useCallback(
     async (query: string) => (await pluginApi.searchPluginShareUsers(query)).users,
