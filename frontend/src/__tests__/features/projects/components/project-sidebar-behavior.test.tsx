@@ -18,6 +18,7 @@ const refreshProjectsMock = jest.fn()
 const refreshTasksMock = jest.fn()
 const deleteProjectMock = jest.fn()
 const toggleProjectExpandedMock = jest.fn()
+const setProjectSectionCollapsedMock = jest.fn()
 const setSelectedProjectTaskIdMock = jest.fn()
 const setSelectedTaskMock = jest.fn()
 let isWorkspaceEnabledMock = true
@@ -131,6 +132,8 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
     isLoading: false,
     expandedProjects: new Set(projects.map(project => project.id)),
     toggleProjectExpanded: toggleProjectExpandedMock,
+    isProjectSectionCollapsed: false,
+    setProjectSectionCollapsed: setProjectSectionCollapsedMock,
     selectedProjectTaskId: null,
     setSelectedProjectTaskId: setSelectedProjectTaskIdMock,
     refreshProjects: refreshProjectsMock,
@@ -168,21 +171,19 @@ describe('project sidebar behavior', () => {
     isWorkspaceEnabledMock = true
   })
 
-  test('renders the unified project section as one compact row by default', () => {
+  test('renders the unified project section expanded by default', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
     expect(screen.getByTestId('project-section-header')).toHaveClass('h-6')
     expect(screen.getByText('workspaceSection.title')).toBeInTheDocument()
     expect(screen.queryByText('section.title')).not.toBeInTheDocument()
     expect(screen.queryByText('(2)')).not.toBeInTheDocument()
-    expect(screen.queryByText('pathless-project')).not.toBeInTheDocument()
-    expect(screen.queryByText('workspace-project')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('project-section-toggle'))
-
     expect(screen.getByTestId('project-section-list')).toHaveClass('mt-1', 'space-y-0.5')
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.getByText('workspace-project')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('project-section-toggle'))
+    expect(setProjectSectionCollapsedMock).toHaveBeenCalledTimes(1)
   })
 
   test('keeps workspace projects visible in the unified section when workspace creation is disabled', () => {
@@ -190,19 +191,18 @@ describe('project sidebar behavior', () => {
 
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
-    fireEvent.click(screen.getByTestId('project-section-toggle'))
-
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.getByText('workspace-project')).toBeInTheDocument()
+    expect(screen.queryByTestId('create-workspace-project-button')).not.toBeInTheDocument()
   })
 
-  test('opens project and group creation from the shared create menu', () => {
+  test('opens group creation directly and keeps workspace creation available', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
     expect(screen.getByTestId('create-workspace-project-menu-item')).toHaveTextContent(
       'workspaceCreate.title'
     )
-    expect(screen.getByTestId('create-group-button')).toHaveTextContent('create.title')
+    expect(screen.getByTestId('create-group-button')).toHaveAttribute('title', 'create.title')
 
     fireEvent.click(screen.getByTestId('create-group-button'))
     expect(screen.getByTestId('project-create-dialog-mode')).toHaveTextContent('group')
@@ -214,12 +214,12 @@ describe('project sidebar behavior', () => {
   test('starts a new conversation inside either a group or a workspace project', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
-    fireEvent.click(screen.getByTestId('project-section-toggle'))
-
     const newConversationButtons = screen.getAllByTestId('project-new-conversation-btn')
     expect(newConversationButtons).toHaveLength(2)
+    expect(newConversationButtons[0]).toHaveClass('opacity-100')
+    expect(screen.getAllByTestId('project-menu-new-conversation-btn')).toHaveLength(2)
 
-    fireEvent.click(newConversationButtons[0])
+    fireEvent.click(screen.getAllByTestId('project-menu-new-conversation-btn')[0])
     expect(pushMock).toHaveBeenLastCalledWith('/chat?conversationGroupId=1')
 
     fireEvent.click(newConversationButtons[1])
@@ -231,7 +231,6 @@ describe('project sidebar behavior', () => {
   test('opens workspace project tasks in device chat from the unified section', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
-    fireEvent.click(screen.getByTestId('project-section-toggle'))
     fireEvent.click(screen.getByText('workspace task'))
 
     expect(pushMock).toHaveBeenCalledWith('/devices/chat?taskId=202&projectId=2&deviceId=device-1')
@@ -240,7 +239,6 @@ describe('project sidebar behavior', () => {
   test('keeps a grouped device conversation on the device chat page', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
-    fireEvent.click(screen.getByTestId('project-section-toggle'))
     fireEvent.click(screen.getByText('pathless task'))
 
     expect(pushMock).toHaveBeenCalledWith('/devices/chat?taskId=101')

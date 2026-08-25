@@ -20,6 +20,7 @@
     "title": "Create project or group"
   },
   "actions": {
+    "menu": "More actions",
     "edit": "Edit",
     "delete": "Delete"
   },

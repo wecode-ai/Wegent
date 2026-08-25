@@ -11,6 +11,11 @@ import { PROJECT_DELETED_EVENT, ProjectDeletedEventDetail } from '@/features/pro
 import type { ProjectWithTasks } from '@/types/api'
 
 const toastMock = jest.fn()
+let mockSearchParams = new URLSearchParams()
+
+jest.mock('next/navigation', () => ({
+  useSearchParams: () => mockSearchParams,
+}))
 
 jest.mock('@/apis/projects', () => ({
   projectApis: {
@@ -61,12 +66,22 @@ function DeleteProjectProbe() {
 }
 
 function ProjectExpansionProbe() {
-  const { expandedProjects, toggleProjectExpanded, refreshProjects } = useProjectContext()
+  const {
+    expandedProjects,
+    toggleProjectExpanded,
+    refreshProjects,
+    selectedProjectTaskId,
+    isProjectSectionCollapsed,
+  } = useProjectContext()
 
   return (
     <div>
       <span data-testid="project-expansion-state">
         {expandedProjects.has(42) ? 'expanded' : 'collapsed'}
+      </span>
+      <span data-testid="selected-project-task">{selectedProjectTaskId ?? 'none'}</span>
+      <span data-testid="project-section-state">
+        {isProjectSectionCollapsed ? 'collapsed' : 'expanded'}
       </span>
       <button type="button" onClick={() => toggleProjectExpanded(42)}>
         toggle project
@@ -96,6 +111,7 @@ const projectFixture: ProjectWithTasks = {
 describe('ProjectContext delete project behavior', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockSearchParams = new URLSearchParams()
     mockedProjectApis.getProjects.mockResolvedValue({ total: 0, items: [] })
     mockedProjectApis.deleteProject.mockResolvedValue({ message: 'ok' })
   })
@@ -168,6 +184,41 @@ describe('ProjectContext delete project behavior', () => {
     await waitFor(() => {
       expect(mockedProjectApis.getProjects).toHaveBeenCalledTimes(2)
       expect(screen.getByTestId('project-expansion-state')).toHaveTextContent('expanded')
+    })
+  })
+
+  test('expands the group containing the task selected by the current route', async () => {
+    mockSearchParams = new URLSearchParams({ taskId: '101' })
+    mockedProjectApis.getProjects.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          ...projectFixture,
+          is_expanded: false,
+          task_count: 1,
+          tasks: [
+            {
+              task_id: 101,
+              task_title: 'selected conversation',
+              task_status: 'COMPLETED',
+              is_group_chat: false,
+              project_id: 42,
+            },
+          ],
+        },
+      ],
+    })
+
+    render(
+      <ProjectProvider>
+        <ProjectExpansionProbe />
+      </ProjectProvider>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('selected-project-task')).toHaveTextContent('101')
+      expect(screen.getByTestId('project-expansion-state')).toHaveTextContent('expanded')
+      expect(screen.getByTestId('project-section-state')).toHaveTextContent('expanded')
     })
   })
 })

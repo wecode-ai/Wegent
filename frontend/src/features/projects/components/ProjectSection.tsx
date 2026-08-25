@@ -56,6 +56,9 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
     selectedProjectTaskId,
     setSelectedProjectTaskId,
     refreshProjects,
+    isProjectSectionCollapsed,
+    setProjectSectionCollapsed,
+    isWorkspaceEnabled,
   } = useProjectContext()
   const { selectTask } = useTaskSession()
 
@@ -87,8 +90,6 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [selectedProject, setSelectedProject] = useState<ProjectWithTasks | null>(null)
 
-  // Section collapsed state
-  const [sectionCollapsed, setSectionCollapsed] = useState(true)
   const sectionTitle = t('workspaceSection.title')
 
   const handleOpenCreateDialog = (mode: 'group' | 'workspace') => {
@@ -142,50 +143,59 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
         <button
           type="button"
           data-testid="project-section-toggle"
-          onClick={() => setSectionCollapsed(!sectionCollapsed)}
-          aria-expanded={!sectionCollapsed}
+          onClick={() => setProjectSectionCollapsed(previous => !previous)}
+          aria-expanded={!isProjectSectionCollapsed}
           className="flex h-full min-w-0 flex-1 items-center justify-between"
         >
           <span className="truncate">{sectionTitle}</span>
-          {sectionCollapsed ? (
+          {isProjectSectionCollapsed ? (
             <ChevronDown className="h-3.5 w-3.5 flex-shrink-0" />
           ) : (
             <ChevronUp className="h-3.5 w-3.5 flex-shrink-0" />
           )}
         </button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              data-testid="create-workspace-project-button"
-              variant="ghost"
-              size="sm"
-              className="ml-1 h-5 w-5 p-0 text-text-muted hover:text-text-primary transition-colors rounded"
-              title={t('createMenu.title')}
-            >
-              <FolderPlus className="w-3.5 h-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-36">
-            <DropdownMenuItem
-              data-testid="create-workspace-project-menu-item"
-              onClick={() => handleOpenCreateDialog('workspace')}
-            >
-              <FolderPlus className="w-3.5 h-3.5 mr-2" />
-              {t('workspaceCreate.title')}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              data-testid="create-group-button"
-              onClick={() => handleOpenCreateDialog('group')}
-            >
-              <Folder className="w-3.5 h-3.5 mr-2" />
-              {t('create.title')}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div className="ml-1 flex items-center">
+          <Button
+            data-testid="create-group-button"
+            variant="ghost"
+            size="sm"
+            className="h-5 w-5 p-0 text-text-muted hover:text-text-primary transition-colors rounded"
+            onClick={() => handleOpenCreateDialog('group')}
+            title={t('create.title')}
+            aria-label={t('create.title')}
+          >
+            <FolderPlus className="w-3.5 h-3.5" />
+          </Button>
+          {isWorkspaceEnabled && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  data-testid="create-workspace-project-button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 w-4 p-0 text-text-muted hover:text-text-primary transition-colors rounded"
+                  title={t('workspaceCreate.title')}
+                  aria-label={t('workspaceCreate.title')}
+                >
+                  <ChevronDown className="w-3 h-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-36">
+                <DropdownMenuItem
+                  data-testid="create-workspace-project-menu-item"
+                  onClick={() => handleOpenCreateDialog('workspace')}
+                >
+                  <FolderPlus className="w-3.5 h-3.5 mr-2" />
+                  {t('workspaceCreate.title')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
       </div>
 
       {/* Project List */}
-      {!sectionCollapsed && (
+      {!isProjectSectionCollapsed && (
         <div className="mt-1 space-y-0.5" data-testid="project-section-list">
           {isLoading ? (
             <div className="px-4 py-2 text-xs text-text-muted">{t('common:loading')}</div>
@@ -297,6 +307,8 @@ function ProjectItem({
         <button
           onClick={onToggleExpand}
           className="flex items-center justify-center w-5 h-5 text-text-secondary hover:text-text-primary"
+          data-testid={`project-item-toggle-${project.id}`}
+          aria-label={project.name}
         >
           {isExpanded ? (
             <ChevronDown className="w-3.5 h-3.5" />
@@ -325,11 +337,22 @@ function ProjectItem({
               variant="ghost"
               size="sm"
               className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary"
+              data-testid={`project-actions-menu-btn-${project.id}`}
+              aria-label={t('actions.menu')}
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-32">
+            {onNewConversation && (
+              <DropdownMenuItem
+                data-testid="project-menu-new-conversation-btn"
+                onClick={() => onNewConversation(project)}
+              >
+                <SquarePen className="w-3.5 h-3.5 mr-2" />
+                {t('workspace.newConversation')}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={onEdit}>
               <Pencil className="w-3.5 h-3.5 mr-2" />
               {t('actions.edit')}
@@ -346,12 +369,16 @@ function ProjectItem({
           <Button
             variant="ghost"
             size="sm"
-            className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary"
+            className={cn(
+              'h-5 w-5 p-0 transition-opacity text-text-muted hover:text-text-primary',
+              isExpanded || taskCount === 0 ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            )}
             onClick={e => {
               e.stopPropagation()
               onNewConversation(project)
             }}
             title={t('workspace.newConversation')}
+            aria-label={t('workspace.newConversation')}
             data-testid="project-new-conversation-btn"
           >
             <SquarePen className="w-3.5 h-3.5" />
