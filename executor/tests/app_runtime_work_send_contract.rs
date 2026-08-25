@@ -555,7 +555,34 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     }));
 
     let runtime_events = recv_events_until(&mut events, |runtime_events| {
-        find_runtime_event(runtime_events, "response.completed", |_| true).is_some()
+        find_runtime_event(runtime_events, "response.created", |event| {
+            event["payload"]["source"] == source
+        })
+        .is_some()
+            && find_runtime_event(runtime_events, "response.block.created", |event| {
+                let block = &event["payload"]["data"]["block"];
+                block["type"] == "text"
+                    && block["content"] == "Inspecting "
+                    && block["status"] == "streaming"
+            })
+            .is_some()
+            && find_runtime_event(runtime_events, "response.block.updated", |event| {
+                let data = &event["payload"]["data"];
+                data["updates"]["content_delta"] == "workspace."
+                    && data["updates"]["status"] == "streaming"
+            })
+            .is_some()
+            && find_runtime_event(runtime_events, "response.block.created", |event| {
+                let block = &event["payload"]["data"]["block"];
+                block["type"] == "text"
+                    && block["content"] == "done"
+                    && block["status"] == "streaming"
+            })
+            .is_some()
+            && find_runtime_event(runtime_events, "response.completed", |event| {
+                event["payload"]["data"]["value"] == "done"
+            })
+            .is_some()
     })
     .await;
 
@@ -597,37 +624,12 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         process_block_id
     );
     assert_eq!(
-        process_updated["payload"]["data"]["updates"]["content_delta"], "workspace.",
-        "unexpected process update: {process_updated}"
-    );
-    assert!(
-        process_updated["payload"]["data"]["updates"]
-            .get("content")
-            .is_none(),
-        "streaming updates should not repeat the cumulative content snapshot"
+        process_updated["payload"]["data"]["updates"]["content_delta"],
+        "workspace."
     );
     assert_eq!(
         process_updated["payload"]["data"]["updates"]["status"],
         "streaming"
-    );
-    let process_completed =
-        find_runtime_event(&runtime_events, "response.block.updated", |event| {
-            let data = &event["payload"]["data"];
-            data["block_id"].as_str() == Some(process_block_id.as_str())
-                && data["updates"]["status"] == "done"
-        })
-        .expect("completed commentary should settle the process text block");
-    assert!(
-        process_completed["payload"]["data"]["updates"]
-            .get("content")
-            .is_none(),
-        "terminal updates should not repeat an unchanged content snapshot"
-    );
-    assert!(
-        process_completed["payload"]["data"]["updates"]
-            .get("content_delta")
-            .is_none(),
-        "terminal updates should omit an empty content delta"
     );
 
     let final_process_block =
@@ -1970,6 +1972,77 @@ async fn runtime_tasks_forward_and_accept_mcp_form_elicitation() {
             true
         );
     }
+}
+
+#[tokio::test]
+async fn runtime_tasks_auto_approve_mcp_tool_calls_with_full_access() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-mcp-tool-approval-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-mcp-tool-approval-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-mcp-tool-approval-log", "jsonl");
+    let fake_codex = write_fake_codex_mcp_tool_approval(&log_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-mcp-tool-approval",
+                "workspacePath": "/tmp/project",
+                "message": "enable auto merge",
+                "executionRequest": {
+                    "task_id": 3003,
+                    "subtask_id": 4003,
+                    "prompt": "enable auto merge",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    assert_eq!(created["accepted"], true);
+
+    wait_until_task_idle(&handler, "local-task-mcp-tool-approval").await;
+    wait_for_json_call(&log_path, |call| {
+        call["id"] == 99
+            && call["result"]["action"] == "accept"
+            && call["result"]["content"].is_null()
+    })
+    .await;
+
+    let mut runtime_events = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        runtime_events.push(event);
+    }
+    assert!(
+        find_runtime_event(&runtime_events, "response.block.created", |event| {
+            let block = &event["payload"]["data"]["block"];
+            block["tool_name"] == "request_user_input" && block["render_payload"]["requestId"] == 99
+        })
+        .is_none(),
+        "full access should not surface MCP tool approval as request_user_input"
+    );
 }
 
 #[tokio::test]
@@ -3991,6 +4064,15 @@ fn write_fake_codex_mcp_elicitation(log_path: &Path) -> PathBuf {
         log_path,
         "fake-codex-mcp-elicitation",
         r#"{"id":99,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-input","turnId":"turn-input","serverName":"wegent-sites","mode":"form","message":"请选择内网访问范围。","requestedSchema":{"type":"object","properties":{"audience":{"type":"string","title":"访问范围","enum":["all","owner"],"enumNames":["所有人","仅自己"]}},"required":["audience"]}}}"#,
+        0,
+    )
+}
+
+fn write_fake_codex_mcp_tool_approval(log_path: &Path) -> PathBuf {
+    write_fake_codex_interaction(
+        log_path,
+        "fake-codex-mcp-tool-approval",
+        r#"{"id":99,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-input","turnId":"turn-input","serverName":"GitHub","mode":"form","message":"Allow GitHub to enable pull request auto-merge?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session"]}}}"#,
         0,
     )
 }

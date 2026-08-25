@@ -63,16 +63,16 @@ export async function handleExecutorEvents(req, res, client) {
   if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET')
   const after = eventCursor(req)
+  let active = true
   let dispose = () => {}
-  let closed = false
-  const close = () => {
-    if (closed) return
-    closed = true
+  const disconnect = () => {
+    if (!active) return
+    active = false
     dispose()
   }
-  req.once('close', close)
-  res.once('close', close)
-  res.on('error', close)
+  req.once('close', disconnect)
+  res.once('close', disconnect)
+  res.on('error', disconnect)
   try {
     const replay = client.replay(after)
     res.writeHead(200, {
@@ -80,25 +80,33 @@ export async function handleExecutorEvents(req, res, client) {
       'cache-control': 'no-cache, no-store',
       connection: 'keep-alive',
     })
-    const write = event => {
-      if (closed || res.destroyed || res.writableEnded) return false
-      const writable = res.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
+    const writeChunk = chunk => {
+      if (!active || res.writableEnded || res.destroyed) {
+        disconnect()
+        return false
+      }
+      const writable = res.write(chunk)
       if (!writable) {
-        close()
-        res.end()
+        disconnect()
+        if (!res.writableEnded && !res.destroyed) res.end()
       }
       return writable
     }
+    const write = event => writeChunk(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
     for (const event of replay) {
       if (!write(event)) return
     }
-    if (closed || res.destroyed || res.writableEnded) return
+    if (!active || res.writableEnded || res.destroyed) return
     dispose = client.listen(write)
-    res.write(': connected\n\n')
+    if (!active) {
+      dispose()
+      return
+    }
+    writeChunk(': connected\n\n')
   } catch (error) {
-    close()
+    disconnect()
     if (!res.headersSent) sendError(res, error)
-    else if (!res.destroyed && !res.writableEnded) {
+    else if (!res.writableEnded && !res.destroyed) {
       res.end(`event: error\ndata: ${JSON.stringify(errorBody(error))}\n\n`)
     }
   }

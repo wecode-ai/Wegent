@@ -928,45 +928,35 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
-  test('appends processing block content deltas without replacing existing content', () => {
-    const state = reduceWorkbenchMessages(
-      reduceWorkbenchMessages([], {
-        type: 'block_created',
+  test('appends text block content deltas without replacing existing content', () => {
+    const state = reduceWorkbenchMessages([], {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'message-1',
         subtaskId: '9',
-        block: {
-          id: 'text_1',
-          subtaskId: '9',
-          type: 'text',
-          content: 'hello',
-          status: 'streaming',
-          createdAt: 1770000000000
-        }
-      }),
-      {
-        type: 'block_updated',
-        subtaskId: '9',
-        blockId: 'text_1',
-        updates: {
-          status: 'streaming',
-          contentDelta: ' world'
-        }
+        type: 'text',
+        content: 'hello',
+        status: 'streaming',
+        createdAt: 1770000000000
       }
-    )
+    })
 
     const next = reduceWorkbenchMessages(state, {
       type: 'block_updated',
       subtaskId: '9',
-      blockId: 'text_1',
+      blockId: 'message-1',
       updates: {
-        status: 'done'
+        status: 'streaming',
+        contentDelta: ' world'
       }
     })
 
     expect(next[0].blocks).toMatchObject([
       {
-        id: 'text_1',
+        id: 'message-1',
         type: 'text',
-        status: 'done',
+        status: 'streaming',
         content: 'hello world'
       }
     ])

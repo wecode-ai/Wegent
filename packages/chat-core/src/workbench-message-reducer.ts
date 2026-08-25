@@ -525,7 +525,7 @@ function mergeProcessingBlockUpdate<TFileChanges>(
 ): WorkbenchProcessingBlock<TFileChanges> {
   const { contentDelta, toolOutputDelta, durationMs, ...directUpdates } =
     updates
-  const nextBlock = withBlockCompletionTime(block, {
+  let nextBlock = withBlockCompletionTime(block, {
     ...block,
     ...directUpdates,
     ...(durationMs !== undefined && {
@@ -534,27 +534,27 @@ function mergeProcessingBlockUpdate<TFileChanges>(
     })
   } as WorkbenchProcessingBlock<TFileChanges>)
 
-  const blockWithContentDelta =
+  if (
     typeof contentDelta === 'string' &&
     (nextBlock.type === 'thinking' ||
       nextBlock.type === 'text' ||
       nextBlock.type === 'plan')
-      ? {
-          ...nextBlock,
-          content: nextBlock.content + contentDelta,
-          contentOriginalChars:
-            nextBlock.contentOriginalChars === undefined
-              ? undefined
-              : nextBlock.contentOriginalChars +
-                textCodePointLength(contentDelta)
-        }
-      : nextBlock
-
-  if (typeof toolOutputDelta !== 'string' || block.type !== 'tool') {
-    return blockWithContentDelta
+  ) {
+    const previousContentChars =
+      nextBlock.contentOriginalChars ?? textCodePointLength(nextBlock.content)
+    nextBlock = {
+      ...nextBlock,
+      content: `${nextBlock.content}${contentDelta}`,
+      contentOriginalChars:
+        previousContentChars + textCodePointLength(contentDelta)
+    } as WorkbenchProcessingBlock<TFileChanges>
   }
 
-  const nextToolBlock = blockWithContentDelta as WorkbenchToolBlock
+  if (typeof toolOutputDelta !== 'string' || block.type !== 'tool') {
+    return nextBlock
+  }
+
+  const nextToolBlock = nextBlock as WorkbenchToolBlock
   const previousOutput = nextToolBlock.toolOutput
   const nextToolOutput = appendToolOutputDelta(previousOutput, toolOutputDelta)
   const previousOutputChars =

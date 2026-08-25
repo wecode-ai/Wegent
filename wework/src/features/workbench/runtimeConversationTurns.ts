@@ -1130,12 +1130,8 @@ function mergeProcessingBlockUpdate(
   ) {
     merged = {
       ...merged,
-      content: merged.content + contentDelta,
-      contentOriginalChars:
-        merged.contentOriginalChars === undefined
-          ? undefined
-          : merged.contentOriginalChars + Array.from(contentDelta).length,
-    }
+      content: `${merged.content}${contentDelta}`,
+    } as ProcessingBlock
   }
   if (merged.type === 'tool' && block.type === 'tool') {
     merged.toolInput = updates.toolInput ?? block.toolInput

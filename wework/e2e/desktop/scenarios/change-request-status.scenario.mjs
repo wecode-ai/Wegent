@@ -42,11 +42,11 @@ fi
 if [ "$state" = "pending" ]; then
   checks_state='PENDING'
   pr_state='OPEN'
-elif [ "$state" = "failure" ]; then
-  checks_state='FAILURE'
-  pr_state='OPEN'
 elif [ "$state" = "success" ]; then
   checks_state='SUCCESS'
+  pr_state='OPEN'
+elif [ "$state" = "failure" ]; then
+  checks_state='FAILURE'
   pr_state='OPEN'
 else
   checks_state='SUCCESS'
@@ -215,27 +215,30 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查失败',
       })
+      await control.command('click', ENVIRONMENT_BUTTON)
       await control.command('click', '[data-testid^="runtime-local-task-change-request-"]')
       await control.command(
         'waitFor',
-        '[data-testid^="runtime-local-task-change-request-"][data-testid$="-repair"]'
+        '[data-testid^="runtime-local-task-change-request-"][data-testid$="-popover"]'
       )
       await control.command(
         'click',
         '[data-testid^="runtime-local-task-change-request-"][data-testid$="-repair"]'
       )
-      await control.command('waitFor', '[data-testid="message-user"]', {
+      await control.command('waitFor', '[data-testid="user-message-content"]', {
         text: '修复 PR/MR #2631',
         timeoutMs: uiTimeoutMs,
       })
-      await capture(control, 'change-request-status-02-ai-repair-message.png')
+      await capture(control, 'change-request-status-03-repair-user-message.png')
+      await control.command('click', ENVIRONMENT_BUTTON)
+      await control.command('waitFor', '[data-testid="environment-info-popover"]')
 
       await writeFile(statePath, 'success\n')
       await refreshEnvironment(control)
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查通过',
       })
-      await capture(control, 'change-request-status-03-checks-passed.png')
+      await capture(control, 'change-request-status-04-checks-passed.png')
 
       await writeFile(statePath, 'unavailable\n')
       await refreshEnvironment(control)
@@ -243,7 +246,7 @@ export async function createDesktopScenario({
         text: '安装 GitHub CLI',
       })
       await control.command('waitFor', '[data-testid="create-pull-request-button"]')
-      await capture(control, 'change-request-status-04-cli-unavailable.png')
+      await capture(control, 'change-request-status-05-cli-unavailable.png')
 
       await control.command('click', '[data-testid="change-request-open-settings"]')
       await control.command('waitFor', '[data-testid="git-hosting-settings-page"]', {
@@ -260,7 +263,7 @@ export async function createDesktopScenario({
         'true',
         'PR/MR status lookup should be enabled by default'
       )
-      await capture(control, 'change-request-status-05-settings-enabled.png', 'body')
+      await capture(control, 'change-request-status-06-settings-enabled.png', 'body')
 
       await control.command('click', '[data-testid="change-request-status-switch"]')
       await waitForAttribute(
@@ -282,7 +285,7 @@ export async function createDesktopScenario({
         'false',
         'Disabled PR/MR status lookup should remain disabled after reopening settings'
       )
-      await capture(control, 'change-request-status-06-settings-disabled.png', 'body')
+      await capture(control, 'change-request-status-07-settings-disabled.png', 'body')
 
       await control.command('click', '[data-testid="change-request-status-switch"]')
       await waitForAttribute(
@@ -308,7 +311,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查通过',
       })
-      await capture(control, 'change-request-status-07-recovered-merged.png')
+      await capture(control, 'change-request-status-08-recovered-merged.png')
     },
 
     diagnostics() {
