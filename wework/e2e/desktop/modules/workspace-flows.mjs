@@ -992,6 +992,22 @@ async function verifyWorkspaceTabIsolation(control) {
   )
   await captureVerificationScreenshot(control, 'workspace-tabs-isolation-02-project-spaces.png')
 
+  await control.command('click', `[data-testid="workspace-tab-select-${firstTaskId}"]`)
+  await control.command('waitFor', firstTaskComposer, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getValue', firstTaskComposer),
+    '第一个任务标签草稿',
+    'Switching through a project-space tab discarded the task draft'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'workspace-tabs-isolation-02b-task-restored-after-project-space.png',
+    firstTaskContent
+  )
+
   const firstAgentId = initialAgentIds[0].slice('workspace-tab-'.length)
   const firstAgentContent = `[data-testid="workspace-tab-content-${firstAgentId}"]`
   const firstAgentWebview = `${firstAgentContent} [data-testid="app-iframe-wegent"]`

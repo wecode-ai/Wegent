@@ -84,10 +84,15 @@ describe('PluginPickerMenu', () => {
     render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
 
     const trigger = screen.getByTestId('composer-plugin-picker-button')
+    expect(trigger).toHaveClass('h-8', 'rounded-xl', 'bg-muted')
+    expect(onListLocalApps).not.toHaveBeenCalled()
+
+    await userEvent.click(trigger)
+    const picker = await screen.findByTestId('composer-plugin-picker')
+
     await waitFor(() =>
       expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(3)
     )
-    expect(trigger).toHaveClass('h-8', 'rounded-xl', 'bg-muted')
     expect(screen.getByTestId('composer-plugin-preview-icons')).toHaveClass('-space-x-1')
     expect(screen.getByTestId('composer-plugin-preview-icon-github')).toHaveClass(
       'plugin-icon-slot',
@@ -97,10 +102,6 @@ describe('PluginPickerMenu', () => {
       'border-border/30'
     )
     expect(trigger).toHaveTextContent('+2')
-
-    await userEvent.click(trigger)
-    const picker = await screen.findByTestId('composer-plugin-picker')
-
     expect(picker).toHaveTextContent('可用插件')
     expect(picker).toHaveTextContent('GitHub')
     expect(picker).toHaveTextContent('superpowers')
@@ -170,7 +171,10 @@ describe('PluginPickerMenu', () => {
 
     expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(3)
     expect(screen.getByTestId('composer-plugin-picker-button')).toHaveTextContent('插件')
+    expect(onListLocalApps).not.toHaveBeenCalled()
 
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    await waitFor(() => expect(onListLocalApps).toHaveBeenCalledTimes(1))
     resolveApps([githubApp, superpowersApp])
     await waitFor(() =>
       expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(2)
@@ -251,7 +255,7 @@ describe('PluginPickerMenu', () => {
     const onListLocalApps = vi.fn().mockResolvedValue([])
     render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
 
-    await waitFor(() => expect(onListLocalApps).toHaveBeenCalled())
+    expect(onListLocalApps).not.toHaveBeenCalled()
     expect(screen.queryByTestId(/composer-plugin-preview-icon-/)).not.toBeInTheDocument()
 
     act(() => {
@@ -262,6 +266,7 @@ describe('PluginPickerMenu', () => {
       expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(2)
     )
     await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    await waitFor(() => expect(onListLocalApps).toHaveBeenCalledTimes(1))
     expect(await screen.findByTestId('composer-plugin-picker-item-github')).toBeInTheDocument()
     expect(screen.getByTestId('composer-plugin-picker-item-plugin:superpowers')).toBeInTheDocument()
   })

@@ -16,6 +16,16 @@ function externalKnowledgeTargetKey(ref: ExternalKnowledgeRef): string {
   ].join(':')
 }
 
+export function buildExternalContextId(ref: ExternalKnowledgeRef): string {
+  const targetType = ref.target_type ?? 'knowledge_base'
+  const targetId =
+    targetType === 'knowledge_base' ? 'source' : (ref.node_id ?? ref.document_id ?? 'unknown')
+
+  return ['external', ref.provider, ref.mode, ref.scope ?? '', ref.id, targetType, targetId].join(
+    ':'
+  )
+}
+
 export function normalizeSelectedExternalKnowledgeRefs(
   refs: ExternalKnowledgeRef[]
 ): ExternalKnowledgeRef[] {

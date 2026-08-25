@@ -133,7 +133,7 @@ import { getWeworkDevInstanceInfo } from '@/lib/wework-dev-instance'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
-  closeEmbeddedBrowsers,
+  closeEmbeddedBrowser,
   listenEmbeddedBrowserOpenRequests,
   listenEmbeddedBrowserPopupRequests,
   markEmbeddedBrowserLabelTransferred,
@@ -213,6 +213,10 @@ import type { WorkspaceAddMenuItem } from './workspace-panels/WorkspaceAddMenu'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
 import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import {
+  WORKSPACE_TABS_CLOSED_EVENT,
+  type WorkspaceTabsClosedEventDetail,
+} from '@/features/workspace-tabs/workspaceTabs'
+import {
   DESKTOP_CHAT_CONTENT_WIDTH_CLASS,
   DESKTOP_MESSAGE_LIST_CLASS,
   DESKTOP_MESSAGE_LIST_WIDTH_CLASS,
@@ -225,6 +229,14 @@ import {
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
 import { titleModelForGeneration } from '@/features/workbench/useWorkbenchRuntimeMessaging'
+import {
+  restartHarnessAppDevelopmentRuntime,
+  startHarnessAppDevelopmentRuntime,
+  stopHarnessAppDevelopmentRuntime,
+} from '@/features/harness-apps/harnessAppDevelopmentRuntime'
+import { consumeSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
+import { harnessAppsApi } from '@/api/local/harnessApps'
+import { getErrorMessage } from '@/lib/error-message'
 
 let legacyEmbeddedBrowserOpenRequestSequence = 0
 
@@ -897,7 +909,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createDeviceDirectory,
     startNewChat,
   } = useWorkbenchPaneContext()
-  const { services, openRuntimeTask } = useWorkbench()
+  const { services, openRuntimeTask, workspaceTabId } = useWorkbench()
   const { t } = useTranslation('common')
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
     'main' | 'right' | null
@@ -1334,10 +1346,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
   >(() => initialBrowserWorkspaceState.states)
   const browserStatesRef = useRef(browserStates)
+  const smartAppDevelopmentPreviewRequestsRef = useRef(new Map<RightWorkspaceBrowserTab, number>())
+  const localHarnessModelApiRef = useRef(services.localHarnessModelApi)
   const recentBrowserPopupRequestsRef = useRef(new Map<string, number>())
   useEffect(() => {
     browserStatesRef.current = browserStates
   }, [browserStates])
+  useEffect(() => {
+    localHarnessModelApiRef.current = services.localHarnessModelApi
+  }, [services.localHarnessModelApi])
   const updateBrowserState = useCallback(
     (tab: RightWorkspaceBrowserTab, update: Partial<RightWorkspaceBrowserState>) => {
       setBrowserStates(current => {
@@ -2096,7 +2113,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     newChatRuntime,
     paneProjectWork.executionMode,
     paneProjectWork.worktreeBranch,
-    services?.runtimeWorkApi,
+    services.runtimeWorkApi,
     t,
   ])
 
@@ -2265,7 +2282,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       getSelectedHarnessModel,
       localHarnesses,
       preferLocalWorkspaceTerminal,
-      services?.localHarnessModelApi,
+      services.localHarnessModelApi,
     ]
   )
   const createHarnessWorkspaceActions = useCallback(
@@ -2754,7 +2771,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
   }, [rightPanelImmediateLayout, rightPanelOpen])
   const openBrowserTab = useCallback(
-    (request?: EmbeddedBrowserOpenRequest | null, targetTab?: RightWorkspaceBrowserTab) => {
+    (
+      request?: EmbeddedBrowserOpenRequest | null,
+      targetTab?: RightWorkspaceBrowserTab,
+      overrides: Partial<RightWorkspaceBrowserState> = {}
+    ) => {
       const tab = targetTab ?? allocateBrowserTab()
       logBrowserOpenDiagnostic('openBrowserTab', {
         tab,
@@ -2766,6 +2787,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })
       const existingState = browserStatesRef.current[tab]
       const stateLabel =
+        overrides.label ??
         existingState?.label ??
         request?.targetLabel ??
         browserLabelForRightWorkspaceTab(defaultEmbeddedBrowserLabel, tab)
@@ -2788,6 +2810,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           [tab]: currentState
             ? {
                 ...currentState,
+                ...overrides,
                 openRequest: normalizedRequest ?? currentState.openRequest,
               }
             : createBrowserTabState(tab, {
@@ -2795,6 +2818,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 browserSessionId:
                   request?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
                 openRequest: normalizedRequest,
+                ...overrides,
               }),
         }
       })
@@ -2813,6 +2837,288 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setRightPanelImmediateLayout,
     ]
   )
+  const closeSmartAppDevelopmentPreviewBrowser = useCallback(
+    async (tab: RightWorkspaceBrowserTab) => {
+      const browserState = browserStatesRef.current[tab]
+      if (!browserState) return
+      await closeEmbeddedBrowser(browserState.label, browserState.nativeLabel ?? undefined)
+      updateBrowserState(tab, {
+        nativeLabel: null,
+        isLoading: false,
+        openRequest: null,
+      })
+    },
+    [updateBrowserState]
+  )
+  const loadSmartAppDevelopmentPreview = useCallback(
+    async (
+      tab: RightWorkspaceBrowserTab,
+      installationId: string,
+      reload: boolean,
+      initialDisplayName?: string
+    ): Promise<void> => {
+      const requestId = (smartAppDevelopmentPreviewRequestsRef.current.get(tab) ?? 0) + 1
+      smartAppDevelopmentPreviewRequestsRef.current.set(tab, requestId)
+      if (reload) {
+        await closeSmartAppDevelopmentPreviewBrowser(tab)
+      }
+      updateBrowserState(tab, {
+        developmentPreview: {
+          installationId,
+          displayName:
+            initialDisplayName ??
+            browserStatesRef.current[tab]?.developmentPreview?.displayName ??
+            t('workbench.smart_apps_title', '智能工作台'),
+          workspaceTabId:
+            browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
+          status: reload ? 'reloading' : 'starting',
+        },
+      })
+      try {
+        const installations = await harnessAppsApi.list()
+        const installation = installations.find(item => item.id === installationId)
+        if (!installation) {
+          throw new Error(t('workbench.smart_app_preview_not_found', '找不到要预览的智能工作台'))
+        }
+        const modelOptions = getHarnessModelOptions('opencode')
+        const missingWebUrlMessage = t(
+          'workbench.smart_apps_missing_web_url',
+          '智能工作台没有返回可用地址'
+        )
+        const running = reload
+          ? await restartHarnessAppDevelopmentRuntime(
+              installation,
+              modelOptions,
+              services.localHarnessModelApi,
+              missingWebUrlMessage
+            )
+          : await startHarnessAppDevelopmentRuntime({
+              installation,
+              modelOptions,
+              localHarnessModelApi: services.localHarnessModelApi,
+              missingWebUrlMessage,
+            })
+        if (
+          smartAppDevelopmentPreviewRequestsRef.current.get(tab) !== requestId ||
+          !browserStatesRef.current[tab]
+        ) {
+          await stopHarnessAppDevelopmentRuntime(
+            installationId,
+            services.localHarnessModelApi
+          ).catch(error => {
+            console.error('Failed to stop closed Smart app development preview:', error)
+          })
+          return
+        }
+        updateBrowserState(tab, {
+          openRequest: {
+            id: `smart-app-development-preview-${installationId}-${Date.now()}`,
+            url: running.webUrl!,
+            baseLabel: defaultEmbeddedBrowserLabel,
+            source: 'user',
+            disposition: 'current-tab',
+            label: browserStatesRef.current[tab]?.label,
+            targetLabel: browserStatesRef.current[tab]?.label,
+            browserSessionId: browserStatesRef.current[tab]?.browserSessionId,
+          },
+          developmentPreview: {
+            installationId,
+            displayName: running.manifest.displayName,
+            workspaceTabId:
+              browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
+            status: 'ready',
+          },
+        })
+      } catch (error) {
+        if (smartAppDevelopmentPreviewRequestsRef.current.get(tab) !== requestId) return
+        updateBrowserState(tab, {
+          developmentPreview: {
+            installationId,
+            displayName:
+              initialDisplayName ??
+              browserStatesRef.current[tab]?.developmentPreview?.displayName ??
+              t('workbench.smart_apps_title', '智能工作台'),
+            workspaceTabId:
+              browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
+            status: 'error',
+            error: getErrorMessage(
+              error,
+              t('workbench.smart_app_preview_failed', 'DSH 开发预览启动失败')
+            ),
+          },
+        })
+      }
+    },
+    [
+      closeSmartAppDevelopmentPreviewBrowser,
+      defaultEmbeddedBrowserLabel,
+      getHarnessModelOptions,
+      services.localHarnessModelApi,
+      t,
+      updateBrowserState,
+      workspaceTabId,
+    ]
+  )
+  const reloadSmartAppDevelopmentPreview = useCallback(
+    (tab: RightWorkspaceBrowserTab, installationId: string) => {
+      void loadSmartAppDevelopmentPreview(tab, installationId, true)
+    },
+    [loadSmartAppDevelopmentPreview]
+  )
+  const addSmartAppDevelopmentPlugin = useCallback(
+    async (tab: RightWorkspaceBrowserTab, installationId: string, pluginSpec: string) => {
+      const installations = await harnessAppsApi.list()
+      const installation = installations.find(item => item.id === installationId)
+      if (!installation) {
+        throw new Error(t('workbench.smart_app_preview_not_found', '找不到要预览的智能工作台'))
+      }
+      await closeSmartAppDevelopmentPreviewBrowser(tab)
+      updateBrowserState(tab, {
+        developmentPreview: {
+          installationId,
+          displayName: installation.manifest.displayName,
+          workspaceTabId:
+            browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
+          status: 'reloading',
+        },
+      })
+      try {
+        if (installation.state === 'running') {
+          await stopHarnessAppDevelopmentRuntime(installationId, services.localHarnessModelApi)
+        }
+        await harnessAppsApi.addPlugin(installationId, pluginSpec)
+        await loadSmartAppDevelopmentPreview(tab, installationId, false)
+      } catch (error) {
+        updateBrowserState(tab, {
+          developmentPreview: {
+            installationId,
+            displayName: installation.manifest.displayName,
+            workspaceTabId:
+              browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
+            status: 'ready',
+          },
+        })
+        throw error
+      }
+    },
+    [
+      closeSmartAppDevelopmentPreviewBrowser,
+      loadSmartAppDevelopmentPreview,
+      services.localHarnessModelApi,
+      t,
+      updateBrowserState,
+      workspaceTabId,
+    ]
+  )
+  useEffect(() => {
+    const previewRequests = smartAppDevelopmentPreviewRequestsRef.current
+    return () => {
+      const installationIds = new Set<string>()
+      Object.entries(browserStatesRef.current).forEach(([tab, browserState]) => {
+        if (!browserState) return
+        if (browserState.developmentPreview) {
+          installationIds.add(browserState.developmentPreview.installationId)
+          const browserTab = tab as RightWorkspaceBrowserTab
+          previewRequests.set(browserTab, (previewRequests.get(browserTab) ?? 0) + 1)
+        }
+        void closeEmbeddedBrowser(browserState.label, browserState.nativeLabel ?? undefined).catch(
+          error => {
+            console.error('Failed to close embedded browser during workbench disposal:', error)
+          }
+        )
+      })
+      installationIds.forEach(installationId => {
+        void stopHarnessAppDevelopmentRuntime(
+          installationId,
+          localHarnessModelApiRef.current
+        ).catch(error => {
+          console.error('Failed to stop Smart app development runtime during disposal:', error)
+        })
+      })
+    }
+  }, [])
+  useEffect(() => {
+    const handleWorkspaceTabsClosed = (event: Event) => {
+      const closedTabIds = new Set(
+        (event as CustomEvent<WorkspaceTabsClosedEventDetail>).detail?.tabIds ?? []
+      )
+      if (closedTabIds.size === 0) return
+      const tabsToClose = Object.entries(browserStatesRef.current).flatMap(
+        ([tab, browserState]) => {
+          const developmentPreview = browserState?.developmentPreview
+          const ownerWorkspaceTabId = developmentPreview?.workspaceTabId ?? workspaceTabId
+          return developmentPreview && ownerWorkspaceTabId && closedTabIds.has(ownerWorkspaceTabId)
+            ? [[tab as RightWorkspaceBrowserTab, browserState] as const]
+            : []
+        }
+      )
+      if (tabsToClose.length === 0) return
+
+      const installationIds = new Set<string>()
+      const nextBrowserStates = { ...browserStatesRef.current }
+      tabsToClose.forEach(([tab, browserState]) => {
+        smartAppDevelopmentPreviewRequestsRef.current.set(
+          tab,
+          (smartAppDevelopmentPreviewRequestsRef.current.get(tab) ?? 0) + 1
+        )
+        installationIds.add(browserState.developmentPreview!.installationId)
+        delete nextBrowserStates[tab]
+        void closeEmbeddedBrowser(browserState.label, browserState.nativeLabel ?? undefined).catch(
+          error => {
+            console.error('Failed to close Smart app browser with its workspace tab:', error)
+          }
+        )
+      })
+      browserStatesRef.current = nextBrowserStates
+      setBrowserStates(nextBrowserStates)
+
+      const closedPreviewTabs = new Set(tabsToClose.map(([tab]) => tab))
+      setRightPanelTabs(current => {
+        const next = current.filter(tab => !closedPreviewTabs.has(tab as RightWorkspaceBrowserTab))
+        if (next.length === 0) {
+          setRightPanelExpanded(false)
+          setRightPanelOpen(false)
+          setRightPanelView('launcher')
+        } else if (closedPreviewTabs.has(rightPanelView as RightWorkspaceBrowserTab)) {
+          setRightPanelView(next[next.length - 1])
+        }
+        return next
+      })
+      installationIds.forEach(installationId => {
+        void stopHarnessAppDevelopmentRuntime(
+          installationId,
+          localHarnessModelApiRef.current
+        ).catch(error => {
+          console.error('Failed to stop Smart app runtime with its workspace tab:', error)
+        })
+      })
+    }
+
+    window.addEventListener(WORKSPACE_TABS_CLOSED_EVENT, handleWorkspaceTabsClosed)
+    return () => window.removeEventListener(WORKSPACE_TABS_CLOSED_EVENT, handleWorkspaceTabsClosed)
+  }, [rightPanelView, workspaceTabId])
+  useEffect(() => {
+    if (!paneActive || !paneVisible || !workbenchVisible) return
+    const preview = consumeSmartAppDevelopmentPreview()
+    if (!preview) return
+    const tab = openBrowserTab(null, undefined, {
+      label: preview.displayName,
+      developmentPreview: {
+        installationId: preview.installationId,
+        displayName: preview.displayName,
+        workspaceTabId,
+        status: 'starting',
+      },
+    })
+    void loadSmartAppDevelopmentPreview(tab, preview.installationId, false, preview.displayName)
+  }, [
+    loadSmartAppDevelopmentPreview,
+    openBrowserTab,
+    paneActive,
+    paneVisible,
+    workbenchVisible,
+    workspaceTabId,
+  ])
   const selectRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
       setRightPanelOpen(true)
@@ -2995,10 +3301,25 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (tab === 'files') {
       setOpenFileRequest(null)
     }
-    if (browserState?.label) {
-      void closeEmbeddedBrowsers([browserState.label]).catch(error => {
-        console.error('Failed to close embedded browser tab:', error)
+    if (browserState?.developmentPreview) {
+      smartAppDevelopmentPreviewRequestsRef.current.set(
+        tab as RightWorkspaceBrowserTab,
+        (smartAppDevelopmentPreviewRequestsRef.current.get(tab as RightWorkspaceBrowserTab) ?? 0) +
+          1
+      )
+      void stopHarnessAppDevelopmentRuntime(
+        browserState.developmentPreview.installationId,
+        services.localHarnessModelApi
+      ).catch(error => {
+        console.error('Failed to stop closed Smart app development preview:', error)
       })
+    }
+    if (browserState?.label) {
+      void closeEmbeddedBrowser(browserState.label, browserState.nativeLabel ?? undefined).catch(
+        error => {
+          console.error('Failed to close embedded browser tab:', error)
+        }
+      )
     }
     if (isRightWorkspaceBrowserTab(tab)) {
       setBrowserStates(current => {
@@ -4438,6 +4759,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               }
               browserStates={browserStates}
               onBrowserStateChange={updateBrowserState}
+              onReloadSmartAppDevelopmentPreview={reloadSmartAppDevelopmentPreview}
+              onAddSmartAppDevelopmentPlugin={addSmartAppDevelopmentPlugin}
               codeCommentCount={paneSession.codeCommentContexts.length}
               codeCommentContexts={paneSession.codeCommentContexts}
               browserAnnotationCommand={paneSession.browserAnnotationCommand}

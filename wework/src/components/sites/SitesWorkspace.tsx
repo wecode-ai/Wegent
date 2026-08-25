@@ -31,7 +31,6 @@ interface SitesWorkspaceProps {
   createNotice?: string | null
   onOpenPlugins?: () => void
   smartAppsContent?: ReactNode
-  smartAppsEnabled?: boolean
   smartAppsMode?: 'marketplace' | 'owned'
 }
 
@@ -62,10 +61,10 @@ function isSecurityCheckingError(error: unknown): boolean {
   return detail?.code === 'SECURITY_CHECKING' || nestedError?.code === 'SECURITY_CHECKING'
 }
 
-function getInitialAppType(smartAppsEnabled: boolean): ApplicationWorkspaceType {
+function getInitialAppType(): ApplicationWorkspaceType {
   if (typeof window === 'undefined') return DEFAULT_APPLICATION_TYPE
   const requestedType = new URLSearchParams(window.location.search).get('app_type')
-  if (smartAppsEnabled && (!requestedType || requestedType === 'smart_app')) return 'smart_app'
+  if (requestedType === 'smart_app') return 'smart_app'
   return getApplicationTypeDefinition(requestedType ?? '')?.appType ?? DEFAULT_APPLICATION_TYPE
 }
 
@@ -226,15 +225,12 @@ export function SitesWorkspace({
   createNotice,
   onOpenPlugins,
   smartAppsContent,
-  smartAppsEnabled = false,
   smartAppsMode = 'marketplace',
 }: SitesWorkspaceProps) {
   const { t } = useTranslation('sites')
   const { t: commonT } = useTranslation('common')
   const applicationTypes = useApplicationTypeDefinitions(api)
-  const [activeAppType, setActiveAppType] = useState<ApplicationWorkspaceType>(() =>
-    getInitialAppType(smartAppsEnabled)
-  )
+  const [activeAppType, setActiveAppType] = useState<ApplicationWorkspaceType>(getInitialAppType)
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set())
@@ -251,13 +247,13 @@ export function SitesWorkspace({
   }, [query])
 
   useEffect(() => {
-    const handlePopState = () => setActiveAppType(getInitialAppType(smartAppsEnabled))
+    const handlePopState = () => setActiveAppType(getInitialAppType())
     handlePopState()
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
-  }, [smartAppsEnabled])
+  }, [])
 
-  const smartAppsActive = smartAppsEnabled && activeAppType === 'smart_app'
+  const smartAppsActive = activeAppType === 'smart_app'
   const pageTitle = smartAppsActive
     ? smartAppsMode === 'owned'
       ? commonT('workbench.smart_apps_my_title', '我的工作台')
@@ -300,18 +296,14 @@ export function SitesWorkspace({
   }, [])
 
   useEffect(() => {
-    if (activeAppType === 'smart_app' && !smartAppsEnabled) {
-      selectAppType(activeDefinition.appType)
-      return
-    }
     if (activeAppType !== 'smart_app' && activeDefinition.appType !== activeAppType) {
       selectAppType(activeDefinition.appType)
     }
-  }, [activeAppType, activeDefinition.appType, selectAppType, smartAppsEnabled])
+  }, [activeAppType, activeDefinition.appType, selectAppType])
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const appTypes: ApplicationWorkspaceType[] = [
-      ...(smartAppsEnabled ? (['smart_app'] as const) : []),
+      'smart_app',
       ...applicationTypes.map(item => item.definition.appType),
     ]
     const currentIndex = appTypes.indexOf(activeAppType)
@@ -493,31 +485,29 @@ export function SitesWorkspace({
           role="tablist"
           aria-label={t('application_types', '应用类型')}
         >
-          {smartAppsEnabled ? (
-            <button
-              type="button"
-              role="tab"
-              data-app-type="smart_app"
-              data-testid="applications-tab-smart-app"
-              id="applications-tab-smart-app"
-              aria-selected={smartAppsActive}
-              aria-controls="applications-tab-panel"
-              tabIndex={smartAppsActive ? 0 : -1}
-              onClick={() => selectAppType('smart_app')}
-              onKeyDown={handleTabKeyDown}
-              className={[
-                'relative flex h-11 items-center gap-1.5 px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',
-                smartAppsActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary',
-              ].join(' ')}
-            >
-              <Boxes className="h-3.5 w-3.5" aria-hidden="true" />
-              {t('smart_apps_tab', '智能工作台')}
-              <ExperimentalBadge testId="applications-smart-app-experimental-badge" />
-              {smartAppsActive ? (
-                <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
-              ) : null}
-            </button>
-          ) : null}
+          <button
+            type="button"
+            role="tab"
+            data-app-type="smart_app"
+            data-testid="applications-tab-smart-app"
+            id="applications-tab-smart-app"
+            aria-selected={smartAppsActive}
+            aria-controls="applications-tab-panel"
+            tabIndex={smartAppsActive ? 0 : -1}
+            onClick={() => selectAppType('smart_app')}
+            onKeyDown={handleTabKeyDown}
+            className={[
+              'relative flex h-11 items-center gap-1.5 px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',
+              smartAppsActive ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary',
+            ].join(' ')}
+          >
+            <Boxes className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('smart_apps_tab', '智能工作台')}
+            <ExperimentalBadge testId="applications-smart-app-experimental-badge" />
+            {smartAppsActive ? (
+              <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
+            ) : null}
+          </button>
           {applicationTypes.map(({ definition }) => {
             const appType = definition.appType
             const selected = activeAppType === appType

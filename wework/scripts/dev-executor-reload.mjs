@@ -135,7 +135,7 @@ function startChild() {
   const nextChild = spawn(executorBinary, executorArgs, {
     cwd: executorDir,
     env: process.env,
-    stdio: ['pipe', 'pipe', 'inherit'],
+    stdio: ['pipe', 'inherit', 'inherit'],
   })
   child = nextChild
   nextChild.once('spawn', () => {
@@ -145,7 +145,6 @@ function startChild() {
       unexpectedExitCount = 0
     }, EXIT_RESTART_STABLE_MS)
   })
-  nextChild.stdout.pipe(process.stdout, { end: false })
   nextChild.stdin.on('error', () => {})
   for (const chunk of pendingInput.splice(0)) {
     nextChild.stdin.write(chunk)

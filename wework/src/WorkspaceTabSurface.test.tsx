@@ -11,6 +11,11 @@ import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 const appIframeMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
 }))
+const workbenchProviderMocks = vi.hoisted(() => ({
+  cleanup: vi.fn(),
+  loadTaskComposerCatalogs: vi.fn(),
+  prewarm: vi.fn(),
+}))
 const portalOwnershipMocks = vi.hoisted(() => ({
   setActiveOwner: vi.fn(),
 }))
@@ -30,10 +35,81 @@ vi.mock('@/components/topnav/workspaceTabPortalOwnership', () => ({
   setActiveWorkspaceTabPortalOwner: portalOwnershipMocks.setActiveOwner,
 }))
 
+vi.mock('@/features/workbench/WorkbenchProvider', () => ({
+  WorkbenchProvider: ({
+    children,
+    loadTaskComposerCatalogs,
+    prewarmComposerApps,
+  }: {
+    children: React.ReactNode
+    loadTaskComposerCatalogs?: boolean
+    prewarmComposerApps?: boolean
+  }) => {
+    workbenchProviderMocks.loadTaskComposerCatalogs(loadTaskComposerCatalogs)
+    workbenchProviderMocks.prewarm(prewarmComposerApps)
+    useEffect(() => workbenchProviderMocks.cleanup, [])
+    return <>{children}</>
+  },
+}))
+
+vi.mock('@/pages/WorkbenchPage', () => ({
+  WorkbenchPage: ({
+    routeActive,
+    surfaceKind,
+  }: {
+    routeActive?: boolean
+    surfaceKind?: 'task' | 'board'
+  }) => (
+    <div
+      data-testid={`mock-workbench-${surfaceKind ?? 'legacy'}`}
+      data-route-active={String(routeActive)}
+    />
+  ),
+}))
+
 describe('WorkspaceTabSurface', () => {
   afterEach(() => {
     appIframeMocks.cleanup.mockClear()
+    workbenchProviderMocks.cleanup.mockClear()
+    workbenchProviderMocks.loadTaskComposerCatalogs.mockClear()
+    workbenchProviderMocks.prewarm.mockClear()
     portalOwnershipMocks.setActiveOwner.mockClear()
+  })
+
+  test('keeps the board workbench connected and stateful while its tab is inactive', () => {
+    const props = {
+      cloudWebUrl: null,
+      lifecycleStore: {} as never,
+      services: {} as never,
+      tab: {
+        id: 'fixed-board',
+        kind: 'board' as const,
+        title: '项目空间',
+        contentRoute: '/todo',
+      },
+      user: {
+        id: 1,
+        user_name: 'tester',
+        email: 'tester@example.com',
+      },
+    }
+
+    const { rerender, unmount } = render(<WorkspaceTabSurface {...props} active />)
+    expect(screen.getByTestId('mock-workbench-board')).toHaveAttribute('data-route-active', 'true')
+    expect(workbenchProviderMocks.loadTaskComposerCatalogs).toHaveBeenLastCalledWith(false)
+    expect(workbenchProviderMocks.prewarm).toHaveBeenLastCalledWith(false)
+
+    rerender(<WorkspaceTabSurface {...props} active={false} />)
+
+    expect(screen.getByTestId('workspace-tab-content-fixed-board')).toHaveClass(
+      'pointer-events-none',
+      'invisible'
+    )
+    expect(screen.getByTestId('mock-workbench-board')).toHaveAttribute('data-route-active', 'false')
+    expect(workbenchProviderMocks.cleanup).not.toHaveBeenCalled()
+
+    unmount()
+    expect(workbenchProviderMocks.cleanup).toHaveBeenCalledTimes(1)
   })
 
   test('keeps an inactive iframe app connected so its page state survives tab switches', () => {

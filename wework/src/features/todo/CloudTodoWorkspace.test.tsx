@@ -1,7 +1,10 @@
+import type { DndContextProps, DragEndEvent } from '@dnd-kit/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   applyRuntimeConversationAction,
@@ -21,6 +24,30 @@ const telemetryMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/telemetry/client', () => telemetryMocks)
+
+vi.mock('@dnd-kit/core', async importOriginal => {
+  const actual = await importOriginal<typeof import('@dnd-kit/core')>()
+  const ActualDndContext = actual.DndContext
+  return {
+    ...actual,
+    DndContext: ({ children, ...props }: DndContextProps) => (
+      <ActualDndContext {...props}>
+        {children}
+        <button
+          type="button"
+          hidden
+          data-testid="mock-dnd-drag-to-pending"
+          onClick={() =>
+            props.onDragEnd?.({
+              active: { id: item.id },
+              over: { id: 'todo-column:pending' },
+            } as DragEndEvent)
+          }
+        />
+      </ActualDndContext>
+    ),
+  }
+})
 
 vi.mock('./ProjectSpaceChatSidebar', () => ({
   ProjectSpaceChatSidebar: ({
@@ -742,6 +769,18 @@ describe('CloudTodoWorkspace', () => {
         type: 'block_created',
         subtaskId: 'turn-1',
         block: {
+          id: 'process-1',
+          subtaskId: 'turn-1',
+          type: 'text',
+          content: '先检查项目看板如何组织运行中的消息。',
+          status: 'done',
+          createdAt: Date.now(),
+        },
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        block: {
           id: 'tool-1',
           subtaskId: 'turn-1',
           type: 'tool',
@@ -782,8 +821,12 @@ describe('CloudTodoWorkspace', () => {
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     expect(progressPopup).toHaveTextContent('当前任务进展')
     expect(progressPopup).toHaveTextContent('验证完整工作流')
-    expect(progressPopup).toHaveTextContent('正在思考 · Rendering latest thinking')
+    expect(progressPopup).toHaveTextContent('先检查项目看板如何组织运行中的消息。')
     expect(progressPopup).toHaveTextContent('pnpm test')
+    expect(screen.getByTestId('cloud-todo-card-popup-scroll-WEG-1')).toHaveClass(
+      'max-h-[min(68vh,42rem)]',
+      'overflow-y-auto'
+    )
 
     await userEvent.click(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
@@ -846,11 +889,10 @@ describe('CloudTodoWorkspace', () => {
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-1'))
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
-    const progressResponse = screen.getByTestId('cloud-todo-card-progress-response-WEG-1-2')
+    const progressResponse = screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')
     expect(progressPopup).toHaveTextContent('当前任务进展')
     expect(progressResponse).toHaveTextContent('第一行')
     expect(progressResponse).toHaveTextContent('第四行')
-    expect(progressResponse).toHaveClass('max-h-60', 'overflow-y-auto', 'whitespace-pre-wrap')
   })
 
   it('loads persisted task output for an in-progress Issue on the board', async () => {
@@ -873,6 +915,12 @@ describe('CloudTodoWorkspace', () => {
       runtime: 'codex' as const,
       running: false,
       messages: [
+        {
+          id: 'user-output',
+          role: 'user',
+          content: '请修复看板输出',
+          created_at: '2026-08-23T00:01:30Z',
+        },
         {
           id: 'assistant-output',
           role: 'assistant',
@@ -928,14 +976,15 @@ describe('CloudTodoWorkspace', () => {
       expect.objectContaining({
         deviceId: 'local-device',
         taskId: 'runtime-in-progress',
-        limit: 20,
+        limit: 50,
       })
     )
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
-    expect(
-      await screen.findByTestId('cloud-todo-card-progress-response-WEG-1-2')
-    ).toHaveTextContent('正在验证修复')
+    const conversation = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-1')
+    expect(conversation).toHaveTextContent('请修复看板输出')
+    expect(conversation).toHaveTextContent('已经定位问题')
+    expect(conversation).toHaveTextContent('正在验证修复')
   })
 
   it('reports the concrete project name for the active document tab', async () => {
@@ -1255,18 +1304,25 @@ describe('CloudTodoWorkspace', () => {
 
   it('opens project chat for every project provider', async () => {
     const workbenchServices = services()
+    const requestCatalogs = vi.fn()
+    const workbench = {
+      projectChat: { requestCatalogs },
+    } as unknown as WorkbenchContextValue
 
     render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
-        services={workbenchServices}
-      />
+      <WorkbenchContext.Provider value={workbench}>
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
+          services={workbenchServices}
+        />
+      </WorkbenchContext.Provider>
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     expect(screen.getByTestId('cloud-project-ask-ai')).toHaveTextContent('私信 AI')
     await userEvent.click(screen.getByTestId('cloud-project-ask-ai'))
+    expect(requestCatalogs).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('project-space-chat-sidebar')).toHaveAttribute(
       'data-project-id',
       '11'
@@ -3230,6 +3286,35 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-detail-dismiss-layer')).not.toBeInTheDocument()
   })
 
+  it('requests task catalogs before opening the composer for a dragged issue', async () => {
+    const inboxItem = { ...item, status: 'inbox' as const }
+    const requestCatalogs = vi.fn()
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [inboxItem] }))
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [])
+    const workbench = {
+      projectChat: { requestCatalogs },
+    } as unknown as WorkbenchContextValue
+
+    render(
+      <WorkbenchContext.Provider value={workbench}>
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={workbenchServices}
+        />
+      </WorkbenchContext.Provider>
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+
+    fireEvent.click(screen.getByTestId('mock-dnd-drag-to-pending'))
+
+    await waitFor(() => expect(requestCatalogs).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', inboxItem.id)
+  })
+
   it('binds a human workflow task without inventing an automation queue state', async () => {
     const manualIssue = {
       ...item,
@@ -3898,7 +3983,7 @@ describe('CloudTodoWorkspace', () => {
       expect.objectContaining({
         deviceId: 'local-device',
         taskId: 'stopped-task',
-        limit: 20,
+        limit: 50,
       })
     )
     expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(

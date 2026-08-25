@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -15,6 +16,9 @@ import App from './App'
 const localCodexPluginMocks = vi.hoisted(() => ({
   listInstalledPlugins: vi.fn(),
   listSkills: vi.fn(),
+}))
+const workbenchProviderMocks = vi.hoisted(() => ({
+  mounts: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/window', () => ({
@@ -503,10 +507,15 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   WorkbenchProvider: ({
     children,
     onStartupReadyChange,
+    prewarmComposerApps,
   }: {
     children: React.ReactNode
     onStartupReadyChange?: (ready: boolean) => void
+    prewarmComposerApps?: boolean
   }) => {
+    useEffect(() => {
+      workbenchProviderMocks.mounts(prewarmComposerApps)
+    }, [prewarmComposerApps])
     queueMicrotask(() => onStartupReadyChange?.(true))
     return <>{children}</>
   },
@@ -890,6 +899,7 @@ describe('App plugins route', () => {
     vi.mocked(workbenchValue.startNewSkillChat).mockReset().mockResolvedValue(false)
     localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue({ items: [] })
     localCodexPluginMocks.listSkills.mockReset().mockResolvedValue([])
+    workbenchProviderMocks.mounts.mockClear()
     localPathMocks.exists.mockReset().mockResolvedValue(false)
     mockSystemSkillsFetch()
   })
@@ -897,6 +907,16 @@ describe('App plugins route', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
     vi.unstubAllGlobals()
+  })
+
+  test('mounts only the active task workbench during startup', async () => {
+    window.history.pushState({}, '', '/')
+
+    renderApp()
+
+    await screen.findByTestId('app-shell')
+    await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
+    expect(workbenchProviderMocks.mounts).toHaveBeenCalledWith(true)
   })
 
   test('opens the plugins page from the desktop sidebar', async () => {
@@ -1863,18 +1883,22 @@ describe('App plugins route', () => {
     expect(window.location.search).toBe('?app_type=smart_app')
   })
 
-  test('hides Smart apps and exits its Applications view while experiments are disabled', async () => {
+  test('keeps Smart apps visible and preserves its experimental badge while experiments are disabled', async () => {
     window.history.pushState({}, '', '/sites?app_type=smart_app')
 
     renderApp()
 
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
-    await waitFor(() => {
-      expect(window.location.pathname).toBe('/sites')
-      expect(window.location.search).toBe('')
-    })
-    expect(screen.queryByTestId('applications-tab-smart-app')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('smart-apps-marketplace-page')).not.toBeInTheDocument()
+    expect(window.location.pathname).toBe('/sites')
+    expect(window.location.search).toBe('?app_type=smart_app')
+    expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('applications-smart-app-experimental-badge')).toHaveTextContent(
+      '实验性'
+    )
+    expect(screen.getByTestId('smart-apps-marketplace-page')).toBeInTheDocument()
   })
 
   test('renders plugin management on direct /plugins/manage visit', async () => {
