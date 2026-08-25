@@ -324,7 +324,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
-      max-parallel: 12
+      max-parallel: 13
       matrix: ${{ fromJSON(needs.changes.outputs.wework_desktop_core_e2e_matrix) }}
 
     steps:

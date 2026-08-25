@@ -133,10 +133,10 @@ node e2e/utils/mock-connector-upstream-server.mjs
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
-完整 Core 和 Cloud 套件各固定使用 12 个 GitHub Actions matrix job；每个 job
+完整 Core 套件固定使用 13 个 GitHub Actions matrix job，Cloud 套件使用 12 个；每个 job
 串行运行其 checkpoint，避免多个真实 Electron、WebView 和 Executor 栈在同一
 GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 10 秒门槛。
-跨 runner 的 24 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
+跨 runner 的 25 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
 上限，以确保完整套件处于 10 分钟关键路径预算内；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。CI 会先构建一次 Core Electron
 应用、Executor 和 Codex artifact，其中 `--build-only` 会在同一 runner 内并行
@@ -144,7 +144,7 @@ GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 
 不再重复执行 Vite、Electron 和 Executor 构建。Rust 构建同时复用由 `main`
 维护的 Cargo target cache 和 sccache 编译单元：target cache 保障 PR 与首次
 运行的延迟，sccache 降低依赖或源码变化后的增量编译成本。归档时只移除复制到
-artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 24 个分片的
+artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 25 个分片的
 上传和下载时间。桌面 E2E 和对应的 cache warmup 显式设置
 `WEWORK_EXECUTOR_PROFILE=debug`，避免为测试 artifact 优化 Executor；正式打包
 不设置该变量，继续默认构建 `release` Executor。桌面 E2E 构建跳过由并行 Lint
@@ -232,7 +232,7 @@ GitHub Actions 的 Executor E2E job 会在恢复 Python、Node.js 和 Playwright
 
 内存场景仅支持 macOS。它会通过真实 Codex 工具调用执行一个开发任务，再向真实 Electron renderer 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试先等待 Web Content 内存基线稳定，再每 500 毫秒采集 Wework 关联的全部 Electron renderer 进程的聚合 physical footprint，并将采样、DOM 节点数和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为峰值增长不超过 384 MiB、完成后的稳定态增长不超过 224 MiB、稳定窗口内最大波动范围不超过 16 MiB。DOM 门禁检查虚拟列表收敛后的稳定窗口，默认不得保留超过 900 个节点；流式渲染期间的瞬时峰值仍会记录在诊断中，但不会把收敛前的短暂渲染误判为泄漏。各阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`、`WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB` 和 `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES` 调整。
 
-并发内存场景同样仅支持 macOS。它会创建并同时保持 10 个 Responses 流，采集 Wework 主进程、Electron renderer/GPU/network、Executor 和 Codex app-server 的进程组 physical footprint，并将证据写入 `concurrent-memory.json`。门禁要求整个进程组峰值低于 800 MiB，可通过 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB` 调整；场景还会在首尾任务之间切换，并等待各自的 prompt 内容重新出现。
+并发内存场景同样仅支持 macOS。它会创建并同时保持 10 个 Responses 流，采集 Wework 主进程、Electron renderer/GPU/network、Executor 和 Codex app-server 的进程组 physical footprint，并将证据写入 `concurrent-memory.json`。相对于稳定基线，峰值和活跃稳定平台的增长都不得超过 320 MiB，稳定采样窗口内的波动不得超过 64 MiB；可分别通过 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB`、`WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB` 和 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB` 调整。场景还会在首尾任务之间切换，并等待各自的 prompt 内容重新出现。
 
 ## Responses API Mock
 

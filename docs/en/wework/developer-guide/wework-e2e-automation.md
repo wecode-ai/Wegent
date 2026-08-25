@@ -136,10 +136,10 @@ its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
 `ci:all` still run the complete desktop suites. The complete Core and Cloud
-suites each use twelve fixed GitHub Actions matrix jobs. Every job runs its
+Core uses thirteen fixed GitHub Actions matrix jobs and Cloud uses twelve. Every job runs its
 checkpoints serially so multiple real Electron, WebView, and Executor stacks do not
 contend for CPU and memory on the same GitHub runner and push normal asynchronous
-state beyond the shared 10-second step timeout. The twenty-four matrix jobs still provide
+state beyond the shared 10-second step timeout. The twenty-five matrix jobs still provide
 suite-level parallelism across runners. Shards are balanced from observed CI
 durations and capped to keep the complete suite inside its ten-minute critical-path
 budget; a new or materially slower checkpoint requires rebalancing instead of
@@ -152,7 +152,7 @@ cache and sccache compiler units: the target cache bounds PR and first-run
 latency, while sccache reduces incremental compilation after dependency or
 source changes. Archiving strips Linux debug symbols only from the copied
 artifact binaries, leaving the original build outputs unchanged while reducing
-upload and download time across the twenty-four shards. Desktop E2E and its cache
+upload and download time across the twenty-five shards. Desktop E2E and its cache
 warmup explicitly set `WEWORK_EXECUTOR_PROFILE=debug` so test artifacts do not
 spend time optimizing the Executor. Release packaging leaves the variable unset
 and continues to build the `release` Executor by default. Desktop E2E builds
@@ -256,7 +256,7 @@ The plugin scenario dynamically creates an isolated local Codex marketplace and 
 
 The memory scenario is macOS-only. It executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Electron renderer. The test first waits for the renderer-process memory baseline to stabilize, then samples the aggregate physical footprint of associated Electron renderer processes every 500 milliseconds. It writes the samples, DOM node counts, and summary metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit peak growth to 384 MiB, settled growth after completion to 224 MiB, and the full physical-footprint range within the settled window to 16 MiB. The DOM gate checks the settled window after virtual-list convergence and allows at most 900 retained nodes by default. Transient peaks during streaming remain in the diagnostics but do not treat pre-convergence rendering as a leak. The limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`, and `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES`.
 
-The concurrent-memory scenario is also macOS-only. It creates and holds 10 Responses streams at the same time, samples the process-group physical footprint for the Wework main process, Electron renderer/GPU/network processes, Executor processes, and the Codex app-server, and writes the evidence to `concurrent-memory.json`. The gate requires the whole process group to stay below an 800 MiB peak and can be adjusted with `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB`. The scenario also switches between the first and last tasks and waits for each task's prompt content to reappear.
+The concurrent-memory scenario is also macOS-only. It creates and holds 10 Responses streams at the same time, samples the process-group physical footprint for the Wework main process, Electron renderer/GPU/network processes, Executor processes, and the Codex app-server, and writes the evidence to `concurrent-memory.json`. Relative to the stable baseline, both the peak and active settled plateau may grow by at most 320 MiB, while the settled sampling window may vary by at most 64 MiB. The limits can be adjusted with `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB`, and `WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB`. The scenario also switches between the first and last tasks and waits for each task's prompt content to reappear.
 
 ## Responses API Mock
 

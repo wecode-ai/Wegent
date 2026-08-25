@@ -107,8 +107,9 @@ core_shards=(
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions
   project-automation
   resilience,local-harness,running-conversation-history,native-window-chrome
-  workspace-attachments,rendering-extensions,automation-lifecycle
+  workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter
+  rendering-extensions
 )
 
 validate_core_shards() {
