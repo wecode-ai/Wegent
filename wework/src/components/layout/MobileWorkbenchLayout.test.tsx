@@ -78,7 +78,6 @@ const originalInnerWidth = window.innerWidth
 
 const baseState = {
   user: { id: 1, user_name: 'MI', email: 'mi@example.com' },
-  defaultTeam: null,
   projects: [
     {
       id: 1,

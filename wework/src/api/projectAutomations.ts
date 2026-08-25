@@ -4,6 +4,7 @@ import type { LocalLoopItemExecution } from './local/localDelivery'
 export type ProjectAutomationRunStatus =
   | 'pending'
   | 'queued'
+  | 'waiting_runtime'
   | 'waiting_device'
   | 'running'
   | 'succeeded'
@@ -31,38 +32,21 @@ interface ProjectAutomationRuleBase {
   version: number
   createdAt: string
   updatedAt: string
+  roleSource?: 'generic' | 'agent'
+  runtimeSource?: 'agent_default' | 'fixed_profile' | 'issue_creator' | 'runtime_user'
+  runtimeProfileId?: string | null
+  runtimeUserId?: number | null
 }
 
-export type ProjectAutomationRule = ProjectAutomationRuleBase &
-  (
-    | {
-        assignmentMode: 'manual'
-        managerType: null
-        agentId: string
-        wegentTeamId: null
-        model: string | null
-        executionEnvironment: 'local' | 'cloud'
-        executionDeviceId: string | null
-      }
-    | {
-        assignmentMode: 'ai_managed'
-        managerType: 'custom'
-        agentId: null
-        wegentTeamId: null
-        model: string
-        executionEnvironment: 'local' | 'cloud'
-        executionDeviceId: string
-      }
-    | {
-        assignmentMode: 'ai_managed'
-        managerType: 'wegent'
-        agentId: null
-        wegentTeamId: number
-        model: null
-        executionEnvironment: 'managed'
-        executionDeviceId: null
-      }
-  )
+export interface ProjectAutomationRule extends ProjectAutomationRuleBase {
+  assignmentMode: 'manual' | 'ai_managed'
+  managerType: 'custom' | 'wegent' | null
+  agentId: string | null
+  wegentTeamId: number | null
+  model: string | null
+  executionEnvironment: 'local' | 'cloud' | 'managed'
+  executionDeviceId: string | null
+}
 
 export interface ProjectAutomationRun {
   id: string
@@ -93,38 +77,21 @@ interface ProjectAutomationInputBase {
   cronExpression: string | null
   timezone: string
   enabled: boolean
+  roleSource?: 'generic' | 'agent'
+  runtimeSource?: 'agent_default' | 'fixed_profile' | 'issue_creator' | 'runtime_user'
+  runtimeProfileId?: string | null
+  runtimeUserId?: number | null
 }
 
-export type ProjectAutomationInput = ProjectAutomationInputBase &
-  (
-    | {
-        assignmentMode: 'manual'
-        managerType: null
-        agentId: string
-        wegentTeamId: null
-        model: null
-        executionEnvironment: null
-        executionDeviceId: null
-      }
-    | {
-        assignmentMode: 'ai_managed'
-        managerType: 'custom'
-        agentId: null
-        wegentTeamId: null
-        model: string
-        executionEnvironment: 'local' | 'cloud'
-        executionDeviceId: string
-      }
-    | {
-        assignmentMode: 'ai_managed'
-        managerType: 'wegent'
-        agentId: null
-        wegentTeamId: number
-        model: null
-        executionEnvironment: null
-        executionDeviceId: null
-      }
-  )
+export interface ProjectAutomationInput extends ProjectAutomationInputBase {
+  assignmentMode: 'manual' | 'ai_managed'
+  managerType: 'custom' | 'wegent' | null
+  agentId: string | null
+  wegentTeamId: number | null
+  model: string | null
+  executionEnvironment: 'local' | 'cloud' | null
+  executionDeviceId: string | null
+}
 
 function cloudExecution(row: Record<string, unknown>): LocalLoopItemExecution {
   const payload = (row.runtimePayload as Record<string, unknown> | null) ?? null

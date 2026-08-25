@@ -4,6 +4,7 @@
 
 """Focused contracts for robot queue execution records (claim/capacity/lease)."""
 
+import json
 import uuid
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,14 +25,17 @@ from app.models.delivery import (
     ProjectChatAgent,
     ProjectWorkflowPlanItem,
     ProjectWorkflowRun,
+    RuntimeProfile,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
 )
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
+from app.models.project import Project
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.project_chat import LoopItemAssign
+from app.schemas.runtime_profile import RuntimeProfileCreate
 from app.services.board_team_execution import dispatch_board_robot_execution
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.loop_item_executions.profile import WeworkExecutionProfile
@@ -43,6 +47,7 @@ from app.services.loop_item_executions.service import (
 )
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_automation_execution import project_automation_execution
+from app.services.runtime_profiles import runtime_profile_service
 from app.services.workflow_stage_context import workflow_stage_task_instruction
 
 
@@ -212,6 +217,31 @@ def _make_item(
     return item
 
 
+def _automation_metadata(
+    *,
+    action: str = "execute",
+    manager_type: str | None = None,
+    agent_id: str | None = None,
+    **extra: object,
+) -> dict:
+    metadata = {
+        "action": action,
+        "role": {
+            "source": "agent" if agent_id else "generic",
+            "agent_id": agent_id,
+        },
+        "runtime": {
+            "source": "agent_default" if agent_id else "issue_creator",
+            "runtime_profile_id": None,
+            "user_id": None,
+        },
+        **extra,
+    }
+    if manager_type:
+        metadata["manager"] = {"type": manager_type}
+    return metadata
+
+
 def _ensure_device(
     db: Session, user: User, device_id: str, device_type: str = "cloud"
 ) -> Kind:
@@ -252,6 +282,71 @@ def _make_execution(
     automation_context: dict | None = None,
 ) -> LoopItemExecution:
     _ensure_device(db, user, "cloud-device-1")
+    metadata = dict(bot.metadata_json or {})
+    model_name = str(metadata.get("model") or "test-model")
+    model = (
+        db.query(Kind)
+        .filter(
+            Kind.kind == "Model",
+            Kind.namespace == "default",
+            Kind.name == model_name,
+            Kind.user_id == 0,
+        )
+        .one_or_none()
+    )
+    if model is None:
+        db.add(
+            Kind(
+                kind="Model",
+                name=model_name,
+                namespace="default",
+                user_id=0,
+                is_active=True,
+                json={
+                    "spec": {
+                        "modelConfig": {
+                            "env": {
+                                "model": "claude",
+                                "api_key": "test-key",
+                                "base_url": "https://gateway.example.com",
+                                "model_id": model_name,
+                            }
+                        }
+                    }
+                },
+            )
+        )
+        db.flush()
+    if metadata.get("runtime") == "codex" and not metadata.get(
+        "default_runtime_profile_id"
+    ):
+        profile = RuntimeProfile(
+            user_id=user.id,
+            created_by_user_id=user.id,
+            updated_by_user_id=user.id,
+            name=f"{bot.name} Runtime",
+            title=f"{bot.name} Runtime",
+            device_id="cloud-device-1",
+            metadata_json={
+                "execution_environment": "cloud",
+                "model": model_name,
+                "model_options": {},
+                "workspace_policy": "project",
+            },
+        )
+        db.add(profile)
+        db.flush()
+        metadata["default_runtime_profile_id"] = profile.id
+        bot.metadata_json = metadata
+        bot.device_id = None
+        db.flush()
+    elif metadata.get("default_runtime_profile_id"):
+        profile = db.get(RuntimeProfile, metadata["default_runtime_profile_id"])
+        if profile is not None:
+            profile_metadata = dict(profile.metadata_json or {})
+            profile_metadata["model"] = model_name
+            profile.metadata_json = profile_metadata
+            db.flush()
     execution = loop_item_execution_service.create_for_assignment(
         db,
         loop_item_id=item.id,
@@ -677,6 +772,53 @@ def test_runtime_completion_finishes_project_automation(
     # A successful run without spawned child tasks must not inherit the
     # bug-scan wording ("No bugs found.").
     assert run.description == "Run succeeded."
+
+
+def test_trusted_terminal_snapshot_completes_without_event_sequence(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    assert claimed is not None
+
+    rejected = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="runtime.task.completed",
+        payload={"status": "done", "data": {"value": "finished"}},
+    )
+
+    assert rejected is None
+    test_db.refresh(execution)
+    assert execution.status == "claimed"
+
+    completed = loop_item_execution_service.handle_runtime_event(
+        test_db,
+        device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+        event_name="runtime.task.completed",
+        payload={"status": "done", "data": {"value": "finished"}},
+        allow_unsequenced_terminal=True,
+    )
+
+    assert completed is not None
+    assert completed.status == "completed"
+    assert completed.last_event_seq == 0
 
 
 def test_complete_wins_concurrent_cancel_across_independent_sessions(
@@ -1215,13 +1357,13 @@ def test_recovery_scan_repairs_terminal_automation_projection(
         description="Choose an assignee.",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={
-            "assignment_mode": "ai_managed",
-            "manager_type": "custom",
-            "model": "test-model",
-            "execution_environment": "cloud",
-            "execution_device_id": "cloud-device-1",
-        },
+        metadata_json=_automation_metadata(
+            action="ai_assign",
+            manager_type="custom",
+            model="test-model",
+            execution_environment="cloud",
+            execution_device_id="cloud-device-1",
+        ),
     )
     run = ProjectAutomationRun(
         cloud_project_id=project.id,
@@ -1259,6 +1401,11 @@ def test_recovery_scan_repairs_terminal_automation_projection(
         execution_device_id="cloud-device-1",
         priority="medium",
         automation_context={"run_id": str(run.id)},
+        runtime_selection={
+            "model": "test-model",
+            "model_type": None,
+            "model_options": {},
+        },
     )
     assert execution.team_id == 0
     assert execution.backend_task_id == 0
@@ -1313,16 +1460,16 @@ async def test_retry_run_redispatches_the_same_processor_record_and_task(
         description="Choose an assignee.",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={
-            "trigger_type": "event",
-            "event_type": "task.created",
-            "assignment_mode": "ai_managed",
-            "manager_type": "custom",
-            "model": "test-model",
-            "execution_environment": "cloud",
-            "execution_device_id": "cloud-device-1",
-            "timezone": "Asia/Shanghai",
-        },
+        metadata_json=_automation_metadata(
+            action="ai_assign",
+            manager_type="custom",
+            trigger_type="event",
+            event_type="task.created",
+            model="test-model",
+            execution_environment="cloud",
+            execution_device_id="cloud-device-1",
+            timezone="Asia/Shanghai",
+        ),
     )
     failed_run = ProjectAutomationRun(
         cloud_project_id=project.id,
@@ -1640,6 +1787,46 @@ def test_approve_reject_only_creator(test_db: Session, test_user: User) -> None:
     assert approved.approval_status == "approved"
 
 
+def test_approve_accepts_complete_issue_runtime_without_profile(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user, mode="manual_approval")
+    item = _make_item(test_db, project, test_user)
+    _ensure_device(test_db, test_user, "cloud-device-1")
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="cloud",
+        execution_device_id="cloud-device-1",
+        priority="medium",
+        automation_context={
+            "runtime_source": "issue_snapshot",
+            "execution_device_id": "cloud-device-1",
+            "model": "test-model",
+            "model_type": "runtime",
+            "model_options": {},
+            "workspace_binding": {"type": "standalone"},
+        },
+    )
+    test_db.commit()
+
+    assert execution.status == "pending_approval"
+    assert execution.runtime_selection["runtime_profile_id"] is None
+    assert execution.runtime_selection["model"] == "test-model"
+
+    approved = loop_item_execution_service.approve(
+        test_db, execution_id=execution.id, user_id=test_user.id
+    )
+
+    assert approved.status == "queued"
+    assert approved.execution_note == ""
+    assert approved.approval_status == "approved"
+
+
 def test_claimed_run_builds_runtime_payload_for_executor(
     test_db: Session, test_user: User
 ) -> None:
@@ -1650,6 +1837,14 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     bot.metadata_json = {
         **dict(bot.metadata_json or {}),
         "system_prompt": "Verify before reporting completion.",
+        "plugins": [
+            {
+                "id": "github@openai",
+                "pluginName": "github",
+                "marketplaceId": "openai",
+                "displayName": "GitHub",
+            }
+        ],
     }
     test_db.commit()
     item = _make_item(test_db, project, test_user, title="Build the landing page")
@@ -1674,7 +1869,15 @@ def test_claimed_run_builds_runtime_payload_for_executor(
         runtime_active_task_ids=set(),
     )
     assert claimed is not None
-    assert claimed.execution_payload == ""
+    assert claimed.runtime_selection == {
+        "runtime_source": "agent_default",
+        "runtime_profile_id": bot.metadata_json["default_runtime_profile_id"],
+        "runtime_profile_version": 1,
+        "model": "test-model",
+        "model_type": None,
+        "model_options": {},
+        "workspace_policy": "project",
+    }
 
     payload = loop_item_execution_service.build_runtime_payload(
         test_db, execution=claimed
@@ -1688,7 +1891,7 @@ def test_claimed_run_builds_runtime_payload_for_executor(
     assert "system_prompt" not in execution_request
     assert "Build the landing page" not in execution_request["prompt"]
     assert "Create three subtasks for testing." not in execution_request["prompt"]
-    assert execution_request["prompt"] == (
+    visible_prompt = (
         f"project_id: {project.id}\n"
         f"task_id: {item.id}\n"
         f"execution_id: {claimed.id}\n\n"
@@ -1696,8 +1899,12 @@ def test_claimed_run_builds_runtime_payload_for_executor(
         "请通过看板工具自行查看。\n\n"
         "Verify before reporting completion."
     )
-    assert execution_request["prompt"] == payload["message"]
+    assert execution_request["prompt"].endswith(visible_prompt)
+    assert "projectSpaceCapability" in execution_request["prompt"]
+    assert payload["message"] == visible_prompt
     assert payload["additionalContext"] == {}
+    assert payload["projectPlugins"][0]["id"] == "github@openai"
+    assert execution_request["project_plugin_ids"] == ["github@openai"]
     assert execution_request["mcp_servers"] == []
     assert execution_request["preload_skills"] == []
     assert execution_request["user_selected_skills"] == []
@@ -1719,14 +1926,25 @@ def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
+    _ensure_device(test_db, test_user, "local-device", "local")
+    code_project = Project(
+        user_id=test_user.id,
+        name="Bound code project",
+        client_origin="wework",
+        config={"path": "/tmp/bound-code-project", "device_id": "local-device"},
+        is_active=True,
+    )
+    test_db.add(code_project)
+    test_db.commit()
+    test_db.refresh(code_project)
     profile = WeworkExecutionProfile.for_automation_manager(
         owner_user_id=test_user.id,
         display_name="Managed AI",
         instruction="Run task",
         model="test-model",
-        local_project_id=91,
+        local_project_id=code_project.id,
     )
-    payload = profile.build_runtime_payload(
+    request = profile.build_runtime_request(
         test_db,
         execution_id=91,
         runtime_task_id="runtime-task-1",
@@ -1744,16 +1962,110 @@ def test_manager_runtime_payload_requires_mcp_reads_and_uses_bound_local_project
             "rule_id": "rule-1",
             "event": {"type": "task.created"},
         },
+        execution_device_id="local-device",
     )
+    payload = request.model_dump(by_alias=True, exclude_none=True)
 
-    assert payload["local_project_id"] == 91
-    assert payload["executionRequest"]["standalone_chat_workspace"] is False
+    assert payload["projectId"] == code_project.id
+    assert payload["standaloneChatWorkspace"] is False
+    assert "executionRequest" not in payload
     assert payload["origin"]["automationRole"] == "manager"
     assert payload["origin"]["type"] == "project_automation"
     assert payload["message"] == "Run task"
-    assert "system_prompt" not in payload["executionRequest"]
-    assert "system_prompt" not in payload["executionRequest"]["bot"][0]
     assert payload["additionalContext"] == {}
+
+
+def test_inline_workflow_execution_uses_standalone_conversation_workspace(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    profile = WeworkExecutionProfile.for_generic_robot(
+        runtime_profile=None,
+        owner_user_id=test_user.id,
+        display_name="Direct execution",
+        execution_prompt="",
+        model_override="test-model",
+        workspace_binding_override={"type": "standalone"},
+    )
+
+    request = profile.build_runtime_request(
+        test_db,
+        execution_id=92,
+        runtime_task_id="runtime-task-standalone",
+        task=TaskContext(
+            id="item-standalone",
+            cloud_project_id=str(project.id),
+            title="Standalone task",
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={
+            "workflow_stage_input": {
+                "target_stage": {
+                    "id": "build",
+                    "prompt": "Build it",
+                    "workspace_policy": "composer",
+                    "required_deliverables": [],
+                },
+                "dependencies": [],
+            }
+        },
+        execution_device_id="local-device",
+    )
+    payload = request.model_dump(by_alias=True, exclude_none=True)
+
+    assert payload["standaloneChatWorkspace"] is True
+    assert "projectId" not in payload
+    assert "runtimeProjectKey" not in payload
+
+
+def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    _ensure_device(test_db, test_user, "local-device", "local")
+    code_project = Project(
+        user_id=test_user.id,
+        name="Git code project",
+        client_origin="wework",
+        config={"path": "/tmp/git-code-project", "device_id": "local-device"},
+        is_active=True,
+    )
+    test_db.add(code_project)
+    test_db.commit()
+    test_db.refresh(code_project)
+    profile = WeworkExecutionProfile(
+        owner_user_id=test_user.id,
+        display_name="Builder",
+        execution_prompt="",
+        instruction="",
+        model="test-model",
+        local_project_id=code_project.id,
+        max_concurrent_executions=1,
+        workspace_policy="git_worktree",
+    )
+
+    request = profile.build_runtime_request(
+        test_db,
+        execution_id=92,
+        runtime_task_id="runtime-task-worktree",
+        task=TaskContext(
+            id="item-worktree",
+            cloud_project_id=str(project.id),
+            title="Isolated task",
+            description="",
+            status="inbox",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={},
+        execution_device_id="local-device",
+    )
+    payload = request.model_dump(by_alias=True, exclude_none=True)
+
+    assert payload["execution"] == {"workspace": {"source": "git_worktree"}}
 
 
 def test_claim_binds_canonical_runtime_identity(
@@ -1789,6 +2101,212 @@ def test_claim_binds_canonical_runtime_identity(
     assert payload["executionRequest"]["subtask_id"] == (
         f"codex-queue-{claimed.id}-assistant"
     )
+
+
+def test_issue_cloud_moonshot_intent_overrides_local_robot_default_immutably(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user, title="Use issue runtime")
+    _ensure_device(test_db, test_user, "local-device", "local")
+    _ensure_device(test_db, test_user, "cloud-device-1", "cloud")
+    local_profile = RuntimeProfile(
+        user_id=test_user.id,
+        created_by_user_id=test_user.id,
+        updated_by_user_id=test_user.id,
+        name="Robot local default",
+        title="Robot local default",
+        device_id="local-device",
+        metadata_json={
+            "execution_environment": "local",
+            "model": "gpt-5.6-sol",
+            "model_type": "runtime",
+            "model_options": {"collaborationMode": "default"},
+            "workspace_policy": "project",
+        },
+    )
+    test_db.add(local_profile)
+    test_db.flush()
+    bot = ProjectChatAgent(
+        id=f"B{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Local-default robot",
+        name="Local-default robot",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "runtime": "codex",
+            "execution_mode": "auto",
+            "default_runtime_profile_id": local_profile.id,
+            "model": "gpt-5.6-sol",
+            "model_type": "runtime",
+            "model_options": {"collaborationMode": "default"},
+            "visibility": "public",
+        },
+    )
+    test_db.add(bot)
+    test_db.flush()
+
+    moonshot_options = {
+        "weworkCloudModelNamespace": "default",
+        "weworkCloudModelResourceUserId": "0",
+        "weworkCloudModelUpstreamApiFormat": "anthropic-messages",
+        "collaborationMode": "default",
+        "permissionMode": "workspace-write",
+    }
+    runtime_capabilities = {
+        "runtime_permission_mode": "plan",
+        "execution": {
+            "workspace": {
+                "source": "local_path",
+            }
+        },
+        "initial_goal": {
+            "objective": "Finish the Issue with verified tests",
+            "status": "active",
+            "tokenBudget": 100_000,
+        },
+        "initial_supervisor": {
+            "mode": "suggest",
+            "instructions": "Prevent model or device drift",
+            "modelSelection": {
+                "modelName": "moonshot-kimi-k2.7-code-highspeed",
+                "modelType": "public",
+                "options": moonshot_options,
+            },
+            "intervalSeconds": 60,
+        },
+        "additional_skills": [{"name": "project-space"}],
+        "attachments": [
+            {
+                "id": "issue-requirements",
+                "original_filename": "requirements.md",
+            }
+        ],
+        "project_plugins": [
+            {
+                "id": "github@openai",
+                "pluginName": "github",
+                "marketplaceId": "openai",
+            }
+        ],
+        "additional_context": {
+            "workflowStageInput": {
+                "kind": "application",
+                "value": "Implement and verify the selected Issue",
+            }
+        },
+        "ephemeral": True,
+    }
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="local",
+        execution_device_id="local-device",
+        priority="medium",
+        automation_context={
+            "runtime_source": "issue_snapshot",
+            "execution_device_id": "cloud-device-1",
+            "model": "moonshot-kimi-k2.7-code-highspeed",
+            "model_type": "public",
+            "model_options": moonshot_options,
+            "workspace_binding": {"type": "standalone"},
+            **runtime_capabilities,
+        },
+    )
+
+    assert execution.execution_environment == "cloud"
+    assert execution.execution_device_id == "cloud-device-1"
+    assert execution.runtime_selection["model"] == ("moonshot-kimi-k2.7-code-highspeed")
+    assert execution.runtime_selection["model_type"] == "public"
+    assert execution.runtime_request["schemaVersion"] == 2
+    assert execution.runtime_request["deviceId"] == "cloud-device-1"
+    assert execution.runtime_request["modelId"] == ("moonshot-kimi-k2.7-code-highspeed")
+    assert execution.runtime_request["modelType"] == "public"
+    assert execution.runtime_request["modelOptions"] == moonshot_options
+    assert execution.runtime_request["runtimePermissionMode"] == "plan"
+    assert execution.runtime_request["execution"] == runtime_capabilities["execution"]
+    assert (
+        execution.runtime_request["initialGoal"] == runtime_capabilities["initial_goal"]
+    )
+    assert execution.runtime_request["initialSupervisor"] == (
+        runtime_capabilities["initial_supervisor"]
+    )
+    assert execution.runtime_request["additionalSkills"] == (
+        runtime_capabilities["additional_skills"]
+    )
+    assert (
+        execution.runtime_request["attachments"] == runtime_capabilities["attachments"]
+    )
+    assert execution.runtime_request["projectPlugins"] == (
+        runtime_capabilities["project_plugins"]
+    )
+    assert execution.runtime_request["additionalContext"] == (
+        runtime_capabilities["additional_context"]
+    )
+    assert execution.runtime_request["ephemeral"] is True
+    assert "modelConfig" not in execution.runtime_request
+
+    local_profile.metadata_json = {
+        **dict(local_profile.metadata_json or {}),
+        "model": "changed-local-default",
+    }
+    bot.metadata_json = {
+        **dict(bot.metadata_json or {}),
+        "model": "changed-bot-default",
+    }
+    test_db.flush()
+
+    model_config = {
+        "model": "openai",
+        "model_id": "moonshot-kimi-k2.7-code-highspeed",
+        "api_format": "responses",
+        "protocol": "openai-responses",
+        "base_url": "https://gateway.example.com",
+        "api_key": "dispatch-only-secret",
+        "upstream_api_format": "anthropic-messages",
+    }
+    with patch(
+        "app.services.chat.trigger.unified._build_cloud_gateway_model_config",
+        return_value=model_config,
+    ) as compile_model:
+        payload = loop_item_execution_service.build_runtime_payload(
+            test_db,
+            execution=execution,
+        )
+
+    compile_model.assert_called_once()
+    assert payload["modelId"] == "moonshot-kimi-k2.7-code-highspeed"
+    assert payload["modelType"] == "public"
+    assert payload["runtimePermissionMode"] == "plan"
+    assert payload["execution"] == runtime_capabilities["execution"]
+    assert payload["initialGoal"] == runtime_capabilities["initial_goal"]
+    assert payload["initialSupervisor"] == runtime_capabilities["initial_supervisor"]
+    assert payload["attachments"] == runtime_capabilities["attachments"]
+    assert payload["projectPlugins"] == runtime_capabilities["project_plugins"]
+    assert payload["additionalContext"] == runtime_capabilities["additional_context"]
+    assert payload["ephemeral"] is True
+    assert payload["executionRequest"]["model_config"]["model_id"] == (
+        "moonshot-kimi-k2.7-code-highspeed"
+    )
+    assert payload["executionRequest"]["runtime_permission_profile"] == ":workspace"
+    assert payload["executionRequest"]["claude_permission_mode"] == "plan"
+    assert (
+        payload["executionRequest"]["attachments"]
+        == runtime_capabilities["attachments"]
+    )
+    assert payload["executionRequest"]["project_plugin_ids"] == ["github@openai"]
+    assert payload["executionRequest"]["ephemeral"] is True
+    assert (
+        "Implement and verify the selected Issue"
+        in payload["executionRequest"]["prompt"]
+    )
+    assert "gpt-5.6-sol" not in json.dumps(payload)
+    assert "dispatch-only-secret" not in execution.execution_payload
 
 
 def test_open_execution_activity_is_idempotent_and_opens_exactly_one_message(
@@ -2227,7 +2745,7 @@ def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
     item = _make_item(test_db, project, test_user, title="Deploy")
     profile = WeworkExecutionProfile.for_project_robot(bot)
 
-    payload = profile.build_runtime_payload(
+    request = profile.build_runtime_request(
         test_db,
         execution_id=253,
         runtime_task_id="codex-queue-253",
@@ -2262,8 +2780,8 @@ def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
             }
         },
         execution_device_id="cloud-device-1",
-        materialize_execution_request=False,
     )
+    payload = request.model_dump(by_alias=True, exclude_none=True)
 
     assert f"task_id: {item.id}" in payload["message"]
     assert "task_id: previous-runtime-task" not in payload["message"]
@@ -2687,8 +3205,50 @@ def test_mark_start_requested_preserves_claimed_state(
     assert second.status == "queued"
 
 
-def test_mark_start_requested_binds_automated_stage_runtime_task(
+def test_mark_start_requested_binds_issue_runtime_task_without_workflow_stage(
     test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+
+    claimed = loop_item_execution_service.claim(
+        test_db,
+        agent_id=bot.id,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    assert claimed is not None and claimed.id == execution.id
+
+    assert (
+        loop_item_execution_service.mark_start_requested(
+            test_db, execution_ids=[claimed.id]
+        )
+        == 1
+    )
+
+    binding = (
+        test_db.query(LoopItemTaskBinding)
+        .filter(
+            LoopItemTaskBinding.loop_item_id == item.id,
+            LoopItemTaskBinding.task_id == claimed.runtime_task_id,
+        )
+        .one()
+    )
+    assert binding.device_id == "cloud-device-1"
+    assert binding.task_title == item.title
+    assert binding.workflow_node_id is None
+
+
+@pytest.mark.parametrize("executor_type", ["project_robot", "generic_robot"])
+def test_mark_start_requested_binds_workflow_stage_runtime_task(
+    test_db: Session, test_user: User, executor_type: str
 ) -> None:
     project = _make_project(test_db, test_user)
     bot = _make_bot(test_db, project, test_user)
@@ -2754,6 +3314,25 @@ def test_mark_start_requested_binds_automated_stage_runtime_task(
         test_user,
         automation_context={"run_id": str(run.id)},
     )
+    if executor_type == "generic_robot":
+        intent = execution.execution_intent
+        execution.execution_payload = (
+            loop_item_execution_service._serialize_execution_intent(
+                runtime_selection={
+                    **dict(intent.get("runtime_selection") or {}),
+                    "executor_kind": "generic_robot",
+                },
+                origin_context=dict(intent.get("origin_context") or {}),
+                runtime_request=(
+                    dict(intent["runtime_request"])
+                    if isinstance(intent.get("runtime_request"), dict)
+                    else None
+                ),
+            )
+        )
+        test_db.commit()
+        test_db.refresh(execution)
+    assert execution.executor_type == executor_type
     claimed = loop_item_execution_service.claim(
         test_db,
         agent_id=bot.id,
@@ -3305,7 +3884,8 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
         side_effect=AssertionError("model credentials must not resolve at enqueue"),
     ):
         execution = _make_execution(test_db, item, bot, test_user)
-    assert execution.execution_payload == ""
+    assert execution.runtime_selection["runtime_profile_id"]
+    assert "api_key" not in execution.execution_payload
     claimed = loop_item_execution_service.claim(
         test_db,
         agent_id=bot.id,
@@ -3318,17 +3898,10 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
         runtime_active_task_ids=set(),
     )
     assert claimed is not None
-    with (
-        patch.object(
-            loop_item_execution_service,
-            "_materialize_backend_request",
-            return_value=True,
-        ),
-        patch(
-            "app.services.chat.trigger.unified.build_wework_runtime_model_config",
-            return_value=full_config,
-        ) as resolve_model,
-    ):
+    with patch(
+        "app.services.chat.trigger.unified.build_wework_runtime_model_config",
+        return_value=full_config,
+    ) as resolve_model:
         payload = loop_item_execution_service.build_runtime_payload(
             test_db, execution=claimed
         )
@@ -3336,22 +3909,15 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
     model_config = payload["executionRequest"]["model_config"]
     assert model_config == full_config
     assert payload["executionRequest"]["enable_deep_thinking"] is False
-    assert payload["modelId"] == "wework-gpt-5.6-sol"
+    assert payload["modelId"] == "wecode-moonshot-kimi-k2.7-code-highspeed(公网)"
     assert model_config["base_url"] == "https://gateway.example.com"
     assert model_config["model_id"] == "moonshot-kimi-k2.7-code-highspeed"
     assert model_config["upstream_api_format"] == "anthropic-messages"
 
     rotated_config = {**full_config, "api_key": "sk-rotated-at-dispatch"}
-    with (
-        patch.object(
-            loop_item_execution_service,
-            "_materialize_backend_request",
-            return_value=True,
-        ),
-        patch(
-            "app.services.chat.trigger.unified.build_wework_runtime_model_config",
-            return_value=rotated_config,
-        ),
+    with patch(
+        "app.services.chat.trigger.unified.build_wework_runtime_model_config",
+        return_value=rotated_config,
     ):
         rebuilt = loop_item_execution_service.build_runtime_payload(
             test_db, execution=claimed
@@ -3359,7 +3925,8 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
     assert rebuilt["executionRequest"]["model_config"]["api_key"] == (
         "sk-rotated-at-dispatch"
     )
-    assert claimed.execution_payload == ""
+    assert claimed.runtime_selection["runtime_profile_id"]
+    assert "api_key" not in claimed.execution_payload
 
 
 @pytest.mark.parametrize("executor_type", ["project_robot", "automation_manager"])
@@ -3373,11 +3940,24 @@ def test_local_runtime_payload_leaves_model_materialization_to_app(
     _ensure_device(test_db, test_user, "local-device", "local")
     if executor_type == "project_robot":
         bot = _make_bot(test_db, project, test_user)
-        bot.device_id = "local-device"
+        profile = RuntimeProfile(
+            user_id=test_user.id,
+            created_by_user_id=test_user.id,
+            updated_by_user_id=test_user.id,
+            name="Local Runtime",
+            title="Local Runtime",
+            device_id="local-device",
+            metadata_json={
+                "execution_environment": "local",
+                "model": "backend-visible-model",
+                "workspace_policy": "project",
+            },
+        )
+        test_db.add(profile)
+        test_db.flush()
         bot.metadata_json = {
             **dict(bot.metadata_json or {}),
-            "execution_environment": "local",
-            "model": "backend-visible-model",
+            "default_runtime_profile_id": profile.id,
         }
         test_db.commit()
         execution = loop_item_execution_service.create_for_assignment(
@@ -3399,13 +3979,41 @@ def test_local_runtime_payload_leaves_model_materialization_to_app(
             status="enabled",
             created_by_user_id=test_user.id,
             metadata_json={
-                "assignment_mode": "ai_managed",
-                "manager_type": "custom",
-                "model": "backend-visible-model",
+                "action": "ai_assign",
+                "manager": {"type": "custom"},
+                "role": {"source": "generic", "agent_id": None},
+                "runtime": {
+                    "source": "fixed_profile",
+                    "runtime_profile_id": None,
+                    "user_id": None,
+                },
             },
         )
         test_db.add(rule)
         test_db.flush()
+        profile = RuntimeProfile(
+            user_id=test_user.id,
+            created_by_user_id=test_user.id,
+            updated_by_user_id=test_user.id,
+            name="Manager Runtime",
+            title="Manager Runtime",
+            device_id="local-device",
+            metadata_json={
+                "execution_environment": "local",
+                "model": "backend-visible-model",
+                "workspace_policy": "project",
+            },
+        )
+        test_db.add(profile)
+        test_db.flush()
+        rule.metadata_json = {
+            **dict(rule.metadata_json or {}),
+            "runtime": {
+                "source": "fixed_profile",
+                "runtime_profile_id": profile.id,
+                "user_id": None,
+            },
+        }
         run = ProjectAutomationRun(
             cloud_project_id=project.id,
             parent_id=rule.id,
@@ -3426,6 +4034,12 @@ def test_local_runtime_payload_leaves_model_materialization_to_app(
             execution_device_id="local-device",
             priority="medium",
             automation_context={"run_id": str(run.id)},
+            runtime_selection={
+                "runtime_source": "fixed_profile",
+                "runtime_profile_id": profile.id,
+                "runtime_profile_version": profile.version,
+                "workspace_policy": "project",
+            },
         )
     test_db.commit()
 
@@ -3538,11 +4152,11 @@ def test_public_cloud_model_uses_backend_gateway_config(
     assert model_config["upstream_api_format"] == "anthropic-messages"
     assert model_config["codex_catalog_model_id"] == "wework-kimi-k2-7"
     assert model_config["codex_responses_compat_proxy"] is True
-    assert payload["modelId"] == "wework-kimi-k2-7"
+    assert payload["modelId"] == "public-cloud-model"
     assert payload["executionRequest"]["enable_deep_thinking"] is False
 
 
-def test_legacy_unbound_project_robot_is_claimed_by_its_owners_local_app(
+def test_unbound_project_robot_waits_for_runtime_selection(
     test_db: Session, test_user: User
 ) -> None:
     project = _make_project(test_db, test_user)
@@ -3586,10 +4200,10 @@ def test_legacy_unbound_project_robot_is_claimed_by_its_owners_local_app(
         runtime_active_task_ids=set(),
     )
 
-    assert claimed is not None
-    assert claimed.id == execution.id
-    assert claimed.execution_device_id == "local-device"
-    assert claimed.executor_owner_user_id == test_user.id
+    assert claimed is None
+    assert execution.status == "waiting_runtime"
+    assert execution.execution_device_id == ""
+    assert execution.executor_owner_user_id == test_user.id
 
 
 def test_automation_assignment_schedules_wegent_runtime_after_commit(
@@ -3608,7 +4222,7 @@ def test_automation_assignment_schedules_wegent_runtime_after_commit(
         status="enabled",
         assignee_agent_id=bot.id,
         created_by_user_id=test_user.id,
-        metadata_json={"assignment_mode": "manual"},
+        metadata_json=_automation_metadata(agent_id=bot.id),
     )
     run = ProjectAutomationRun(
         cloud_project_id=project.id,
@@ -3646,6 +4260,218 @@ def test_automation_assignment_schedules_wegent_runtime_after_commit(
     assert execution.agent_id == bot.id
     assert execution.team_id == team.id
     schedule.assert_called_once_with(test_db, execution)
+
+
+def test_waiting_execution_can_select_owned_runtime_once(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    _ensure_device(test_db, test_user, "cloud-device-1")
+    execution = loop_item_execution_service.create_for_assignment(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        agent=bot,
+        assigner_user_id=test_user.id,
+        environment="cloud",
+        execution_device_id="cloud-device-1",
+        priority="medium",
+    )
+    assert execution.status == "waiting_runtime"
+    initial_version = execution.version
+
+    profile = runtime_profile_service.create(
+        test_db,
+        test_user.id,
+        RuntimeProfileCreate(
+            name="Selectable Runtime",
+            execution_environment="cloud",
+            execution_device_id="cloud-device-1",
+            model="test-model",
+            workspace_policy="project",
+        ),
+    )
+    selected = runtime_profile_service.select_execution(
+        test_db,
+        execution_id=execution.id,
+        user_id=test_user.id,
+        profile_id=profile["id"],
+        version=initial_version,
+    )
+
+    assert selected.status == "queued"
+    assert selected.runtime_selection == {
+        "runtime_source": "selected",
+        "runtime_profile_id": profile["id"],
+        "runtime_profile_version": 1,
+        "model": "test-model",
+        "model_type": None,
+        "model_options": {},
+        "workspace_policy": "project",
+    }
+    assert "execution_device_id" not in selected.runtime_selection
+    with pytest.raises(HTTPException) as conflict:
+        runtime_profile_service.select_execution(
+            test_db,
+            execution_id=execution.id,
+            user_id=test_user.id,
+            profile_id=profile["id"],
+            version=initial_version,
+        )
+    assert conflict.value.status_code == 409
+
+
+def test_runtime_profile_rejects_incomplete_cloud_model_identity(
+    test_db: Session, test_user: User
+) -> None:
+    _ensure_device(test_db, test_user, "cloud-device-1")
+
+    with pytest.raises(HTTPException) as exc_info:
+        runtime_profile_service.create(
+            test_db,
+            test_user.id,
+            RuntimeProfileCreate(
+                name="Incomplete cloud Runtime",
+                execution_environment="cloud",
+                execution_device_id="cloud-device-1",
+                model="moonshot-model",
+                model_type="public",
+                model_options={},
+                workspace_policy="project",
+            ),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "Cloud model identity is incomplete"
+
+
+def test_runtime_profile_preserves_complete_cloud_model_identity(
+    test_db: Session, test_user: User
+) -> None:
+    _ensure_device(test_db, test_user, "cloud-device-1")
+    model_options = {
+        "weworkCloudModelNamespace": "default",
+        "weworkCloudModelResourceUserId": "0",
+        "weworkCloudModelUpstreamApiFormat": "openai-responses",
+    }
+
+    profile = runtime_profile_service.create(
+        test_db,
+        test_user.id,
+        RuntimeProfileCreate(
+            name="Moonshot cloud Runtime",
+            execution_environment="cloud",
+            execution_device_id="cloud-device-1",
+            model="moonshot-model",
+            model_type="public",
+            model_options=model_options,
+            workspace_policy="project",
+        ),
+    )
+
+    assert profile["model_type"] == "public"
+    assert profile["model_options"] == model_options
+
+
+def test_runtime_catalog_excludes_internal_migration_profiles(
+    test_db: Session, test_user: User
+) -> None:
+    visible = RuntimeProfile(
+        user_id=test_user.id,
+        created_by_user_id=test_user.id,
+        updated_by_user_id=test_user.id,
+        name="My Runtime",
+        title="My Runtime",
+        device_id="device-visible",
+        metadata_json={
+            "execution_environment": "local",
+            "model": "visible-model",
+            "model_options": {},
+            "workspace_policy": "project",
+        },
+    )
+    internal = RuntimeProfile(
+        user_id=test_user.id,
+        created_by_user_id=test_user.id,
+        updated_by_user_id=test_user.id,
+        name="Legacy Robot Runtime",
+        title="Legacy Robot Runtime",
+        device_id="device-internal",
+        metadata_json={
+            "execution_environment": "local",
+            "model": "internal-model",
+            "model_options": {},
+            "workspace_policy": "project",
+            "catalog_visibility": "internal",
+            "migrated_from": {
+                "resource_type": "chat_agent",
+                "resource_id": "legacy-agent",
+            },
+        },
+    )
+    test_db.add_all([visible, internal])
+    test_db.commit()
+
+    profiles = runtime_profile_service.list(test_db, test_user.id)
+
+    assert [profile["name"] for profile in profiles] == ["My Runtime"]
+    assert (
+        runtime_profile_service.require_owned(test_db, str(internal.id), test_user.id)
+        is internal
+    )
+
+
+def test_runtime_catalog_creates_one_default_per_device(
+    test_db: Session, test_user: User
+) -> None:
+    test_db.add(
+        RuntimeProfile(
+            user_id=test_user.id,
+            created_by_user_id=test_user.id,
+            updated_by_user_id=test_user.id,
+            name="内部迁移配置",
+            title="内部迁移配置",
+            device_id="device-local",
+            metadata_json={
+                "execution_environment": "local",
+                "model": "legacy-model",
+                "catalog_visibility": "internal",
+            },
+        )
+    )
+    test_db.commit()
+    devices = [
+        {
+            "device_id": "device-local",
+            "name": "我的本地",
+            "device_type": "local",
+        },
+        {
+            "device_id": "device-cloud",
+            "name": "云端设备",
+            "device_type": "cloud",
+        },
+    ]
+
+    runtime_profile_service.ensure_device_defaults(test_db, test_user.id, devices)
+    runtime_profile_service.ensure_device_defaults(test_db, test_user.id, devices)
+
+    profiles = runtime_profile_service.list(test_db, test_user.id)
+    assert {profile["execution_device_id"] for profile in profiles} == {
+        "device-local",
+        "device-cloud",
+    }
+    assert len(profiles) == 2
+    assert all(profile["model"] == "" for profile in profiles)
+    assert {
+        profile["execution_device_id"]: profile["execution_environment"]
+        for profile in profiles
+    } == {
+        "device-local": "local",
+        "device-cloud": "cloud",
+    }
 
 
 @pytest.mark.asyncio
@@ -3778,6 +4604,26 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
     item.assignee_user_id = test_user.id
     agent = _make_bot(test_db, project, test_user)
     _ensure_device(test_db, test_user, "cloud-device-1")
+    profile = RuntimeProfile(
+        user_id=test_user.id,
+        created_by_user_id=test_user.id,
+        updated_by_user_id=test_user.id,
+        name="Assigned robot Runtime",
+        title="Assigned robot Runtime",
+        device_id="cloud-device-1",
+        metadata_json={
+            "execution_environment": "cloud",
+            "model": "test-model",
+            "model_options": {},
+            "workspace_policy": "project",
+        },
+    )
+    test_db.add(profile)
+    test_db.flush()
+    agent.metadata_json = {
+        **dict(agent.metadata_json or {}),
+        "default_runtime_profile_id": profile.id,
+    }
     rule = ProjectAutomationRule(
         id=f"rule-{uuid.uuid4().hex[:10]}",
         cloud_project_id=project.id,
@@ -3785,13 +4631,13 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
         description="Choose the project robot with the closest responsibility.",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={
-            "assignment_mode": "ai_managed",
-            "manager_type": "custom",
-            "model": "test-model",
-            "execution_environment": "cloud",
-            "execution_device_id": "cloud-device-1",
-        },
+        metadata_json=_automation_metadata(
+            action="ai_assign",
+            manager_type="custom",
+            model="test-model",
+            execution_environment="cloud",
+            execution_device_id="cloud-device-1",
+        ),
     )
     run = ProjectAutomationRun(
         cloud_project_id=project.id,
@@ -3846,6 +4692,11 @@ def test_custom_manager_assignment_survives_manager_transport_failure(
             "trigger": "task_created",
             "event": {"type": "task.created", "task_id": item.id},
             "activity_message_id": message_id,
+        },
+        runtime_selection={
+            "model": "test-model",
+            "model_type": None,
+            "model_options": {},
         },
     )
     activity.metadata_json = {
@@ -3981,7 +4832,10 @@ def test_manager_assigns_project_member_without_parsing_final_output(
         description="Choose by project capability.",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={"assignment_mode": "ai_managed", "manager_type": "custom"},
+        metadata_json=_automation_metadata(
+            action="ai_assign",
+            manager_type="custom",
+        ),
     )
     run = ProjectAutomationRun(
         cloud_project_id=project.id,
@@ -4062,7 +4916,10 @@ def test_completed_manager_comment_repairs_stale_queued_rule_run(
         title="Wegent dispatcher",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={"assignment_mode": "ai_managed", "manager_type": "wegent"},
+        metadata_json=_automation_metadata(
+            action="ai_assign",
+            manager_type="wegent",
+        ),
     )
     run = ProjectAutomationRun(
         id=f"run-{uuid.uuid4().hex[:10]}",
@@ -4131,7 +4988,10 @@ def test_manager_does_not_treat_default_creator_as_a_submitted_plan(
         description="Choose by capability.",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={"assignment_mode": "ai_managed", "manager_type": "custom"},
+        metadata_json=_automation_metadata(
+            action="ai_assign",
+            manager_type="custom",
+        ),
     )
     run = ProjectAutomationRun(
         cloud_project_id=project.id,
@@ -4395,11 +5255,11 @@ async def test_cancel_stops_selected_robot_before_terminal_wegent_manager_task(
         description="Choose a project robot.",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={
-            "assignment_mode": "ai_managed",
-            "manager_type": "wegent",
-            "timezone": "Asia/Shanghai",
-        },
+        metadata_json=_automation_metadata(
+            action="ai_assign",
+            manager_type="wegent",
+            timezone="Asia/Shanghai",
+        ),
     )
     run = ProjectAutomationRun(
         cloud_project_id=project.id,
@@ -4480,6 +5340,22 @@ def test_cloud_execution_fails_when_selected_model_no_longer_exists(
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
     _ensure_device(test_db, test_user, "cloud-device-1")
+    profile = RuntimeProfile(
+        user_id=test_user.id,
+        created_by_user_id=test_user.id,
+        updated_by_user_id=test_user.id,
+        name="Deleted model Runtime",
+        title="Deleted model Runtime",
+        device_id="cloud-device-1",
+        metadata_json={
+            "execution_environment": "cloud",
+            "model": "deleted-model",
+            "model_options": {},
+            "workspace_policy": "project",
+        },
+    )
+    test_db.add(profile)
+    test_db.flush()
     rule = ProjectAutomationRule(
         id="deleted-model-rule",
         cloud_project_id=project.id,
@@ -4487,11 +5363,15 @@ def test_cloud_execution_fails_when_selected_model_no_longer_exists(
         description="Handle this task",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={
-            "assignment_mode": "ai_managed",
-            "manager_type": "custom",
-            "model": "deleted-model",
-        },
+        metadata_json=_automation_metadata(
+            action="ai_assign",
+            manager_type="custom",
+            runtime={
+                "source": "fixed_profile",
+                "runtime_profile_id": profile.id,
+                "user_id": None,
+            },
+        ),
     )
     run = ProjectAutomationRun(
         cloud_project_id=project.id,
@@ -4513,6 +5393,12 @@ def test_cloud_execution_fails_when_selected_model_no_longer_exists(
         execution_device_id="cloud-device-1",
         priority="medium",
         automation_context={"run_id": str(run.id)},
+        runtime_selection={
+            "runtime_source": "fixed_profile",
+            "runtime_profile_id": profile.id,
+            "runtime_profile_version": profile.version,
+            "workspace_policy": "project",
+        },
     )
     test_db.commit()
 
@@ -4564,11 +5450,11 @@ def test_cancel_queued_execution_closes_linked_activity_without_runtime_device(
         description="Process the event.",
         status="enabled",
         created_by_user_id=test_user.id,
-        metadata_json={
-            "assignment_mode": "ai_managed",
-            "manager_type": "custom",
-            "model": "test-model",
-        },
+        metadata_json=_automation_metadata(
+            action="ai_assign",
+            manager_type="custom",
+            model="test-model",
+        ),
     )
     run.parent_id = rule.id
     run.metadata_json = {
@@ -4589,6 +5475,11 @@ def test_cancel_queued_execution_closes_linked_activity_without_runtime_device(
         automation_context={
             "run_id": str(run.id),
             "activity_message_id": message_id,
+        },
+        runtime_selection={
+            "model": "test-model",
+            "model_type": None,
+            "model_options": {},
         },
     )
     activity.metadata_json = {

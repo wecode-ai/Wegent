@@ -143,6 +143,10 @@ class ExecutionRequest:
     project_workspace_path: Optional[str] = None
     execution_target_type: Optional[str] = None
     device_id: Optional[str] = None
+    runtime_project_key: Optional[str] = None
+    runtime_project_name: Optional[str] = None
+    runtime_workspace_roots: list[str] = field(default_factory=list)
+    project_plugin_ids: list[str] = field(default_factory=list)
 
     # === Git Configuration (from Task) ===
     git_domain: Optional[str] = None
@@ -161,6 +165,7 @@ class ExecutionRequest:
     history_limit: Optional[int] = None
     stateless: bool = False
     new_session: bool = False
+    ephemeral: bool = False
     fork_runtime: Optional[dict] = None
     inherited_sessions: list[dict] = field(default_factory=list)
     collaboration_model: str = "single"
@@ -168,6 +173,7 @@ class ExecutionRequest:
         None  # From Task: Collaboration mode (e.g., "coordinate", "collaborate")
     )
     request_id: str = ""  # From ChatRequest
+    client_user_message_id: Optional[str] = None
 
     # === Context Data (from ChatRequest) ===
     contexts: list = field(default_factory=list)
@@ -211,6 +217,12 @@ class ExecutionRequest:
     validation_params: Optional[dict] = None  # Validation task parameters
     sandbox_metadata: Optional[dict] = None  # Sandbox task metadata
     runtime_permission_profile: Optional[str] = None
+    runtime_executable_path: Optional[str] = None
+    claude_permission_mode: Optional[str] = None
+
+    # === Runtime Origin ===
+    cloud_project_id: Optional[str] = None
+    origin: Optional[dict] = None
 
     # === Reasoning Configuration ===
     reasoning_config: Optional[dict] = (

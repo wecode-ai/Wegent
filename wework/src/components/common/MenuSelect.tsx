@@ -10,11 +10,19 @@ export interface MenuOption {
   disabled?: boolean
 }
 
+interface MenuAction {
+  label: string
+  testId: string
+  icon?: ReactNode
+  onSelect: () => void
+}
+
 export function MenuSelect({
   testId,
   value,
   options,
   onChange,
+  action,
   pill = false,
   disabled = false,
   placeholder,
@@ -24,6 +32,7 @@ export function MenuSelect({
   value: string
   options: MenuOption[]
   onChange: (value: string) => void
+  action?: MenuAction
   pill?: boolean
   disabled?: boolean
   placeholder?: string
@@ -53,25 +62,43 @@ export function MenuSelect({
         </span>
       }
     >
-      {close =>
-        options.map(option => (
-          <button
-            key={option.value}
-            type="button"
-            data-testid={`${testId}-option-${option.value}`}
-            disabled={option.disabled}
-            onClick={() => {
-              if (option.disabled) return
-              onChange(option.value)
-              close()
-            }}
-            className="flex h-10 w-full items-center rounded-xl px-3 text-left text-sm font-medium hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-          >
-            <span className="min-w-0 flex-1 truncate">{option.label}</span>
-            {option.value === value ? <Check className="h-4 w-4 shrink-0" /> : null}
-          </button>
-        ))
-      }
+      {close => (
+        <>
+          {options.map(option => (
+            <button
+              key={option.value}
+              type="button"
+              data-testid={`${testId}-option-${option.value}`}
+              disabled={option.disabled}
+              onClick={() => {
+                if (option.disabled) return
+                onChange(option.value)
+                close()
+              }}
+              className="flex h-10 w-full items-center rounded-xl px-3 text-left text-sm font-medium hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              {option.value === value ? <Check className="h-4 w-4 shrink-0" /> : null}
+            </button>
+          ))}
+          {action ? (
+            <div className="mt-1 border-t border-border pt-1">
+              <button
+                type="button"
+                data-testid={action.testId}
+                onClick={() => {
+                  action.onSelect()
+                  close()
+                }}
+                className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium hover:bg-surface"
+              >
+                {action.icon}
+                <span className="min-w-0 flex-1 truncate">{action.label}</span>
+              </button>
+            </div>
+          ) : null}
+        </>
+      )}
     </PopupMenu>
   )
 }
@@ -178,6 +205,7 @@ export function PopupMenu({
   disabled = false,
   invalid = false,
   menuWidth,
+  fullWidth = false,
 }: {
   testId: string
   trigger: ReactNode
@@ -186,6 +214,7 @@ export function PopupMenu({
   disabled?: boolean
   invalid?: boolean
   menuWidth?: number
+  fullWidth?: boolean
 }) {
   const rootRef = useRef<HTMLSpanElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -231,14 +260,17 @@ export function PopupMenu({
   }, [close, open])
 
   return (
-    <span ref={rootRef} className="inline-flex">
+    <span ref={rootRef} className={cn('inline-flex', fullWidth && 'w-full')}>
       <button
         type="button"
         data-testid={testId}
         disabled={disabled}
         aria-invalid={invalid || undefined}
         onClick={() => setOpen(current => !current)}
-        className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+        className={cn(
+          'rounded-full outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50',
+          fullWidth && 'w-full'
+        )}
         aria-haspopup="menu"
         aria-expanded={open}
       >

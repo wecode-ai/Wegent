@@ -23,6 +23,8 @@ use super::{
 
 const REGISTER_EVENT: &str = "device:register";
 const HEARTBEAT_EVENT: &str = "device:heartbeat";
+const RUNTIME_TASK_PULL_EVENT: &str = "runtime.tasks.pull";
+const RUNTIME_TASK_ACCEPT_EVENT: &str = "runtime.tasks.accept";
 #[derive(Clone)]
 pub struct LocalBackendClient<T>
 where
@@ -111,6 +113,71 @@ where
         self.transport
             .emit(HEARTBEAT_EVENT, self.heartbeat_payload())
             .await
+    }
+
+    pub async fn pull_runtime_task(&self, timeout: Duration) -> Result<Option<Value>, String> {
+        let runtime_capacity = self
+            .runtime_capacity
+            .lock()
+            .expect("runtime capacity lock should not be poisoned")
+            .clone();
+        let response = self
+            .transport
+            .call(
+                RUNTIME_TASK_PULL_EVENT,
+                json!({"runtime_capacity": runtime_capacity}),
+                timeout,
+            )
+            .await?;
+        let payload = ack_payload(&response);
+        if payload
+            .and_then(|value| value.get("success"))
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            return Err(payload
+                .and_then(|value| value.get("error"))
+                .and_then(Value::as_str)
+                .unwrap_or("Runtime task pull failed")
+                .to_owned());
+        }
+        Ok(payload
+            .and_then(|value| value.get("task"))
+            .cloned()
+            .filter(|task| !task.is_null()))
+    }
+
+    pub async fn acknowledge_runtime_task(
+        &self,
+        task: &Value,
+        accepted: bool,
+        response: &Value,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let payload = json!({
+            "execution_id": task.get("execution_id"),
+            "runtime_task_id": task.get("runtime_task_id"),
+            "prompt": task.get("prompt"),
+            "accepted": accepted,
+            "error": response.get("error"),
+        });
+        let ack = self
+            .transport
+            .call(RUNTIME_TASK_ACCEPT_EVENT, payload, timeout)
+            .await?;
+        let ack = ack_payload(&ack);
+        if ack
+            .and_then(|value| value.get("success"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            return Ok(());
+        }
+        Err(ack
+            .and_then(|value| value.get("error"))
+            .and_then(Value::as_str)
+            .unwrap_or("Runtime task acceptance report failed")
+            .to_owned())
     }
 
     pub async fn emit_event(&self, event: EventEnvelope) -> Result<(), String> {
@@ -225,6 +292,13 @@ fn ack_success(response: &Value) -> bool {
         .as_array()
         .map(|values| values.iter().any(ack_success))
         .unwrap_or(false)
+}
+
+fn ack_payload(response: &Value) -> Option<&Value> {
+    if response.is_object() {
+        return Some(response);
+    }
+    response.as_array()?.iter().find_map(ack_payload)
 }
 
 fn backend_event_payload(event: EventEnvelope) -> Result<Value, String> {

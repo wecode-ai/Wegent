@@ -13,6 +13,7 @@ import {
   Package,
   Palette,
   ScanLine,
+  Server,
   SlidersHorizontal,
   Terminal,
   UserRound,
@@ -35,6 +36,7 @@ import { ModelSettingsPage } from '@/components/settings/ModelSettingsPage'
 import { PluginSettingsPage } from '@/components/settings/PluginSettingsPage'
 import { ProxySettingsPage } from '@/components/settings/ProxySettingsPage'
 import { QuickPhrasesSettingsPage } from '@/components/settings/QuickPhrasesSettingsPage'
+import { RuntimeSettingsPage } from '@/components/settings/RuntimeSettingsPage'
 import { WorktreesSettingsPage } from '@/components/settings/WorktreesSettingsPage'
 
 import type { WorkbenchSettingsContribution } from './settings'
@@ -133,6 +135,22 @@ export const CORE_WORKBENCH_SETTINGS = [
     label: '快捷短语',
     ...personal,
     render: () => <QuickPhrasesSettingsPage />,
+  },
+  {
+    key: 'runtimes',
+    path: '/settings/personal/runtimes',
+    icon: Server,
+    labelKey: 'settings_nav_runtimes',
+    label: 'Runtime',
+    ...personal,
+    render: context => (
+      <RuntimeSettingsPage
+        runtimeProfileApi={context.services?.runtimeProfileApi}
+        deliveryApi={context.services?.deliveryApi}
+        deviceApi={context.services?.deviceApi}
+        modelApi={context.services?.modelApi}
+      />
+    ),
   },
   {
     key: 'about',
