@@ -45,7 +45,7 @@ import {
 } from './host/workbench-tab-controller.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions, workbenchDshBounds } from './host/window-layout.js'
-import { presentWindow } from './host/window-presentation.js'
+import { createSingleFlight, presentWindow } from './host/window-presentation.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
@@ -369,7 +369,7 @@ class ElectronWorkbenchView implements WorkbenchTabView {
   }
 }
 
-async function loadPrimaryDshView(): Promise<void> {
+const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   if (!mainWindow || !desktopRuntime) return
   if (primaryDshLoaded) return
   rendererHealth.loading()
@@ -415,7 +415,7 @@ async function loadPrimaryDshView(): Promise<void> {
     rendererHealth.failed('renderer_load_failed')
     throw error
   }
-}
+})
 
 function disposeCoreDshViews(): void {
   for (const workspaceWindow of workspaceWindows.values()) {
@@ -713,7 +713,9 @@ function dispatchTrayAction(action: TrayAction): void {
     requestApplicationShutdown(() => app.quit())
     return
   }
-  void reactivateMainWindow()
+  void reactivateMainWindow().catch(error => {
+    console.error('[window] failed to handle tray action', error)
+  })
   if (action.type === 'open-settings' || action.type === 'open-task') {
     pendingTrayActions.push(action)
   }

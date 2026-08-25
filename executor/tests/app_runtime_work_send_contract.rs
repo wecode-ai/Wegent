@@ -3064,6 +3064,63 @@ async fn refreshed_transcript_reads_without_resuming_an_active_thread() {
 }
 
 #[tokio::test]
+async fn active_transcript_without_a_snapshot_reads_provider_history() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-active-transcript-no-snapshot-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-active-transcript-no-snapshot-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-active-transcript-no-snapshot-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-active-transcript-no-snapshot",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_until_task_running(&handler, "local-task-active-transcript-no-snapshot").await;
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "local-task-active-transcript-no-snapshot",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("active transcript should restore provider history");
+
+    assert_eq!(transcript["success"], true);
+    wait_for_method_count(&log_path, "thread/turns/list", 1).await;
+    let calls = read_json_lines(&log_path);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/resume")
+            .count(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn runtime_tasks_interrupt_and_send_starts_a_new_turn_after_interrupting() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
