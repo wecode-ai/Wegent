@@ -16086,12 +16086,11 @@ describe('WorkbenchProvider runtime tasks', () => {
         taskId: 'runtime-a',
       })
     })
-    const cancelRuntimeTask = vi.fn().mockImplementation(() => {
+    const cancellation = deferred<{ accepted: boolean; taskId: string }>()
+    const cancelRuntimeTask = vi.fn().mockImplementation(async () => {
+      const response = await cancellation.promise
       runtimeRunning = false
-      return Promise.resolve({
-        accepted: true,
-        taskId: 'runtime-a',
-      })
+      return response
     })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork,
@@ -16130,6 +16129,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('stop current response'))
 
     await waitFor(() => expect(cancelRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('assistant-stopped-notice')).not.toBeInTheDocument()
+
+    cancellation.resolve({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
     await waitFor(() => expect(screen.getByTestId('assistant-stopped-notice')).toBeInTheDocument())
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('已停止')
   })
