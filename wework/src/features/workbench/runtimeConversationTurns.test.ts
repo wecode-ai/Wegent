@@ -1667,6 +1667,49 @@ describe('runtimeConversationTurns', () => {
     expect(merged[0].status).toBe('done')
   })
 
+  test('keeps a transcript assistant item when a completed text block races the snapshot', () => {
+    const content = 'Initial goal turn complete'
+    const assistantItem = {
+      id: 'message-1',
+      type: 'assistant_text' as const,
+      content,
+      createdAt: '2026-08-25T07:49:01.000Z',
+    }
+    let turns: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [assistantItem],
+        status: 'streaming',
+      },
+    ]
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: assistantItem.id,
+        subtaskId: 'turn-1',
+        type: 'text',
+        processKind: 'assistant_message',
+        content,
+        status: 'done',
+        createdAt: Date.parse(assistantItem.createdAt),
+      },
+    })
+    turns = mergeRuntimeConversationTurns(turns, [
+      {
+        id: 'turn-1',
+        items: [assistantItem],
+        status: 'streaming',
+      },
+    ])
+
+    expect(turns[0].items).toEqual([assistantItem])
+    expect(projectRuntimeConversationTurns(turns).map(message => message.content)).toEqual([
+      content,
+    ])
+  })
+
   test('preserves the live tool start when a snapshot falls back to the turn start', () => {
     const localBlock: ProcessingBlock = {
       id: 'tool-1',
