@@ -66,6 +66,7 @@ def _robot(db: Session, project: CloudProject, user: User) -> ProjectChatAgent:
         device_id=device_id,
         metadata_json={
             "runtime": "codex",
+            "model": "test-model",
             "execution_mode": "auto",
             "execution_environment": "local",
             "visibility": "public",

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentType, ReactNode } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type { ProjectWorkflowDefinition } from '@/api/deliveries'
+import type { ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import { ProjectWorkflowEditor } from './ProjectWorkflowEditor'
 
@@ -31,6 +32,8 @@ vi.mock('@xyflow/react', () => ({
     edgeTypes,
     onNodeClick,
     onDelete,
+    zoomOnScroll,
+    preventScrolling,
     children,
   }: {
     nodes: Array<{
@@ -54,10 +57,14 @@ vi.mock('@xyflow/react', () => ({
       nodes: Array<{ id: string }>
       edges: Array<{ id: string; source: string; target: string }>
     }) => void
+    zoomOnScroll?: boolean
+    preventScrolling?: boolean
     children?: ReactNode
   }) => (
     <div
       data-testid="mock-react-flow"
+      data-zoom-on-scroll={zoomOnScroll ? 'true' : 'false'}
+      data-prevent-scrolling={preventScrolling ? 'true' : 'false'}
       tabIndex={0}
       onKeyDown={event => {
         if (event.key !== 'Backspace' && event.key !== 'Delete') return
@@ -140,10 +147,44 @@ const robot: ProjectChatAgent = {
   executionDeviceId: 'device-1',
   localProjectId: 1,
   maxConcurrentExecutions: 1,
+  plugins: [],
   createdByUserId: 1,
   version: 1,
   createdAt: '2026-08-18T00:00:00Z',
   updatedAt: '2026-08-18T00:00:00Z',
+}
+
+const robotRule: ProjectAutomationRule = {
+  id: 'workflow-rule-1',
+  projectId: 'project-1',
+  name: '开发阶段',
+  prompt: '实现功能',
+  triggerType: 'workflow',
+  eventType: null,
+  eventConfig: {},
+  webhookEventId: null,
+  webhookSecret: null,
+  cronExpression: null,
+  timezone: 'Asia/Shanghai',
+  agentName: robot.name,
+  enabled: true,
+  nextRunAt: null,
+  lastRunAt: null,
+  lastRunStatus: null,
+  version: 1,
+  createdAt: '2026-08-18T00:00:00Z',
+  updatedAt: '2026-08-18T00:00:00Z',
+  roleSource: 'agent',
+  runtimeSource: 'agent_default',
+  runtimeProfileId: null,
+  runtimeUserId: null,
+  assignmentMode: 'manual',
+  managerType: null,
+  agentId: robot.id,
+  wegentTeamId: null,
+  model: null,
+  executionEnvironment: 'local',
+  executionDeviceId: 'device-1',
 }
 
 describe('ProjectWorkflowEditor', () => {
@@ -166,6 +207,21 @@ describe('ProjectWorkflowEditor', () => {
     )
 
     expect(screen.getByTestId('project-workflow-dag')).toBeInTheDocument()
+    expect(screen.getByTestId('project-workflow-dag')).toHaveClass('h-[420px]', 'lg:h-auto')
+    expect(screen.getByTestId('project-workflow-dag')).toHaveAttribute('data-active', 'false')
+    expect(screen.getByTestId('mock-react-flow')).toHaveAttribute('data-zoom-on-scroll', 'false')
+    expect(screen.getByTestId('mock-react-flow')).toHaveAttribute('data-prevent-scrolling', 'false')
+
+    fireEvent.pointerDown(screen.getByTestId('project-workflow-dag'))
+    expect(screen.getByTestId('project-workflow-dag')).toHaveAttribute('data-active', 'true')
+    expect(screen.getByTestId('mock-react-flow')).toHaveAttribute('data-zoom-on-scroll', 'true')
+    expect(screen.getByTestId('mock-react-flow')).toHaveAttribute('data-prevent-scrolling', 'true')
+
+    fireEvent.pointerDown(screen.getByTestId('project-workflow-stage-prompt-develop'))
+    expect(screen.getByTestId('project-workflow-dag')).toHaveAttribute('data-active', 'false')
+    expect(screen.getByTestId('mock-react-flow')).toHaveAttribute('data-zoom-on-scroll', 'false')
+    expect(screen.getByTestId('mock-react-flow')).toHaveAttribute('data-prevent-scrolling', 'false')
+
     expect(screen.getByTestId('project-workflow-inspector-develop')).toBeInTheDocument()
     expect(screen.getByText('运行测试并修复失败')).toBeInTheDocument()
 
@@ -365,6 +421,60 @@ describe('ProjectWorkflowEditor', () => {
     })
   })
 
+  test('deletes a deliverable directly from the compact list', () => {
+    const onChange = vi.fn()
+    const onSave = vi.fn()
+    const workflowWithDeliverables: ProjectWorkflowDefinition = {
+      ...workflow,
+      nodes: [
+        {
+          ...workflow.nodes[0],
+          required_deliverables: [
+            {
+              id: 'backend-wiki',
+              name: '后端 Wiki',
+              description: '接口说明',
+              value_type: 'url',
+              file_constraints: null,
+            },
+            {
+              id: 'backend-code',
+              name: '后端代码',
+              description: '',
+              value_type: 'code_snapshot',
+              file_constraints: null,
+            },
+          ],
+        },
+        workflow.nodes[1],
+      ],
+    }
+    render(
+      <ProjectWorkflowEditor
+        value={workflowWithDeliverables}
+        busy={false}
+        onChange={onChange}
+        onSave={onSave}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-remove-deliverable-backend-wiki'))
+
+    const expectedDefinition: ProjectWorkflowDefinition = {
+      ...workflowWithDeliverables,
+      nodes: [
+        {
+          ...workflowWithDeliverables.nodes[0],
+          required_deliverables: [workflowWithDeliverables.nodes[0].required_deliverables![1]],
+        },
+        workflowWithDeliverables.nodes[1],
+      ],
+    }
+    expect(screen.queryByTestId('workflow-deliverable-requirements-dialog')).not.toBeInTheDocument()
+    expect(onChange).toHaveBeenCalledWith(expectedDefinition)
+    expect(onSave).toHaveBeenCalledWith(expectedDefinition)
+  })
+
   test('keeps the three orchestration choices as one dimension', () => {
     const onChange = vi.fn()
     render(
@@ -550,18 +660,30 @@ describe('ProjectWorkflowEditor', () => {
     expect(screen.getByTestId('project-workflow-stage-executor-robot-develop')).toBeChecked()
     expect(screen.getByTestId('project-workflow-stage-automation-develop')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('project-workflow-stage-add-robot'))
+    fireEvent.click(screen.getByTestId('project-workflow-stage-automation-develop'))
+    expect(screen.getByTestId('project-workflow-stage-automation-develop-menu')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('project-workflow-stage-create-robot'))
     expect(onRequestCreateRobot).toHaveBeenCalledOnce()
 
-    fireEvent.change(screen.getByTestId('project-workflow-stage-automation-develop'), {
-      target: { value: robot.id },
-    })
-    await waitFor(() => expect(onEnsureStageRobotRule).toHaveBeenCalledWith(robot.id))
+    fireEvent.click(screen.getByTestId('project-workflow-stage-automation-develop'))
+    fireEvent.click(
+      screen.getByTestId(`project-workflow-stage-automation-develop-option-${robot.id}`)
+    )
+    await waitFor(() =>
+      expect(onEnsureStageRobotRule).toHaveBeenCalledWith({
+        roleSource: 'agent',
+        agentId: robot.id,
+        runtimeSource: 'agent_default',
+        runtimeProfileId: null,
+        runtimeUserId: null,
+      })
+    )
     expect(onChange).toHaveBeenLastCalledWith({
       ...workflow,
       nodes: [
         {
           ...workflow.nodes[0],
+          execution_mode: 'robot',
           automation_rule_id: 'workflow-rule-1',
           workspace_policy: 'composer',
         },
@@ -570,7 +692,62 @@ describe('ProjectWorkflowEditor', () => {
     })
   })
 
-  test('returns a stage to human execution when robot rule creation fails', async () => {
+  test('clears the selected execution robot without changing the execution type', () => {
+    const onChange = vi.fn()
+    const value = {
+      ...workflow,
+      nodes: [{ ...workflow.nodes[0], automation_rule_id: robotRule.id }, workflow.nodes[1]],
+    }
+    const { rerender } = render(
+      <ProjectWorkflowEditor
+        value={value}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        automationRules={[robotRule]}
+        projectAgents={[robot]}
+      />
+    )
+
+    expect(screen.getByTestId('project-workflow-stage-executor-robot-develop')).toBeChecked()
+    expect(screen.getByTestId('project-workflow-stage-automation-develop')).toHaveTextContent(
+      robot.name
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-stage-automation-develop'))
+    fireEvent.click(screen.getByTestId('project-workflow-stage-automation-develop-clear'))
+
+    const clearedValue = {
+      ...value,
+      nodes: [
+        {
+          ...value.nodes[0],
+          execution_mode: 'robot',
+          automation_rule_id: null,
+        },
+        value.nodes[1],
+      ],
+    }
+    expect(onChange).toHaveBeenLastCalledWith(clearedValue)
+
+    rerender(
+      <ProjectWorkflowEditor
+        value={clearedValue}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        automationRules={[robotRule]}
+        projectAgents={[robot]}
+      />
+    )
+
+    expect(screen.getByTestId('project-workflow-stage-executor-robot-develop')).toBeChecked()
+    expect(screen.getByTestId('project-workflow-stage-automation-develop')).toHaveTextContent(
+      '添加机器人'
+    )
+  })
+
+  test('keeps automatic execution unconfigured when robot rule creation fails', async () => {
     const onChange = vi.fn()
     render(
       <ProjectWorkflowEditor
@@ -584,13 +761,67 @@ describe('ProjectWorkflowEditor', () => {
     )
 
     fireEvent.click(screen.getByTestId('project-workflow-stage-executor-robot-develop'))
-    fireEvent.change(screen.getByTestId('project-workflow-stage-automation-develop'), {
-      target: { value: robot.id },
-    })
+    fireEvent.click(screen.getByTestId('project-workflow-stage-automation-develop'))
+    fireEvent.click(
+      screen.getByTestId(`project-workflow-stage-automation-develop-option-${robot.id}`)
+    )
 
     await waitFor(() =>
-      expect(screen.getByTestId('project-workflow-stage-executor-human-develop')).toBeChecked()
+      expect(onChange).toHaveBeenLastCalledWith({
+        ...workflow,
+        nodes: [
+          {
+            ...workflow.nodes[0],
+            execution_mode: 'robot',
+            automation_rule_id: null,
+            workspace_policy: 'composer',
+          },
+          workflow.nodes[1],
+        ],
+      })
     )
-    expect(onChange).toHaveBeenLastCalledWith(workflow)
+    expect(screen.getByTestId('project-workflow-stage-executor-robot-develop')).toBeChecked()
+  })
+
+  test('selects a newly created robot for the stage that requested it', async () => {
+    const onChange = vi.fn()
+    const onEnsureStageRobotRule = vi.fn().mockResolvedValue('workflow-rule-created')
+    render(
+      <ProjectWorkflowEditor
+        value={workflow}
+        busy={false}
+        onChange={onChange}
+        onSave={vi.fn()}
+        projectAgents={[]}
+        onEnsureStageRobotRule={onEnsureStageRobotRule}
+        onRequestCreateRobot={vi.fn().mockResolvedValue(robot)}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('project-workflow-stage-executor-robot-develop'))
+    fireEvent.click(screen.getByTestId('project-workflow-stage-automation-develop'))
+    fireEvent.click(screen.getByTestId('project-workflow-stage-create-robot'))
+
+    await waitFor(() =>
+      expect(onEnsureStageRobotRule).toHaveBeenCalledWith({
+        roleSource: 'agent',
+        agentId: robot.id,
+        runtimeSource: 'agent_default',
+        runtimeProfileId: null,
+        runtimeUserId: null,
+      })
+    )
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...workflow,
+      nodes: [
+        {
+          ...workflow.nodes[0],
+          execution_mode: 'robot',
+          automation_rule_id: 'workflow-rule-created',
+          workspace_policy: 'composer',
+        },
+        workflow.nodes[1],
+      ],
+    })
   })
 })

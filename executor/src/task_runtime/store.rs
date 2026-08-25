@@ -623,6 +623,7 @@ impl LocalTaskStore {
                 "Robot max concurrent executions must be between 1 and 20".to_owned(),
             ));
         }
+        validate_workspace_policy(&input.workspace_policy)?;
         let connection = self.connection()?;
         let id = format!("LA-{}", Uuid::new_v4().simple());
         let now = now();
@@ -634,6 +635,8 @@ impl LocalTaskStore {
             "execution_environment": input.execution_environment.unwrap_or_else(|| "local".to_owned()),
             "execution_mode": input.execution_mode.unwrap_or_else(|| "auto".to_owned()),
             "max_concurrent_executions": input.max_concurrent_executions,
+            "workspace_policy": input.workspace_policy,
+            "plugins": input.plugins,
         });
         metadata["execution_device_id"] = json!(input.execution_device_id);
         metadata["local_project_id"] = json!(input.local_project_id);
@@ -704,8 +707,15 @@ impl LocalTaskStore {
             }
             metadata["max_concurrent_executions"] = json!(max_concurrent_executions);
         }
+        if let Some(workspace_policy) = input.workspace_policy {
+            validate_workspace_policy(&workspace_policy)?;
+            metadata["workspace_policy"] = json!(workspace_policy);
+        }
         if let Some(local_project_id) = input.local_project_id {
             metadata["local_project_id"] = json!(local_project_id);
+        }
+        if let Some(plugins) = input.plugins {
+            metadata["plugins"] = json!(plugins);
         }
         let status = input
             .status
@@ -2668,14 +2678,19 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
          ON loop_items(assignee_agent_id)",
         [],
     )?;
-    let default_board_migration_applied = connection.query_row(
+    let default_board_exists = connection.query_row(
         "SELECT EXISTS(
-            SELECT 1 FROM schema_migrations WHERE version = ?1
+            SELECT 1 FROM loop_items
+            WHERE id = ?1 AND resource_type = 'project'
+              AND project_key = ?2
+              AND status = 'active'
+              AND deleted_at IS NULL
+              AND json_extract(metadata, '$.system_kind') = 'default_work_items'
          )",
-        [LOCAL_SCHEMA_VERSION],
+        params![DEFAULT_WORK_ITEM_PROJECT_ID, DEFAULT_WORK_ITEM_PROJECT_KEY],
         |row| row.get::<_, bool>(0),
     )?;
-    if !default_board_migration_applied {
+    if !default_board_exists {
         let timestamp = now();
         let metadata = local_project_metadata(TaskProviderKind::Local, json!({}));
         let metadata = json!({
@@ -3141,6 +3156,15 @@ fn validate_name(value: &str, label: &str) -> Result<(), TaskRuntimeError> {
     Ok(())
 }
 
+fn validate_workspace_policy(value: &str) -> Result<(), TaskRuntimeError> {
+    if matches!(value, "project" | "git_worktree") {
+        return Ok(());
+    }
+    Err(TaskRuntimeError::Invalid(
+        "Robot workspace policy must be project or git_worktree".to_owned(),
+    ))
+}
+
 fn validate_status(value: &str) -> Result<(), TaskRuntimeError> {
     matches!(
         value,
@@ -3307,7 +3331,13 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
             .and_then(Value::as_u64)
             .filter(|value| (1..=20).contains(value))
             .unwrap_or(1),
+        workspace_policy: text("workspace_policy", "project"),
         local_project_id: metadata.get("local_project_id").and_then(Value::as_i64),
+        plugins: metadata
+            .get("plugins")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
         created_by_user_id: row.created_by_user_id,
         version: row.version,
         created_at: row.created_at,
@@ -3492,6 +3522,11 @@ fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
             .and_then(Value::as_u64)
             .filter(|value| (1..=20).contains(value))
             .unwrap_or(1),
+        agent_plugins: agent_metadata
+            .get("plugins")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
     })
 }
 
@@ -3734,8 +3769,10 @@ mod tests {
                     execution_mode: Some(mode.to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
                     max_concurrent_executions: 1,
+                    workspace_policy: "project".to_owned(),
                     local_project_id: None,
                     created_by_user_id: Some(7),
+                    plugins: Vec::new(),
                 },
             )
             .unwrap()
@@ -4327,14 +4364,23 @@ mod tests {
                     execution_mode: Some("manual_approval".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
                     max_concurrent_executions: 1,
+                    workspace_policy: "project".to_owned(),
                     local_project_id: None,
                     created_by_user_id: Some(42),
+                    plugins: vec![json!({
+                        "id": "github@openai",
+                        "pluginName": "github",
+                        "marketplaceId": "openai",
+                        "displayName": "GitHub",
+                    })],
                 },
             )
             .unwrap();
         assert_eq!(agent.created_by_user_id, 42);
+        assert_eq!(agent.plugins[0]["id"], "github@openai");
         let listed = store.list_chat_agents(&project.id).unwrap();
         assert_eq!(listed[0].created_by_user_id, 42);
+        assert_eq!(listed[0].plugins[0]["id"], "github@openai");
     }
 
     #[test]
@@ -4353,8 +4399,10 @@ mod tests {
                     execution_mode: Some("auto".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
                     max_concurrent_executions: 1,
+                    workspace_policy: "project".to_owned(),
                     local_project_id: Some(7),
                     created_by_user_id: Some(7),
+                    plugins: Vec::new(),
                 },
             )
             .unwrap();
@@ -4377,7 +4425,9 @@ mod tests {
                     execution_mode: None,
                     execution_device_id: None,
                     max_concurrent_executions: None,
+                    workspace_policy: None,
                     local_project_id: Some(Some(9)),
+                    plugins: None,
                 },
             )
             .unwrap();
@@ -4398,7 +4448,9 @@ mod tests {
                     execution_mode: None,
                     execution_device_id: None,
                     max_concurrent_executions: None,
+                    workspace_policy: None,
                     local_project_id: Some(None),
+                    plugins: None,
                 },
             )
             .unwrap();
@@ -4421,8 +4473,10 @@ mod tests {
                     execution_mode: Some("auto".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
                     max_concurrent_executions: 20,
+                    workspace_policy: "project".to_owned(),
                     local_project_id: None,
                     created_by_user_id: None,
+                    plugins: Vec::new(),
                 },
             )
             .unwrap();
@@ -4438,8 +4492,10 @@ mod tests {
                     execution_mode: Some("auto".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
                     max_concurrent_executions: 1,
+                    workspace_policy: "project".to_owned(),
                     local_project_id: None,
                     created_by_user_id: None,
+                    plugins: Vec::new(),
                 },
             )
             .unwrap();
@@ -4531,8 +4587,10 @@ mod tests {
                     execution_mode: Some("auto".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
                     max_concurrent_executions: 2,
+                    workspace_policy: "project".to_owned(),
                     local_project_id: None,
                     created_by_user_id: Some(7),
+                    plugins: Vec::new(),
                 },
             )
             .unwrap();
@@ -4601,8 +4659,10 @@ mod tests {
                     // Robots created before device binding have no device.
                     execution_device_id: None,
                     max_concurrent_executions: 1,
+                    workspace_policy: "project".to_owned(),
                     local_project_id: None,
                     created_by_user_id: Some(7),
+                    plugins: Vec::new(),
                 },
             )
             .unwrap();
@@ -4727,8 +4787,10 @@ mod tests {
                     execution_mode: Some("manual_approval".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
                     max_concurrent_executions: 1,
+                    workspace_policy: "project".to_owned(),
                     local_project_id: None,
                     created_by_user_id: Some(7),
+                    plugins: Vec::new(),
                 },
             )
             .unwrap();
@@ -4786,8 +4848,10 @@ mod tests {
                     execution_mode: Some("manual_approval".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
                     max_concurrent_executions: 1,
+                    workspace_policy: "project".to_owned(),
                     local_project_id: None,
                     created_by_user_id: Some(7),
+                    plugins: Vec::new(),
                 },
             )
             .unwrap();
@@ -5339,8 +5403,10 @@ mod tests {
                     execution_mode: Some("auto".to_owned()),
                     execution_device_id: Some("local-device".to_owned()),
                     max_concurrent_executions: 1,
+                    workspace_policy: "project".to_owned(),
                     local_project_id: None,
                     created_by_user_id: None,
+                    plugins: Vec::new(),
                 },
             )
             .unwrap();
@@ -5455,6 +5521,36 @@ mod tests {
             .filter(|project| project.project_key.as_deref() == Some(DEFAULT_WORK_ITEM_PROJECT_KEY))
             .count();
         assert_eq!(default_board_count, 1);
+    }
+
+    #[test]
+    fn restores_the_default_work_item_project_after_it_is_deleted() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&db_path).unwrap();
+        {
+            let connection = store.connection().unwrap();
+            connection
+                .execute(
+                    "DELETE FROM loop_items WHERE id = ?1",
+                    [DEFAULT_WORK_ITEM_PROJECT_ID],
+                )
+                .unwrap();
+        }
+        drop(store);
+
+        let reopened_store = LocalTaskStore::open(&db_path).unwrap();
+        let restored_project = reopened_store
+            .get_project(DEFAULT_WORK_ITEM_PROJECT_ID)
+            .expect("the default work-item project should be restored");
+        assert_eq!(
+            restored_project.project_key.as_deref(),
+            Some(DEFAULT_WORK_ITEM_PROJECT_KEY)
+        );
+        assert_eq!(
+            restored_project.metadata["system_kind"],
+            json!("default_work_items")
+        );
     }
 
     #[test]

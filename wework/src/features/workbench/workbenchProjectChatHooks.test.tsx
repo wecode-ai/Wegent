@@ -693,7 +693,7 @@ describe('workbench project chat hooks', () => {
     }
 
     const { result, rerender } = renderHook(
-      ({ locked }: { locked: boolean }) => useWorkbenchSkills({ api, teamId: 2, locked }),
+      ({ locked }: { locked: boolean }) => useWorkbenchSkills({ api, locked }),
       { initialProps: { locked: false } }
     )
 

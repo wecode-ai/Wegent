@@ -32,9 +32,8 @@ def _base_create() -> dict[str, object]:
             {
                 "assignmentMode": "ai_managed",
                 "managerType": "custom",
-                "model": "model-a",
-                "executionEnvironment": "local",
-                "executionDeviceId": "device-a",
+                "runtimeSource": "fixed_profile",
+                "runtimeProfileId": "runtime-1",
             },
             "ai_managed",
             "custom",

@@ -262,12 +262,81 @@ describe('AiChatModal', () => {
           type: 'board_task',
           cloudProjectId: '11',
           loopItemId: 'WEG-1',
+          projectStore: 'backend',
         },
         additionalContext: expect.objectContaining({
           issueEnvironment: expect.objectContaining({
             value: expect.stringContaining('"description":"Use the shared workspace"'),
           }),
         }),
+      })
+    )
+    mocks.createProjectRuntimeTask.mockClear()
+  })
+
+  it('uses the execution selection captured by the Issue creation page', async () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialTaskRequest={{
+          schemaVersion: 2,
+          runtime: 'codex',
+          message: '给出任务列表',
+          projectId: 92,
+          deviceWorkspaceId: 202,
+          execution: {
+            workspace: {
+              source: 'git_worktree',
+              branch: 'feature/issue-selection',
+            },
+          },
+          modelId: 'selected-in-issue-composer',
+          modelType: 'runtime',
+          modelOptions: { reasoning: 'xhigh', collaborationMode: 'default' },
+        }}
+        initialLocalProjectId={92}
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-project-id', '92')
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+
+    expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '给出任务列表',
+      expect.objectContaining({
+        project: expect.objectContaining({ id: 92 }),
+        deviceWorkspaceId: 202,
+        executionModel: {
+          modelId: 'backend-codex',
+          modelType: 'user',
+          modelOptions: { reasoningEffort: 'high' },
+        },
+        taskRequest: {
+          schemaVersion: 2,
+          runtime: 'codex',
+          message: '给出任务列表',
+          execution: {
+            workspace: {
+              source: 'git_worktree',
+              branch: 'feature/issue-selection',
+            },
+          },
+          modelId: 'selected-in-issue-composer',
+          modelType: 'runtime',
+          modelOptions: { reasoning: 'xhigh', collaborationMode: 'default' },
+          cloudProjectId: '11',
+          origin: {
+            type: 'board_task',
+            cloudProjectId: '11',
+            loopItemId: 'WEG-1',
+            projectStore: 'backend',
+          },
+          additionalContext: expect.any(Object),
+        },
       })
     )
     mocks.createProjectRuntimeTask.mockClear()
@@ -518,5 +587,36 @@ describe('AiChatModal', () => {
 
     await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('notifies the parent only once when a new task address becomes available', () => {
+    const onAddressChange = vi.fn()
+
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        embedded
+        open
+        onClose={vi.fn()}
+        onAddressChange={onAddressChange}
+      />
+    )
+
+    act(() => {
+      mocks.lastOnAddressChange?.({ deviceId: 'cloud-device', taskId: 'runtime-1' })
+      mocks.lastOnAddressChange?.({
+        deviceId: 'cloud-device',
+        taskId: 'runtime-1',
+        threadId: 'thread-1',
+      })
+    })
+
+    expect(onAddressChange).toHaveBeenCalledOnce()
+    expect(onAddressChange).toHaveBeenCalledWith({
+      deviceId: 'cloud-device',
+      taskId: 'runtime-1',
+    })
   })
 })

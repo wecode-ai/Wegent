@@ -87,6 +87,12 @@ celery_app.conf.update(
         "scan-robot-queue": {
             "task": "app.tasks.robot_queue_tasks.scan_robot_queue",
             "schedule": float(settings.ROBOT_QUEUE_SCAN_INTERVAL_SECONDS),
+            "options": {
+                # A maintenance scan older than one interval has been replaced
+                # by a newer scan and must not delay execution tasks.
+                "expires": float(settings.ROBOT_QUEUE_SCAN_INTERVAL_SECONDS),
+                "priority": 0,
+            },
         },
         "check-due-project-automations": {
             "task": "app.tasks.project_automation_tasks.check_due_project_automations",

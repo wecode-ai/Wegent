@@ -118,6 +118,7 @@ docs/superpowers/
 .live-architecture/
 docs/en/architecture/
 docs/zh/architecture/
+local-artifacts/
 .worktrees/
 wework/resources/bundled-harness-runtime/
 !wework/resources/bundled-harness-runtime/

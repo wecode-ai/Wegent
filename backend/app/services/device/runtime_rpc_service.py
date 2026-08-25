@@ -19,6 +19,10 @@ from app.services.device.runtime_route import (
     RuntimeRouteError,
     runtime_route_resolver,
 )
+from app.services.device.runtime_task_create_protocol import (
+    RuntimeTaskCreateProtocolError,
+    negotiate_runtime_task_create_payload,
+)
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -93,6 +97,23 @@ class RuntimeRpcService:
                 retryable=exc.retryable,
                 details=exc.details,
             ) from exc
+
+        if method == "runtime.tasks.create":
+            try:
+                payload = negotiate_runtime_task_create_payload(
+                    payload,
+                    route.online_info.get("runtime_features"),
+                )
+            except RuntimeTaskCreateProtocolError as exc:
+                raise RuntimeRpcError(
+                    str(exc),
+                    code="unsupported_runtime_task_create_features",
+                    retryable=False,
+                    details={
+                        "deviceId": route.logical_device_id,
+                        "features": list(exc.features),
+                    },
+                ) from exc
 
         sio = get_sio()
         request = {"method": method, "payload": payload}

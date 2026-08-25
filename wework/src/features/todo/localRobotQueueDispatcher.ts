@@ -1,13 +1,7 @@
 import type { LocalLoopItemExecution } from '@/api/local/localDelivery'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { createConversationWorkspace } from '@/features/workbench/workbenchRuntimeHelpers'
-import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { runtimeTaskReconciliationSnapshot } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import type { RuntimeTaskCreateRequest } from '@/types/api'
-import {
-  findRuntimeTaskWorkspace,
-  getRuntimeTaskWorkspacePath,
-} from '@/features/workbench/workbenchRuntimeHelpers'
 
 const LOCAL_QUEUE_POLL_MS = 3000
 const LOCAL_QUEUE_DEVICE_CACHE_MS = 30_000
@@ -23,11 +17,6 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
-}
-
-function requiredNumber(value: unknown, field: string): number {
-  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value
-  throw new Error(`Transient runtime payload is missing ${field}`)
 }
 
 function runtimeBot(value: unknown): Array<Record<string, unknown>> {
@@ -204,74 +193,6 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         throw new Error('Execution device does not match the claiming device')
       }
 
-      const payloadLocalProjectId = runtimePayload.local_project_id
-      const boundLocalProjectId =
-        typeof payloadLocalProjectId === 'number' && payloadLocalProjectId > 0
-          ? payloadLocalProjectId
-          : null
-      let boundWorkspacePath: string | null = null
-      const workspaceSourceTask = recordValue(runtimePayload.workspaceSourceTask)
-      const sourceTaskAddress =
-        workspaceSourceTask &&
-        nonEmptyString(workspaceSourceTask.deviceId) &&
-        nonEmptyString(workspaceSourceTask.taskId)
-          ? {
-              deviceId: nonEmptyString(workspaceSourceTask.deviceId)!,
-              taskId: nonEmptyString(workspaceSourceTask.taskId)!,
-            }
-          : null
-      const runtimeWork =
-        boundLocalProjectId != null || sourceTaskAddress
-          ? await services.runtimeWorkApi?.listRuntimeWork()
-          : null
-      if (sourceTaskAddress) {
-        if (sourceTaskAddress.deviceId !== deviceId) {
-          throw new Error('Inherited workflow workspace belongs to another device')
-        }
-        const sourceWorkspace = findRuntimeTaskWorkspace(runtimeWork, sourceTaskAddress)
-        const sourceTask = sourceWorkspace?.tasks.find(
-          candidate => candidate.taskId === sourceTaskAddress.taskId
-        )
-        boundWorkspacePath =
-          sourceWorkspace && sourceTask
-            ? getRuntimeTaskWorkspacePath(sourceWorkspace, sourceTask)
-            : null
-        if (!boundWorkspacePath) {
-          throw new Error('Inherited workflow workspace is unavailable')
-        }
-      }
-      if (boundLocalProjectId != null) {
-        const projectWork = runtimeWork?.projects.find(
-          item => item.project.id === boundLocalProjectId
-        )
-        const workspace = projectWork?.deviceWorkspaces.find(
-          candidate => candidate.deviceId === deviceId && candidate.available
-        )
-        boundWorkspacePath ??=
-          workspace?.workspacePath ?? projectWork?.project.roots?.[0]?.path ?? null
-      }
-      if (boundLocalProjectId != null && !boundWorkspacePath) {
-        throw new Error(
-          `Bound local project ${boundLocalProjectId} is unavailable on device ${deviceId}`
-        )
-      }
-      if (boundWorkspacePath && execution.agent_max_concurrent_executions > 1) {
-        const gitCheck = await deviceApi.executeCommand(deviceId, {
-          command_key: 'git_is_worktree',
-          args: [boundWorkspacePath],
-          timeout_seconds: 15,
-          max_output_bytes: 4096,
-        })
-        const gitCheckOutput = Array.isArray(gitCheck.stdout)
-          ? gitCheck.stdout.join('\n')
-          : typeof gitCheck.stdout === 'string'
-            ? gitCheck.stdout
-            : ''
-        if (!gitCheck.success || gitCheckOutput.trim() !== 'true') {
-          throw new Error('Robot concurrency above 1 requires an isolated Git worktree workspace')
-        }
-      }
-
       const title = typeof runtimePayload.title === 'string' ? runtimePayload.title : null
       const origin = recordValue(runtimePayload.origin)
       const additionalContext = recordValue(runtimePayload.additionalContext)
@@ -299,31 +220,11 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
           'Local execution claims must not contain a backend-materialized execution request'
         )
       }
-      let modelFields: Pick<RuntimeTaskCreateRequest, 'modelId' | 'modelType' | 'modelOptions'> = {}
-      const requestedModelName = nonEmptyString(runtimePayload.modelId)
-      if (requestedModelName) {
-        const modelResponse = await services.modelApi.listModels()
-        const matchingModels = modelResponse.data.filter(
-          model =>
-            model.name === requestedModelName &&
-            model.isActive !== false &&
-            !model.compatibilityDisabled
-        )
-        if (matchingModels.length !== 1) {
-          throw new Error(
-            `Execution model '${requestedModelName}' is unavailable in the current App model catalog`
-          )
-        }
-        modelFields = selectedModelExecutionFields(matchingModels[0], {})
-        if (!modelFields.modelId) {
-          throw new Error(`Execution model '${requestedModelName}' has no runtime identity`)
-        }
-      }
-
       const payloadBot = runtimeBot(runtimePayload.bot)
       const request: RuntimeTaskCreateRequest = {
+        ...(runtimePayload as unknown as RuntimeTaskCreateRequest),
+        schemaVersion: 2,
         taskId,
-        teamId: requiredNumber(runtimePayload.teamId, 'team identity'),
         runtime: 'codex',
         message: prompt,
         title,
@@ -333,11 +234,6 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         origin: origin as RuntimeTaskCreateRequest['origin'],
         additionalContext: additionalContext as RuntimeTaskCreateRequest['additionalContext'],
         standaloneChatWorkspace,
-        ...modelFields,
-        ...(boundLocalProjectId != null ? { projectId: boundLocalProjectId } : {}),
-        ...(boundLocalProjectId != null && execution.agent_max_concurrent_executions > 1
-          ? { execution: { workspace: { source: 'git_worktree' as const } } }
-          : {}),
       }
 
       console.log('[local-robot-queue] claimed transient runtime payload', {
@@ -347,12 +243,7 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         hasExecutionRequest: false,
         model: request.modelId ?? null,
         hasAdditionalContext: true,
-        boundLocalProjectId,
-        boundWorkspacePath,
       })
-      const workspacePath =
-        boundWorkspacePath ??
-        (await createConversationWorkspace(deviceApi, request.deviceId ?? deviceId, prompt, taskId))
       if (isCloudExecution) {
         const fenced = await cloudExecutionApi!.startRequested(execution, deviceId, taskId)
         if (!fenced) throw new Error('Execution is no longer dispatchable')
@@ -366,7 +257,7 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         if (!fenced) throw new Error('Execution is no longer dispatchable')
       }
       startRequested = true
-      const response = await runtimeWorkApi.createRuntimeTask({ ...request, workspacePath })
+      const response = await runtimeWorkApi.createRuntimeTask(request)
       if (response.taskId !== taskId) {
         throw new Error(`Runtime accepted task '${response.taskId}' instead of '${taskId}'`)
       }

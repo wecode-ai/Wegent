@@ -19,6 +19,8 @@ function runtimePayload(overrides: Record<string, unknown> = {}): Record<string,
     title: 'Run me',
     cloudProjectId: 'P-1',
     modelId: 'local-model',
+    modelType: 'runtime',
+    modelOptions: { collaborationMode: 'default' },
     bot: [{ id: 'LA-1', name: 'Bot', shell_type: 'codex' }],
     standaloneChatWorkspace: true,
     origin: {
@@ -318,7 +320,7 @@ describe('startLocalRobotQueueDispatcher', () => {
     stop()
   })
 
-  it('uses the backend runtime identity, resolves the model in App, and reports runtime start', async () => {
+  it('forwards the complete backend V2 intent and reports runtime start', async () => {
     const runtimeOrigin = {
       type: 'project_automation',
       cloudProjectId: 'P-1',
@@ -346,6 +348,8 @@ describe('startLocalRobotQueueDispatcher', () => {
             title: 'Claim-time title',
             cloudProjectId: 'P-1',
             modelId: 'local-model',
+            modelType: 'runtime',
+            modelOptions: { collaborationMode: 'default' },
             bot: [{ id: 'LA-1', name: 'Bot', shell_type: 'codex' }],
             standaloneChatWorkspace: true,
             origin: runtimeOrigin,
@@ -384,7 +388,7 @@ describe('startLocalRobotQueueDispatcher', () => {
     expect(call.ephemeral).toBeUndefined()
     expect(call.origin).toEqual(runtimeOrigin)
     expect(call.additionalContext).toEqual(runtimeContext)
-    expect(mocks.listModels).toHaveBeenCalledOnce()
+    expect(mocks.listModels).not.toHaveBeenCalled()
     expect(runtimeStart).toHaveBeenCalledWith(
       expect.objectContaining({ id: 1, cloud_project_id: 'P-1' }),
       'local-device',
@@ -398,7 +402,7 @@ describe('startLocalRobotQueueDispatcher', () => {
   it.each([
     { label: 'project robot', agentId: 'LA-1', agentName: 'Bot', botId: 'LA-1' },
     { label: 'inline custom', agentId: '', agentName: 'AI 托管', botId: 0 },
-  ])('resolves the model in App for a non-secret $label intent', async testCase => {
+  ])('forwards the complete non-secret V2 intent for a $label', async testCase => {
     const claimNext = vi
       .fn()
       .mockResolvedValueOnce(
@@ -432,7 +436,7 @@ describe('startLocalRobotQueueDispatcher', () => {
     await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
     await vi.runOnlyPendingTimersAsync()
 
-    expect(mocks.listModels).toHaveBeenCalledOnce()
+    expect(mocks.listModels).not.toHaveBeenCalled()
     expect(mocks.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         taskId: 'codex-queue-1',
@@ -449,25 +453,27 @@ describe('startLocalRobotQueueDispatcher', () => {
     stop()
   })
 
-  it('fails a local intent whose selected model is unavailable', async () => {
+  it('leaves model availability validation to the Local Compiler', async () => {
     const claimNext = vi
       .fn()
       .mockResolvedValueOnce(
         execution({ runtime_payload: localModelIntent({ modelId: 'removed-local-model' }) })
       )
       .mockResolvedValue(null)
-    const listModels = vi.fn(async () => ({ data: [] }))
-    const fail = vi.fn(async () => execution({ status: 'failed' }))
-    const { services: svc, mocks } = services({ claimNext, listModels, fail })
+    const { services: svc, mocks } = services({
+      claimNext,
+      listModels: vi.fn(async () => ({ data: [] })),
+    })
     const stop = startLocalRobotQueueDispatcher(svc)
     await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
     await vi.runOnlyPendingTimersAsync()
 
-    expect(listModels).toHaveBeenCalledOnce()
-    expect(mocks.createRuntimeTask).not.toHaveBeenCalled()
-    expect(fail).toHaveBeenCalledWith(
-      1,
-      "Execution model 'removed-local-model' is unavailable in the current App model catalog"
+    expect(mocks.listModels).not.toHaveBeenCalled()
+    expect(mocks.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: 'removed-local-model',
+        modelType: 'runtime',
+      })
     )
     stop()
   })
@@ -547,9 +553,7 @@ describe('startLocalRobotQueueDispatcher', () => {
   it('runs in the bound project workspace instead of a fresh conversation directory', async () => {
     const claimNext = vi
       .fn()
-      .mockResolvedValueOnce(
-        execution({ runtime_payload: runtimePayload({ local_project_id: 7 }) })
-      )
+      .mockResolvedValueOnce(execution({ runtime_payload: runtimePayload({ projectId: 7 }) }))
       .mockResolvedValue(null)
     const runtimeWork = [
       {
@@ -584,7 +588,7 @@ describe('startLocalRobotQueueDispatcher', () => {
     await vi.runOnlyPendingTimersAsync()
 
     const call = mocks.createRuntimeTask.mock.calls[0][0] as Record<string, unknown>
-    expect(call.workspacePath).toBe('/Users/me/A2A')
+    expect(call.workspacePath).toBeUndefined()
     expect(call.projectId).toBe(7)
     expect(mocks.getHomeDirectory).not.toHaveBeenCalled()
     stop()
@@ -639,7 +643,11 @@ describe('startLocalRobotQueueDispatcher', () => {
     await vi.runOnlyPendingTimersAsync()
 
     const call = mocks.createRuntimeTask.mock.calls[0][0] as Record<string, unknown>
-    expect(call.workspacePath).toBe('/Users/me/A2A/.worktrees/previous')
+    expect(call.workspacePath).toBeUndefined()
+    expect(call.workspaceSourceTask).toEqual({
+      deviceId: 'local-device',
+      taskId: 'previous-runtime-task',
+    })
     expect(mocks.getHomeDirectory).not.toHaveBeenCalled()
     stop()
   })
@@ -648,7 +656,7 @@ describe('startLocalRobotQueueDispatcher', () => {
     const claimNext = vi
       .fn()
       .mockResolvedValueOnce(
-        execution({ runtime_payload: runtimePayload({ local_project_id: 0 }) })
+        execution({ runtime_payload: runtimePayload({ projectId: undefined }) })
       )
       .mockResolvedValue(null)
     const { services: svc, mocks } = services({ claimNext, runtimeWork: [] })
@@ -659,30 +667,24 @@ describe('startLocalRobotQueueDispatcher', () => {
     expect(mocks.createRuntimeTask).toHaveBeenCalledTimes(1)
     const call = mocks.createRuntimeTask.mock.calls[0][0] as Record<string, unknown>
     expect(call.projectId).toBeUndefined()
-    expect(mocks.getHomeDirectory).toHaveBeenCalled()
+    expect(call.standaloneChatWorkspace).toBe(true)
+    expect(mocks.getHomeDirectory).not.toHaveBeenCalled()
     expect(mocks.fail).not.toHaveBeenCalled()
     stop()
   })
 
-  it('fails instead of falling back when the bound project is unavailable', async () => {
+  it('passes an exact project binding to the Local Compiler without fallback', async () => {
     const claimNext = vi
       .fn()
-      .mockResolvedValueOnce(
-        execution({ runtime_payload: runtimePayload({ local_project_id: 7 }) })
-      )
+      .mockResolvedValueOnce(execution({ runtime_payload: runtimePayload({ projectId: 7 }) }))
       .mockResolvedValue(null)
-    const fail = vi.fn(async () => execution({ status: 'failed' }))
-    const { services: svc, mocks } = services({ claimNext, fail, runtimeWork: [] })
+    const { services: svc, mocks } = services({ claimNext, runtimeWork: [] })
     const stop = startLocalRobotQueueDispatcher(svc)
     await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
     await vi.runOnlyPendingTimersAsync()
 
-    expect(mocks.createRuntimeTask).not.toHaveBeenCalled()
+    expect(mocks.createRuntimeTask).toHaveBeenCalledWith(expect.objectContaining({ projectId: 7 }))
     expect(mocks.getHomeDirectory).not.toHaveBeenCalled()
-    expect(fail).toHaveBeenCalledWith(
-      1,
-      expect.stringContaining('Bound local project 7 is unavailable')
-    )
     stop()
   })
 

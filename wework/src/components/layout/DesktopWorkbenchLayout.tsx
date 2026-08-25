@@ -138,6 +138,7 @@ export function DesktopWorkbenchLayout({
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
     createProject: onCreateProject,
+    createLocalRuntimeProject: onCreateLocalRuntimeProject,
     createGitWorkspaceProject: onCreateGitWorkspaceProject,
     prepareDeviceWorkspace: onPrepareDeviceWorkspace,
     deleteDeviceWorkspace: onDeleteDeviceWorkspace,
@@ -387,6 +388,7 @@ export function DesktopWorkbenchLayout({
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
       setActiveLocalHarnessSessionId(null)
+      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
       activateSplitPane(
         getWorkbenchPaneKey({
           currentRuntimeTask: address,
@@ -396,7 +398,6 @@ export function DesktopWorkbenchLayout({
       if (!(currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address))) {
         await onOpenRuntimeTask(address)
       }
-      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
     },
     [activateSplitPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
@@ -1066,6 +1067,11 @@ export function DesktopWorkbenchLayout({
                 runtimeWork={state.runtimeWork}
                 runtimeTaskLifecycle={runtimeTaskLifecycle}
                 services={services}
+                onCreateLocalCodeProject={onCreateLocalRuntimeProject}
+                onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+                onListDeviceDirectories={onListDeviceDirectories}
+                onCreateDeviceDirectory={onCreateDeviceDirectory}
+                onCloneGitRepository={onCloneGitRepository}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                 onArchiveRuntimeTask={onArchiveRuntimeTask}
                 onOpenSettings={options => openSettings(options, '/todo')}
