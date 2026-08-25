@@ -111,10 +111,10 @@ export function isWeworkAutomationEnabled(): boolean {
 }
 
 export function shouldUseNativeProjectDirectoryPicker(): boolean {
-  if (import.meta.env.VITE_WEWORK_E2E_NATIVE_DIRECTORY_PICKER === 'true') {
-    return true
-  }
-  return import.meta.env.MODE !== 'test' && !isWeworkAutomationEnabled()
+  return (
+    !isWeworkAutomationEnabled() ||
+    import.meta.env.VITE_WEWORK_E2E_NATIVE_DIRECTORY_PICKER === 'true'
+  )
 }
 
 function desktopControlUrl(): string | null {

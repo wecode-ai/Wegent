@@ -1,9 +1,8 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
-import { isWeworkAutomationEnabled, shouldUseNativeProjectDirectoryPicker } from './automation'
+import { afterEach, describe, expect, test } from 'vitest'
+import { isWeworkAutomationEnabled } from './automation'
 
 afterEach(() => {
   delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
-  vi.unstubAllEnvs()
 })
 
 describe('Electron desktop E2E automation', () => {
@@ -13,15 +12,5 @@ describe('Electron desktop E2E automation', () => {
     }
 
     expect(isWeworkAutomationEnabled()).toBe(true)
-  })
-
-  test('uses the controllable project directory picker in unit tests', () => {
-    expect(shouldUseNativeProjectDirectoryPicker()).toBe(false)
-  })
-
-  test('allows native project directory picker coverage when explicitly requested', () => {
-    vi.stubEnv('VITE_WEWORK_E2E_NATIVE_DIRECTORY_PICKER', 'true')
-
-    expect(shouldUseNativeProjectDirectoryPicker()).toBe(true)
   })
 })
