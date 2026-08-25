@@ -298,6 +298,14 @@ describe('TaskSidebar scroll structure', () => {
     expect(within(scrollableSection).queryByText('common:navigation.inbox')).not.toBeInTheDocument()
   })
 
+  it('keeps the project section available when there are no history tasks', () => {
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    expect(screen.getAllByText('project-section').length).toBeGreaterThan(0)
+  })
+
   it('shows WeWork instead of Code when a Wework URL is configured', () => {
     mockRuntimeConfig.weworkCodeUrl = 'https://wework.example.com/coding'
 
