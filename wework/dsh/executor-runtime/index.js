@@ -71,22 +71,94 @@ export async function handleExecutorEvents(req, res, client) {
       connection: 'keep-alive',
     })
     let dispose = () => {}
-    const write = event => {
-      const writable = res.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
-      if (!writable) {
-        dispose()
-        res.end()
-      }
-    }
-    for (const event of replay) write(event)
+    const writer = createExecutorEventWriter(res, () => dispose())
+    for (const event of replay) writer.write(event)
+    writer.flush()
     if (res.writableEnded) return
-    dispose = client.listen(write)
-    req.on('close', dispose)
+    dispose = client.listen(event => writer.write(event))
+    req.on('close', () => {
+      writer.close()
+      dispose()
+    })
     res.write(': connected\n\n')
   } catch (error) {
     if (!res.headersSent) sendError(res, error)
     else res.end(`event: error\ndata: ${JSON.stringify(errorBody(error))}\n\n`)
   }
+}
+
+function createExecutorEventWriter(res, disconnect) {
+  const pendingBlockUpdates = new Map()
+  let flushImmediate = null
+  let closed = false
+
+  const writeRaw = event => {
+    if (closed || res.writableEnded) return false
+    const writable = res.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
+    if (!writable) {
+      closed = true
+      if (flushImmediate) clearImmediate(flushImmediate)
+      flushImmediate = null
+      pendingBlockUpdates.clear()
+      disconnect()
+      res.end()
+      return false
+    }
+    return true
+  }
+
+  const flush = () => {
+    if (flushImmediate) clearImmediate(flushImmediate)
+    flushImmediate = null
+    if (closed || pendingBlockUpdates.size === 0) return
+    const events = [...pendingBlockUpdates.values()]
+    pendingBlockUpdates.clear()
+    for (const event of events) {
+      if (!writeRaw(event)) return
+    }
+  }
+
+  const write = event => {
+    const key = coalescibleBlockUpdateKey(event)
+    if (!key) {
+      flush()
+      writeRaw(event)
+      return
+    }
+    pendingBlockUpdates.set(key, event)
+    if (!flushImmediate) {
+      flushImmediate = setImmediate(flush)
+    }
+  }
+
+  return {
+    write,
+    flush,
+    close() {
+      closed = true
+      if (flushImmediate) clearImmediate(flushImmediate)
+      flushImmediate = null
+      pendingBlockUpdates.clear()
+    },
+  }
+}
+
+function coalescibleBlockUpdateKey(event) {
+  if (event?.event !== 'response.block.updated') return null
+  const payload = isRecord(event.payload) ? event.payload : {}
+  const data = isRecord(payload.data) ? payload.data : {}
+  const updates = isRecord(data.updates) ? data.updates : {}
+  if (
+    typeof updates.content !== 'string' ||
+    Object.keys(updates).some(key => key !== 'content' && key !== 'status')
+  ) {
+    return null
+  }
+  const taskId = stringValue(payload.taskId)
+  const subtaskId = stringValue(payload.subtaskId)
+  const blockId = stringValue(data.blockId) ?? stringValue(data.block_id)
+  if (!taskId || !subtaskId || !blockId) return null
+  return [stringValue(payload.deviceId) ?? '', taskId, subtaskId, blockId].join(':')
 }
 
 function eventCursor(req) {
@@ -191,4 +263,8 @@ function singleHeader(value) {
 
 function isRecord(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function stringValue(value) {
+  return typeof value === 'string' && value ? value : null
 }

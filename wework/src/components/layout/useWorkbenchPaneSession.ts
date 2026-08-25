@@ -2631,18 +2631,15 @@ export function useWorkbenchPaneSession({
     if (shouldPauseQueue) {
       setQueuedMessagesPaused(true)
     }
-    const interruptedTurn = optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
     const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
     if (!cancelled) {
-      if (interruptedTurn) {
-        restoreOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
-      }
       if (shouldPauseQueue) {
         setQueuedMessagesPaused(false)
       }
       return
     }
 
+    optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
     void refreshWorkLists()
   }, [
     cancelRuntimePaneTask,
