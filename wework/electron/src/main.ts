@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   ipcMain,
   Menu,
+  nativeTheme,
   screen,
   session,
   shell,
@@ -44,7 +45,7 @@ import { presentWindow } from './host/window-presentation.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
-import { StartupSplash } from './host/startup-splash.js'
+import { resolveStartupSplashTheme, StartupSplash } from './host/startup-splash.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 
@@ -973,6 +974,7 @@ if (hasSingleInstanceLock) {
     })
     trayManager = createTrayManager()
     trayManager.create()
+    const startupPreferences = await preferences.read()
     startupSplash = new StartupSplash({
       createWindow: options => {
         const target = new BrowserWindow(options)
@@ -980,7 +982,7 @@ if (hasSingleInstanceLock) {
           close: () => target.close(),
           isDestroyed: () => target.isDestroyed(),
           isVisible: () => target.isVisible(),
-          loadFile: path => target.loadFile(path),
+          loadFile: (path, options) => target.loadFile(path, options),
           once: (event, listener) => {
             if (event === 'closed') target.once('closed', listener)
             else target.once('ready-to-show', listener)
@@ -994,6 +996,10 @@ if (hasSingleInstanceLock) {
         }
       },
       htmlPath: resolve(packageRoot, 'dist/shell/startup-splash/index.html'),
+      theme: resolveStartupSplashTheme(
+        startupPreferences.appearanceMode,
+        nativeTheme.shouldUseDarkColors
+      ),
     })
     await Promise.all([startupSplash.show(), createWindow()])
     void startDesktopRuntime()
