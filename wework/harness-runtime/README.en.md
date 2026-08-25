@@ -31,5 +31,13 @@ pnpm run prepare:harness-runtime
 pnpm run prepare:harness-runtime -- --materialize
 ```
 
+Every generated runtime archive must be self-contained. The preparation script
+uses `node_modules/.pnpm` inside the archive staging directory and must not
+retain dependency links into the build machine's global pnpm store. Before
+archiving, it rejects broken symlinks and links that resolve outside the
+runtime root. Changes to the dependency layout or archive semantics must also
+bump `archiveFormatVersion` so published assets from the old format cannot be
+reused.
+
 The three built-in tabs share one Core DSH process. Each active smart-app tab
 owns an isolated Workbench DSH process that must exit when the tab closes.
