@@ -353,6 +353,23 @@ jobs:
           path: .ci-artifacts
 
       - name: Restore Wework desktop Core E2E build
+        id: restore-core-e2e-build
+        continue-on-error: true
+        run: .github/scripts/restore-wework-core-e2e-build.sh
+
+      - name: Clear incomplete Wework desktop Core E2E build
+        if: steps.restore-core-e2e-build.outcome == 'failure'
+        run: rm -rf .ci-artifacts
+
+      - name: Retry Wework desktop Core E2E build download
+        if: steps.restore-core-e2e-build.outcome == 'failure'
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-desktop-core-e2e-build
+          path: .ci-artifacts
+
+      - name: Restore retried Wework desktop Core E2E build
+        if: steps.restore-core-e2e-build.outcome == 'failure'
         run: .github/scripts/restore-wework-core-e2e-build.sh
 
       - name: Run Wework desktop Core shard E2E
@@ -428,6 +445,23 @@ jobs:
           path: .ci-artifacts
 
       - name: Restore shared Wework desktop E2E build
+        id: restore-cloud-e2e-build
+        continue-on-error: true
+        run: .github/scripts/restore-wework-core-e2e-build.sh
+
+      - name: Clear incomplete shared Wework desktop E2E build
+        if: steps.restore-cloud-e2e-build.outcome == 'failure'
+        run: rm -rf .ci-artifacts
+
+      - name: Retry shared Wework desktop E2E build download
+        if: steps.restore-cloud-e2e-build.outcome == 'failure'
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-desktop-core-e2e-build
+          path: .ci-artifacts
+
+      - name: Restore retried shared Wework desktop E2E build
+        if: steps.restore-cloud-e2e-build.outcome == 'failure'
         run: .github/scripts/restore-wework-core-e2e-build.sh
 
       - name: Restore shared Python dependencies
@@ -507,6 +541,23 @@ jobs:
           path: .ci-artifacts
 
       - name: Restore shared Wework desktop E2E build
+        id: restore-other-e2e-build
+        continue-on-error: true
+        run: .github/scripts/restore-wework-core-e2e-build.sh
+
+      - name: Clear incomplete shared Wework desktop E2E build
+        if: steps.restore-other-e2e-build.outcome == 'failure'
+        run: rm -rf .ci-artifacts
+
+      - name: Retry shared Wework desktop E2E build download
+        if: steps.restore-other-e2e-build.outcome == 'failure'
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-desktop-core-e2e-build
+          path: .ci-artifacts
+
+      - name: Restore retried shared Wework desktop E2E build
+        if: steps.restore-other-e2e-build.outcome == 'failure'
         run: .github/scripts/restore-wework-core-e2e-build.sh
 
       - name: Run Wework desktop ${{ matrix.name }} E2E
