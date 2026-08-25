@@ -1884,13 +1884,17 @@ export function WorkbenchProvider({
         .updateTaskTrackingStatus(trackedAddress, executionStatus)
         .then(result => {
           if (result === null) {
-            trackingStatusSignaturesRef.current.delete(key)
+            if (trackingStatusSignaturesRef.current.get(key) === executionStatus) {
+              trackingStatusSignaturesRef.current.delete(key)
+            }
             return
           }
           publishProjectSpaceTaskContextChanged(trackedAddress)
         })
         .catch(error => {
-          trackingStatusSignaturesRef.current.delete(key)
+          if (trackingStatusSignaturesRef.current.get(key) === executionStatus) {
+            trackingStatusSignaturesRef.current.delete(key)
+          }
           console.warn('[Wework] Failed to synchronize project task execution status', {
             address: trackedAddress,
             executionStatus,

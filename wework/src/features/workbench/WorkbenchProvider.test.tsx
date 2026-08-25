@@ -5,6 +5,7 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resetLocalRuntimeChatStreamsForTests } from '@/api/local/localServices'
+import type { CloudLoopItem, TaskExecutionStatus } from '@/api/deliveries'
 import i18n from '@/i18n'
 import {
   CloudConnectionContext,
@@ -13084,7 +13085,13 @@ describe('WorkbenchProvider runtime tasks', () => {
       if (handlers.onChatStart) streamHandlers = handlers
       return vi.fn()
     })
-    const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
+    const staleRunningUpdate = deferred<null>()
+    const updateTaskTrackingStatus = vi.fn(
+      (_address: RuntimeTaskAddress, status: TaskExecutionStatus) =>
+        status === 'running'
+          ? staleRunningUpdate.promise
+          : Promise.resolve({ id: 'tracked-item' } as CloudLoopItem)
+    )
     const runningRuntimeWork = createRuntimeWork({
       projects: [
         {
@@ -13166,9 +13173,14 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
     await act(async () => {
+      staleRunningUpdate.reject(new Error('stale running update failed'))
+      await staleRunningUpdate.promise.catch(() => undefined)
+    })
+    await act(async () => {
       staleRuntimeWorkRefresh.resolve(runningRuntimeWork)
       await staleRuntimeWorkRefresh.promise
     })
+    expect(updateTaskTrackingStatus).toHaveBeenCalledTimes(2)
     expect(updateTaskTrackingStatus.mock.calls.at(-1)?.[1]).toBe('succeeded')
   })
 

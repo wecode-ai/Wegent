@@ -68,21 +68,6 @@ async function loadAttachmentImageUrl(
       throw new Error('Local attachment preview already failed')
     }
 
-    const localPath = getDownloadableLocalPath(localPreviewUrl)
-    if (localPath && isTauriRuntime()) {
-      try {
-        const exists = await invoke<boolean>('local_path_exists', { path: localPath })
-        if (!exists) {
-          failedAttachmentPreviewUrls.add(localPreviewUrl)
-          throw new Error('Local attachment preview no longer exists')
-        }
-      } catch (error) {
-        if (failedAttachmentPreviewUrls.has(localPreviewUrl)) {
-          throw error
-        }
-      }
-    }
-
     const resolvedLocalPreviewUrl = resolveDirectMarkdownImageSrc(localPreviewUrl)
     if (!resolvedLocalPreviewUrl) {
       throw new Error('Failed to resolve local attachment preview')
@@ -181,7 +166,6 @@ export function AttachmentImagePreview({
   const [isLightboxLoading, setIsLightboxLoading] = useState(false)
   const [hasLightboxError, setHasLightboxError] = useState(false)
   const [zoom, setZoom] = useState(1)
-  const [shouldLoadPreview, setShouldLoadPreview] = useState(false)
   const previewContainerRef = useRef<HTMLElement | null>(null)
   const previewIdentity = attachmentPreviewIdentity(attachment)
   const attachmentRef = useRef(attachment)
@@ -200,7 +184,6 @@ export function AttachmentImagePreview({
 
   /* eslint-disable react-hooks/set-state-in-effect -- Attachment identity changes must clear stale preview UI before loading the next image. */
   useEffect(() => {
-    setShouldLoadPreview(false)
     setPreviewUrl(null)
     setHasError(false)
     setIsLightboxOpen(false)
@@ -210,30 +193,6 @@ export function AttachmentImagePreview({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
-    if (shouldLoadPreview) return undefined
-
-    const element = previewContainerRef.current
-    if (!element || typeof IntersectionObserver === 'undefined') {
-      setShouldLoadPreview(true)
-      return undefined
-    }
-
-    const observer = new IntersectionObserver(
-      entries => {
-        if (entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0)) {
-          setShouldLoadPreview(true)
-          observer.disconnect()
-        }
-      },
-      { root: null, rootMargin: '320px 0px' }
-    )
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [previewIdentity, shouldLoadPreview])
-
-  useEffect(() => {
-    if (!shouldLoadPreview) return undefined
-
     let isMounted = true
     let objectUrl: string | null = null
     const targetAttachment = attachmentRef.current
@@ -269,7 +228,7 @@ export function AttachmentImagePreview({
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [fetchAttachmentBlob, previewIdentity, shouldLoadPreview])
+  }, [fetchAttachmentBlob, previewIdentity])
 
   useEffect(() => {
     if (!isLightboxOpen || disableLightbox) return

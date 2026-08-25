@@ -1111,6 +1111,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ...options,
         additionalContext: cloudSubmission.additionalContext,
         cloudProjectId: cloudSubmission.cloudProjectId,
+        origin: cloudSubmission.origin,
         initialSupervisor: supervisorConfig,
         onRuntimeTaskCreated: cloudSubmission.onRuntimeTaskCreated,
         onRuntimeTaskReady: () => {

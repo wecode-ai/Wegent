@@ -113,6 +113,7 @@ class LoopItemResponse(BaseModel):
     assignee_team_id: int | None = None
     assignee_team_name: str | None = None
     ai_state: dict[str, Any] | None = None
+    execution_id: int | None = None
     execution_state: str | None = None
     execution_control_state: str | None = None
     execution_observed_state: str | None = None

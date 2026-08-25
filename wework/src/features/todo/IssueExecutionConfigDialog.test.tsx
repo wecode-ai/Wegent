@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
+import { WORKBENCH_MODELS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { IssueExecutionConfigDialog } from './IssueExecutionConfigDialog'
 
 const item = {
@@ -28,6 +29,42 @@ const item = {
 }
 
 describe('IssueExecutionConfigDialog', () => {
+  it('refreshes cloud models when the hybrid catalog finishes loading', async () => {
+    const listModels = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: [{ name: 'local-model', type: 'runtime', displayName: 'Local Model' }],
+      })
+      .mockResolvedValue({
+        data: [
+          { name: 'local-model', type: 'runtime', displayName: 'Local Model' },
+          { name: 'cloud-model', type: 'public', displayName: 'Cloud Model' },
+        ],
+      })
+
+    render(
+      <IssueExecutionConfigDialog
+        item={item}
+        projectChatAgentApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        runtimeProfileApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        modelApi={{ listModels } as never}
+        deviceApi={{ listDevices: vi.fn().mockResolvedValue([]) } as never}
+        localProjects={[]}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    const modelSelect = await screen.findByTestId('issue-execution-config-fields-model')
+    expect(modelSelect).toHaveTextContent('Local Model')
+    expect(modelSelect).not.toHaveTextContent('Cloud Model')
+
+    act(() => window.dispatchEvent(new Event(WORKBENCH_MODELS_CHANGED_EVENT)))
+
+    await waitFor(() => expect(modelSelect).toHaveTextContent('Cloud Model'))
+    expect(listModels).toHaveBeenCalledTimes(2)
+  })
+
   it('requires the AI manager runtime snapshot before confirming', async () => {
     render(
       <IssueExecutionConfigDialog

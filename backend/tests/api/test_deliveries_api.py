@@ -813,6 +813,101 @@ def test_ai_issue_created_in_pending_waits_for_configuration_then_starts(
     dispatch.assert_awaited_once()
 
 
+def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Wake assigned execution", "status": "inbox"},
+    ).json()
+    item = test_db.get(LoopItem, created["id"])
+    assert item is not None
+    item.assignee_agent_id = "agent-1"
+    test_db.commit()
+    test_db.refresh(item)
+
+    refresh = MagicMock(side_effect=lambda _db, *, item, user_id: item)
+    dispatch = AsyncMock()
+    wake = AsyncMock()
+    monkeypatch.setattr(
+        deliveries_endpoint.loop_item_service,
+        "refresh_agent_execution_configuration",
+        refresh,
+    )
+    monkeypatch.setattr(
+        "app.services.board_team_execution.dispatch_board_team_assignment",
+        dispatch,
+    )
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        wake,
+    )
+
+    response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": item.version,
+            "execution_config": {
+                "agent_id": "agent-1",
+                "runtime_profile_id": None,
+                "execution_device_id": "cloud-device",
+                "model": "public-model",
+                "model_type": "public",
+                "model_options": {},
+                "workspace_binding": {"type": "standalone"},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    refresh.assert_called_once()
+    dispatch.assert_awaited_once()
+    wake.assert_awaited_once_with()
+
+
+def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = AsyncMock(return_value=1)
+    monkeypatch.setattr(
+        "app.services.project_automations.project_automation_processor.process",
+        process,
+    )
+
+    response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Trigger inbox automation"},
+    )
+
+    assert response.status_code == 201
+    created = response.json()
+    assert created["status"] == "inbox"
+    process.assert_awaited_once()
+    event = process.await_args.args[1]
+    assert event.event_type == "task.created"
+    assert event.project_id == str(delivery_project.id)
+    assert event.subject_id == created["id"]
+
+    updated = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": created["version"], "status": "in_progress"},
+    )
+
+    assert updated.status_code == 200
+    process.assert_awaited_once()
+
+
 def test_pausing_planning_cancels_active_ai_manager(
     test_client: TestClient,
     test_db: Session,

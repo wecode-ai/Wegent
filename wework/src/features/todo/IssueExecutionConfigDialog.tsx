@@ -12,6 +12,7 @@ import type { ProjectWithTasks } from '@/types/api'
 import type { UnifiedModel } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
 import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
+import { WORKBENCH_MODELS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { CloudTodoModal } from './CloudTodoModal'
 import { WorkflowExecutionConfigFields } from './WorkflowExecutionConfigFields'
 import {
@@ -66,6 +67,20 @@ export function IssueExecutionConfigDialog({
 
   useEffect(() => {
     let active = true
+    const setAvailableModels = (nextModels: UnifiedModel[]) => {
+      if (!active) return
+      setModels(
+        nextModels.filter(model => model.isActive !== false && !model.compatibilityDisabled)
+      )
+    }
+    const refreshModels = () => {
+      void (modelApi?.listModels() ?? Promise.resolve({ data: [] }))
+        .then(response => setAvailableModels(response.data))
+        .catch(cause => {
+          if (active) setError(cause instanceof Error ? cause.message : String(cause))
+        })
+    }
+    window.addEventListener(WORKBENCH_MODELS_CHANGED_EVENT, refreshModels)
     void Promise.all([
       projectChatAgentApi?.list(String(item.cloud_project_id)) ?? Promise.resolve([]),
       runtimeProfileApi?.list() ?? Promise.resolve([]),
@@ -88,11 +103,7 @@ export function IssueExecutionConfigDialog({
         )
         setAgents(activeAgents)
         setDevices(onlineDevices)
-        setModels(
-          modelResponse.data.filter(
-            model => model.isActive !== false && !model.compatibilityDisabled
-          )
-        )
+        setAvailableModels(modelResponse.data)
         setRuntimeProfiles(onlineProfiles)
         setExecutionConfig(current =>
           resolveWorkflowExecutionConfig(current, activeAgents, onlineProfiles)
@@ -130,6 +141,7 @@ export function IssueExecutionConfigDialog({
       })
     return () => {
       active = false
+      window.removeEventListener(WORKBENCH_MODELS_CHANGED_EVENT, refreshModels)
     }
   }, [deviceApi, item.cloud_project_id, modelApi, projectChatAgentApi, runtimeProfileApi])
 

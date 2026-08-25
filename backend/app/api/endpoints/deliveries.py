@@ -8,6 +8,7 @@ import logging
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -473,36 +474,31 @@ async def create_loop_item(
     project = cloud_project_service.get(db, project_id, current_user.id)
     created = loop_item_provider_router.create(db, project, current_user, values)
     response = LoopItemResponse.model_validate(created.values)
-    starts_immediately = response.status in {"pending", "in_progress"}
-    is_ai_workflow = bool(
-        response.workflow and response.workflow.advancement_policy == "ai"
+    from app.services.project_automations import (
+        ProjectAutomationEvent,
+        project_automation_processor,
     )
-    if starts_immediately and not is_ai_workflow:
-        from app.services.project_automations import (
-            ProjectAutomationEvent,
-            project_automation_processor,
-        )
 
-        try:
-            await project_automation_processor.process(
-                db,
-                ProjectAutomationEvent(
-                    event_type="task.created",
-                    project_id=str(project.id),
-                    subject_id=str(created.values["id"]),
-                    source=project.task_provider,
-                    actor_user_id=current_user.id,
-                    payload=response.model_dump(mode="json"),
-                ),
-            )
-        except Exception:
-            db.rollback()
-            logger.exception(
-                "Project automation processing failed after task creation "
-                "project=%s task=%s",
-                project.id,
-                created.values.get("id"),
-            )
+    try:
+        await project_automation_processor.process(
+            db,
+            ProjectAutomationEvent(
+                event_type="task.created",
+                project_id=str(project.id),
+                subject_id=str(created.values["id"]),
+                source=project.task_provider,
+                actor_user_id=current_user.id,
+                payload=response.model_dump(mode="json"),
+            ),
+        )
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "Project automation processing failed after task creation "
+            "project=%s task=%s",
+            project.id,
+            created.values.get("id"),
+        )
     if created.internal_item is not None:
         db.refresh(created.internal_item)
         if created.internal_item.status in {"pending", "in_progress"}:
@@ -888,6 +884,7 @@ async def report_loop_item_workflow_outcome(
 async def update_loop_item(
     item_id: str,
     values: LoopItemUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
@@ -902,6 +899,9 @@ async def update_loop_item(
             if item is None:
                 raise RuntimeError("External robot assignment index is unavailable")
             await dispatch_board_team_assignment(db, item=item, user=current_user)
+            from app.tasks.robot_queue_tasks import consume_queues_background
+
+            background_tasks.add_task(consume_queues_background)
             response = external_loop_item_provider.get(db, item_id, current_user.id)
         return LoopItemResponse.model_validate(response)
     existing = loop_item_service.get(db, item_id, current_user.id)
@@ -942,6 +942,9 @@ async def update_loop_item(
         from app.services.board_team_execution import dispatch_board_team_assignment
 
         await dispatch_board_team_assignment(db, item=item, user=current_user)
+        from app.tasks.robot_queue_tasks import consume_queues_background
+
+        background_tasks.add_task(consume_queues_background)
         db.refresh(item)
     elif item.assignee_agent_id and (
         "execution_config" in values.model_fields_set
@@ -958,32 +961,9 @@ async def update_loop_item(
         from app.services.board_team_execution import dispatch_board_team_assignment
 
         await dispatch_board_team_assignment(db, item=item, user=current_user)
-        db.refresh(item)
-    entered_execution = previous_status not in {
-        "pending",
-        "in_progress",
-    } and item.status in {"pending", "in_progress"}
-    item_view = _loop_item_response(db, item, current_user)
-    is_ai_workflow = bool(
-        item_view.workflow and item_view.workflow.advancement_policy == "ai"
-    )
-    if entered_execution and not is_ai_workflow:
-        from app.services.project_automations import (
-            ProjectAutomationEvent,
-            project_automation_processor,
-        )
+        from app.tasks.robot_queue_tasks import consume_queues_background
 
-        await project_automation_processor.process(
-            db,
-            ProjectAutomationEvent(
-                event_type="task.created",
-                project_id=str(item.cloud_project_id),
-                subject_id=str(item.id),
-                source=project.task_provider,
-                actor_user_id=current_user.id,
-                payload=item_view.model_dump(mode="json"),
-            ),
-        )
+        background_tasks.add_task(consume_queues_background)
         db.refresh(item)
     publish_loop_item_changed(
         db,

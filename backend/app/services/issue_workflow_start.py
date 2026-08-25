@@ -293,9 +293,12 @@ class IssueWorkflowStartService:
             metadata = run.metadata_json if isinstance(run.metadata_json, dict) else {}
             event = metadata.get("event")
             payload = event.get("payload") if isinstance(event, dict) else None
+            existing_workflow_run_id = (
+                payload.get("workflow_run_id") if isinstance(payload, dict) else None
+            )
             if (
-                isinstance(payload, dict)
-                and payload.get("workflow_run_id") == workflow_run_id
+                not existing_workflow_run_id
+                or existing_workflow_run_id == workflow_run_id
             ):
                 return True
         return False

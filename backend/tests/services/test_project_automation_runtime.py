@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.project_automation_domain import (
     ProjectAutomationEvent,
     assignment_mode,
@@ -102,6 +103,132 @@ async def test_event_processing_wakes_cloud_executor_after_dispatch(monkeypatch)
     assert dispatched == 1
     dispatch.assert_awaited_once_with(db, rule, run)
     wake.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_ai_workflow_defers_only_its_coordinator_rule(monkeypatch):
+    coordinator = SimpleNamespace(
+        id="coordinator-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+        },
+    )
+    ordinary = SimpleNamespace(
+        id="ordinary-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+        },
+    )
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="",
+        task_title="",
+        metadata_json={},
+    )
+    query = MagicMock()
+    query.filter.return_value = query
+    query.all.return_value = [coordinator, ordinary]
+    db = MagicMock()
+    db.query.return_value = query
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
+
+    dispatched = await processor.process(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.created",
+            project_id="project-1",
+            subject_id="task-1",
+            source="local",
+            actor_user_id=7,
+            payload={
+                "title": "AI workflow task",
+                "workflow": {
+                    "advancement_policy": "ai",
+                    "ai_automation_rule_id": coordinator.id,
+                    "execution_config": {
+                        "execution_device_id": None,
+                        "model": None,
+                    },
+                },
+            },
+        ),
+    )
+
+    assert dispatched == 1
+    dispatch.assert_awaited_once_with(db, ordinary, run)
+
+
+@pytest.mark.asyncio
+async def test_ai_workflow_uses_coordinator_rule_runtime_when_no_override(monkeypatch):
+    coordinator = SimpleNamespace(
+        id="coordinator-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+        },
+    )
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="",
+        task_title="",
+        metadata_json={},
+    )
+    rule_query = MagicMock()
+    rule_query.filter.return_value = rule_query
+    rule_query.all.return_value = [coordinator]
+    issue = SimpleNamespace(
+        id="task-1",
+        cloud_project_id="project-1",
+        metadata_json={},
+    )
+    issue_query = MagicMock()
+    issue_query.filter.return_value = issue_query
+    issue_query.one_or_none.return_value = issue
+    planning_run = SimpleNamespace(
+        id="workflow-run-1",
+        metadata_json={"plan_version": 1},
+    )
+    db = MagicMock()
+    db.query.side_effect = [rule_query, issue_query]
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    monkeypatch.setattr(
+        issue_workflow_planning_service,
+        "ensure_run",
+        MagicMock(return_value=planning_run),
+    )
+    processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
+
+    dispatched = await processor.process(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.created",
+            project_id="project-1",
+            subject_id="task-1",
+            source="local",
+            actor_user_id=7,
+            payload={
+                "title": "AI workflow task",
+                "workflow": {
+                    "advancement_policy": "ai",
+                    "ai_automation_rule_id": coordinator.id,
+                    "execution_config": None,
+                },
+            },
+        ),
+    )
+
+    assert dispatched == 1
+    dispatch.assert_awaited_once_with(db, coordinator, run)
+    assert run.metadata_json["event"]["payload"]["workflow_run_id"] == planning_run.id
+    assert run.metadata_json["event"]["payload"]["workflow_plan_version"] == 1
 
 
 @pytest.mark.asyncio

@@ -1324,6 +1324,49 @@ class ProjectAutomationProcessor:
 
         return project_automation_service._create_run(db, rule, trigger, scheduled_for)
 
+    @staticmethod
+    def _event_payload_for_rule(
+        db: Session,
+        event: ProjectAutomationEvent,
+        rule: ProjectAutomationRule,
+    ) -> dict[str, Any]:
+        payload = dict(event.payload)
+        workflow = payload.get("workflow")
+        if (
+            not isinstance(workflow, dict)
+            or workflow.get("advancement_policy") != "ai"
+            or str(workflow.get("ai_automation_rule_id") or "") != str(rule.id)
+            or payload.get("workflow_run_id")
+        ):
+            return payload
+
+        issue = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.id == event.subject_id,
+                LoopItem.cloud_project_id == event.project_id,
+                loop_datetime_is_unset(LoopItem.deleted_at),
+            )
+            .one_or_none()
+        )
+        if issue is None:
+            raise RuntimeError("AI manager Issue is unavailable")
+
+        from app.services.issue_workflow_planning import (
+            issue_workflow_planning_service,
+        )
+
+        planning_run = issue_workflow_planning_service.ensure_run(
+            db,
+            issue=issue,
+            user_id=event.actor_user_id,
+        )
+        payload["workflow_run_id"] = planning_run.id
+        payload["workflow_plan_version"] = (planning_run.metadata_json or {}).get(
+            "plan_version"
+        )
+        return payload
+
     async def retry(
         self,
         db: Session,
@@ -1432,8 +1475,18 @@ class ProjectAutomationProcessor:
         )
         if automation_id:
             query = query.filter(ProjectAutomationRule.id == automation_id)
+        workflow = event.payload.get("workflow")
+        deferred_automation_id = (
+            str(workflow.get("ai_automation_rule_id") or "")
+            if isinstance(workflow, dict)
+            and workflow.get("advancement_policy") == "ai"
+            and isinstance(workflow.get("execution_config"), dict)
+            else ""
+        )
         dispatched = 0
         for rule in query.all():
+            if deferred_automation_id and str(rule.id) == deferred_automation_id:
+                continue
             rule_metadata = metadata(rule)
             if rule_metadata.get("trigger_type") != "event":
                 continue
@@ -1441,6 +1494,7 @@ class ProjectAutomationProcessor:
                 continue
             if not self._matches(rule_metadata.get("event_config"), event):
                 continue
+            run_event_payload = self._event_payload_for_rule(db, event, rule)
             run = self._create_run(db, rule, "event", utcnow())
             run.task_id = event.subject_id
             event_title = event.payload.get("title")
@@ -1451,9 +1505,9 @@ class ProjectAutomationProcessor:
                 "source": event.source,
                 "subject_id": event.subject_id,
                 "actor_user_id": event.actor_user_id,
-                "payload": event.payload,
+                "payload": run_event_payload,
             }
-            execution_config = event.payload.get("execution_config")
+            execution_config = run_event_payload.get("execution_config")
             if isinstance(execution_config, dict):
                 run_metadata["workflow_execution_config"] = execution_config
             run.metadata_json = run_metadata

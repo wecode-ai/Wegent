@@ -131,6 +131,17 @@ interface RuntimeAttachmentTransport {
   attachments: Attachment[]
 }
 
+function runtimeCreateMessage(intent: PreparedRuntimeTaskIntent): string {
+  const message = intent.message.trim()
+  if (message) return intent.message
+  const filenames = (intent.attachments ?? [])
+    .map(attachment => attachment.filename.trim())
+    .filter(Boolean)
+  return filenames.length > 0
+    ? `Attached files:\n${filenames.map(name => `- ${name}`).join('\n')}`
+    : ''
+}
+
 function remoteRuntimeAttachment(attachment: Attachment): Attachment {
   const sanitized = { ...attachment }
   delete sanitized.local_path
@@ -1087,7 +1098,7 @@ export function useWorkbenchRuntimeMessaging({
         ...(options?.runtimePermissionMode
           ? { runtimePermissionMode: options.runtimePermissionMode }
           : {}),
-        message: intent.message,
+        message: runtimeCreateMessage(intent),
         ...(clientUserMessageId ? { clientUserMessageId } : {}),
         title: buildRuntimeTaskTitle(displayMessage, intent.title),
         modelId: executionModel.modelId,

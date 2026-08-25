@@ -110,6 +110,7 @@ export interface SendCurrentInputOptions {
   ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
 }
 
 export interface CreateTemporaryRuntimeTaskOptions {

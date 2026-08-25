@@ -1,6 +1,19 @@
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchServices } from './workbenchServices'
 
+const projectStoreByRuntimeTask = new Map<string, 'backend' | 'local'>()
+
+function runtimeTaskKey(address: RuntimeTaskAddress) {
+  return `${address.deviceId}:${address.taskId}`
+}
+
+export function rememberProjectTaskStore(
+  address: RuntimeTaskAddress,
+  projectStore: 'backend' | 'local'
+) {
+  projectStoreByRuntimeTask.set(runtimeTaskKey(address), projectStore)
+}
+
 export function projectTaskTrackingApi(services: WorkbenchServices, address: RuntimeTaskAddress) {
   const apis = services.projectSpaceApis
   if (!apis) return null
@@ -10,7 +23,11 @@ export function projectTaskTrackingApi(services: WorkbenchServices, address: Run
       ? (handle.origin as Record<string, unknown>)
       : null
   const projectStore =
-    handle?.projectStore ?? handle?.project_store ?? origin?.projectStore ?? origin?.project_store
+    handle?.projectStore ??
+    handle?.project_store ??
+    origin?.projectStore ??
+    origin?.project_store ??
+    projectStoreByRuntimeTask.get(runtimeTaskKey(address))
   const location =
     projectStore === 'backend'
       ? 'cloud'

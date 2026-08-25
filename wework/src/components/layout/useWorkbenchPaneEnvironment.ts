@@ -68,6 +68,7 @@ export function applySharedChangeRequestSnapshot(
   environmentInfo: EnvironmentInfo,
   snapshot: TaskChangeRequestSnapshot
 ): EnvironmentInfo {
+  if (snapshot.stale && snapshot.error) return environmentInfo
   if (snapshot.error && !snapshot.changeRequest) return environmentInfo
   const provider = snapshot.changeRequest?.provider ?? environmentInfo.changeRequest?.provider
   if (!provider) return environmentInfo
@@ -553,8 +554,12 @@ export function useWorkbenchPaneEnvironment({
   )
 
   const refreshEnvironmentInfo = useCallback(
-    () => loadCurrentEnvironmentInfo({ force: true, showLoading: true }),
-    [loadCurrentEnvironmentInfo]
+    () =>
+      Promise.all([
+        loadCurrentEnvironmentInfo({ force: true, showLoading: true }),
+        changeRequestMonitor?.refresh(),
+      ]).then(() => undefined),
+    [changeRequestMonitor, loadCurrentEnvironmentInfo]
   )
 
   useEffect(() => {

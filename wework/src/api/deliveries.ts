@@ -1211,6 +1211,7 @@ export function createDeliveryApi(client: HttpClient) {
           })
           return updated
         }
+        if (item.execution_id != null) return item
         if (executionStatus === 'succeeded') {
           const bindings = await api.listTaskBindings(item.id)
           if (bindings.length > 1) return item
