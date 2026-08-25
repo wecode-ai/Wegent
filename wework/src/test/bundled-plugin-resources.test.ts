@@ -140,13 +140,13 @@ describe('bundled plugin resources', () => {
     expect(script).toContain("'--exclude=test-results'")
   })
 
-  test('uses the Electron packager in GitHub desktop releases', () => {
+  test('uses the shared release build command in GitHub desktop releases', () => {
     const workflow = readFileSync(
       resolve(process.cwd(), '../.github/workflows/wework-app.yml'),
       'utf8'
     )
 
-    expect(workflow).toContain('ai:verify:electron:build')
+    expect(workflow).toContain('pnpm --filter wework build:release')
   })
 
   test('publishes packaged Electron artifacts for all desktop platforms', () => {
