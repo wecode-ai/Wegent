@@ -903,6 +903,10 @@ class SubtaskStore(Protocol):
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
     ) -> list[Subtask]: ...
 
+    def list_cleanup_subtasks_for_executors(
+        self, db: Session, *, executors: list[tuple[str, str]]
+    ) -> list[Subtask]: ...
+
     def update_status(
         self,
         db: Session,

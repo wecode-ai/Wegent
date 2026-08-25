@@ -1131,10 +1131,6 @@ fn bootstrap_is_stable_at_build(post_build_navigation: bool) -> bool {
     !post_build_navigation
 }
 
-fn embedded_browser_devtools_enabled(release_build: bool, debug_assertions: bool) -> bool {
-    !release_build && debug_assertions
-}
-
 fn entry_readiness(
     state: &EmbeddedBrowserState,
     label: &str,
@@ -2086,10 +2082,10 @@ pub async fn embedded_browser_open(
         .data_directory(data_directory)
         .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
         .initialization_script(EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT)
-        .devtools(embedded_browser_devtools_enabled(
-            cfg!(wework_release_build),
-            cfg!(debug_assertions),
-        ))
+        // Match the main webview: keep the native right-click "Inspect
+        // Element" entry in debug builds and in release builds compiled with
+        // the release-devtools feature (the default release packaging).
+        .devtools(cfg!(any(debug_assertions, feature = "release-devtools")))
         .accept_first_mouse(true)
         .on_navigation({
             let state = state.inner().clone();
