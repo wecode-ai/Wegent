@@ -78,7 +78,10 @@ import {
   mergeRuntimeTaskHandles,
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
-import { applyRuntimeConversationAction } from './runtimeConversationCache'
+import {
+  applyRuntimeConversationAction,
+  removeRuntimeConversationTurn,
+} from './runtimeConversationCache'
 import { findFileChangesBySubtaskId } from './runtimePaneMessages'
 import { isRuntimeTaskBusyError } from './runtimePaneStatus'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
@@ -420,8 +423,21 @@ export function useWorkbenchRuntimeMessaging({
   const sendRuntimePaneMessage = useCallback(
     async (request: RuntimeSendRequest, options?: RuntimePaneActionOptions): Promise<boolean> => {
       let sendRequested = false
+      const optimisticUserMessage = options?.optimisticUserMessage
+      const outboundRequestWithClientId = optimisticUserMessage
+        ? {
+            ...request,
+            clientUserMessageId: optimisticUserMessage.id,
+          }
+        : request
+      if (optimisticUserMessage) {
+        applyRuntimeConversationAction(request.address, {
+          type: 'user_added',
+          message: optimisticUserMessage,
+        })
+      }
       try {
-        const outboundRequest = await prepareRuntimeSendRequest(request)
+        const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
         if (!options?.silentBusyRetry) {
           lifecycleStore.sendRequested(outboundRequest.address)
           sendRequested = true
@@ -444,6 +460,11 @@ export function useWorkbenchRuntimeMessaging({
         }
         return true
       } catch (error) {
+        if (optimisticUserMessage) {
+          removeRuntimeConversationTurn(request.address, {
+            clientUserMessageId: optimisticUserMessage.id,
+          })
+        }
         const errorMessage = error instanceof Error ? error.message : '发送失败'
         const blockedByActiveTurn = isRuntimeTaskBusyError(errorMessage)
         if (sendRequested) {
