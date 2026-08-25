@@ -14,7 +14,9 @@ configuration, and executor startup.
 import base64
 import logging
 import shlex
-from typing import Dict
+from typing import Any, Dict, List, Optional
+
+from wecode.service.cloud_device_git_tokens import build_git_token_envs
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,7 @@ def generate_cloud_init_script(
     install_script_token: str = "",
     mail_email: str = "",
     mail_password: str = "",
+    git_tokens: Optional[List[Dict[str, Any]]] = None,
     device_id: str = "",
     device_name: str = "",
     ubuntu_password: str = "",
@@ -67,6 +70,7 @@ def generate_cloud_init_script(
         install_script_token: Private token for authenticated download.
         mail_email: Optional mail account username for himalaya mail skill.
         mail_password: Optional mail account password for himalaya mail skill.
+        git_tokens: User git tokens passed through to the cloud device.
         device_id: Server-generated device UUID.
         device_name: Server-generated device name.
         ubuntu_password: Login password for the ubuntu system user.
@@ -86,6 +90,7 @@ def generate_cloud_init_script(
         install_script_token,
         mail_email,
         mail_password,
+        git_tokens,
         device_id,
         device_name,
         ubuntu_password,
@@ -113,6 +118,7 @@ def generate_simple_startup_script(
     install_script_token: str = "",
     mail_email: str = "",
     mail_password: str = "",
+    git_tokens: Optional[List[Dict[str, Any]]] = None,
     device_id: str = "",
     device_name: str = "",
     ubuntu_password: str = "",
@@ -134,6 +140,7 @@ def generate_simple_startup_script(
         install_script_token: Private token for authenticated download.
         mail_email: Optional mail account username for himalaya mail skill.
         mail_password: Optional mail account password for himalaya mail skill.
+        git_tokens: User git tokens passed through to the cloud device.
         device_id: Server-generated device UUID.
         device_name: Server-generated device name.
         ubuntu_password: Login password for the ubuntu system user.
@@ -153,6 +160,7 @@ def generate_simple_startup_script(
         install_script_token,
         mail_email,
         mail_password,
+        git_tokens,
         device_id,
         device_name,
         ubuntu_password,
@@ -180,6 +188,7 @@ def _generate_user_data_script(
     install_script_token: str = "",
     mail_email: str = "",
     mail_password: str = "",
+    git_tokens: Optional[List[Dict[str, Any]]] = None,
     device_id: str = "",
     device_name: str = "",
     ubuntu_password: str = "",
@@ -202,6 +211,7 @@ def _generate_user_data_script(
         install_script_token: Private token for authenticated download.
         mail_email: Optional mail account username for himalaya mail skill.
         mail_password: Optional mail account password for himalaya mail skill.
+        git_tokens: User git tokens passed through to the cloud device.
         device_id: Server-generated device UUID.
         device_name: Server-generated device name.
         ubuntu_password: Login password for the ubuntu system user.
@@ -223,6 +233,8 @@ def _generate_user_data_script(
             f" -m -e {shlex.quote(mail_email)} -p {shlex.quote(mail_password)}"
         )
 
+    git_token_exports = _generate_git_token_exports(git_tokens)
+    git_clone_config = _generate_git_clone_config(git_tokens, user_name)
     ubuntu_password_section = _generate_ubuntu_password_section(ubuntu_password)
     runtime_env_exports = "\n".join(
         f'export {key}="{_escape_double_quoted_env_value(value)}"'
@@ -309,6 +321,8 @@ export WEGENT_BACKEND_URL="{backend_url}"
 # Export current user identity for scripts running on the cloud device
 export WEGENT_USER_JWT_TOKEN="{user_jwt_token}"
 export WEGENT_USER_NAME="{user_name}"
+{git_token_exports}
+{git_clone_config}
 
 # Export server-generated device ID and name
 export DEVICE_ID="{device_id}"
@@ -362,6 +376,118 @@ echo "ubuntu:{ubuntu_password}" | sudo chpasswd
 set -x
 echo "[CloudDevice] Ubuntu user password configured"
 """
+
+
+def _generate_git_token_exports(
+    git_tokens: Optional[List[Dict[str, Any]]],
+) -> str:
+    """Generate shell export lines for supported git token environment variables."""
+    envs = build_git_token_envs(git_tokens)
+    if not envs:
+        return ""
+
+    export_lines = _generate_git_token_export_lines(envs)
+    return "\n".join(
+        [
+            "# Export git tokens without shell xtrace leaking values",
+            "set +x",
+            export_lines,
+            "set -x",
+        ]
+    )
+
+
+def _generate_git_clone_config(
+    git_tokens: Optional[List[Dict[str, Any]]],
+    git_username: str,
+) -> str:
+    """Generate Git config that uses injected tokens for supported GitLab hosts."""
+    envs = build_git_token_envs(git_tokens)
+    if not envs:
+        return ""
+
+    askpass_cases = []
+    rewrite_commands = []
+    for domain, env_name in _iter_git_token_domains(envs):
+        askpass_cases.append(f'  *Password*{domain}*) echo "${env_name}" ;;')
+        rewrite_commands.append(
+            f'git config --global --unset-all url."https://{domain}/".insteadOf '
+            "|| true"
+        )
+        rewrite_commands.extend(
+            [
+                f'git config --global --add url."https://{domain}/".insteadOf '
+                f'"ssh://git@{domain}/"',
+                f'git config --global --add url."https://{domain}/".insteadOf '
+                f'"ssh://git@{domain}:2222/"',
+                f'git config --global --add url."https://{domain}/".insteadOf '
+                f'"git@{domain}:"',
+            ]
+        )
+
+    askpass_case_lines = "\n".join(askpass_cases)
+    git_env_lines = "\n".join(
+        [
+            f'export WEGENT_GIT_USERNAME="{_escape_double_quoted_env_value(git_username)}"',
+            _generate_git_token_export_lines(envs),
+        ]
+    )
+    rewrite_command_lines = "\n".join(rewrite_commands)
+
+    return f"""
+# Configure Git token authentication for supported GitLab hosts
+mkdir -p "$HOME/.wecode"
+GIT_TOKEN_ENV_FILE="$HOME/.wecode/git-token-env"
+set +x
+cat > "$GIT_TOKEN_ENV_FILE" <<'GIT_TOKEN_ENV'
+{git_env_lines}
+GIT_TOKEN_ENV
+chmod 600 "$GIT_TOKEN_ENV_FILE"
+. "$GIT_TOKEN_ENV_FILE"
+set -x
+ASKPASS_SCRIPT="$HOME/.wecode/git-askpass.sh"
+cat > "$ASKPASS_SCRIPT" <<'GIT_ASKPASS_SCRIPT'
+#!/bin/sh
+case "$1" in
+  *Username*) echo "${{WEGENT_GIT_USERNAME:-${{WEGENT_USER_NAME:-oauth2}}}}" ;;
+{askpass_case_lines}
+  *) echo "" ;;
+esac
+GIT_ASKPASS_SCRIPT
+chmod 700 "$ASKPASS_SCRIPT"
+export GIT_ASKPASS="$ASKPASS_SCRIPT"
+git config --global core.askPass "$ASKPASS_SCRIPT"
+if ! grep -Fq '# Wegent Git token environment' "$HOME/.bashrc"; then
+  cat >> "$HOME/.bashrc" <<'GIT_TOKEN_PROFILE'
+# Wegent Git token environment
+if [ -f "$HOME/.wecode/git-token-env" ]; then
+  . "$HOME/.wecode/git-token-env"
+fi
+export GIT_ASKPASS="$HOME/.wecode/git-askpass.sh"
+GIT_TOKEN_PROFILE
+fi
+{rewrite_command_lines}
+"""
+
+
+def _generate_git_token_export_lines(envs: Dict[str, str]) -> str:
+    """Generate escaped export lines for git token environment variables."""
+    return "\n".join(
+        f'export {env_name}="{_escape_double_quoted_env_value(value)}"'
+        for env_name, value in envs.items()
+    )
+
+
+def _iter_git_token_domains(envs: Dict[str, str]) -> List[tuple[str, str]]:
+    """Return supported Git domains whose token env vars are available."""
+    domain_env_pairs = [
+        ("git.intra.weibo.com", "GIT_INTRA_WEIBO_COM_TOKEN"),
+        ("git.staff.sina.com.cn", "GIT_STAFF_SINA_COM_CN_TOKEN"),
+        ("gitlab.weibo.cn", "GITLAB_WEIBO_CN_TOKEN"),
+    ]
+    return [
+        (domain, env_name) for domain, env_name in domain_env_pairs if env_name in envs
+    ]
 
 
 def _escape_double_quoted_env_value(value: str) -> str:

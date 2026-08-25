@@ -81,12 +81,61 @@ async def test_create_cloud_device_passes_current_user_jwt_to_provider(monkeypat
 
     assert provider.create_device_kwargs["auth_token"] == "device-api-key"
     assert provider.create_device_kwargs["user_jwt_token"] == "jwt.current.user"
-    assert "git_tokens" not in provider.create_device_kwargs
     assert len(background_tasks.tasks) == 1
     assert background_tasks.tasks[0].func == (
         cloud_devices.cloud_device_ip_index_service.sync_device
     )
     assert background_tasks.tasks[0].args == (7, "device-1")
+
+
+@pytest.mark.asyncio
+async def test_create_cloud_device_passes_current_user_git_tokens_to_provider(
+    monkeypatch,
+):
+    """Cloud device creation should pass current user's real git tokens."""
+    provider = _FakeCloudDeviceProvider()
+    monkeypatch.setattr(cloud_devices, "cloud_device_provider", provider)
+    monkeypatch.setattr(
+        "wecode.service.api_key_service.create_api_key_for_cloud_device",
+        lambda db, user_id, user_name: ("key-id", "device-api-key"),
+    )
+    monkeypatch.setattr(
+        cloud_devices.get_user_gitinfo,
+        "get_real_git_tokens",
+        lambda user_name: [
+            {
+                "type": "gitlab",
+                "git_domain": "git.intra.weibo.com",
+                "git_token": "git-intra-token",
+            },
+            {
+                "type": "gitlab",
+                "git_domain": "gitlab.weibo.cn",
+                "git_token": "gitlab-weibo-token",
+            },
+        ],
+    )
+
+    await cloud_devices.create_cloud_device(
+        request=_FakeRequest(),
+        background_tasks=BackgroundTasks(),
+        body=CreateCloudDeviceRequest(),
+        db=SimpleNamespace(),
+        current_user=SimpleNamespace(id=7, user_name="alice"),
+    )
+
+    assert provider.create_device_kwargs["git_tokens"] == [
+        {
+            "type": "gitlab",
+            "git_domain": "git.intra.weibo.com",
+            "git_token": "git-intra-token",
+        },
+        {
+            "type": "gitlab",
+            "git_domain": "gitlab.weibo.cn",
+            "git_token": "gitlab-weibo-token",
+        },
+    ]
 
 
 @pytest.mark.asyncio

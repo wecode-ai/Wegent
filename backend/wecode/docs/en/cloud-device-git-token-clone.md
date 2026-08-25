@@ -2,9 +2,25 @@
 sidebar_position: 1
 ---
 
-# Manually Sync Device Git Configuration
+# Cloud Device Git Configuration
 
-Cloud device creation no longer reads or injects Git tokens. In Wework, the user opens Git hosting settings, selects one online ClaudeCode cloud or remote device, and clicks **Sync Git configuration**.
+## Automatic configuration during creation
+
+When a cloud device is created, the Backend reads the current user's GitLab tokens from the internal secret service and injects supported domains into the Nevis VM environment and startup script:
+
+| Variable                      | Git domain              | Purpose                                                            |
+| ----------------------------- | ----------------------- | ------------------------------------------------------------------ |
+| `GIT_INTRA_WEIBO_COM_TOKEN`   | `git.intra.weibo.com`   | Access the corresponding GitLab repositories from the cloud device |
+| `GIT_STAFF_SINA_COM_CN_TOKEN` | `git.staff.sina.com.cn` | Access the corresponding GitLab repositories from the cloud device |
+| `GITLAB_WEIBO_CN_TOKEN`       | `gitlab.weibo.cn`       | Access the corresponding GitLab repositories from the cloud device |
+
+For the `ubuntu` user, the startup script rewrites supported `ssh://git@...` and `git@...:` repository addresses to HTTPS through `url.*.insteadOf`. `~/.wecode/git-askpass.sh` then authenticates with the current Wegent user name and token.
+
+To support clones from later interactive shells, the startup script writes the Git user name and token variables to `~/.wecode/git-token-env` with `0600` permissions and loads it from `~/.bashrc`. Tokens are not written to Git remote URLs, Device CRDs, the database, or logs. A token lookup failure does not block cloud device creation.
+
+## Manually sync a selected device
+
+In Wework, the user can also open Git hosting settings, select one online ClaudeCode cloud or remote device, and click **Sync Git configuration**.
 
 The Backend selects the first configured account for each domain and resolves every token before synchronization. If any effective token is unavailable, the request fails before changing the device. Tokens are never returned to Wework or written to URLs, command arguments, Device CRDs, cloud-init, or logs.
 
