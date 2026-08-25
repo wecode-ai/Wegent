@@ -710,6 +710,19 @@ fn non_project_launch_keeps_global_plugin_configuration() {
 }
 
 #[test]
+fn standalone_robot_launch_enables_configured_plugins() {
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("project_plugin_ids".to_owned(), json!(["robot-tool@team"]));
+
+    assert_eq!(
+        project_plugin_config_overrides(&request),
+        vec!["plugins.\"robot-tool@team\".enabled=true"]
+    );
+}
+
+#[test]
 fn project_plugin_overrides_reject_malformed_plugin_ids() {
     let mut request = ExecutionRequest {
         runtime_project_key: Some("local:/repo".to_owned()),

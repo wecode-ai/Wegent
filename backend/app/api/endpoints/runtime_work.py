@@ -44,6 +44,7 @@ from app.schemas.runtime_work import (
     RuntimeTaskQueueReorderRequest,
     RuntimeTaskQueueReorderResponse,
     RuntimeTaskRenameRequest,
+    RuntimeTaskStatusReplayRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
@@ -99,6 +100,20 @@ async def list_runtime_work_endpoint(
     return await runtime_work_service.list_runtime_work(
         db=db,
         user_id=current_user.id,
+    )
+
+
+@router.post("/task-status/replay")
+async def replay_runtime_task_statuses_endpoint(
+    request: RuntimeTaskStatusReplayRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Ask one Runtime to replay status through the normal event pipeline."""
+
+    return await runtime_work_service.replay_runtime_task_statuses(
+        user_id=current_user.id,
+        device_id=request.device_id,
+        task_ids=request.task_ids,
     )
 
 

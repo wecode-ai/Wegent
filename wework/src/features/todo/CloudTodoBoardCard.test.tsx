@@ -89,6 +89,112 @@ function conversationTurn(
 }
 
 describe('CloudTodoBoardCard', () => {
+  it('shows the current workflow stage before any task starts', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={{
+          ...item,
+          status: 'pending',
+          workflow: {
+            version: 1,
+            definition_version: 1,
+            nodes: [
+              {
+                id: 'manual-stage',
+                name: '手动阶段',
+                execution_mode: 'human',
+                depends_on: [],
+                required: true,
+                workspace_policy: 'none',
+                status: 'ready',
+              },
+              {
+                id: 'automatic-stage',
+                name: '自动阶段',
+                execution_mode: 'robot',
+                depends_on: ['manual-stage'],
+                required: true,
+                workspace_policy: 'none',
+                status: 'blocked',
+              },
+            ],
+          },
+        }}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-card-workflow-stage-WEG-85')).toHaveTextContent(
+      '手动阶段'
+    )
+    expect(screen.getByTestId('cloud-todo-card-workflow-status-WEG-85')).toHaveTextContent('可开始')
+    expect(screen.queryByTestId('cloud-todo-card-tasks-WEG-85')).not.toBeInTheDocument()
+  })
+
+  it('keeps a failed workflow stage visible after its task stops', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={{
+          ...item,
+          status: 'pending',
+          workflow: {
+            version: 2,
+            definition_version: 1,
+            nodes: [
+              {
+                id: 'automatic-stage',
+                name: '自动阶段',
+                execution_mode: 'robot',
+                depends_on: [],
+                required: true,
+                workspace_policy: 'none',
+                status: 'failed',
+                execution_error: 'Execution model is unavailable',
+              },
+            ],
+          },
+        }}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Run automation',
+            running: false,
+            finalResponseLoaded: true,
+          },
+        ]}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-card-workflow-stage-WEG-85')).toHaveTextContent(
+      '自动阶段'
+    )
+    expect(screen.getByTestId('cloud-todo-card-workflow-status-WEG-85')).toHaveTextContent(
+      '执行失败'
+    )
+    expect(screen.queryByTestId('cloud-todo-card-tasks-WEG-85')).not.toBeInTheDocument()
+  })
+
   it('renders the pull request popup outside the overflow-hidden board card', async () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(snapshot)
 

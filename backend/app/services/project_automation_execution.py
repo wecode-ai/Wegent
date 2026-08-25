@@ -40,10 +40,13 @@ from app.services.project_automation_domain import (
     ProjectAutomationEvent,
     assignment_mode,
     integer,
+    manager_config,
     manager_type,
     metadata,
     project_agent,
+    role_config,
     runnable_wegent_team,
+    runtime_config,
     text,
     utcnow,
     wegent_team,
@@ -98,19 +101,32 @@ class ProjectAutomationExecution:
             if owner is None or project is None:
                 raise RuntimeError("Automation owner or project is unavailable")
             self._ensure_run_task(db, project=project, owner=owner, rule=rule, run=run)
-            context = self._automation_context(rule, run)
+            context = self._automation_context(db, rule, run)
             instruction = self._run_instruction(rule, run)
             configured_mode = assignment_mode(metadata(rule))
             if configured_mode == "manual":
-                self._assign_project_robot(
-                    db,
-                    owner=owner,
-                    rule=rule,
-                    run=run,
-                    agent_id=rule.assignee_agent_id,
-                    context=context,
-                    instruction=instruction,
-                )
+                configured_agent_id = str(context.get("agent_id") or "")
+                if not configured_agent_id and (
+                    "workspace_binding" in context
+                    or role_config(metadata(rule)).get("source") == "generic"
+                ):
+                    self._dispatch_generic_robot(
+                        db,
+                        owner=owner,
+                        rule=rule,
+                        run=run,
+                        context=context,
+                    )
+                else:
+                    self._assign_project_robot(
+                        db,
+                        owner=owner,
+                        rule=rule,
+                        run=run,
+                        agent_id=configured_agent_id or rule.assignee_agent_id,
+                        context=context,
+                        instruction=instruction,
+                    )
             else:
                 configured_manager = manager_type(metadata(rule))
                 activity = self._create_manager_activity(
@@ -175,7 +191,7 @@ class ProjectAutomationExecution:
             )
         except ZoneInfoNotFoundError:
             local_time = scheduled_for
-        context = self._automation_context(rule, run)
+        context = self._automation_context(db, rule, run)
         instruction = self._run_instruction(rule, run)
         routed = loop_item_provider_router.create(
             db,
@@ -215,6 +231,28 @@ class ProjectAutomationExecution:
         agent = project_agent(db, str(rule.cloud_project_id), agent_id)
         if not run.task_id:
             raise RuntimeError("Automation task carrier is unavailable")
+        uses_workflow_snapshot = "workspace_binding" in context
+        robot_context = {
+            **context,
+            "runtime_source": (
+                context.get("runtime_source")
+                if uses_workflow_snapshot
+                else "agent_default"
+            )
+            or "agent_default",
+            "runtime_profile_id": (
+                context.get("runtime_profile_id") if uses_workflow_snapshot else None
+            ),
+            "runtime_subject_user_id": int(
+                (
+                    context.get("runtime_subject_user_id")
+                    if uses_workflow_snapshot
+                    else None
+                )
+                or agent.created_by_user_id
+                or owner.id
+            ),
+        }
         item = db.get(LoopItem, run.task_id)
         if item is not None:
             loop_item_service.assign(
@@ -227,7 +265,7 @@ class ProjectAutomationExecution:
                     assignee_id=agent.id,
                     version=item.version,
                 ),
-                automation_context=context,
+                automation_context=robot_context,
                 instruction=instruction,
             )
         elif external_loop_item_provider.is_external_item(db, run.task_id):
@@ -236,7 +274,7 @@ class ProjectAutomationExecution:
                 run.task_id,
                 owner.id,
                 LoopItemAssign(assignee_type="agent", assignee_id=agent.id, version=1),
-                automation_context=context,
+                automation_context=robot_context,
                 instruction=instruction,
             )
         else:
@@ -262,6 +300,60 @@ class ProjectAutomationExecution:
             execution.execution_device_id,
         )
 
+    def _dispatch_generic_robot(
+        self,
+        db: Session,
+        *,
+        owner: User,
+        rule: ProjectAutomationRule,
+        run: ProjectAutomationRun,
+        context: dict,
+    ) -> None:
+        if not run.task_id:
+            raise RuntimeError("Automation task carrier is unavailable")
+        from app.services.runtime_profiles import runtime_profile_service
+
+        runtime_source = str(context.get("runtime_source") or "")
+        profile = None
+        profile_id = context.get("runtime_profile_id")
+        runtime_subject_user_id = int(
+            context.get("runtime_subject_user_id") or owner.id
+        )
+        if runtime_source == "fixed_profile" and isinstance(profile_id, str):
+            profile = runtime_profile_service.require_owned(
+                db, profile_id, runtime_subject_user_id
+            )
+        elif runtime_source in {"issue_creator", "runtime_user"}:
+            profile = runtime_profile_service.resolve_project_default(
+                db,
+                str(rule.cloud_project_id),
+                runtime_subject_user_id,
+            )
+        execution = loop_item_execution_service.enqueue_generic_robot(
+            db,
+            loop_item_id=str(run.task_id),
+            cloud_project_id=str(rule.cloud_project_id),
+            runtime_subject_user_id=runtime_subject_user_id,
+            runtime_profile=profile,
+            execution_device_id=str(context.get("execution_device_id") or "") or None,
+            model=str(context.get("model") or "") or None,
+            model_type=(
+                str(context.get("model_type"))
+                if context.get("model_type") is not None
+                else None
+            ),
+            model_options=dict(context.get("model_options") or {}),
+            assigner_user_id=owner.id,
+            priority="medium",
+            automation_context=context,
+        )
+        run.device_id = execution.execution_device_id
+        run.status = (
+            "waiting_runtime" if execution.status == "waiting_runtime" else "queued"
+        )
+        run.version += 1
+        db.commit()
+
     def _dispatch_custom_manager(
         self,
         db: Session,
@@ -272,24 +364,82 @@ class ProjectAutomationExecution:
         context: dict,
     ) -> None:
         rule_metadata = metadata(rule)
-        model = text(rule_metadata.get("model"))
-        environment = text(rule_metadata.get("execution_environment"))
-        device_id = text(rule_metadata.get("execution_device_id"))
-        if not model or not environment or not device_id or not run.task_id:
+        if not run.task_id:
             raise RuntimeError("Custom AI manager configuration is incomplete")
+        from app.services.runtime_profiles import runtime_profile_service
+
+        runtime_source = str(context.get("runtime_source") or "")
+        runtime_subject_user_id = int(
+            context.get("runtime_subject_user_id") or owner.id
+        )
+        runtime_profile = None
+        if runtime_source == "fixed_profile" and context.get("runtime_profile_id"):
+            runtime_profile = runtime_profile_service.require_owned(
+                db,
+                str(context["runtime_profile_id"]),
+                runtime_subject_user_id,
+            )
+        elif runtime_source in {"issue_creator", "runtime_user"}:
+            runtime_profile = runtime_profile_service.resolve_project_default(
+                db,
+                str(rule.cloud_project_id),
+                runtime_subject_user_id,
+            )
+        profile_metadata = (
+            dict(runtime_profile.metadata_json or {}) if runtime_profile else {}
+        )
+        model = text(context.get("model") or profile_metadata.get("model"))
+        environment = text(profile_metadata.get("execution_environment"))
+        device_id = text(
+            context.get("execution_device_id")
+            or (runtime_profile.device_id if runtime_profile is not None else None)
+        )
+        if device_id and (
+            runtime_profile is None or device_id != str(runtime_profile.device_id or "")
+        ):
+            from app.services.loop_item_executions.profile import (
+                wework_execution_environment,
+            )
+
+            environment = wework_execution_environment(
+                db,
+                user_id=runtime_subject_user_id,
+                execution_device_id=device_id,
+            )
+        waiting_runtime = not model or not environment or not device_id
         execution = loop_item_execution_service.enqueue_automation_manager(
             db,
             loop_item_id=str(run.task_id),
             cloud_project_id=str(rule.cloud_project_id),
-            owner_user_id=owner.id,
+            owner_user_id=runtime_subject_user_id,
             assigner_user_id=owner.id,
-            environment=environment,
+            environment=environment or "local",
             execution_device_id=device_id,
             priority="medium",
             automation_context=context,
+            runtime_selection={
+                "runtime_source": runtime_source,
+                "runtime_profile_id": (runtime_profile.id if runtime_profile else None),
+                "runtime_profile_version": (
+                    runtime_profile.version if runtime_profile else None
+                ),
+                "model": model or None,
+                "model_type": (
+                    context.get("model_type") or profile_metadata.get("model_type")
+                ),
+                "model_options": dict(
+                    context.get("model_options")
+                    or profile_metadata.get("model_options")
+                    or {}
+                ),
+                "workspace_policy": (
+                    profile_metadata.get("workspace_policy") or "project"
+                ),
+            },
+            waiting_runtime=waiting_runtime,
         )
         run.device_id = device_id
-        run.status = "queued"
+        run.status = "waiting_runtime" if waiting_runtime else "queued"
         run.version += 1
         self._bind_activity_to_execution(db, run=run, execution=execution)
         self._commit_and_push_activity(db, run)
@@ -314,7 +464,7 @@ class ProjectAutomationExecution:
         team = runnable_wegent_team(
             db,
             owner.id,
-            integer(metadata(rule).get("wegent_team_id")),
+            integer(manager_config(metadata(rule)).get("wegent_team_id")),
         )
         if not run.task_id:
             raise RuntimeError("Automation task carrier is unavailable")
@@ -437,12 +587,12 @@ class ProjectAutomationExecution:
         if configured_manager == "custom":
             sender_name = "自定义 AI 调度员"
             sender_id = f"automation_manager:{rule.id}"
-            model = text(rule_metadata.get("model")) or ""
         elif configured_manager == "wegent":
+            configured_manager_values = manager_config(rule_metadata)
             team = wegent_team(
                 db,
                 int(rule.created_by_user_id or 0),
-                integer(rule_metadata.get("wegent_team_id")),
+                integer(configured_manager_values.get("wegent_team_id")),
             )
             sender_name = str(team.name or "Wegent 智能体")
             sender_id = f"wegent_team:{team.id}"
@@ -555,7 +705,7 @@ class ProjectAutomationExecution:
         if robot_execution is not None:
             raise RuntimeError("AI manager has already assigned this task to a robot")
 
-        context = self._automation_context(rule, run)
+        context = self._automation_context(db, rule, run)
         if assignee_type == "agent":
             self._assign_project_robot(
                 db,
@@ -976,18 +1126,97 @@ class ProjectAutomationExecution:
             .one_or_none()
         )
 
-    @staticmethod
     def _automation_context(
-        rule: ProjectAutomationRule, run: ProjectAutomationRun
+        self,
+        db: Session,
+        rule: ProjectAutomationRule,
+        run: ProjectAutomationRun,
     ) -> dict:
         run_metadata = metadata(run)
-        return {
+        rule_metadata = metadata(rule)
+        runtime = runtime_config(rule_metadata)
+        runtime_source = str(runtime.get("source") or "agent_default")
+        runtime_subject_user_id = int(rule.created_by_user_id or 0)
+        runtime_profile_id = text(runtime.get("runtime_profile_id"))
+        if runtime_source == "issue_creator" and run.task_id:
+            task = self._task_values(
+                db,
+                project_id=str(rule.cloud_project_id),
+                task_id=str(run.task_id),
+                user_id=int(rule.created_by_user_id or 0),
+            )
+            runtime_subject_user_id = int(
+                task.get("created_by_user_id") or runtime_subject_user_id
+            )
+        elif runtime_source == "runtime_user":
+            runtime_subject_user_id = int(
+                runtime.get("user_id") or runtime_subject_user_id
+            )
+        elif runtime_source == "fixed_profile" and runtime_profile_id:
+            from app.models.delivery import RuntimeProfile
+
+            profile = db.get(RuntimeProfile, runtime_profile_id)
+            if profile is not None:
+                runtime_subject_user_id = int(
+                    profile.user_id or runtime_subject_user_id
+                )
+        workflow_config = run_metadata.get("workflow_execution_config")
+        workflow_config = workflow_config if isinstance(workflow_config, dict) else {}
+        configured_runtime_profile_id = workflow_config.get(
+            "runtimeProfileId"
+        ) or workflow_config.get("runtime_profile_id")
+        if configured_runtime_profile_id:
+            runtime_source = "fixed_profile"
+            runtime_profile_id = str(configured_runtime_profile_id)
+            from app.models.delivery import RuntimeProfile
+
+            profile = db.get(RuntimeProfile, runtime_profile_id)
+            if profile is not None:
+                runtime_subject_user_id = int(
+                    profile.user_id or runtime_subject_user_id
+                )
+        workspace_binding = workflow_config.get("workspaceBinding")
+        if not isinstance(workspace_binding, dict):
+            workspace_binding = workflow_config.get("workspace_binding")
+        context = {
             "rule_id": str(rule.id),
             "run_id": str(run.id),
             "trigger": run_metadata.get("trigger") or run.source,
             "scheduled_for": run_metadata.get("scheduled_for"),
             "event": run_metadata.get("event") or {},
+            "runtime_source": runtime_source,
+            "runtime_profile_id": (configured_runtime_profile_id or runtime_profile_id),
+            "runtime_subject_user_id": runtime_subject_user_id,
         }
+        if workflow_config:
+            from app.schemas.issue_workflow import WorkflowExecutionConfig
+
+            execution_config = WorkflowExecutionConfig.model_validate(workflow_config)
+            context.update(
+                {
+                    "agent_id": (
+                        workflow_config.get("agentId")
+                        or workflow_config.get("agent_id")
+                    ),
+                    "execution_device_id": (
+                        workflow_config.get("executionDeviceId")
+                        or workflow_config.get("execution_device_id")
+                    ),
+                    "model": workflow_config.get("model"),
+                    "model_type": (
+                        workflow_config.get("modelType")
+                        or workflow_config.get("model_type")
+                    ),
+                    "model_options": (
+                        workflow_config.get("modelOptions")
+                        or workflow_config.get("model_options")
+                        or {}
+                    ),
+                    "workspace_binding": workspace_binding,
+                    **execution_config.runtime_request_options(),
+                }
+            )
+        return context
 
     @staticmethod
     def _scheduled_for(run: ProjectAutomationRun) -> datetime:
@@ -1094,6 +1323,49 @@ class ProjectAutomationProcessor:
         from app.services.project_automations import project_automation_service
 
         return project_automation_service._create_run(db, rule, trigger, scheduled_for)
+
+    @staticmethod
+    def _event_payload_for_rule(
+        db: Session,
+        event: ProjectAutomationEvent,
+        rule: ProjectAutomationRule,
+    ) -> dict[str, Any]:
+        payload = dict(event.payload)
+        workflow = payload.get("workflow")
+        if (
+            not isinstance(workflow, dict)
+            or workflow.get("advancement_policy") != "ai"
+            or str(workflow.get("ai_automation_rule_id") or "") != str(rule.id)
+            or payload.get("workflow_run_id")
+        ):
+            return payload
+
+        issue = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.id == event.subject_id,
+                LoopItem.cloud_project_id == event.project_id,
+                loop_datetime_is_unset(LoopItem.deleted_at),
+            )
+            .one_or_none()
+        )
+        if issue is None:
+            raise RuntimeError("AI manager Issue is unavailable")
+
+        from app.services.issue_workflow_planning import (
+            issue_workflow_planning_service,
+        )
+
+        planning_run = issue_workflow_planning_service.ensure_run(
+            db,
+            issue=issue,
+            user_id=event.actor_user_id,
+        )
+        payload["workflow_run_id"] = planning_run.id
+        payload["workflow_plan_version"] = (planning_run.metadata_json or {}).get(
+            "plan_version"
+        )
+        return payload
 
     async def retry(
         self,
@@ -1203,8 +1475,18 @@ class ProjectAutomationProcessor:
         )
         if automation_id:
             query = query.filter(ProjectAutomationRule.id == automation_id)
+        workflow = event.payload.get("workflow")
+        deferred_automation_id = (
+            str(workflow.get("ai_automation_rule_id") or "")
+            if isinstance(workflow, dict)
+            and workflow.get("advancement_policy") == "ai"
+            and isinstance(workflow.get("execution_config"), dict)
+            else ""
+        )
         dispatched = 0
         for rule in query.all():
+            if deferred_automation_id and str(rule.id) == deferred_automation_id:
+                continue
             rule_metadata = metadata(rule)
             if rule_metadata.get("trigger_type") != "event":
                 continue
@@ -1212,6 +1494,7 @@ class ProjectAutomationProcessor:
                 continue
             if not self._matches(rule_metadata.get("event_config"), event):
                 continue
+            run_event_payload = self._event_payload_for_rule(db, event, rule)
             run = self._create_run(db, rule, "event", utcnow())
             run.task_id = event.subject_id
             event_title = event.payload.get("title")
@@ -1222,8 +1505,11 @@ class ProjectAutomationProcessor:
                 "source": event.source,
                 "subject_id": event.subject_id,
                 "actor_user_id": event.actor_user_id,
-                "payload": event.payload,
+                "payload": run_event_payload,
             }
+            execution_config = run_event_payload.get("execution_config")
+            if isinstance(execution_config, dict):
+                run_metadata["workflow_execution_config"] = execution_config
             run.metadata_json = run_metadata
             db.commit()
             await project_automation_execution.dispatch(db, rule, run)
@@ -1234,6 +1520,10 @@ class ProjectAutomationProcessor:
             event.subject_id,
             dispatched,
         )
+        if dispatched:
+            from app.tasks.robot_queue_tasks import consume_queues_background
+
+            await consume_queues_background()
         return dispatched
 
     @staticmethod

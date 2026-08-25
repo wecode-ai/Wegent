@@ -493,8 +493,22 @@ describe('BufferedChatInput', () => {
   test('focuses a selected conversation after its composer mounts', async () => {
     requestWorkbenchComposerFocus('runtime:device-1:task-1')
 
-    render(
+    const { rerender } = render(
       <BufferedChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={createProjectChat('runtime:device-1:task-1')}
+      />
+    )
+
+    await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
+
+    rerender(<div />)
+    rerender(
+      <BufferedChatInput
+        key="remounted"
         value=""
         onChange={vi.fn()}
         onSubmit={vi.fn()}

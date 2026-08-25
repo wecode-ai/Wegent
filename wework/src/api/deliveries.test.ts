@@ -335,6 +335,29 @@ describe('createDeliveryApi task tracking', () => {
     })
   })
 
+  test('leaves robot execution status projection to the backend state machine', async () => {
+    const managedItem = {
+      ...trackedItem,
+      execution_id: 42,
+      status: 'in_review' as const,
+    }
+    const context = {
+      loop_item_id: managedItem.id,
+      loop_item: managedItem,
+    } as CloudTaskContext
+    const get = vi.fn().mockResolvedValue(context)
+    const patch = vi.fn()
+    const api = createDeliveryApi(clientWith({ get, patch }))
+
+    await expect(
+      api.updateTaskTrackingStatus(
+        { deviceId: 'cloud-device', taskId: 'managed-runtime' },
+        'running'
+      )
+    ).resolves.toEqual(managedItem)
+    expect(patch).not.toHaveBeenCalled()
+  })
+
   test('serializes rapid runtime status updates for the same board task', async () => {
     const task = { deviceId: 'local-device', taskId: 'runtime-1' }
     const defaultProject = {

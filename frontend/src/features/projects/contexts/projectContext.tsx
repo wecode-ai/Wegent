@@ -5,6 +5,7 @@
 'use client'
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { ProjectWithTasks, ProjectTask } from '@/types/api'
 import { projectApis, CreateProjectRequest, UpdateProjectRequest } from '@/apis/projects'
 import { useToast } from '@/hooks/use-toast'
@@ -13,6 +14,7 @@ import { ApiError } from '@/apis/client'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import { useUser } from '@/features/common/UserContext'
 import { dispatchProjectDeletedEvent } from '../events'
+import { getFirstSearchParam } from '@/lib/search-params'
 
 interface ProjectContextValue {
   // Data
@@ -33,6 +35,8 @@ interface ProjectContextValue {
   // UI state
   toggleProjectExpanded: (projectId: number) => void
   expandedProjects: Set<number>
+  isProjectSectionCollapsed: boolean
+  setProjectSectionCollapsed: React.Dispatch<React.SetStateAction<boolean>>
 
   // Highlight control - track which task is selected in project section
   selectedProjectTaskId: number | null
@@ -51,6 +55,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation('projects')
   const { toast } = useToast()
   const { user } = useUser()
+  const searchParams = useSearchParams()
   const runtimeConfig = getRuntimeConfigSync()
   const enableProjectWorkspace = useMemo(() => {
     if (!runtimeConfig.enableProjectWorkspace) return false
@@ -72,6 +77,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expandedProjects, setExpandedProjects] = useState<Set<number>>(new Set())
+  const [isProjectSectionCollapsed, setProjectSectionCollapsed] = useState(false)
 
   // Track which task is selected in the project section (for highlight control)
   const [selectedProjectTaskId, setSelectedProjectTaskId] = useState<number | null>(null)
@@ -301,35 +307,75 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   // Toggle project expanded state
   const toggleProjectExpanded = useCallback(
     (projectId: number) => {
+      const nextIsExpanded = !expandedProjects.has(projectId)
+
       setExpandedProjects(prev => {
         const next = new Set(prev)
-        if (next.has(projectId)) {
-          next.delete(projectId)
-        } else {
+        if (nextIsExpanded) {
           next.add(projectId)
+        } else {
+          next.delete(projectId)
         }
         return next
       })
+
+      // Keep the project model aligned so refreshes and subsequent toggles
+      // persist the visible state instead of reusing a stale server value.
+      setProjects(prev =>
+        prev.map(project =>
+          project.id === projectId ? { ...project, is_expanded: nextIsExpanded } : project
+        )
+      )
 
       // Persist to server
       const project = projects.find(p => p.id === projectId)
       if (project) {
         projectApis
           .updateProject(projectId, {
-            is_expanded: !project.is_expanded,
+            is_expanded: nextIsExpanded,
           })
           .catch(err => {
             console.error('[ProjectContext] Failed to persist expanded state:', err)
           })
       }
     },
-    [projects]
+    [expandedProjects, projects]
   )
 
   // Load projects on mount
   useEffect(() => {
     refreshProjects()
   }, [refreshProjects])
+
+  // Keep the active conversation visible when route changes remount the sidebar.
+  // Server-side expansion preferences remain the baseline, while the selected
+  // conversation's group is always expanded for the current route.
+  useEffect(() => {
+    const routeTaskIdValue = getFirstSearchParam(searchParams, ['taskId', 'task_id', 'taskid'])
+    const routeTaskId = routeTaskIdValue ? Number(routeTaskIdValue) : null
+
+    if (!routeTaskId || !Number.isFinite(routeTaskId)) {
+      setSelectedProjectTaskId(null)
+      return
+    }
+
+    const activeProject = projects.find(project =>
+      project.tasks?.some(projectTask => projectTask.task_id === routeTaskId)
+    )
+    if (!activeProject) {
+      setSelectedProjectTaskId(null)
+      return
+    }
+
+    setSelectedProjectTaskId(routeTaskId)
+    setProjectSectionCollapsed(false)
+    setExpandedProjects(previous => {
+      if (previous.has(activeProject.id)) return previous
+      const next = new Set(previous)
+      next.add(activeProject.id)
+      return next
+    })
+  }, [projects, searchParams])
 
   const value: ProjectContextValue = {
     projects,
@@ -343,6 +389,8 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     removeTaskFromProject,
     toggleProjectExpanded,
     expandedProjects,
+    isProjectSectionCollapsed,
+    setProjectSectionCollapsed,
     selectedProjectTaskId,
     setSelectedProjectTaskId,
     projectTaskIds,

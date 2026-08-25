@@ -124,8 +124,6 @@
   box-shadow:
     0 8px 16px -4px rgb(0 0 0 / 12%),
     0 0 0 0.5px rgb(0 0 0 / 6%);
-  animation: task-detail-workspace-panel-enter 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  transform-origin: right center;
 }
 
 .task-conversation-workspace-panel {
@@ -157,18 +155,6 @@
   font-size: var(--text-sm);
 }
 
-@keyframes task-detail-workspace-panel-enter {
-  from {
-    opacity: 0;
-    transform: translateX(24px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
 @keyframes task-conversation-workspace-panel-enter {
   from {
     opacity: 0;
@@ -183,8 +169,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .todo-panel-backdrop,
-  .task-conversation-workspace-panel,
-  .task-detail-workspace-panel-shell {
+  .task-conversation-workspace-panel {
     animation: none;
   }
 }
@@ -1350,6 +1335,36 @@
   margin-top: 12px;
   padding-left: 42px;
   color: rgb(var(--color-text-primary));
+}
+
+.task-detail-ai-run-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.task-detail-ai-run-open-task {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 8px;
+  color: rgb(var(--color-focus));
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.task-detail-ai-run-open-task:hover {
+  text-decoration: underline;
+}
+
+.task-detail-ai-run-open-task:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid rgb(var(--color-focus) / 70%);
+  outline-offset: 2px;
 }
 
 .task-detail-comment-bar {

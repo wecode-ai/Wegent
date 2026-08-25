@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 
-def _runtime_route():
+def _runtime_route(*, runtime_features=None):
     from app.schemas.device import DeviceType
     from app.services.device.runtime_route import RuntimeRoute
 
@@ -17,7 +17,14 @@ def _runtime_route():
         runtime_instance_id="runtime-instance-1",
         device_type=DeviceType.CLOUD,
         socket_id="socket-1",
-        online_info={"socket_id": "socket-1"},
+        online_info={
+            "socket_id": "socket-1",
+            **(
+                {"runtime_features": runtime_features}
+                if runtime_features is not None
+                else {}
+            ),
+        },
     )
 
 
@@ -85,6 +92,103 @@ def _socketio_with_call(call: AsyncMock, *, connected: bool = True):
             "manager": _SocketManager(connected=connected),
         },
     )()
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_sends_v2_to_capable_executor(monkeypatch):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(
+            return_value=_runtime_route(
+                runtime_features={
+                    "schemaVersion": 2,
+                    "runtimeTaskCreate": {
+                        "schemaVersions": [1, 2],
+                        "features": {"goal": True},
+                    },
+                }
+            )
+        ),
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.create",
+        payload={
+            "schemaVersion": 2,
+            "runtime": "codex",
+            "message": "Implement",
+            "initialGoal": {"objective": "Finish"},
+        },
+    )
+
+    emitted = sio_call.await_args.args[1]["payload"]
+    assert emitted["schemaVersion"] == 2
+    assert emitted["initialGoal"] == {"objective": "Finish"}
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_losslessly_downgrades_plain_v2(monkeypatch):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route()),
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.create",
+        payload={
+            "schemaVersion": 2,
+            "runtime": "codex",
+            "message": "Implement",
+        },
+    )
+
+    emitted = sio_call.await_args.args[1]["payload"]
+    assert "schemaVersion" not in emitted
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_rejects_lossy_v2_downgrade(monkeypatch):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route()),
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    with pytest.raises(module.RuntimeRpcError) as exc_info:
+        await module.RuntimeRpcService().call(
+            user_id=7,
+            device_id="device-1",
+            method="runtime.tasks.create",
+            payload={
+                "schemaVersion": 2,
+                "runtime": "codex",
+                "message": "Implement",
+                "initialSupervisor": {"mode": "auto"},
+            },
+        )
+
+    assert exc_info.value.code == "unsupported_runtime_task_create_features"
+    assert exc_info.value.retryable is False
+    assert exc_info.value.details["features"] == ["supervisor"]
+    sio_call.assert_not_awaited()
 
 
 @pytest.mark.asyncio

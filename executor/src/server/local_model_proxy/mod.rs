@@ -115,6 +115,21 @@ pub(crate) struct LocalModelProxyUpstream {
 
 pub(crate) fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream) -> String {
     upstream.api_format = canonical_upstream_api_format(&upstream.api_format);
+    let upstream_endpoint = upstream
+        .request_url
+        .as_deref()
+        .unwrap_or(upstream.base_url.as_str());
+    let registration_fields = [
+        ("route_scope", route_scope.to_owned()),
+        ("api_format", upstream.api_format.clone()),
+        ("upstream", safe_url(upstream_endpoint)),
+        ("model_id", upstream.model_id.clone().unwrap_or_default()),
+        ("auth_present", (!upstream.api_key.is_empty()).to_string()),
+        (
+            "default_headers",
+            upstream.default_headers.len().to_string(),
+        ),
+    ];
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
@@ -147,7 +162,12 @@ pub(crate) fn register_harness(route_scope: &str, mut upstream: LocalModelProxyU
         "harness model proxy registered",
         &[
             ("active_registrations", registry.routes.len().to_string()),
-            ("route_scope", route_scope.to_owned()),
+            registration_fields[0].clone(),
+            registration_fields[1].clone(),
+            registration_fields[2].clone(),
+            registration_fields[3].clone(),
+            registration_fields[4].clone(),
+            registration_fields[5].clone(),
         ],
     );
     token
@@ -299,6 +319,25 @@ pub(crate) fn register_with_vision_sidecar(
     vision_sidecar: Option<VisionSidecarUpstream>,
 ) -> String {
     upstream.api_format = canonical_upstream_api_format(&upstream.api_format);
+    let upstream_endpoint = upstream
+        .request_url
+        .as_deref()
+        .unwrap_or(upstream.base_url.as_str());
+    let registration_fields = [
+        ("route_scope", route_scope.to_owned()),
+        ("api_format", upstream.api_format.clone()),
+        ("upstream", safe_url(upstream_endpoint)),
+        ("model_id", upstream.model_id.clone().unwrap_or_default()),
+        (
+            "routing_model_id",
+            upstream.routing_model_id.clone().unwrap_or_default(),
+        ),
+        ("auth_present", (!upstream.api_key.is_empty()).to_string()),
+        (
+            "default_headers",
+            upstream.default_headers.len().to_string(),
+        ),
+    ];
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
@@ -354,7 +393,13 @@ pub(crate) fn register_with_vision_sidecar(
         &[
             ("active_registrations", registry.routes.len().to_string()),
             ("active_references", active_references.to_string()),
-            ("route_scope", route_scope.to_owned()),
+            registration_fields[0].clone(),
+            registration_fields[1].clone(),
+            registration_fields[2].clone(),
+            registration_fields[3].clone(),
+            registration_fields[4].clone(),
+            registration_fields[5].clone(),
+            registration_fields[6].clone(),
         ],
     );
     token
@@ -707,6 +752,11 @@ async fn handle_for_token(
     let mut request_log_fields = vec![
         ("api_format", upstream.api_format.clone()),
         ("upstream", safe_url(&request_url)),
+        ("auth_present", (!upstream.api_key.is_empty()).to_string()),
+        (
+            "default_headers",
+            upstream.default_headers.len().to_string(),
+        ),
         ("body_bytes", request_body.len().to_string()),
         (
             "convert_custom_tools",

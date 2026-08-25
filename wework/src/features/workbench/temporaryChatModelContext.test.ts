@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import type { RuntimeTaskAddress, RuntimeWorkListResponse, UnifiedModel } from '@/types/api'
-import { resolveTemporaryChatActiveModel } from './temporaryChatModelContext'
+import {
+  resolveTemporaryChatActiveModel,
+  resolveTemporaryChatModelSelection,
+} from './temporaryChatModelContext'
 
 const kimiModel: UnifiedModel = {
   name: 'kimi-k2',
@@ -65,5 +68,32 @@ describe('resolveTemporaryChatActiveModel', () => {
     }
 
     expect(resolveTemporaryChatActiveModel([kimiModel, gptModel], null, address)).toBe(gptModel)
+  })
+
+  it('preserves the immutable task identity even when the model catalog is unavailable', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'cloud-device',
+      taskId: 'codex-queue-293',
+      runtimeHandle: {
+        modelSelection: {
+          modelName: 'moonshot-kimi-k2.7-code-highspeed',
+          modelType: 'public',
+          options: {
+            weworkCloudModelNamespace: 'default',
+            weworkCloudModelResourceUserId: '0',
+          },
+        },
+      },
+    }
+
+    expect(resolveTemporaryChatModelSelection(null, address)).toEqual({
+      modelName: 'moonshot-kimi-k2.7-code-highspeed',
+      modelType: 'public',
+      options: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '0',
+      },
+    })
+    expect(resolveTemporaryChatActiveModel([gptModel], null, address)).toBeNull()
   })
 })

@@ -8,6 +8,7 @@ import json
 import logging
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
+from urllib.request import getproxies
 
 import httpx
 from fastapi import HTTPException, Request, status
@@ -152,6 +153,19 @@ def _join_upstream_url(base_url: str, endpoint_path: str) -> str:
     path_segments = [*base_segments, *endpoint_segments[overlap:]]
     path = f"/{'/'.join(path_segments)}" if path_segments else ""
     return urlunsplit(parsed._replace(path=path))
+
+
+def _safe_proxy_config() -> dict[str, str]:
+    """Return proxy routing without exposing credentials."""
+    safe_proxies: dict[str, str] = {}
+    for scheme, proxy_url in getproxies().items():
+        parsed = urlsplit(str(proxy_url))
+        hostname = parsed.hostname or ""
+        port = f":{parsed.port}" if parsed.port else ""
+        safe_proxies[str(scheme)] = urlunsplit(
+            (parsed.scheme, f"{hostname}{port}", parsed.path, "", "")
+        )
+    return safe_proxies
 
 
 def _is_protected_upstream_header(name: str) -> bool:
@@ -384,6 +398,13 @@ async def proxy_llm_responses(
         protocol_headers,
     )
 
+    proxy_config = _safe_proxy_config()
+    logger.info(
+        "LLM proxy transport configured user=%s upstream=%s proxies=%s",
+        current_user.id,
+        urlunsplit(urlsplit(upstream_url)._replace(query="", fragment="")),
+        proxy_config,
+    )
     client = httpx.AsyncClient(timeout=httpx.Timeout(600.0))
     try:
         upstream_request = httpx.Request(
