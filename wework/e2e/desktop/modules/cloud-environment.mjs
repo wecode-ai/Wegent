@@ -41,6 +41,11 @@ import {
 const REDIS_START_ATTEMPTS = 5
 const REDIS_READY_PATTERN = /Ready to accept connections/
 const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
+const CLOUD_PUBLIC_MODEL_OPTIONS = {
+  weworkCloudModelNamespace: 'default',
+  weworkCloudModelResourceUserId: '0',
+  weworkCloudModelUpstreamApiFormat: 'openai-responses',
+}
 
 async function waitForRedisReady(redis, logPath, fromOffset) {
   let spawnError = null
@@ -591,11 +596,6 @@ class RealCloudEnvironment {
       `${process.pid}-${Date.now()}`
     )
     await mkdir(workspacePath, { recursive: true })
-    const modelOptions = {
-      weworkCloudModelNamespace: 'default',
-      weworkCloudModelResourceUserId: '0',
-      weworkCloudModelUpstreamApiFormat: 'openai-responses',
-    }
     const task = await fetchJson(`${this.backendUrl}/api/runtime-work/create`, {
       method: 'POST',
       headers: {
@@ -611,11 +611,11 @@ class RealCloudEnvironment {
         title: 'Cloud Plugin Creator E2E',
         modelId: CLOUD_PUBLIC_MODEL_NAME,
         modelType: 'public',
-        modelOptions,
+        modelOptions: CLOUD_PUBLIC_MODEL_OPTIONS,
         modelSelection: {
           modelName: CLOUD_PUBLIC_MODEL_NAME,
           modelType: 'public',
-          options: modelOptions,
+          options: CLOUD_PUBLIC_MODEL_OPTIONS,
         },
       }),
     })
@@ -660,7 +660,15 @@ class RealCloudEnvironment {
         Authorization: `Bearer ${this.authToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ address, message: marker }),
+      body: JSON.stringify({
+        address,
+        message: marker,
+        modelSelection: {
+          modelName: CLOUD_PUBLIC_MODEL_NAME,
+          modelType: 'public',
+          options: CLOUD_PUBLIC_MODEL_OPTIONS,
+        },
+      }),
     })
     assert.equal(result.accepted, true, `Cloud Plugin Creator result was rejected: ${result.error}`)
   }
