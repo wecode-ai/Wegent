@@ -3,7 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MessageBlock } from '../message-blocks'
-import { mergeBlocksForDone, mergeStreamingBlocks } from './TaskStateMachine.blockMerging'
+import {
+  mergeBlocksForDone,
+  mergeMessageBlock,
+  mergeStreamingBlocks,
+} from './TaskStateMachine.blockMerging'
 import { generateMessageId, mergeChunkContent } from './TaskStateMachine.messageUtils'
 import type {
   Event,
@@ -203,20 +207,57 @@ export function reduceChatBlockUpdatedEvent({
 >): TaskMachineInternalState {
   const aiMessageId = generateMessageId('ai', event.subtaskId)
   const existingMessage = state.messages.get(aiMessageId)
-  if (!existingMessage) return state
+  const isCardUpdate = 'card_id' in event.block || 'card_type' in event.block
+  const inferredType = event.block.type || (isCardUpdate ? 'card' : undefined)
+  if (!existingMessage) {
+    if (!inferredType) return state
+
+    const block = {
+      ...event.block,
+      type: inferredType,
+    } as MessageBlock
+    const isTerminalBlock =
+      block.status === 'done' ||
+      (block.type === 'card' &&
+        (block.card_status === 'populated' || block.card_status === 'error'))
+    console.info('[TaskStateMachine][block_updated] Created missing assistant message', {
+      task_id: state.taskId,
+      subtask_id: event.subtaskId,
+      block_id: block.id,
+      block_type: block.type,
+      card_status: block.type === 'card' ? block.card_status : null,
+      terminal: isTerminalBlock,
+    })
+    const messages = new Map(state.messages)
+    messages.set(aiMessageId, {
+      id: aiMessageId,
+      type: 'ai',
+      status: isTerminalBlock ? 'completed' : 'streaming',
+      content: '',
+      timestamp: Date.now(),
+      subtaskId: event.subtaskId,
+      result: {
+        blocks: [block],
+      },
+    })
+    return {
+      ...state,
+      messages,
+    }
+  }
 
   const existingBlocks = existingMessage.result?.blocks || []
   const existingIndex = existingBlocks.findIndex(block => block.id === event.block.id)
-  if (existingIndex < 0 && !event.block.type) return state
+  if (existingIndex < 0 && !inferredType) return state
 
   const blocks = [...existingBlocks]
   if (existingIndex >= 0) {
-    blocks[existingIndex] = {
-      ...blocks[existingIndex],
-      ...event.block,
-    } as MessageBlock
+    blocks[existingIndex] = mergeMessageBlock(blocks[existingIndex], event.block)
   } else {
-    blocks.push(event.block as MessageBlock)
+    blocks.push({
+      ...event.block,
+      type: inferredType,
+    } as MessageBlock)
   }
 
   const messages = new Map(state.messages)

@@ -30,6 +30,7 @@ export interface VideoDirectorCardData {
   buttons?: VideoDirectorCardButton[]
   video_url?: string
   cover_url?: string
+  duration?: number
 }
 
 export interface VideoDirectorCardPreview {

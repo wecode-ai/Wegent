@@ -39,6 +39,7 @@ export interface VideoSettingsPopoverProps {
   disabled?: boolean
   showDuration?: boolean
   triggerVariant?: 'default' | 'menu-item'
+  iconOnly?: boolean
 }
 
 // Aspect ratio icon dimensions for visual representation
@@ -79,6 +80,7 @@ export function VideoSettingsPopover({
   disabled = false,
   showDuration = true,
   triggerVariant = 'default',
+  iconOnly = false,
 }: VideoSettingsPopoverProps) {
   const { t } = useTranslation('chat')
   const [isOpen, setIsOpen] = useState(false)
@@ -110,17 +112,21 @@ export function VideoSettingsPopover({
           type="button"
           disabled={disabled}
           data-testid="video-settings-trigger"
+          aria-label={iconOnly ? summaryText : undefined}
+          title={iconOnly ? summaryText : undefined}
           className={cn(
             'flex items-center gap-1.5 min-w-0 text-text-primary hover:bg-hover',
             triggerVariant === 'menu-item'
               ? 'h-11 w-full rounded-md px-3'
-              : 'h-9 rounded-full border border-border bg-base pl-2.5 pr-3 py-2.5',
+              : iconOnly
+                ? 'h-9 w-9 justify-center rounded-full border border-border bg-base p-0'
+                : 'h-9 rounded-full border border-border bg-base pl-2.5 pr-3 py-2.5',
             'transition-colors focus:outline-none focus:ring-0',
             'disabled:cursor-not-allowed disabled:opacity-50'
           )}
         >
           <SlidersHorizontal className="h-4 w-4 flex-shrink-0" />
-          <span className="truncate text-xs min-w-0">{summaryText}</span>
+          {!iconOnly && <span className="truncate text-xs min-w-0">{summaryText}</span>}
         </button>
       </PopoverTrigger>
 

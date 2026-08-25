@@ -6,10 +6,13 @@
 
 import { Loader2, X } from 'lucide-react'
 import dynamic from 'next/dynamic'
-import type { ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
+import type { TaskRightPanelComponentProps } from '@/features/tasks/components/right-panel'
+import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { AigcVideoButton } from './types'
 
 const StoryboardPanel = dynamic(
   () =>
@@ -74,14 +77,13 @@ export interface VideoPanelTarget {
   index: number
 }
 
-interface AigcVideoPanelProps {
-  open: boolean
+export interface AigcVideoPanelPayload {
   link?: string
   title: string
   fallbackTaskId?: number
-  onClose: () => void
-  onContinue?: (buttonName?: string) => void
-  children: ReactNode
+  previewText?: string
+  buttons?: AigcVideoButton[]
+  onChatButtonClick?: (message: string) => void | Promise<void>
 }
 
 export function parseVideoPanelTarget(link?: string): VideoPanelTarget {
@@ -119,16 +121,20 @@ export function resolveVideoPanelSessionId(
 }
 
 export function AigcVideoPanel({
-  open,
-  link,
-  title,
-  fallbackTaskId,
+  panelProps,
   onClose,
-  onContinue,
-  children,
-}: AigcVideoPanelProps) {
+}: TaskRightPanelComponentProps<AigcVideoPanelPayload>) {
   const { t } = useTranslation('video')
-  if (!open) return null
+  const { theme } = useTheme()
+  const [submitting, setSubmitting] = useState<string | null>(null)
+  const {
+    link,
+    title,
+    fallbackTaskId,
+    previewText = '',
+    buttons = [],
+    onChatButtonClick,
+  } = panelProps
   const target = parseVideoPanelTarget(link)
   const taskId = target.taskId ?? fallbackTaskId
   const sessionId = resolveVideoPanelSessionId(target, fallbackTaskId)
@@ -142,11 +148,35 @@ export function AigcVideoPanel({
       target.panel === 'material-search' ||
       target.panel === 'timeline')
   const isEntity = target.panel === 'entity' && taskId
+  const chatButtons = buttons.filter(button => button.button_type !== 'link')
+  const finalVideoButton =
+    chatButtons.find(button => /最终|合成|final/i.test(button.button_name)) ?? chatButtons.at(-1)
 
-  return createPortal(
+  const handleAction = async (button: AigcVideoButton) => {
+    if (!onChatButtonClick) return
+    const buttonId = button.button_id || button.button_name
+    const message = button.prompt || button.button_name
+    setSubmitting(buttonId)
+    try {
+      await onChatButtonClick(message)
+    } finally {
+      setSubmitting(null)
+    }
+  }
+
+  const handleContinue = (buttonName?: string) => {
+    const button =
+      buttons.find(candidate => candidate.button_name === buttonName) ?? finalVideoButton
+    const message = button?.prompt || buttonName || button?.button_name
+    if (!message || !onChatButtonClick) return
+    onClose()
+    void onChatButtonClick(message)
+  }
+
+  return (
     <section
       data-wegent-panel
-      className="fixed bottom-[10px] right-0 top-[56px] z-[60] flex w-full flex-col overflow-hidden rounded-l-lg border border-border bg-surface shadow-2xl md:w-[720px]"
+      className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-surface"
       data-testid="aigc-video-panel"
     >
       {isStoryboard ? (
@@ -155,7 +185,7 @@ export function AigcVideoPanel({
           taskId={taskId!}
           initialIndex={target.index}
           onClose={onClose}
-          onGenerateFinalVideo={onContinue ? () => onContinue() : undefined}
+          onGenerateFinalVideo={onChatButtonClick ? () => handleContinue() : undefined}
         />
       ) : (
         <>
@@ -180,17 +210,49 @@ export function AigcVideoPanel({
                 panel={target.panel!}
                 sessionId={sessionId}
                 taskUuid={target.taskUuid}
-                onContinue={onContinue}
+                onContinue={onChatButtonClick ? handleContinue : undefined}
               />
             ) : isEntity ? (
-              <EntityPanel taskId={taskId!} onContinue={onContinue} />
+              <EntityPanel
+                taskId={taskId!}
+                onContinue={onChatButtonClick ? handleContinue : undefined}
+              />
             ) : (
-              <div className="h-full overflow-y-auto p-5">{children}</div>
+              <div className="h-full overflow-y-auto p-5">
+                <div className="space-y-4">
+                  {previewText ? (
+                    <div className="rounded-lg border border-border/50 bg-muted/30 p-4 text-sm leading-6 text-text-primary [&_h1]:mb-4 [&_h1]:mt-0 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-3 [&_h2]:mt-6 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-base [&_h3]:font-semibold [&_li]:my-1 [&_ol]:mb-3 [&_p]:mb-3 [&_ul]:mb-3">
+                      <EnhancedMarkdown source={previewText} theme={theme} />
+                    </div>
+                  ) : (
+                    <div className="text-sm text-text-secondary">{t('panel.noPreview')}</div>
+                  )}
+                  {buttons.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {buttons.map(button => {
+                        const buttonId = button.button_id || button.button_name
+                        return (
+                          <Button
+                            key={buttonId}
+                            disabled={submitting === buttonId}
+                            onClick={() => void handleAction(button)}
+                            data-testid={`aigc-video-panel-action-${buttonId}`}
+                          >
+                            {submitting === buttonId ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : null}
+                            {button.button_name}
+                          </Button>
+                        )
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             )}
           </div>
         </>
       )}
-    </section>,
-    document.body
+    </section>
   )
 }

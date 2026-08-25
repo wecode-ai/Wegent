@@ -11,6 +11,8 @@ import sys
 import time
 from logging.handlers import TimedRotatingFileHandler
 
+from shared.utils.sensitive_data_masker import mask_string
+
 
 class HourlyRotatingFileHandler(TimedRotatingFileHandler):
     """
@@ -97,7 +99,7 @@ class RelativePathFormatter(logging.Formatter):
             record.relativepath = record.pathname[len(self.base_path) + 1 :]
         else:
             record.relativepath = record.pathname
-        return super().format(record)
+        return mask_string(super().format(record))
 
 
 class RequestIdFilter(logging.Filter):
@@ -168,6 +170,8 @@ def _create_file_handler(
 
 def setup_logging() -> None:
     """Configure logging format for Chat Shell Service."""
+    log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, log_level_str, logging.INFO)
 
     # Create a custom formatter with relative path, request_id and line number for easier debugging
     log_format = "%(asctime)s %(levelname)-4s [%(request_id)s] [%(relativepath)s:%(lineno)d] : %(message)s"
@@ -177,6 +181,7 @@ def setup_logging() -> None:
     # Console handler (keep existing behaviour)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
+    console_handler.setLevel(logging.DEBUG)
     console_handler.addFilter(RequestIdFilter())
 
     # File handler with hourly rotation (uses the same formatter)
@@ -184,7 +189,7 @@ def setup_logging() -> None:
 
     # Configure root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(log_level)
     root_logger.handlers.clear()
     root_logger.addHandler(console_handler)
     if file_handler is not None:
@@ -202,3 +207,7 @@ def setup_logging() -> None:
     # Suppress verbose httpx/httpcore request logs
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+    root_logger.info("Logging configured with level: %s (%s)", log_level_str, log_level)
+    if file_handler is not None:
+        root_logger.info("File logging enabled: %s", file_handler.baseFilename)

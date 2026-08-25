@@ -6,6 +6,8 @@
 
 from typing import Any, Optional
 
+from app.services.execution.skill_generation import build_skill_generation_context
+
 SYSTEM_RESOURCE_USER_ID = 0
 AIGC_VIDEO_SKILL_NAMES = {
     "material-to-video-unified-async",
@@ -168,7 +170,7 @@ def inject_generation_into_public_skills(
         ):
             continue
         skill_config = dict(skill_data.get("config") or {})
-        skill_config["generation"] = dict(generation)
+        skill_config["generation"] = build_skill_generation_context(generation)
         if prompt:
             skill_config["prompt"] = prompt
         skill_data["config"] = skill_config

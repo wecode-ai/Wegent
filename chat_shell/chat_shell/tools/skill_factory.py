@@ -27,6 +27,41 @@ from shared.telemetry.context import get_request_id
 logger = logging.getLogger(__name__)
 
 
+def _apply_skill_runtime_tool_policies(
+    skill_config: dict[str, Any],
+    tools: list[Any],
+) -> list[Any]:
+    """Apply optional request-scoped runtime policies to a Skill's tools."""
+    runtime = skill_config.get("runtime")
+    if not isinstance(runtime, dict):
+        return tools
+
+    configured_names = runtime.get("returnDirectTools")
+    if not isinstance(configured_names, list):
+        return tools
+
+    return_direct_names = {
+        str(name).strip() for name in configured_names if str(name).strip()
+    }
+    if not return_direct_names:
+        return tools
+
+    for tool in tools:
+        tool_name = str(getattr(tool, "name", "") or "")
+        if not tool_name:
+            continue
+        if tool_name in return_direct_names or any(
+            tool_name.endswith(f"_{name}") for name in return_direct_names
+        ):
+            tool.return_direct = True
+            logger.info(
+                "[skill_factory] Marked tool '%s' as return_direct for skill '%s'",
+                tool_name,
+                skill_config.get("name", "unknown"),
+            )
+    return tools
+
+
 def _with_request_skill_plan(
     skill_config: dict[str, Any],
     task_data: Optional[ExecutionRequest],
@@ -283,7 +318,7 @@ async def _create_provider_tools_for_skill(
         (time.perf_counter() - create_tools_start) * 1000,
         len(skill_tools or []),
     )
-    return skill_tools or []
+    return _apply_skill_runtime_tool_policies(skill_config, skill_tools or [])
 
 
 async def prepare_skill_tools(
@@ -418,6 +453,7 @@ async def prepare_skill_tools(
                 async def load_deferred_mcp_tools(
                     skill_name=skill_name,
                     mcp_servers=mcp_servers,
+                    skill_config=skill_config,
                 ):
                     load_start = time.perf_counter()
                     deferred_mcp_configs: dict[str, dict[str, Any]] = {}
@@ -437,6 +473,7 @@ async def prepare_skill_tools(
                     loaded_tools: list[Any] = []
                     for server_tools in tools_with_server.values():
                         loaded_tools.extend(server_tools)
+                    _apply_skill_runtime_tool_policies(skill_config, loaded_tools)
 
                     logger.info(
                         "[skill_factory_perf] skill=%s deferred_mcp_load=%.2fms "
@@ -665,6 +702,15 @@ async def prepare_skill_tools(
                 owner_skill = skill_mcp_server_owner.get(server_name)
 
                 if owner_skill:
+                    owner_config = next(
+                        (
+                            config
+                            for config in skill_configs
+                            if config.get("name") == owner_skill
+                        ),
+                        {},
+                    )
+                    _apply_skill_runtime_tool_policies(owner_config, server_tools)
                     tools_by_skill.setdefault(owner_skill, []).extend(server_tools)
                     logger.debug(
                         "[skill_factory] Mapped %d tools from server '%s' to skill '%s'",
@@ -702,7 +748,17 @@ async def prepare_skill_tools(
         elif load_skill_tool is None and mcp_tools_with_server:
             # Without LoadSkillTool we can't apply skill gating; keep previous behavior
             # and expose MCP tools directly.
-            for server_tools in mcp_tools_with_server.values():
+            for server_name, server_tools in mcp_tools_with_server.items():
+                owner_skill = skill_mcp_server_owner.get(server_name)
+                owner_config = next(
+                    (
+                        config
+                        for config in skill_configs
+                        if config.get("name") == owner_skill
+                    ),
+                    {},
+                )
+                _apply_skill_runtime_tool_policies(owner_config, server_tools)
                 tools.extend(server_tools)
 
     # Log summary of all skills loaded

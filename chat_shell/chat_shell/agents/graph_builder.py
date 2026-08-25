@@ -193,6 +193,18 @@ def _tool_call_count(message: Any) -> int:
     return len(getattr(message, "tool_calls", None) or [])
 
 
+def _has_unexecuted_tool_calls(
+    final_message: BaseMessage | None,
+    last_model_end_tool_calls: int,
+) -> bool:
+    """Return whether the turn ended before its last requested tool executed."""
+    if isinstance(final_message, ToolMessage):
+        return False
+    if isinstance(final_message, AIMessage) and _tool_call_count(final_message) > 0:
+        return True
+    return last_model_end_tool_calls > 0
+
+
 def _count_tool_use_blocks(output: Any) -> int:
     """Count tool_use-style content blocks on a model output message."""
     content = getattr(output, "content", None)
@@ -2249,9 +2261,7 @@ class LangGraphAgentBuilder:
             )
             termination_reason = "normal_completion"
             termination_log = logger.info
-            if final_tool_calls > 0 or (
-                last_model_end_tool_calls > 0 and final_tool_calls == 0
-            ):
+            if _has_unexecuted_tool_calls(final_message, last_model_end_tool_calls):
                 termination_reason = "completed_with_unexecuted_tool_calls"
                 termination_log = logger.warning
 

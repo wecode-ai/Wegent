@@ -40,4 +40,27 @@ describe('VideoSettingsPopover', () => {
     fireEvent.click(screen.getByTestId('video-resolution-option-1080p'))
     expect(onResolutionChange).toHaveBeenCalledWith('1080p')
   })
+
+  it('keeps the settings accessible while hiding the summary in compact mode', () => {
+    render(
+      <VideoSettingsPopover
+        selectedRatio="16:9"
+        onRatioChange={jest.fn()}
+        availableRatios={['16:9']}
+        selectedDuration={5}
+        onDurationChange={jest.fn()}
+        availableDurations={[5]}
+        selectedResolution="720p"
+        onResolutionChange={jest.fn()}
+        availableResolutions={['720p']}
+        iconOnly
+      />
+    )
+
+    const trigger = screen.getByTestId('video-settings-trigger')
+
+    expect(trigger).not.toHaveTextContent('16:9')
+    expect(trigger.getAttribute('aria-label')).toContain('16:9')
+    expect(trigger).toHaveClass('h-9', 'w-9', 'justify-center')
+  })
 })

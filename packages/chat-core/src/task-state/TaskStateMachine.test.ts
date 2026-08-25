@@ -58,6 +58,134 @@ describe('TaskStateMachine', () => {
     })
   })
 
+  it('creates a missing card from a self-describing block update', () => {
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      status: 'pending',
+      card_id: 'card-1',
+      card_type: 'video_director_generation',
+      card_status: 'pending',
+      card_data: {},
+      card_preview_data: { progress: 85 },
+    })
+
+    expect(machine.getState().messages.get('ai-7')?.result?.blocks).toEqual([
+      {
+        id: 'card-1',
+        type: 'card',
+        status: 'pending',
+        card_id: 'card-1',
+        card_type: 'video_director_generation',
+        card_status: 'pending',
+        card_data: {},
+        card_preview_data: { progress: 85 },
+      },
+    ])
+    expect(machine.getState().messages.get('ai-7')?.status).toBe('streaming')
+  })
+
+  it('creates a completed message from a terminal card update without chat start', () => {
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      status: 'done',
+      card_id: 'card-1',
+      card_type: 'video_director_generation',
+      card_status: 'populated',
+      card_data: { video_url: 'https://example.com/video.mp4' },
+      card_preview_data: { progress: 100 },
+    })
+
+    expect(machine.getState().messages.get('ai-7')).toMatchObject({
+      status: 'completed',
+      result: {
+        blocks: [
+          {
+            id: 'card-1',
+            type: 'card',
+            status: 'done',
+            card_status: 'populated',
+          },
+        ],
+      },
+    })
+  })
+
+  it('does not regress a populated card when a delayed pending update arrives', () => {
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+    machine.handleChatStart(7, 'Chat', 1)
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      type: 'card',
+      status: 'done',
+      card_id: 'card-1',
+      card_type: 'video_director_generation',
+      card_status: 'populated',
+      card_data: { video_url: 'https://example.com/video.mp4' },
+      card_preview_data: { progress: 100 },
+    })
+
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      status: 'pending',
+      card_status: 'pending',
+      card_data: {},
+      card_preview_data: { progress: 0 },
+    })
+
+    expect(machine.getState().messages.get('ai-7')?.result?.blocks?.[0]).toMatchObject({
+      status: 'done',
+      card_status: 'populated',
+      card_data: { video_url: 'https://example.com/video.mp4' },
+      card_preview_data: { progress: 100 },
+    })
+  })
+
+  it('does not regress a populated card when chat done contains a stale snapshot', () => {
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+    machine.handleChatStart(7, 'Chat', 1)
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      type: 'card',
+      status: 'done',
+      card_id: 'card-1',
+      card_type: 'video_director_generation',
+      card_status: 'populated',
+      card_data: { video_url: 'https://example.com/video.mp4' },
+      card_preview_data: { progress: 100 },
+    })
+
+    machine.handleChatDone(
+      7,
+      '',
+      {
+        blocks: [
+          {
+            id: 'card-1',
+            type: 'card',
+            status: 'pending',
+            card_id: 'card-1',
+            card_type: 'video_director_generation',
+            card_status: 'pending',
+            card_data: {},
+            card_preview_data: { progress: 0 },
+          },
+        ],
+      },
+      1
+    )
+
+    expect(machine.getState().messages.get('ai-7')?.result?.blocks?.[0]).toMatchObject({
+      status: 'done',
+      card_status: 'populated',
+      card_data: { video_url: 'https://example.com/video.mp4' },
+      card_preview_data: { progress: 100 },
+    })
+  })
+
   it('stores reasoning chunks as chronological thinking blocks', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: vi.fn(),

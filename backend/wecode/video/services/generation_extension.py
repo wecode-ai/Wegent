@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models.subtask_context import ContextStatus, SubtaskContext
+from app.models.user import User
 from app.services.attachment.external_storage import (
     ExternalAttachmentPlayback,
     ExternalAttachmentStorageResult,
@@ -23,6 +24,7 @@ from app.services.execution.agents.video.extensions import (
     VideoStatusOverride,
     register_video_generation_extension,
 )
+from app.services.media.weibo_media_service import weibo_media_service
 from wecode.video.config.media import video_media_settings
 from wecode.video.services.media_platform import (
     fetch_playback,
@@ -87,7 +89,10 @@ class WeiboMediaAttachmentPlaybackResolver:
     ) -> Optional[ExternalAttachmentPlayback]:
         media_type, media_id = _stored_media_reference(type_data)
         if not media_type or not media_id:
-            return None
+            return self._resolve_legacy_playback(
+                type_data=type_data,
+                user_id=user_id,
+            )
 
         del user_id
         uid = _media_uid()
@@ -99,6 +104,35 @@ class WeiboMediaAttachmentPlaybackResolver:
         return ExternalAttachmentPlayback(
             url=_https(playback.url),
             media_type="audio/mpeg" if media_type == "audio" else "video/mp4",
+            cover_url=_https(playback.cover_url) if playback.cover_url else None,
+            delivery_mode="direct",
+        )
+
+    @staticmethod
+    def _resolve_legacy_playback(
+        *,
+        type_data: dict[str, Any],
+        user_id: int,
+    ) -> Optional[ExternalAttachmentPlayback]:
+        if type_data.get("storage_backend") != "weibo" or not type_data.get("fid"):
+            return None
+
+        db = SessionLocal()
+        try:
+            owner = db.query(User).filter(User.id == user_id).first()
+            playback_url = weibo_media_service.get_download_url(
+                int(type_data["fid"]),
+                owner,
+            )
+        finally:
+            db.close()
+
+        if not playback_url:
+            raise ValueError("Legacy Weibo video playback URL is unavailable")
+        return ExternalAttachmentPlayback(
+            url=_https(playback_url),
+            media_type=str(type_data.get("mime_type") or "video/mp4"),
+            delivery_mode="direct",
         )
 
 

@@ -3,23 +3,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { CardBlock } from '@wegent/chat-core'
+import { getCardComponent } from '@/features/cards/registry'
+import {
+  OPEN_TASK_RIGHT_PANEL_EVENT,
+  type TaskRightPanelRequest,
+} from '@/features/tasks/components/right-panel'
 import AigcVideoCard from '@/../wecode/features/video/aigc_video/AigcVideoCard'
+import type { AigcVideoPanelPayload } from '@/../wecode/features/video/aigc_video/AigcVideoPanel'
+import '@/../wecode/features/video/cardRegistry'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => key,
   }),
-}))
-
-jest.mock('@/features/theme/ThemeProvider', () => ({
-  useTheme: () => ({ theme: 'light' }),
-}))
-
-jest.mock('@/../wecode/features/video/aigc_video/AigcVideoPanel', () => ({
-  AigcVideoPanel: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
-    open ? <div data-testid="aigc-video-panel">{children}</div> : null,
 }))
 
 function buildCard(overrides: Partial<CardBlock> = {}): CardBlock {
@@ -38,14 +36,20 @@ function buildCard(overrides: Partial<CardBlock> = {}): CardBlock {
 }
 
 describe('AigcVideoCard', () => {
-  it('keeps the public card media and error states', () => {
+  it('maps the internal legacy video card type to the unified renderer', () => {
+    expect(getCardComponent('video_short_generation')).toBe(AigcVideoCard)
+  })
+
+  it('routes Weibo card media through the authenticated media proxies', () => {
+    const videoUrl = 'https://f.video.weibocdn.com/o0/video.mp4?KID=expired'
+    const coverUrl = 'https://wx1.sinaimg.cn/large/cover.jpg'
     const { rerender } = render(
       <AigcVideoCard
         block={buildCard({
           card_data: {
             title: '一分钟成片',
-            video_url: 'https://cdn.example.com/video.mp4',
-            cover_url: 'https://cdn.example.com/cover.jpg',
+            video_url: videoUrl,
+            cover_url: coverUrl,
           },
         })}
       />
@@ -53,12 +57,13 @@ describe('AigcVideoCard', () => {
 
     expect(screen.getByTestId('card-video-director-player')).toHaveAttribute(
       'src',
-      'https://cdn.example.com/video.mp4'
+      `/api/aigc-video/media/playback?video_url=${encodeURIComponent(videoUrl)}`
     )
     expect(screen.getByTestId('card-video-director-player')).toHaveAttribute(
       'poster',
-      'https://cdn.example.com/cover.jpg'
+      `/api/aigc-video/media/image?image_url=${encodeURIComponent(coverUrl)}`
     )
+    expect(screen.getByTestId('generated-video-player')).toBeInTheDocument()
 
     rerender(
       <AigcVideoCard
@@ -74,18 +79,34 @@ describe('AigcVideoCard', () => {
   })
 
   it('opens the internal panel only for a validated workflow URL', () => {
+    const handleOpen = jest.fn()
+    window.addEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
     const { rerender } = render(
       <AigcVideoCard
         block={buildCard({
           card_data: {
-            link: 'https://workflow.example.com/tasks/1',
+            title: '星空信号',
+            created_time: '2026-08-24T03:20:54',
+            link: 'http://localhost:3000/chat?mode=video&taskId=10&openPanel=script&scriptId=5',
           },
         })}
       />
     )
 
+    expect(screen.getByText('card.viewEdit')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('card-video-director-detail'))
-    expect(screen.getByTestId('aigc-video-panel')).toBeInTheDocument()
+    expect(handleOpen).toHaveBeenCalledTimes(1)
+    const event = handleOpen.mock.calls[0][0] as CustomEvent<
+      TaskRightPanelRequest<AigcVideoPanelPayload>
+    >
+    expect(event.detail).toMatchObject({
+      panelType: 'aigc-video',
+      panelProps: {
+        title: '星空信号',
+        fallbackTaskId: undefined,
+        link: 'http://localhost:3000/chat?mode=video&taskId=10&openPanel=script&scriptId=5',
+      },
+    })
 
     rerender(
       <AigcVideoCard
@@ -98,5 +119,88 @@ describe('AigcVideoCard', () => {
     )
 
     expect(screen.queryByTestId('card-video-director-detail')).not.toBeInTheDocument()
+    window.removeEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
+  })
+
+  it('sends the workflow action label back to the chat agent', async () => {
+    const onChatButtonClick = jest.fn().mockResolvedValue(undefined)
+    render(
+      <AigcVideoCard
+        block={buildCard({
+          card_data: {
+            title: '星空信号',
+            buttons: [
+              {
+                button_id: 'generate-entities',
+                button_name: '开始生成主体',
+                button_type: 'chat',
+              },
+            ],
+          },
+        })}
+        onChatButtonClick={onChatButtonClick}
+      />
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('aigc-video-card-action-generate-entities'))
+    })
+
+    expect(onChatButtonClick).toHaveBeenCalledWith('开始生成主体')
+  })
+
+  it('opens persisted previews and adapts legacy content buttons without a link', async () => {
+    const onChatButtonClick = jest.fn().mockResolvedValue(undefined)
+    const handleOpen = jest.fn()
+    window.addEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
+    render(
+      <AigcVideoCard
+        block={buildCard({
+          card_data: {
+            title: '最后一战',
+            preview_type: 'script',
+            preview_content: {
+              text: '# 最后一战',
+            },
+            content: [
+              {
+                type: 'button',
+                value: [
+                  {
+                    button_id: 'legacy-next',
+                    button_name: '开始生成主体',
+                    button_type: 'chat',
+                  },
+                ],
+              },
+            ],
+          },
+        })}
+        onChatButtonClick={onChatButtonClick}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('card-video-director-detail'))
+    expect(handleOpen).toHaveBeenCalledTimes(1)
+    const event = handleOpen.mock.calls[0][0] as CustomEvent<
+      TaskRightPanelRequest<AigcVideoPanelPayload>
+    >
+    expect(event.detail.panelProps).toMatchObject({
+      title: '最后一战',
+      previewText: '# 最后一战',
+      buttons: [
+        {
+          button_id: 'legacy-next',
+          button_name: '开始生成主体',
+          button_type: 'chat',
+        },
+      ],
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('aigc-video-card-action-legacy-next'))
+    })
+    expect(onChatButtonClick).toHaveBeenCalledWith('开始生成主体')
+    window.removeEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
   })
 })

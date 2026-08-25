@@ -4,7 +4,91 @@
 
 import pytest
 
-from wecode.video.services.media_platform import _parse_playback_info, upload_media
+from wecode.video.services.media_platform import (
+    _parse_playback_info,
+    sign_urls,
+    upload_media,
+)
+
+
+def test_sign_urls_upgrades_signed_playback_url_to_https(monkeypatch) -> None:
+    requested = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "result": 0,
+                        "result_data": {
+                            "ssig_url": (
+                                "http://f.video.weibocdn.com/o0/example"
+                                "?KID=signed-value"
+                            )
+                        },
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, url, **kwargs):
+            requested["url"] = url
+            requested["params"] = kwargs["params"]
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "wecode.video.services.media_platform.video_media_settings."
+        "WEIBO_IMAGE_HOSTING_ENABLED",
+        True,
+    )
+    monkeypatch.setattr(
+        "wecode.video.services.media_platform.video_media_settings."
+        "WEIBO_FILEPLATFORM_URL",
+        "http://fileplatform.example.com",
+    )
+    monkeypatch.setattr(
+        "wecode.video.services.media_platform.video_media_settings."
+        "WEIBO_MEDIA_SSIG_URL",
+        "http://ssig.example.com",
+    )
+    monkeypatch.setattr(
+        "wecode.video.services.media_platform.video_media_settings."
+        "WEIBO_TAUTH2_APPKEY",
+        "app-key",
+    )
+    monkeypatch.setattr(
+        "wecode.video.services.media_platform.video_media_settings."
+        "WEIBO_MEDIA_UPLOAD_DEFAULT_UID",
+        "1234567890",
+    )
+    monkeypatch.setattr(
+        "wecode.video.services.media_platform.httpx.Client",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        "wecode.video.services.media_platform.auth_headers",
+        lambda _uid: {},
+    )
+
+    raw_url = "http://f.video.weibocdn.com/o0/example?old=signature"
+    result = sign_urls([raw_url], "1234567890")
+
+    assert requested["params"]["urls"] == ("http://f.video.weibocdn.com/o0/example")
+    assert result[raw_url] == (
+        "https://f.video.weibocdn.com/o0/example?KID=signed-value"
+    )
 
 
 def test_parse_playback_uses_original_video_and_basic_cover() -> None:

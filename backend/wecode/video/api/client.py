@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.core.config import settings
+from wecode.video.card_payload import normalize_qia_card_data
 
 IN_PROGRESS_STATUSES = {
     "created",
@@ -149,7 +150,10 @@ def _card_data(raw: dict[str, Any], wb_data: dict[str, Any]) -> dict[str, Any]:
                 buttons.append(public_button)
     if buttons:
         data["buttons"] = buttons
-    return data
+    return normalize_qia_card_data(
+        data,
+        frontend_url=settings.FRONTEND_URL,
+    )
 
 
 def parse_card_status(raw: dict[str, Any]) -> AigcCardStatus:

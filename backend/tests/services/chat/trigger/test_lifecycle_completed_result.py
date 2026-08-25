@@ -7,6 +7,27 @@ import pytest
 from app.services.chat.trigger import lifecycle
 
 
+def test_merge_blocks_does_not_regress_terminal_card_to_pending():
+    populated = {
+        "id": "card-1",
+        "type": "card",
+        "status": "done",
+        "card_status": "populated",
+        "card_data": {"video_url": "https://example.com/video.mp4"},
+        "card_preview_data": {"progress": 100},
+    }
+    stale_pending = {
+        "id": "card-1",
+        "type": "card",
+        "status": "pending",
+        "card_status": "pending",
+        "card_data": {},
+        "card_preview_data": {"progress": 0},
+    }
+
+    assert lifecycle._merge_blocks([populated], [stale_pending]) == [populated]
+
+
 class _SessionManager:
     async def get_accumulated_content(self, _subtask_id: int) -> str:
         return ""

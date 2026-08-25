@@ -68,4 +68,12 @@ describe('AttachmentPreview lightbox', () => {
       'blob:preview-image'
     )
   })
+
+  it('uses the same fixed size as input media cards in compact mode', () => {
+    render(<AttachmentPreview attachment={imageAttachment} compact />)
+
+    const card = screen.getByRole('button', { name: 'screenshot.png' })
+    expect(card).toHaveClass('h-14', 'w-14')
+    expect(screen.queryByText('screenshot.png')).not.toBeInTheDocument()
+  })
 })

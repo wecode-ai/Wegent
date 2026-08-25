@@ -2,9 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { nestMessageBlocks, type MessageBlock } from '../message-blocks'
+import { nestMessageBlocks, type CardBlock, type MessageBlock } from '../message-blocks'
 
 export type StreamingBlockType = 'text' | 'thinking'
+
+const TERMINAL_CARD_STATUSES = new Set(['populated', 'error'])
+const NONTERMINAL_CARD_STATUSES = new Set(['pending', 'partial_ready'])
 
 interface MergeStreamingBlocksInput {
   existingBlocks: MessageBlock[]
@@ -117,6 +120,35 @@ export function mergeBlocksForDone(
   )
 }
 
+export function mergeMessageBlock(
+  existingBlock: MessageBlock,
+  incomingBlock: Partial<MessageBlock>
+): MessageBlock {
+  const merged = {
+    ...existingBlock,
+    ...incomingBlock,
+  } as MessageBlock
+
+  if (existingBlock.type === 'card') {
+    const existingCard = existingBlock as CardBlock
+    const incomingCard = incomingBlock as Partial<CardBlock>
+    if (
+      TERMINAL_CARD_STATUSES.has(existingCard.card_status) &&
+      incomingCard.card_status &&
+      NONTERMINAL_CARD_STATUSES.has(incomingCard.card_status)
+    ) {
+      const mergedCard = merged as CardBlock
+      mergedCard.status = existingCard.status
+      mergedCard.card_status = existingCard.card_status
+      mergedCard.card_data = existingCard.card_data
+      mergedCard.card_preview_data = existingCard.card_preview_data
+      mergedCard.card_error = existingCard.card_error
+    }
+  }
+
+  return merged
+}
+
 function mergeTextBlockWithId(
   existingBlocks: MessageBlock[],
   blockId: string,
@@ -187,7 +219,7 @@ function mergeDoneBlocksWithInlineThinking(
   const incomingBlocksMap = new Map(incomingBlocks.map(block => [block.id, block]))
   const mergedBlocks = existingBlocks.map(existingBlock => {
     const incomingBlock = incomingBlocksMap.get(existingBlock.id)
-    return incomingBlock ? { ...existingBlock, ...incomingBlock } : existingBlock
+    return incomingBlock ? mergeMessageBlock(existingBlock, incomingBlock) : existingBlock
   })
   const existingIds = new Set(existingBlocks.map(block => block.id))
   const appendedBlocks = incomingBlocks.filter(
@@ -211,7 +243,7 @@ function mergeDoneBlocksWithBackendOrder(
     }
 
     const existingBlock = existingToolBlocksMap.get(incomingBlock.id)
-    return existingBlock ? { ...existingBlock, ...incomingBlock } : incomingBlock
+    return existingBlock ? mergeMessageBlock(existingBlock, incomingBlock) : incomingBlock
   })
 }
 

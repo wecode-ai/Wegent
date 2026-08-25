@@ -25,6 +25,18 @@ def _legacy_chat_video() -> SimpleNamespace:
     )
 
 
+def _local_video() -> SimpleNamespace:
+    return SimpleNamespace(
+        id=43,
+        user_id=7,
+        context_type=ContextType.ATTACHMENT.value,
+        original_filename="local.mp4",
+        file_extension=".mp4",
+        mime_type="video/mp4",
+        type_data={"storage_backend": "mysql"},
+    )
+
+
 def _assert_legacy_video_download_rejected(
     exc_info: pytest.ExceptionInfo[HTTPException],
 ) -> None:
@@ -95,6 +107,121 @@ async def test_stream_remote_media_forwards_range_and_streams_chunks(monkeypatch
     assert response.headers["x-accel-buffering"] == "no"
     assert response.headers["content-disposition"] == (
         'attachment; filename="generated.mp4"'
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_attachment_playback_returns_direct_adapter_url_and_cover(
+    monkeypatch,
+):
+    context = SimpleNamespace(
+        id=42,
+        user_id=7,
+        type_data={"storage_backend": "external_video"},
+    )
+    monkeypatch.setattr(
+        attachments,
+        "_get_attachment_context",
+        Mock(return_value=context),
+    )
+    monkeypatch.setattr(
+        attachments,
+        "_resolve_attachment_playback",
+        AsyncMock(
+            return_value=attachments.ExternalAttachmentPlayback(
+                url="https://cdn.example.com/reference.mp4",
+                media_type="video/mp4",
+                cover_url="https://cdn.example.com/reference-cover.jpg",
+                delivery_mode="direct",
+            )
+        ),
+    )
+
+    response = await attachments.get_attachment_playback(
+        attachment_id=42,
+        share_token=None,
+        db=Mock(),
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.playback_url == "https://cdn.example.com/reference.mp4"
+    assert response.cover_url == "https://cdn.example.com/reference-cover.jpg"
+
+
+@pytest.mark.asyncio
+async def test_get_attachment_playback_returns_wegent_proxy_for_other_storage(
+    monkeypatch,
+):
+    context = _local_video()
+    monkeypatch.setattr(
+        attachments,
+        "_get_attachment_context",
+        Mock(return_value=context),
+    )
+    monkeypatch.setattr(
+        attachments,
+        "_resolve_attachment_playback",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        attachments,
+        "_create_download_token",
+        Mock(return_value="playback-token"),
+    )
+    monkeypatch.setattr(
+        attachments.context_service,
+        "build_attachment_url",
+        Mock(return_value="/api/attachments/43/download"),
+    )
+
+    response = await attachments.get_attachment_playback(
+        attachment_id=43,
+        share_token=None,
+        db=Mock(),
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.playback_url == (
+        "/api/attachments/43/download?download_token=playback-token"
+    )
+    assert response.cover_url is None
+
+
+@pytest.mark.asyncio
+async def test_get_attachment_playback_preserves_share_access_on_wegent_proxy(
+    monkeypatch,
+):
+    context = _local_video()
+    monkeypatch.setattr(
+        attachments,
+        "_validate_share_token_access",
+        Mock(return_value=True),
+    )
+    monkeypatch.setattr(
+        attachments.context_service,
+        "get_context_optional",
+        Mock(return_value=context),
+    )
+    monkeypatch.setattr(
+        attachments,
+        "_resolve_attachment_playback",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        attachments.context_service,
+        "build_attachment_url",
+        Mock(return_value="/api/attachments/43/download"),
+    )
+
+    response = await attachments.get_attachment_playback(
+        attachment_id=43,
+        share_token="share/token",
+        db=Mock(),
+        current_user=None,
+    )
+
+    assert response.playback_url == (
+        "/api/attachments/43/download?share_token=share%2Ftoken"
     )
 
 
