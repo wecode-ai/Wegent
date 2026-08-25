@@ -1392,7 +1392,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
   })
 
-  it('ignores a task address that resolves after reopening the Issue detail', async () => {
+  it('ignores a task address that resolves after reopening the task panel', async () => {
     const workbenchServices = services()
     let resolveBinding: (() => void) | null = null
     const binding = new Promise<void>(resolve => {
@@ -1416,9 +1416,14 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
     await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
       'data-conversation-open',
-      'false'
+      'true'
+    )
+    expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute(
+      'data-runtime-task-id',
+      'runtime-created'
     )
 
     await act(async () => {
@@ -1426,11 +1431,16 @@ describe('CloudTodoWorkspace', () => {
       await binding
     })
 
-    await waitFor(() => expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByTestId('ai-chat-modal')).not.toHaveAttribute(
+        'data-runtime-task-id',
+        'runtime-created'
+      )
+    )
     expect(screen.getByTestId('cloud-todo-detail')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
       'data-conversation-open',
-      'false'
+      'true'
     )
   })
 
