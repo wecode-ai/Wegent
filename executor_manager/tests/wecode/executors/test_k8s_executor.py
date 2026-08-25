@@ -660,10 +660,12 @@ def test_create_executor_from_warmpool_reconciles_reusable_claim_metadata(mocker
 
 def test_non_git_online_task_is_executor_warmpool_eligible(mocker):
     executor = object.__new__(K8sExecutor)
+    module = "executor_manager.wecode.executors.k8s.k8s_executor"
     mocker.patch(
-        "executor_manager.wecode.executors.k8s.k8s_executor.EXECUTOR_DEFAULT_MAGE",
+        f"{module}.EXECUTOR_DEFAULT_MAGE",
         "registry/executor:1.0.214",
     )
+    mocker.patch(f"{module}.EXECUTOR_NON_GIT_WARMPOOL_ENABLED", True)
 
     reason = executor._executor_warmpool_ineligibility_reason(
         {
@@ -681,14 +683,30 @@ def test_non_git_online_task_is_executor_warmpool_eligible(mocker):
     assert reason is None
 
 
+def test_non_git_online_task_skips_warmpool_by_default(mocker):
+    executor = object.__new__(K8sExecutor)
+    module = "executor_manager.wecode.executors.k8s.k8s_executor"
+    mocker.patch(f"{module}.EXECUTOR_DEFAULT_MAGE", "registry/executor:1.0.214")
+    mocker.patch(f"{module}.EXECUTOR_NON_GIT_WARMPOOL_ENABLED", False)
+
+    reason = executor._executor_warmpool_ineligibility_reason(
+        {"task_id": 123, "type": "online", "user": {"name": "test_user"}},
+        "registry/executor:1.0.214",
+    )
+
+    assert reason == "non_git_warmpool_disabled"
+
+
 def test_executor_warmpool_is_enabled_by_default(monkeypatch):
     from executor_manager.wecode.config import config
 
     with monkeypatch.context() as patch:
         patch.delenv("EXECUTOR_WARMPOOL_ENABLED", raising=False)
+        patch.delenv("EXECUTOR_NON_GIT_WARMPOOL_ENABLED", raising=False)
         patch.delenv("EXECUTOR_GIT_WARMPOOL_ENABLED", raising=False)
         reloaded_config = importlib.reload(config)
         assert reloaded_config.EXECUTOR_WARMPOOL_ENABLED is True
+        assert reloaded_config.EXECUTOR_NON_GIT_WARMPOOL_ENABLED is False
         assert reloaded_config.EXECUTOR_GIT_WARMPOOL_ENABLED is False
 
     importlib.reload(config)
@@ -699,6 +717,7 @@ def test_create_instance_claims_shared_sandbox_warmpool(mocker):
     module = "executor_manager.wecode.executors.k8s.k8s_executor"
     mocker.patch(f"{module}.WARMPOOL_ENABLED", True)
     mocker.patch(f"{module}.EXECUTOR_WARMPOOL_ENABLED", True)
+    mocker.patch(f"{module}.EXECUTOR_NON_GIT_WARMPOOL_ENABLED", True)
     mocker.patch(
         f"{module}.WARMPOOL_TEMPLATE_NAME",
         "wegent-sandbox-1.0.214",

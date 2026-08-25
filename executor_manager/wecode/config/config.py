@@ -50,6 +50,12 @@ EXECUTOR_WARMPOOL_ENABLED = (
     os.getenv("EXECUTOR_WARMPOOL_ENABLED", "true").lower() == "true"
 )
 
+# Non-Git online tasks are a separate rollout surface. Keep them on direct Pods
+# unless an environment explicitly opts in to shared warm-pool claims.
+EXECUTOR_NON_GIT_WARMPOOL_ENABLED = (
+    os.getenv("EXECUTOR_NON_GIT_WARMPOOL_ENABLED", "false").lower() == "true"
+)
+
 # Git tasks require request-scoped encrypted credentials. Keep this rollout
 # independently disabled until the executor image contains the secure Git path.
 EXECUTOR_GIT_WARMPOOL_ENABLED = (

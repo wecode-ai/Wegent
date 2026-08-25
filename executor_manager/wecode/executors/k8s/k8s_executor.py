@@ -31,6 +31,7 @@ from executor_manager.utils.executor_name import generate_executor_name
 from executor_manager.wecode.config.config import (
     EXECUTOR_DEFAULT_MAGE,
     EXECUTOR_GIT_WARMPOOL_ENABLED,
+    EXECUTOR_NON_GIT_WARMPOOL_ENABLED,
     EXECUTOR_WARMPOOL_ENABLED,
     K8S_NAMESPACE,
     MAX_USER_TASKS,
@@ -594,6 +595,8 @@ class K8sExecutor(Executor):
             return "custom_base_image"
         if self._task_has_git_repository(task):
             return self._git_warmpool_ineligibility_reason(task)
+        if not EXECUTOR_NON_GIT_WARMPOOL_ENABLED:
+            return "non_git_warmpool_disabled"
         return None
 
     @staticmethod
