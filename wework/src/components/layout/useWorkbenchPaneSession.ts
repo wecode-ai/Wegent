@@ -2459,7 +2459,9 @@ export function useWorkbenchPaneSession({
       setError('当前对话还没有可压缩的 Codex 线程')
       return false
     }
-    if (paneStatus.isBusy) {
+    const currentTaskIsBusy =
+      lifecycleStore.getTask(currentRuntimeTask)?.derived.isBusy ?? paneStatus.isBusy
+    if (currentTaskIsBusy) {
       setError('当前回复进行中，完成后再压缩上下文')
       return false
     }
@@ -2467,7 +2469,14 @@ export function useWorkbenchPaneSession({
       return send('/compact')
     }
     return compactRuntimePaneTask(currentRuntimeTask, { onError: setError })
-  }, [compactRuntimePaneTask, currentRuntimeTask, paneStatus.isBusy, send, setError])
+  }, [
+    compactRuntimePaneTask,
+    currentRuntimeTask,
+    lifecycleStore,
+    paneStatus.isBusy,
+    send,
+    setError,
+  ])
 
   const setCurrentGoal = useCallback(async () => {
     projectChat.setSelectedModelOption('collaborationMode', 'default')

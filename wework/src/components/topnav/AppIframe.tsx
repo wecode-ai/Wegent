@@ -123,6 +123,7 @@ export function AppIframe({
       window.requestAnimationFrame(() => {
         const bounds = hostRef.current ? elementBounds(hostRef.current) : null
         if (!bounds || !activeRef.current) return
+        if (revealGenerationRef.current !== generation) return
         if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
           void setEmbeddedBrowserBounds(bounds, true, label).catch(error => {
             console.error('Failed to reveal app webview:', error)
@@ -291,6 +292,7 @@ export function AppIframe({
     lifecycleGenerationRef.current = generation
 
     return () => {
+      revealGenerationRef.current += 1
       window.setTimeout(() => {
         if (lifecycleGenerationRef.current !== generation) return
 

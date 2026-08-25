@@ -913,7 +913,10 @@ function upsertRuntimeBlock(
 
   const existingIndex = items.findIndex(item => item.id === block.id)
   if (existingIndex >= 0) {
-    if (items[existingIndex]?.type === 'assistant_text' && turnStatus === 'done') {
+    if (
+      items[existingIndex]?.type === 'assistant_text' &&
+      (turnStatus === 'done' || block.type === 'text')
+    ) {
       return items
     }
     return upsertBlocks(items, [block])
