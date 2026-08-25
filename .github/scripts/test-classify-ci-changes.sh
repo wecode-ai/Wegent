@@ -779,6 +779,10 @@ if [[ "$wework_browser_job" != *"needs.changes.outputs.wework_e2e == 'true'"* ]]
   printf 'Wework browser E2E must use the broad Wework change classification\n' >&2
   exit 1
 fi
+if [[ "$wework_browser_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
+  printf 'Wework browser E2E must honor merge-group change classification\n' >&2
+  exit 1
+fi
 
 wework_changes_job="$(
   sed -n '/^  changes:/,/^  wework-e2e:/p' "$wework_workflow"
@@ -802,6 +806,10 @@ if [[ "$wework_desktop_job" != *"needs.changes.outputs.wework_desktop_other_e2e 
   printf 'Wework non-Core desktop E2E must use its segment classification\n' >&2
   exit 1
 fi
+if [[ "$wework_desktop_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
+  printf 'Wework non-Core desktop E2E must honor merge-group change classification\n' >&2
+  exit 1
+fi
 
 wework_desktop_cloud_job="$(
   sed -n '/^  wework-desktop-cloud-e2e:/,/^  wework-desktop-e2e:/p' "$wework_workflow"
@@ -818,6 +826,10 @@ if [[ "$wework_desktop_cloud_job" != *"needs.changes.outputs.wework_desktop_clou
   printf 'Wework Cloud desktop E2E must use five prebuilt serial shards\n' >&2
   exit 1
 fi
+if [[ "$wework_desktop_cloud_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
+  printf 'Wework Cloud desktop E2E must honor merge-group change classification\n' >&2
+  exit 1
+fi
 
 wework_desktop_core_job="$(
   sed -n '/^  wework-desktop-core-e2e:/,/^  wework-desktop-cloud-e2e:/p' \
@@ -827,6 +839,21 @@ if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_
   [[ "$wework_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
   [[ "$wework_desktop_core_job" != *"compression-level: 0"* ]]; then
   printf 'Wework Core desktop E2E must use its segment classification\n' >&2
+  exit 1
+fi
+if [[ "$wework_desktop_core_job" == *"if: github.event_name != 'pull_request' ||"* ]]; then
+  printf 'Wework Core desktop E2E must honor merge-group change classification\n' >&2
+  exit 1
+fi
+
+wework_summary_job="$(
+  sed -n '/^  wework-e2e-summary:/,/^  wework-desktop-memory-e2e:/p' \
+    "$wework_workflow"
+)"
+if [[ "$wework_summary_job" == *"RUN_DESKTOP_CORE_E2E: \${{ github.event_name != 'pull_request' ||"* ]] ||
+  [[ "$wework_summary_job" == *"RUN_DESKTOP_CLOUD_E2E: \${{ github.event_name != 'pull_request' ||"* ]] ||
+  [[ "$wework_summary_job" == *"RUN_DESKTOP_OTHER_E2E: \${{ github.event_name != 'pull_request' ||"* ]]; then
+  printf 'Wework E2E summary must honor merge-group change classification\n' >&2
   exit 1
 fi
 
