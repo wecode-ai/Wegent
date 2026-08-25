@@ -130,7 +130,7 @@ export type WorkbenchAction =
       startFreshChat?: boolean
     }
   | { type: 'user_preferences_updated'; preferences: UserPreferences }
-  | { type: 'blank_chat_committed' }
+  | { type: 'blank_chat_committed'; standaloneChatKey: number }
   | {
       type: 'runtime_task_opened'
       address: RuntimeTaskAddress
@@ -1258,6 +1258,9 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           : state.user,
       }
     case 'blank_chat_committed':
+      if (state.standaloneChatKey !== action.standaloneChatKey) {
+        return state
+      }
       return {
         ...state,
         standaloneChatKey: state.standaloneChatKey + 1,

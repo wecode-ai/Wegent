@@ -1489,17 +1489,39 @@ export function WorkbenchProvider({
       const deviceWorkspaceId = getDefaultProjectDeviceWorkspaceId(state.runtimeWork, projectId)
       const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
       if (!project) return
+      const blankScopeKey = getProjectChatScopeKey({
+        currentRuntimeTask: null,
+        standaloneChatKey: state.standaloneChatKey,
+      })
+      const blankAttachmentState = attachmentSelection.stateByScope[blankScopeKey]
+      const hasPreservedBlankComposerState =
+        Boolean(draftInputByScope[blankScopeKey]) ||
+        Boolean(
+          blankAttachmentState &&
+          (blankAttachmentState.attachments.length > 0 ||
+            blankAttachmentState.uploadingFiles.size > 0 ||
+            blankAttachmentState.errors.size > 0)
+        )
       projectSelectionStartedRef.current = true
       writeLastProjectId(user.id, project.id)
       dispatch({
         type: 'project_workspace_selected',
         project,
         deviceWorkspaceId,
+        startFreshChat: Boolean(state.currentRuntimeTask && !hasPreservedBlankComposerState),
       })
       navigateTo('/')
       requestNewChatComposerFocus()
     },
-    [state.projects, state.runtimeWork, user.id]
+    [
+      attachmentSelection.stateByScope,
+      draftInputByScope,
+      state.currentRuntimeTask,
+      state.projects,
+      state.runtimeWork,
+      state.standaloneChatKey,
+      user.id,
+    ]
   )
 
   const runtimeTasks = useWorkbenchRuntimeTasks({

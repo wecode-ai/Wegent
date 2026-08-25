@@ -7340,7 +7340,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('')
     expect(screen.getByTestId('pane-goal-draft-active')).toHaveTextContent('inactive')
     expect(screen.getByTestId('runtime-pane-standalone-chat-key')).toHaveTextContent(
-      String(previousBlankChatKey)
+      String(previousBlankChatKey + 1)
     )
   })
 

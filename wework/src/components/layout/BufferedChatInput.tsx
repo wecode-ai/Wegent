@@ -130,10 +130,8 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     [cancelPendingFlush, onChange]
   )
 
-  // Reconcile the active scope before the composer becomes interactive.
-  // A passive effect leaves a window where text entered after a scope switch
-  // can be overwritten by the delayed external value from that render.
-  useLayoutEffect(() => {
+  // Sync external value changes into composer and local state.
+  useEffect(() => {
     const shouldSetComposer = value !== draftRef.current
     recordComposerDiagnostic('draft-external-sync', {
       sourceValueLength: value.length,
@@ -148,8 +146,8 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     }
   }, [scopeKey, setComposerValue, value])
 
-  // Persist the previous scope before the next scope is reconciled.
-  useLayoutEffect(() => {
+  // Flush a pending draft whenever it would be discarded (scope switch or unmount).
+  useEffect(() => {
     return () => {
       cancelPendingFlush()
       cancelPendingFlushFrame()

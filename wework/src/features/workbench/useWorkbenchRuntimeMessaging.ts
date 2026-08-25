@@ -873,6 +873,7 @@ export function useWorkbenchRuntimeMessaging({
       }
     ): Promise<RuntimeTaskAddress | false> => {
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
+      const sourceBlankChatKey = state.currentRuntimeTask ? null : state.standaloneChatKey
       const projectId = intent.projectId
       const requestedWorktree = intent.execution?.workspace?.source === 'git_worktree'
       const hasOverrideSelection = Boolean(
@@ -1416,8 +1417,11 @@ export function useWorkbenchRuntimeMessaging({
             })
           }
         }
-        if (options?.openInMainPane !== false) {
-          dispatch({ type: 'blank_chat_committed' })
+        if (options?.openInMainPane !== false && sourceBlankChatKey !== null) {
+          dispatch({
+            type: 'blank_chat_committed',
+            standaloneChatKey: sourceBlankChatKey,
+          })
         }
         return address
       } catch (error) {
@@ -1480,10 +1484,12 @@ export function useWorkbenchRuntimeMessaging({
       services.runtimeWorkApi,
       projectWorktreeBranch,
       state.currentProject,
+      state.currentRuntimeTask,
       state.devices,
       state.projects,
       state.runtimeWork,
       state.selectedDeviceWorkspaceId,
+      state.standaloneChatKey,
     ]
   )
 
