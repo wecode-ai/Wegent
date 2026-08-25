@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState } from 'react'
+import { useLayoutEffect, useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { requestWorkbenchComposerFocus } from '@/lib/workbenchComposerFocus'
 import { BufferedChatInput } from './BufferedChatInput'
@@ -467,6 +467,33 @@ describe('BufferedChatInput', () => {
     await waitFor(() => {
       expect(screen.getByTestId('chat-message-input')).toHaveValue('unfinished draft')
     })
+  })
+
+  test('keeps input entered immediately after switching chat scopes', () => {
+    function Harness({ scopeKey }: { scopeKey: string }) {
+      useLayoutEffect(() => {
+        if (scopeKey !== 'blank') return
+        const input = screen.getByTestId('chat-message-input') as HTMLElement & {
+          value: string
+        }
+        input.value = 'second task'
+      }, [scopeKey])
+
+      return (
+        <BufferedChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          projectChat={createProjectChat(scopeKey)}
+        />
+      )
+    }
+
+    const { rerender } = render(<Harness scopeKey="runtime:device-1:task-1" />)
+    rerender(<Harness scopeKey="blank" />)
+
+    expect(screen.getByTestId('chat-message-input')).toHaveValue('second task')
   })
 
   test('focuses the matching composer when a conversation is selected', async () => {
