@@ -141,7 +141,7 @@ describe('WorkspaceTabSurface', () => {
 
     const { rerender, unmount } = render(<WorkspaceTabSurface {...props} active />)
     expect(screen.getByTestId('mock-workbench-board')).toHaveAttribute('data-route-active', 'true')
-    expect(workbenchProviderMocks.loadTaskComposerCatalogs).toHaveBeenLastCalledWith(false)
+    expect(workbenchProviderMocks.loadTaskComposerCatalogs).toHaveBeenLastCalledWith(true)
     expect(workbenchProviderMocks.prewarm).toHaveBeenLastCalledWith(false)
 
     rerender(<WorkspaceTabSurface {...props} active={false} />)
@@ -155,6 +155,50 @@ describe('WorkspaceTabSurface', () => {
 
     unmount()
     expect(workbenchProviderMocks.cleanup).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps composer catalogs loaded when a retained board tab displays an auxiliary page', () => {
+    const dispose = getWorkbenchPluginRuntime().routes.register({
+      id: 'board-auxiliary-catalog-test',
+      path: '/board-auxiliary-catalog-test',
+      telemetryFeature: 'apps',
+      render: () => <div data-testid="mock-board-auxiliary-page" />,
+    })
+    const props = {
+      active: true,
+      cloudWebUrl: null,
+      lifecycleStore: {} as never,
+      nativeWorkbenchKind: 'board' as const,
+      services: {} as never,
+      tab: {
+        id: 'fixed-board',
+        kind: 'board' as const,
+        title: '项目空间',
+        contentRoute: '/todo',
+      },
+      user: {
+        id: 1,
+        user_name: 'tester',
+        email: 'tester@example.com',
+      },
+    }
+
+    const { rerender, unmount } = render(<WorkspaceTabSurface {...props} />)
+    expect(workbenchProviderMocks.loadTaskComposerCatalogs).toHaveBeenLastCalledWith(true)
+
+    rerender(
+      <WorkspaceTabSurface
+        {...props}
+        tab={{ ...props.tab, contentRoute: '/board-auxiliary-catalog-test' }}
+      />
+    )
+
+    expect(screen.getByTestId('mock-board-auxiliary-page')).toBeInTheDocument()
+    expect(workbenchProviderMocks.loadTaskComposerCatalogs.mock.calls).toEqual([[true], [true]])
+    expect(workbenchProviderMocks.cleanup).not.toHaveBeenCalled()
+
+    unmount()
+    dispose()
   })
 
   test('keeps an inactive iframe app connected so its page state survives tab switches', () => {
