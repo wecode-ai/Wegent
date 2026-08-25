@@ -26,6 +26,7 @@ import {
   mkdir,
   pathExists,
   readFile,
+  readdir,
   repoDir,
   reservePort,
   resultDir,
@@ -611,9 +612,33 @@ class RealCloudEnvironment {
     while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
       const task = await this.runtimeTask(taskId)
       if (task?.workspacePath) return task
+      const workspacePath = await this.standaloneTaskWorkspace(taskId)
+      if (workspacePath) return { taskId, workspacePath }
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
-    throw new Error(`Cloud Task ${taskId} did not expose its runtime workspace`)
+    const task = await fetchJson(
+      `${this.backendUrl}/api/tasks/${encodeURIComponent(taskId)}?client_origin=wework`,
+      { headers: { Authorization: `Bearer ${this.authToken}` } }
+    ).catch(() => null)
+    const device = await this.device(CLOUD_DEVICE_ID).catch(() => null)
+    throw new Error(
+      `Cloud Task ${taskId} did not expose or persist its runtime workspace ` +
+        `(task_status=${task?.status ?? 'unknown'}, device_status=${device?.status ?? 'unknown'})`
+    )
+  }
+
+  async standaloneTaskWorkspace(taskId) {
+    if (!this.remoteCodexHome) return null
+    const conversationsRoot = join(dirname(this.remoteCodexHome), 'Documents', 'Codex')
+    const dateDirectories = await readdir(conversationsRoot, {
+      withFileTypes: true,
+    }).catch(() => [])
+    for (const entry of dateDirectories) {
+      if (!entry.isDirectory()) continue
+      const workspacePath = join(conversationsRoot, entry.name, String(taskId))
+      if (await pathExists(workspacePath)) return workspacePath
+    }
+    return null
   }
 
   async appendPluginWorkspaceResult(taskId, marker) {
