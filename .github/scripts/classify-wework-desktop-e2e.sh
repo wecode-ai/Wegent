@@ -235,6 +235,18 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    # Documentation does not change the packaged desktop application.
+    wework/*.md)
+      return
+      ;;
+
+    # The native startup checkpoint owns splash-window creation and teardown.
+    wework/electron/src/host/startup-splash* | \
+      wework/electron/src/shell/startup-splash/*)
+      select_target "core:native-window-startup"
+      return
+      ;;
+
     # Browser-runner changes do not require a real desktop application.
     wework/e2e/tests/* | \
       wework/e2e/fixtures/* | \
