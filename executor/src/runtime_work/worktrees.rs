@@ -1958,10 +1958,13 @@ fn home_dir() -> PathBuf {
 }
 
 fn normalized_path_key(path: &Path) -> String {
-    path.to_string_lossy()
-        .replace('\\', "/")
-        .trim_end_matches('/')
-        .to_owned()
+    let value = path.to_string_lossy();
+    let value = if cfg!(windows) {
+        value.replace('\\', "/")
+    } else {
+        value.into_owned()
+    };
+    value.trim_end_matches('/').to_owned()
 }
 
 fn same_path(left: &str, right: &str) -> bool {
@@ -2134,17 +2137,26 @@ mod tests {
 
     #[test]
     fn normalized_path_key_unifies_separators() {
-        assert_eq!(
-            normalized_path_key(Path::new(r"C:\wegent\worktrees\task-1\repository")),
-            "C:/wegent/worktrees/task-1/repository"
-        );
+        if cfg!(windows) {
+            assert_eq!(
+                normalized_path_key(Path::new(r"C:\wegent\worktrees\task-1\repository")),
+                "C:/wegent/worktrees/task-1/repository"
+            );
+            assert_eq!(
+                normalized_path_key(Path::new(r"C:\wegent\worktrees\")),
+                "C:/wegent/worktrees"
+            );
+        } else {
+            // On POSIX, backslash is a literal filename character and must not
+            // be conflated with the path separator.
+            assert_eq!(
+                normalized_path_key(Path::new(r"/tmp/wegent-worktrees/task-1\repository")),
+                r"/tmp/wegent-worktrees/task-1\repository"
+            );
+        }
         assert_eq!(
             normalized_path_key(Path::new("/tmp/wegent-worktrees/task-1/repository/")),
             "/tmp/wegent-worktrees/task-1/repository"
-        );
-        assert_eq!(
-            normalized_path_key(Path::new(r"C:\wegent\worktrees\")),
-            "C:/wegent/worktrees"
         );
     }
 
