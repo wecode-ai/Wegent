@@ -261,9 +261,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
 
       const sidebar = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar"]`
       const completionTimeoutMs = Math.max(uiTimeoutMs, BURST_RENDER_TIMEOUT_MS)
+      // Keep the noisy task active while its burst renders, then verify that the
+      // quiet task completed correctly in the background without cross-thread data.
       for (const [task, completion] of [
-        [quiet, COMPLETIONS.quiet],
         [noisy, COMPLETIONS.noisy],
+        [quiet, COMPLETIONS.quiet],
       ]) {
         await selectTask(control, sidebar, task, uiTimeoutMs)
         await control.command(
