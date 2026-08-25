@@ -34,7 +34,11 @@ import {
 } from '@/components/chat/requestUserInputMessages'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
-import { visibleRuntimeGoal } from '@/lib/runtime-goal'
+import {
+  projectRuntimeGoalContinuing,
+  shouldReconcileActiveRuntimeGoalTranscript,
+  visibleRuntimeGoal,
+} from '@/lib/runtime-goal'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import { appendConversationMentionContext } from '@/lib/conversation-mentions'
 import {
@@ -350,6 +354,10 @@ export function useWorkbenchPaneSession({
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
+  const goalTranscriptReconciliationRef = useRef<{
+    key: string
+    attempts: number
+  } | null>(null)
   const messageActionFrameRef = useRef<number | null>(null)
   const retryInFlightRef = useRef(false)
   const lastSubmittedRetryMessageRef = useRef<WorkbenchMessage | null>(null)
@@ -2622,7 +2630,128 @@ export function useWorkbenchPaneSession({
   }, [clearRuntimeGoal, currentRuntimeTask, goal, lifecycleStore, refreshWorkLists])
 
   const cancelGuidanceMessage = useCallback(() => undefined, [])
-  const goalContinuing = goal?.status === 'active' && goalContinuation?.status === 'started'
+  const goalContinuing = projectRuntimeGoalContinuing({
+    goal,
+    continuation: goalContinuation,
+    taskRunning: paneStatus.taskExecution.running,
+    messages,
+    activeAssistantMessage,
+  })
+
+  useEffect(() => {
+    const shouldReconcile = shouldReconcileActiveRuntimeGoalTranscript({
+      goalContinuing,
+      messages,
+      activeAssistantMessage,
+    })
+    if (!runtimeTaskLoadTarget || transcriptLoading || !shouldReconcile) {
+      if (!shouldReconcile) {
+        goalTranscriptReconciliationRef.current = null
+      }
+      return
+    }
+
+    const { address, identityKey } = runtimeTaskLoadTarget
+    const activeTurnId =
+      activeAssistantMessage?.turnId?.trim() ||
+      activeAssistantMessage?.subtaskId?.trim() ||
+      activeAssistantMessage?.id
+    const reconciliationKey = `${identityKey}:${activeTurnId}`
+    if (goalTranscriptReconciliationRef.current?.key !== reconciliationKey) {
+      goalTranscriptReconciliationRef.current = {
+        key: reconciliationKey,
+        attempts: 0,
+      }
+    }
+    if ((goalTranscriptReconciliationRef.current?.attempts ?? 0) >= 30) {
+      return
+    }
+
+    let cancelled = false
+    let retryTimeout: number | null = null
+    const reconcile = async () => {
+      if (cancelled) return
+      if (rebuildingTranscriptRef.current) {
+        retryTimeout = window.setTimeout(() => void reconcile(), 1_000)
+        return
+      }
+
+      const reconciliation = goalTranscriptReconciliationRef.current
+      if (!reconciliation || reconciliation.key !== reconciliationKey) return
+      if (reconciliation.attempts >= 30) return
+      reconciliation.attempts += 1
+      const attempt = reconciliation.attempts
+      const hydrationToken = beginRuntimeConversationHydration(address)
+      rebuildingTranscriptRef.current = true
+      rebuildingTranscriptIdentityRef.current = identityKey
+      try {
+        const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
+          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          refresh: true,
+        })
+        if (cancelled || runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) {
+          abortRuntimeConversationHydration(address, hydrationToken)
+          return
+        }
+
+        const nextMessages = completeRuntimeConversationHydration(
+          address,
+          hydrationToken,
+          transcript.turns
+        )
+        dispatchMessages({ type: 'reset', messages: nextMessages })
+        lifecycleStore.syncTranscript(address, transcript, { preserveActiveTurn: true })
+        console.info('[Wework] Active Goal transcript projection reconciled', {
+          address: runtimeAddressDebug(address),
+          attempt,
+          transcriptMessageCount: transcript.messages.length,
+          restoredMessageCount: nextMessages.length,
+        })
+
+        if (
+          attempt < 30 &&
+          shouldReconcileActiveRuntimeGoalTranscript({
+            goalContinuing: true,
+            messages: nextMessages,
+            activeAssistantMessage,
+          })
+        ) {
+          retryTimeout = window.setTimeout(() => void reconcile(), 1_000)
+        }
+      } catch (error) {
+        abortRuntimeConversationHydration(address, hydrationToken)
+        if (!cancelled && attempt < 30) {
+          retryTimeout = window.setTimeout(() => void reconcile(), 1_000)
+        }
+        console.error('[Wework] Active Goal transcript projection reconciliation failed', {
+          address: runtimeAddressDebug(address),
+          attempt,
+          error,
+        })
+      } finally {
+        if (rebuildingTranscriptIdentityRef.current === identityKey) {
+          rebuildingTranscriptRef.current = false
+          rebuildingTranscriptIdentityRef.current = null
+        }
+      }
+    }
+
+    void reconcile()
+    return () => {
+      cancelled = true
+      if (retryTimeout !== null) {
+        window.clearTimeout(retryTimeout)
+      }
+    }
+  }, [
+    activeAssistantMessage,
+    dispatchMessages,
+    goalContinuing,
+    lifecycleStore,
+    messages,
+    runtimeTaskLoadTarget,
+    transcriptLoading,
+  ])
 
   useEffect(() => {
     if (!debugSnapshotEnabled) return
