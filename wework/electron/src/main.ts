@@ -598,6 +598,7 @@ async function createWindow(): Promise<void> {
     primaryDshSecurityInstalled = false
     mainWindow = null
   })
+  await mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'))
 }
 
 async function setDockVisible(visible: boolean): Promise<void> {
@@ -939,6 +940,10 @@ function startDesktopRuntime(): Promise<void> {
       runtimePhase = 'failed'
       runtimeError = error instanceof Error ? error.message : String(error)
       console.error('[runtime] startup failed', error)
+      mainWindow?.show()
+      void startupSplash?.close().catch(splashError => {
+        console.error('[startup-splash] failed to close after runtime failure', splashError)
+      })
     })
     .finally(() => {
       runtimeStartPromise = null
@@ -990,8 +995,7 @@ if (hasSingleInstanceLock) {
       },
       htmlPath: resolve(packageRoot, 'dist/shell/startup-splash/index.html'),
     })
-    await startupSplash.show()
-    await createWindow()
+    await Promise.all([startupSplash.show(), createWindow()])
     void startDesktopRuntime()
   })
 }
