@@ -87,6 +87,7 @@ COPY resource.yaml /app/init_data/new_user/resource.yaml
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
 
 ENV PORT=8000
+ENV AIGC_VIDEO_AGENT_URL=http://10.2.40.157:8200/2
 # Expose port
 EXPOSE ${PORT}
 
