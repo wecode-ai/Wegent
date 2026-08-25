@@ -436,6 +436,12 @@ pub(super) fn validate_relative_arg(arg: &str) -> Result<(), AppIpcError> {
         ));
     }
     for component in path.components() {
+        if matches!(component, Component::RootDir | Component::Prefix(_)) {
+            return Err(AppIpcError::new(
+                "local_auth_invalid",
+                "Absolute paths are not allowed in localAuth commands",
+            ));
+        }
         if matches!(component, Component::ParentDir) {
             return Err(AppIpcError::new(
                 "local_auth_invalid",
@@ -665,28 +671,7 @@ async fn run_plugin_command(
     }
     let program = resolve_program(plugin_root, &args[0])?;
     let rest = &args[1..];
-    let mut command = if looks_like_shell_script(&program) {
-        let mut cmd = Command::new("sh");
-        cmd.arg(&program);
-        for arg in rest {
-            cmd.arg(arg);
-        }
-        cmd
-    } else if program.extension().and_then(|ext| ext.to_str()) == Some("ps1") {
-        let mut cmd = Command::new("powershell");
-        cmd.args(["-NoProfile", "-NonInteractive", "-File"]);
-        cmd.arg(&program);
-        for arg in rest {
-            cmd.arg(arg);
-        }
-        cmd
-    } else {
-        let mut cmd = Command::new(&program);
-        for arg in rest {
-            cmd.arg(arg);
-        }
-        cmd
-    };
+    let mut command = plugin_command(&program, rest);
     command
         .current_dir(plugin_root)
         .stdin(Stdio::null())
@@ -728,10 +713,49 @@ async fn run_plugin_command(
     Ok(parsed)
 }
 
+fn plugin_command(program: &Path, rest: &[String]) -> Command {
+    if looks_like_shell_script(program) {
+        let mut cmd = Command::new("sh");
+        cmd.arg(program);
+        for arg in rest {
+            cmd.arg(arg);
+        }
+        cmd
+    } else if program.extension().and_then(|ext| ext.to_str()) == Some("ps1") {
+        let mut cmd = Command::new("powershell");
+        cmd.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ]);
+        cmd.arg(program);
+        for arg in rest {
+            cmd.arg(arg);
+        }
+        cmd
+    } else {
+        let mut cmd = Command::new(program);
+        for arg in rest {
+            cmd.arg(arg);
+        }
+        cmd
+    }
+}
+
 fn resolve_program(plugin_root: &Path, arg: &str) -> Result<PathBuf, AppIpcError> {
+    resolve_program_for_platform(plugin_root, arg, cfg!(windows))
+}
+
+fn resolve_program_for_platform(
+    plugin_root: &Path,
+    arg: &str,
+    windows: bool,
+) -> Result<PathBuf, AppIpcError> {
     validate_relative_arg(arg)?;
     let candidate = plugin_root.join(arg);
-    if cfg!(windows)
+    if windows
         && candidate
             .extension()
             .and_then(|extension| extension.to_str())
@@ -928,6 +952,63 @@ mod tests {
         assert!(validate_relative_arg("scripts/run.sh").is_ok());
         assert!(validate_relative_arg("/tmp/evil").is_err());
         assert!(validate_relative_arg("../escape").is_err());
+    }
+
+    #[test]
+    fn shell_script_command_uses_sh_with_unchanged_arguments() {
+        let command = plugin_command(
+            Path::new("plugin with spaces/scripts/local-auth.sh"),
+            &["login".to_owned(), "中文".to_owned()],
+        );
+        let command = command.as_std();
+        assert_eq!(command.get_program(), "sh");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["plugin with spaces/scripts/local-auth.sh", "login", "中文"]
+        );
+    }
+
+    #[test]
+    fn powershell_command_uses_process_scoped_execution_policy_bypass() {
+        let command = plugin_command(
+            Path::new("plugin with spaces/scripts/local-auth.ps1"),
+            &["login".to_owned(), "中文".to_owned()],
+        );
+        let command = command.as_std();
+        assert_eq!(command.get_program(), "powershell");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "plugin with spaces/scripts/local-auth.ps1",
+                "login",
+                "中文"
+            ]
+        );
+    }
+
+    #[test]
+    fn windows_resolves_shell_manifest_entry_to_powershell_sibling() {
+        let temp = tempfile::tempdir().unwrap();
+        let scripts = temp.path().join("scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        let shell = scripts.join("local-auth.sh");
+        let powershell = scripts.join("local-auth.ps1");
+        fs::write(&shell, "#!/bin/sh").unwrap();
+        fs::write(&powershell, "Write-Output ok").unwrap();
+
+        assert_eq!(
+            resolve_program_for_platform(temp.path(), "scripts/local-auth.sh", true).unwrap(),
+            powershell
+        );
+        assert_eq!(
+            resolve_program_for_platform(temp.path(), "scripts/local-auth.sh", false).unwrap(),
+            shell
+        );
     }
 
     #[test]
