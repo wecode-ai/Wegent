@@ -399,6 +399,57 @@ describe('runtimeConversationTurns', () => {
     expect(merged[0].items.map(item => item.id)).toEqual(['client-user-1', 'live-process'])
   })
 
+  test('reconciles a provider alias that repeats the canonical assistant item', () => {
+    const content = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'runtime-provisional-turn',
+        items: [
+          {
+            id: 'assistant-item-1',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-25T04:57:46.000Z',
+          },
+        ],
+        status: 'done',
+      },
+      {
+        id: 'provider-turn-1',
+        items: [
+          {
+            id: 'assistant-item-1',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-25T04:57:46.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'provider-turn-1',
+        items: [
+          {
+            id: 'assistant-item-1',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-25T04:57:46.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged).toHaveLength(1)
+    expect(projectRuntimeConversationTurns(merged).map(message => message.content)).toEqual([
+      content,
+    ])
+  })
+
   test('does not synthesize a Codex turn from a terminal event', () => {
     const turns = reduceRuntimeConversationTurns(
       [
