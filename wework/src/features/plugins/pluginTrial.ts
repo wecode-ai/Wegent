@@ -58,6 +58,10 @@ interface PendingPluginTrial {
   app?: LocalDeviceApp
   openInNewChat?: boolean
   targetProject?: ProjectWithTasks
+  targetWorkspace?: {
+    deviceId: string
+    path: string
+  }
 }
 
 interface PluginReferenceTrial {
@@ -68,6 +72,10 @@ interface PluginReferenceTrial {
   prompt?: string
   openInNewChat?: boolean
   targetProject?: ProjectWithTasks
+  targetWorkspace?: {
+    deviceId: string
+    path: string
+  }
 }
 
 interface PluginTrialOptions {
@@ -363,6 +371,7 @@ export function queuePluginReferenceTrial({
   prompt,
   openInNewChat = false,
   targetProject,
+  targetWorkspace,
 }: PluginReferenceTrial): boolean {
   const normalizedPluginName = pluginName.trim()
   const normalizedMarketplaceName = marketplaceName.trim()
@@ -377,6 +386,7 @@ export function queuePluginReferenceTrial({
     templates,
     openInNewChat,
     targetProject,
+    targetWorkspace,
   })
 }
 
@@ -405,6 +415,18 @@ export function consumePluginTrial(): PendingPluginTrial | null {
         typeof payload.targetProject.id === 'number' &&
         typeof payload.targetProject.name === 'string'
           ? (payload.targetProject as ProjectWithTasks)
+          : undefined,
+      targetWorkspace:
+        payload.targetWorkspace &&
+        typeof payload.targetWorkspace === 'object' &&
+        typeof payload.targetWorkspace.deviceId === 'string' &&
+        payload.targetWorkspace.deviceId.trim() &&
+        typeof payload.targetWorkspace.path === 'string' &&
+        payload.targetWorkspace.path.trim()
+          ? {
+              deviceId: payload.targetWorkspace.deviceId.trim(),
+              path: payload.targetWorkspace.path.trim(),
+            }
           : undefined,
     }
   } catch {

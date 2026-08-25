@@ -518,23 +518,7 @@ describe('SmartAppsMarketplacePage', () => {
   })
 
   test('queues the development preview after creating a blank workbench', async () => {
-    const project = {
-      id: 42,
-      name: '空白工作台',
-      tasks: [],
-      config: {
-        mode: 'workspace',
-        execution: { targetType: 'local' as const, deviceId: 'local-device-1' },
-        workspace: {
-          source: 'local_path' as const,
-          localPath: '/tmp/blank-workbench',
-        },
-      },
-    }
-    const onCreateProject = vi.fn().mockResolvedValue(project)
-    render(
-      <SmartAppsMarketplacePage api={api([])} mode="owned" onCreateProject={onCreateProject} />
-    )
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
 
     fireEvent.click(screen.getByTestId('smart-apps-created-create'))
     fireEvent.change(screen.getByTestId('smart-app-development-display-name'), {
@@ -554,25 +538,13 @@ describe('SmartAppsMarketplacePage', () => {
         displayName: '空白工作台',
       })
     )
-    expect(onCreateProject).toHaveBeenCalledWith(
-      {
-        name: '空白工作台',
-        description: '整理本地研究资料',
-        config: {
-          mode: 'workspace',
-          execution: { targetType: 'local', deviceId: 'local-device-1' },
-          workspace: {
-            source: 'local_path',
-            localPath: '/tmp/blank-workbench',
-          },
-        },
-      },
-      { refreshWorkLists: false }
-    )
     expect(queuePluginReferenceTrial).toHaveBeenCalledWith(
       expect.objectContaining({
         openInNewChat: true,
-        targetProject: project,
+        targetWorkspace: {
+          deviceId: 'local-device-1',
+          path: '/tmp/blank-workbench',
+        },
       })
     )
     expect(navigateTo).toHaveBeenCalledWith('/')
@@ -580,7 +552,7 @@ describe('SmartAppsMarketplacePage', () => {
 
   test('does not create a workbench directory without a local project device', async () => {
     getLocalExecutorDeviceId.mockResolvedValue(null)
-    render(<SmartAppsMarketplacePage api={api([])} mode="owned" onCreateProject={vi.fn()} />)
+    render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
 
     fireEvent.click(screen.getByTestId('smart-apps-created-create'))
     fireEvent.change(screen.getByTestId('smart-app-development-display-name'), {
