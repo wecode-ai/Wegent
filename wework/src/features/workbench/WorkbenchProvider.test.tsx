@@ -59,6 +59,7 @@ import {
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
 } from './runtimeConversationCache'
+import { createRuntimeUserMessage } from './runtimeUserMessage'
 import {
   getComposerApps,
   resetComposerAppsMemory,
@@ -2190,6 +2191,32 @@ function FollowUpProbe() {
         interrupt first queued
       </button>
     </div>
+  )
+}
+
+function ExternalRuntimeSendProbe() {
+  const workbench = useWorkbench()
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        const optimisticUserMessage = createRuntimeUserMessage('修复 PR #2631')
+        void workbench.sendRuntimePaneMessage(
+          {
+            address: {
+              deviceId: 'device-1',
+              workspacePath: '/workspace/project-alpha',
+              taskId: 'runtime-a',
+            },
+            message: optimisticUserMessage.content,
+          },
+          { optimisticUserMessage }
+        )
+      }}
+    >
+      repair pull request
+    </button>
   )
 }
 
@@ -10651,6 +10678,88 @@ describe('WorkbenchProvider runtime tasks', () => {
       modelOptions: { collaborationMode: 'default' },
     })
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
+  })
+
+  test('shows user messages sent from an external runtime action', async () => {
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <ExternalRuntimeSendProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await userEvent.click(screen.getByText('repair pull request'))
+
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+    expect(sendRuntimeMessage).toHaveBeenCalledWith({
+      address: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+      },
+      clientUserMessageId: expect.stringMatching(/^runtime-local-pane-/),
+      message: '修复 PR #2631',
+    })
+    expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('修复 PR #2631')
+  })
+
+  test('removes an external optimistic user message when sending fails', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage: vi.fn().mockResolvedValue({
+        accepted: false,
+        taskId: 'runtime-a',
+        error: 'send failed',
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <ExternalRuntimeSendProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await userEvent.click(screen.getByText('repair pull request'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('修复 PR #2631')
+    )
   })
 
   test('only emits browser cleanup commands when browser annotations are cleared', async () => {
