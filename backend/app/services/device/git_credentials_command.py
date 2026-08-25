@@ -31,11 +31,6 @@ if [ -f "$HOME/.wecode/git-token-env" ]; then
 fi
 export GIT_ASKPASS="$HOME/.wecode/git-askpass.sh"
 """
-LEGACY_DOMAINS = (
-    "git.intra.weibo.com",
-    "git.staff.sina.com.cn",
-    "gitlab.weibo.cn",
-)
 REWRITE_PROVIDERS = {"github", "gitlab", "gitee", "gitea"}
 
 
@@ -335,20 +330,6 @@ def update_global_git_config(global_config, include_path, enabled, home):
         exact_value_pattern(legacy_askpass),
         allow_missing=True,
     )
-    for domain in LEGACY_DOMAINS:
-        key = 'url.https://%s/.insteadOf' % domain
-        for value in (
-            "ssh://git@%s/" % domain,
-            "ssh://git@%s:2222/" % domain,
-            "git@%s:" % domain,
-        ):
-            git_config(
-                global_config,
-                "--unset-all",
-                key,
-                exact_value_pattern(value),
-                allow_missing=True,
-            )
     if enabled:
         git_config(global_config, "--add", "include.path", str(include_path))
 
