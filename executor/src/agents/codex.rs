@@ -1550,6 +1550,18 @@ async fn run_codex_app_server_turn_on_shared_client(
         )
         .await;
         let outcome = outcome_result?;
+        if !request.ephemeral {
+            match client
+                .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
+                .await
+            {
+                Ok(goal_response) => sync_goal_status_from_response(&mut state, &goal_response),
+                Err(error) => log_executor_event(
+                    "codex shared goal status reconciliation failed",
+                    &[("thread_id", thread_id.clone()), ("error", error)],
+                ),
+            }
+        }
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
             turn_fields.push(("error", message.clone()));
