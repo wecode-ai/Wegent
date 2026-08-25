@@ -261,6 +261,69 @@ describe('createRuntimeChatStream', () => {
     consoleInfo.mockRestore()
   })
 
+  test('coalesces bursty text deltas before a terminal event', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const onChatChunk = vi.fn()
+    const onChatDone = vi.fn()
+    const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const stream = createRuntimeChatStream({ subscribe, request })
+
+    stream.subscribe({ onChatChunk, onChatDone })
+    await Promise.resolve()
+    for (let offset = 0; offset < 2_200; offset += 1) {
+      listener({
+        event: 'response.output_text.delta',
+        payload: {
+          taskId: 'task-1',
+          subtaskId: '1001',
+          deviceId: 'local-device',
+          data: {
+            item_id: 'message-1',
+            output_index: 0,
+            content_index: 0,
+            delta: 'x',
+            offset,
+          },
+        },
+      })
+    }
+    listener({
+      event: 'response.completed',
+      payload: {
+        taskId: 'task-1',
+        subtaskId: '1001',
+        deviceId: 'local-device',
+        data: { value: 'complete' },
+      },
+    })
+
+    expect(onChatChunk).toHaveBeenCalledTimes(2)
+    expect(onChatChunk).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        itemId: 'message-1',
+        content: 'x',
+        offset: 0,
+      })
+    )
+    expect(onChatChunk).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        itemId: 'message-1',
+        content: 'x'.repeat(2_199),
+        offset: 1,
+      })
+    )
+    expect(onChatChunk.mock.invocationCallOrder[1]).toBeLessThan(
+      onChatDone.mock.invocationCallOrder[0]
+    )
+    consoleInfo.mockRestore()
+  })
+
   test('logs local stream lifecycle only when stream debug is enabled', async () => {
     subscribe.mockImplementation(async () => vi.fn())
     const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)

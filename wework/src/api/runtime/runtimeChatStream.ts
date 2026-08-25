@@ -17,6 +17,9 @@ interface RuntimeChatSubscription {
   state: ReturnType<typeof createResponseApiStreamState>
   eventCount: number
   textDeltaCount: number
+  emittedTextDeltaKeys: Set<string>
+  pendingTextDeltas: Map<string, LocalExecutorEvent>
+  pendingTextDeltaFrame: number | null
   pendingBlockUpdates: Map<string, LocalExecutorEvent>
   pendingBlockUpdateFrame: number | null
 }
@@ -61,6 +64,55 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
     const events = [...subscription.pendingBlockUpdates.values()]
     subscription.pendingBlockUpdates.clear()
     events.forEach(event => emitSubscriptionEvent(subscription, event))
+  }
+
+  function flushPendingTextDeltas(subscription: RuntimeChatSubscription): void {
+    if (subscription.pendingTextDeltaFrame !== null) {
+      cancelAnimationFrame(subscription.pendingTextDeltaFrame)
+      subscription.pendingTextDeltaFrame = null
+    }
+    subscription.emittedTextDeltaKeys.clear()
+    if (subscription.pendingTextDeltas.size === 0) return
+    const events = [...subscription.pendingTextDeltas.values()]
+    subscription.pendingTextDeltas.clear()
+    events.forEach(event => emitSubscriptionEvent(subscription, event))
+  }
+
+  function scheduleTextDeltaFrame(subscription: RuntimeChatSubscription): void {
+    if (subscription.pendingTextDeltaFrame !== null) return
+    subscription.pendingTextDeltaFrame = requestAnimationFrame(() => {
+      subscription.pendingTextDeltaFrame = null
+      subscription.emittedTextDeltaKeys.clear()
+      if (subscription.pendingTextDeltas.size === 0) return
+      const events = [...subscription.pendingTextDeltas.values()]
+      subscription.pendingTextDeltas.clear()
+      events.forEach(event => emitSubscriptionEvent(subscription, event))
+    })
+  }
+
+  function queueTextDelta(
+    subscription: RuntimeChatSubscription,
+    event: LocalExecutorEvent
+  ): boolean {
+    const key = coalescibleRuntimeTextDeltaKey(event)
+    if (!key || !subscription.handlers.onChatChunk) return false
+    if (!subscription.emittedTextDeltaKeys.has(key)) {
+      if (subscription.pendingTextDeltas.size > 0) {
+        flushPendingTextDeltas(subscription)
+      }
+      subscription.emittedTextDeltaKeys.add(key)
+      scheduleTextDeltaFrame(subscription)
+      emitSubscriptionEvent(subscription, event)
+      return true
+    }
+    const pending = subscription.pendingTextDeltas.get(key)
+    const merged = mergeCoalescibleTextDeltas(pending, event)
+    if (!merged && pending) {
+      subscription.pendingTextDeltas.delete(key)
+      emitSubscriptionEvent(subscription, pending)
+    }
+    subscription.pendingTextDeltas.set(key, merged ?? event)
+    return true
   }
 
   function queueBlockUpdate(
@@ -128,6 +180,11 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
             subscription.eventCount,
             subscription.textDeltaCount
           )
+          if (coalescibleRuntimeTextDeltaKey(event)) {
+            flushPendingBlockUpdates(subscription)
+            if (queueTextDelta(subscription, event)) continue
+          }
+          flushPendingTextDeltas(subscription)
           if (queueBlockUpdate(subscription, event)) continue
           flushPendingBlockUpdates(subscription)
           emitSubscriptionEvent(subscription, event)
@@ -179,6 +236,9 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
         state: createResponseApiStreamState(),
         eventCount: 0,
         textDeltaCount: 0,
+        emittedTextDeltaKeys: new Set(),
+        pendingTextDeltas: new Map(),
+        pendingTextDeltaFrame: null,
         pendingBlockUpdates: new Map(),
         pendingBlockUpdateFrame: null,
       })
@@ -194,6 +254,9 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
         if (released) return
         released = true
         const subscription = subscriptions.get(subscriptionId)
+        if (subscription && subscription.pendingTextDeltaFrame !== null) {
+          cancelAnimationFrame(subscription.pendingTextDeltaFrame)
+        }
         if (subscription && subscription.pendingBlockUpdateFrame !== null) {
           cancelAnimationFrame(subscription.pendingBlockUpdateFrame)
         }
@@ -206,6 +269,62 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
           ...streamScopeDebug(subscription?.handlers.scope),
         })
       }
+    },
+  }
+}
+
+function coalescibleRuntimeTextDeltaKey(event: LocalExecutorEvent): string | null {
+  if (event.event !== 'response.output_text.delta') return null
+  const payload = asRecord(event.payload)
+  const data = asRecord(payload.data)
+  if (!stringField(data, 'delta')) return null
+  const taskId = stringField(payload, 'taskId')
+  const subtaskId = stringField(payload, 'subtaskId')
+  if (!taskId || !subtaskId) return null
+  const itemId = stringField(data, 'itemId') ?? stringField(data, 'item_id') ?? ''
+  const outputIndex = finiteNumberField(data, 'outputIndex', 'output_index')
+  const contentIndex = finiteNumberField(data, 'contentIndex', 'content_index')
+  return [
+    stringField(payload, 'deviceId') ?? '',
+    taskId,
+    subtaskId,
+    itemId,
+    outputIndex ?? '',
+    contentIndex ?? '',
+  ].join(':')
+}
+
+function mergeCoalescibleTextDeltas(
+  previous: LocalExecutorEvent | undefined,
+  next: LocalExecutorEvent
+): LocalExecutorEvent | null {
+  if (!previous) return next
+  const previousPayload = asRecord(previous.payload)
+  const previousData = asRecord(previousPayload.data)
+  const nextPayload = asRecord(next.payload)
+  const nextData = asRecord(nextPayload.data)
+  const previousDelta = stringField(previousData, 'delta')
+  const nextDelta = stringField(nextData, 'delta')
+  if (previousDelta === undefined || nextDelta === undefined) return null
+  const previousOffset = finiteNumberField(previousData, 'offset')
+  const nextOffset = finiteNumberField(nextData, 'offset')
+  if (
+    previousOffset !== undefined &&
+    nextOffset !== undefined &&
+    nextOffset !== previousOffset + previousDelta.length
+  ) {
+    return null
+  }
+  if ((previousOffset === undefined) !== (nextOffset === undefined)) return null
+  return {
+    ...next,
+    payload: {
+      ...nextPayload,
+      data: {
+        ...nextData,
+        delta: previousDelta + nextDelta,
+        ...(previousOffset !== undefined && { offset: previousOffset }),
+      },
     },
   }
 }
@@ -431,4 +550,12 @@ function asRecord(value: unknown): Record<string, unknown> {
 function stringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key]
   return typeof value === 'string' ? value : undefined
+}
+
+function finiteNumberField(record: Record<string, unknown>, ...keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+  }
+  return undefined
 }
