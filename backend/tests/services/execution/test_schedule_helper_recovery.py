@@ -123,7 +123,7 @@ async def test_schedule_marks_subtask_failed_when_recovery_returns_false():
 
 
 @pytest.mark.asyncio
-async def test_executor_pod_missing_returns_false_when_pod_alive():
+async def test_executor_pod_missing_returns_false_when_pod_alive() -> None:
     """A confirmed-alive pod should not trigger recovery."""
     from app.services.execution.schedule_helper import _executor_pod_missing
 
@@ -137,7 +137,7 @@ async def test_executor_pod_missing_returns_false_when_pod_alive():
 
 
 @pytest.mark.asyncio
-async def test_executor_pod_missing_returns_true_when_pod_gone():
+async def test_executor_pod_missing_returns_true_when_pod_gone() -> None:
     """executor_manager confirming 'No pod found' should trigger recovery."""
     from app.services.execution.schedule_helper import _executor_pod_missing
 
@@ -151,7 +151,7 @@ async def test_executor_pod_missing_returns_true_when_pod_gone():
 
 
 @pytest.mark.asyncio
-async def test_executor_pod_missing_treats_transport_error_as_alive():
+async def test_executor_pod_missing_treats_transport_error_as_alive() -> None:
     """Network/transport failures must not trigger spurious recovery."""
     from app.services.execution.schedule_helper import _executor_pod_missing
 
@@ -162,4 +162,3 @@ async def test_executor_pod_missing_treats_transport_error_as_alive():
         result = await _executor_pod_missing("executor-1", "default")
 
     assert result is False
-

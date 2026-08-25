@@ -263,9 +263,13 @@ async def _dispatch_task_async(task_id: int) -> None:
                 # A pod can disappear outside the cleanup path (OOM, eviction,
                 # manual delete); without this check dispatch would fail and
                 # the workspace archive would never be restored.
-                elif subtask.executor_name and await _executor_pod_missing(
-                    subtask.executor_name,
-                    subtask.executor_namespace,
+                elif (
+                    subtask.executor_name
+                    and not _extract_device_id_from_executor_name(subtask.executor_name)
+                    and await _executor_pod_missing(
+                        subtask.executor_name,
+                        subtask.executor_namespace,
+                    )
                 ):
                     logger.info(
                         "[schedule_dispatch] Executor pod missing, marking deleted "
