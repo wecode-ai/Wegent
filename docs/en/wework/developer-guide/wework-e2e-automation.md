@@ -135,15 +135,18 @@ checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
-`ci:all` still run the complete desktop suites. Core uses fifteen fixed GitHub
-Actions matrix jobs and Cloud uses twelve. Every job runs its
+`ci:all` still run the complete desktop suites. Core uses sixteen fixed GitHub
+Actions matrix jobs and Cloud uses thirteen. Every job runs its
 checkpoints serially so multiple real Electron, WebView, and Executor stacks do not
 contend for CPU and memory on the same GitHub runner and push normal asynchronous
-state beyond the shared 10-second step timeout. The twenty-seven matrix jobs still provide
+state beyond the shared 10-second step timeout. The twenty-nine matrix jobs still provide
 suite-level parallelism across runners. Shards are balanced from observed CI
 durations and capped to keep the complete suite inside its ten-minute critical-path
 budget; a new or materially slower checkpoint requires rebalancing instead of
-removing coverage or rerunning failures. CI first builds one Core Electron
+removing coverage or rerunning failures. The 2,200-delta Codex notification
+isolation stress case and the long plugin auto-update checkpoint each have a
+dedicated shard; the notification scenario uses a targeted 60-second render
+budget without changing the shared 10-second UI timeout. CI first builds one Core Electron
 application, Executor, and Codex artifact. Electron package preparation builds
 the Harness runtime, Node execution runtime, and Executor concurrently; the
 Harness preparation owns the single DSH application Vite build so the same
@@ -153,7 +156,7 @@ reuse both the `main`-owned Cargo target cache and sccache compiler units: the
 target cache bounds PR and first-run latency, while sccache reduces incremental
 compilation after dependency or source changes. Archiving strips Linux debug symbols only from the copied
 artifact binaries, leaving the original build outputs unchanged while reducing
-upload and download time across the twenty-seven shards. Desktop E2E and its cache
+upload and download time across the twenty-nine shards. Desktop E2E and its cache
 warmup explicitly set `WEWORK_EXECUTOR_PROFILE=debug` so test artifacts do not
 spend time optimizing the Executor. Release packaging leaves the variable unset
 and continues to build the `release` Executor by default. Desktop E2E builds

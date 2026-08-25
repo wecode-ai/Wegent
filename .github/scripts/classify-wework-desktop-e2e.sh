@@ -81,7 +81,7 @@ cloud_segments=(
 cloud_shards=(
   core-task-flow
   embedded-browser,cloud-worktree-device-restart,cloud-project-creation
-  goal-lifecycle,cloud-worktree-archive-restore,plugin-auto-update
+  goal-lifecycle,cloud-worktree-archive-restore
   rendering-extensions
   project-automation
   window-lifecycle
@@ -91,6 +91,7 @@ cloud_shards=(
   workspace-attachments,workspace-tabs,cloud-worktree-capability
   conversation-state,supervisor-lifecycle
   model-routing
+  plugin-auto-update
 )
 # Group checkpoints by observed Core CI duration so every serial shard stays
 # below the desktop suite's critical-path budget while reusing the same
@@ -102,7 +103,7 @@ core_shards=(
   model-routing,temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,permission-modes,tray-lifecycle
   conversation-state,project-ai-settings,offline-local-project-space,cloud-space-mention
-  claude-runtime,workspace-tabs,codex-notification-isolation,task-attachments
+  claude-runtime,workspace-tabs,task-attachments
   core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions
   project-automation
@@ -112,6 +113,7 @@ core_shards=(
   rendering-extensions
   runtime-task-queue,native-window-startup
   local-harness,running-conversation-history,native-window-chrome
+  codex-notification-isolation
 )
 
 validate_core_shards() {

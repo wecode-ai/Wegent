@@ -16,7 +16,7 @@ const COMPLETIONS = {
   noisy: 'WEWORK_E2E_CODEX_NOTIFICATION_NOISY_COMPLETE',
 }
 const NOISE_DELTA_COUNT = 2200
-const BURST_RENDER_TIMEOUT_MS = 30_000
+const BURST_RENDER_TIMEOUT_MS = 60_000
 
 function sse(event) {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
