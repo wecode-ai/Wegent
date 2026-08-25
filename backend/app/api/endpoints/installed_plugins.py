@@ -26,7 +26,7 @@ from app.core import security
 from app.core.config import settings
 from app.db.session import get_db_session
 from app.models.plugin_marketplace import Plugin, PluginDeviceInstallation
-from app.models.subtask import Subtask, SubtaskStatus
+from app.models.subtask import SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.device import DeviceCapabilitySyncResponse
@@ -68,6 +68,7 @@ from app.services.plugin_device_installation_service import (
 from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.plugin_package_storage import PluginPackageStorageError
+from app.stores.tasks import subtask_store, task_store
 
 router = APIRouter(tags=["plugins"])
 logger = logging.getLogger(__name__)
@@ -113,29 +114,24 @@ def _get_plugin_submission_auth(
     if token_info is None:
         return PluginSubmissionAuth(user=current_user)
 
-    task_exists = (
-        db.query(TaskResource.id)
-        .filter(
-            TaskResource.id == token_info.task_id,
-            TaskResource.user_id == current_user.id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-        )
-        .first()
-        is not None
+    task = task_store.get_task_by_states(
+        db,
+        task_id=token_info.task_id,
+        states=TaskResource.is_active_query(),
+        user_id=current_user.id,
     )
-    subtask_exists = (
-        db.query(Subtask.id)
-        .filter(
-            Subtask.id == token_info.subtask_id,
-            Subtask.task_id == token_info.task_id,
-            Subtask.user_id == current_user.id,
-            Subtask.status.in_(ACTIVE_PLUGIN_SUBMISSION_SUBTASK_STATUSES),
-        )
-        .first()
-        is not None
+    subtask = subtask_store.get_basic_by_id(
+        db,
+        subtask_id=token_info.subtask_id,
+        owner_user_id=current_user.id,
     )
-    if not task_exists or not subtask_exists:
+    if (
+        task is None
+        or subtask is None
+        or subtask.task_id != token_info.task_id
+        or subtask.user_id != current_user.id
+        or subtask.status not in ACTIVE_PLUGIN_SUBMISSION_SUBTASK_STATUSES
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Task token is no longer active",
