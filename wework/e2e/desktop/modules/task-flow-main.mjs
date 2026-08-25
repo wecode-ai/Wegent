@@ -2996,6 +2996,11 @@ last_updated = "2026-07-30T00:00:00Z"`
       await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      assert.equal(
+        await control.command('getText', '[data-testid="workspace-file-path"]'),
+        join(workspacePath, GIT_SEED_NAME),
+        'The encoded Markdown file link did not resolve to the workspace file path'
+      )
       await control.command('finishAnimations', 'body')
       await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const filePanelScrollerAfterOpen = await getSingleElementMetrics(
