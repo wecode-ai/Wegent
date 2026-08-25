@@ -768,6 +768,11 @@ export function useChatStreamHandlers({
             getFirstSearchParam(searchParams, ['taskId', 'task_id', 'taskid'])
           )
           if (completedTaskId && routeTaskId !== completedTaskId) {
+            console.info('[useChatStreamHandlers][task-route] Repairing task id', {
+              route_task_id: Number.isFinite(routeTaskId) && routeTaskId > 0 ? routeTaskId : null,
+              resolved_task_id: completedTaskId,
+              pathname: pathname ?? null,
+            })
             if (taskType === 'knowledge' && knowledgeBaseId) {
               navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
             } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
@@ -1545,6 +1550,12 @@ export function useChatStreamHandlers({
                 getFirstSearchParam(searchParams, ['taskId', 'task_id', 'taskid'])
               )
               if (completedTaskId && routeTaskId !== completedTaskId) {
+                console.info('[useChatStreamHandlers][task-route] Repairing task id', {
+                  route_task_id:
+                    Number.isFinite(routeTaskId) && routeTaskId > 0 ? routeTaskId : null,
+                  resolved_task_id: completedTaskId,
+                  pathname: pathname ?? null,
+                })
                 if (taskType === 'knowledge' && knowledgeBaseId) {
                   navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
                 } else {

@@ -10,6 +10,7 @@ for multi-worker deployments.
 """
 
 import logging
+from typing import Any
 
 import socketio
 
@@ -25,6 +26,45 @@ SOCKETIO_PING_TIMEOUT = 20  # seconds
 SOCKETIO_MAX_HTTP_BUFFER_SIZE = 1000000  # 1MB
 
 
+class TracingAsyncRedisManager(socketio.AsyncRedisManager):
+    """Trace async card events before Socket.IO forwards them."""
+
+    async def _handle_emit(self, message: dict[str, Any]) -> None:
+        event = message.get("event")
+        if event in {"chat:block_created", "chat:block_updated", "chat:done"}:
+            namespace = message.get("namespace") or "/"
+            room = message.get("room")
+            data = message.get("data")
+            payload = data[0] if isinstance(data, list) and data else {}
+            if not isinstance(payload, dict):
+                payload = {}
+            block = payload.get("block")
+            if not isinstance(block, dict):
+                result = payload.get("result")
+                blocks = result.get("blocks") if isinstance(result, dict) else None
+                block = blocks[0] if isinstance(blocks, list) and blocks else {}
+            participant_count = (
+                sum(1 for _ in self.get_participants(namespace, room)) if room else 0
+            )
+            source = "local" if message.get("host_id") == self.host_id else "redis"
+            logger.info(
+                "[socketio_emit] Forwarding source=%s event=%s room=%s "
+                "participants=%s task_id=%s subtask_id=%s block_id=%s "
+                "status=%s card_status=%s",
+                source,
+                event,
+                room,
+                participant_count,
+                payload.get("task_id"),
+                payload.get("subtask_id"),
+                payload.get("block_id") or block.get("id"),
+                payload.get("status") or block.get("status"),
+                payload.get("card_status") or block.get("card_status"),
+            )
+
+        await super()._handle_emit(message)
+
+
 def create_socketio_server() -> socketio.AsyncServer:
     """
     Create and configure the Socket.IO server instance.
@@ -38,7 +78,7 @@ def create_socketio_server() -> socketio.AsyncServer:
     redis_url = settings.REDIS_URL
 
     try:
-        mgr = socketio.AsyncRedisManager(redis_url)
+        mgr = TracingAsyncRedisManager(redis_url)
         logger.info(f"Socket.IO Redis manager initialized with {redis_url}")
     except Exception as e:
         logger.warning(

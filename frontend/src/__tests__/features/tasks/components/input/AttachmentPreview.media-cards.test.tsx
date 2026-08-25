@@ -89,7 +89,7 @@ describe('AttachmentPreview sent media cards', () => {
       'src',
       'https://backend.example.com/attachments/1#t=0.001'
     )
-    expect(screen.queryByText('material.mp4')).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'material.mp4' })).toBeInTheDocument()
   })
 
   it('uses the resolved first-frame cover when available', async () => {

@@ -220,6 +220,14 @@ export function reduceChatBlockUpdatedEvent({
       block.status === 'done' ||
       (block.type === 'card' &&
         (block.card_status === 'populated' || block.card_status === 'error'))
+    console.info('[TaskStateMachine][block_updated] Created missing assistant message', {
+      task_id: state.taskId,
+      subtask_id: event.subtaskId,
+      block_id: block.id,
+      block_type: block.type,
+      card_status: block.type === 'card' ? block.card_status : null,
+      terminal: isTerminalBlock,
+    })
     const messages = new Map(state.messages)
     messages.set(aiMessageId, {
       id: aiMessageId,

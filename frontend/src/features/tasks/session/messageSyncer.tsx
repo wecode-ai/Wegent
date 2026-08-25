@@ -34,6 +34,68 @@ import { generateMessageId, TaskStateMachine } from '@wegent/chat-core'
 import type { TaskStateMachineDeps, UnifiedMessage } from '@wegent/chat-core'
 import DOMPurify from 'dompurify'
 
+type ChatEventDiagnosticLevel = 'info' | 'warn'
+type ChatEventDiagnosticValue = string | number | boolean | null
+type ChatEventDiagnosticEntry = {
+  timestamp: string
+  level: ChatEventDiagnosticLevel
+  event: string
+  data: Record<string, ChatEventDiagnosticValue>
+}
+
+declare global {
+  interface Window {
+    __WEGENT_CHAT_EVENT_LOG__?: ChatEventDiagnosticEntry[]
+  }
+}
+
+function recordChatEventDiagnostic(
+  level: ChatEventDiagnosticLevel,
+  event: string,
+  data: Record<string, ChatEventDiagnosticValue>
+): void {
+  const message = `[messageSyncer][${event}]`
+  console[level](message, data)
+
+  if (typeof window === 'undefined') return
+
+  const entries = window.__WEGENT_CHAT_EVENT_LOG__ ?? []
+  entries.push({
+    timestamp: new Date().toISOString(),
+    level,
+    event,
+    data,
+  })
+  window.__WEGENT_CHAT_EVENT_LOG__ = entries.slice(-100)
+}
+
+function recordBlockStateDiagnostic(
+  machine: TaskStateMachine,
+  event: 'block_created' | 'block_updated',
+  taskId: number,
+  subtaskId: number,
+  blockId: string
+): void {
+  const message = machine.getState().messages.get(generateMessageId('ai', subtaskId))
+  const blocks = message?.result?.blocks ?? []
+  const targetBlock = blocks.find(block => block.id === blockId)
+
+  recordChatEventDiagnostic('info', `${event}:state`, {
+    task_id: taskId,
+    subtask_id: subtaskId,
+    block_id: blockId,
+    message_found: Boolean(message),
+    message_status: message?.status ?? null,
+    block_count: blocks.length,
+    target_found: Boolean(targetBlock),
+    block_type: targetBlock?.type ?? null,
+    card_status:
+      targetBlock?.type === 'card' && 'card_status' in targetBlock
+        ? (targetBlock.card_status ?? null)
+        : null,
+  })
+}
+
 /**
  * Request parameters for sending a chat message
  */
@@ -221,9 +283,24 @@ export function useMessageSyncer({
       const { task_id, subtask_id, bot_name, shell_type, message_id } = data
 
       const machine = getMachineForTask(task_id)
-      machine?.handleChatStart(subtask_id, shell_type, message_id, bot_name)
+      if (!machine) {
+        recordChatEventDiagnostic('warn', 'chat:start:ignored', {
+          task_id,
+          active_task_id: getMachine()?.getState().taskId ?? null,
+          subtask_id,
+          message_id: message_id ?? null,
+        })
+        return
+      }
+
+      recordChatEventDiagnostic('info', 'chat:start:applied', {
+        task_id,
+        subtask_id,
+        message_id: message_id ?? null,
+      })
+      machine.handleChatStart(subtask_id, shell_type, message_id, bot_name)
     },
-    [getMachineForTask]
+    [getMachine, getMachineForTask]
   )
 
   /**
@@ -414,11 +491,31 @@ export function useMessageSyncer({
       }
 
       const machine = getMachineForTask(taskId)
-      if (machine) {
-        machine.handleChatBlockUpdated(subtask_id, block as MessageBlock)
+      if (!machine) {
+        recordChatEventDiagnostic('warn', 'block_created:ignored', {
+          task_id: taskId,
+          active_task_id: getMachine()?.getState().taskId ?? null,
+          subtask_id,
+          block_id: block.id,
+          block_type: block.type,
+          card_status: 'card_status' in block ? (block.card_status ?? null) : null,
+        })
+        return
+      }
+
+      recordChatEventDiagnostic('info', 'block_created:received', {
+        task_id: taskId,
+        subtask_id,
+        block_id: block.id,
+        block_type: block.type,
+        card_status: 'card_status' in block ? (block.card_status ?? null) : null,
+      })
+      machine.handleChatBlockUpdated(subtask_id, block as MessageBlock)
+      if (block.type === 'card') {
+        recordBlockStateDiagnostic(machine, 'block_created', taskId, subtask_id, block.id)
       }
     },
-    [getMachineForTask]
+    [getMachine, getMachineForTask]
   )
 
   /**
@@ -480,11 +577,35 @@ export function useMessageSyncer({
       }
 
       const machine = getMachineForTask(taskId)
-      if (machine) {
-        machine.handleChatBlockUpdated(subtask_id, blockUpdate)
+      if (!machine) {
+        recordChatEventDiagnostic('warn', 'block_updated:ignored', {
+          task_id: taskId,
+          active_task_id: getMachine()?.getState().taskId ?? null,
+          subtask_id,
+          block_id,
+          block_type: card_type ? 'card' : null,
+          card_status: card_status ?? null,
+          status: mappedStatus ?? null,
+        })
+        return
+      }
+
+      if (mappedStatus === 'done' || card_status === 'populated' || card_status === 'error') {
+        recordChatEventDiagnostic('info', 'block_updated:terminal', {
+          task_id: taskId,
+          subtask_id,
+          block_id,
+          block_type: card_type ? 'card' : null,
+          card_status: card_status ?? null,
+          status: mappedStatus ?? null,
+        })
+      }
+      machine.handleChatBlockUpdated(subtask_id, blockUpdate)
+      if (card_id !== undefined || card_type !== undefined || card_status !== undefined) {
+        recordBlockStateDiagnostic(machine, 'block_updated', taskId, subtask_id, block_id)
       }
     },
-    [getMachineForTask]
+    [getMachine, getMachineForTask]
   )
 
   // Register WebSocket event handlers
