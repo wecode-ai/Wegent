@@ -19,11 +19,14 @@ import { AttachmentBadges } from '@/components/chat/composer/AttachmentBadges'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
 import { Tooltip } from '@/components/ui/tooltip'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
+import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { releaseAttachmentPreview } from '@/lib/attachments'
+import { resolveRuntimeTaskProjects } from '@/lib/runtime-project'
+import { resolveRuntimeTaskWorkspaceBinding } from '@/lib/runtime-task-workspace-binding'
 import { cn } from '@/lib/utils'
-import type { Attachment, ProjectWithTasks } from '@/types/api'
-import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import type { Attachment, ProjectWithTasks, RuntimeTaskCreateRequest } from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 import { issueDraftFromText } from './issueComposerDraft'
@@ -47,7 +50,7 @@ interface IssueComposerProps {
     description: string
     files: File[]
     createTask: boolean
-    localProjectId: number | null
+    taskRequest?: RuntimeTaskCreateRequest
     continueCreating?: boolean
     status?: CloudLoopItem['status']
     priority?: CloudLoopItem['priority']
@@ -177,11 +180,40 @@ export function IssueComposer({
   const [creationMode, setCreationMode] = useState<'issue' | 'task'>(
     draft?.creationMode ?? initialMode
   )
+  const projectRuntimeWork = workbench?.state?.runtimeWork ?? {
+    projects: localProjects.map(project => ({
+      project: {
+        key: `local-project-${project.id}`,
+        id: project.id,
+        name: project.name,
+        description: project.description,
+        kind: 'local',
+        source: 'local_project',
+      },
+      deviceWorkspaces: [],
+      totalTasks: project.tasks?.length ?? 0,
+    })),
+    chats: [],
+    totalTasks: 0,
+  }
+  const runtimeTaskProjects = resolveRuntimeTaskProjects(localProjects, projectRuntimeWork)
   const [localProjectId, setLocalProjectId] = useState<number | null>(
-    draft?.localProjectId ?? initialLocalProjectId ?? localProjects[0]?.id ?? null
+    draft?.localProjectId ?? initialLocalProjectId ?? runtimeTaskProjects[0]?.id ?? null
   )
   const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(null)
-  const selectedLocalProject = localProjects.find(project => project.id === localProjectId) ?? null
+  const [executionMode, setExecutionMode] = useState(
+    () => workbench?.projectExecutionMode ?? 'current_workspace'
+  )
+  const [worktreeBranch, setWorktreeBranch] = useState<string | null>(
+    () => workbench?.projectWorktreeBranch ?? null
+  )
+  const selectedLocalProject =
+    runtimeTaskProjects.find(project => project.id === localProjectId) ?? null
+  const selectedWorkspaceBinding = resolveRuntimeTaskWorkspaceBinding({
+    runtimeWork: projectRuntimeWork,
+    projectUiId: localProjectId,
+    deviceWorkspaceId: localDeviceWorkspaceId,
+  })
   const selectLocalProject = (projectId: number | null) => {
     setLocalProjectId(projectId)
     setLocalDeviceWorkspaceId(null)
@@ -208,22 +240,6 @@ export function IssueComposer({
     { id: 'pending', name: t('todo.status_pending', '待处理') },
     { id: 'in_progress', name: t('todo.status_in_progress', '进行中') },
   ]
-  const projectRuntimeWork = workbench?.state?.runtimeWork ?? {
-    projects: localProjects.map(project => ({
-      project: {
-        key: `local-project-${project.id}`,
-        id: project.id,
-        name: project.name,
-        description: project.description,
-        kind: 'local',
-        source: 'local_project',
-      },
-      deviceWorkspaces: [],
-      totalTasks: project.tasks?.length ?? 0,
-    })),
-    chats: [],
-    totalTasks: 0,
-  }
   const [stagedAttachments, setStagedAttachments] = useState<StagedIssueAttachment[]>(() =>
     restoredFiles.map((file, index) => ({
       attachment: attachmentFromFile(file, -(index + 1)),
@@ -395,12 +411,45 @@ export function IssueComposer({
       description,
     }
     if (!boardKey || !submittedDraft.title || busy) return false
+    const selectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
+    const selectedModelOptions =
+      projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+    const executionModel = selectedModelExecutionFields(selectedModel, selectedModelOptions)
     const created = await onCreate({
       boardKey,
       ...submittedDraft,
       files: stagedAttachments.map(item => item.file),
       createTask: creationMode === 'task',
-      localProjectId: creationMode === 'task' ? localProjectId : null,
+      ...(creationMode === 'task'
+        ? {
+            taskRequest: {
+              schemaVersion: 2,
+              runtime: 'codex',
+              message: description,
+              ...(selectedWorkspaceBinding ?? {}),
+              ...(executionMode === 'git_worktree'
+                ? {
+                    execution: {
+                      workspace: {
+                        source: 'git_worktree' as const,
+                        ...(worktreeBranch?.trim() ? { branch: worktreeBranch.trim() } : {}),
+                      },
+                    },
+                  }
+                : {}),
+              ...executionModel,
+              modelSelection:
+                selectedModel && executionModel.modelId
+                  ? {
+                      modelName: executionModel.modelId,
+                      modelType: executionModel.modelType ?? selectedModel.type,
+                      options: executionModel.modelOptions ?? {},
+                    }
+                  : null,
+              additionalSkills: projectChat.selectedSkills,
+            },
+          }
+        : {}),
       ...(keepOpen ? { continueCreating: true } : {}),
       ...(status !== 'inbox' ? { status } : {}),
       ...(priority !== 'none' ? { priority } : {}),
@@ -464,9 +513,9 @@ export function IssueComposer({
     setFullScreen(false)
   }
   const fallbackProjectWork: ProjectWorkControls | undefined =
-    localProjects.length > 0
+    runtimeTaskProjects.length > 0
       ? {
-          projects: localProjects,
+          projects: runtimeTaskProjects,
           devices: [],
           runtimeWork: projectRuntimeWork,
           currentProject: selectedLocalProject,
@@ -498,8 +547,18 @@ export function IssueComposer({
         submitButtonTestId="workspace-issue-submit"
         variant="desktop"
         projectChat={projectChat}
-        projectWork={resolvedProjectWork}
-        showProjectWorkBar={creationMode === 'task' && localProjects.length > 0}
+        projectWork={
+          resolvedProjectWork
+            ? {
+                ...resolvedProjectWork,
+                executionMode,
+                worktreeBranch,
+                onExecutionModeChange: setExecutionMode,
+                onWorktreeBranchChange: setWorktreeBranch,
+              }
+            : undefined
+        }
+        showProjectWorkBar={creationMode === 'task' && runtimeTaskProjects.length > 0}
         showExecutionTools={creationMode === 'task'}
         showWorkspaceMenu={false}
         toolbarLeadingContext={

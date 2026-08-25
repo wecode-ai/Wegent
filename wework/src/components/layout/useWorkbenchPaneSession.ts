@@ -59,6 +59,7 @@ import type {
   RuntimeRollbackRequest,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
   RuntimeTurnNavigationItem,
 } from '@/types/api'
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
@@ -131,6 +132,7 @@ interface RuntimePaneSendOptions {
   modelSelection?: ModelSelectionConfig | null
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   onRuntimeTaskCreated?: (address: RuntimeTaskAddress) => void
   onRuntimeTaskReady?: (address: RuntimeTaskAddress) => void
@@ -2021,6 +2023,7 @@ export function useWorkbenchPaneSession({
             codeCommentContexts,
             additionalContext: options.additionalContext,
             cloudProjectId: options.cloudProjectId,
+            origin: options.origin,
             ...(options.runtime ? { runtime: options.runtime } : {}),
             ...(options.runtimeExecutablePath
               ? { runtimeExecutablePath: options.runtimeExecutablePath }
@@ -2070,6 +2073,7 @@ export function useWorkbenchPaneSession({
             initialGoal: pendingInitialGoal,
             additionalContext: resolvedAdditionalContext,
             cloudProjectId: options.cloudProjectId,
+            origin: options.origin,
             initialSupervisor: options.initialSupervisor,
             ...(options.runtime ? { runtime: options.runtime } : {}),
             ...(options.runtimeExecutablePath

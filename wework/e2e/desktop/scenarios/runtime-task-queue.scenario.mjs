@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { access } from 'node:fs/promises'
 
+import { ensureProjectExpandedInActiveSidebar } from '../modules/project-sidebar.mjs'
 import { createSingleRootLocalProject } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -130,63 +131,6 @@ async function prepareScreenshot(control, hoverSelector = '[data-testid="new-cha
   await new Promise(resolve => setTimeout(resolve, 500))
 }
 
-async function ensureRuntimeProjectExpanded(control, timeoutMs) {
-  let sidebarSelector = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar"]`
-  const visibleSidebarCount = Number(
-    await control.command('getElementCount', sidebarSelector, { visible: true })
-  )
-  let requireVisible = visibleSidebarCount > 0
-  if (visibleSidebarCount === 0) {
-    const hoverEdgeSelector = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar-hover-edge"]`
-    const hoverEdgeCount = Number(await control.command('getElementCount', hoverEdgeSelector))
-    if (hoverEdgeCount > 0) {
-      await control.command('hover', hoverEdgeSelector)
-      sidebarSelector = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar-preview-panel"]`
-      requireVisible = true
-      await control.command('waitFor', sidebarSelector, {
-        timeoutMs,
-        visible: true,
-      })
-    }
-  }
-  const visibleProjectsToggleSelector = `${sidebarSelector} [data-testid="projects-section-toggle"]`
-  const projectButtonSelector = `${sidebarSelector} [data-testid="project-item-button"]`
-  await control.command('waitFor', visibleProjectsToggleSelector, {
-    timeoutMs,
-    visible: requireVisible,
-  })
-  await control.command('scrollIntoView', visibleProjectsToggleSelector)
-  const projectsSectionExpanded = await control.command(
-    'getAttribute',
-    visibleProjectsToggleSelector,
-    {
-      value: 'aria-expanded',
-      visible: requireVisible,
-    }
-  )
-  if (projectsSectionExpanded !== 'true') {
-    await control.command('click', visibleProjectsToggleSelector, { visible: requireVisible })
-  }
-  await control.command('waitFor', projectButtonSelector, {
-    timeoutMs,
-    visible: requireVisible,
-  })
-  await control.command('scrollIntoView', projectButtonSelector)
-  const projectExpanded = await control.command('getAttribute', projectButtonSelector, {
-    value: 'aria-expanded',
-    visible: requireVisible,
-  })
-  if (projectExpanded !== 'true') {
-    await control.command('click', projectButtonSelector, { visible: requireVisible })
-  }
-  await control.command('waitFor', `${projectButtonSelector}[aria-expanded="true"]`, {
-    timeoutMs,
-    visible: requireVisible,
-  })
-  await new Promise(resolve => setTimeout(resolve, 350))
-  return { requireVisible, sidebarSelector }
-}
-
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   let active = false
   const requests = []
@@ -312,7 +256,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }
       )
       const { requireVisible: sidebarVisible, sidebarSelector } =
-        await ensureRuntimeProjectExpanded(control, uiTimeoutMs)
+        await ensureProjectExpandedInActiveSidebar(control, { timeoutMs: uiTimeoutMs })
       await control.command(
         'scrollIntoView',
         `${sidebarSelector} [data-testid="runtime-local-task-queued-${second.taskId}"]`
@@ -525,7 +469,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await waitForRequestCount(requests, 5, uiTimeoutMs)
       await control.command('click', '[data-testid="settings-back-button"]')
       const { requireVisible: refreshedSidebarVisible, sidebarSelector: refreshedSidebarSelector } =
-        await ensureRuntimeProjectExpanded(control, uiTimeoutMs)
+        await ensureProjectExpandedInActiveSidebar(control, { timeoutMs: uiTimeoutMs })
       await control.command(
         'waitFor',
         `${refreshedSidebarSelector} [data-testid="runtime-local-task-running-${fifth.taskId}"]`,

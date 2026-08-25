@@ -17,7 +17,7 @@ from pydantic import (
 )
 
 from app.schemas.cloud_project import CloudProjectResponse, SnowflakeId
-from app.schemas.issue_workflow import IssueWorkflowInstance
+from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionConfig
 from app.schemas.tagging import MAX_TAGS_PER_ITEM
 from app.schemas.tagging import normalize_tags as _normalize_tags
 
@@ -34,6 +34,7 @@ class LoopItemCreate(BaseModel):
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
+    execution_config: WorkflowExecutionConfig | None = None
 
     _normalize = field_validator("tags", mode="before")(_normalize_tags)
 
@@ -65,6 +66,7 @@ class LoopItemUpdate(BaseModel):
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
+    execution_config: WorkflowExecutionConfig | None = None
 
     _normalize = field_validator("tags", mode="before")(
         lambda value: None if value is None else _normalize_tags(value)
@@ -111,6 +113,7 @@ class LoopItemResponse(BaseModel):
     assignee_team_id: int | None = None
     assignee_team_name: str | None = None
     ai_state: dict[str, Any] | None = None
+    execution_id: int | None = None
     execution_state: str | None = None
     execution_control_state: str | None = None
     execution_observed_state: str | None = None
@@ -126,6 +129,7 @@ class LoopItemResponse(BaseModel):
     execution_error: str | None = None
     automation: dict[str, Any] | None = None
     workflow: IssueWorkflowInstance | None = None
+    execution_config: WorkflowExecutionConfig | None = None
     priority: str
     due_at: datetime | None
     sort_order: int
@@ -194,6 +198,15 @@ class LoopItemResponse(BaseModel):
                     else None
                 )
             )
+            execution_config = (
+                value.get("execution_config")
+                if value.get("execution_config") is not None
+                else (
+                    metadata.get("execution_config")
+                    if isinstance(metadata.get("execution_config"), dict)
+                    else None
+                )
+            )
             queued_at_value = value.get("queued_at")
             if isinstance(queued_at_value, datetime):
                 queued_at = queued_at_value.isoformat()
@@ -214,6 +227,7 @@ class LoopItemResponse(BaseModel):
                 "status_history": status_history,
                 "approval": approval,
                 "workflow": workflow,
+                "execution_config": execution_config,
                 "queued_at": queued_at,
                 "execution_note": (
                     value.get("execution_note")

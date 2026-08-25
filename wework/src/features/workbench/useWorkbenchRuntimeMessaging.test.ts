@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { Attachment, DeviceInfo } from '@/types/api'
 import {
+  buildRuntimeTaskCreateHandle,
   friendlyTitleForTask,
   loadTemporaryChatSource,
   prepareRuntimeAttachmentsForDevice,
@@ -10,6 +11,30 @@ import {
   runtimeThreadId,
   titleModelForGeneration,
 } from './useWorkbenchRuntimeMessaging'
+
+describe('buildRuntimeTaskCreateHandle', () => {
+  test('keeps board ownership in the optimistic runtime address', () => {
+    expect(
+      buildRuntimeTaskCreateHandle(null, {
+        cloudProjectId: 'project-1',
+        origin: {
+          type: 'board_task',
+          cloudProjectId: 'project-1',
+          loopItemId: 'ISSUE-1',
+          projectStore: 'backend',
+        },
+      })
+    ).toEqual({
+      cloudProjectId: 'project-1',
+      origin: {
+        type: 'board_task',
+        cloudProjectId: 'project-1',
+        loopItemId: 'ISSUE-1',
+        projectStore: 'backend',
+      },
+    })
+  })
+})
 
 describe('resolveRuntimeTaskCreateWorkspacePath', () => {
   test('keeps the source path for a current-workspace task without a response path', () => {

@@ -1,5 +1,5 @@
-import { joinDevicePath } from '@/lib/device-workspace-path'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
+import { buildConversationWorkspacePath } from '@/lib/runtime-conversation-workspace'
 import {
   normalizeRuntimeWorkspacePath,
   runtimeProjectToProject,
@@ -23,9 +23,6 @@ export const STANDALONE_PROJECT_ID = 0
 export const EMPTY_MESSAGE_TASK_TITLE = '新对话'
 export const MAX_RUNTIME_TASK_TITLE_LENGTH = 60
 
-const DEFAULT_CONVERSATION_WORKSPACE_NAME = 'new-chat'
-const MAX_CONVERSATION_WORKSPACE_NAME_LENGTH = 20
-
 export async function createConversationWorkspace(
   deviceApi: {
     createDirectory: (deviceId: string, path: string) => Promise<void>
@@ -39,47 +36,6 @@ export async function createConversationWorkspace(
   const workspacePath = buildConversationWorkspacePath(homeDirectory, message, taskId)
   await deviceApi.createDirectory(deviceId, workspacePath)
   return workspacePath
-}
-
-function buildConversationWorkspacePath(
-  homeDirectory: string,
-  message: string,
-  taskId: string
-): string {
-  return joinDevicePath(
-    homeDirectory,
-    'Documents',
-    'Codex',
-    formatConversationWorkspaceDate(new Date()),
-    conversationWorkspaceName(message, taskId)
-  )
-}
-
-function formatConversationWorkspaceDate(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function slugifyConversationWorkspaceName(message: string): string {
-  const words = message.match(/[A-Za-z0-9]+/g) ?? []
-  const name = words.length > 0 ? words.map(word => word.toLowerCase()).join('-') : ''
-  return trimConversationWorkspaceName(name || DEFAULT_CONVERSATION_WORKSPACE_NAME)
-}
-
-function conversationWorkspaceName(message: string, taskId: string): string {
-  const suffix = taskId
-    .replace(/[^A-Za-z0-9]+/g, '')
-    .slice(-8)
-    .toLowerCase()
-  const name = slugifyConversationWorkspaceName(message)
-  return suffix ? `${name}-${suffix}` : name
-}
-
-function trimConversationWorkspaceName(name: string): string {
-  const trimmed = name.slice(0, MAX_CONVERSATION_WORKSPACE_NAME_LENGTH).replace(/-+$/g, '')
-  return trimmed || DEFAULT_CONVERSATION_WORKSPACE_NAME
 }
 
 export function getRuntimeTaskRouteKey(route: RuntimeTaskRoute): string {

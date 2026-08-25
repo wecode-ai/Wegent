@@ -45,6 +45,7 @@ export interface EnvironmentInfo {
   deletions: string
   executionTarget: 'local' | 'cloud' | 'remote'
   isGitRepository?: boolean
+  executionDeviceId?: string
   deviceId?: string
   workspacePath?: string
   workspaceRoots?: string[]
