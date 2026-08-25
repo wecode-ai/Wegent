@@ -120,11 +120,6 @@ jest.mock('@/features/tasks/components/message/thinking/ThinkingDisplay', () => 
   },
 }))
 
-jest.mock('@/features/tasks/components/clarification/ClarificationForm', () => ({
-  __esModule: true,
-  default: () => null,
-}))
-
 jest.mock('@/features/tasks/components/clarification', () => ({
   AskUserForm: () => null,
 }))
@@ -371,6 +366,46 @@ describe('MessageBubble', () => {
 
     expect(mockMixedContentView).toHaveBeenCalledWith(
       expect.objectContaining({ onAskUserSubmit: latestSubmit })
+    )
+  })
+
+  it('renders card blocks when the message text contains a final-format keyword', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$正在合成最终视频',
+      timestamp: new Date('2026-08-25T13:15:41Z').getTime(),
+      subtaskStatus: 'COMPLETED',
+      status: 'completed',
+      result: {
+        blocks: [
+          {
+            id: 'card-video',
+            type: 'card',
+            status: 'done',
+            card_id: 'card-video',
+            card_type: 'video_director_generation',
+            card_status: 'populated',
+            card_data: {},
+          },
+        ],
+      },
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+      />
+    )
+
+    expect(mockMixedContentView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: [expect.objectContaining({ id: 'card-video', type: 'card' })],
+      })
     )
   })
 

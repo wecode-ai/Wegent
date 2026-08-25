@@ -57,7 +57,11 @@ export function VideoDirectorGenerationCard({
   const isFailed = block.card_status === 'error'
   const isCompleted = block.card_status === 'populated'
   const progress = Math.min(100, Math.max(0, preview.progress || 0))
-  const title = card.title || preview.title || t('cards.video_director.title')
+  const title =
+    card.title ||
+    (isCompleted
+      ? t('cards.video_director.completed')
+      : preview.title || t('cards.video_director.title'))
   const detailUrl = safeCardUrl(card.link)
   const videoUrl = safeCardMediaUrl(card.video_url || preview.video_url)
   const coverUrl = safeCardMediaUrl(card.cover_url || preview.cover_url)
