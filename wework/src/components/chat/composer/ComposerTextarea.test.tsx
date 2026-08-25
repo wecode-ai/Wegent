@@ -661,7 +661,7 @@ describe('ComposerTextarea', () => {
     expect(videoIcon).toHaveTextContent('W')
   })
 
-  test('preloads callable plugins before the slash menu opens', async () => {
+  test('loads callable plugins when the slash menu opens', async () => {
     const textareaRef = createRef<HTMLElement>()
     const onListLocalApps = vi.fn().mockResolvedValue([GITHUB_PLUGIN])
 
@@ -679,7 +679,7 @@ describe('ComposerTextarea', () => {
       />
     )
 
-    await waitFor(() => expect(onListLocalApps).toHaveBeenCalledTimes(1))
+    expect(onListLocalApps).not.toHaveBeenCalled()
     expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument()
 
     const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }

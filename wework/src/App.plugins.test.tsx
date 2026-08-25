@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -15,6 +16,9 @@ import App from './App'
 const localCodexPluginMocks = vi.hoisted(() => ({
   listInstalledPlugins: vi.fn(),
   listSkills: vi.fn(),
+}))
+const workbenchProviderMocks = vi.hoisted(() => ({
+  mounts: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/window', () => ({
@@ -503,10 +507,15 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   WorkbenchProvider: ({
     children,
     onStartupReadyChange,
+    prewarmComposerApps,
   }: {
     children: React.ReactNode
     onStartupReadyChange?: (ready: boolean) => void
+    prewarmComposerApps?: boolean
   }) => {
+    useEffect(() => {
+      workbenchProviderMocks.mounts(prewarmComposerApps)
+    }, [prewarmComposerApps])
     queueMicrotask(() => onStartupReadyChange?.(true))
     return <>{children}</>
   },
@@ -890,6 +899,7 @@ describe('App plugins route', () => {
     vi.mocked(workbenchValue.startNewSkillChat).mockReset().mockResolvedValue(false)
     localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue({ items: [] })
     localCodexPluginMocks.listSkills.mockReset().mockResolvedValue([])
+    workbenchProviderMocks.mounts.mockClear()
     localPathMocks.exists.mockReset().mockResolvedValue(false)
     mockSystemSkillsFetch()
   })
@@ -897,6 +907,16 @@ describe('App plugins route', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
     vi.unstubAllGlobals()
+  })
+
+  test('mounts only the active task workbench during startup', async () => {
+    window.history.pushState({}, '', '/')
+
+    renderApp()
+
+    await screen.findByTestId('app-shell')
+    await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
+    expect(workbenchProviderMocks.mounts).toHaveBeenCalledWith(true)
   })
 
   test('opens the plugins page from the desktop sidebar', async () => {

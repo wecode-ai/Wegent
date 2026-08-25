@@ -11,6 +11,7 @@ interface UseWorkbenchSkillsOptions {
   api: WorkbenchSkillApi
   teamId?: number | null
   locked: boolean
+  enabled?: boolean
   scopeKey?: string
 }
 
@@ -28,6 +29,7 @@ export function useWorkbenchSkills({
   api,
   teamId,
   locked,
+  enabled = true,
   scopeKey = DEFAULT_SKILL_SCOPE_KEY,
 }: UseWorkbenchSkillsOptions) {
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
@@ -43,6 +45,8 @@ export function useWorkbenchSkills({
   )
 
   useEffect(() => {
+    if (!enabled) return
+
     let cancelled = false
 
     async function loadSkills() {
@@ -68,9 +72,11 @@ export function useWorkbenchSkills({
     return () => {
       cancelled = true
     }
-  }, [api])
+  }, [api, enabled])
 
   useEffect(() => {
+    if (!enabled) return
+
     let cancelled = false
 
     async function loadTeamSkills() {
@@ -104,7 +110,7 @@ export function useWorkbenchSkills({
     return () => {
       cancelled = true
     }
-  }, [api, teamId])
+  }, [api, enabled, teamId])
 
   const selectedSkillNames = useMemo(
     () => selectedSkills.map(skill => skill.name),
@@ -153,15 +159,15 @@ export function useWorkbenchSkills({
   )
 
   return {
-    skills,
-    teamSkillNames,
-    preloadedSkillNames,
+    skills: enabled ? skills : [],
+    teamSkillNames: enabled ? teamSkillNames : [],
+    preloadedSkillNames: enabled ? preloadedSkillNames : [],
     selectedSkills,
     selectedSkillNames,
     setSelectedSkills,
     setSelectedSkillsForScope,
     toggleSkill,
-    isLoading: isLoading || isTeamSkillsLoading,
-    error,
+    isLoading: enabled && (isLoading || isTeamSkillsLoading),
+    error: enabled ? error : null,
   }
 }
