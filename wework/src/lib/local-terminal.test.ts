@@ -6,9 +6,11 @@ import {
   getLocalPathKind,
   isLocalHarnessAvailable,
   isLocalTerminalAvailable,
+  listLocalWorkspaceOpeners,
   localPathExists,
   openLocalFile,
   openLocalWorkspace,
+  pickLocalWorkspaceOpenerExe,
   resizeLocalTerminal,
   startLocalTerminal,
   writeLocalTerminal,
@@ -131,14 +133,28 @@ describe('Electron local terminal', () => {
   })
 
   test('opens local paths through Electron host capabilities', async () => {
-    mocks.desktopHost.mockResolvedValue(undefined)
+    mocks.desktopHost
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce([
+        { id: 'vscode', category: 'general', available: true, label: 'VS Code' },
+        { id: 'file-manager', category: 'fileManager', available: true },
+      ])
+      .mockResolvedValueOnce('C:\\Tools\\Helix\\hx.exe')
 
-    await openLocalWorkspace({ opener: 'file-manager', path: ' /Users/me/project ' })
+    await openLocalWorkspace({ opener: 'vscode', path: ' /Users/me/project ' })
     await openLocalFile(' /Users/me/project/readme.md ')
+    await expect(listLocalWorkspaceOpeners()).resolves.toEqual([
+      { id: 'vscode', category: 'general', available: true, label: 'VS Code' },
+      { id: 'file-manager', category: 'fileManager', available: true },
+    ])
+    await expect(pickLocalWorkspaceOpenerExe()).resolves.toBe('C:\\Tools\\Helix\\hx.exe')
 
     expect(mocks.desktopHost.mock.calls).toEqual([
-      ['shell.openPath', { path: '/Users/me/project' }],
+      ['workspace.open', { opener: 'vscode', path: '/Users/me/project' }],
       ['shell.openPath', { path: '/Users/me/project/readme.md' }],
+      ['workspace.listOpeners'],
+      ['workspace.pickOpener'],
     ])
   })
 

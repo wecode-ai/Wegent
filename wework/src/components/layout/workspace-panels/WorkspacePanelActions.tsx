@@ -177,6 +177,12 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       string | undefined
     >
 
+  const refreshLocalWorkspaceOpeners = async () => {
+    const availability = await listLocalWorkspaceOpeners()
+    setOpenerAvailability(buildAvailabilityMap(availability))
+    setOpenerLabels(buildLabelMap(availability))
+  }
+
   useEffect(() => {
     if (!localWorkspaceEnabled) return
     let cancelled = false
@@ -365,6 +371,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             }
             labels={openerLabels}
             onChooseOther={handleChooseOther}
+            onOpen={refreshLocalWorkspaceOpeners}
             onSelect={handleOpenLocalWorkspace}
           />
         </div>

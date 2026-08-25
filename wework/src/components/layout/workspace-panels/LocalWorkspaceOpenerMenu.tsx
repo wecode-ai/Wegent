@@ -40,6 +40,7 @@ interface LocalWorkspaceOpenerPickerProps {
   availability: Record<LocalWorkspaceOpenerId, boolean | undefined>
   labels?: Record<string, string | undefined>
   onChooseOther?: () => void | Promise<void>
+  onOpen?: () => void | Promise<void>
   onSelect: (opener: LocalWorkspaceOpenerId) => void | Promise<void>
 }
 
@@ -55,6 +56,7 @@ export function LocalWorkspaceOpenerPicker({
   availability,
   labels,
   onChooseOther,
+  onOpen,
   onSelect,
 }: LocalWorkspaceOpenerPickerProps) {
   const { t } = useTranslation('common')
@@ -126,7 +128,7 @@ export function LocalWorkspaceOpenerPicker({
     }
   }, [open])
 
-  const toggleOpen = (event: MouseEvent<HTMLButtonElement>) => {
+  const toggleOpen = async (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
 
     if (open) {
@@ -135,6 +137,7 @@ export function LocalWorkspaceOpenerPicker({
       return
     }
 
+    await onOpen?.()
     setPosition(null)
     setOpen(true)
   }
@@ -155,7 +158,7 @@ export function LocalWorkspaceOpenerPicker({
         ref={buttonRef}
         type="button"
         data-testid={buttonTestId}
-        onClick={toggleOpen}
+        onClick={event => void toggleOpen(event)}
         disabled={disabled}
         className={buttonClassName}
         aria-label={ariaLabel}
