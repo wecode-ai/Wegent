@@ -1,7 +1,12 @@
 import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
-import { createStartupSplash, type StartupSplashWindow } from './startup-splash.js'
+import {
+  createStartupSplash,
+  resolveStartupSplashTheme,
+  type StartupSplashTheme,
+  type StartupSplashWindow,
+} from './startup-splash.js'
 
 class FakeSplashWindow implements StartupSplashWindow {
   private readonly listeners = new Map<string, () => void>()
@@ -34,7 +39,7 @@ class FakeSplashWindow implements StartupSplashWindow {
   }
 }
 
-function createFixture() {
+function createFixture(theme: StartupSplashTheme = 'light') {
   const target = new FakeSplashWindow()
   const createWindow = vi.fn(() => target)
   const writePng = vi.fn(async () => undefined)
@@ -42,6 +47,7 @@ function createFixture() {
   const splash = createStartupSplash({
     createWindow,
     htmlPath: '/app/startup-splash/index.html',
+    theme,
     now: () => timestamp++,
     writePng,
   })
@@ -70,7 +76,8 @@ describe('StartupSplash', () => {
     expect(html).toContain('aria-valuemax="3"')
     expect(styles).toContain('@keyframes robot-bob')
     expect(styles).toContain('@keyframes working-arm')
-    expect(styles).toContain('@media (prefers-color-scheme: dark)')
+    expect(html).toContain('document.documentElement.dataset.theme = theme')
+    expect(styles).toContain(":root[data-theme='dark']")
     expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
     expect(script).toContain('const stages =')
     expect(script).toContain('requestAnimationFrame(animateMorph)')
@@ -92,12 +99,12 @@ describe('StartupSplash', () => {
         height: 260,
         show: false,
         frame: false,
-        transparent: true,
+        transparent: false,
         resizable: false,
         alwaysOnTop: true,
         skipTaskbar: true,
         hasShadow: false,
-        backgroundColor: '#00000000',
+        backgroundColor: '#fafafa',
         webPreferences: {
           contextIsolation: true,
           nodeIntegration: false,
@@ -105,13 +112,16 @@ describe('StartupSplash', () => {
         },
       })
     )
-    expect(target.loadFile).toHaveBeenCalledWith('/app/startup-splash/index.html')
+    expect(target.loadFile).toHaveBeenCalledWith('/app/startup-splash/index.html', {
+      query: { theme: 'light' },
+    })
     expect(target.show).toHaveBeenCalledOnce()
     expect(target.webContents.executeJavaScript).toHaveBeenCalledWith(
       expect.stringContaining('dataset.animationReady')
     )
     expect(snapshot).toEqual({
       state: 'visible',
+      theme: 'light',
       events: [
         { name: 'created', timestamp: 100 },
         { name: 'shown', timestamp: 101 },
@@ -123,6 +133,29 @@ describe('StartupSplash', () => {
         visible: true,
       },
     })
+  })
+
+  test('uses the saved dark appearance for the native window and splash document', async () => {
+    const { createWindow, splash, target } = createFixture('dark')
+
+    await splash.show()
+
+    expect(createWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backgroundColor: '#171717',
+      })
+    )
+    expect(target.loadFile).toHaveBeenCalledWith('/app/startup-splash/index.html', {
+      query: { theme: 'dark' },
+    })
+  })
+
+  test('resolves explicit appearance modes before falling back to the system theme', () => {
+    expect(resolveStartupSplashTheme('light', true)).toBe('light')
+    expect(resolveStartupSplashTheme('dark', false)).toBe('dark')
+    expect(resolveStartupSplashTheme('system', true)).toBe('dark')
+    expect(resolveStartupSplashTheme('system', false)).toBe('light')
+    expect(resolveStartupSplashTheme(undefined, true)).toBe('dark')
   })
 
   test('does not capture or write files during a production close', async () => {
