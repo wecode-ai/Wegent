@@ -1697,26 +1697,12 @@ export function useWorkbenchPaneSession({
         return
       }
 
-      setQueuedMessages(messages =>
-        messages.map(message =>
-          message.id === id
-            ? {
-                ...message,
-                status: 'sending',
-                deliveryMode: 'guidance',
-                error: undefined,
-                notice: '正在引导当前对话',
-              }
-            : message
-        )
-      )
-
       try {
         const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
         const messageAttachments = queuedMessage.attachments ?? []
         const attachmentIds = remoteAttachmentIds(messageAttachments)
         const attachments = localRuntimeAttachments(messageAttachments)
-        const result = await sendRuntimePaneGuidance({
+        const guidanceRequest = sendRuntimePaneGuidance({
           address: currentRuntimeTask,
           message: queuedMessage.content,
           clientGuidanceId: id,
@@ -1724,6 +1710,20 @@ export function useWorkbenchPaneSession({
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(additionalContext ? { additionalContext } : {}),
         })
+        setQueuedMessages(messages =>
+          messages.map(message =>
+            message.id === id
+              ? {
+                  ...message,
+                  status: 'sending',
+                  deliveryMode: 'guidance',
+                  error: undefined,
+                  notice: '正在引导当前对话',
+                }
+              : message
+          )
+        )
+        const result = await guidanceRequest
         if (result.sent) {
           markRuntimeTerminalAdditionalContextDelivered(additionalContext)
           if (result.turnId) {
