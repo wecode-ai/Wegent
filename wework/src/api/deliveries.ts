@@ -340,6 +340,7 @@ export interface CloudProject {
     prompt: string
   }
   workflow_definition?: ProjectWorkflowDefinition
+  workflow_automation_id?: string | null
   created_by_user_id: number
   current_user_id?: number
   current_user_name?: string

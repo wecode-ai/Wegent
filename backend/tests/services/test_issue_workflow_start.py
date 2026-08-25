@@ -74,6 +74,28 @@ def workflow(*, advancement_policy: str = "manual") -> dict:
     }
 
 
+@pytest.mark.parametrize(
+    ("advancement_policy", "status", "expected"),
+    [
+        ("manual", "inbox", False),
+        ("manual", "pending", True),
+        ("manual", "in_progress", True),
+        ("ai", "inbox", True),
+    ],
+)
+def test_should_start_after_creation_matches_workflow_entry_semantics(
+    advancement_policy: str,
+    status: str,
+    expected: bool,
+) -> None:
+    item = SimpleNamespace(
+        status=status,
+        metadata_json={"workflow": workflow(advancement_policy=advancement_policy)},
+    )
+
+    assert issue_workflow_start_service.should_start_after_creation(item) is expected
+
+
 @pytest.mark.asyncio
 async def test_start_runs_only_ready_automated_stages(
     monkeypatch: pytest.MonkeyPatch,
@@ -271,12 +293,16 @@ async def test_continue_does_not_restart_ai_orchestration(
 async def test_start_dispatches_ai_coordinator_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    process = AsyncMock(return_value=1)
+    run_manager = AsyncMock(return_value={"id": "automation-run-1"})
     planning_run = SimpleNamespace(
         id="workflow-run-1",
         metadata_json={"plan_version": 1},
     )
-    monkeypatch.setattr(project_automation_processor, "process", process)
+    monkeypatch.setattr(
+        project_automation_service,
+        "run_ai_workflow_manager",
+        run_manager,
+    )
     monkeypatch.setattr(
         issue_workflow_planning_service,
         "ensure_run",
@@ -309,10 +335,10 @@ async def test_start_dispatches_ai_coordinator_once(
     )
 
     assert started == 1
-    process.assert_awaited_once()
-    assert process.await_args.kwargs["automation_id"] == "ai-manager-rule"
-    assert process.await_args.args[1].payload["workflow_run_id"] == planning_run.id
-    assert process.await_args.args[1].payload["execution_config"]["model"] == "model-1"
+    run_manager.assert_awaited_once()
+    assert run_manager.await_args.kwargs["automation_id"] == "ai-manager-rule"
+    assert run_manager.await_args.kwargs["workflow_run_id"] == planning_run.id
+    assert run_manager.await_args.kwargs["execution_config"]["model"] == "model-1"
 
     monkeypatch.setattr(issue_workflow_start_service, "_has_run", lambda *_args: True)
     assert (
@@ -324,7 +350,7 @@ async def test_start_dispatches_ai_coordinator_once(
         )
         == 0
     )
-    process.assert_awaited_once()
+    run_manager.assert_awaited_once()
 
 
 @pytest.mark.asyncio

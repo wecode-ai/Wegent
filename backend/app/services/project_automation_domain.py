@@ -209,7 +209,10 @@ def validate_trigger(
             )
         next_run(str(cron_expression), "UTC", utcnow())
         return
-    if trigger_type == "event" and event_type == "task.created":
+    if trigger_type == "event" and event_type in {
+        "task.created",
+        "task.status_changed",
+    }:
         return
     if trigger_type == "workflow" and event_type is None and cron_expression is None:
         return

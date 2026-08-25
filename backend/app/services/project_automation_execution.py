@@ -29,6 +29,11 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.schemas.delivery import LoopItemCreate
+from app.schemas.issue_workflow import (
+    IssueWorkflowInstance,
+    ProjectWorkflowDefinition,
+    instantiate_workflow,
+)
 from app.schemas.project_chat import LoopItemAssign
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_item_executions.service import loop_item_execution_service
@@ -100,7 +105,28 @@ class ProjectAutomationExecution:
             project = db.get(CloudProject, rule.cloud_project_id)
             if owner is None or project is None:
                 raise RuntimeError("Automation owner or project is unavailable")
+            run_metadata = metadata(run)
+            if not text(run_metadata.get("task_origin")):
+                run_metadata["task_origin"] = (
+                    "existing_issue" if run.task_id else "automation_created"
+                )
+                run.metadata_json = run_metadata
             self._ensure_run_task(db, project=project, owner=owner, rule=rule, run=run)
+            workflow_definition = (
+                None
+                if run_metadata.get("bypass_workflow_definition")
+                else self._workflow_definition(rule)
+            )
+            if workflow_definition is not None:
+                await self._dispatch_workflow(
+                    db,
+                    owner=owner,
+                    project=project,
+                    rule=rule,
+                    run=run,
+                    definition=workflow_definition,
+                )
+                return
             context = self._automation_context(db, rule, run)
             instruction = self._run_instruction(rule, run)
             configured_mode = assignment_mode(metadata(rule))
@@ -160,6 +186,140 @@ class ProjectAutomationExecution:
                 run.id,
             )
             self._fail_run(db, run_id=str(run.id), error=str(exc) or "Dispatch failed")
+
+    @staticmethod
+    def _workflow_definition(
+        rule: ProjectAutomationRule,
+    ) -> ProjectWorkflowDefinition | None:
+        event_config = metadata(rule).get("event_config")
+        if not isinstance(event_config, dict):
+            return None
+        raw_definition = event_config.get("runtime_workflow_definition")
+        if not isinstance(raw_definition, dict):
+            return None
+        return ProjectWorkflowDefinition.model_validate(raw_definition)
+
+    async def _dispatch_workflow(
+        self,
+        db: Session,
+        *,
+        owner: User,
+        project: CloudProject,
+        rule: ProjectAutomationRule,
+        run: ProjectAutomationRun,
+        definition: ProjectWorkflowDefinition,
+    ) -> None:
+        if not run.task_id:
+            raise RuntimeError("Workflow automation task is unavailable")
+        item = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.id == run.task_id,
+                LoopItem.cloud_project_id == project.id,
+                loop_datetime_is_unset(LoopItem.deleted_at),
+            )
+            .with_for_update()
+            .one_or_none()
+        )
+        if item is None:
+            raise RuntimeError("Workflow automation requires a local Issue")
+
+        item_metadata = dict(item.metadata_json or {})
+        existing_binding = item_metadata.get("workflow_automation")
+        if isinstance(existing_binding, dict) and existing_binding.get("run_id") == str(
+            run.id
+        ):
+            return
+        existing_workflow = item_metadata.get("workflow")
+        run_metadata = metadata(run)
+        adopt_existing_workflow = (
+            text(run_metadata.get("task_origin")) == "existing_issue"
+            and isinstance(existing_workflow, dict)
+            and not isinstance(existing_binding, dict)
+        )
+        workflow = (
+            IssueWorkflowInstance.model_validate(existing_workflow)
+            if adopt_existing_workflow
+            else instantiate_workflow(definition)
+        )
+        item_metadata["workflow"] = workflow.model_dump(mode="json")
+        item_metadata["workflow_automation"] = {
+            "rule_id": str(rule.id),
+            "run_id": str(run.id),
+        }
+        item.metadata_json = item_metadata
+        item.version += 1
+        run.status = "running"
+        run_metadata["workflow_definition_version"] = definition.version
+        run.metadata_json = run_metadata
+        run.version += 1
+        db.commit()
+        db.refresh(item)
+        db.refresh(run)
+
+        from app.services.issue_workflow_start import issue_workflow_start_service
+
+        started = await issue_workflow_start_service.start(
+            db,
+            item=item,
+            project=project,
+            user_id=owner.id,
+        )
+        from app.services.project_workflow_projection import (
+            sync_workflow_automation_nodes,
+            sync_workflow_automation_status,
+        )
+
+        current_metadata = (
+            item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        )
+        current_workflow = current_metadata.get("workflow")
+        orchestration_status = (
+            str(current_workflow.get("orchestration_status") or "")
+            if isinstance(current_workflow, dict)
+            else ""
+        )
+        if workflow.advancement_policy == "manual":
+            current_nodes = (
+                current_workflow.get("nodes")
+                if isinstance(current_workflow, dict)
+                else None
+            )
+            sync_workflow_automation_nodes(
+                db,
+                item,
+                [dict(node) for node in current_nodes or [] if isinstance(node, dict)],
+            )
+        elif orchestration_status == "failed":
+            sync_workflow_automation_status(
+                db,
+                item,
+                run_status="failed",
+                description="Issue workflow failed",
+            )
+        elif orchestration_status == "completed":
+            sync_workflow_automation_status(
+                db,
+                item,
+                run_status="succeeded",
+            )
+        else:
+            sync_workflow_automation_status(
+                db,
+                item,
+                run_status="running",
+            )
+        db.commit()
+        logger.info(
+            "[ProjectAutomation] Workflow dispatched rule=%s run=%s item=%s "
+            "nodes=%s started=%s adopted=%s",
+            rule.id,
+            run.id,
+            item.id,
+            len(workflow.nodes),
+            started,
+            adopt_existing_workflow,
+        )
 
     def _ensure_run_task(
         self,
@@ -1463,7 +1623,7 @@ class ProjectAutomationProcessor:
         *,
         automation_id: str | None = None,
     ) -> int:
-        if event.event_type != "task.created":
+        if event.event_type not in {"task.created", "task.status_changed"}:
             logger.info(
                 "[ProjectAutomation] Ignoring unsupported event=%s", event.event_type
             )
@@ -1478,9 +1638,7 @@ class ProjectAutomationProcessor:
         workflow = event.payload.get("workflow")
         deferred_automation_id = (
             str(workflow.get("ai_automation_rule_id") or "")
-            if isinstance(workflow, dict)
-            and workflow.get("advancement_policy") == "ai"
-            and isinstance(workflow.get("execution_config"), dict)
+            if isinstance(workflow, dict) and workflow.get("advancement_policy") == "ai"
             else ""
         )
         dispatched = 0

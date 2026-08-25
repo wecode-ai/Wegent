@@ -1194,8 +1194,6 @@ describe('CloudTodoWorkspace', () => {
     expect(cloudApi.listLoopItems).not.toHaveBeenCalled()
     expect(cloudApi.listCloudProjectMembers).not.toHaveBeenCalled()
     expect(cloudApi.listCloudFiles).not.toHaveBeenCalled()
-    expect(localServices.modelApi.listModels).toHaveBeenCalled()
-    expect(localServices.deviceApi.listDevices).toHaveBeenCalled()
   })
 
   it('resets project-specific view state when a controlled project changes externally', async () => {
@@ -1261,8 +1259,7 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click(await screen.findByTestId('cloud-project-automation-view'))
-    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
-    expect(screen.getByTestId('cloud-project-chat-agent-save')).toBeInTheDocument()
+    expect(await screen.findByTestId('project-automation-view')).toBeInTheDocument()
 
     view.rerender(
       <CloudTodoWorkspace
@@ -1272,7 +1269,6 @@ describe('CloudTodoWorkspace', () => {
     )
 
     expect(screen.getByTestId('project-automation-view')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-project-chat-agent-save')).toBeInTheDocument()
   })
 
   it('opens project-space settings from the root navigation', async () => {
@@ -2785,208 +2781,6 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.type(screen.getByTestId('cloud-project-task-search-input'), 'missing')
     expect(screen.getByText('没有匹配的任务')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
-  })
-
-  it('stores a Wework runtime AI as a project chat agent', async () => {
-    const workbenchServices = services()
-    workbenchServices.projectChatAgentApi = {
-      list: vi.fn(async () => []),
-      create: vi.fn(async () => ({
-        id: 'agent-1',
-        projectId: project.id,
-        name: '新 AI',
-        runtime: 'codex',
-        model: 'gpt-5-codex',
-        systemPrompt: '',
-        status: 'active',
-        version: 1,
-        createdAt: '',
-        updatedAt: '',
-      })),
-      update: vi.fn(),
-    }
-
-    render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[]}
-        services={workbenchServices}
-      />
-    )
-
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
-    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
-    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-device'))
-    await userEvent.click(
-      await screen.findByTestId('cloud-project-chat-agent-device-option-local-device')
-    )
-    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
-    await userEvent.click(
-      await screen.findByTestId('cloud-project-chat-agent-model-option-runtime:gpt-5-codex')
-    )
-    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
-
-    await waitFor(() => expect(workbenchServices.projectChatAgentApi!.list).toHaveBeenCalled())
-    await waitFor(() =>
-      expect(workbenchServices.projectChatAgentApi!.create).toHaveBeenCalledWith(
-        11,
-        expect.objectContaining({ model: 'gpt-5-codex' })
-      )
-    )
-    expect(await screen.findByTestId('cloud-project-chat-agent-agent-1')).toBeInTheDocument()
-  })
-
-  it('limits project AI management to one active AI', async () => {
-    const workbenchServices = services()
-    workbenchServices.projectChatAgentApi = {
-      list: vi.fn(async () => [
-        {
-          id: 'agent-1',
-          projectId: project.id,
-          name: '项目 AI',
-          runtime: 'codex',
-          model: null,
-          systemPrompt: '',
-          status: 'active',
-          visibility: 'creator_admin',
-          executionEnvironment: 'local',
-          executionMode: 'auto',
-          createdByUserId: 1,
-          createdByUserName: 'local',
-          version: 1,
-          createdAt: '',
-          updatedAt: '',
-        },
-      ]),
-      create: vi.fn(async () => ({
-        id: 'agent-2',
-        projectId: project.id,
-        name: '项目 AI',
-        runtime: 'codex',
-        model: 'gpt-5-codex',
-        systemPrompt: '',
-        status: 'active',
-        visibility: 'creator_admin',
-        executionEnvironment: 'local',
-        executionMode: 'auto',
-        createdByUserId: 1,
-        createdByUserName: 'local',
-        version: 1,
-        createdAt: '',
-        updatedAt: '',
-      })),
-      update: vi.fn(),
-    }
-
-    render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[]}
-        services={workbenchServices}
-      />
-    )
-
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
-    const addButton = await screen.findByTestId('cloud-project-chat-agent-add')
-
-    expect(await screen.findByTestId('cloud-project-chat-agent-agent-1')).toHaveTextContent(
-      '项目 AI'
-    )
-    expect(addButton).not.toBeDisabled()
-    await userEvent.click(addButton)
-    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-device'))
-    await userEvent.click(
-      await screen.findByTestId('cloud-project-chat-agent-device-option-local-device')
-    )
-    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-model'))
-    await userEvent.click(
-      await screen.findByTestId('cloud-project-chat-agent-model-option-runtime:gpt-5-codex')
-    )
-    await userEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
-    await waitFor(() =>
-      expect(screen.getByTestId('cloud-project-chat-agent-agent-2')).toBeInTheDocument()
-    )
-    expect(workbenchServices.projectChatAgentApi!.create).toHaveBeenCalledTimes(1)
-  })
-
-  it('renders project AI and the execution queue inside the automation tab', async () => {
-    const workbenchServices = services()
-    workbenchServices.projectChatAgentApi = {
-      list: vi.fn(async () => [
-        {
-          id: 'agent-1',
-          projectId: project.id,
-          name: '项目 AI',
-          runtime: 'codex',
-          model: null,
-          systemPrompt: '',
-          status: 'active',
-          visibility: 'creator_admin',
-          executionEnvironment: 'local',
-          executionMode: 'auto',
-          createdByUserId: 1,
-          createdByUserName: 'local',
-          version: 1,
-          createdAt: '',
-          updatedAt: '',
-        },
-      ]),
-      create: vi.fn(),
-      update: vi.fn(),
-    }
-
-    render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[]}
-        services={workbenchServices}
-      />
-    )
-
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    expect(screen.queryByTestId('cloud-project-queue-view')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
-
-    expect(await screen.findByTestId('project-automation-view')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-project-chat-agents')).toBeInTheDocument()
-    expect(await screen.findByTestId('project-queue-view')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByTestId('project-queue-column-me')).toBeInTheDocument())
-  })
-
-  it('keeps the automation queue loaded across unrelated workspace re-renders', async () => {
-    const workbenchServices = services()
-    workbenchServices.projectChatAgentApi = {
-      list: vi.fn(async () => []),
-      create: vi.fn(),
-      update: vi.fn(),
-    }
-    const listExecutions = workbenchServices.deliveryApi!.listLoopItemExecutions as ReturnType<
-      typeof vi.fn
-    >
-
-    render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[]}
-        services={workbenchServices}
-      />
-    )
-
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
-    await waitFor(() => expect(listExecutions).toHaveBeenCalledTimes(1))
-
-    // Opening and closing the global search re-renders the workspace. The
-    // queue must not restart its load (which previously flashed the spinner)
-    // just because the parent re-rendered.
-    await userEvent.keyboard('{Meta>}k{/Meta}')
-    await waitFor(() => expect(screen.getByTestId('cloud-global-search')).toBeInTheDocument())
-    await userEvent.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByTestId('cloud-global-search')).not.toBeInTheDocument())
-
-    expect(listExecutions).toHaveBeenCalledTimes(1)
   })
 
   it('shows the automation tab for local project spaces', async () => {

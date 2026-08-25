@@ -501,7 +501,9 @@ async def create_loop_item(
         )
     if created.internal_item is not None:
         db.refresh(created.internal_item)
-        if created.internal_item.status in {"pending", "in_progress"}:
+        if issue_workflow_start_service.should_start_after_creation(
+            created.internal_item
+        ):
             await issue_workflow_start_service.start(
                 db,
                 item=created.internal_item,
@@ -965,6 +967,39 @@ async def update_loop_item(
 
         background_tasks.add_task(consume_queues_background)
         db.refresh(item)
+    if "status" in values.model_fields_set and previous_status != item.status:
+        from app.services.project_automations import (
+            ProjectAutomationEvent,
+            project_automation_processor,
+        )
+
+        try:
+            await project_automation_processor.process(
+                db,
+                ProjectAutomationEvent(
+                    event_type="task.status_changed",
+                    project_id=str(item.cloud_project_id),
+                    subject_id=str(item.id),
+                    source="board",
+                    actor_user_id=current_user.id,
+                    payload={
+                        **_loop_item_response(db, item, current_user).model_dump(
+                            mode="json"
+                        ),
+                        "previous_status": previous_status,
+                    },
+                ),
+            )
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "Project automation processing failed after task status change "
+                "project=%s task=%s previous_status=%s status=%s",
+                item.cloud_project_id,
+                item.id,
+                previous_status,
+                item.status,
+            )
     publish_loop_item_changed(
         db,
         item=item,

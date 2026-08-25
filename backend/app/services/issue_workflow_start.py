@@ -15,9 +15,7 @@ from app.models.delivery import (
 )
 from app.schemas.issue_workflow import IssueWorkflowInstance
 from app.services.issue_workflow_planning import issue_workflow_planning_service
-from app.services.project_automation_domain import ProjectAutomationEvent
 from app.services.project_automations import (
-    project_automation_processor,
     project_automation_service,
 )
 
@@ -26,6 +24,16 @@ logger = logging.getLogger(__name__)
 
 class IssueWorkflowStartService:
     """Enter an Issue's snapshotted orchestration exactly once."""
+
+    def should_start_after_creation(self, item: LoopItem) -> bool:
+        """Return whether a newly created Issue should start its workflow."""
+
+        workflow = self._workflow(item)
+        if workflow is None:
+            return False
+        if workflow.advancement_policy == "ai":
+            return True
+        return item.status in {"pending", "in_progress"}
 
     async def start(
         self,
@@ -142,37 +150,22 @@ class IssueWorkflowStartService:
                 planning_run.id,
             )
             return 0
-        started = await project_automation_processor.process(
+        started_run = await project_automation_service.run_ai_workflow_manager(
             db,
-            ProjectAutomationEvent(
-                event_type="task.created",
-                project_id=str(project.id),
-                subject_id=str(item.id),
-                source=project.task_provider,
-                actor_user_id=user_id,
-                payload={
-                    "id": str(item.id),
-                    "title": item.title,
-                    "description": item.description,
-                    "status": item.status,
-                    "priority": item.priority,
-                    "workflow_run_id": planning_run.id,
-                    "workflow_plan_version": (planning_run.metadata_json or {}).get(
-                        "plan_version"
-                    ),
-                    "execution_config": (
-                        workflow.execution_config.model_dump(mode="json", by_alias=True)
-                        if workflow.execution_config
-                        else None
-                    ),
-                    "tags": list(
-                        (item.metadata_json or {}).get("tags", [])
-                        if isinstance(item.metadata_json, dict)
-                        else []
-                    ),
-                },
-            ),
+            project_id=str(project.id),
             automation_id=rule_id,
+            item=item,
+            workflow_run_id=str(planning_run.id),
+            workflow_plan_version=(planning_run.metadata_json or {}).get(
+                "plan_version"
+            ),
+            user_id=user_id,
+            coordinator_prompt=workflow.coordinator_prompt,
+            execution_config=(
+                workflow.execution_config.model_dump(mode="json", by_alias=True)
+                if workflow.execution_config
+                else None
+            ),
         )
         logger.info(
             "[issue-workflow-start] AI workflow dispatched item=%s rule=%s "
@@ -180,9 +173,9 @@ class IssueWorkflowStartService:
             item.id,
             rule_id,
             planning_run.id,
-            started,
+            started_run.get("id"),
         )
-        return started
+        return 1
 
     async def _start_ready_stages(
         self,

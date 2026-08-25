@@ -1,5 +1,6 @@
 import type { HttpClient } from './http'
 import type { LocalLoopItemExecution } from './local/localDelivery'
+import type { ProjectWorkflowDefinition } from './deliveries'
 
 export type ProjectAutomationRunStatus =
   | 'pending'
@@ -18,7 +19,7 @@ interface ProjectAutomationRuleBase {
   name: string
   prompt: string
   triggerType: 'schedule' | 'event' | 'workflow'
-  eventType: 'task.created' | null
+  eventType: 'task.created' | 'task.status_changed' | null
   eventConfig: Record<string, unknown>
   webhookEventId: string | null
   webhookSecret: string | null
@@ -72,7 +73,7 @@ interface ProjectAutomationInputBase {
   name: string
   prompt: string
   triggerType: 'schedule' | 'event' | 'workflow'
-  eventType: 'task.created' | null
+  eventType: 'task.created' | 'task.status_changed' | null
   eventConfig: Record<string, unknown>
   cronExpression: string | null
   timezone: string
@@ -91,6 +92,17 @@ export interface ProjectAutomationInput extends ProjectAutomationInputBase {
   model: string | null
   executionEnvironment: 'local' | 'cloud' | null
   executionDeviceId: string | null
+}
+
+export interface ProjectAutomationWorkflowMigrationResult {
+  automation: ProjectAutomationRule
+  projectVersion: number
+  workflowAutomationId: string
+}
+
+export interface ProjectAutomationDeleteResult {
+  projectVersion: number
+  workflowAutomationId: string | null
 }
 
 function cloudExecution(row: Record<string, unknown>): LocalLoopItemExecution {
@@ -229,6 +241,19 @@ export function createProjectAutomationApi(client: HttpClient) {
         input
       )
     },
+    migrateWorkflow(
+      projectId: string,
+      input: {
+        projectVersion: number
+        automation: ProjectAutomationInput
+        workflowDefinition: ProjectWorkflowDefinition
+      }
+    ) {
+      return client.post<ProjectAutomationWorkflowMigrationResult>(
+        `/v1/cloud-projects/${projectId}/automations/migrate-workflow`,
+        input
+      )
+    },
     update(
       projectId: string,
       automationId: string,
@@ -240,7 +265,9 @@ export function createProjectAutomationApi(client: HttpClient) {
       )
     },
     delete(projectId: string, automationId: string) {
-      return client.delete<void>(`/v1/cloud-projects/${projectId}/automations/${automationId}`)
+      return client.delete<ProjectAutomationDeleteResult>(
+        `/v1/cloud-projects/${projectId}/automations/${automationId}`
+      )
     },
     rotateWebhookSecret(projectId: string, automationId: string) {
       return client.post<ProjectAutomationRule>(

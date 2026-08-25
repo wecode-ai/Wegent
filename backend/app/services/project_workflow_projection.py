@@ -14,9 +14,11 @@ from app.models.delivery import (
     ProjectAutomationRun,
     ProjectWorkflowRun,
     loop_datetime_is_unset,
+    loop_unset_datetime_for_connection,
 )
 from app.schemas.issue_workflow import workflow_node_execution_mode
 from app.services.loop_item_unread import advance_content_revision
+from app.services.project_automation_domain import utcnow
 
 COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
 SUCCESS_TASK_STATUSES = {"succeeded", "archived"}
@@ -220,10 +222,11 @@ def update_workflow_task_status(
         nodes.append(node)
     if not changed:
         return item
-    return apply_workflow_nodes(item, workflow=workflow, nodes=nodes)
+    return apply_workflow_nodes(db, item, workflow=workflow, nodes=nodes)
 
 
 def apply_workflow_nodes(
+    db: Session,
     item: LoopItem,
     *,
     workflow: dict,
@@ -259,7 +262,69 @@ def apply_workflow_nodes(
     else:
         item.status = "pending"
     item.version += 1
+    sync_workflow_automation_nodes(db, item, nodes)
     return item
+
+
+def sync_workflow_automation_nodes(
+    db: Session,
+    item: LoopItem,
+    nodes: list[dict],
+) -> None:
+    required = [node for node in nodes if node.get("required", True)]
+    failed = [node for node in required if node.get("status") == "failed"]
+    if failed:
+        next_status = "failed"
+        next_description = str(
+            failed[0].get("execution_error") or "Workflow node failed"
+        )
+    elif not required or all(
+        node.get("status") in COMPLETED_NODE_STATUSES for node in required
+    ):
+        next_status = "succeeded"
+        next_description = ""
+    else:
+        next_status = "running"
+        next_description = ""
+    sync_workflow_automation_status(
+        db,
+        item,
+        run_status=next_status,
+        description=next_description,
+    )
+
+
+def sync_workflow_automation_status(
+    db: Session,
+    item: LoopItem,
+    *,
+    run_status: str,
+    description: str = "",
+) -> None:
+    """Project one Issue workflow state onto its owning automation run."""
+
+    metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
+    binding = metadata.get("workflow_automation")
+    run_id = binding.get("run_id") if isinstance(binding, dict) else None
+    if not isinstance(run_id, str) or not run_id:
+        return
+    run = db.get(ProjectAutomationRun, run_id)
+    if run is None or str(run.task_id or "") != str(item.id):
+        return
+    next_status = (
+        run_status if run_status in {"running", "succeeded", "failed"} else "running"
+    )
+    next_description = description[:2000] if next_status == "failed" else ""
+    if run.status == next_status and (run.description or "") == next_description:
+        return
+    run.status = next_status
+    run.description = next_description
+    run.completed_at = (
+        utcnow()
+        if next_status in {"succeeded", "failed"}
+        else loop_unset_datetime_for_connection(db.connection(), "completed_at")
+    )
+    run.version += 1
 
 
 def update_workflow_node(
@@ -305,7 +370,7 @@ def update_workflow_node(
 
     if not changed:
         return item
-    return apply_workflow_nodes(item, workflow=workflow, nodes=nodes)
+    return apply_workflow_nodes(db, item, workflow=workflow, nodes=nodes)
 
 
 def sync_automation_workflow_node(
@@ -399,4 +464,10 @@ def _sync_ai_planning_run(
     issue_metadata["workflow"] = next_workflow
     issue.metadata_json = issue_metadata
     issue.version += 1
+    sync_workflow_automation_status(
+        db,
+        issue,
+        run_status="failed",
+        description=workflow_run.description,
+    )
     return issue

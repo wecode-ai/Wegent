@@ -905,7 +905,57 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     )
 
     assert updated.status_code == 200
-    process.assert_awaited_once()
+    assert process.await_count == 2
+    status_event = process.await_args_list[1].args[1]
+    assert status_event.event_type == "task.status_changed"
+    assert status_event.subject_id == created["id"]
+
+
+def test_issue_created_in_inbox_starts_its_existing_workflow(
+    test_client: TestClient,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = AsyncMock(return_value=0)
+    start = AsyncMock(return_value=1)
+    monkeypatch.setattr(
+        "app.services.project_automations.project_automation_processor.process",
+        process,
+    )
+    monkeypatch.setattr(
+        deliveries_endpoint.issue_workflow_start_service,
+        "start",
+        start,
+    )
+
+    response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={
+            "title": "Start inbox workflow",
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "stage_mode": "none",
+                "advancement_policy": "ai",
+                "coordinator_prompt": "",
+                "approval_policy": "automatic",
+                "ai_automation_rule_id": "rule-1",
+                "execution_config": None,
+                "orchestration_status": "idle",
+                "active_run_id": None,
+                "active_plan_version": None,
+                "current_stage_id": None,
+                "nodes": [],
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "inbox"
+    start.assert_awaited_once()
+    assert start.await_args.kwargs["item"].id == response.json()["id"]
 
 
 def test_pausing_planning_cancels_active_ai_manager(

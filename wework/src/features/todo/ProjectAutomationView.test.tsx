@@ -1,324 +1,405 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
-import type { CloudProject, ProjectWorkflowDefinition } from '@/api/deliveries'
+import { beforeAll, describe, expect, test, vi } from 'vitest'
+import type { CloudProject } from '@/api/deliveries'
+import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { ProjectAutomationView } from './ProjectAutomationView'
 
-vi.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({
-    t: (_key: string, fallback?: string): string => fallback ?? _key,
-  }),
-}))
-
-vi.mock('./ProjectAutomationRulesSection', () => ({
-  ProjectAutomationRulesSection: () => <div data-testid="mock-automation-rules" />,
-}))
-
-vi.mock('./ProjectChatAgentsSection', () => ({
-  ProjectChatAgentsSection: ({
-    deviceApi,
-    modelApi,
-    localProjects,
-    runtimeWork,
-  }: {
-    deviceApi?: unknown
-    modelApi?: unknown
-    localProjects?: unknown[]
-    runtimeWork?: unknown
-  }) => (
-    <div
-      data-testid="mock-project-agents"
-      data-has-device-api={Boolean(deviceApi)}
-      data-has-model-api={Boolean(modelApi)}
-      data-local-project-count={localProjects?.length ?? 0}
-      data-has-runtime-work={Boolean(runtimeWork)}
-    />
-  ),
-}))
-
-vi.mock('./ProjectQueueView', () => ({
-  ProjectQueueView: () => <div data-testid="mock-project-queue" />,
-}))
-
-vi.mock('./ProjectWorkflowEditor', () => ({
-  ProjectWorkflowEditor: ({
-    value,
-    onChange,
-    onSave,
-  }: {
-    value: ProjectWorkflowDefinition
-    onChange: (value: ProjectWorkflowDefinition) => void
-    onSave: (value: ProjectWorkflowDefinition) => void
-  }) => (
-    <div data-testid="mock-project-workflow">
-      <span data-testid="workflow-node-count">{value.nodes.length}</span>
-      <button
-        type="button"
-        data-testid="mock-add-stage"
-        onClick={() =>
-          onChange({
-            ...value,
-            stage_mode: 'dag',
-            nodes: [
-              ...value.nodes,
-              {
-                id: `stage-${value.nodes.length + 1}`,
-                name: `设计 ${value.nodes.length + 1}`,
-                prompt: '',
-                depends_on: [],
-                dependency_context: {},
-                required: true,
-                workspace_policy: 'composer',
-                automation_rule_id: null,
-              },
-            ],
-          })
-        }
-      >
-        Add stage
-      </button>
-      <button type="button" data-testid="mock-save-workflow" onClick={() => onSave(value)}>
-        Save
-      </button>
-    </div>
-  ),
-}))
-
-const initialProject: CloudProject = {
+const project = {
   id: 11,
-  public_id: 'project-11',
-  project_key: 'SAVE',
-  name: 'Workflow persistence',
-  description: '',
-  project_store: 'backend',
-  task_provider: 'local',
-  provider_config: {},
-  workflow_definition: {
-    version: 1,
-    stage_mode: 'none',
-    advancement_policy: 'manual',
-    nodes: [],
+  name: 'Automation project',
+  current_user_id: 7,
+  tags: ['自动开发', '缺陷'],
+} as CloudProject
+
+const rule: ProjectAutomationRule = {
+  id: 'rule-1',
+  projectId: '11',
+  name: '新 Issue 自动开发',
+  prompt: '自动开发',
+  triggerType: 'event',
+  eventType: 'task.created',
+  eventConfig: {
+    tags: ['自动开发'],
+    wework_flow: {
+      version: 1,
+      description: '创建需求后自动分析、实现并回写结果',
+      steps: [
+        {
+          id: 'step-1',
+          name: '分析需求',
+          prompt: '理解需求',
+          kind: 'task',
+          deliverables: [],
+          executionMode: 'automatic',
+          environment: '本机 · Wegent',
+          executionEnvironment: 'local',
+          executionDeviceId: 'local-device',
+          runtimeProfileId: 'profile-1',
+          model: 'GPT-5.6 Codex',
+          modelType: 'runtime',
+          modelOptions: {},
+          plugins: ['Wework 项目空间'],
+          projectPlugins: [],
+          workspacePolicy: 'composer',
+          required: true,
+          dagEnabled: false,
+          dagStages: [],
+        },
+        {
+          id: 'step-2',
+          name: 'AI 动态分配',
+          prompt: '动态拆解任务',
+          kind: 'dynamic',
+          deliverables: [],
+          executionMode: 'automatic',
+          environment: '本机 · Wegent',
+          executionEnvironment: 'local',
+          executionDeviceId: 'local-device',
+          runtimeProfileId: 'profile-1',
+          model: 'GPT-5.6 Codex',
+          modelType: 'runtime',
+          modelOptions: {},
+          plugins: ['Wework 项目空间'],
+          projectPlugins: [],
+          workspacePolicy: 'composer',
+          required: true,
+          dagEnabled: true,
+          dagStages: [
+            {
+              id: 'dag-stage-step-2-analysis',
+              name: '分析需求',
+              instruction: '分析',
+              dependencies: [],
+              x: 24,
+              y: 105,
+            },
+            {
+              id: 'dag-stage-step-2-delivery',
+              name: '汇总交付',
+              instruction: '汇总',
+              dependencies: ['dag-stage-step-2-analysis'],
+              x: 424,
+              y: 105,
+            },
+          ],
+        },
+        {
+          id: 'step-3',
+          name: '回写 Issue',
+          prompt: '回写结果',
+          kind: 'task',
+          deliverables: [],
+          executionMode: 'automatic',
+          environment: '本机 · Wegent',
+          executionEnvironment: 'local',
+          executionDeviceId: 'local-device',
+          runtimeProfileId: 'profile-1',
+          model: 'GPT-5.6 Codex',
+          modelType: 'runtime',
+          modelOptions: {},
+          plugins: ['Wework 项目空间'],
+          projectPlugins: [],
+          workspacePolicy: 'inherit',
+          required: true,
+          dagEnabled: false,
+          dagStages: [],
+        },
+      ],
+    },
   },
-  created_by_user_id: 1,
-  current_user_id: 1,
-  current_user_name: 'Owner',
-  access_role: 'Owner',
-  visibility: 'private',
-  status: 'active',
-  tags: [],
-  version: 1,
-  created_at: '2026-08-18T00:00:00Z',
-  updated_at: '2026-08-18T00:00:00Z',
+  webhookEventId: 'event-1',
+  webhookSecret: null,
+  cronExpression: null,
+  timezone: 'Asia/Shanghai',
+  assignmentMode: 'manual',
+  managerType: null,
+  agentId: null,
+  wegentTeamId: null,
+  model: null,
+  agentName: '自动化执行器',
+  executionEnvironment: 'local',
+  executionDeviceId: null,
+  enabled: true,
+  nextRunAt: null,
+  lastRunAt: '2026-08-25T02:32:00Z',
+  lastRunStatus: 'succeeded',
+  version: 2,
+  createdAt: '2026-08-24T02:32:00Z',
+  updatedAt: '2026-08-25T02:32:00Z',
+  roleSource: 'generic',
+  runtimeSource: 'runtime_user',
+  runtimeProfileId: null,
+  runtimeUserId: 7,
+}
+
+const run: ProjectAutomationRun = {
+  id: 'run-1',
+  automationId: 'rule-1',
+  projectId: '11',
+  trigger: 'event',
+  status: 'succeeded',
+  timezone: 'Asia/Shanghai',
+  scheduledFor: '2026-08-25T02:32:00Z',
+  expiresAt: null,
+  taskId: 'WEG-842',
+  taskTitle: 'WEG-842 统一自动化概念',
+  backendTaskId: null,
+  deviceId: 'local-device',
+  error: null,
+  createdAt: '2026-08-25T02:32:00Z',
+  updatedAt: '2026-08-25T02:38:18Z',
+  completedAt: '2026-08-25T02:38:18Z',
+}
+
+beforeAll(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  )
+})
+
+function renderView({
+  viewProject = project,
+  listedRules = [rule],
+  onProjectUpdated,
+}: {
+  viewProject?: CloudProject
+  listedRules?: ProjectAutomationRule[]
+  onProjectUpdated?: (project: CloudProject) => void
+} = {}) {
+  const projectAutomationApi = {
+    list: vi.fn().mockResolvedValue(listedRules),
+    listRuns: vi.fn().mockResolvedValue([run]),
+    create: vi.fn(),
+    migrateWorkflow: vi.fn().mockImplementation((_projectId, input) =>
+      Promise.resolve({
+        automation: {
+          ...rule,
+          id: 'rule-migrated',
+          name: input.automation.name,
+          prompt: input.automation.prompt,
+          eventConfig: input.automation.eventConfig,
+        },
+        projectVersion: viewProject.version + 1,
+        workflowAutomationId: 'rule-migrated',
+      })
+    ),
+    update: vi.fn(),
+    delete: vi.fn().mockResolvedValue({
+      projectVersion: viewProject.version + 1,
+      workflowAutomationId: null,
+    }),
+    runNow: vi.fn(),
+  } as unknown as NonNullable<WorkbenchServices['projectAutomationApi']>
+  const deviceApi = {
+    listDevices: vi.fn().mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'local-device',
+        name: '本机执行器',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+      },
+    ]),
+  } as unknown as WorkbenchServices['deviceApi']
+  const modelApi = {
+    listModels: vi.fn().mockResolvedValue({
+      data: [
+        {
+          name: 'codex-runtime',
+          displayName: 'Codex Runtime',
+          type: 'runtime',
+          isActive: true,
+        },
+      ],
+    }),
+  } as unknown as WorkbenchServices['modelApi']
+  const pluginApi = {
+    listPlugins: vi.fn().mockResolvedValue([
+      {
+        id: 'plugin-1',
+        pluginName: 'wework-space',
+        marketplaceId: 'market-1',
+        displayName: 'Wework 项目空间',
+      },
+    ]),
+  }
+  render(
+    <ProjectAutomationView
+      api={{} as NonNullable<WorkbenchServices['deliveryApi']>}
+      project={viewProject}
+      projectAutomationApi={projectAutomationApi}
+      deviceApi={deviceApi}
+      modelApi={modelApi}
+      pluginApi={pluginApi}
+      currentUserId={7}
+      canManageAgents
+      onProjectUpdated={onProjectUpdated}
+    />
+  )
+  return { projectAutomationApi, deviceApi, modelApi, pluginApi }
 }
 
 describe('ProjectAutomationView', () => {
-  test('orders Issue orchestration before robots and automation rules', () => {
-    render(
-      <ProjectAutomationView
-        api={
-          {
-            updateCloudProject: vi.fn(),
-          } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
-        }
-        project={initialProject}
-        canManageAgents
-      />
-    )
+  test('renders backend automations directly inside the project shell', async () => {
+    const { projectAutomationApi, deviceApi, modelApi, pluginApi } = renderView()
 
-    const sectionOrder = [
-      'mock-project-workflow',
-      'mock-project-agents',
-      'mock-automation-rules',
-    ].map(testId => screen.getByTestId(testId))
-
-    expect(
-      sectionOrder.every(
-        (section, index) =>
-          index === 0 ||
-          Boolean(
-            sectionOrder[index - 1].compareDocumentPosition(section) &
-            Node.DOCUMENT_POSITION_FOLLOWING
-          )
-      )
-    ).toBe(true)
+    expect(await screen.findByTestId('automation-card-rule-1')).toBeInTheDocument()
+    expect(screen.getByTestId('project-automation-view')).toHaveClass('automation-root')
+    expect(screen.getByRole('heading', { name: '自动化' })).toBeInTheDocument()
+    expect(screen.getByTestId('automation-create-blank')).toBeInTheDocument()
+    expect(screen.getByTestId('open-template-store')).toBeInTheDocument()
+    expect(projectAutomationApi.list).toHaveBeenCalledWith('11')
+    expect(projectAutomationApi.listRuns).toHaveBeenCalledWith('11', 'rule-1')
+    expect(deviceApi.listDevices).toHaveBeenCalled()
+    expect(modelApi.listModels).toHaveBeenCalled()
+    expect(pluginApi.listPlugins).toHaveBeenCalledWith('local-device')
   })
 
-  test('passes device, model, and project runtime sources to robot creation', () => {
-    render(
-      <ProjectAutomationView
-        api={
-          {
-            updateCloudProject: vi.fn(),
-          } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
-        }
-        project={initialProject}
-        deviceApi={{} as WorkbenchServices['deviceApi']}
-        modelApi={{} as WorkbenchServices['modelApi']}
-        localProjects={[{ id: 1 }] as never[]}
-        runtimeWork={{ projects: [] } as never}
-        canManageAgents
-      />
-    )
+  test('opens and applies an embedded template from the template store', async () => {
+    renderView()
+    await screen.findByTestId('automation-card-rule-1')
 
-    expect(screen.getByTestId('mock-project-agents')).toHaveAttribute('data-has-device-api', 'true')
-    expect(screen.getByTestId('mock-project-agents')).toHaveAttribute('data-has-model-api', 'true')
-    expect(screen.getByTestId('mock-project-agents')).toHaveAttribute(
-      'data-local-project-count',
-      '1'
-    )
-    expect(screen.getByTestId('mock-project-agents')).toHaveAttribute(
-      'data-has-runtime-work',
-      'true'
+    fireEvent.click(screen.getByTestId('open-template-store'))
+    expect(screen.getByTestId('template-store')).toBeInTheDocument()
+    expect(screen.getAllByText('每日 Issue 巡检')).not.toHaveLength(0)
+
+    fireEvent.click(screen.getByTestId('template-card-daily-inspection'))
+    fireEvent.click(screen.getByTestId('apply-selected-template'))
+
+    expect(screen.getByTestId('automation-rule-editor')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('每日 Issue 巡检')).toBeInTheDocument()
+    expect(screen.getByTestId('automation-workflow-canvas')).toBeInTheDocument()
+  })
+
+  test('opens a backend rule as a horizontal draggable React Flow workflow', async () => {
+    renderView()
+    fireEvent.click(await screen.findByTestId('automation-card-rule-1'))
+
+    expect(screen.getByTestId('automation-rule-editor')).toBeInTheDocument()
+    expect(screen.getByTestId('automation-workflow-canvas')).toBeInTheDocument()
+    expect(screen.getByTestId('automation-trigger-node')).toBeInTheDocument()
+    expect(screen.getByTestId('execution-node-step-1')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-allocation-node-step-2')).toBeInTheDocument()
+    expect(screen.getByTestId('execution-node-step-3')).toBeInTheDocument()
+    expect(screen.getByTestId('automation-editor-leftbar')).toBeInTheDocument()
+    expect(screen.getByTestId('automation-editor-rightbar')).toContainElement(
+      screen.getByTestId('automation-editor-global-actions')
     )
   })
 
-  test('adopts the saved project definition so re-entering restores the workflow', async () => {
-    let persistedProject = initialProject
-    const updateCloudProject = vi.fn(async (_projectId, values) => {
-      persistedProject = {
-        ...persistedProject,
-        workflow_definition: values.workflow_definition,
-        version: persistedProject.version + 1,
-      }
-      return persistedProject
+  test('keeps persisted AI dynamic allocation as a DAG subgraph', async () => {
+    renderView()
+    fireEvent.click(await screen.findByTestId('automation-card-rule-1'))
+    fireEvent.click(screen.getByTestId('ai-allocation-node-step-2'))
+
+    expect(screen.getByText('AI 动态分配 · DAG 子图')).toBeInTheDocument()
+    expect(screen.getByTestId('dag-stage-node-dag-stage-step-2-analysis')).toBeInTheDocument()
+    expect(screen.getByTestId('dag-stage-node-dag-stage-step-2-delivery')).toBeInTheDocument()
+  })
+
+  test('shows backend run history inside the current automation', async () => {
+    renderView()
+    fireEvent.click(await screen.findByTestId('automation-card-rule-1'))
+    fireEvent.click(screen.getByTestId('open-current-automation-runs'))
+
+    expect(screen.getByTestId('current-automation-runs')).toBeInTheDocument()
+    expect(screen.getAllByText('WEG-842 统一自动化概念')).not.toHaveLength(0)
+  })
+
+  test('promotes a legacy Issue workflow on its first save', async () => {
+    const legacyProject = {
+      ...project,
+      version: 4,
+      updated_at: '2026-08-25T02:32:00Z',
+      workflow_definition: {
+        version: 3,
+        stage_mode: 'dag',
+        advancement_policy: 'manual',
+        coordinator_prompt: '',
+        approval_policy: 'required',
+        ai_automation_rule_id: null,
+        execution_config: null,
+        nodes: [
+          {
+            id: 'implement',
+            name: '实现',
+            prompt: '完成 Issue 中的要求',
+            execution_mode: 'human',
+            depends_on: [],
+            dependency_context: {},
+            required: true,
+            required_deliverables: [],
+            workspace_policy: 'composer',
+            automation_rule_id: null,
+            execution_config: null,
+            execution_config_override: false,
+          },
+        ],
+      },
+    } as CloudProject
+    const onProjectUpdated = vi.fn()
+    const { projectAutomationApi } = renderView({
+      viewProject: legacyProject,
+      listedRules: [],
+      onProjectUpdated,
     })
-    const api = {
-      updateCloudProject,
-    } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
 
-    const firstView = render(
-      <ProjectAutomationView
-        api={api}
-        project={initialProject}
-        canManageAgents
-        onProjectUpdated={project => {
-          persistedProject = project
-        }}
-      />
-    )
+    fireEvent.click(await screen.findByTestId('automation-card-legacy-workflow-11'))
+    fireEvent.click(screen.getByTestId('automation-save'))
 
-    expect(screen.queryByTestId('runtime-profile-create')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('mock-add-stage'))
-    fireEvent.click(screen.getByTestId('mock-save-workflow'))
-
-    await waitFor(() =>
-      expect(updateCloudProject).toHaveBeenCalledWith(11, {
-        workflow_definition: expect.objectContaining({
-          version: 2,
-          stage_mode: 'dag',
-          nodes: [expect.objectContaining({ id: 'stage-1' })],
+    await waitFor(() => expect(projectAutomationApi.migrateWorkflow).toHaveBeenCalledOnce())
+    expect(projectAutomationApi.migrateWorkflow).toHaveBeenCalledWith(
+      '11',
+      expect.objectContaining({
+        projectVersion: 4,
+        workflowDefinition: expect.objectContaining({
+          version: 3,
+          nodes: [expect.objectContaining({ id: 'implement' })],
         }),
-        version: 1,
       })
     )
-    await waitFor(() => expect(persistedProject.workflow_definition?.nodes).toHaveLength(1))
-
-    firstView.unmount()
-    render(<ProjectAutomationView api={api} project={persistedProject} canManageAgents />)
-
-    expect(screen.getByTestId('workflow-node-count')).toHaveTextContent('1')
+    expect(onProjectUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflow_automation_id: 'rule-migrated',
+        version: 5,
+      })
+    )
+    expect(await screen.findByTestId('execution-node-implement')).toBeInTheDocument()
   })
 
-  test('adopts a project update while the view is mounted', async () => {
-    const updatedProject: CloudProject = {
-      ...initialProject,
-      version: 2,
-      workflow_definition: {
-        version: 2,
-        stage_mode: 'dag',
-        advancement_policy: 'manual',
-        nodes: [
-          {
-            id: 'stage-1',
-            name: '设计',
-            prompt: '',
-            depends_on: [],
-            dependency_context: {},
-            required: true,
-            workspace_policy: 'composer',
-            automation_rule_id: null,
-          },
-        ],
+  test('keeps a canonical AI workflow visible when it references itself', async () => {
+    const canonicalRule: ProjectAutomationRule = {
+      ...rule,
+      id: 'canonical-rule',
+      eventConfig: {
+        ...rule.eventConfig,
+        runtime_workflow_definition: {
+          version: 4,
+          stage_mode: 'dag',
+          advancement_policy: 'ai',
+          coordinator_prompt: '动态规划',
+          approval_policy: 'required',
+          ai_automation_rule_id: 'canonical-rule',
+          execution_config: null,
+          nodes: [],
+        },
       },
     }
-    const { rerender } = render(
-      <ProjectAutomationView
-        api={
-          {
-            updateCloudProject: vi.fn(),
-          } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
-        }
-        project={initialProject}
-        canManageAgents
-      />
-    )
-
-    expect(screen.getByTestId('workflow-node-count')).toHaveTextContent('0')
-    rerender(
-      <ProjectAutomationView
-        api={
-          {
-            updateCloudProject: vi.fn(),
-          } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
-        }
-        project={updatedProject}
-        canManageAgents
-      />
-    )
-
-    expect(screen.getByTestId('workflow-node-count')).toHaveTextContent('1')
-  })
-
-  test('keeps edits made while a workflow save is in flight', async () => {
-    let resolveUpdate: ((project: CloudProject) => void) | undefined
-    const updateCloudProject = vi.fn(
-      () =>
-        new Promise<CloudProject>(resolve => {
-          resolveUpdate = resolve
-        })
-    )
-    render(
-      <ProjectAutomationView
-        api={
-          {
-            updateCloudProject,
-          } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
-        }
-        project={initialProject}
-        localProjects={[]}
-        canManageAgents
-      />
-    )
-
-    fireEvent.click(screen.getByTestId('mock-add-stage'))
-    fireEvent.click(screen.getByTestId('mock-save-workflow'))
-    await waitFor(() => expect(updateCloudProject).toHaveBeenCalledTimes(1))
-
-    fireEvent.click(screen.getByTestId('mock-add-stage'))
-    expect(screen.getByTestId('workflow-node-count')).toHaveTextContent('2')
-
-    resolveUpdate?.({
-      ...initialProject,
-      version: 2,
-      workflow_definition: {
-        version: 2,
-        stage_mode: 'dag',
-        advancement_policy: 'manual',
-        nodes: [
-          {
-            id: 'stage-1',
-            name: '设计 1',
-            prompt: '',
-            depends_on: [],
-            dependency_context: {},
-            required: true,
-            workspace_policy: 'composer',
-            automation_rule_id: null,
-          },
-        ],
-      },
+    renderView({
+      viewProject: {
+        ...project,
+        workflow_automation_id: 'canonical-rule',
+      } as CloudProject,
+      listedRules: [canonicalRule],
     })
 
-    await waitFor(() => expect(screen.getByTestId('workflow-node-count')).toHaveTextContent('2'))
+    expect(await screen.findByTestId('automation-card-canonical-rule')).toBeInTheDocument()
   })
 })

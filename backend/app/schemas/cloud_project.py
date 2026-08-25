@@ -232,6 +232,7 @@ class CloudProjectResponse(BaseModel):
     workflow_definition: ProjectWorkflowDefinition = Field(
         default_factory=ProjectWorkflowDefinition
     )
+    workflow_automation_id: str | None = None
     visibility: ProjectVisibility = "private"
     created_by_user_id: int
     current_user_id: int = 0
@@ -262,6 +263,7 @@ class CloudProjectResponse(BaseModel):
                 "ai_automation": metadata.get("ai_automation", {}),
                 "pull_request_automation": metadata.get("pull_request_automation", {}),
                 "workflow_definition": metadata.get("workflow_definition", {}),
+                "workflow_automation_id": metadata.get("workflow_automation_id"),
                 "visibility": (
                     "public" if metadata.get("visibility") == "public" else "private"
                 ),
