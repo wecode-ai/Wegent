@@ -2,7 +2,12 @@ import { readFile, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { WebContents } from 'electron'
-import { materializeTemporaryImage, resolveRendererImageContext } from './image-context-actions.js'
+import {
+  cleanupStaleTemporaryImages,
+  materializeTemporaryImage,
+  resolveRendererImageContext,
+  scheduleTemporaryImageCleanup,
+} from './image-context-actions.js'
 
 const temporaryDirectories: string[] = []
 
@@ -75,6 +80,14 @@ describe('materializeTemporaryImage', () => {
 
     expect(path).toMatch(/remote\.png$/)
     await expect(readFile(path)).resolves.toEqual(bytes)
+    expect(contents.executeJavaScript).toHaveBeenCalledWith(
+      expect.stringContaining('response.body.getReader()'),
+      true
+    )
+    expect(contents.executeJavaScript).toHaveBeenCalledWith(
+      expect.stringContaining('totalBytes > 104857600'),
+      true
+    )
   })
 
   test('adds an extension from the MIME type when the filename has none', async () => {
@@ -90,5 +103,39 @@ describe('materializeTemporaryImage', () => {
     temporaryDirectories.push(dirname(path))
 
     expect(path).toMatch(/remote\.webp$/)
+  })
+
+  test('removes a materialized image after the cleanup delay', async () => {
+    const contents = {
+      executeJavaScript: vi.fn(async () => 'data:image/png;base64,aW1hZ2U='),
+    } as unknown as WebContents
+    const path = await materializeTemporaryImage(contents, {
+      filename: 'remote.png',
+      localPath: null,
+      sourceUrl: 'blob:remote',
+    })
+    temporaryDirectories.push(dirname(path))
+
+    scheduleTemporaryImageCleanup(path, 0)
+
+    await vi.waitFor(async () => {
+      await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+  })
+
+  test('removes stale managed temporary image directories', async () => {
+    const contents = {
+      executeJavaScript: vi.fn(async () => 'data:image/png;base64,aW1hZ2U='),
+    } as unknown as WebContents
+    const path = await materializeTemporaryImage(contents, {
+      filename: 'remote.png',
+      localPath: null,
+      sourceUrl: 'blob:remote',
+    })
+    temporaryDirectories.push(dirname(path))
+
+    await cleanupStaleTemporaryImages(0, Date.now() + 1_000)
+
+    await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

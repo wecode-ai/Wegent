@@ -50,8 +50,10 @@ import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { installNativeContextMenu } from './host/image-context-menu.js'
 import {
+  cleanupStaleTemporaryImages,
   materializeTemporaryImage,
   resolveRendererImageContext,
+  scheduleTemporaryImageCleanup,
 } from './host/image-context-actions.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -125,8 +127,13 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       copyPath: path => clipboard.writeText(path),
       copyText: text => clipboard.writeText(text),
       openImage: async image => {
-        const path = image.localPath ?? (await materializeTemporaryImage(contents, image))
+        const temporaryPath = image.localPath
+          ? null
+          : await materializeTemporaryImage(contents, image)
+        const path = image.localPath ?? temporaryPath
+        if (!path) throw new Error('Image path is unavailable')
         const error = await shell.openPath(path)
+        if (temporaryPath) scheduleTemporaryImageCleanup(temporaryPath)
         if (error) throw new Error(error)
       },
       reportError: (action, error) => {
@@ -979,6 +986,9 @@ function startDesktopRuntime(): Promise<void> {
 
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
+    await cleanupStaleTemporaryImages().catch(error => {
+      console.error('[context-menu] failed to remove stale temporary images', error)
+    })
     installDshWindowLabelHeaders()
     installIpc()
     preferences = new PreferencesStore(app.getPath('userData'))
