@@ -592,6 +592,11 @@ class RealCloudEnvironment {
       `${process.pid}-${Date.now()}`
     )
     await mkdir(workspacePath, { recursive: true })
+    const modelOptions = {
+      weworkCloudModelNamespace: 'default',
+      weworkCloudModelResourceUserId: '0',
+      weworkCloudModelUpstreamApiFormat: 'openai-responses',
+    }
     const task = await fetchJson(`${this.backendUrl}/api/runtime-work/create`, {
       method: 'POST',
       headers: {
@@ -605,6 +610,14 @@ class RealCloudEnvironment {
         runtime: 'codex',
         message: PLUGIN_CREATOR_PROMPT,
         title: 'Cloud Plugin Creator E2E',
+        modelId: CLOUD_PUBLIC_MODEL_NAME,
+        modelType: 'public',
+        modelOptions,
+        modelSelection: {
+          modelName: CLOUD_PUBLIC_MODEL_NAME,
+          modelType: 'public',
+          options: modelOptions,
+        },
       }),
     })
     assert.equal(task.accepted, true, `Cloud Plugin Creator task was rejected: ${task.error}`)
