@@ -456,6 +456,37 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('emits processing block content deltas', () => {
+    const onBlockUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onBlockUpdated },
+      'response.block.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        deviceId: 'device-1',
+        data: {
+          block_id: 'text-1',
+          updates: {
+            content_delta: 'next',
+            status: 'streaming',
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onBlockUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      blockId: 'text-1',
+      contentDelta: 'next',
+      status: 'streaming',
+    })
+  })
+
   test('restores a missing block from a block update snapshot before applying updates', () => {
     const calls: string[] = []
     const onBlockCreated = vi.fn(() => calls.push('created'))

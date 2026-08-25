@@ -1115,7 +1115,7 @@ function mergeProcessingBlockUpdate(
   block: ProcessingBlock,
   updates: Extract<RuntimePaneMessageAction, { type: 'block_updated' }>['updates']
 ): ProcessingBlock {
-  const { durationMs, ...directUpdates } = updates
+  const { contentDelta, durationMs, ...directUpdates } = updates
   let merged = {
     ...block,
     ...directUpdates,
@@ -1124,6 +1124,19 @@ function mergeProcessingBlockUpdate(
       completedAt: block.createdAt + Math.max(0, durationMs),
     }),
   } as ProcessingBlock
+  if (
+    typeof contentDelta === 'string' &&
+    (merged.type === 'thinking' || merged.type === 'text' || merged.type === 'plan')
+  ) {
+    merged = {
+      ...merged,
+      content: merged.content + contentDelta,
+      contentOriginalChars:
+        merged.contentOriginalChars === undefined
+          ? undefined
+          : merged.contentOriginalChars + Array.from(contentDelta).length,
+    }
+  }
   if (merged.type === 'tool' && block.type === 'tool') {
     merged.toolInput = updates.toolInput ?? block.toolInput
   }

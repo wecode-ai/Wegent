@@ -190,6 +190,77 @@ describe('createRuntimeChatStream', () => {
     consoleDebug.mockRestore()
   })
 
+  test('coalesces bursty streaming block deltas before a terminal event', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const onBlockUpdated = vi.fn()
+    const onChatDone = vi.fn()
+    const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const stream = createRuntimeChatStream({ subscribe, request })
+
+    stream.subscribe({ onBlockUpdated, onChatDone })
+    await Promise.resolve()
+    for (let index = 1; index <= 2_200; index += 1) {
+      listener({
+        event: 'response.block.updated',
+        payload: {
+          taskId: 'task-1',
+          subtaskId: '1001',
+          deviceId: 'local-device',
+          data: {
+            block_id: 'process-1',
+            updates: { content_delta: 'x', status: 'streaming' },
+          },
+        },
+      })
+    }
+    listener({
+      event: 'response.block.updated',
+      payload: {
+        taskId: 'task-1',
+        subtaskId: '1001',
+        deviceId: 'local-device',
+        data: {
+          block_id: 'process-1',
+          updates: { status: 'done' },
+        },
+      },
+    })
+    listener({
+      event: 'response.completed',
+      payload: {
+        taskId: 'task-1',
+        subtaskId: '1001',
+        deviceId: 'local-device',
+        data: { value: 'complete' },
+      },
+    })
+
+    expect(onBlockUpdated).toHaveBeenCalledTimes(2)
+    expect(onBlockUpdated).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        blockId: 'process-1',
+        contentDelta: 'x'.repeat(2_200),
+        status: 'streaming',
+      })
+    )
+    expect(onBlockUpdated).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        blockId: 'process-1',
+        status: 'done',
+      })
+    )
+    expect(onBlockUpdated.mock.invocationCallOrder[1]).toBeLessThan(
+      onChatDone.mock.invocationCallOrder[0]
+    )
+    consoleInfo.mockRestore()
+  })
+
   test('logs local stream lifecycle only when stream debug is enabled', async () => {
     subscribe.mockImplementation(async () => vi.fn())
     const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)

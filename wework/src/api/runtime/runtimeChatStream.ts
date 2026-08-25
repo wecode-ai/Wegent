@@ -12,6 +12,15 @@ interface RuntimeChatStreamDeps {
   request: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
 }
 
+interface RuntimeChatSubscription {
+  handlers: ChatStreamHandlers
+  state: ReturnType<typeof createResponseApiStreamState>
+  eventCount: number
+  textDeltaCount: number
+  pendingBlockUpdates: Map<string, LocalExecutorEvent>
+  pendingBlockUpdateFrame: number | null
+}
+
 let nextRuntimeChatStreamSubscriptionId = 1
 let activeRuntimeChatStreamSubscriptions = 0
 const RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-runtime-chat-stream'
@@ -32,17 +41,45 @@ export function setRuntimeChatStreamDebugEnabled(enabled: boolean): void {
 }
 
 export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
-  const subscriptions = new Map<
-    number,
-    {
-      handlers: ChatStreamHandlers
-      state: ReturnType<typeof createResponseApiStreamState>
-      eventCount: number
-      textDeltaCount: number
-    }
-  >()
+  const subscriptions = new Map<number, RuntimeChatSubscription>()
   let nativeCleanup: (() => void) | null = null
   let nativeSubscribePromise: Promise<void> | null = null
+
+  function emitSubscriptionEvent(
+    subscription: RuntimeChatSubscription,
+    event: LocalExecutorEvent
+  ): void {
+    emitResponseApiEvent(subscription.handlers, event.event, event.payload, subscription.state)
+  }
+
+  function flushPendingBlockUpdates(subscription: RuntimeChatSubscription): void {
+    if (subscription.pendingBlockUpdateFrame !== null) {
+      cancelAnimationFrame(subscription.pendingBlockUpdateFrame)
+      subscription.pendingBlockUpdateFrame = null
+    }
+    if (subscription.pendingBlockUpdates.size === 0) return
+    const events = [...subscription.pendingBlockUpdates.values()]
+    subscription.pendingBlockUpdates.clear()
+    events.forEach(event => emitSubscriptionEvent(subscription, event))
+  }
+
+  function queueBlockUpdate(
+    subscription: RuntimeChatSubscription,
+    event: LocalExecutorEvent
+  ): boolean {
+    const key = coalescibleRuntimeBlockUpdateKey(event)
+    if (!key || !subscription.handlers.onBlockUpdated) return false
+    const pending = subscription.pendingBlockUpdates.get(key)
+    subscription.pendingBlockUpdates.set(key, mergeCoalescibleBlockUpdates(pending, event))
+    if (subscription.pendingBlockUpdateFrame === null) {
+      subscription.pendingBlockUpdateFrame = requestAnimationFrame(() => {
+        subscription.pendingBlockUpdateFrame = null
+        flushPendingBlockUpdates(subscription)
+      })
+    }
+    return true
+  }
+
   function ensureNativeListener(): void {
     if (nativeCleanup || nativeSubscribePromise) return
     nativeSubscribePromise = Promise.resolve(
@@ -91,12 +128,9 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
             subscription.eventCount,
             subscription.textDeltaCount
           )
-          emitResponseApiEvent(
-            subscription.handlers,
-            event.event,
-            event.payload,
-            subscription.state
-          )
+          if (queueBlockUpdate(subscription, event)) continue
+          flushPendingBlockUpdates(subscription)
+          emitSubscriptionEvent(subscription, event)
         }
       })
     )
@@ -145,6 +179,8 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
         state: createResponseApiStreamState(),
         eventCount: 0,
         textDeltaCount: 0,
+        pendingBlockUpdates: new Map(),
+        pendingBlockUpdateFrame: null,
       })
       activeRuntimeChatStreamSubscriptions += 1
       logRuntimeChatStreamSubscription('subscribed', subscriptionId, {
@@ -158,6 +194,9 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
         if (released) return
         released = true
         const subscription = subscriptions.get(subscriptionId)
+        if (subscription && subscription.pendingBlockUpdateFrame !== null) {
+          cancelAnimationFrame(subscription.pendingBlockUpdateFrame)
+        }
         subscriptions.delete(subscriptionId)
         activeRuntimeChatStreamSubscriptions = Math.max(0, activeRuntimeChatStreamSubscriptions - 1)
         logRuntimeChatStreamSubscription('unsubscribed', subscriptionId, {
@@ -167,6 +206,63 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
           ...streamScopeDebug(subscription?.handlers.scope),
         })
       }
+    },
+  }
+}
+
+function coalescibleRuntimeBlockUpdateKey(event: LocalExecutorEvent): string | null {
+  if (event.event !== 'response.block.updated') return null
+  const payload = asRecord(event.payload)
+  const data = asRecord(payload.data)
+  const updates = asRecord(data.updates)
+  const updateKeys = Object.keys(updates)
+  const hasContentSnapshot = typeof updates.content === 'string'
+  const hasContentDelta =
+    typeof updates.contentDelta === 'string' || typeof updates.content_delta === 'string'
+  if (
+    (!hasContentSnapshot && !hasContentDelta) ||
+    updates.status !== 'streaming' ||
+    updateKeys.some(
+      key =>
+        key !== 'content' && key !== 'contentDelta' && key !== 'content_delta' && key !== 'status'
+    )
+  ) {
+    return null
+  }
+  const taskId = stringField(payload, 'taskId')
+  const subtaskId = stringField(payload, 'subtaskId')
+  const blockId = stringField(data, 'blockId') ?? stringField(data, 'block_id')
+  if (!taskId || !subtaskId || !blockId) return null
+  return [stringField(payload, 'deviceId') ?? '', taskId, subtaskId, blockId].join(':')
+}
+
+function mergeCoalescibleBlockUpdates(
+  previous: LocalExecutorEvent | undefined,
+  next: LocalExecutorEvent
+): LocalExecutorEvent {
+  if (!previous) return next
+  const previousPayload = asRecord(previous.payload)
+  const previousData = asRecord(previousPayload.data)
+  const previousUpdates = asRecord(previousData.updates)
+  const nextPayload = asRecord(next.payload)
+  const nextData = asRecord(nextPayload.data)
+  const nextUpdates = asRecord(nextData.updates)
+  const previousDelta =
+    stringField(previousUpdates, 'contentDelta') ?? stringField(previousUpdates, 'content_delta')
+  const nextDelta =
+    stringField(nextUpdates, 'contentDelta') ?? stringField(nextUpdates, 'content_delta')
+  if (previousDelta === undefined || nextDelta === undefined) return next
+  return {
+    ...next,
+    payload: {
+      ...nextPayload,
+      data: {
+        ...nextData,
+        updates: {
+          ...nextUpdates,
+          content_delta: previousDelta + nextDelta,
+        },
+      },
     },
   }
 }

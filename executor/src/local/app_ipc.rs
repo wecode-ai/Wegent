@@ -1351,7 +1351,14 @@ fn is_bulk_app_ipc_event(message: &Value) -> bool {
         Some("response.block.updated") => app_ipc_event_data(message)
             .and_then(|data| data.get("updates"))
             .is_some_and(|updates| {
-                updates.get("tool_output_delta").is_some() || updates.get("file_changes").is_some()
+                updates.get("tool_output_delta").is_some()
+                    || updates.get("file_changes").is_some()
+                    || ((updates.get("content").and_then(Value::as_str).is_some()
+                        || updates
+                            .get("content_delta")
+                            .and_then(Value::as_str)
+                            .is_some())
+                        && updates.get("status").and_then(Value::as_str) == Some("streaming"))
             }),
         _ => false,
     }
@@ -3070,6 +3077,18 @@ mod tests {
         })));
         assert!(is_bulk_app_ipc_event(&json!({
             "type": "event",
+            "event": "response.block.updated",
+            "payload": {
+                "data": {
+                    "updates": {
+                        "content_delta": "partial response",
+                        "status": "streaming"
+                    }
+                }
+            }
+        })));
+        assert!(is_bulk_app_ipc_event(&json!({
+            "type": "event",
             "event": "response.block.created",
             "payload": {
                 "data": {
@@ -3100,6 +3119,30 @@ mod tests {
             "payload": {
                 "data": {
                     "updates": {
+                        "status": "done"
+                    }
+                }
+            }
+        })));
+        assert!(is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.updated",
+            "payload": {
+                "data": {
+                    "updates": {
+                        "content": "partial response",
+                        "status": "streaming"
+                    }
+                }
+            }
+        })));
+        assert!(!is_bulk_app_ipc_event(&json!({
+            "type": "event",
+            "event": "response.block.updated",
+            "payload": {
+                "data": {
+                    "updates": {
+                        "content": "final response",
                         "status": "done"
                     }
                 }

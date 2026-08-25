@@ -109,6 +109,7 @@ export interface WorkbenchContentLoadRef {
 
 type ProcessingBlockUpdate = {
   content?: string
+  contentDelta?: string
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
   toolOutputDelta?: string
@@ -522,7 +523,8 @@ function mergeProcessingBlockUpdate<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>,
   updates: ProcessingBlockUpdate
 ): WorkbenchProcessingBlock<TFileChanges> {
-  const { toolOutputDelta, durationMs, ...directUpdates } = updates
+  const { contentDelta, toolOutputDelta, durationMs, ...directUpdates } =
+    updates
   const nextBlock = withBlockCompletionTime(block, {
     ...block,
     ...directUpdates,
@@ -532,11 +534,27 @@ function mergeProcessingBlockUpdate<TFileChanges>(
     })
   } as WorkbenchProcessingBlock<TFileChanges>)
 
+  const blockWithContentDelta =
+    typeof contentDelta === 'string' &&
+    (nextBlock.type === 'thinking' ||
+      nextBlock.type === 'text' ||
+      nextBlock.type === 'plan')
+      ? {
+          ...nextBlock,
+          content: nextBlock.content + contentDelta,
+          contentOriginalChars:
+            nextBlock.contentOriginalChars === undefined
+              ? undefined
+              : nextBlock.contentOriginalChars +
+                textCodePointLength(contentDelta)
+        }
+      : nextBlock
+
   if (typeof toolOutputDelta !== 'string' || block.type !== 'tool') {
-    return nextBlock
+    return blockWithContentDelta
   }
 
-  const nextToolBlock = nextBlock as WorkbenchToolBlock
+  const nextToolBlock = blockWithContentDelta as WorkbenchToolBlock
   const previousOutput = nextToolBlock.toolOutput
   const nextToolOutput = appendToolOutputDelta(previousOutput, toolOutputDelta)
   const previousOutputChars =
