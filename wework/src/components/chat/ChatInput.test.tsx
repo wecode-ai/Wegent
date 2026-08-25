@@ -927,6 +927,32 @@ describe('ChatInput', () => {
     expect(onInterruptAndSendQueuedMessage).toHaveBeenCalledWith('sending-guidance')
   })
 
+  test('does not expose guidance before the native runtime accepts it', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={[
+          {
+            id: 'pending-guidance',
+            content: '等待原生运行时接受',
+            status: 'sending',
+            deliveryMode: 'guidance',
+            awaitingGuidanceAcceptance: true,
+            notice: '正在引导当前对话',
+            createdAt: '2026-08-25T10:30:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
+    expect(screen.queryByText('等待原生运行时接受')).not.toBeInTheDocument()
+  })
+
   test('provides left-side drag handles to reorder multiple queued messages', () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
       {

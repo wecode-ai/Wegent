@@ -1717,6 +1717,7 @@ export function useWorkbenchPaneSession({
                   ...message,
                   status: 'sending',
                   deliveryMode: 'guidance',
+                  awaitingGuidanceAcceptance: true,
                   error: undefined,
                   notice: '正在引导当前对话',
                 }
@@ -1725,6 +1726,11 @@ export function useWorkbenchPaneSession({
         )
         const result = await guidanceRequest
         if (result.sent) {
+          setQueuedMessages(messages =>
+            messages.map(message =>
+              message.id === id ? { ...message, awaitingGuidanceAcceptance: undefined } : message
+            )
+          )
           markRuntimeTerminalAdditionalContextDelivered(additionalContext)
           if (result.turnId) {
             appendOptimisticRuntimeConversationGuidance(
@@ -1743,7 +1749,13 @@ export function useWorkbenchPaneSession({
           setQueuedMessages(messages =>
             messages.map(message =>
               message.id === id
-                ? { ...message, status: 'failed', notice: undefined, error: '引导发送失败' }
+                ? {
+                    ...message,
+                    status: 'failed',
+                    awaitingGuidanceAcceptance: undefined,
+                    notice: undefined,
+                    error: '引导发送失败',
+                  }
                 : message
             )
           )
@@ -1761,7 +1773,13 @@ export function useWorkbenchPaneSession({
         setQueuedMessages(messages =>
           messages.map(message =>
             message.id === id
-              ? { ...message, status: 'failed', notice: undefined, error: '引导发送失败' }
+              ? {
+                  ...message,
+                  status: 'failed',
+                  awaitingGuidanceAcceptance: undefined,
+                  notice: undefined,
+                  error: '引导发送失败',
+                }
               : message
           )
         )

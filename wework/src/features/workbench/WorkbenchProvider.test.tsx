@@ -1919,6 +1919,11 @@ function FollowUpProbe() {
       <span data-testid="queued-notices">
         {paneSession.queuedMessages.map(message => message.notice ?? '').join('|')}
       </span>
+      <span data-testid="queued-guidance-acceptance">
+        {paneSession.queuedMessages
+          .map(message => (message.awaitingGuidanceAcceptance ? 'pending' : 'accepted'))
+          .join('|')}
+      </span>
       <span data-testid="runtime-attachment-count">{workbench.projectChat.attachments.length}</span>
       <span data-testid="code-comment-context-count">{paneSession.codeCommentContexts.length}</span>
       <span data-testid="browser-annotation-command">
@@ -14646,6 +14651,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(cancelRuntimeTask).not.toHaveBeenCalled()
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
+    expect(screen.getByTestId('queued-guidance-acceptance')).toHaveTextContent('pending')
     expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
       'first message|working\n\nbefore '
     )
@@ -14664,6 +14670,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
+    expect(screen.getByTestId('queued-guidance-acceptance')).toHaveTextContent('accepted')
     expect(screen.getByTestId('runtime-open-blocks')).not.toHaveTextContent(
       'tool:conversation_guidance:done'
     )
