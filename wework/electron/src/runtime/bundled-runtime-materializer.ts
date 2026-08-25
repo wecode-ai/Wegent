@@ -1,7 +1,7 @@
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import * as tar from 'tar'
 
 interface RuntimeDescriptor {
   dshVersion: string
@@ -77,7 +77,7 @@ async function materializeRuntime(
   await rm(temporary, { recursive: true, force: true })
   await mkdir(temporary, { recursive: true, mode: 0o700 })
   try {
-    await tar.x({ file: archive, cwd: temporary })
+    await extractArchive(archive, temporary)
     if (!(await runtimeMatches(temporary, runtime))) {
       throw new Error(`Bundled DSH runtime identity is invalid: ${runtime.assetName}`)
     }
@@ -86,6 +86,27 @@ async function materializeRuntime(
   } finally {
     await rm(temporary, { recursive: true, force: true })
   }
+}
+
+function extractArchive(archive: string, destination: string): Promise<void> {
+  return new Promise((resolveExtraction, rejectExtraction) => {
+    const child = spawn('tar', ['-xzf', archive, '-C', destination], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    })
+    const stderr: Buffer[] = []
+    child.stderr.on('data', chunk => stderr.push(Buffer.from(chunk)))
+    child.once('error', rejectExtraction)
+    child.once('close', code => {
+      if (code === 0) {
+        resolveExtraction()
+        return
+      }
+      const detail = Buffer.concat(stderr).toString('utf8').trim()
+      rejectExtraction(
+        new Error(`Bundled DSH runtime extraction failed (${code ?? 'signal'}): ${detail}`)
+      )
+    })
+  })
 }
 
 async function runtimeMatches(root: string, runtime: RuntimeDescriptor): Promise<boolean> {
