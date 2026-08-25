@@ -14359,6 +14359,11 @@ describe('WorkbenchProvider runtime tasks', () => {
         shellType: 'Chat',
         deviceId: 'device-1',
       })
+    })
+    expect(sendRuntimeMessage).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('queued-messages-paused')).toHaveTextContent('paused')
+
+    await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: 'runtime-a',
         subtaskId: 'manual-turn',

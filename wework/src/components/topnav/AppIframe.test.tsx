@@ -1,5 +1,5 @@
 import { StrictMode } from 'react'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { AppIframe } from './AppIframe'
 
@@ -364,5 +364,48 @@ describe('AppIframe', () => {
       )
     )
     boundsSpy.mockRestore()
+  })
+
+  test('does not reveal a reduced-motion native webview after cleanup', async () => {
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
+    const frames: FrameRequestCallback[] = []
+    const frameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(callback => frames.push(callback))
+    const mediaSpy = vi.spyOn(window, 'matchMedia').mockReturnValue({
+      matches: true,
+    } as MediaQueryList)
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 620,
+      height: 600,
+      left: 10,
+      right: 810,
+      top: 20,
+      width: 800,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    })
+    const { unmount } = render(
+      <AppIframe
+        appKey="wegent"
+        src="http://localhost:3000"
+        title="Wegent"
+        workspaceTabId="agent-reduced-motion"
+      />
+    )
+    await waitFor(() => expect(frames).toHaveLength(1))
+
+    act(() => frames.shift()?.(performance.now()))
+    expect(frames).toHaveLength(1)
+    const callsBeforeCleanup = embeddedBrowserMocks.setEmbeddedBrowserBounds.mock.calls.length
+
+    unmount()
+    act(() => frames.shift()?.(performance.now()))
+
+    expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledTimes(callsBeforeCleanup)
+    boundsSpy.mockRestore()
+    mediaSpy.mockRestore()
+    frameSpy.mockRestore()
   })
 })

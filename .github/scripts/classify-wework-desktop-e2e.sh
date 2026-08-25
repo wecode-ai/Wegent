@@ -80,28 +80,28 @@ cloud_segments=(
 # longest to shortest so the eight serial runners finish at similar times.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  goal-lifecycle,telemetry-consent,cloud-worktree-capability
-  model-routing,plugin-auto-update,plugin-workspace-publication,priority-filter
-  embedded-browser,cloud-worktree-device-restart,cloud-project-creation
-  resilience,cloud-worktree-queued-cancel,browser-multi-tabs
-  core-task-flow,supervisor-lifecycle,automation-lifecycle
-  window-lifecycle,cloud-worktree-tools,cloud-worktree-archive-restore
-  project-automation,workspace-attachments,cloud-worktree-create
-  conversation-state,rendering-extensions,workspace-tabs
+  conversation-state,supervisor-lifecycle,priority-filter,plugin-auto-update
+  model-routing,cloud-worktree-queued-cancel,telemetry-consent,plugin-workspace-publication
+  window-lifecycle,cloud-project-creation,cloud-worktree-capability
+  project-automation,automation-lifecycle,workspace-tabs
+  resilience,cloud-worktree-device-restart,browser-multi-tabs
+  embedded-browser,cloud-worktree-create,cloud-worktree-tools
+  goal-lifecycle,workspace-attachments,cloud-worktree-archive-restore
+  core-task-flow,rendering-extensions
 )
 # Group checkpoints by observed Core CI duration and order each shard so the
 # eight serial runners stay balanced while reusing the same prebuilt
 # application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  rendering-extensions,runtime-task-queue,local-file-preview,context-compaction
-  project-ai-settings,window-lifecycle,permission-modes,cloud-space-mention,project-assignment-notification
-  core-task-flow,temporary-chat,codex-notification-isolation,task-attachments
-  claude-runtime,workspace-attachments,local-harness,harness-apps
-  conversation-state,goal-lifecycle,workspace-tabs,running-conversation-history
-  resilience,supervisor-lifecycle,runtime-terminal-convergence
-  model-routing,project-automation,automation-lifecycle,offline-local-project-space
-  embedded-browser,browser-toolbar-actions,priority-filter,remote-device-onboarding,split-workbench,native-window-startup,native-window-chrome,tray-lifecycle,change-request-status
+  core-task-flow,remote-device-onboarding,runtime-terminal-convergence,browser-toolbar-actions,temporary-chat
+  conversation-state,supervisor-lifecycle,project-ai-settings,change-request-status,task-attachments
+  goal-lifecycle,project-assignment-notification,split-workbench,runtime-task-queue,context-compaction
+  window-lifecycle,project-automation,running-conversation-history,permission-modes,local-file-preview
+  harness-apps,workspace-tabs,priority-filter,codex-notification-isolation,cloud-space-mention
+  model-routing,workspace-attachments,offline-local-project-space,native-window-startup
+  rendering-extensions,embedded-browser,native-window-chrome,tray-lifecycle
+  resilience,claude-runtime,automation-lifecycle,local-harness
 )
 
 validate_core_shards() {
