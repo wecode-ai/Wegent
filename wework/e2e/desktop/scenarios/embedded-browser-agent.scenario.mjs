@@ -1512,6 +1512,20 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       assert.ok(deleteApproval.approval?.approvalId)
       await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
+      const approvalResolutionStartedAt = Date.now()
+      let approvalButtonCount = 1
+      while (Date.now() - approvalResolutionStartedAt < uiTimeoutMs) {
+        approvalButtonCount = Number(
+          await control.command('getElementCount', BROWSER_AGENT_APPROVE_SELECTOR)
+        )
+        if (approvalButtonCount === 0) break
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      }
+      assert.equal(
+        approvalButtonCount,
+        0,
+        'Browser approval remained pending after the user approved it'
+      )
 
       const approvedDeleteResult = await bridgeCall({
         action: 'click',
