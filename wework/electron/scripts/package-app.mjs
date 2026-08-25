@@ -23,7 +23,15 @@ await Promise.all([
 ])
 await run(
   'pnpm',
-  ['--filter', sourcePackage.name, 'deploy', '--prod', '--legacy', staging],
+  [
+    '--config.inject-workspace-packages=true',
+    '--config.node-linker=hoisted',
+    '--filter',
+    sourcePackage.name,
+    'deploy',
+    '--prod',
+    staging,
+  ],
   electronRoot
 )
 await Promise.all(

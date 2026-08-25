@@ -35,7 +35,11 @@ describe('desktop resource migration', () => {
   test('packages production dependencies from the locked Electron workspace', async () => {
     const source = await readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8')
 
-    expect(source).toContain("'deploy', '--prod', '--legacy'")
+    expect(source).toContain("'--config.inject-workspace-packages=true'")
+    expect(source).toContain("'--config.node-linker=hoisted'")
+    expect(source).toContain("'deploy',")
+    expect(source).toContain("'--prod',")
+    expect(source).not.toContain("'--legacy'")
     expect(source).not.toContain("'npm',")
     expect(source).not.toContain("'install', '--omit=dev'")
   })
