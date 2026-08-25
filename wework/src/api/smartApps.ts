@@ -1,5 +1,6 @@
 import type { HttpClient } from './http'
 import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from './plugins'
+import { sha256Hex } from './fileHash'
 
 export interface SmartAppMarketplaceTag {
   id: string
@@ -158,10 +159,7 @@ export function createSmartAppsApi(client: HttpClient) {
     completeSubmission,
     cancelSubmission,
     async publish(file: File, metadata: SmartAppSubmissionMetadata) {
-      const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-      const sha256 = Array.from(new Uint8Array(digest), byte =>
-        byte.toString(16).padStart(2, '0')
-      ).join('')
+      const sha256 = await sha256Hex(file)
       const initialized = await initSubmission(
         { filename: file.name, sha256, sizeBytes: file.size },
         metadata
