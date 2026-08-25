@@ -749,7 +749,7 @@ impl CodexNotificationEventMapper {
                 json!({
                     "block_id": process_text.id.clone(),
                     "updates": {
-                        "content": process_text.content.clone(),
+                        "content_delta": delta,
                         "status": "streaming",
                     }
                 }),
@@ -3120,8 +3120,8 @@ mod tests {
         assert_eq!(first_event["payload"]["data"]["block"]["content"], "Done.");
         assert_eq!(second_event["event"], "response.block.updated");
         assert_eq!(
-            second_event["payload"]["data"]["updates"]["content"],
-            "Done. More."
+            second_event["payload"]["data"]["updates"]["content_delta"],
+            " More."
         );
         assert_eq!(next_event["event"], "response.block.created");
         assert_eq!(next_event["payload"]["data"]["block"]["type"], "text");
@@ -3360,8 +3360,8 @@ mod tests {
         assert_eq!(updated["event"], "response.block.updated");
         assert_eq!(updated["payload"]["data"]["block_id"], block_id);
         assert_eq!(
-            updated["payload"]["data"]["updates"]["content"],
-            "I will inspect."
+            updated["payload"]["data"]["updates"]["content_delta"],
+            "inspect."
         );
     }
 

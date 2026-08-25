@@ -928,6 +928,40 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('appends text block content deltas without replacing existing content', () => {
+    const state = reduceWorkbenchMessages([], {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'message-1',
+        subtaskId: '9',
+        type: 'text',
+        content: 'hello',
+        status: 'streaming',
+        createdAt: 1770000000000
+      }
+    })
+
+    const next = reduceWorkbenchMessages(state, {
+      type: 'block_updated',
+      subtaskId: '9',
+      blockId: 'message-1',
+      updates: {
+        status: 'streaming',
+        contentDelta: ' world'
+      }
+    })
+
+    expect(next[0].blocks).toMatchObject([
+      {
+        id: 'message-1',
+        type: 'text',
+        status: 'streaming',
+        content: 'hello world'
+      }
+    ])
+  })
+
   test('preserves custom tool render payload on block create and update', () => {
     const requestPayload = {
       kind: 'request_user_input',

@@ -237,7 +237,11 @@ function logRuntimeChatTerminalEvent(
 }
 
 function isBatchableRuntimeStreamEvent(event: LocalExecutorEvent): boolean {
-  return isRuntimeTextDeltaEvent(event) || isRuntimeBlockContentSnapshotEvent(event)
+  return (
+    isRuntimeTextDeltaEvent(event) ||
+    isRuntimeBlockContentDeltaEvent(event) ||
+    isRuntimeBlockContentSnapshotEvent(event)
+  )
 }
 
 function mergeBatchableRuntimeStreamEvents(
@@ -246,6 +250,9 @@ function mergeBatchableRuntimeStreamEvents(
 ): LocalExecutorEvent | null {
   if (isRuntimeTextDeltaEvent(current) && isRuntimeTextDeltaEvent(next)) {
     return mergeRuntimeTextDeltaEvents(current, next)
+  }
+  if (isRuntimeBlockContentDeltaEvent(current) && isRuntimeBlockContentDeltaEvent(next)) {
+    return mergeRuntimeBlockContentDeltas(current, next)
   }
   if (isRuntimeBlockContentSnapshotEvent(current) && isRuntimeBlockContentSnapshotEvent(next)) {
     return mergeRuntimeBlockContentSnapshots(current, next)
@@ -316,6 +323,61 @@ function sameRuntimeTextDeltaIdentity(
       nextData.contentIndex ?? nextData.content_index,
     ],
   ].every(([currentValue, nextValue]) => currentValue === nextValue)
+}
+
+function isRuntimeBlockContentDeltaEvent(event: LocalExecutorEvent): boolean {
+  if (event.event !== 'response.block.updated') return false
+  const data = asRecord(asRecord(event.payload).data)
+  if (Object.keys(asRecord(data.block)).length > 0) return false
+  const updates = asRecord(data.updates)
+  if (typeof (updates.contentDelta ?? updates.content_delta) !== 'string') return false
+  if (updates.status !== undefined && updates.status !== 'streaming') return false
+  return Object.keys(updates).every(
+    key => key === 'contentDelta' || key === 'content_delta' || key === 'status'
+  )
+}
+
+function mergeRuntimeBlockContentDeltas(
+  current: LocalExecutorEvent,
+  next: LocalExecutorEvent
+): LocalExecutorEvent | null {
+  const currentPayload = asRecord(current.payload)
+  const nextPayload = asRecord(next.payload)
+  const currentData = asRecord(currentPayload.data)
+  const nextData = asRecord(nextPayload.data)
+  if (
+    !sameRuntimeEventAddress(currentPayload, nextPayload) ||
+    (currentData.blockId ?? currentData.block_id) !== (nextData.blockId ?? nextData.block_id)
+  ) {
+    return null
+  }
+  const currentUpdates = asRecord(currentData.updates)
+  const nextUpdates = asRecord(nextData.updates)
+  const currentDelta =
+    stringField(currentUpdates, 'contentDelta') ?? stringField(currentUpdates, 'content_delta')
+  const nextDelta =
+    stringField(nextUpdates, 'contentDelta') ?? stringField(nextUpdates, 'content_delta')
+  if (currentDelta === undefined || nextDelta === undefined) return null
+  const deltaKey =
+    'contentDelta' in currentUpdates || 'contentDelta' in nextUpdates
+      ? 'contentDelta'
+      : 'content_delta'
+  return {
+    event: current.event,
+    payload: {
+      ...currentPayload,
+      ...nextPayload,
+      data: {
+        ...currentData,
+        ...nextData,
+        updates: {
+          ...currentUpdates,
+          ...nextUpdates,
+          [deltaKey]: `${currentDelta}${nextDelta}`,
+        },
+      },
+    },
+  }
 }
 
 function isRuntimeBlockContentSnapshotEvent(event: LocalExecutorEvent): boolean {
