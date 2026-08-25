@@ -968,7 +968,10 @@ export function useWorkbenchRuntimeMessaging({
           reportSendBlocked('无法解析任务运行项目', undefined, options)
           return false
         }
-        runtimeTaskTarget = workspaceBinding
+        runtimeTaskTarget = {
+          ...workspaceBinding,
+          deviceId: optimisticDeviceId,
+        }
       } else {
         if (!activeDeviceId) {
           reportSendBlocked('请选择设备后再发送', undefined, options)
