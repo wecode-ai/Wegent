@@ -2167,10 +2167,27 @@ describe('TaskActivityView', () => {
             assignee_agent_id: '12',
           } as never
         }
+        taskBindings={[
+          {
+            id: 9,
+            cloud_project_id: '11',
+            loop_item_id: 'WEG-1',
+            task_user_id: 1,
+            device_id: 'local-device',
+            task_id: 'manager-runtime-1',
+            task_title: 'Inspect changes',
+            backend_task_id: null,
+            workflow_node_id: null,
+            linked_at: '2026-08-24T08:00:00Z',
+          },
+        ]}
         linear
       />
     )
 
+    expect(
+      await screen.findByTestId(`cloud-task-activity-message-${managerMessage.messageId}`)
+    ).toHaveTextContent('自定义 AI 调度员')
     await user.type(
       await screen.findByTestId(`cloud-task-activity-card-composer-${managerMessage.messageId}`),
       '任务完成了吗？{Enter}'
@@ -2200,6 +2217,9 @@ describe('TaskActivityView', () => {
         expect.anything()
       )
     )
+    expect(
+      await screen.findByTestId(`cloud-task-activity-message-${managerReply.messageId}`)
+    ).toHaveTextContent('自定义 AI 调度员')
   })
 
   it('replies to the parent comment from the card composer by default', async () => {

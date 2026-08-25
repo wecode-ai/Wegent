@@ -1721,9 +1721,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       text: '自定义 AI 调度员',
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('scrollIntoViewAsUser', customManagerCard, {
-      text: '自定义 AI 调度员',
-    })
+    await control.command('scrollIntoView', customManagerCard)
     await control.command('waitFor', customManagerCard, {
       text: '自定义 AI 调度员',
       timeoutMs: uiTimeoutMs,
@@ -1747,9 +1745,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The custom manager did not append a distinct reply to its comment thread',
       uiTimeoutMs * 3
     )
-    await control.command('scrollIntoViewAsUser', customManagerCard, {
-      text: '自定义 AI 调度员',
-    })
+    await control.command('scrollIntoView', customManagerCard)
     const managerExecutionsAfterReply = await allExecutions(projectId)
     assert.equal(
       managerExecutionsAfterReply.filter(

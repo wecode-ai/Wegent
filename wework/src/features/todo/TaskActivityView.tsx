@@ -755,7 +755,15 @@ export function TaskActivityView({
 
   function taskSummaryForMessage(message: ProjectChatMessage): ExecutionTaskSummary | undefined {
     const address = message.runtimeAddress
-    if (message.sender.type !== 'agent' || !address?.deviceId || !address.taskId) return undefined
+    if (
+      message.sender.type !== 'agent' ||
+      message.metadata.executor_type === 'automation_manager' ||
+      message.metadata.conversation_only === true ||
+      !address?.deviceId ||
+      !address.taskId
+    ) {
+      return undefined
+    }
     const binding = taskBindings.find(
       candidate => candidate.device_id === address.deviceId && candidate.task_id === address.taskId
     )
