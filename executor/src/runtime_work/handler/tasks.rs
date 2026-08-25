@@ -1005,17 +1005,22 @@ impl RuntimeWorkRpcHandler {
         };
         let had_active_local_execution = self.is_active_local_task(&local_task_id);
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
-        if let Some(thread_id) = thread_id.as_deref() {
-            if self
-                .settle_local_execution_from_terminal_codex_turn(
-                    &local_task_id,
-                    thread_id,
-                    "interrupt_and_send_provider_terminal",
-                    PROVIDER_STATE_RECONCILIATION_TIMEOUT,
-                )
-                .await
-            {
-                return self.send_message_after_local_checks(payload).await;
+        if had_active_local_execution {
+            self.request_active_turn_stop(&local_task_id);
+        }
+        if !had_active_local_execution {
+            if let Some(thread_id) = thread_id.as_deref() {
+                if self
+                    .settle_local_execution_from_terminal_codex_turn(
+                        &local_task_id,
+                        thread_id,
+                        "interrupt_and_send_provider_terminal",
+                        PROVIDER_STATE_RECONCILIATION_TIMEOUT,
+                    )
+                    .await
+                {
+                    return self.send_message_after_local_checks(payload).await;
+                }
             }
         }
         let local_stop = self.abort_active_turn(&local_task_id);
@@ -1553,7 +1558,10 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if is_codex {
+        if had_active_local_execution {
+            self.request_active_turn_stop(&local_task_id);
+        }
+        if is_codex && !had_active_local_execution {
             if let Some(thread_id) = thread_id.as_deref() {
                 if self
                     .settle_local_execution_from_terminal_codex_turn(

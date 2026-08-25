@@ -4,6 +4,7 @@ import {
   clipboard,
   ipcMain,
   Menu,
+  nativeImage,
   nativeTheme,
   powerMonitor,
   screen,
@@ -50,6 +51,7 @@ import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
 import { resolveStartupSplashTheme, StartupSplash } from './host/startup-splash.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
+import { createTrayIcon } from './host/tray-icon.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { installNativeContextMenu } from './host/image-context-menu.js'
 import {
@@ -99,7 +101,7 @@ let dockVisible = true
 let preferences: PreferencesStore | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
-let trayManager: ElectronTrayManager<Electron.Menu | null> | null = null
+let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let pendingTrayActions: TrayAction[] = []
 const pendingEmbeddedBrowserAttachments = new Map<
   number,
@@ -717,12 +719,17 @@ function dispatchTrayAction(action: TrayAction): void {
   }
 }
 
-function createTrayManager(): ElectronTrayManager<Electron.Menu | null> {
+function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const resourcesRoot = app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'resources')
+  const iconPath = join(resourcesRoot, 'icons', '128x128.png')
   return new ElectronTrayManager({
-    createTray: () => new Tray(join(resourcesRoot, 'icons', '32x32.png')),
+    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath)),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
+    applyTitle: (tray, title) => {
+      tray.setImage(createTrayIcon(nativeImage, iconPath, title))
+      tray.setTitle('')
+    },
   })
 }
 
@@ -1013,8 +1020,9 @@ if (hasSingleInstanceLock) {
         await preferences?.update({ closeToTrayHintSeen: true })
       },
     })
-    trayManager = createTrayManager()
-    trayManager.create()
+    const createdTrayManager = createTrayManager()
+    createdTrayManager.create()
+    trayManager = createdTrayManager
     const startupPreferences = await preferences.read()
     startupSplash = new StartupSplash({
       createWindow: options => {
