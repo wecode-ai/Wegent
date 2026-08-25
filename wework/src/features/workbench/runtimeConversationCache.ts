@@ -34,6 +34,14 @@ const MAX_CONVERSATION_CACHE_ENTRIES = 50
 const turnsByConversation = new Map<string, RuntimeConversationTurn[]>()
 const metadataByConversation = new Map<string, RuntimeConversationMetadata>()
 const listenersByConversation = new Map<string, Set<(action?: RuntimePaneMessageAction) => void>>()
+type PendingRuntimeConversationNotification =
+  | { id: number; scheduler: 'animation-frame' }
+  | {
+      id: ReturnType<typeof globalThis.setTimeout>
+      scheduler: 'timeout'
+    }
+
+const pendingNotificationsByConversation = new Map<string, PendingRuntimeConversationNotification>()
 const runtimeTransportReplacedListeners = new Set<
   (payload: RuntimeTransportReplacedPayload) => void
 >()
@@ -834,6 +842,7 @@ function shortRuntimeAgentId(agentId: string): string {
 
 export function evictRuntimeConversation(address: RuntimeTaskAddress) {
   const key = runtimeConversationKey(address)
+  cancelPendingRuntimeConversationNotification(key)
   turnsByConversation.delete(key)
   metadataByConversation.delete(key)
   hydrationByConversation.delete(key)
@@ -853,6 +862,9 @@ export function getRuntimeConversationCacheStats() {
 }
 
 export function clearRuntimeConversationCacheForTests() {
+  pendingNotificationsByConversation.forEach((_, key) =>
+    cancelPendingRuntimeConversationNotification(key)
+  )
   turnsByConversation.clear()
   metadataByConversation.clear()
   listenersByConversation.clear()
@@ -866,6 +878,49 @@ export function clearRuntimeConversationCacheForTests() {
 }
 
 function notifyRuntimeConversation(key: string, action?: RuntimePaneMessageAction) {
+  if (action && isBatchableRuntimeConversationAction(action)) {
+    scheduleRuntimeConversationNotification(key)
+    return
+  }
+  cancelPendingRuntimeConversationNotification(key)
+  emitRuntimeConversationNotification(key, action)
+}
+
+function isBatchableRuntimeConversationAction(action: RuntimePaneMessageAction): boolean {
+  return action.type === 'assistant_chunk' || action.type === 'block_updated'
+}
+
+function scheduleRuntimeConversationNotification(key: string): void {
+  if (pendingNotificationsByConversation.has(key)) return
+
+  if (typeof globalThis.requestAnimationFrame === 'function') {
+    const id = globalThis.requestAnimationFrame(() => {
+      pendingNotificationsByConversation.delete(key)
+      emitRuntimeConversationNotification(key)
+    })
+    pendingNotificationsByConversation.set(key, { id, scheduler: 'animation-frame' })
+    return
+  }
+
+  const id = globalThis.setTimeout(() => {
+    pendingNotificationsByConversation.delete(key)
+    emitRuntimeConversationNotification(key)
+  }, 0)
+  pendingNotificationsByConversation.set(key, { id, scheduler: 'timeout' })
+}
+
+function cancelPendingRuntimeConversationNotification(key: string): void {
+  const pending = pendingNotificationsByConversation.get(key)
+  if (!pending) return
+  pendingNotificationsByConversation.delete(key)
+  if (pending.scheduler === 'animation-frame') {
+    globalThis.cancelAnimationFrame(pending.id)
+    return
+  }
+  globalThis.clearTimeout(pending.id)
+}
+
+function emitRuntimeConversationNotification(key: string, action?: RuntimePaneMessageAction): void {
   listenersByConversation.get(key)?.forEach(listener => listener(action))
 }
 
