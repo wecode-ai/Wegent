@@ -16,6 +16,7 @@ import {
   Trash2,
   FolderOpen,
   Folder,
+  FolderKanban,
   SquarePen,
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -58,7 +59,6 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
     refreshProjects,
     isProjectSectionCollapsed,
     setProjectSectionCollapsed,
-    isWorkspaceEnabled,
   } = useProjectContext()
   const { selectTask } = useTaskSession()
 
@@ -154,44 +154,36 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
             <ChevronUp className="h-3.5 w-3.5 flex-shrink-0" />
           )}
         </button>
-        <div className="ml-1 flex items-center">
-          <Button
-            data-testid="create-group-button"
-            variant="ghost"
-            size="sm"
-            className="h-5 w-5 p-0 text-text-muted hover:text-text-primary transition-colors rounded"
-            onClick={() => handleOpenCreateDialog('group')}
-            title={t('create.title')}
-            aria-label={t('create.title')}
-          >
-            <FolderPlus className="w-3.5 h-3.5" />
-          </Button>
-          {isWorkspaceEnabled && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  data-testid="create-workspace-project-button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 w-4 p-0 text-text-muted hover:text-text-primary transition-colors rounded"
-                  title={t('workspaceCreate.title')}
-                  aria-label={t('workspaceCreate.title')}
-                >
-                  <ChevronDown className="w-3 h-3" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-36">
-                <DropdownMenuItem
-                  data-testid="create-workspace-project-menu-item"
-                  onClick={() => handleOpenCreateDialog('workspace')}
-                >
-                  <FolderPlus className="w-3.5 h-3.5 mr-2" />
-                  {t('workspaceCreate.title')}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              data-testid="create-workspace-project-button"
+              variant="ghost"
+              size="sm"
+              className="ml-1 h-5 w-5 p-0 text-text-muted hover:text-text-primary transition-colors rounded"
+              title={t('createMenu.title')}
+              aria-label={t('createMenu.title')}
+            >
+              <FolderPlus className="w-3.5 h-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-36">
+            <DropdownMenuItem
+              data-testid="create-group-button"
+              onClick={() => handleOpenCreateDialog('group')}
+            >
+              <Folder className="w-3.5 h-3.5 mr-2" />
+              {t('create.title')}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-testid="create-workspace-project-menu-item"
+              onClick={() => handleOpenCreateDialog('workspace')}
+            >
+              <FolderPlus className="w-3.5 h-3.5 mr-2" />
+              {t('workspaceCreate.title')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Project List */}
@@ -317,12 +309,18 @@ function ProjectItem({
           )}
         </button>
 
-        {/* Project Icon */}
+        {/* Project/group icon */}
         <div
           className="flex items-center justify-center w-5 h-5"
           style={{ color: project.color || 'var(--color-text-secondary)' }}
         >
-          {isExpanded ? <FolderOpen className="w-4 h-4" /> : <Folder className="w-4 h-4" />}
+          {isWorkspace ? (
+            <FolderKanban className="w-4 h-4" data-testid="workspace-project-icon" />
+          ) : isExpanded ? (
+            <FolderOpen className="w-4 h-4" data-testid="conversation-group-icon" />
+          ) : (
+            <Folder className="w-4 h-4" data-testid="conversation-group-icon" />
+          )}
         </div>
 
         {/* Project Name */}

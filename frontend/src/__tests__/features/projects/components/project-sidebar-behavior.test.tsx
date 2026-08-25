@@ -181,28 +181,31 @@ describe('project sidebar behavior', () => {
     expect(screen.getByTestId('project-section-list')).toHaveClass('mt-1', 'space-y-0.5')
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.getByText('workspace-project')).toBeInTheDocument()
+    expect(screen.getByTestId('conversation-group-icon')).toHaveClass('lucide-folder-open')
+    expect(screen.getByTestId('workspace-project-icon')).toHaveClass('lucide-folder-kanban')
 
     fireEvent.click(screen.getByTestId('project-section-toggle'))
     expect(setProjectSectionCollapsedMock).toHaveBeenCalledTimes(1)
   })
 
-  test('keeps workspace projects visible in the unified section when workspace creation is disabled', () => {
+  test('keeps workspace projects and creation available regardless of the workspace whitelist', () => {
     isWorkspaceEnabledMock = false
 
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.getByText('workspace-project')).toBeInTheDocument()
-    expect(screen.queryByTestId('create-workspace-project-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('create-workspace-project-button')).toBeInTheDocument()
+    expect(screen.getByTestId('create-workspace-project-menu-item')).toBeInTheDocument()
   })
 
-  test('opens group creation directly and keeps workspace creation available', () => {
+  test('opens group and workspace creation from the shared create menu', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
     expect(screen.getByTestId('create-workspace-project-menu-item')).toHaveTextContent(
       'workspaceCreate.title'
     )
-    expect(screen.getByTestId('create-group-button')).toHaveAttribute('title', 'create.title')
+    expect(screen.getByTestId('create-group-button')).toHaveTextContent('create.title')
 
     fireEvent.click(screen.getByTestId('create-group-button'))
     expect(screen.getByTestId('project-create-dialog-mode')).toHaveTextContent('group')
