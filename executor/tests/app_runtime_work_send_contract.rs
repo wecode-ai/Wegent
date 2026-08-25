@@ -568,7 +568,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
             .is_some()
             && find_runtime_event(runtime_events, "response.block.updated", |event| {
                 let data = &event["payload"]["data"];
-                data["updates"]["content"] == "Inspecting workspace."
+                data["updates"]["content_delta"] == "workspace."
                     && data["updates"]["status"] == "streaming"
             })
             .is_some()
@@ -624,8 +624,8 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         process_block_id
     );
     assert_eq!(
-        process_updated["payload"]["data"]["updates"]["content"],
-        "Inspecting workspace."
+        process_updated["payload"]["data"]["updates"]["content_delta"],
+        "workspace."
     );
     assert_eq!(
         process_updated["payload"]["data"]["updates"]["status"],
