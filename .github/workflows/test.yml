@@ -191,7 +191,6 @@ jobs:
         os: [macos-14, windows-latest]
     env:
       CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
 
     steps:
       - name: Checkout code
@@ -215,6 +214,8 @@ jobs:
 
       - name: Run local connector auth platform tests
         working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: cargo test --all-features --lib runtime_work::local_connector_auth::tests
 
   test-shared:
