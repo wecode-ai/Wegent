@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { ApiError } from '@/api/http'
 import { defaultAppPreferences } from '@/tauri/appPreferences'
 import './../../../src/i18n'
 import { GitHostingSettingsPage } from './GitHostingSettingsPage'
@@ -16,6 +17,7 @@ const cloudConnection = vi.hoisted(() => ({
   isConnected: true,
   apiBaseUrl: 'https://cloud.example.com/api',
   token: 'cloud-token',
+  refreshUser: vi.fn(),
 }))
 
 vi.mock('@/api/gitHostingCli', () => ({
@@ -61,6 +63,8 @@ describe('GitHostingSettingsPage', () => {
     getGitAccountSyncSummary.mockReset()
     getAllDevices.mockReset()
     syncGitAccounts.mockReset()
+    cloudConnection.refreshUser.mockReset()
+    cloudConnection.refreshUser.mockResolvedValue(null)
     updateAppPreferences.mockImplementation(async patch => ({
       ...defaultAppPreferences,
       ...patch,
@@ -307,6 +311,30 @@ describe('GitHostingSettingsPage', () => {
     expect(await screen.findByTestId('git-device-sync-error')).toHaveTextContent(
       'summary unavailable'
     )
-    expect(screen.getByTestId('git-device-sync-submit')).toBeDisabled()
+    expect(screen.queryByTestId('git-device-sync-accounts')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('git-device-sync-submit')).not.toBeInTheDocument()
+  })
+
+  test('marks an expired cloud session without rendering missing accounts', async () => {
+    getGitAccountSyncSummary.mockRejectedValue(new ApiError('Could not validate credentials', 401))
+
+    render(<GitHostingSettingsPage />)
+
+    expect(await screen.findByTestId('git-device-sync-error')).toHaveTextContent(
+      'Wegent 云端登录已失效'
+    )
+    expect(cloudConnection.refreshUser).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('云端尚未配置 Git 账户。')).not.toBeInTheDocument()
+  })
+
+  test('explains when the connected Backend does not support Git sync', async () => {
+    getGitAccountSyncSummary.mockRejectedValue(new ApiError('Not Found', 404))
+
+    render(<GitHostingSettingsPage />)
+
+    expect(await screen.findByTestId('git-device-sync-error')).toHaveTextContent(
+      '当前 Wegent Backend 不支持设备 Git 配置同步'
+    )
+    expect(screen.queryByText('云端尚未配置 Git 账户。')).not.toBeInTheDocument()
   })
 })

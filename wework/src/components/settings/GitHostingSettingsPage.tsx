@@ -15,6 +15,7 @@ import {
   type GitHostingCliProvider,
   type GitHostingCliStatus,
 } from '@/api/gitHostingCli'
+import { ApiError } from '@/api/http'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -61,9 +62,28 @@ function statusLabel(
   return t('workbench.git_hosting_cli_ready', '已就绪')
 }
 
+function syncLoadErrorMessage(t: ReturnType<typeof useTranslation>['t'], error: unknown): string {
+  if (error instanceof ApiError && error.status === 401) {
+    return t(
+      'workbench.git_device_sync_login_expired',
+      'Wegent 云端登录已失效，请在“云端连接”中重新连接后重试。'
+    )
+  }
+  if (error instanceof ApiError && error.status === 404) {
+    return t(
+      'workbench.git_device_sync_backend_unsupported',
+      '当前 Wegent Backend 不支持设备 Git 配置同步，请更新服务后重试。'
+    )
+  }
+  return error instanceof Error && error.message
+    ? error.message
+    : t('workbench.git_device_sync_load_failed', '读取设备 Git 配置失败')
+}
+
 export function GitHostingSettingsPage() {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  const refreshCloudUser = cloudConnection.refreshUser
   const syncConnection = useMemo(
     () => ({
       isConnected: cloudConnection.isConnected,
@@ -146,15 +166,14 @@ export function GitHostingSettingsPage() {
       setSyncSummary(null)
       setSyncDevices([])
       setSelectedDeviceId('')
-      setSyncError(
-        loadError instanceof Error && loadError.message
-          ? loadError.message
-          : t('workbench.git_device_sync_load_failed', '读取设备 Git 配置失败')
-      )
+      setSyncError(syncLoadErrorMessage(t, loadError))
+      if (loadError instanceof ApiError && loadError.status === 401) {
+        void refreshCloudUser()
+      }
     } finally {
       setSyncLoading(false)
     }
-  }, [syncConnection, t])
+  }, [refreshCloudUser, syncConnection, t])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => void loadSyncConfiguration(), 0)
@@ -387,6 +406,12 @@ export function GitHostingSettingsPage() {
             <Loader2 className="h-4 w-4 animate-spin" />
             {t('workbench.git_device_sync_loading', '正在读取 Git 账户和设备…')}
           </div>
+        ) : !syncSummary ? (
+          syncError ? (
+            <p data-testid="git-device-sync-error" className="mt-4 text-xs text-red-500">
+              {syncError}
+            </p>
+          ) : null
         ) : (
           <div className="mt-4 space-y-4">
             <div data-testid="git-device-sync-accounts">
@@ -534,7 +559,7 @@ export function GitHostingSettingsPage() {
           </div>
         )}
 
-        {syncError ? (
+        {syncError && syncSummary ? (
           <p data-testid="git-device-sync-error" className="mt-4 text-xs text-red-500">
             {syncError}
           </p>

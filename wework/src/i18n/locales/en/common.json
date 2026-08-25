@@ -2281,6 +2281,8 @@
     "git_device_sync_cloud_required": "Connect to Wegent Cloud to sync Git configuration.",
     "git_device_sync_loading": "Loading Git accounts and devices…",
     "git_device_sync_load_failed": "Unable to load device Git configuration",
+    "git_device_sync_login_expired": "Your Wegent Cloud session has expired. Reconnect under Cloud connection and try again.",
+    "git_device_sync_backend_unsupported": "This Wegent Backend does not support device Git configuration sync. Update the service and try again.",
     "git_device_sync_account_count": "{{count}} domains will be synced",
     "git_device_sync_no_accounts": "No Git account is configured in the cloud.",
     "git_device_sync_duplicate_warning": "Only the first configured account for each domain is synced.",

@@ -2279,6 +2279,8 @@
     "git_device_sync_cloud_required": "连接 Wegent 云端后可同步 Git 配置。",
     "git_device_sync_loading": "正在读取 Git 账户和设备…",
     "git_device_sync_load_failed": "读取设备 Git 配置失败",
+    "git_device_sync_login_expired": "Wegent 云端登录已失效，请在“云端连接”中重新连接后重试。",
+    "git_device_sync_backend_unsupported": "当前 Wegent Backend 不支持设备 Git 配置同步，请更新服务后重试。",
     "git_device_sync_account_count": "将同步 {{count}} 个域",
     "git_device_sync_no_accounts": "云端尚未配置 Git 账户。",
     "git_device_sync_duplicate_warning": "同一域只同步配置顺序中的第一个账户。",
