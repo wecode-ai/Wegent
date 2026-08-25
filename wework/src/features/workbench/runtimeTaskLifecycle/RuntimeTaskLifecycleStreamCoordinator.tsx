@@ -21,14 +21,6 @@ interface TerminalEventPayload {
   deviceId?: string
 }
 
-interface TerminalDoneEventPayload extends TerminalEventPayload {
-  result?: {
-    value?: unknown
-    blocks?: unknown
-    fileChanges?: unknown
-  }
-}
-
 export function RuntimeTaskLifecycleStreamCoordinator({
   services,
   store,
@@ -110,7 +102,13 @@ export function RuntimeTaskLifecycleStreamCoordinator({
       const snapshot = store.getSnapshot()
       for (const lifecycle of snapshot.tasks.values()) {
         if (!lifecycle || lifecycle.address.taskId !== payload.taskId) continue
-        if (payload.deviceId && lifecycle.address.deviceId !== payload.deviceId) continue
+        if (
+          payload.deviceId &&
+          lifecycle.address.deviceId !== payload.deviceId &&
+          store.getTask({ ...lifecycle.address, deviceId: payload.deviceId })?.key !== lifecycle.key
+        ) {
+          continue
+        }
         const terminalTurnId = payload.subtaskId?.trim() || null
         const activeTurnId = lifecycle.turn.id
         if (terminalTurnId && activeTurnId && terminalTurnId !== activeTurnId) {
@@ -153,7 +151,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     const unsubscribe = services.chatStream.subscribe({
       onChatDone: payload => {
         const match = settleMatchingTask(payload, 'succeeded')
-        if (match && (!match.settled || terminalDoneNeedsTranscript(payload))) {
+        if (match) {
           void reconcileTerminalTranscript(match.address, 'succeeded')
         }
       },
@@ -208,13 +206,4 @@ function isCancelledTerminalEvent(payload: { error: string; type?: string }): bo
   return [error, type].some(value =>
     value ? ['interrupted', 'cancelled', 'canceled', 'aborted'].includes(value) : false
   )
-}
-
-function terminalDoneNeedsTranscript(payload: TerminalDoneEventPayload): boolean {
-  const result = payload.result
-  if (!result) return true
-  const hasValue = typeof result.value === 'string' && result.value.trim().length > 0
-  const hasBlocks = Array.isArray(result.blocks) && result.blocks.length > 0
-  const hasFileChanges = typeof result.fileChanges === 'object' && result.fileChanges !== null
-  return !hasValue && !hasBlocks && !hasFileChanges
 }

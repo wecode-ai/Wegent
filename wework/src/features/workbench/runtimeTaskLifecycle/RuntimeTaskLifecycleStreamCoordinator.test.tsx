@@ -490,13 +490,13 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
   })
 
-  test('does not reload a terminal transcript when completion already carries content', async () => {
+  test('reconciles executor state when completion already carries content', async () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
+    store.syncRuntimeWork(runtimeWork(true, 'executor-device'))
     store.turnStarted(address, 'turn-1')
     let streamHandlers: ChatStreamHandlers = {}
-    const getRuntimeTranscript = vi.fn()
+    const getRuntimeTranscript = vi.fn().mockResolvedValue(runtimeTranscript(false))
     const services = {
       chatStream: {
         subscribe: vi.fn((handlers: ChatStreamHandlers) => {
@@ -516,14 +516,22 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: address.taskId,
-        deviceId: address.deviceId,
+        deviceId: 'executor-device',
         subtaskId: 'turn-1',
         result: { value: 'streamed answer' },
       } as never)
     })
 
-    expect(getRuntimeTranscript).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(getRuntimeTranscript).toHaveBeenCalledWith({
+        ...address,
+        limit: 50,
+        refresh: true,
+      })
+    )
+    await waitFor(() => expect(store.getTask(address)?.execution.phase).toBe('idle'))
     expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
   })
 
   test('settles a matching cancellation without projecting executor execution as idle', async () => {
@@ -609,13 +617,14 @@ function runtimeTaskAddress() {
   }
 }
 
-function runtimeWork(running: boolean): RuntimeWorkListResponse {
+function runtimeWork(running: boolean, remoteHostId?: string): RuntimeWorkListResponse {
   const address = runtimeTaskAddress()
   return {
     projects: [],
     chats: [
       {
         deviceId: address.deviceId,
+        ...(remoteHostId ? { remoteHostId } : {}),
         workspacePath: address.workspacePath,
         available: true,
         tasks: [
