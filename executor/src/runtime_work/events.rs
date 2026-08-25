@@ -743,15 +743,14 @@ impl CodexNotificationEventMapper {
             process_text.accepts(block_type, process_kind, item_id.as_deref())
         }) {
             process_text.content.push_str(&delta);
-            if delta.len() == 1
-                && process_text
-                    .content
-                    .len()
-                    .saturating_sub(process_text.emitted_content_len)
-                    < PROCESS_TEXT_UPDATE_MIN_CHARS
-            {
+            let pending_content_len = process_text
+                .content
+                .len()
+                .saturating_sub(process_text.emitted_content_len);
+            if delta.len() == 1 && pending_content_len < PROCESS_TEXT_UPDATE_MIN_CHARS {
                 return;
             }
+            let pending_delta = process_text.content[process_text.emitted_content_len..].to_owned();
             process_text.emitted_content_len = process_text.content.len();
             emit_response_event(
                 emit_context.event_tx,
@@ -762,7 +761,7 @@ impl CodexNotificationEventMapper {
                 json!({
                     "block_id": process_text.id.clone(),
                     "updates": {
-                        "content_delta": delta,
+                        "content_delta": pending_delta,
                         "status": "streaming",
                     }
                 }),
@@ -818,7 +817,8 @@ impl CodexNotificationEventMapper {
         if let Some(process_text) = self.process_text.as_mut().filter(|process_text| {
             process_text.accepts(block_type, process_kind, item_id.as_deref())
         }) {
-            let updates = terminal_content_updates(&process_text.content, &text);
+            let emitted_content = &process_text.content[..process_text.emitted_content_len];
+            let updates = terminal_content_updates(emitted_content, &text);
             emit_response_event(
                 emit_context.event_tx,
                 emit_context.device_id,
@@ -1349,7 +1349,10 @@ fn terminal_content_updates(streamed_content: &str, completed_content: &str) -> 
             "status": "done",
         });
     }
-    json!({ "status": "done" })
+    json!({
+        "content": completed_content,
+        "status": "done",
+    })
 }
 
 fn is_context_compaction_notification(params: &Value) -> bool {
@@ -2146,10 +2149,10 @@ mod tests {
     }
 
     #[test]
-    fn terminal_content_update_does_not_send_a_mismatched_snapshot() {
+    fn terminal_content_update_repairs_a_mismatched_stream_with_the_final_snapshot() {
         assert_eq!(
             terminal_content_updates("streamed text", "canonical text"),
-            json!({"status": "done"})
+            json!({"content": "canonical text", "status": "done"})
         );
     }
 
