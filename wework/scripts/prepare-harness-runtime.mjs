@@ -433,6 +433,7 @@ await resetTargetDirectory()
 await writeFile(catalogPath, `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`)
 if (materializeRequested) {
   await mkdir(materializedRoot, { recursive: true })
+  await rm(path.join(materializedRoot, 'runtime.json'), { force: true })
   await pruneMaterializedRuntimes(descriptors)
   await writeFile(
     path.join(materializedRoot, 'runtimes.json'),

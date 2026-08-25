@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "prepare:electron": "pnpm --dir electron install --frozen-lockfile",
-    "dev:desktop": "pnpm run prepare:electron && pnpm --dir electron dev",
+    "dev:desktop": "pnpm run prepare:electron && pnpm run prepare:harness-runtime -- --materialize && pnpm --dir electron dev",
     "dev:mac": "pnpm run dev:desktop",
     "dev:windows": "pnpm run dev:desktop",
     "prepare:codex": "node scripts/prepare-codex-binary.mjs",

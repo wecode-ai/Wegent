@@ -23,6 +23,9 @@ describe('desktop resource migration', () => {
       'pnpm --dir electron install --frozen-lockfile'
     )
     expect(packageJson.scripts['dev:desktop']).toContain('pnpm run prepare:electron')
+    expect(packageJson.scripts['dev:desktop']).toContain(
+      'pnpm run prepare:harness-runtime -- --materialize'
+    )
     expect(packageJson.scripts['ai:verify:electron:build']).toContain('pnpm run prepare:electron')
   })
 

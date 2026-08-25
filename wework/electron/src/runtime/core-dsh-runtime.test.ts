@@ -24,6 +24,13 @@ describe('core DSH runtime', () => {
         })),
       })
     )
+    await writeFile(
+      join(root.path, 'runtime.json'),
+      JSON.stringify({
+        dshVersion: '0.1.0-rc.8',
+        sourceFingerprint: rc8.fingerprint,
+      })
+    )
 
     await expect(selectCoreDshRuntime(root.path)).resolves.toMatchObject({
       version: CORE_DSH_VERSION,
@@ -36,6 +43,7 @@ describe('core DSH runtime', () => {
     await writeRuntime(root.path, '0.1.0-rc.7', '7')
     await writeRuntime(root.path, '0.1.0-rc.8', '8')
     await writeRuntime(root.path, '0.1.1-rc.1', '9')
+    await writeRuntime(root.path, CORE_DSH_VERSION, 'a', 'workbench')
 
     await expect(
       selectBundledDshRuntimeMatching(root.path, 'workbench', '>=0.1.0-rc.7 <=0.1.0-rc.8')
@@ -46,6 +54,12 @@ describe('core DSH runtime', () => {
       selectBundledDshRuntimeMatching(root.path, 'workbench', '0.1.0-rc.7')
     ).resolves.toMatchObject({
       version: '0.1.0-rc.7',
+    })
+    await expect(
+      selectBundledDshRuntimeMatching(root.path, 'workbench', '>=0.1.0-rc.7')
+    ).resolves.toMatchObject({
+      version: CORE_DSH_VERSION,
+      role: 'workbench',
     })
     await root.remove()
   })
@@ -269,7 +283,8 @@ describe('core DSH runtime', () => {
 async function writeRuntime(
   root: string,
   version: string,
-  fingerprintCharacter: string
+  fingerprintCharacter: string,
+  role = version === CORE_DSH_VERSION ? 'core' : 'workbench'
 ): Promise<{
   root: string
   fingerprint: string
@@ -294,7 +309,7 @@ async function writeRuntime(
     join(runtime, 'runtime.json'),
     JSON.stringify({
       dshVersion: version,
-      role: version === CORE_DSH_VERSION ? 'core' : 'workbench',
+      role,
       sourceFingerprint: fingerprint,
     })
   )

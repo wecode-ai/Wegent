@@ -122,9 +122,7 @@ export async function selectBundledDshRuntimeMatching(
   versionRequirement: string
 ): Promise<BundledDshRuntime> {
   const absoluteRoot = resolve(root)
-  const roots = (await isRuntimeRoot(absoluteRoot))
-    ? [absoluteRoot]
-    : await runtimeDirectories(absoluteRoot)
+  const roots = await runtimeDirectories(absoluteRoot)
   const candidates = (await Promise.all(roots.map(candidate => readRuntime(candidate)))).filter(
     (runtime): runtime is BundledDshRuntime =>
       runtime !== null &&
@@ -327,6 +325,7 @@ async function runtimeDirectories(root: string): Promise<string[]> {
   } catch {
     // Fall back to directory discovery for a direct development runtime root.
   }
+  if (await isRuntimeRoot(root)) return [root]
   const entries = await readdir(root, { withFileTypes: true })
   return entries.filter(entry => entry.isDirectory()).map(entry => join(root, entry.name))
 }
