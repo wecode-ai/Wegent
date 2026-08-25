@@ -11285,6 +11285,39 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 
+  test('opens a queued plugin trial in its explicit local workspace', async () => {
+    renderWorkbench(<ProjectSendProbe />)
+    await screen.findByText('open project runtime task')
+    const standaloneChatKey = Number(screen.getByTestId('standalone-chat-key').textContent)
+
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$智能工作台开发助手](plugin://smart-app-builder@wework-personal) ',
+        pluginName: '智能工作台开发助手',
+        openInNewChat: true,
+        targetWorkspace: {
+          deviceId: 'device-1',
+          path: '/tmp/blank-workbench',
+        },
+      })
+    )
+    act(() => window.dispatchEvent(new Event('wework:plugin-trial-queued')))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-input')).toHaveTextContent('智能工作台开发助手')
+    )
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
+    expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('device-1')
+    expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent(
+      '/tmp/blank-workbench'
+    )
+    expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent(
+      String(standaloneChatKey + 1)
+    )
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
   test('sends a follow-up message after setting a goal in an existing runtime task', async () => {
     const sendRuntimeMessage = vi.fn().mockResolvedValue({
       accepted: true,
