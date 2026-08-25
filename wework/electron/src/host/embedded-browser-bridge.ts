@@ -358,6 +358,10 @@ export class EmbeddedBrowserBridge {
       reason: 'not_started',
     }
     while (Date.now() - startedAt <= timeoutMs) {
+      if (!this.browser.has(label)) {
+        await new Promise(resolve => setTimeout(resolve, pollMs))
+        continue
+      }
       const input = {
         waitId,
         selector: request.selector ?? null,
@@ -367,13 +371,20 @@ export class EmbeddedBrowserBridge {
         timeoutMs,
         options: request.options ?? null,
       }
-      const result = await this.evaluate(
-        label,
-        (await this.loadScript('embedded_browser_wait.js')).replace(
-          '__WEWORK_WAIT_INPUT__',
-          JSON.stringify(input)
+      let result: unknown
+      try {
+        result = await this.evaluate(
+          label,
+          (await this.loadScript('embedded_browser_wait.js')).replace(
+            '__WEWORK_WAIT_INPUT__',
+            JSON.stringify(input)
+          )
         )
-      )
+      } catch (error) {
+        if (!isUnavailableBrowserError(error, label)) throw error
+        await new Promise(resolve => setTimeout(resolve, pollMs))
+        continue
+      }
       if (result && typeof result === 'object' && !Array.isArray(result)) {
         lastResult = result as Record<string, unknown>
       }
@@ -444,6 +455,10 @@ export class EmbeddedBrowserBridge {
     this.scripts.set(filename, script)
     return script
   }
+}
+
+function isUnavailableBrowserError(error: unknown, label: string): boolean {
+  return errorMessage(error) === `Embedded browser is unavailable: ${label}`
 }
 
 async function writeRuntimeRecord(path: string, record: RuntimeRecord): Promise<void> {
