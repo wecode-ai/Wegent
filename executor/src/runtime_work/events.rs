@@ -31,7 +31,8 @@ use super::{
     },
     util::{
         extract_text, is_codex_context_compaction_item_type, is_completed_plan_item, item_id,
-        item_type, now_ms, raw_string_field, runtime_task_title, string_field,
+        item_type, normalize_runtime_goal_timestamps, now_ms, raw_string_field, runtime_task_title,
+        string_field,
     },
 };
 
@@ -489,11 +490,14 @@ impl CodexNotificationEventMapper {
                 emit_goal_continuation_event(&emit_context, notification.params, "settled");
             }
             "thread/goal/updated" => {
-                self.goal_status = notification
+                let goal = notification
                     .params
                     .get("goal")
-                    .and_then(|goal| string_field(goal, "status"))
-                    .map(|status| status.to_ascii_lowercase());
+                    .cloned()
+                    .map(normalize_runtime_goal_timestamps)
+                    .unwrap_or(Value::Null);
+                self.goal_status =
+                    string_field(&goal, "status").map(|status| status.to_ascii_lowercase());
                 emit_response_event(
                     event_tx,
                     device_id,
@@ -505,7 +509,7 @@ impl CodexNotificationEventMapper {
                             .or_else(|| string_field(notification.params, "thread_id")),
                         "turn_id": string_field(notification.params, "turnId")
                             .or_else(|| string_field(notification.params, "turn_id")),
-                        "goal": notification.params.get("goal").cloned().unwrap_or(Value::Null),
+                        "goal": goal,
                     }),
                 );
             }
@@ -3773,11 +3777,23 @@ mod tests {
                 "method": "thread/goal/updated",
                 "params": {
                     "threadId": "thread-root",
-                    "goal": { "status": "active" }
+                    "goal": {
+                        "status": "active",
+                        "createdAt": 1_787_636_000,
+                        "updatedAt": 1_787_636_001
+                    }
                 }
             }),
         );
-        let _ = event_rx.try_recv().expect("goal event should be emitted");
+        let goal = event_rx.try_recv().expect("goal event should be emitted");
+        assert_eq!(
+            goal["payload"]["data"]["goal"]["createdAt"],
+            1_787_636_000_000_i64
+        );
+        assert_eq!(
+            goal["payload"]["data"]["goal"]["updatedAt"],
+            1_787_636_001_000_i64
+        );
 
         mapper.map(
             &Some(event_tx.clone()),

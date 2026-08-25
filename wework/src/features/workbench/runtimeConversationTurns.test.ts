@@ -399,6 +399,57 @@ describe('runtimeConversationTurns', () => {
     expect(merged[0].items.map(item => item.id)).toEqual(['client-user-1', 'live-process'])
   })
 
+  test('reconciles a provider alias that repeats the canonical assistant item', () => {
+    const content = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'runtime-provisional-turn',
+        items: [
+          {
+            id: 'assistant-item-1',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-25T04:57:46.000Z',
+          },
+        ],
+        status: 'done',
+      },
+      {
+        id: 'provider-turn-1',
+        items: [
+          {
+            id: 'assistant-item-1',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-25T04:57:46.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'provider-turn-1',
+        items: [
+          {
+            id: 'assistant-item-1',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-25T04:57:46.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged).toHaveLength(1)
+    expect(projectRuntimeConversationTurns(merged).map(message => message.content)).toEqual([
+      content,
+    ])
+  })
+
   test('does not synthesize a Codex turn from a terminal event', () => {
     const turns = reduceRuntimeConversationTurns(
       [
@@ -1132,6 +1183,91 @@ describe('runtimeConversationTurns', () => {
         content,
         blocks: undefined,
       }),
+    ])
+  })
+
+  test('reconciles completed assistant text when the snapshot uses a different item id', () => {
+    const content = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'streamed-assistant-item',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-25T07:20:37.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'canonical-assistant-item',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-25T07:20:37.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged[0].items).toEqual(snapshot[0].items)
+    expect(projectRuntimeConversationTurns(merged).map(message => message.content)).toEqual([
+      content,
+    ])
+  })
+
+  test('matches duplicate completed assistant text one-to-one', () => {
+    const content = 'Repeated completion'
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'live-message-1',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-01T00:00:00.000Z',
+          },
+          {
+            id: 'live-message-2',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-01T00:00:01.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'snapshot-message-1',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-01T00:00:00.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged[0].items).toHaveLength(2)
+    expect(merged[0].items.map(item => item.id)).toEqual(['live-message-2', 'snapshot-message-1'])
+    expect(projectRuntimeConversationTurns(merged).map(message => message.content)).toEqual([
+      `${content}\n\n${content}`,
     ])
   })
 
