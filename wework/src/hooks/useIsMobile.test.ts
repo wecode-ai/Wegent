@@ -10,7 +10,7 @@ describe('useIsMobile', () => {
       configurable: true,
       value: originalInnerWidth,
     })
-    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    delete window.__WEWORK_RUNTIME_CONFIG__
     vi.unstubAllGlobals()
   })
 
@@ -25,15 +25,12 @@ describe('useIsMobile', () => {
     expect(result.current).toBe(true)
   })
 
-  test('keeps narrow Tauri desktop windows in desktop mode', () => {
+  test('keeps narrow Electron desktop windows in desktop mode', () => {
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 500,
     })
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
 
     const { result } = renderHook(() => useIsMobile())
 

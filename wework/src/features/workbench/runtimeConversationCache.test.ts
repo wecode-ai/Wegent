@@ -19,6 +19,7 @@ import {
   getRuntimeConversationLiveActivitySnapshot,
   getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
+  getRuntimeConversationMessagesForLogicalAddress,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
   markRuntimeConversationGuidanceInterrupted,
@@ -60,6 +61,51 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
+  })
+
+  test('resolves the local-device alias to a unique executor conversation', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'assistant-1',
+      content: 'visible assistant message',
+    })
+
+    expect(
+      getRuntimeConversationMessagesForLogicalAddress({
+        ...address,
+        deviceId: 'local-device',
+      })
+    ).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        content: 'visible assistant message',
+        turnId: 'turn-1',
+      }),
+    ])
+  })
+
+  test('does not guess between duplicate local task ids', () => {
+    for (const deviceId of ['device-1', 'device-2']) {
+      const duplicateAddress = { ...address, deviceId }
+      applyRuntimeConversationAction(duplicateAddress, {
+        type: 'assistant_started',
+        taskId: address.taskId,
+        subtaskId: `turn-${deviceId}`,
+      })
+    }
+
+    expect(
+      getRuntimeConversationMessagesForLogicalAddress({
+        ...address,
+        deviceId: 'local-device',
+      })
+    ).toEqual([])
   })
 
   test('does not project an empty live-activity row before thinking or tools arrive', () => {
@@ -507,6 +553,83 @@ describe('runtimeConversationCache', () => {
       'working',
       'Return to the required language.',
       '',
+    ])
+  })
+
+  test('keeps late-delivered pre-guidance blocks before the applied guidance', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'subtask-1',
+    })
+    const guidance = {
+      id: 'client-guidance-1',
+      content: 'follow the updated direction',
+      status: 'sending' as const,
+      deliveryMode: 'guidance' as const,
+      createdAt: '2026-07-27T00:00:01.000Z',
+    }
+    appendOptimisticRuntimeConversationGuidance(address, 'subtask-1', guidance)
+    cacheRuntimeConversationQueuedMessages(address, [guidance])
+    settleRuntimeConversationGuidance(address, {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      subtaskId: 'subtask-1',
+      guidanceId: 'runtime-guidance-1',
+      clientGuidanceId: guidance.id,
+      message: guidance.content,
+      appliedAtMs: Date.parse('2026-07-27T00:00:02.000Z'),
+    })
+
+    applyRuntimeConversationAction(address, {
+      type: 'block_created',
+      subtaskId: 'subtask-1',
+      block: {
+        id: 'pre-guidance-text',
+        subtaskId: 'subtask-1',
+        type: 'text',
+        content: 'working before guidance',
+        status: 'done',
+        createdAt: Date.parse('2026-07-27T00:00:01.500Z'),
+      },
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'block_created',
+      subtaskId: 'subtask-1',
+      block: {
+        id: 'post-guidance-tool',
+        subtaskId: 'subtask-1',
+        type: 'tool',
+        toolName: 'bash',
+        status: 'streaming',
+        createdAt: Date.parse('2026-07-27T00:00:02.500Z'),
+      },
+    })
+
+    expect(getRuntimeConversationMessages(address)).toMatchObject([
+      {
+        role: 'assistant',
+        runtimeGuidanceSplitBefore: true,
+        blocks: [{ id: 'pre-guidance-text' }],
+      },
+      {
+        id: guidance.id,
+        role: 'user',
+        runtimeGuidance: true,
+      },
+      {
+        role: 'assistant',
+        runtimeGuidanceContinuation: true,
+        blocks: [
+          {
+            type: 'tool',
+            toolName: 'conversation_guidance',
+          },
+          {
+            id: 'post-guidance-tool',
+          },
+        ],
+      },
     ])
   })
 

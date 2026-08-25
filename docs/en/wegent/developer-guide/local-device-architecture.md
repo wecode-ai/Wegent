@@ -36,26 +36,26 @@ flowchart LR
 
 ### Wework Packaged App Local-First Channel
 
-The packaged Wework Tauri App defaults to local-first mode. This mode does not start the frontend Node dev server and does not start an extra local HTTP Backend service. The React UI runs inside the Tauri WebView, while the Tauri Rust side is only the app's internal command layer.
+The packaged Wework Electron app defaults to local-first mode. This mode does not start the frontend Node dev server and does not start an extra local HTTP Backend service. The React UI runs inside the Electron renderer, while the Electron main process provides the app's internal command layer.
 
 Local-first mode needs only two local processes:
 
 ```mermaid
 flowchart LR
     subgraph "User's Computer"
-        APP["Wework Tauri App"]
+        APP["Wework Electron app"]
         UI["React UI"]
-        TAURI["Tauri Commands"]
+        ELECTRON["Electron IPC"]
         EX["Executor Sidecar"]
         FS["Local Files"]
     end
 
-    UI --> TAURI
-    TAURI <-->|"stdio JSONL"| EX
+    UI --> ELECTRON
+    ELECTRON <-->|"stdio JSONL"| EX
     EX --> FS
 ```
 
-Tauri starts the executor sidecar with no arguments and exchanges newline-delimited JSON through the child process stdin/stdout. Stdout carries protocol responses and events only; diagnostics go to stderr and `~/.wegent-executor/logs/executor.log`. Sidecars started by the App are owned by the Tauri process: on macOS/Linux they run in an isolated process group, and App close or restart sends `SIGTERM` before using `SIGKILL` for remaining child processes. The dev-mode reload supervisor and the executor it launches are included in that cleanup scope. The Wework renderer sends `runtime.*` and `device.execute_command` requests through Tauri commands and subscribes to Responses stream events emitted by the sidecar.
+Electron starts the executor sidecar with no arguments and exchanges newline-delimited JSON through the child process stdin/stdout. Stdout carries protocol responses and events only; diagnostics go to stderr and `~/.wegent-executor/logs/executor.log`. Sidecars started by the App are owned by the Electron main process: on macOS/Linux they run in an isolated process group, and App close or restart sends `SIGTERM` before using `SIGKILL` for remaining child processes. The dev-mode reload supervisor and the executor it launches are included in that cleanup scope. The Wework renderer sends `runtime.*` and `device.execute_command` requests through Electron IPC commands and subscribes to Responses stream events emitted by the sidecar.
 
 The parent-child relationship defines the stdio lifecycle directly: a write failure, stdout EOF, or child exit marks local IPC unavailable. A normal request timeout ends only that request and does not tear down the transport, so system sleep or scheduling delays cannot trigger endpoint reconnection or attach the App to another executor.
 
@@ -73,7 +73,7 @@ Before creating its asynchronous runtime or starting Agent child processes, a Un
 
 Wework uses an isolated Codex Home for local runtime configuration. During first-run initialization, users can copy configuration, plugins, skills, and plugin marketplace data from the native Codex Home. After initialization, Wework writes `apps = true` under `[features]` by default so migrated plugin Apps are immediately available. If a user explicitly disables Apps later in Settings, ordinary subsequent startups preserve that choice.
 
-Wework considers the local runtime usable only after the real Codex app-server completes `initialize`, not merely when the executor stdio transport is connected. After Tauri starts the executor, it first applies the current local proxy configuration and then starts and initializes the shared Codex app-server through `runtime.codex.ensure_started`; the renderer proceeds to the interactive workbench only after that call succeeds. The Codex initialization path must not synchronously wait for plugin marketplace refreshes, Git fetches, update checks, or other external network requests. Those background requests must not delay the `initialize` response even when the network is unavailable or a proxy never responds. Startup E2E coverage must verify this boundary with the real Codex binary and a blocking network proxy, while also confirming that no Agent model request is sent during initialization.
+Wework considers the local runtime usable only after the real Codex app-server completes `initialize`, not merely when the executor stdio transport is connected. After Electron starts the executor, it first applies the current local proxy configuration and then starts and initializes the shared Codex app-server through `runtime.codex.ensure_started`; the renderer proceeds to the interactive workbench only after that call succeeds. The Codex initialization path must not synchronously wait for plugin marketplace refreshes, Git fetches, update checks, or other external network requests. Those background requests must not delay the `initialize` response even when the network is unavailable or a proxy never responds. Startup E2E coverage must verify this boundary with the real Codex binary and a blocking network proxy, while also confirming that no Agent model request is sent during initialization.
 
 ### Runtime Task and Goal State
 

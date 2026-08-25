@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabSurface } from './App'
 import {
@@ -19,6 +19,16 @@ const workbenchProviderMocks = vi.hoisted(() => ({
 const portalOwnershipMocks = vi.hoisted(() => ({
   setActiveOwner: vi.fn(),
 }))
+const harnessAppLauncherMocks = vi.hoisted(() => ({
+  cleanup: vi.fn(),
+  requested: vi.fn(),
+  registered: vi.fn(),
+  started: vi.fn(),
+  waitUntilReady: vi.fn<() => Promise<void>>(() => Promise.resolve()),
+}))
+const runtimeEnvironmentMocks = vi.hoisted(() => ({
+  electron: false,
+}))
 
 vi.mock('@/components/topnav/AppIframe', () => ({
   AppIframe: ({ active }: { active?: boolean }) => {
@@ -34,6 +44,34 @@ vi.mock('@/components/topnav/TitlebarActionsPortal', () => ({
 vi.mock('@/components/topnav/workspaceTabPortalOwnership', () => ({
   setActiveWorkspaceTabPortalOwner: portalOwnershipMocks.setActiveOwner,
 }))
+
+vi.mock('@/features/harness-apps/HarnessAppAutoLauncher', () => ({
+  HarnessAppAutoLauncher: ({ installationId }: { installationId: string }) => {
+    useEffect(() => {
+      let cancelled = false
+      harnessAppLauncherMocks.requested(installationId)
+      void harnessAppLauncherMocks.waitUntilReady().then(() => {
+        if (!cancelled) {
+          harnessAppLauncherMocks.started(installationId)
+          harnessAppLauncherMocks.registered(installationId)
+        }
+      })
+      return () => {
+        cancelled = true
+        harnessAppLauncherMocks.cleanup(installationId)
+      }
+    }, [installationId])
+    return null
+  },
+}))
+
+vi.mock('@/lib/runtime-environment', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/runtime-environment')>()
+  return {
+    ...actual,
+    isElectronRuntime: () => runtimeEnvironmentMocks.electron,
+  }
+})
 
 vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   WorkbenchProvider: ({
@@ -74,6 +112,13 @@ describe('WorkspaceTabSurface', () => {
     workbenchProviderMocks.loadTaskComposerCatalogs.mockClear()
     workbenchProviderMocks.prewarm.mockClear()
     portalOwnershipMocks.setActiveOwner.mockClear()
+    harnessAppLauncherMocks.cleanup.mockClear()
+    harnessAppLauncherMocks.requested.mockClear()
+    harnessAppLauncherMocks.registered.mockClear()
+    harnessAppLauncherMocks.started.mockClear()
+    harnessAppLauncherMocks.waitUntilReady.mockReset()
+    harnessAppLauncherMocks.waitUntilReady.mockResolvedValue()
+    runtimeEnvironmentMocks.electron = false
   })
 
   test('keeps the board workbench connected and stateful while its tab is inactive', () => {
@@ -234,5 +279,56 @@ describe('WorkspaceTabSurface', () => {
     unmount()
     clearHarnessAppLaunch(installationId)
     dispose()
+  })
+
+  test('keeps an Electron Harness app launch connected while its tab is inactive', async () => {
+    const installationId = 'launching-app'
+    runtimeEnvironmentMocks.electron = true
+    let finishLaunch: (() => void) | undefined
+    harnessAppLauncherMocks.waitUntilReady.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finishLaunch = resolve
+        })
+    )
+    beginHarnessAppLaunch(installationId, 'Launching app', vi.fn(), 'loadingApp')
+    const props = {
+      cloudWebUrl: null,
+      lifecycleStore: {} as never,
+      services: {} as never,
+      smartAppsEnabled: true,
+      tab: {
+        id: 'launching-app-tab',
+        kind: 'auxiliary' as const,
+        title: 'Launching app',
+        contentRoute: `/app/harness-${installationId}`,
+      },
+      user: {
+        id: 1,
+        user_name: 'tester',
+        email: 'tester@example.com',
+      },
+    }
+
+    const { rerender, unmount } = render(<WorkspaceTabSurface {...props} active />)
+    expect(harnessAppLauncherMocks.requested).toHaveBeenCalledWith(installationId)
+
+    rerender(<WorkspaceTabSurface {...props} active={false} />)
+
+    expect(screen.getByTestId(`workspace-tab-content-${props.tab.id}`)).toHaveClass(
+      'pointer-events-none',
+      'invisible'
+    )
+    expect(harnessAppLauncherMocks.cleanup).not.toHaveBeenCalled()
+
+    finishLaunch?.()
+    await waitFor(() => {
+      expect(harnessAppLauncherMocks.started).toHaveBeenCalledWith(installationId)
+      expect(harnessAppLauncherMocks.registered).toHaveBeenCalledWith(installationId)
+    })
+
+    unmount()
+    expect(harnessAppLauncherMocks.cleanup).toHaveBeenCalledWith(installationId)
+    clearHarnessAppLaunch(installationId)
   })
 })

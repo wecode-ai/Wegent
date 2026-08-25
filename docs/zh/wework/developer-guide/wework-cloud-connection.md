@@ -21,7 +21,7 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 
 桌面端授权窗默认尺寸为 `1000 × 640`，最小尺寸为 `960 × 620`，以完整容纳没有响应式布局的企业登录页。窗口完成定位前保持隐藏，显示后置顶于普通窗口，并在 Wework 主窗口移动或显示器缩放比例变化时重新定位。位置以 Wework 当前显示器的可用区域为边界；macOS 直接使用 AppKit 的统一逻辑桌面坐标，因此在 Retina 与非 Retina 显示器之间移动时不会因物理像素和逻辑像素换算而漂移到屏幕外。
 
-Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的地址、与当前 Backend 匹配的打包 Socket 地址、Backend `/auth/wework/config` 返回的 `socket_url`、Backend 同源默认地址。Backend 通过 `WEGENT_SOCKET_URL` 声明公开 Socket.IO origin；HTTPS 部署应配置 `wss://` 地址。启动时也会按同一优先级刷新并迁移已保存连接。Wework 会把最终解析出的地址通过 Tauri IPC 传给本机 executor；executor 使用该地址建立 Backend Socket.IO 连接，而 HTTP API 仍使用 Backend 地址，因此分离部署不需要用户再次手工配置 WSS 地址。
+Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的地址、与当前 Backend 匹配的打包 Socket 地址、Backend `/auth/wework/config` 返回的 `socket_url`、Backend 同源默认地址。Backend 通过 `WEGENT_SOCKET_URL` 声明公开 Socket.IO origin；HTTPS 部署应配置 `wss://` 地址。启动时也会按同一优先级刷新并迁移已保存连接。Wework 会把最终解析出的地址通过 Electron IPC 传给本机 executor；executor 使用该地址建立 Backend Socket.IO 连接，而 HTTP API 仍使用 Backend 地址，因此分离部署不需要用户再次手工配置 WSS 地址。
 
 本地 Wework 不渲染云端账号密码表单，也不调用 `/auth/login` 或 `/auth/admin-password/setup`。云端登录、OIDC 和管理员初始化都发生在云端 Wegent Web 授权页中。用户登录后必须明确点击“授权 Wework”，Backend 才会把一次性可领取的云端 JWT 写入授权会话；本地 Wework 领取成功后继续读取 `/users/me` 校验用户并保存云端连接状态。
 

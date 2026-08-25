@@ -7,7 +7,7 @@ pub mod cli;
 use crate::config::device::{load_device_config, DeviceConfig};
 use crate::local::{
     app_ipc::normalize_device_id,
-    backend::{serve_local_app_sidecar, serve_remote_local_backend},
+    backend::{serve_local_app_endpoint, serve_local_app_sidecar, serve_remote_local_backend},
 };
 use crate::logging::{
     init_executor_logging, log_executor_event, reserve_executor_stdout_for_protocol,
@@ -95,6 +95,7 @@ pub struct LocalSidecarPlan {
 pub enum LocalSidecarTransport {
     RemoteBackend,
     Stdio,
+    LocalEndpoint,
 }
 
 impl HttpServerPlan {
@@ -138,7 +139,7 @@ pub async fn run_with_shell_environment(
         return run_upgrade(config.update, args.yes).await;
     }
 
-    if app_ipc_enabled() {
+    if app_ipc_enabled() && !local_endpoint_enabled() {
         reserve_executor_stdout_for_protocol();
     }
     init_executor_logging(&DeviceConfig::default());
@@ -203,6 +204,11 @@ async fn serve_local_sidecar(
     match plan.transport {
         LocalSidecarTransport::RemoteBackend => serve_remote_local_backend(config).await,
         LocalSidecarTransport::Stdio => serve_local_app_sidecar(config).await,
+        LocalSidecarTransport::LocalEndpoint => {
+            let endpoint = required_environment("WEGENT_APP_IPC_ENDPOINT")?;
+            let token = required_environment("WEGENT_APP_IPC_TOKEN")?;
+            serve_local_app_endpoint(config, &endpoint, &token).await
+        }
     }
 }
 
@@ -262,7 +268,9 @@ fn startup_plan_for_config(
         local_sidecar: Some(LocalSidecarPlan {
             backend_enabled,
             device_id: normalize_device_id(config.device_id.clone()),
-            transport: if backend_enabled && !app_ipc_enabled {
+            transport: if local_endpoint_enabled() {
+                LocalSidecarTransport::LocalEndpoint
+            } else if backend_enabled && !app_ipc_enabled {
                 LocalSidecarTransport::RemoteBackend
             } else {
                 LocalSidecarTransport::Stdio
@@ -272,7 +280,22 @@ fn startup_plan_for_config(
 }
 
 fn app_ipc_enabled() -> bool {
-    env::var("WEGENT_APP_IPC_DEVICE_ID")
+    local_endpoint_enabled()
+        || env::var("WEGENT_APP_IPC_DEVICE_ID")
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn local_endpoint_enabled() -> bool {
+    env::var("WEGENT_APP_IPC_ENDPOINT")
         .ok()
         .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn required_environment(name: &str) -> Result<String, String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("{name} is required"))
 }

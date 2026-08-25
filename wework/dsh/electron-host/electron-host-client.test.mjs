@@ -1,0 +1,83 @@
+import assert from 'node:assert/strict'
+import { PassThrough } from 'node:stream'
+import test from 'node:test'
+import {
+  ELECTRON_HOST_PROTOCOL_VERSION,
+  ElectronHostClient,
+  ElectronHostError,
+} from './electron-host-client.js'
+
+test('negotiates capabilities and invokes the Electron host', async () => {
+  const hostToDsh = new PassThrough()
+  const dshToHost = new PassThrough()
+  const client = new ElectronHostClient({
+    token: 'test-token',
+    input: hostToDsh,
+    output: dshToHost,
+  })
+  let requestBuffer = ''
+  dshToHost.setEncoding('utf8')
+  dshToHost.on('data', chunk => {
+    requestBuffer += chunk
+    for (;;) {
+      const newline = requestBuffer.indexOf('\n')
+      if (newline < 0) break
+      const line = requestBuffer.slice(0, newline)
+      requestBuffer = requestBuffer.slice(newline + 1)
+      const message = JSON.parse(line)
+      if (message.type === 'hello') {
+        assert.equal(message.token, 'test-token')
+        hostToDsh.write(
+          `${JSON.stringify({
+            type: 'hello',
+            ok: true,
+            protocolVersion: ELECTRON_HOST_PROTOCOL_VERSION,
+            capabilities: ['window.getState'],
+          })}\n`
+        )
+        continue
+      }
+      hostToDsh.write(
+        `${JSON.stringify({
+          type: 'response',
+          id: message.id,
+          ok: true,
+          result: { maximized: false },
+        })}\n`
+      )
+    }
+  })
+
+  assert.deepEqual(await client.start(), {
+    protocolVersion: 1,
+    capabilities: ['window.getState'],
+  })
+  assert.deepEqual(await client.invoke('window.getState'), { maximized: false })
+  client.stop()
+})
+
+test('rejects capabilities not granted by Electron', async () => {
+  const hostToDsh = new PassThrough()
+  const dshToHost = new PassThrough()
+  const client = new ElectronHostClient({
+    token: 'test-token',
+    input: hostToDsh,
+    output: dshToHost,
+  })
+  dshToHost.once('data', () => {
+    hostToDsh.write(
+      `${JSON.stringify({
+        type: 'hello',
+        ok: true,
+        protocolVersion: 1,
+        capabilities: [],
+      })}\n`
+    )
+  })
+  await client.start()
+  await assert.rejects(
+    () => client.invoke('window.close'),
+    error => error instanceof ElectronHostError && error.code === 'capability_denied'
+  )
+  client.stop()
+})

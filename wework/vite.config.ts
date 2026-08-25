@@ -18,7 +18,9 @@ const backendProxyTarget = normalizeBackendUrl(
   process.env.VITE_WEGENT_BACKEND_URL || 'http://localhost:8000'
 )
 const socketProxyTarget = process.env.VITE_WEGENT_SOCKET_URL || backendProxyTarget
-const configuredAppBasePath = process.env.VITE_APP_BASE_PATH || '/'
+const dshAppOutput = process.env.WEWORK_DSH_APP_OUT_DIR?.trim()
+const configuredAppBasePath =
+  process.env.VITE_APP_BASE_PATH || (dshAppOutput ? '/wework/app/' : '/')
 const appBasePath = configuredAppBasePath.endsWith('/')
   ? configuredAppBasePath
   : `${configuredAppBasePath}/`
@@ -66,6 +68,12 @@ export default defineConfig({
     include: ['mermaid', 'plantuml-encoder'],
   },
   build: {
+    ...(dshAppOutput
+      ? {
+          outDir: path.resolve(dshAppOutput),
+          emptyOutDir: true,
+        }
+      : {}),
     // File-viewer renderers are split into dedicated chunks; the desktop shell
     // intentionally remains a single entry bundle.
     chunkSizeWarningLimit: 5_000,
@@ -116,7 +124,13 @@ export default defineConfig({
     // Keep local and pre-push runs below the resource-contention point where
     // jsdom-heavy files begin timing out nondeterministically.
     maxWorkers: 2,
-    exclude: [...configDefaults.exclude, 'e2e/**', 'test-results/**'],
+    exclude: [
+      ...configDefaults.exclude,
+      'dsh/**/*.test.mjs',
+      'e2e/**',
+      'scripts/harness-runtime-metadata.test.mjs',
+      'test-results/**',
+    ],
     coverage: {
       provider: 'istanbul',
       reporter: ['text', 'json', 'lcov'],

@@ -1,13 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
 import { ChromeTitlebar } from './ChromeTitlebar'
-
-const startDragging = vi.fn().mockResolvedValue(undefined)
-
-vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({ startDragging }),
-}))
 
 vi.mock('@/components/layout/WindowFrameControls', () => ({
   WindowFrameControls: () => <div data-testid="window-frame-controls">FrameControls</div>,
@@ -47,19 +41,17 @@ function mockUserAgent(ua: string) {
   })
 }
 
-function enableTauri() {
-  Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} })
-}
-
-function disableTauri() {
-  delete (window as Window & { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
+function enableElectron() {
+  window.__WEWORK_RUNTIME_CONFIG__ = {
+    ...window.__WEWORK_RUNTIME_CONFIG__,
+    desktopHost: 'electron',
+  }
 }
 
 describe('ChromeTitlebar', () => {
   beforeEach(() => {
-    startDragging.mockClear()
     localStorage.clear()
-    disableTauri()
+    enableElectron()
     mockUserAgent('Mozilla/5.0')
     window.history.replaceState({}, '', '/')
   })
@@ -95,9 +87,8 @@ describe('ChromeTitlebar', () => {
     expect(screen.queryByRole('tab', { name: '项目空间' })).not.toBeInTheDocument()
   })
 
-  test('shows the macOS traffic-light spacer and starts native dragging', async () => {
+  test('shows the macOS traffic-light spacer with a native drag region', () => {
     mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
-    enableTauri()
     renderTitlebar()
 
     const spacer = screen.getByTestId('macos-traffic-light-spacer')
@@ -105,8 +96,7 @@ describe('ChromeTitlebar', () => {
     expect(spacer.parentElement?.firstChild).toBe(spacer)
 
     const nativeDragRegion = within(spacer).getByTestId('macos-titlebar-drag-region')
-    fireEvent.mouseDown(nativeDragRegion, { button: 0 })
-    await waitFor(() => expect(startDragging).toHaveBeenCalledTimes(1))
+    expect(nativeDragRegion).toHaveClass('electron-titlebar-drag-region')
 
     const fixedActions = screen.getByTestId('titlebar-fixed-actions')
     expect(fixedActions).toHaveStyle({ width: '6.75rem' })
@@ -120,7 +110,6 @@ describe('ChromeTitlebar', () => {
 
   test('shows custom window controls on Windows', () => {
     mockUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
-    enableTauri()
     renderTitlebar()
 
     expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
@@ -128,9 +117,28 @@ describe('ChromeTitlebar', () => {
     expect(screen.queryByTestId('topnav-feedback-button')).not.toBeInTheDocument()
   })
 
+  test('uses the Electron macOS traffic-light layout', () => {
+    mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
+    enableElectron()
+    renderTitlebar()
+
+    expect(screen.getByTestId('macos-traffic-light-spacer')).toHaveClass('w-[92px]', 'self-stretch')
+    expect(screen.getByTestId('titlebar-fixed-actions')).toHaveStyle({
+      width: '6.75rem',
+    })
+    expect(screen.getByTestId('titlebar-right-panel-drag-region')).toBeInTheDocument()
+  })
+
+  test('uses DSH window controls in frameless Electron windows', () => {
+    mockUserAgent('Mozilla/5.0 (X11; Linux x86_64)')
+    enableElectron()
+    renderTitlebar()
+
+    expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
+  })
+
   test('can hide workbench portals without removing the document tabs', () => {
     mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
-    enableTauri()
     renderTitlebar({ showWorkspacePortals: false, showFeedback: false })
 
     expect(screen.getByTestId('workspace-tab-strip')).toBeInTheDocument()

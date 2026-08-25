@@ -9,22 +9,22 @@ import {
 } from './codexPlugins'
 
 const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(),
   requestLocalExecutor: vi.fn(),
   ensureLocalExecutorStarted: vi.fn(),
   ensureBundledPluginMarketplaceRegistered: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn(() => null),
-}))
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => mocks.invoke(...args),
+  runtime: {
+    desktop: true,
+    electron: true,
+  },
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: () => true,
+  isDesktopRuntime: () => mocks.runtime.desktop,
+  isElectronRuntime: () => mocks.runtime.electron,
 }))
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: () => mocks.ensureLocalExecutorStarted(),
   ensureBundledPluginMarketplaceRegistered: () => mocks.ensureBundledPluginMarketplaceRegistered(),
   getInitializedBundledPluginMarketplace: () => mocks.getInitializedBundledPluginMarketplace(),
@@ -84,7 +84,8 @@ const createdPlugin: InstalledPlugin = {
 describe('local codex plugin readState cache', () => {
   beforeEach(() => {
     clearLocalCodexPluginsReadStateCache()
-    mocks.invoke.mockReset()
+    mocks.runtime.desktop = true
+    mocks.runtime.electron = true
     mocks.requestLocalExecutor.mockReset()
     mocks.ensureLocalExecutorStarted.mockReset()
     mocks.ensureBundledPluginMarketplaceRegistered.mockReset()
@@ -97,36 +98,59 @@ describe('local codex plugin readState cache', () => {
           method?: string
         }
       ) => {
-        if (method !== 'codex.app_server_request') {
-          throw new Error(`Unexpected executor method ${method}`)
+        if (method === 'executor.plugins.links.list') return []
+        if (method === 'executor.plugins.personal.ensure') {
+          return {
+            pluginName: 'dev-tools',
+            marketplacePath: '/tmp/wework-personal',
+            pluginPath: '/tmp/wework-personal/plugins/dev-tools',
+            migrated: false,
+          }
         }
+        if (method === 'executor.plugins.links.link') return null
+        if (method === 'executor.plugins.links.unlink') return null
+        if (method === 'executor.plugins.store.list') {
+          return { storePath: '/tmp/store/plugins', plugins: [] }
+        }
+        if (method === 'executor.plugins.personal.delete') return null
+        if (method !== 'codex.app_server_request')
+          throw new Error(`Unexpected executor method ${method}`)
         if (params.method === 'plugin/list' || params.method === 'plugin/installed') {
           return { marketplaces: [personalMarketplace] }
         }
         throw new Error(`Unexpected app-server method ${params.method}`)
       }
     )
-    mocks.invoke.mockImplementation(async (command: string) => {
-      if (command === 'local_executor_read_plugin_cloud_links') return []
-      if (command === 'local_executor_ensure_personal_plugin') {
-        return {
-          pluginName: 'dev-tools',
-          marketplacePath: '/tmp/wework-personal',
-          pluginPath: '/tmp/wework-personal/plugins/dev-tools',
-          migrated: false,
-        }
-      }
-      if (command === 'local_executor_link_plugin_release') return null
-      if (command === 'local_executor_unlink_plugin_release') return null
-      if (command === 'local_executor_list_wegent_store_plugins') {
-        return { storePath: '/tmp/store/plugins', plugins: [] }
-      }
-      throw new Error(`Unexpected invoke ${command}`)
-    })
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  test('loads Codex marketplaces through Executor in Electron desktop runtime', async () => {
+    const state = await createLocalCodexPluginApi().readState({
+      mergeAllMarketplaces: true,
+      refresh: true,
+    })
+
+    expect(state.marketplaces).toEqual([
+      expect.objectContaining({
+        id: 'wework-personal',
+      }),
+    ])
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('codex.app_server_request', {
+      method: 'plugin/installed',
+      params: {
+        cwds: null,
+        installSuggestionPluginNames: null,
+      },
+    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('codex.app_server_request', {
+      method: 'plugin/list',
+      params: {
+        cwds: null,
+      },
+    })
   })
 
   test('linkPersonalPluginRelease drops TTL cache so the next readState reloads', async () => {
@@ -159,7 +183,7 @@ describe('local codex plugin readState cache', () => {
           (params as { method?: string }).method === 'plugin/list'
       ).length
     ).toBe(2)
-    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_link_plugin_release', {
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.links.link', {
       marketplacePath: '/tmp/wework-personal',
       localPluginName: 'dev-tools',
       cloudPluginId: 71,
@@ -170,15 +194,10 @@ describe('local codex plugin readState cache', () => {
   test('deletes a personal plugin through the managed marketplace command', async () => {
     const api = createLocalCodexPluginApi()
     await api.readState({ mergeAllMarketplaces: true })
-    mocks.invoke.mockImplementation(async (command: string) => {
-      if (command === 'local_executor_delete_personal_plugin') return null
-      if (command === 'local_executor_read_plugin_cloud_links') return []
-      throw new Error(`Unexpected invoke ${command}`)
-    })
 
     await api.deletePersonalPlugin('dev-tools')
 
-    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_delete_personal_plugin', {
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.personal.delete', {
       marketplacePath: '/tmp/wework-personal',
       pluginName: 'dev-tools',
     })
@@ -186,20 +205,21 @@ describe('local codex plugin readState cache', () => {
 
   test('deletes a legacy personal plugin from its source marketplace', async () => {
     const api = createLocalCodexPluginApi()
-    mocks.invoke.mockImplementation(async (command: string) => {
-      if (command === 'local_executor_delete_personal_plugin') return null
-      throw new Error(`Unexpected invoke ${command}`)
-    })
 
     await api.deletePersonalPlugin('quality-gate', '/Users/test/.agents/plugins/marketplace.json')
 
-    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_delete_personal_plugin', {
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.personal.delete', {
       marketplacePath: '/Users/test/.agents/plugins/marketplace.json',
       pluginName: 'quality-gate',
     })
   })
 
   test('previews plugin ZIPs against the managed personal marketplace', async () => {
+    mocks.getInitializedBundledPluginMarketplace.mockReturnValue({
+      id: 'wework-personal',
+      path: '/tmp/wework-personal',
+      pluginCount: 0,
+    })
     const preview = {
       valid: false,
       archivePath: '/tmp/wrapped.zip',
@@ -215,18 +235,20 @@ describe('local codex plugin readState cache', () => {
       existingVersion: null,
       issues: [{ code: 'manifest_not_at_root', path: null, message: 'nested manifest' }],
     }
-    mocks.invoke.mockImplementation(async (command: string) => {
-      if (command === 'local_executor_read_plugin_cloud_links') return []
-      if (command === 'local_executor_preview_plugin_import') return preview
-      throw new Error(`Unexpected invoke ${command}`)
+    mocks.requestLocalExecutor.mockImplementation(async (method: string) => {
+      if (method === 'executor.plugins.import_package.preview') return preview
+      throw new Error(`Unexpected executor method ${method}`)
     })
     const api = createLocalCodexPluginApi()
 
     await expect(api.previewPluginImport('/tmp/wrapped.zip')).resolves.toEqual(preview)
-    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_preview_plugin_import', {
-      archivePath: '/tmp/wrapped.zip',
-      marketplacePath: '/tmp/wework-personal',
-    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.plugins.import_package.preview',
+      {
+        archivePath: '/tmp/wrapped.zip',
+        marketplacePath: '/tmp/wework-personal',
+      }
+    )
   })
 
   test('rolls back imported files when App Server installation fails', async () => {
@@ -245,23 +267,19 @@ describe('local codex plugin readState cache', () => {
       existingVersion: null,
       issues: [],
     }
-    mocks.invoke.mockImplementation(async (command: string) => {
-      if (command === 'local_executor_read_plugin_cloud_links') return []
-      if (command === 'local_executor_import_plugin_package') {
-        return {
-          pluginName: 'example-plugin',
-          displayName: 'Example Plugin',
-          version: '1.0.0',
-          marketplacePath: '/tmp/wework-personal',
-          pluginPath: '/tmp/wework-personal/plugins/example-plugin',
-          rollbackId: 'rollback-1',
-        }
-      }
-      if (command === 'local_executor_rollback_plugin_import') return null
-      throw new Error(`Unexpected invoke ${command}`)
-    })
     mocks.requestLocalExecutor.mockImplementation(
       async (method: string, params: { method?: string }) => {
+        if (method === 'executor.plugins.import_package') {
+          return {
+            pluginName: 'example-plugin',
+            displayName: 'Example Plugin',
+            version: '1.0.0',
+            marketplacePath: '/tmp/wework-personal',
+            pluginPath: '/tmp/wework-personal/plugins/example-plugin',
+            rollbackId: 'rollback-1',
+          }
+        }
+        if (method === 'executor.plugins.import_package.rollback') return null
         if (method === 'runtime.codex.plugin.install_local_first') {
           throw new Error('install rejected')
         }
@@ -279,10 +297,13 @@ describe('local codex plugin readState cache', () => {
     await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
       'Plugin package installation failed: install rejected'
     )
-    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_rollback_plugin_import', {
-      marketplacePath: '/tmp/wework-personal',
-      rollbackId: 'rollback-1',
-    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.plugins.import_package.rollback',
+      {
+        marketplacePath: '/tmp/wework-personal',
+        rollbackId: 'rollback-1',
+      }
+    )
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'runtime.codex.plugin.install_local_first',
       {
@@ -308,22 +329,18 @@ describe('local codex plugin readState cache', () => {
       existingVersion: null,
       issues: [],
     }
-    mocks.invoke.mockImplementation(async (command: string) => {
-      if (command === 'local_executor_read_plugin_cloud_links') return []
-      if (command === 'local_executor_import_plugin_package') {
-        return {
-          pluginName: 'example-plugin',
-          displayName: 'Example Plugin',
-          version: '1.0.0',
-          marketplacePath: '/tmp/wework-personal',
-          pluginPath: '/tmp/wework-personal/plugins/example-plugin',
-          rollbackId: 'rollback-timeout',
-        }
-      }
-      throw new Error(`Unexpected invoke ${command}`)
-    })
     mocks.requestLocalExecutor.mockImplementation(
       async (method: string, params: { method?: string }) => {
+        if (method === 'executor.plugins.import_package') {
+          return {
+            pluginName: 'example-plugin',
+            displayName: 'Example Plugin',
+            version: '1.0.0',
+            marketplacePath: '/tmp/wework-personal',
+            pluginPath: '/tmp/wework-personal/plugins/example-plugin',
+            rollbackId: 'rollback-timeout',
+          }
+        }
         if (method === 'runtime.codex.plugin.install_local_first') {
           throw new Error('local_plugin_commit_timeout: still committing')
         }
@@ -341,8 +358,8 @@ describe('local codex plugin readState cache', () => {
     await expect(api.importPluginPackage(preview, false)).rejects.toThrow(
       'local_plugin_commit_timeout'
     )
-    expect(mocks.invoke).not.toHaveBeenCalledWith(
-      'local_executor_rollback_plugin_import',
+    expect(mocks.requestLocalExecutor).not.toHaveBeenCalledWith(
+      'executor.plugins.import_package.rollback',
       expect.anything()
     )
   })
@@ -363,26 +380,20 @@ describe('local codex plugin readState cache', () => {
       existingVersion: null,
       issues: [],
     }
-    mocks.invoke.mockImplementation(async (command: string) => {
-      if (command === 'local_executor_read_plugin_cloud_links') return []
-      if (command === 'local_executor_import_plugin_package') {
-        return {
-          pluginName: 'example-plugin',
-          displayName: 'Example Plugin',
-          version: '1.0.0',
-          marketplacePath: '/tmp/wework-personal',
-          pluginPath: '/tmp/wework-personal/plugins/example-plugin',
-          rollbackId: 'rollback-verify',
-        }
-      }
-      if (command === 'local_executor_rollback_plugin_import') return null
-      if (command === 'local_executor_finalize_plugin_import') {
-        return null
-      }
-      throw new Error(`Unexpected invoke ${command}`)
-    })
     mocks.requestLocalExecutor.mockImplementation(
       async (method: string, params: { method?: string }) => {
+        if (method === 'executor.plugins.import_package') {
+          return {
+            pluginName: 'example-plugin',
+            displayName: 'Example Plugin',
+            version: '1.0.0',
+            marketplacePath: '/tmp/wework-personal',
+            pluginPath: '/tmp/wework-personal/plugins/example-plugin',
+            rollbackId: 'rollback-verify',
+          }
+        }
+        if (method === 'executor.plugins.import_package.rollback') return null
+        if (method === 'executor.plugins.import_package.finalize') return null
         if (method === 'runtime.codex.plugin.install_local_first') {
           return {
             pluginKey: 'example-plugin@wework-personal',
@@ -406,10 +417,13 @@ describe('local codex plugin readState cache', () => {
       displayName: 'Example Plugin',
       version: '1.0.0',
     })
-    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_finalize_plugin_import', {
-      marketplacePath: '/tmp/wework-personal',
-      rollbackId: 'rollback-verify',
-    })
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.plugins.import_package.finalize',
+      {
+        marketplacePath: '/tmp/wework-personal',
+        rollbackId: 'rollback-verify',
+      }
+    )
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'runtime.codex.plugin.install_local_first',
       {
@@ -631,6 +645,63 @@ describe('local codex plugin readState cache', () => {
     })
   })
 
+  test('an older refresh resolves with the newer canonical marketplace snapshot', async () => {
+    const currentMarketplace = {
+      name: 'desktop-e2e-openai-official',
+      path: '/tmp/desktop-e2e-openai-official',
+      interface: { displayName: 'Desktop E2E OpenAI Official' },
+      plugins: [
+        {
+          id: 'openai-developers',
+          name: 'openai-developers',
+          interface: { displayName: 'OpenAI Developers' },
+        },
+      ],
+    }
+    let pluginListRequestCount = 0
+    let resolveOlderList: ((value: unknown) => void) | null = null
+    mocks.requestLocalExecutor.mockImplementation(
+      async (
+        method: string,
+        params: {
+          method?: string
+        }
+      ) => {
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/installed') {
+          return { marketplaces: [personalMarketplace] }
+        }
+        if (params.method === 'plugin/list') {
+          pluginListRequestCount += 1
+          if (pluginListRequestCount === 1) {
+            return await new Promise(resolve => {
+              resolveOlderList = resolve
+            })
+          }
+          return { marketplaces: [personalMarketplace, currentMarketplace] }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    const older = api.readState({ mergeAllMarketplaces: true, refresh: true })
+    await vi.waitFor(() => expect(pluginListRequestCount).toBe(1))
+
+    const current = await api.readState({ mergeAllMarketplaces: true, refresh: true })
+    expect(current.marketplaces.map(marketplace => marketplace.id)).toContain(
+      'desktop-e2e-openai-official'
+    )
+
+    resolveOlderList?.({ marketplaces: [personalMarketplace] })
+    const resolvedOlder = await older
+    expect(resolvedOlder.marketplaces.map(marketplace => marketplace.id)).toContain(
+      'desktop-e2e-openai-official'
+    )
+  })
+
   test('retains the cached OpenAI catalog when a refresh omits that marketplace', async () => {
     const openAiMarketplace = {
       name: 'openai-curated-remote',
@@ -777,8 +848,8 @@ describe('local codex plugin readState cache', () => {
     const state = await createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true })
 
     expect(state.marketplaceItems.map(item => item.name)).toContain('gmail')
-    expect(mocks.invoke).toHaveBeenCalledWith(
-      'local_executor_ensure_personal_plugin',
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.plugins.personal.ensure',
       expect.any(Object)
     )
     const durable = window.localStorage.getItem('wework.plugins.codexReadState.v2')
@@ -2526,7 +2597,8 @@ describe('local codex plugin readState cache', () => {
     expect(after.installedPlugins).toEqual([])
   })
 
-  test('uninstalls Wework personal plugins locally without Codex marketplace refresh', async () => {
+  test('uninstalls Wework personal plugins through Executor in Electron without Codex marketplace refresh', async () => {
+    mocks.runtime.electron = true
     let installed = true
     mocks.requestLocalExecutor.mockImplementation(
       async (
@@ -2536,6 +2608,14 @@ describe('local codex plugin readState cache', () => {
           pluginName?: string
         }
       ) => {
+        if (method === 'executor.plugins.links.list') return []
+        if (method === 'executor.plugins.links.unlink') {
+          expect(params).toEqual({
+            marketplacePath: '/tmp/wework-personal',
+            localPluginName: 'dev-tools',
+          })
+          return null
+        }
         if (method === 'runtime.codex.plugin.uninstall_local') {
           expect(params).toEqual({
             marketplacePath: '/tmp/wework-personal/.agents/plugins/marketplace.json',
@@ -2579,7 +2659,7 @@ describe('local codex plugin readState cache', () => {
 
     await api.uninstallInstalledPlugin('dev-tools@wework-personal')
 
-    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(1)
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledTimes(2)
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
       'runtime.codex.plugin.uninstall_local',
       {
@@ -2587,6 +2667,10 @@ describe('local codex plugin readState cache', () => {
         pluginName: 'dev-tools',
       }
     )
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.links.unlink', {
+      marketplacePath: '/tmp/wework-personal',
+      localPluginName: 'dev-tools',
+    })
     expect(
       mocks.requestLocalExecutor.mock.calls.some(
         ([method, params]) =>

@@ -15,7 +15,7 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { getRuntimeConfig } from '@/config/runtime'
 import { parsePluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { track } from '@/telemetry/client'
@@ -141,13 +141,13 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
-  const isTauri = isTauriRuntime()
+  const isDesktop = isElectronRuntime()
   const pluginReference = parsePluginDetailRoute(routeSearch)
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
 
   useEffect(() => {
     track('plugin_center_opened', { surface: 'catalog' })
-    if (!isTauriRuntime()) return
+    if (!isElectronRuntime()) return
     const timeoutId = window.setTimeout(() => prefetchPluginsWorkspace(), 400)
     return () => window.clearTimeout(timeoutId)
   }, [])
@@ -193,7 +193,7 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-background text-text-primary">
       <div className="flex flex-1 overflow-hidden">
-        {!isMobile && isTauri && (
+        {!isMobile && isDesktop && (
           <DesktopCollapsedSidebarToggle
             collapsed={sidebarCollapsed}
             onToggle={() => setSidebarCollapsed(false)}
@@ -295,13 +295,13 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
               sidebarCollapsed={sidebarCollapsed && !isMobile}
               pluginDetail={Boolean(pluginReference)}
               topBarLeftActions={
-                !isMobile && sidebarCollapsed && !isTauri ? (
+                !isMobile && sidebarCollapsed && !isDesktop ? (
                   <DesktopWindowControls
                     sidebarCollapsed
                     onToggleSidebar={() => setSidebarCollapsed(false)}
                     onNewChat={handleNewChat}
                   />
-                ) : !isMobile && !isTauri ? (
+                ) : !isMobile && !isDesktop ? (
                   <DesktopWindowControls
                     sidebarCollapsed={false}
                     onToggleSidebar={() => setSidebarCollapsed(true)}
@@ -318,13 +318,13 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
             cloudToken={cloudConnection.token}
             sidebarCollapsed={sidebarCollapsed && !isMobile}
             topBarLeftActions={
-              !isMobile && sidebarCollapsed && !isTauri ? (
+              !isMobile && sidebarCollapsed && !isDesktop ? (
                 <DesktopWindowControls
                   sidebarCollapsed
                   onToggleSidebar={() => setSidebarCollapsed(false)}
                   onNewChat={handleNewChat}
                 />
-              ) : !isMobile && !isTauri ? (
+              ) : !isMobile && !isDesktop ? (
                 <DesktopWindowControls
                   sidebarCollapsed={false}
                   onToggleSidebar={() => setSidebarCollapsed(true)}

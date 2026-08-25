@@ -3,22 +3,22 @@ import { fireEvent } from '@testing-library/react'
 import { installDeveloperCommandMenu } from './developerCommandMenu'
 import { APP_UPDATE_SIMULATE_EVENT } from '@/features/app-update/app-update-context'
 
-const invokeMock = vi.hoisted(() => vi.fn())
+const desktopInvokeMock = vi.hoisted(() => vi.fn())
 const requestLocalExecutorMock = vi.hoisted(() => vi.fn())
-const isTauriRuntimeMock = vi.hoisted(() => vi.fn())
+const isElectronRuntimeMock = vi.hoisted(() => vi.fn())
 const getWorkbenchDebugSnapshotMock = vi.hoisted(() => vi.fn())
 const clearWorkbenchDebugLogsMock = vi.hoisted(() => vi.fn())
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: invokeMock,
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: desktopInvokeMock,
 }))
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   requestLocalExecutor: requestLocalExecutorMock,
 }))
 
 vi.mock('./runtime-environment', () => ({
-  isTauriRuntime: isTauriRuntimeMock,
+  isElectronRuntime: isElectronRuntimeMock,
 }))
 
 vi.mock('./debugPanel', () => ({
@@ -32,9 +32,9 @@ describe('developerCommandMenu', () => {
   })
 
   beforeEach(() => {
-    invokeMock.mockResolvedValue(undefined)
+    desktopInvokeMock.mockResolvedValue(undefined)
     requestLocalExecutorMock.mockResolvedValue({ enabled: false })
-    isTauriRuntimeMock.mockReturnValue(true)
+    isElectronRuntimeMock.mockReturnValue(true)
     getWorkbenchDebugSnapshotMock.mockReturnValue(createDebugSnapshot())
     localStorage.clear()
   })
@@ -99,20 +99,20 @@ describe('developerCommandMenu', () => {
     window.removeEventListener(APP_UPDATE_SIMULATE_EVENT, listener)
   })
 
-  test('opens the app log directory through Tauri', () => {
+  test('opens the app log directory through Electron', () => {
     dispatchDeveloperShortcut()
 
     screenCommand('open-log-directory').click()
 
-    expect(invokeMock).toHaveBeenCalledWith('open_app_log_directory')
+    expect(desktopInvokeMock).toHaveBeenCalledWith('developer.openLogDirectory')
   })
 
-  test('opens the main WebView inspector through Tauri', () => {
+  test('opens the main WebView inspector through Electron', () => {
     dispatchDeveloperShortcut()
 
     screenCommand('open-web-inspector').click()
 
-    expect(invokeMock).toHaveBeenCalledWith('open_main_webview_devtools')
+    expect(desktopInvokeMock).toHaveBeenCalledWith('developer.openDevTools')
   })
 
   test('opens the debug panel with active task state and debug logs', () => {

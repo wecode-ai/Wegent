@@ -42,7 +42,7 @@ mod client;
 mod config;
 mod connection_controller;
 mod extension;
-mod runtime_rpc_encoding;
+pub(crate) mod runtime_rpc_encoding;
 mod session_events;
 mod socket_transport;
 mod tasks;
@@ -1044,6 +1044,21 @@ pub fn local_backend_heartbeat_failure_log_line(backend_url: &str, error: &str) 
 }
 
 pub async fn serve_local_app_sidecar(config: DeviceConfig) -> Result<(), String> {
+    local_app_ipc_server(config).await?.serve_stdio().await
+}
+
+pub async fn serve_local_app_endpoint(
+    config: DeviceConfig,
+    endpoint: &str,
+    token: &str,
+) -> Result<(), String> {
+    local_app_ipc_server(config)
+        .await?
+        .serve_local_endpoint(endpoint, token)
+        .await
+}
+
+async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, String> {
     crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
@@ -1071,7 +1086,7 @@ pub async fn serve_local_app_sidecar(config: DeviceConfig) -> Result<(), String>
         .with_runtime_instance_id(runtime_instance_id)
         .with_shared_runtime_work_handler(runtime_work_handler, runtime_event_tx)
         .with_backend_connection_handler(backend_connection);
-    server.serve_stdio().await
+    Ok(server)
 }
 
 pub async fn serve_remote_local_backend(config: DeviceConfig) -> Result<(), String> {

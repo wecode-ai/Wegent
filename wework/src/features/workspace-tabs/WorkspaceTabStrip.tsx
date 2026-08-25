@@ -391,7 +391,7 @@ export function WorkspaceTabStrip({
         >
           <Plus aria-hidden="true" className="h-4 w-4" />
         </button>
-        <div className="min-w-0 flex-1 self-stretch" data-tauri-drag-region />
+        <div className="electron-titlebar-drag-region min-w-0 flex-1 self-stretch" />
       </div>
       {addMenuPosition
         ? createPortal(

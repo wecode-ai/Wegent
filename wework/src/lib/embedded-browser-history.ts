@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 
 export const EMBEDDED_BROWSER_HISTORY_PAGE_SIZE = 100
 
@@ -36,7 +36,7 @@ export async function searchEmbeddedBrowserHistory(
   text: string,
   cursor?: EmbeddedBrowserHistoryCursor
 ): Promise<EmbeddedBrowserHistoryEntry[]> {
-  return invoke<EmbeddedBrowserHistoryEntry[]>('embedded_browser_history_search', {
+  return invokeDesktopHost<EmbeddedBrowserHistoryEntry[]>('browser.historySearch', {
     text,
     endTimeMs: cursor?.endTimeMs ?? null,
     offset: cursor?.offset ?? 0,
@@ -45,5 +45,5 @@ export async function searchEmbeddedBrowserHistory(
 }
 
 export async function removeEmbeddedBrowserHistoryEntries(ids: string[]): Promise<number> {
-  return invoke<number>('embedded_browser_history_remove', { ids })
+  return invokeDesktopHost<number>('browser.historyRemove', { ids })
 }

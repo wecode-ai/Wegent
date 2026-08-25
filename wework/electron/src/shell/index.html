@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wework</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main id="runtime-overlay" data-phase="initializing">
+      <section class="runtime-card" aria-live="polite">
+        <div class="runtime-spinner" aria-hidden="true"></div>
+        <h1>正在启动 Wework</h1>
+        <p id="status">正在初始化 Core DSH…</p>
+        <pre id="details" hidden></pre>
+        <button id="reload-dsh" type="button" hidden>重试启动</button>
+      </section>
+    </main>
+    <script src="./shell.js"></script>
+  </body>
+</html>

@@ -101,8 +101,8 @@ async function waitForNewTaskRow(control, knownRows, timeoutMs) {
   throw new Error('Timed out waiting for a Codex notification isolation task')
 }
 
-async function sendTask(control, knownRows, prompt, timeoutMs) {
-  await control.command('click', '[data-testid="project-new-conversation-button"]')
+async function sendTask(control, newConversationSelector, knownRows, prompt, timeoutMs) {
+  await control.command('clickWhenEnabled', newConversationSelector, { timeoutMs })
   await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
   await control.command('fill', COMPOSER_SELECTOR, { value: prompt })
   await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
@@ -237,12 +237,36 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await createSingleRootLocalProject(control, workspacePath, 'codex-notification-isolation')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await selectE2EModel(control)
+      const createdProjectSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      const createdProjectId = createdProjectSnapshot.workbench?.currentProject?.id
+      assert.ok(
+        createdProjectId,
+        'The notification isolation project did not become the active project'
+      )
+      const newConversationSelector =
+        `[data-testid="project-row-${createdProjectId}"] ` +
+        '[data-testid="project-new-conversation-button"]'
+      await control.command('waitFor', newConversationSelector, { timeoutMs: uiTimeoutMs })
       const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       const knownRows = new Set(
         initialSnapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
       )
-      const quiet = await sendTask(control, knownRows, PROMPTS.quiet, uiTimeoutMs)
-      const noisy = await sendTask(control, knownRows, PROMPTS.noisy, uiTimeoutMs)
+      const quiet = await sendTask(
+        control,
+        newConversationSelector,
+        knownRows,
+        PROMPTS.quiet,
+        uiTimeoutMs
+      )
+      const noisy = await sendTask(
+        control,
+        newConversationSelector,
+        knownRows,
+        PROMPTS.noisy,
+        uiTimeoutMs
+      )
       await waitForRequestCount(requests, 2, uiTimeoutMs)
 
       const sidebar = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar"]`

@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { invoke } from '@tauri-apps/api/core'
 import {
   embeddedBrowserHistoryEntryKey,
   embeddedBrowserHistoryNextCursor,
@@ -8,11 +7,13 @@ import {
   type EmbeddedBrowserHistoryEntry,
 } from './embedded-browser-history'
 
-vi.mock('@tauri-apps/api/core', () => ({
+const desktopHostMocks = vi.hoisted(() => ({
   invoke: vi.fn(),
 }))
 
-const invokeMock = vi.mocked(invoke)
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: desktopHostMocks.invoke,
+}))
 
 function entry(url: string, visitTimeMs: number, title: string | null = null) {
   return { id: `history-${visitTimeMs}`, url, title, visitTimeMs }
@@ -20,7 +21,7 @@ function entry(url: string, visitTimeMs: number, title: string | null = null) {
 
 describe('embedded-browser-history', () => {
   beforeEach(() => {
-    invokeMock.mockReset()
+    desktopHostMocks.invoke.mockReset()
   })
 
   test('builds stable entry keys from url and visit time', () => {
@@ -43,9 +44,9 @@ describe('embedded-browser-history', () => {
   })
 
   test('searches history with default pagination arguments', async () => {
-    invokeMock.mockResolvedValue([])
+    desktopHostMocks.invoke.mockResolvedValue([])
     await searchEmbeddedBrowserHistory('docs')
-    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_history_search', {
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('browser.historySearch', {
       text: 'docs',
       endTimeMs: null,
       offset: 0,
@@ -54,9 +55,9 @@ describe('embedded-browser-history', () => {
   })
 
   test('searches history with a cursor', async () => {
-    invokeMock.mockResolvedValue([])
+    desktopHostMocks.invoke.mockResolvedValue([])
     await searchEmbeddedBrowserHistory('', { endTimeMs: 5001, offset: 3 })
-    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_history_search', {
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('browser.historySearch', {
       text: '',
       endTimeMs: 5001,
       offset: 3,
@@ -65,10 +66,10 @@ describe('embedded-browser-history', () => {
   })
 
   test('removes history entries by selector', async () => {
-    invokeMock.mockResolvedValue(2)
+    desktopHostMocks.invoke.mockResolvedValue(2)
     const removed = await removeEmbeddedBrowserHistoryEntries(['history-1000', 'history-2000'])
     expect(removed).toBe(2)
-    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_history_remove', {
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('browser.historyRemove', {
       ids: ['history-1000', 'history-2000'],
     })
   })

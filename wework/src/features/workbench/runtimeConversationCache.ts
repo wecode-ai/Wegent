@@ -161,6 +161,20 @@ export function getRuntimeConversationMessages(address: RuntimeTaskAddress): Wor
   return projectRuntimeConversationTurns(touchEntry(turnsByConversation, key) ?? [])
 }
 
+export function getRuntimeConversationMessagesForLogicalAddress(
+  address: RuntimeTaskAddress
+): WorkbenchMessage[] {
+  const exactKey = runtimeConversationKey(address)
+  if (turnsByConversation.has(exactKey) || address.deviceId !== 'local-device') {
+    return projectRuntimeConversationTurns(touchEntry(turnsByConversation, exactKey) ?? [])
+  }
+
+  const taskSuffix = `:${address.taskId}`
+  const matchingKeys = [...turnsByConversation.keys()].filter(key => key.endsWith(taskSuffix))
+  if (matchingKeys.length !== 1) return []
+  return projectRuntimeConversationTurns(touchEntry(turnsByConversation, matchingKeys[0]) ?? [])
+}
+
 export function getRuntimeConversationTurnIds(address: RuntimeTaskAddress): ReadonlySet<string> {
   const key = runtimeConversationKey(address)
   return new Set(

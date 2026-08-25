@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { PopoutWorkbenchPage } from './PopoutWorkbenchPage'
 
 const dismissPopoutWindowMock = vi.hoisted(() => vi.fn())
-const startDraggingMock = vi.hoisted(() => vi.fn())
 const setPopoutWindowExpandedMock = vi.hoisted(() => vi.fn())
 const setPopoutWindowOverlayActiveMock = vi.hoisted(() => vi.fn())
 const openPopoutTaskInMainMock = vi.hoisted(() => vi.fn())
@@ -37,10 +36,6 @@ const workbenchMock = vi.hoisted(() => ({
   startNewChat: startNewChatMock,
 }))
 
-vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({ startDragging: startDraggingMock }),
-}))
-
 vi.mock('@/components/layout/DesktopWorkbenchMain', () => ({
   DesktopWorkbenchMain: (props: Record<string, unknown>) => {
     desktopWorkbenchMainPropsMock(props)
@@ -58,7 +53,7 @@ vi.mock('@/features/workbench/workbenchRuntimeHelpers', () => ({
   truncateRuntimeTaskTitle: (title?: string) => title ?? null,
 }))
 
-vi.mock('@/tauri/popoutWindow', () => ({
+vi.mock('@/desktop/popoutWindow', () => ({
   dismissPopoutWindow: dismissPopoutWindowMock,
   openPopoutTaskInMain: openPopoutTaskInMainMock,
   setPopoutWindowExpanded: setPopoutWindowExpandedMock,
@@ -74,7 +69,6 @@ vi.mock('@/hooks/useTranslation', () => ({
 describe('PopoutWorkbenchPage', () => {
   beforeEach(() => {
     dismissPopoutWindowMock.mockReset()
-    startDraggingMock.mockReset()
     setPopoutWindowExpandedMock.mockReset()
     setPopoutWindowOverlayActiveMock.mockReset()
     openPopoutTaskInMainMock.mockReset()
@@ -200,17 +194,17 @@ describe('PopoutWorkbenchPage', () => {
     expect(dismissPopoutWindowMock).toHaveBeenCalledOnce()
   })
 
-  test('drags only from visible non-interactive surface space', () => {
+  test('marks the visible header as the Electron titlebar drag region', () => {
+    workbenchMock.state.currentRuntimeTask = {
+      deviceId: 'local-device',
+      taskId: 'task-1',
+    }
     render(<PopoutWorkbenchPage />)
 
-    fireEvent.pointerDown(screen.getByTestId('mock-popout-workbench-main'), { button: 0 })
-    expect(startDraggingMock).toHaveBeenCalledOnce()
-
-    fireEvent.pointerDown(screen.getByTestId('popout-workbench-page'), {
-      button: 0,
-      target: screen.getByTestId('popout-workbench-page'),
-    })
-    expect(startDraggingMock).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('popout-window-header')).toHaveClass('electron-titlebar-drag-region')
+    expect(screen.getByTestId('popout-workbench-page')).not.toHaveClass(
+      'electron-titlebar-drag-region'
+    )
   })
 
   test('temporarily enables mouse events across the native canvas while a menu is open', async () => {

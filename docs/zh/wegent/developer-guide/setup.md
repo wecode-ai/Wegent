@@ -268,8 +268,8 @@ Wework macOS 开发脚本会让 Git worktree 按组件共享 Cargo target，因�
 - 如需使用仓库内 Cargo 默认的 `target/`，设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1`。
 - 如需跳过自动安装并禁用 `sccache`，设置 `WEGENT_DISABLE_SCCACHE=1`。
 - 显式设置 `CARGO_TARGET_DIR` 或 `RUSTC_WRAPPER` 时，脚本会尊重该值。
-- Wework 启动的 Codex 和 Claude Code 会话会按 Git common directory 生成稳定的仓库缓存键，并把 `CARGO_TARGET_DIR` 设置为 `$WEGENT_CARGO_TARGET_ROOT/repositories/<仓库键>`。因此即使智能体直接执行 `cargo test`、`cargo build` 或 `pnpm tauri build`，同一仓库的所有 worktree 也会复用一份 Cargo 产物；不同仓库仍使用隔离目录。
-- 升级前已经生成的各 worktree 内 `executor/target` 与 `wework/src-tauri/target` 不会自动删除。确认没有 Cargo 构建正在运行后，可以手动删除这些旧缓存；新的构建会写入上述共享目录。
+- Wework 启动的 Codex 和 Claude Code 会话会按 Git common directory 生成稳定的仓库缓存键，并把 `CARGO_TARGET_DIR` 设置为 `$WEGENT_CARGO_TARGET_ROOT/repositories/<仓库键>`。因此即使智能体直接执行 `cargo test` 或 `cargo build`，同一仓库的所有 worktree 也会复用一份 Cargo 产物；不同仓库仍使用隔离目录。Electron 构建产物则位于 `wework/electron/release/`。
+- 升级前已经生成的各 worktree 内 `executor/target` 不会自动删除。确认没有 Cargo 构建正在运行后，可以手动删除这些旧缓存；新的 Executor 构建会写入上述共享目录。
 
 ---
 

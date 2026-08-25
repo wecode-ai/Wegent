@@ -742,7 +742,7 @@ async def test_runtime_request_relays_device_command_nonzero_exit(monkeypatch):
     ``success: False`` envelope means the command exited non-zero (e.g.
     ``git_is_worktree`` intentionally exits 1 on a non-git directory), not
     that the RPC transport failed. It must be relayed verbatim so the client
-    can interpret the exit code, matching the local Tauri IPC path.
+    can interpret the exit code, matching the local desktop IPC path.
     """
 
     namespace = WeworkRuntimeNamespace()

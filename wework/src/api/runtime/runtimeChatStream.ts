@@ -1,6 +1,6 @@
 import type { ChatCancelAck, ChatCancelPayload, ChatGuideAck, ChatGuidePayload } from '@/types/api'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
-import type { LocalExecutorEvent } from '@/tauri/localExecutor'
+import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import {
   createResponseApiStreamState,
   emitResponseApiEvent,

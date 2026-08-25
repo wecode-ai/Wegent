@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { isMobileViewport, mobileMediaQuery } from '@/lib/responsive'
 
 export function useIsMobile(): boolean {
   const [isMobile, setIsMobile] = useState(
-    () => !isTauriRuntime() && isMobileViewport(window.innerWidth)
+    () => !isElectronRuntime() && isMobileViewport(window.innerWidth)
   )
 
   useEffect(() => {
-    if (isTauriRuntime()) {
+    if (isElectronRuntime()) {
       return
     }
 

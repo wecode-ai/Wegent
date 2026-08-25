@@ -18,6 +18,14 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle'
 import '@/i18n'
 
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
+    if (capability === 'preferences.get') return {}
+    if (capability === 'preferences.update') return params.patch ?? {}
+    return {}
+  }),
+}))
+
 const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
 }))

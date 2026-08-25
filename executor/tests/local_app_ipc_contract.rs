@@ -130,6 +130,95 @@ async fn app_ipc_routes_codex_app_server_request() {
 }
 
 #[tokio::test]
+async fn app_ipc_initializes_the_bundled_plugin_marketplace() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("bundled-plugins/wework-personal");
+    let executor_home = root.path().join("executor-home");
+    fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+    fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+    fs::create_dir_all(source.join("plugins/smart-app-builder")).unwrap();
+    fs::write(
+        source.join(".agents/plugins/marketplace.json"),
+        r#"{"plugins":[{"name":"smart-app-builder","policy":{"installation":"INSTALLED_BY_DEFAULT"}},{"name":"wework-space"}]}"#,
+    )
+    .unwrap();
+    fs::write(
+        source.join(".claude-plugin/marketplace.json"),
+        r#"{"plugins":[{"name":"wework-space"},{"name":"smart-app-builder"}]}"#,
+    )
+    .unwrap();
+    fs::write(
+        source.join("plugins/smart-app-builder/README.md"),
+        "builder",
+    )
+    .unwrap();
+    let _source = EnvGuard::set(
+        "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR",
+        &source.display().to_string(),
+    );
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+
+    let result = AppIpcServer::new()
+        .dispatch("executor.plugins.initialize_bundled_marketplace", json!({}))
+        .await
+        .unwrap();
+
+    let destination = executor_home.join("capabilities/bundled-marketplaces/wework-personal");
+    assert_eq!(result["id"], "wework-personal");
+    assert_eq!(result["path"], destination.display().to_string());
+    assert_eq!(result["pluginCount"], 2);
+    assert_eq!(result["defaultPluginNames"], json!(["smart-app-builder"]));
+    assert_eq!(
+        fs::read_to_string(destination.join("plugins/smart-app-builder/README.md")).unwrap(),
+        "builder"
+    );
+}
+
+#[tokio::test]
+async fn app_ipc_initializes_a_blank_codex_home() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let executor_home = root.path().join("executor-home");
+    let codex_home = executor_home.join("codex");
+    let native_home = root.path().join("native-codex");
+    fs::create_dir_all(&native_home).unwrap();
+    fs::write(native_home.join("config.toml"), "# native marker\n").unwrap();
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
+    let _e2e = EnvGuard::set("VITE_WEWORK_E2E", "true");
+    let _native_home = EnvGuard::set(
+        "WEWORK_E2E_NATIVE_CODEX_HOME",
+        &native_home.display().to_string(),
+    );
+
+    let server = AppIpcServer::new();
+    let status = server
+        .dispatch("executor.codex_home.status", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(status["shouldPromptMigration"], true);
+
+    let initialized = server
+        .dispatch(
+            "executor.codex_home.initialize",
+            json!({
+                "migrateNativeHome": false,
+                "remoteAppsEnabled": true
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(initialized["shouldPromptMigration"], false);
+    let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+    assert!(!config.contains("native marker"));
+    assert!(config.contains("apps = true"));
+}
+
+#[tokio::test]
 async fn app_ipc_routes_local_first_plugin_install_as_runtime_rpc() {
     let server = AppIpcServer::new().with_runtime_work_handler(LocalPluginInstallRuntimeHandler);
 
@@ -1559,6 +1648,11 @@ async fn app_ipc_stdio_serves_ready_event_and_responses_until_input_closes() {
     assert_eq!(ready["event"], "executor.ready");
     assert_eq!(ready["payload"]["device_id"], "device-1");
     assert_eq!(ready["payload"]["ready"], true);
+    assert_eq!(ready["payload"]["protocol_version"], 1);
+    assert!(ready["payload"]["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("runtime.tasks")));
 
     writer
         .write_all(
@@ -1589,6 +1683,159 @@ async fn app_ipc_stdio_serves_ready_event_and_responses_until_input_closes() {
         .expect("stdio server should stop after stdin closes")
         .expect("stdio server task should join")
         .is_ok());
+}
+
+#[tokio::test]
+async fn app_ipc_prioritizes_lag_recovery_over_queued_runtime_deltas() {
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        time::{sleep, timeout, Duration},
+    };
+
+    let server = AppIpcServer::new().with_device_id("device-1");
+    let event_source = server.clone();
+    let (client, executor) = tokio::io::duplex(256);
+    let (executor_reader, executor_writer) = tokio::io::split(executor);
+    let task = tokio::spawn(async move { server.serve_io(executor_reader, executor_writer).await });
+    let (reader, mut writer) = tokio::io::split(client);
+    let mut reader = BufReader::new(reader);
+    let mut line = String::new();
+
+    reader.read_line(&mut line).await.unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&line).unwrap()["event"],
+        "executor.ready"
+    );
+
+    let delta = "x".repeat(1024);
+    for sequence in 0..512 {
+        event_source
+            .emit_event(
+                "runtime.plan.updated",
+                json!({ "sequence": sequence, "delta": delta }),
+            )
+            .unwrap();
+    }
+    sleep(Duration::from_millis(50)).await;
+    event_source
+        .emit_event(
+            "runtime.plan.updated",
+            json!({ "sequence": 512, "delta": delta }),
+        )
+        .unwrap();
+    sleep(Duration::from_millis(50)).await;
+    for sequence in 513..2561 {
+        event_source
+            .emit_event(
+                "runtime.plan.updated",
+                json!({ "sequence": sequence, "delta": delta }),
+            )
+            .unwrap();
+    }
+
+    let lag_event = timeout(Duration::from_secs(2), async {
+        for _ in 0..10 {
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let message: Value = serde_json::from_str(&line).unwrap();
+            if message["event"] == "executor.event_lagged" {
+                return Some(message);
+            }
+        }
+        None
+    })
+    .await
+    .expect("lag recovery event should not wait behind queued deltas")
+    .expect("lag recovery event should be prioritized");
+
+    assert!(lag_event["payload"]["skipped"].as_u64().unwrap() > 0);
+
+    writer.shutdown().await.unwrap();
+    drop(writer);
+    drop(reader);
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test]
+async fn app_ipc_describes_the_versioned_desktop_protocol() {
+    let server = AppIpcServer::new()
+        .with_device_id("device-1")
+        .with_runtime_instance_id("runtime-1");
+
+    let description = server
+        .dispatch("executor.protocol.describe", json!({}))
+        .await
+        .unwrap();
+
+    assert_eq!(description["protocol_version"], 1);
+    assert_eq!(description["device_id"], "device-1");
+    assert_eq!(description["runtime_instance_id"], "runtime-1");
+    assert_eq!(description["features"]["structured_errors"], true);
+    assert_eq!(description["features"]["event_resume"], false);
+    assert!(description["transports"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("stdio-ndjson")));
+    assert!(description["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("runtime.worktrees")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("codex.app_server_request")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("runtime.*")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.harnesses.list")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.harnesses.prepare_launch")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.plugins.initialize_bundled_marketplace")));
+    for method in [
+        "executor.plugins.import_package.preview",
+        "executor.plugins.import_package",
+        "executor.plugins.import_package.finalize",
+        "executor.plugins.import_package.rollback",
+        "executor.plugins.links.list",
+        "executor.plugins.links.link",
+        "executor.plugins.links.unlink",
+        "executor.plugins.personal.delete",
+    ] {
+        assert!(description["renderer_methods"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(method)));
+    }
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.codex_home.status")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.codex_home.initialize")));
+    assert!(description["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.harnesses")));
+    assert!(description["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.plugins")));
+    assert!(!description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.protocol.describe")));
 }
 
 fn unique_dir(label: &str) -> std::path::PathBuf {

@@ -111,7 +111,7 @@ coverage/
 executor/build/
 executor/dist/
 executor/target/
-wework/src-tauri/binaries/
+wework/resources/binaries/
 backend/init_data/plugins/wegent-sites/
 backend/init_data/plugins/wegent-mini-program/
 docs/superpowers/
@@ -119,7 +119,7 @@ docs/superpowers/
 docs/en/architecture/
 docs/zh/architecture/
 .worktrees/
-wework/src-tauri/bundled-harness-runtime/
-!wework/src-tauri/bundled-harness-runtime/
-wework/src-tauri/bundled-harness-runtime/*
-!wework/src-tauri/bundled-harness-runtime/.resource-placeholder
+wework/resources/bundled-harness-runtime/
+!wework/resources/bundled-harness-runtime/
+wework/resources/bundled-harness-runtime/*
+!wework/resources/bundled-harness-runtime/.resource-placeholder

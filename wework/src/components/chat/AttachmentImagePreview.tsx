@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { invoke } from '@tauri-apps/api/core'
 import {
   ChevronLeft,
   ChevronRight,
@@ -12,7 +11,8 @@ import {
   X,
 } from 'lucide-react'
 import type { Attachment } from '@/types/api'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { readElectronLocalFile } from '@/lib/electron-local-file'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { useAttachmentDownload } from './AttachmentDownloadContext'
 import {
   localPathFromMarkdownImageSrc,
@@ -53,6 +53,16 @@ function attachmentPreviewIdentity(attachment: Attachment): string {
   return `${attachment.id}:${attachment.local_preview_url ?? attachment.local_path ?? ''}`
 }
 
+async function loadElectronLocalImage(
+  path: string,
+  mimeType: string
+): Promise<{ url: string; objectUrl: string }> {
+  const objectUrl = URL.createObjectURL(
+    new Blob([await readElectronLocalFile(path)], { type: mimeType })
+  )
+  return { url: objectUrl, objectUrl }
+}
+
 async function loadAttachmentImageUrl(
   attachment: Attachment,
   fetchAttachmentBlob: (attachmentId: number) => Promise<Blob>
@@ -69,20 +79,9 @@ async function loadAttachmentImageUrl(
     }
 
     const localPath = getDownloadableLocalPath(localPreviewUrl)
-    if (localPath && isTauriRuntime()) {
-      try {
-        const exists = await invoke<boolean>('local_path_exists', { path: localPath })
-        if (!exists) {
-          failedAttachmentPreviewUrls.add(localPreviewUrl)
-          throw new Error('Local attachment preview no longer exists')
-        }
-      } catch (error) {
-        if (failedAttachmentPreviewUrls.has(localPreviewUrl)) {
-          throw error
-        }
-      }
+    if (localPath && isElectronRuntime()) {
+      return loadElectronLocalImage(localPath, attachment.mime_type || 'application/octet-stream')
     }
-
     const resolvedLocalPreviewUrl = resolveDirectMarkdownImageSrc(localPreviewUrl)
     if (!resolvedLocalPreviewUrl) {
       throw new Error('Failed to resolve local attachment preview')
@@ -147,11 +146,14 @@ function getDownloadableLocalPath(value?: string): string | null {
 
 async function downloadAttachmentImage(attachment: Attachment, imageUrl: string) {
   const sourcePath = getDownloadableLocalPath(attachment.local_preview_url ?? attachment.local_path)
-  if (sourcePath && isTauriRuntime()) {
-    await invoke<string>('download_local_file_to_downloads', {
-      sourcePath,
-      filename: attachment.filename,
-    })
+  if (sourcePath && isElectronRuntime()) {
+    const objectUrl = URL.createObjectURL(
+      new Blob([await readElectronLocalFile(sourcePath)], {
+        type: attachment.mime_type || 'application/octet-stream',
+      })
+    )
+    triggerDownload(objectUrl, attachment.filename)
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
     return
   }
 
@@ -181,7 +183,8 @@ export function AttachmentImagePreview({
   const [isLightboxLoading, setIsLightboxLoading] = useState(false)
   const [hasLightboxError, setHasLightboxError] = useState(false)
   const [zoom, setZoom] = useState(1)
-  const [shouldLoadPreview, setShouldLoadPreview] = useState(false)
+  const loadsPreviewImmediately = isElectronRuntime() || typeof IntersectionObserver === 'undefined'
+  const [shouldLoadPreview, setShouldLoadPreview] = useState(loadsPreviewImmediately)
   const previewContainerRef = useRef<HTMLElement | null>(null)
   const previewIdentity = attachmentPreviewIdentity(attachment)
   const attachmentRef = useRef(attachment)
@@ -200,23 +203,20 @@ export function AttachmentImagePreview({
 
   /* eslint-disable react-hooks/set-state-in-effect -- Attachment identity changes must clear stale preview UI before loading the next image. */
   useEffect(() => {
-    setShouldLoadPreview(false)
+    setShouldLoadPreview(loadsPreviewImmediately)
     setPreviewUrl(null)
     setHasError(false)
     setIsLightboxOpen(false)
     setLightboxUrl(null)
     setZoom(1)
-  }, [previewIdentity])
+  }, [loadsPreviewImmediately, previewIdentity])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     if (shouldLoadPreview) return undefined
 
     const element = previewContainerRef.current
-    if (!element || typeof IntersectionObserver === 'undefined') {
-      setShouldLoadPreview(true)
-      return undefined
-    }
+    if (!element) return undefined
 
     const observer = new IntersectionObserver(
       entries => {

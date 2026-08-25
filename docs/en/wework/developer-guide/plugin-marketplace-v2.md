@@ -44,13 +44,13 @@ Creation does not create a cloud Plugin, Release, or package. Local Plugin Creat
 
 Cloud Plugin Creator flows instead keep source under `$WEGENT_TASK_WORKSPACE/plugins/<plugin-name>`. A persisted result marker in the existing Task conversation renders View, Share, and Publish actions; no draft table or plugin-center draft row is created. A later action restores the same Task workspace and asks that Task's Executor to revalidate and package the current source. Permanently deleting the Task also removes access to an unpublished source.
 
-Publishing does not require a manually selected ZIP. Tauri packages local Marketplace source, while the current Task's Executor packages cloud workspace source. Both paths validate the Codex manifest, symlinks, path containment, and the 50 MB archive limit, then reuse the existing submission, object-storage, scanning, ACL, and review pipeline. A single-Skill plugin is submitted with `listing_type=skill`.
+Publishing does not require a manually selected ZIP. Electron locates and packages local Marketplace source, while the current Task's Executor packages cloud workspace source. Both paths validate the Codex manifest, symlinks, path containment, and the 50 MB archive limit, then reuse the existing submission, object-storage, scanning, ACL, and review pipeline; the server scan also enforces the 200 MB expanded-size limit. A single-Skill plugin is submitted with `listing_type=skill` automatically.
 
 ## Restricted sharing and personal copies
 
 Publishing to people, or later managing personal visibility, uploads the local package with `purpose=restricted_share` through the same object-storage and security-scanning pipeline. A successful scan creates a `visibility=personal` cloud Plugin and Release without public-market review. User and Namespace grants atomically replace existing `resource_members`; selecting owner-only access clears all grants and disables copying.
 
-Only the owner and matching recipients can discover, inspect, and install a personal plugin. Revoking a recipient removes the original account install intent immediately, uninstalls online devices, and leaves offline devices pending reconciliation. When `allowCopy` is enabled, the copy endpoint returns short-lived download metadata. Tauri verifies SHA256, ZIP paths, duplicate entries, symlinks, and the manifest, then atomically imports a uniquely named `0.1.0` copy into `wework-personal`. Provenance stays in the local registry and is never embedded in the uploaded package; revoking the original does not remove an independent copy.
+Only the owner and matching recipients can discover, inspect, and install a personal plugin. Revoking a recipient removes the original account install intent immediately, uninstalls online devices, and leaves offline devices pending reconciliation. When `allowCopy` is enabled, the copy endpoint returns short-lived download metadata. Electron verifies SHA256, ZIP paths, duplicate entries, symlinks, and the manifest, then atomically imports a uniquely named `0.1.0` copy into `wework-personal`. Provenance stays in the local registry and is never embedded in the uploaded package; revoking the original does not remove an independent copy.
 
 The Executor owns managed package caching, integrity checks, sync events, and device-result reporting. Codex App Server remains the installation and uninstallation authority. Device results are exposed through `InstalledPlugin.status.devices`; an API request must never report the current device as installed when App Server rejected the operation. Server-side scanning rejects path traversal, duplicate paths, symlinks, encrypted members, sensitive files, oversized expansion, checksum mismatches, and missing manifests.
 
@@ -113,7 +113,7 @@ Migration `d4e5f6a7b8c9` creates the plugin marketplace control-plane tables in 
 ### Shipped in this pass
 
 - **Backend**: restricted-share submissions, owner access replacement, recipient visibility, copy authorization, and revocation-driven uninstall synchronization reuse the shared scanner.
-- **Tauri**: safe personal-copy import with SHA256, duplicate/path/symlink/manifest checks, unique naming, atomic rollback, and local provenance mapping.
+- **Electron**: safe personal-copy import with SHA256, duplicate/path/symlink/manifest checks, unique naming, atomic rollback, and local provenance mapping.
 - **Wework**: distribution filters, a single installed-plugin management list, unified capability details, real share/copy flows, and plugin-aware slash and rich-mention interactions.
 
 ### Automated checks (local)
@@ -122,9 +122,9 @@ Migration `d4e5f6a7b8c9` creates the plugin marketplace control-plane tables in 
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | `backend/tests/services/test_plugin_marketplace_v2.py` | 40 passed                                                                                  |
 | `wework` Vitest                                        | 224 files / 2217 passed                                                                    |
-| Tauri `plugin_copy`                                    | 5 passed                                                                                   |
+| Electron `plugin_copy`                                 | 5 passed                                                                                   |
 | Alembic upgrade → downgrade → upgrade                  | Passed on an isolated database                                                             |
-| Isolated Tauri `ai:verify`                             | Marketplace, details, management, slash picker, prompt prefill, and branded mention passed |
+| Isolated Electron `ai:verify`                          | Marketplace, details, management, slash picker, prompt prefill, and branded mention passed |
 
 ### Blocked on environment
 

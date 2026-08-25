@@ -1,0 +1,7 @@
+dist/
+dummy-non-existing-folder/
+node_modules/
+public/
+release/
+resources/
+.package-staging/

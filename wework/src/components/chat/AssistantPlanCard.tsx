@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
-import { invoke } from '@tauri-apps/api/core'
 import { Copy, Download, ListChecks, Maximize2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 
@@ -27,14 +25,6 @@ export function AssistantPlanCard({
   const { t } = useTranslation('chat')
 
   const handleDownload = async () => {
-    if (isTauriRuntime()) {
-      await invoke<string>('save_text_file_to_downloads', {
-        filename: 'plan.md',
-        content,
-      })
-      return
-    }
-
     downloadTextFile(content, 'plan.md')
   }
 
