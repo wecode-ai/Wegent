@@ -291,6 +291,7 @@ export function AppIframe({
     lifecycleGenerationRef.current = generation
 
     return () => {
+      revealGenerationRef.current += 1
       window.setTimeout(() => {
         if (lifecycleGenerationRef.current !== generation) return
 
