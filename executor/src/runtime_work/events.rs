@@ -3456,8 +3456,8 @@ mod tests {
         assert_eq!(updated["event"], "response.block.updated");
         assert_eq!(updated["payload"]["data"]["block_id"], block_id);
         assert_eq!(
-            updated["payload"]["data"]["updates"]["content"],
-            "I found the issue."
+            updated["payload"]["data"]["updates"]["content_delta"],
+            "the issue."
         );
     }
 
