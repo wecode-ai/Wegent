@@ -4,6 +4,7 @@ import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
   CloneGitRepositoryInput,
+  CreatedRuntimeProject,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   DeleteDeviceWorkspaceRequest,
@@ -109,6 +110,7 @@ export interface SendCurrentInputOptions {
   ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
 }
 
 export interface CreateTemporaryRuntimeTaskOptions {
@@ -125,6 +127,7 @@ export interface CreateProjectRuntimeTaskOptions {
   /** Select a project workspace without mutating the global workbench
    * selection, for embedded project-space composers. */
   deviceWorkspaceId?: number | null
+  taskRequest?: RuntimeTaskCreateRequest | null
   /** Reuse the exact workspace or worktree from a previous runtime task
    * without inheriting its conversation. */
   workspaceSource?: RuntimeTaskAddress | null
@@ -312,6 +315,11 @@ export interface WorkbenchContextValue {
     data: CreateProjectRequest,
     options?: ProjectMutationOptions
   ) => Promise<ProjectWithTasks>
+  createLocalRuntimeProject: (data: {
+    deviceId: string
+    name: string
+    roots: string[]
+  }) => Promise<CreatedRuntimeProject>
   createGitWorkspaceProject: (data: CreateGitWorkspaceProjectRequest) => Promise<ProjectWithTasks>
   prepareDeviceWorkspace: (
     data: DeviceWorkspacePrepareRequest,

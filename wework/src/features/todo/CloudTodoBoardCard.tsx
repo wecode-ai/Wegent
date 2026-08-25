@@ -1,6 +1,15 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import { Archive, Bot, CalendarDays, Ellipsis, Flag, ListTodo } from 'lucide-react'
+import {
+  AlertTriangle,
+  Archive,
+  Bot,
+  CalendarDays,
+  Ellipsis,
+  Flag,
+  ListTodo,
+  UserRound,
+} from 'lucide-react'
 import {
   useCallback,
   useContext,
@@ -49,12 +58,15 @@ import {
   stoppedTaskNeedsAttention,
 } from '@/features/workbench/changeRequestStatus'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
+import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
 import {
   finalAssistantMessagesText,
   latestResponseLine,
   latestAssistantMessage,
 } from './runtimeTaskResponsePreview'
 import { priorityBadgeClasses } from './todoShared'
+import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
+import { getCurrentWorkflowNode, workflowNodeStatusLabel } from './workflowStagePresentation'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 
 export interface BoardCardDisplaySettings {
@@ -81,6 +93,7 @@ interface CloudTodoCardContentProps {
 }
 
 export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCardContentProps) {
+  const { t } = useTranslation('common')
   const tags = item.tags ?? []
   const showFooter = display.showPriority || display.showDate || display.showAssignee
   const assigneeName =
@@ -89,6 +102,8 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
     (item.assignee_agent_id
       ? item.assignee_agent_name || agentNames?.[item.assignee_agent_id] || null
       : null)
+  const needsExecutionConfiguration = itemNeedsExecutionConfiguration(item)
+  const currentWorkflowNode = item.workflow ? getCurrentWorkflowNode(item.workflow.nodes) : null
 
   return (
     <>
@@ -102,6 +117,15 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
         ) : null}
         <span className="line-clamp-1 min-w-0">{item.title}</span>
       </span>
+      {needsExecutionConfiguration ? (
+        <span
+          data-testid={`cloud-todo-card-needs-execution-config-${item.id}`}
+          className="mt-2 inline-flex w-fit items-center gap-1 rounded-md bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-300"
+        >
+          <AlertTriangle className="h-3.5 w-3.5" />
+          待配置
+        </span>
+      ) : null}
       {display.showTags && tags.length > 0 ? (
         <span className="mt-2 flex min-w-0 items-center gap-1.5 overflow-hidden">
           {tags.slice(0, 2).map((tag, index) => (
@@ -160,6 +184,38 @@ export function CloudTodoCardContent({ item, display, agentNames }: CloudTodoCar
               <span className="ml-auto">未指定</span>
             )
           ) : null}
+        </span>
+      ) : null}
+      {currentWorkflowNode ? (
+        <span
+          data-testid={`cloud-todo-card-workflow-stage-${item.id}`}
+          className="mt-2.5 flex min-w-0 items-center gap-2 text-xs"
+        >
+          {workflowNodeExecutionMode(currentWorkflowNode) === 'robot' ? (
+            <Bot className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+          ) : (
+            <UserRound className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+          )}
+          <span className="min-w-0 truncate font-medium text-text-secondary">
+            {currentWorkflowNode.name}
+          </span>
+          <span
+            data-testid={`cloud-todo-card-workflow-status-${item.id}`}
+            className={cn(
+              'ml-auto shrink-0 rounded-full px-2 py-0.5',
+              ['running', 'ready', 'queued'].includes(currentWorkflowNode.status) &&
+                'bg-blue-500/10 text-blue-700 dark:text-blue-300',
+              ['awaiting_approval', 'awaiting_deliverables'].includes(currentWorkflowNode.status) &&
+                'bg-amber-500/10 text-amber-700 dark:text-amber-300',
+              ['completed', 'forced_completed'].includes(currentWorkflowNode.status) &&
+                'bg-green-500/10 text-green-700 dark:text-green-300',
+              ['failed', 'changes_requested'].includes(currentWorkflowNode.status) &&
+                'bg-red-500/10 text-red-700 dark:text-red-300',
+              currentWorkflowNode.status === 'blocked' && 'bg-muted text-text-muted'
+            )}
+          >
+            {workflowNodeStatusLabel(t, currentWorkflowNode.status)}
+          </span>
         </span>
       ) : null}
     </>

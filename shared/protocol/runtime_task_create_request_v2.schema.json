@@ -1,0 +1,307 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wegent.dev/schemas/runtime-task-create-request-v2.json",
+  "title": "RuntimeTaskCreateRequest V2",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "runtime",
+    "message"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 2
+    },
+    "projectId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "deviceWorkspaceId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "deviceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workspacePath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "standaloneChatWorkspace": {
+      "type": "boolean"
+    },
+    "runtimeProjectKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtimeProjectName": {
+      "type": "string"
+    },
+    "runtimeWorkspaceRoots": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "projectInstructions": {
+      "type": "string"
+    },
+    "projectPlugins": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "taskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime": {
+      "enum": [
+        "codex",
+        "claude_code"
+      ]
+    },
+    "runtimeExecutablePath": {
+      "type": "string"
+    },
+    "runtimePermissionMode": {
+      "enum": [
+        "default",
+        "acceptEdits",
+        "plan",
+        "auto",
+        "bypassPermissions"
+      ]
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bot": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "clientUserMessageId": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "modelId": {
+      "type": "string"
+    },
+    "modelType": {
+      "enum": [
+        "public",
+        "user",
+        "group",
+        "runtime",
+        null
+      ]
+    },
+    "modelOptions": {
+      "type": "object"
+    },
+    "modelSelection": {
+      "$ref": "#/$defs/modelSelection"
+    },
+    "friendlyTitle": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "additionalSkills": {
+      "type": "array"
+    },
+    "attachmentIds": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "execution": {
+      "type": "object"
+    },
+    "initialGoal": {
+      "$ref": "#/$defs/goal"
+    },
+    "initialSupervisor": {
+      "$ref": "#/$defs/supervisor"
+    },
+    "ephemeral": {
+      "type": "boolean"
+    },
+    "sideSource": {
+      "$ref": "#/$defs/taskAddress"
+    },
+    "workspaceSourceTask": {
+      "$ref": "#/$defs/taskAddress"
+    },
+    "deliveryId": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36
+    },
+    "cloudProjectId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "origin": {
+      "type": "object"
+    },
+    "additionalContext": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/additionalContextEntry"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "modelSelection": {
+      "type": "object",
+      "required": [
+        "modelName"
+      ],
+      "properties": {
+        "modelName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "options": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "goal": {
+      "type": "object",
+      "required": [
+        "objective"
+      ],
+      "properties": {
+        "objective": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "active",
+            "paused",
+            "blocked",
+            "usageLimited",
+            "budgetLimited",
+            "complete"
+          ]
+        },
+        "tokenBudget": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "supervisor": {
+      "type": "object",
+      "required": [
+        "mode",
+        "modelSelection",
+        "intervalSeconds"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "suggest",
+            "auto"
+          ]
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "modelSelection": {
+          "$ref": "#/$defs/modelSelection"
+        },
+        "modelConfig": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "intervalSeconds": {
+          "enum": [
+            10,
+            30,
+            60,
+            300
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "taskAddress": {
+      "type": "object",
+      "required": [
+        "deviceId",
+        "taskId"
+      ],
+      "properties": {
+        "deviceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspacePath": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "additionalContextEntry": {
+      "type": "object",
+      "required": [
+        "kind",
+        "value"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "application",
+            "untrusted"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

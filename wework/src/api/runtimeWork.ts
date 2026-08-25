@@ -49,6 +49,8 @@ import type {
   RuntimeTaskQueueReorderRequest,
   RuntimeTaskQueueReorderResponse,
   RuntimeTaskRenameRequest,
+  RuntimeTaskStatusReplayRequest,
+  RuntimeTaskStatusReplayResponse,
   RuntimeSettings,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
@@ -99,6 +101,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
       return requestOptions
         ? client.get('/runtime-work', requestOptions)
         : client.get('/runtime-work')
+    },
+    replayRuntimeTaskStatuses(
+      data: RuntimeTaskStatusReplayRequest
+    ): Promise<RuntimeTaskStatusReplayResponse> {
+      return client.post('/runtime-work/task-status/replay', data)
     },
     getKeybindings(): Promise<{ keybindings: KeybindingOverride[] }> {
       return client.get('/runtime-work/keybindings')

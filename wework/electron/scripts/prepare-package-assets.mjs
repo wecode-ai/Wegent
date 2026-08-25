@@ -9,11 +9,13 @@ const repositoryRoot = resolve(weworkRoot, '..')
 const executorRoot = join(repositoryRoot, 'executor')
 const resourcesRoot = join(electronRoot, 'resources')
 const sharedResourcesRoot = join(weworkRoot, 'resources')
+const executorProfile = resolveExecutorProfile()
 
 await run('pnpm', ['prepare:harness-runtime', '--materialize'], weworkRoot)
 await run('pnpm', ['prepare:execution-runtime', '--materialize'], weworkRoot)
 
-const executorPath = process.env.WEWORK_EXECUTOR_PATH?.trim() || (await buildExecutor())
+const executorPath =
+  process.env.WEWORK_EXECUTOR_PATH?.trim() || (await buildExecutor(executorProfile))
 
 await rm(resourcesRoot, { recursive: true, force: true })
 await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
@@ -53,14 +55,20 @@ if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
 
 console.log(`Electron package resources: ${resourcesRoot}`)
 
-async function buildExecutor() {
+function resolveExecutorProfile() {
+  const configured = process.env.WEWORK_EXECUTOR_PROFILE?.trim() || 'release'
+  if (configured === 'debug' || configured === 'release') return configured
+  throw new Error(`Unsupported Wework executor profile: ${configured}`)
+}
+
+async function buildExecutor(profile) {
   await run(
     'cargo',
     [
       'build',
       '--manifest-path',
       join(executorRoot, 'Cargo.toml'),
-      '--release',
+      ...(profile === 'release' ? ['--release'] : []),
       '--bin',
       'wegent-executor',
     ],
@@ -82,7 +90,7 @@ async function buildExecutor() {
   )
   return join(
     metadata.target_directory,
-    'release',
+    profile,
     process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
   )
 }

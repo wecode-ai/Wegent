@@ -136,10 +136,10 @@ its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
 `ci:all` still run the complete desktop suites. The complete Core and Cloud
-suites each use five fixed GitHub Actions matrix jobs. Every job runs its
+suites each use eight fixed GitHub Actions matrix jobs. Every job runs its
 checkpoints serially so multiple real Electron, WebView, and Executor stacks do not
 contend for CPU and memory on the same GitHub runner and push normal asynchronous
-state beyond the shared 10-second step timeout. The ten matrix jobs still provide
+state beyond the shared 10-second step timeout. The sixteen matrix jobs still provide
 suite-level parallelism across runners. Shards are balanced from observed CI
 durations; a new or materially slower checkpoint requires rebalancing instead of
 adding runners, removing coverage, or rerunning failures. CI first builds one Core Electron
@@ -151,8 +151,11 @@ cache and sccache compiler units: the target cache bounds PR and first-run
 latency, while sccache reduces incremental compilation after dependency or
 source changes. Archiving strips Linux debug symbols only from the copied
 artifact binaries, leaving the original build outputs unchanged while reducing
-upload and download time across the ten shards. Desktop E2E builds skip the
-duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
+upload and download time across the sixteen shards. Desktop E2E and its cache
+warmup explicitly set `WEWORK_EXECUTOR_PROFILE=debug` so test artifacts do not
+spend time optimizing the Executor. Release packaging leaves the variable unset
+and continues to build the `release` Executor by default. Desktop E2E builds
+skip the duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
 while retaining the real Vite and Electron artifact build; test coverage and the
 type gate remain unchanged. The plugin suite requires an independent build
 configuration and continues to run in parallel with the shared Core build.

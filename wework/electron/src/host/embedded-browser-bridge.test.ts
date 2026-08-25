@@ -218,6 +218,46 @@ describe('EmbeddedBrowserBridge', () => {
       'https://example.test/redirect'
     )
   })
+
+  test('waits for a browser that is remounting before evaluating its condition', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const browser = fakeBrowser()
+    browser.has.mockReturnValue(false)
+    browser.evaluate.mockImplementation(async () => {
+      if (!browser.has()) {
+        throw new Error('Embedded browser is unavailable: workspace-browser')
+      }
+      return { ok: true, kind: 'browser.wait' }
+    })
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    const runtimePath = await bridge.start()
+    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
+      address: string
+      token: string
+    }
+    setTimeout(() => browser.has.mockReturnValue(true), 25)
+
+    const response = await fetch(`http://${identity.address}/browser`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${identity.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'waitFor',
+        text: 'Browser data cache fixture',
+        timeoutMs: 1_000,
+        options: { pollMs: 50 },
+      }),
+    })
+
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      data: { ok: true, kind: 'browser.wait' },
+    })
+    expect(browser.evaluate).toHaveBeenCalledOnce()
+  })
 })
 
 function fakeBrowser() {
@@ -233,6 +273,7 @@ function fakeBrowser() {
     navigationError: null,
   }))
   const navigate = vi.fn(async () => undefined)
+  const evaluate = vi.fn()
   const manager = {
     activeLabel,
     has,
@@ -243,7 +284,7 @@ function fakeBrowser() {
     requestClose: vi.fn(),
     goBack: vi.fn(),
     goForward: vi.fn(),
-    evaluate: vi.fn(),
+    evaluate,
     isAgentControlPaused: vi.fn(() => false),
     consumeApprovedAgentRisk: vi.fn(() => false),
     registerAgentApproval: vi.fn(() => null),
@@ -251,6 +292,7 @@ function fakeBrowser() {
   } as unknown as EmbeddedBrowserManager
   return {
     activeLabel,
+    evaluate,
     has,
     manager,
     navigate,

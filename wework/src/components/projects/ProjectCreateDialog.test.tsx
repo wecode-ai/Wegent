@@ -1,9 +1,22 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { DeviceInfo, DeviceWorkspaceResponse, ProjectWithTasks } from '@/types/api'
 import '@/i18n'
 import { ProjectCreateDialog } from './ProjectCreateDialog'
+
+const pickerMocks = vi.hoisted(() => ({
+  openNative: vi.fn(),
+  useNative: false,
+}))
+
+vi.mock('@/e2e/automation', () => ({
+  shouldUseNativeProjectDirectoryPicker: () => pickerMocks.useNative,
+}))
+
+vi.mock('@/lib/native-directory-picker', () => ({
+  openNativeProjectDirectoryPicker: pickerMocks.openNative,
+}))
 
 const devices: DeviceInfo[] = [
   {
@@ -46,6 +59,63 @@ function mapping(overrides: Partial<DeviceWorkspaceResponse> = {}): DeviceWorksp
 }
 
 describe('ProjectCreateDialog', () => {
+  beforeEach(() => {
+    pickerMocks.openNative.mockReset()
+    pickerMocks.useNative = false
+  })
+
+  test('uses the native folder picker for a local device outside CI automation', async () => {
+    pickerMocks.useNative = true
+    pickerMocks.openNative.mockResolvedValue('/home/user/native-repo')
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={devices}
+        preferredDeviceId="local-device"
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onPrepareDeviceWorkspace={vi.fn()}
+        onDeleteDeviceWorkspace={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-folder-select-button'))
+
+    await waitFor(() => expect(pickerMocks.openNative).toHaveBeenCalledWith('/home/user'))
+    expect(screen.queryByTestId('confirm-device-folder-picker-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-name-preview')).toHaveTextContent('native-repo')
+  })
+
+  test('keeps the controllable folder picker for local devices in CI automation', async () => {
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={devices}
+        preferredDeviceId="local-device"
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onPrepareDeviceWorkspace={vi.fn()}
+        onDeleteDeviceWorkspace={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-folder-select-button'))
+
+    expect(await screen.findByTestId('confirm-device-folder-picker-button')).toBeInTheDocument()
+    expect(pickerMocks.openNative).not.toHaveBeenCalled()
+  })
+
   test('uses a black primary action button in the dialog footer', () => {
     render(
       <ProjectCreateDialog
