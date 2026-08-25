@@ -149,6 +149,53 @@ async def test_get_attachment_playback_returns_direct_adapter_url_and_cover(
 
 
 @pytest.mark.asyncio
+async def test_get_attachment_playback_uses_proxy_for_adapter_proxy_mode(monkeypatch):
+    context = SimpleNamespace(
+        id=42,
+        user_id=7,
+        type_data={"storage_backend": "weibo_video_hosting"},
+    )
+    monkeypatch.setattr(
+        attachments,
+        "_get_attachment_context",
+        Mock(return_value=context),
+    )
+    monkeypatch.setattr(
+        attachments,
+        "_resolve_attachment_playback",
+        AsyncMock(
+            return_value=attachments.ExternalAttachmentPlayback(
+                url="https://private-media.example/reference.mp4",
+                media_type="video/mp4",
+                delivery_mode="proxy",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        attachments,
+        "_create_download_token",
+        Mock(return_value="playback-token"),
+    )
+    monkeypatch.setattr(
+        attachments.context_service,
+        "build_attachment_url",
+        Mock(return_value="/api/attachments/42/download"),
+    )
+
+    response = await attachments.get_attachment_playback(
+        attachment_id=42,
+        share_token=None,
+        db=Mock(),
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.playback_url == (
+        "/api/attachments/42/download?download_token=playback-token"
+    )
+    assert "private-media.example" not in response.playback_url
+
+
+@pytest.mark.asyncio
 async def test_get_attachment_playback_returns_wegent_proxy_for_other_storage(
     monkeypatch,
 ):

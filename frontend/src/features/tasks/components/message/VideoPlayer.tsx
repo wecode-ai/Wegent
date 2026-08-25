@@ -10,6 +10,25 @@ import { createAttachmentDownloadUrl, downloadAttachment } from '@/apis/attachme
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 
+const MESSAGE_VIDEO_SHORT_EDGE = 202
+const MESSAGE_VIDEO_LONG_EDGE = 359
+
+function getMessageVideoDisplaySize(
+  width: number,
+  height: number
+): { width: number; height: number } | null {
+  if (width <= 0 || height <= 0) return null
+
+  const shortEdge = Math.min(width, height)
+  const longEdge = Math.max(width, height)
+  const scale = Math.min(MESSAGE_VIDEO_SHORT_EDGE / shortEdge, MESSAGE_VIDEO_LONG_EDGE / longEdge)
+
+  return {
+    width: Math.round(width * scale),
+    height: Math.round(height * scale),
+  }
+}
+
 export interface VideoPlayerProps {
   /** URL of the video to play */
   videoUrl: string
@@ -27,6 +46,8 @@ export interface VideoPlayerProps {
   videoClassName?: string
   /** Optional test identifier for the underlying video element */
   videoTestId?: string
+  /** Match the compact ratio-aware size used for completed videos in chat messages */
+  useMessageDisplaySize?: boolean
   /** Whether this is a placeholder video (still being generated) */
   isPlaceholder?: boolean
   /** Video generation progress (0-100) when in placeholder mode */
@@ -53,6 +74,7 @@ export function VideoPlayer({
   className,
   videoClassName,
   videoTestId,
+  useMessageDisplaySize = false,
   isPlaceholder = false,
   progress = 0,
 }: VideoPlayerProps) {
@@ -63,6 +85,10 @@ export function VideoPlayer({
   const [showControls, setShowControls] = useState(false)
   const [playbackFeedback, setPlaybackFeedback] = useState<'play' | 'pause' | null>(null)
   const [resolvedVideoUrl, setResolvedVideoUrl] = useState(videoUrl)
+  const [messageDisplaySize, setMessageDisplaySize] = useState<{
+    width: number
+    height: number
+  } | null>(null)
   const playbackRefreshCountRef = useRef(0)
 
   const usesProtectedAttachmentUrl =
@@ -85,6 +111,7 @@ export function VideoPlayer({
 
   useEffect(() => {
     playbackRefreshCountRef.current = 0
+    setMessageDisplaySize(null)
     void refreshAttachmentPlaybackUrl()
   }, [refreshAttachmentPlaybackUrl])
 
@@ -209,6 +236,16 @@ export function VideoPlayer({
     void refreshAttachmentPlaybackUrl()
   }, [refreshAttachmentPlaybackUrl, usesProtectedAttachmentUrl])
 
+  const handleLoadedMetadata = useCallback(
+    (event: React.SyntheticEvent<HTMLVideoElement>) => {
+      if (!useMessageDisplaySize) return
+      setMessageDisplaySize(
+        getMessageVideoDisplaySize(event.currentTarget.videoWidth, event.currentTarget.videoHeight)
+      )
+    },
+    [useMessageDisplaySize]
+  )
+
   // Placeholder mode: show loading state with progress
   if (isPlaceholder) {
     return (
@@ -248,8 +285,17 @@ export function VideoPlayer({
       onKeyDown={handleKeyDown}
       className={cn(
         'relative max-w-md overflow-hidden rounded-lg bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+        useMessageDisplaySize && 'inline-block',
         className
       )}
+      style={
+        messageDisplaySize
+          ? {
+              width: messageDisplaySize.width,
+              height: messageDisplaySize.height,
+            }
+          : undefined
+      }
       onMouseEnter={() => setShowControls(true)}
       onMouseLeave={() => setShowControls(false)}
       onTouchStart={() => setShowControls(true)}
@@ -259,7 +305,12 @@ export function VideoPlayer({
         src={playbackUrl}
         poster={posterUrl}
         data-testid={videoTestId}
-        className={cn('w-full h-auto', videoClassName)}
+        className={cn(
+          'w-full h-auto',
+          useMessageDisplaySize && 'h-full object-contain',
+          videoClassName
+        )}
+        onLoadedMetadata={handleLoadedMetadata}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onEnded={() => setIsPlaying(false)}

@@ -416,6 +416,7 @@ export default function AttachmentPreview({
               muted
               playsInline
               preload="metadata"
+              onError={() => setMediaError(true)}
             />
             <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20">
               <Play className="h-5 w-5 fill-white text-white drop-shadow" />

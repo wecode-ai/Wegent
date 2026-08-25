@@ -12,6 +12,29 @@ import pytest
 from app.services.execution.request_builder import TaskRequestBuilder
 
 
+@pytest.mark.parametrize("task_type", ["video", "image"])
+def test_direct_generation_task_retains_primary_generation_model(
+    task_type: str,
+) -> None:
+    builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+    task = SimpleNamespace(
+        json={"metadata": {"labels": {"taskType": task_type}}},
+    )
+
+    assert builder._should_use_secondary_model_for_generation_chat(task) is False
+
+
+@pytest.mark.parametrize("task_type", ["chat", "code", None])
+def test_non_generation_task_uses_secondary_model_for_generation_bot(
+    task_type: str | None,
+) -> None:
+    builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+    labels = {} if task_type is None else {"taskType": task_type}
+    task = SimpleNamespace(json={"metadata": {"labels": labels}})
+
+    assert builder._should_use_secondary_model_for_generation_chat(task) is True
+
+
 def _resolve_model(
     *,
     secondary_model: dict | None,

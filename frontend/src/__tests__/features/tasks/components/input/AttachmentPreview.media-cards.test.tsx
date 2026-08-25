@@ -105,6 +105,16 @@ describe('AttachmentPreview sent media cards', () => {
     expect(video).toHaveAttribute('poster', 'https://video.weibocdn.com/material-cover.jpg')
   })
 
+  it('replaces an unplayable compact video with the video fallback', async () => {
+    render(<AttachmentPreview attachment={attachment({})} compact />)
+
+    const video = await screen.findByTestId('sent-video-attachment-1')
+    fireEvent.error(video)
+
+    expect(screen.queryByTestId('sent-video-attachment-1')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('material.mp4')).toBeInTheDocument()
+  })
+
   it('renders audio as a compact playable card', async () => {
     render(
       <AttachmentPreview

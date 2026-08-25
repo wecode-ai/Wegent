@@ -6,6 +6,7 @@
 
 import logging
 from typing import Any, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,7 @@ from app.services.execution.agents.video.extensions import (
     register_video_generation_extension,
 )
 from app.services.media.weibo_media_service import weibo_media_service
+from wecode.video.api.client import validate_image_url, validate_playback_url
 from wecode.video.config.media import video_media_settings
 from wecode.video.services.media_platform import (
     fetch_playback,
@@ -33,6 +35,60 @@ from wecode.video.services.media_platform import (
 )
 
 logger = logging.getLogger(__name__)
+
+_INTERNAL_OSS_HOST_SUFFIX = ".oss-cn-beijing-internal.aliyuncs.com"
+_PUBLIC_OSS_HOST_SUFFIX = ".oss-cn-beijing.aliyuncs.com"
+
+
+def _public_weibo_oss_url(url: str) -> Optional[str]:
+    """Convert a signed internal Weibo OSS URL to its browser-accessible endpoint."""
+    candidate = urlsplit(url)
+    hostname = (candidate.hostname or "").lower()
+    if not hostname.endswith(_INTERNAL_OSS_HOST_SUFFIX):
+        return None
+
+    bucket = hostname[: -len(_INTERNAL_OSS_HOST_SUFFIX)]
+    if not bucket:
+        return None
+
+    public_hostname = f"{bucket}{_PUBLIC_OSS_HOST_SUFFIX}"
+    return urlunsplit(
+        (
+            "https",
+            public_hostname,
+            candidate.path,
+            candidate.query,
+            candidate.fragment,
+        )
+    )
+
+
+def _browser_cover_url(url: Optional[str]) -> Optional[str]:
+    """Return the cover only when the browser can load it directly."""
+    if not url:
+        return None
+    public_oss_url = _public_weibo_oss_url(url)
+    if public_oss_url:
+        return public_oss_url
+    normalized_url = _https(url)
+    try:
+        validate_image_url(normalized_url)
+    except ValueError:
+        return None
+    return normalized_url
+
+
+def _browser_playback_url(url: str) -> str:
+    """Return a browser-accessible Weibo playback URL."""
+    public_oss_url = _public_weibo_oss_url(url)
+    if public_oss_url:
+        return public_oss_url
+    normalized_url = _https(url)
+    try:
+        validate_playback_url(normalized_url)
+    except ValueError:
+        return url
+    return normalized_url
 
 
 class WeiboMediaAttachmentStorageAdapter:
@@ -101,10 +157,11 @@ class WeiboMediaAttachmentPlaybackResolver:
             raise ValueError(
                 f"Weibo {media_type} playback URL is unavailable for media_id={media_id}"
             )
+        playback_url = _browser_playback_url(playback.url)
         return ExternalAttachmentPlayback(
-            url=_https(playback.url),
+            url=playback_url,
             media_type="audio/mpeg" if media_type == "audio" else "video/mp4",
-            cover_url=_https(playback.cover_url) if playback.cover_url else None,
+            cover_url=_browser_cover_url(playback.cover_url),
             delivery_mode="direct",
         )
 
@@ -129,8 +186,9 @@ class WeiboMediaAttachmentPlaybackResolver:
 
         if not playback_url:
             raise ValueError("Legacy Weibo video playback URL is unavailable")
+        normalized_url = _browser_playback_url(playback_url)
         return ExternalAttachmentPlayback(
-            url=_https(playback_url),
+            url=normalized_url,
             media_type=str(type_data.get("mime_type") or "video/mp4"),
             delivery_mode="direct",
         )

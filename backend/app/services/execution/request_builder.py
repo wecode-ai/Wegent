@@ -166,7 +166,7 @@ class TaskRequestBuilder:
         override_model_name: Optional[str] = None,
         force_override: bool = False,
         runtime_model_config: Optional[dict[str, Any]] = None,
-        use_secondary_model_for_generation_chat: bool = True,
+        use_secondary_model_for_generation_chat: Optional[bool] = None,
         team_member_prompt: Optional[str] = None,
         web_runtime_guidance: bool = False,
         user_generation: Optional[dict[str, Any]] = None,
@@ -199,8 +199,10 @@ class TaskRequestBuilder:
             override_model_name: Optional model name to override bot's model
             force_override: If True, override takes highest priority
             runtime_model_config: Optional already-resolved runtime model config
-            use_secondary_model_for_generation_chat: Whether video/image Chat tasks
-                should execute with the Bot's secondary text model
+            use_secondary_model_for_generation_chat: Explicit override for whether
+                video/image tasks should execute with the Bot's secondary text model.
+                By default, direct video/image task modes retain the generation model,
+                while Chat mode uses the secondary model.
             team_member_prompt: Optional additional prompt from team member
             web_runtime_guidance: Whether to inject Wegent web UI runtime guidance
 
@@ -244,6 +246,10 @@ class TaskRequestBuilder:
         user_info = self._build_user_info(user, git_domain)
 
         # Get model config with full resolution (decryption, placeholder replacement)
+        if use_secondary_model_for_generation_chat is None:
+            use_secondary_model_for_generation_chat = (
+                self._should_use_secondary_model_for_generation_chat(task)
+            )
         model_resolution: dict[str, bool] = {}
         model_config = self._get_model_config(
             bot=bot,
@@ -727,6 +733,13 @@ class TaskRequestBuilder:
         labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
         return str(labels.get("taskType") or labels.get("type") or "chat")
 
+    def _should_use_secondary_model_for_generation_chat(
+        self,
+        task: TaskResource,
+    ) -> bool:
+        """Use a planning LLM only for generation Bots running in Chat mode."""
+        return self._derive_task_mode(task).strip().lower() not in {"video", "image"}
+
     @staticmethod
     def _append_web_runtime_guidance(
         system_prompt: str,
@@ -1038,6 +1051,15 @@ class TaskRequestBuilder:
                 team_id=team_id,
                 team_name=team_name,
                 team_namespace=team_namespace,
+            )
+            logger.info(
+                "[TaskRequestBuilder] Generation model routing: "
+                "task_id=%s, model_type=%s, use_secondary_model_for_chat=%s, "
+                "has_secondary_model=%s",
+                task_id,
+                model_type,
+                use_secondary_model_for_chat,
+                secondary_model_config is not None,
             )
             if secondary_model_config:
                 if (
