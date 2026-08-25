@@ -10,6 +10,7 @@ CALL_LOG="$TMP_DIR/calls.log"
 DEFAULT_TEST_OUT="$(mktemp "${TMP_DIR}/default-test.XXXXXX")"
 FULL_TEST_OUT="$(mktemp "${TMP_DIR}/full-test.XXXXXX")"
 WEWORK_TEST_OUT="$(mktemp "${TMP_DIR}/wework-test.XXXXXX")"
+WEWORK_ELECTRON_TEST_OUT="$(mktemp "${TMP_DIR}/wework-electron-test.XXXXXX")"
 FRONTEND_TEST_OUT="$(mktemp "${TMP_DIR}/frontend-test.XXXXXX")"
 EXECUTOR_TEST_OUT="$(mktemp "${TMP_DIR}/executor-test.XXXXXX")"
 EXECUTOR_FULL_TEST_OUT="$(mktemp "${TMP_DIR}/executor-full-test.XXXXXX")"
@@ -172,25 +173,81 @@ if ! grep -qE '^pnpm --filter wework typecheck$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
-    echo "Expected Wework changes to run unit tests through the Wework package script."
+if ! grep -qE '^pnpm --filter wework exec vitest run src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts$' "$CALL_LOG"; then
+    echo "Expected renderer source changes to run changed and sibling test files."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1
 fi
 
-if ! grep -qE 'Running unit tests with 2 workers' "$WEWORK_TEST_OUT"; then
-    echo "Expected Wework pre-push tests to use two workers by default."
+if grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
+    echo "Expected renderer source changes to avoid the full Wework test suite."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if ! grep -qE 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT"; then
+    echo "Expected focused Wework pre-push tests to use two workers by default."
     cat "$WEWORK_TEST_OUT"
     exit 1
 fi
 
-STATIC_CHECK_LINE=$(grep -n 'Running ESLint and TypeScript in parallel' "$WEWORK_TEST_OUT" | cut -d: -f1)
-UNIT_TEST_LINE=$(grep -n 'Running unit tests with 2 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
+STATIC_CHECK_LINE=$(grep -n 'Running static checks in parallel' "$WEWORK_TEST_OUT" | cut -d: -f1)
+UNIT_TEST_LINE=$(grep -n 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
 if [ -z "$STATIC_CHECK_LINE" ] || [ -z "$UNIT_TEST_LINE" ] ||
     [ "$STATIC_CHECK_LINE" -ge "$UNIT_TEST_LINE" ]; then
     echo "Expected Wework static checks to be reported before unit tests."
     cat "$WEWORK_TEST_OUT"
+    exit 1
+fi
+
+: > "$CALL_LOG"
+
+# Build an unreferenced synthetic commit that changes only Electron host code.
+# This keeps the regression fixture independent from repository history without
+# modifying the working tree or creating a branch.
+ELECTRON_BASE_SHA=$(git rev-parse HEAD)
+ELECTRON_FIXTURE_FILE="$TMP_DIR/pre-push-scope-fixture.ts"
+cat > "$ELECTRON_FIXTURE_FILE" <<'EOF'
+export const prePushScopeFixture = true
+EOF
+ELECTRON_FIXTURE_BLOB=$(git hash-object -w "$ELECTRON_FIXTURE_FILE")
+ELECTRON_INDEX="$TMP_DIR/electron.index"
+GIT_INDEX_FILE="$ELECTRON_INDEX" git read-tree "$ELECTRON_BASE_SHA"
+GIT_INDEX_FILE="$ELECTRON_INDEX" git update-index --add --cacheinfo \
+    100644 "$ELECTRON_FIXTURE_BLOB" wework/electron/src/pre-push-scope-fixture.ts
+GIT_INDEX_FILE="$ELECTRON_INDEX" git update-index --add --cacheinfo \
+    100644 "$ELECTRON_FIXTURE_BLOB" wework/e2e/desktop/pre-push-scope-fixture.mjs
+ELECTRON_TREE=$(GIT_INDEX_FILE="$ELECTRON_INDEX" git write-tree)
+ELECTRON_LOCAL_SHA=$(printf 'electron pre-push fixture\n' |
+    git commit-tree "$ELECTRON_TREE" -p "$ELECTRON_BASE_SHA")
+
+AI_VERIFIED=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_ELECTRON_TEST_OUT" 2>&1
+refs/heads/topic $ELECTRON_LOCAL_SHA refs/heads/topic $ELECTRON_BASE_SHA
+EOF
+
+if ! grep -qE '^pnpm --filter wework run prepare:electron$' "$CALL_LOG"; then
+    echo "Expected Electron changes to prepare the Electron package."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if ! grep -qE '^pnpm --dir wework/electron typecheck$' "$CALL_LOG" ||
+    ! grep -qE '^pnpm --dir wework/electron test$' "$CALL_LOG"; then
+    echo "Expected Electron changes to run Electron-owned checks."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if grep -qE '^pnpm --filter wework (typecheck|test)$|^pnpm --filter wework exec vitest ' "$CALL_LOG"; then
+    echo "Expected Electron-only changes to skip unrelated renderer checks."
+    echo "Calls:"
+    cat "$CALL_LOG"
     exit 1
 fi
 
