@@ -11996,7 +11996,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('reconciles a completed Claude goal from the executor snapshot after the turn settles', async () => {
+  test('reconciles a completed Claude goal after the executor settles', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -12004,6 +12004,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     const getRuntimeGoal = vi
       .fn()
+      .mockResolvedValueOnce({
+        accepted: true,
+        goal: createRuntimeGoal({ objective: '完成 Claude 目标', status: 'active' }),
+      })
       .mockResolvedValueOnce({
         accepted: true,
         goal: createRuntimeGoal({ objective: '完成 Claude 目标', status: 'active' }),
@@ -12072,7 +12076,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-goal-objective')).toHaveTextContent('none')
     )
-    expect(getRuntimeGoal).toHaveBeenCalledTimes(2)
+    expect(getRuntimeGoal).toHaveBeenCalledTimes(3)
   })
 
   test('keeps an active runtime goal active while the task list is between automatic turns', async () => {

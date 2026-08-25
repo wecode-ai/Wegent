@@ -1934,7 +1934,7 @@ export function WorkbenchProvider({
   })
   const syncRuntimeTaskUntilExecutorSettles = useStableEvent(
     async (address: RuntimeTaskAddress) => {
-      if (!runtimeTaskSettleSyncActiveRef.current) return
+      if (!runtimeTaskSettleSyncActiveRef.current) return false
       const key = runtimeConversationKey(address)
       const generation = ++runtimeTaskSettleSyncGenerationCounterRef.current
       runtimeTaskSettleSyncGenerationRef.current.set(key, generation)
@@ -1944,22 +1944,22 @@ export function WorkbenchProvider({
           if (delayMs > 0) {
             await new Promise(resolve => globalThis.setTimeout(resolve, delayMs))
           }
-          if (!runtimeTaskSettleSyncActiveRef.current) return
-          if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+          if (!runtimeTaskSettleSyncActiveRef.current) return false
+          if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return false
 
           const expectedLifecycle = lifecycleStore.getTask(address)
-          if (expectedLifecycle?.turn.phase === 'streaming') return
+          if (expectedLifecycle?.turn.phase === 'streaming') return false
 
           try {
             const task = await refreshRuntimeTask(address)
-            if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+            if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return false
             if (!task) {
               const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(address, {
                 refresh: true,
               })
-              if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return
+              if (runtimeTaskSettleSyncGenerationRef.current.get(key) !== generation) return false
               lifecycleStore.syncTranscript(address, transcript)
-              if (lifecycleStore.getTask(address)?.execution.phase === 'idle') return
+              if (lifecycleStore.getTask(address)?.execution.phase === 'idle') return true
               continue
             }
             const applied = lifecycleStore.syncRuntimeTask(address, task, expectedLifecycle)
@@ -1970,7 +1970,7 @@ export function WorkbenchProvider({
               currentLifecycle?.execution.phase === 'idle' ||
               currentLifecycle?.turn.phase === 'streaming'
             ) {
-              return
+              return currentLifecycle.execution.phase === 'idle'
             }
           } catch (error) {
             console.warn('[Wework] Runtime task settle snapshot sync failed', {
@@ -1990,6 +1990,7 @@ export function WorkbenchProvider({
           turnPhase: lifecycle?.turn.phase ?? null,
           executorSnapshotRunning: lifecycle?.task?.running ?? null,
         })
+        return false
       } finally {
         if (runtimeTaskSettleSyncGenerationRef.current.get(key) === generation) {
           runtimeTaskSettleSyncGenerationRef.current.delete(key)
@@ -2082,7 +2083,9 @@ export function WorkbenchProvider({
               turnId,
               outcome === 'succeeded' ? 'success' : outcome === 'failed' ? 'failure' : 'cancelled'
             )
-            void syncRuntimeTaskUntilExecutorSettles(address)
+            void syncRuntimeTaskUntilExecutorSettles(address).then(executorSettled => {
+              if (executorSettled) syncRuntimeGoalSnapshot(address)
+            })
             syncRuntimeGoalSnapshot(address)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
