@@ -570,6 +570,13 @@ async function openOptimisticTemporaryRuntimeTask(
   address: RuntimeTaskAddress,
   options: CreateTemporaryRuntimeTaskOptions
 ) {
+  address.runtimeHandle ??= {
+    modelSelection: {
+      modelName: 'test-model',
+      modelType: 'user',
+      options: {},
+    },
+  }
   if (options?.optimisticUserMessage) {
     applyRuntimeConversationAction(address, {
       type: 'user_added',
@@ -9007,12 +9014,17 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('keeps the environment info panel open until its icon is clicked', async () => {
     mockDesktopWorkbenchMainWidth(1024)
+    const environmentRuntimeTask = {
+      ...activeProjectRuntimeTask,
+      deviceId: 'e13e1a10-5377-4a87-a3b3-634a098d0bb4',
+      workspacePath: '/workspace/projects/github_wegent',
+    }
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{
           ...baseProps.state,
-          currentRuntimeTask: activeProjectRuntimeTask,
+          currentRuntimeTask: environmentRuntimeTask,
           currentProject: activeProjectState.currentProject,
           devices: [
             {
@@ -9077,8 +9089,9 @@ describe('DesktopWorkbenchLayout', () => {
     const deviceButton = await screen.findByTestId('environment-device-button')
     expect(deviceSection).toContainElement(deviceButton)
     expect(deviceButton).toHaveTextContent('设备')
-    expect(deviceButton).toHaveTextContent('10.23.45.67')
+    expect(deviceButton).toHaveTextContent('yunpeng7-executor-0bb4')
     expect(deviceButton).not.toHaveTextContent('云设备')
+    expect(deviceButton).not.toHaveTextContent('10.23.45.67')
     expect(deviceButton).not.toHaveTextContent('e13e1a10')
     expect(deviceButton).not.toHaveTextContent('8ef4')
     expect(screen.queryByTestId('environment-device-id')).not.toBeInTheDocument()

@@ -160,7 +160,8 @@ export function createSmartAppsApi(client: HttpClient) {
     completeSubmission,
     cancelSubmission,
     async publish(file: File, metadata: SmartAppSubmissionMetadata) {
-      const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+      const packageBytes = new Uint8Array(await file.arrayBuffer())
+      const digest = await crypto.subtle.digest('SHA-256', packageBytes)
       const sha256 = Array.from(new Uint8Array(digest), byte =>
         byte.toString(16).padStart(2, '0')
       ).join('')

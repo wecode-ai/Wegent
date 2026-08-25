@@ -262,6 +262,7 @@ describe('AiChatModal', () => {
           type: 'board_task',
           cloudProjectId: '11',
           loopItemId: 'WEG-1',
+          projectStore: 'backend',
         },
         additionalContext: expect.objectContaining({
           issueEnvironment: expect.objectContaining({
@@ -332,6 +333,7 @@ describe('AiChatModal', () => {
             type: 'board_task',
             cloudProjectId: '11',
             loopItemId: 'WEG-1',
+            projectStore: 'backend',
           },
           additionalContext: expect.any(Object),
         },
