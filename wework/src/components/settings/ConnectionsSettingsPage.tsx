@@ -53,6 +53,7 @@ import {
   useOptionalAppearance,
 } from '@/features/appearance'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
+import { DeviceGitSyncSection } from './DeviceGitSyncSection'
 import { DeviceActionButton } from './DeviceActionButton'
 import {
   createSettingsDeviceApi,
@@ -1030,10 +1031,12 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
   )
 }
 
-function ConnectionsDeviceSettingsPage({
+export function ConnectionsDeviceSettingsPage({
   autoOpenAddCloudDeviceDialog = false,
+  showHeader = true,
 }: {
   autoOpenAddCloudDeviceDialog?: boolean
+  showHeader?: boolean
 }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -1092,7 +1095,9 @@ function ConnectionsDeviceSettingsPage({
     return (
       <>
         <SettingsPage>
-          <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
+          {showHeader ? (
+            <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
+          ) : null}
 
           <section className="rounded-lg border border-border bg-background p-5">
             <div className="flex items-start justify-between gap-4">
@@ -1153,7 +1158,9 @@ function ConnectionsDeviceSettingsPage({
   return (
     <>
       <SettingsPage>
-        <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
+        {showHeader ? (
+          <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
+        ) : null}
 
         <section
           data-testid="cloud-connection-status-card"
@@ -1260,6 +1267,12 @@ function ConnectionsDeviceSettingsPage({
               )}
             </div>
           </div>
+
+          <DeviceGitSyncSection
+            devices={devices}
+            devicesLoading={loading}
+            onRefreshDevices={fetchDevices}
+          />
         </section>
       </SettingsPage>
 
