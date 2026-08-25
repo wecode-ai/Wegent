@@ -13,6 +13,7 @@ import {
   CLOUD_VISION_SIDECAR_CASE,
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_API_KEY,
+  PLUGIN_CREATOR_COMPLETION_TEXT,
   PLUGIN_CREATOR_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   appendFile,
@@ -26,7 +27,6 @@ import {
   mkdir,
   pathExists,
   readFile,
-  readdir,
   repoDir,
   reservePort,
   resultDir,
@@ -583,73 +583,88 @@ class RealCloudEnvironment {
     })
     const team = teams.items?.[0]
     assert.ok(team?.id, 'Cloud Plugin Creator E2E requires a Team fixture')
-    const reserved = await fetchJson(`${this.backendUrl}/api/tasks`, {
+    assert.ok(this.remoteCodexHome, 'Cloud Executor Codex home is not initialized')
+    const workspacePath = join(
+      dirname(this.remoteCodexHome),
+      'Documents',
+      'Codex',
+      'plugin-workspace-publication',
+      `${process.pid}-${Date.now()}`
+    )
+    await mkdir(workspacePath, { recursive: true })
+    const task = await fetchJson(`${this.backendUrl}/api/runtime-work/create`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${this.authToken}` },
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        deviceId: CLOUD_DEVICE_ID,
+        workspacePath,
+        teamId: team.id,
+        runtime: 'codex',
+        message: PLUGIN_CREATOR_PROMPT,
+        title: 'Cloud Plugin Creator E2E',
+      }),
     })
-    const task = await fetchJson(
-      `${this.backendUrl}/api/tasks/create?task_id=${encodeURIComponent(reserved.task_id)}`,
-      {
+    assert.equal(task.accepted, true, `Cloud Plugin Creator task was rejected: ${task.error}`)
+    assert.ok(task.taskId, 'Cloud Plugin Creator task did not return a runtime task ID')
+    assert.equal(task.workspacePath, workspacePath)
+    const address = {
+      deviceId: task.deviceId,
+      taskId: task.taskId,
+      workspacePath: task.workspacePath,
+    }
+    await this.waitForRuntimeTranscript(address, PLUGIN_CREATOR_COMPLETION_TEXT)
+    return address
+  }
+
+  async waitForRuntimeTask(address) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      const task = await this.runtimeTask(address.taskId)
+      if (task?.workspacePath === address.workspacePath) return task
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+    const device = await this.device(CLOUD_DEVICE_ID).catch(() => null)
+    throw new Error(
+      `Cloud runtime task ${address.taskId} did not expose its workspace ` +
+        `(device_status=${device?.status ?? 'unknown'})`
+    )
+  }
+
+  async waitForRuntimeTranscript(address, expectedText) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      const transcript = await fetchJson(`${this.backendUrl}/api/runtime-work/transcript`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${this.authToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          title: 'Cloud Plugin Creator E2E',
-          team_id: team.id,
-          prompt: PLUGIN_CREATOR_PROMPT,
-          client_origin: 'wework',
-        }),
+        body: JSON.stringify({ ...address, includeFullContent: true }),
+      }).catch(() => null)
+      if (transcript?.messages?.some(message => message.content?.includes(expectedText))) {
+        return transcript
       }
-    )
-    assert.match(String(task.id ?? ''), /^\d+$/, 'Cloud Plugin Creator task was not persisted')
-    return String(task.id)
-  }
-
-  async waitForRuntimeTask(taskId) {
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
-      const task = await this.runtimeTask(taskId)
-      if (task?.workspacePath) return task
-      const workspacePath = await this.standaloneTaskWorkspace(taskId)
-      if (workspacePath) return { taskId, workspacePath }
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
-    const task = await fetchJson(
-      `${this.backendUrl}/api/tasks/${encodeURIComponent(taskId)}?client_origin=wework`,
-      { headers: { Authorization: `Bearer ${this.authToken}` } }
-    ).catch(() => null)
-    const device = await this.device(CLOUD_DEVICE_ID).catch(() => null)
     throw new Error(
-      `Cloud Task ${taskId} did not expose or persist its runtime workspace ` +
-        `(task_status=${task?.status ?? 'unknown'}, device_status=${device?.status ?? 'unknown'})`
+      `Cloud runtime task ${address.taskId} transcript did not contain ${expectedText}`
     )
   }
 
-  async standaloneTaskWorkspace(taskId) {
-    if (!this.remoteCodexHome) return null
-    const conversationsRoot = join(dirname(this.remoteCodexHome), 'Documents', 'Codex')
-    const dateDirectories = await readdir(conversationsRoot, {
-      withFileTypes: true,
-    }).catch(() => [])
-    for (const entry of dateDirectories) {
-      if (!entry.isDirectory()) continue
-      const workspacePath = join(conversationsRoot, entry.name, String(taskId))
-      if (await pathExists(workspacePath)) return workspacePath
-    }
-    return null
-  }
-
-  async appendPluginWorkspaceResult(taskId, marker) {
-    return fetchJson(`${this.backendUrl}/api/internal/chat/history/task:${taskId}/messages`, {
+  async sendPluginWorkspaceResult(address, marker) {
+    const result = await fetchJson(`${this.backendUrl}/api/runtime-work/send`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${this.backendEnv.INTERNAL_SERVICE_TOKEN}`,
+        Authorization: `Bearer ${this.authToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ role: 'assistant', content: marker }),
+      body: JSON.stringify({ address, message: marker }),
     })
+    assert.equal(result.accepted, true, `Cloud Plugin Creator result was rejected: ${result.error}`)
+    await this.waitForRuntimeTranscript(address, marker)
   }
 
   async spawnExecutor(env, logPath) {

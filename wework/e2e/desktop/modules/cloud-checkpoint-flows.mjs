@@ -326,8 +326,9 @@ async function verifyCloudWorkspacePathMentions({ composerSelector, control, wor
 }
 
 async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
-  const taskId = await cloudEnvironment.createPluginWorkspaceTask()
-  const runtimeTask = await cloudEnvironment.waitForRuntimeTask(taskId)
+  const taskAddress = await cloudEnvironment.createPluginWorkspaceTask()
+  const taskId = taskAddress.taskId
+  const runtimeTask = await cloudEnvironment.waitForRuntimeTask(taskAddress)
   const taskWorkspace = runtimeTask.workspacePath
   const pluginRoot = join(taskWorkspace, 'plugins', 'cloud-workspace-e2e')
   await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true })
@@ -367,7 +368,7 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
   await cloudEnvironment.restartCloudExecutor()
 
   const readyMarker = `[WEGENT_PLUGIN_RESULT]${JSON.stringify(described)}`
-  await cloudEnvironment.appendPluginWorkspaceResult(taskId, readyMarker)
+  await cloudEnvironment.sendPluginWorkspaceResult(taskAddress, readyMarker)
   await control.command('navigate', 'body', { value: '/' })
   const taskRowSelector = `[data-testid="runtime-local-task-row-${taskId}"]`
   await control.command('waitFor', taskRowSelector, {

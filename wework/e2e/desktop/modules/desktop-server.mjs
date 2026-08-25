@@ -291,6 +291,22 @@ function publishedPluginWorkspaceResult(body) {
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
 }
 
+function readyPluginWorkspaceResult(body) {
+  const output = findNestedString(
+    body,
+    value => value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && value.includes('"status":"ready"')
+  )
+  if (!output) return null
+  const line = output
+    .split(/\r?\n/u)
+    .find(
+      candidate =>
+        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && candidate.includes('"status":"ready"')
+    )
+  if (!line) return null
+  return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
+}
+
 class DesktopE2EServer {
   constructor(
     workspacePath,
@@ -1823,6 +1839,16 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         ...functionCall(PLUGIN_WORKSPACE_PUBLISH_CALL_ID, tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    const readyResult = readyPluginWorkspaceResult(body)
+    if (readyResult) {
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(readyResult),
         responseCompleted(responseId),
       ])
       return
