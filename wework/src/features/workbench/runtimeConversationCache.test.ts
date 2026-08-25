@@ -5,6 +5,7 @@ import {
   applyRuntimeConversationGoalContinuation,
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
+  applyRuntimeConversationStreamAction,
   beginRuntimeConversationHydration,
   cacheConversationScrollSnapshot,
   cacheConversationVirtualMeasurements,
@@ -174,13 +175,13 @@ describe('runtimeConversationCache', () => {
     const listener = vi.fn()
     const unsubscribe = subscribeRuntimeConversation(address, listener)
 
-    applyRuntimeConversationAction(address, {
+    applyRuntimeConversationStreamAction(address, {
       type: 'assistant_started',
       taskId: address.taskId,
       subtaskId: 'turn-1',
     })
     for (let index = 0; index < 2_200; index += 1) {
-      applyRuntimeConversationAction(address, {
+      applyRuntimeConversationStreamAction(address, {
         type: 'assistant_chunk',
         subtaskId: 'turn-1',
         itemId: 'assistant-1',
@@ -192,14 +193,14 @@ describe('runtimeConversationCache', () => {
     expect(requestAnimationFrame).toHaveBeenCalledTimes(1)
     expect(scheduledFrame).not.toBeNull()
 
-    applyRuntimeConversationAction(address, {
+    applyRuntimeConversationStreamAction(address, {
       type: 'assistant_chunk',
       subtaskId: 'turn-1',
       itemId: 'assistant-1',
       content: 'complete',
       contentMode: 'snapshot',
     })
-    applyRuntimeConversationAction(address, {
+    applyRuntimeConversationStreamAction(address, {
       type: 'assistant_done',
       subtaskId: 'turn-1',
     })
@@ -211,6 +212,47 @@ describe('runtimeConversationCache', () => {
       expect.objectContaining({
         content: 'complete',
         status: 'done',
+      }),
+    ])
+    unsubscribe()
+  })
+
+  test('coalesces streaming text deltas before updating cached turns', () => {
+    const scheduledFrames: FrameRequestCallback[] = []
+    const requestAnimationFrame = vi
+      .spyOn(globalThis, 'requestAnimationFrame')
+      .mockImplementation(callback => {
+        scheduledFrames.push(callback)
+        return scheduledFrames.length
+      })
+    vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    const listener = vi.fn()
+    const unsubscribe = subscribeRuntimeConversation(address, listener)
+
+    applyRuntimeConversationStreamAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+    for (let index = 0; index < 2_200; index += 1) {
+      applyRuntimeConversationStreamAction(address, {
+        type: 'assistant_chunk',
+        subtaskId: 'turn-1',
+        itemId: 'assistant-1',
+        content: 'x',
+      })
+    }
+
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    scheduledFrames[0](0)
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      expect.objectContaining({
+        content: 'x'.repeat(2_200),
+        status: 'streaming',
       }),
     ])
     unsubscribe()
