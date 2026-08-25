@@ -200,6 +200,12 @@ export function AttachmentImagePreview({
   )
   const currentLightboxAttachment = gallery[clampIndex(lightboxIndex, gallery.length)] ?? attachment
   const canNavigateLightbox = gallery.length > 1
+  const previewLocalPath = getDownloadableLocalPath(
+    attachment.local_preview_url ?? attachment.local_path
+  )
+  const lightboxLocalPath = getDownloadableLocalPath(
+    currentLightboxAttachment.local_preview_url ?? currentLightboxAttachment.local_path
+  )
 
   /* eslint-disable react-hooks/set-state-in-effect -- Attachment identity changes must clear stale preview UI before loading the next image. */
   useEffect(() => {
@@ -483,6 +489,8 @@ export function AttachmentImagePreview({
                   data-testid="attachment-image-lightbox-image"
                   src={lightboxUrl}
                   alt={currentLightboxAttachment.filename}
+                  data-context-image-filename={currentLightboxAttachment.filename}
+                  data-context-image-local-path={lightboxLocalPath ?? undefined}
                   className="max-h-[calc(100dvh-9rem)] max-w-[calc(100dvw-8rem)] rounded-2xl object-contain transition-transform duration-150 ease-out"
                   style={{ transform: `scale(${zoom})` }}
                   onClick={event => event.stopPropagation()}
@@ -525,6 +533,8 @@ export function AttachmentImagePreview({
             data-testid={imageTestId}
             src={previewUrl}
             alt={attachment.filename}
+            data-context-image-filename={attachment.filename}
+            data-context-image-local-path={previewLocalPath ?? undefined}
             loading="lazy"
             className={imageClassName}
             onError={() => {
@@ -551,6 +561,8 @@ export function AttachmentImagePreview({
             data-testid={imageTestId}
             src={previewUrl}
             alt={attachment.filename}
+            data-context-image-filename={attachment.filename}
+            data-context-image-local-path={previewLocalPath ?? undefined}
             loading="lazy"
             className={imageClassName}
             onError={() => {

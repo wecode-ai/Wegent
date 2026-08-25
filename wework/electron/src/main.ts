@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   ipcMain,
   Menu,
   screen,
@@ -47,6 +48,11 @@ import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
 import { StartupSplash } from './host/startup-splash.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
+import { installNativeContextMenu } from './host/image-context-menu.js'
+import {
+  materializeTemporaryImage,
+  resolveRendererImageContext,
+} from './host/image-context-actions.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
@@ -112,6 +118,25 @@ rendererHealth.on('change', () => {
 
 function secureDshContents(contents: WebContents, dshUrl: string): void {
   const allowedOrigin = new URL(dshUrl).origin
+  installNativeContextMenu(
+    contents,
+    items => Menu.buildFromTemplate(items),
+    {
+      copyPath: path => clipboard.writeText(path),
+      copyText: text => clipboard.writeText(text),
+      openImage: async image => {
+        const path = image.localPath ?? (await materializeTemporaryImage(contents, image))
+        const error = await shell.openPath(path)
+        if (error) throw new Error(error)
+      },
+      reportError: (action, error) => {
+        console.error(`[context-menu] ${action} failed`, error)
+      },
+      resolveImageContext: params => resolveRendererImageContext(contents, params),
+      showItemInFolder: path => shell.showItemInFolder(path),
+    },
+    app.getLocale()
+  )
   contents.setWindowOpenHandler(({ url }) => {
     const target = new URL(url)
     if (target.origin === allowedOrigin) return { action: 'allow' }
