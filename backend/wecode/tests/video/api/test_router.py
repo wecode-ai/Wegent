@@ -6,12 +6,46 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from wecode.video.api import router as aigc_video_router
 
 _response_headers = aigc_video_router._response_headers
 _upstream_url = aigc_video_router._upstream_url
+
+
+def test_media_auth_uses_same_origin_cookie(monkeypatch):
+    user = SimpleNamespace(is_active=True)
+    db = object()
+    request = SimpleNamespace(cookies={"auth_token": "cookie-token"})
+    resolve_user = lambda token, session: user
+    monkeypatch.setattr(
+        aigc_video_router.security,
+        "get_current_user_from_token",
+        resolve_user,
+    )
+
+    result = aigc_video_router._get_media_user(
+        request=request,
+        token=None,
+        db=db,
+    )
+
+    assert result is user
+
+
+def test_media_auth_rejects_missing_credentials():
+    request = SimpleNamespace(cookies={})
+
+    with pytest.raises(HTTPException) as exc_info:
+        aigc_video_router._get_media_user(
+            request=request,
+            token=None,
+            db=object(),
+        )
+
+    assert exc_info.value.status_code == 401
 
 
 def test_upstream_url_maps_editor_api_to_aigc_namespace(monkeypatch):

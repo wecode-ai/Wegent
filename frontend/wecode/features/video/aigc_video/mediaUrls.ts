@@ -18,12 +18,7 @@ export function getAigcVideoImageUrl(imageUrl?: string): string | undefined {
   if (!imageUrl) return undefined
   try {
     const hostname = new URL(imageUrl).hostname.toLowerCase()
-    if (
-      hostname === 'sinaimg.cn' ||
-      hostname.endsWith('.sinaimg.cn') ||
-      hostname === 'weibocdn.com' ||
-      hostname.endsWith('.weibocdn.com')
-    ) {
+    if (hostname === 'weibocdn.com' || hostname.endsWith('.weibocdn.com')) {
       return `/api/aigc-video/media/image?image_url=${encodeURIComponent(imageUrl)}`
     }
   } catch {

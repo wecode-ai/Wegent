@@ -59,10 +59,7 @@ describe('AigcVideoCard', () => {
       'src',
       `/api/aigc-video/media/playback?video_url=${encodeURIComponent(videoUrl)}`
     )
-    expect(screen.getByTestId('card-video-director-player')).toHaveAttribute(
-      'poster',
-      `/api/aigc-video/media/image?image_url=${encodeURIComponent(coverUrl)}`
-    )
+    expect(screen.getByTestId('card-video-director-player')).toHaveAttribute('poster', coverUrl)
     expect(screen.getByTestId('generated-video-player')).toBeInTheDocument()
 
     rerender(
