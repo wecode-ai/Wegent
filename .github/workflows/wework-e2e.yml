@@ -648,10 +648,14 @@ jobs:
     if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
     runs-on: macos-14
     timeout-minutes: 45
+    env:
+      CI: true
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          filter: blob:none
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
@@ -676,14 +680,15 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-store-v1-${{ hashFiles('pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-store-v2-${{ hashFiles('pnpm-lock.yaml', 'wework/electron/pnpm-lock.yaml') }}
           restore-keys: |
+            ${{ runner.os }}-pnpm-store-v2-
             ${{ runner.os }}-pnpm-store-v1-
 
       - name: Install dependencies
         run: |
-          pnpm install --frozen-lockfile
-          pnpm --dir wework/electron install --frozen-lockfile
+          pnpm install --frozen-lockfile --offline
+          pnpm --dir wework/electron install --frozen-lockfile --offline
 
       - name: Save shared macOS pnpm store
         if: github.ref == 'refs/heads/main' && steps.macos-pnpm-cache.outputs.cache-hit != 'true'

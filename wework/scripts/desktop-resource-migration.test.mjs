@@ -24,6 +24,7 @@ describe('desktop resource migration', () => {
     )
     expect(packageJson.scripts['dev:desktop']).toContain('pnpm run prepare:electron')
     expect(packageJson.scripts['ai:verify:electron:build']).toContain('pnpm run prepare:electron')
+    expect(packageJson.scripts['ai:verify:electron:build']).not.toContain('pnpm run build:dsh-app')
   })
 
   test.each(scripts)('%s depends only on neutral desktop resources', async relativePath => {
@@ -53,6 +54,9 @@ describe('desktop resource migration', () => {
     expect(source).toContain("process.env.WEWORK_EXECUTOR_PROFILE?.trim() || 'release'")
     expect(source).toContain("configured === 'debug' || configured === 'release'")
     expect(source).toContain("profile === 'release' ? ['--release'] : []")
+    expect(source).toContain('const [executorPath] = await Promise.all([')
+    expect(source).toContain("run('pnpm', ['prepare:harness-runtime', '--materialize']")
+    expect(source).toContain("run('pnpm', ['prepare:execution-runtime', '--materialize']")
   })
 
   test.each([

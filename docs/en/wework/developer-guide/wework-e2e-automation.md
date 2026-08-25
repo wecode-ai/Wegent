@@ -144,13 +144,14 @@ suite-level parallelism across runners. Shards are balanced from observed CI
 durations and capped to keep the complete suite inside its ten-minute critical-path
 budget; a new or materially slower checkpoint requires rebalancing instead of
 removing coverage or rerunning failures. CI first builds one Core Electron
-application, Executor, and Codex artifact. In `--build-only` mode, the
-independent Electron and Executor builds run concurrently on the same runner. Every
-Core and Cloud shard downloads and reuses that artifact instead of rebuilding
-Vite, Electron, and Executor. Rust builds reuse both the `main`-owned Cargo target
-cache and sccache compiler units: the target cache bounds PR and first-run
-latency, while sccache reduces incremental compilation after dependency or
-source changes. Archiving strips Linux debug symbols only from the copied
+application, Executor, and Codex artifact. Electron package preparation builds
+the Harness runtime, Node execution runtime, and Executor concurrently; the
+Harness preparation owns the single DSH application Vite build so the same
+frontend is not compiled twice. Every Core and Cloud shard downloads and reuses
+that artifact instead of rebuilding Vite, Electron, and Executor. Rust builds
+reuse both the `main`-owned Cargo target cache and sccache compiler units: the
+target cache bounds PR and first-run latency, while sccache reduces incremental
+compilation after dependency or source changes. Archiving strips Linux debug symbols only from the copied
 artifact binaries, leaving the original build outputs unchanged while reducing
 upload and download time across the twenty-seven shards. Desktop E2E and its cache
 warmup explicitly set `WEWORK_EXECUTOR_PROFILE=debug` so test artifacts do not
@@ -158,7 +159,9 @@ spend time optimizing the Executor. Release packaging leaves the variable unset
 and continues to build the `release` Executor by default. Desktop E2E builds
 skip the duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
 while retaining the real Vite and Electron artifact build; test coverage and the
-type gate remain unchanged. The plugin suite requires an independent build
+type gate remain unchanged. The macOS memory job keys its pnpm store from both
+the workspace and Electron lockfiles, then installs offline so registry stalls
+cannot consume the critical-path budget. The plugin suite requires an independent build
 configuration and continues to run in parallel with the shared Core build.
 Desktop shards use only the runtime tools already present in the immutable E2E
 image; ZIP fixtures use Python's standard library, so the jobs do not restore

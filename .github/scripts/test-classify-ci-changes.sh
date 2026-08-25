@@ -899,4 +899,15 @@ if ! grep -q "github.event_name != 'merge_group'" "$wework_workflow"; then
   exit 1
 fi
 
+wework_memory_job="$(
+  sed -n '/^  wework-desktop-memory-e2e:/,$p' "$wework_workflow"
+)"
+if [[ "$wework_memory_job" != *"pnpm-store-v2-"* ]] ||
+  [[ "$wework_memory_job" != *"'wework/electron/pnpm-lock.yaml'"* ]] ||
+  [[ "$wework_memory_job" != *"pnpm install --frozen-lockfile --offline"* ]] ||
+  [[ "$wework_memory_job" != *"pnpm --dir wework/electron install --frozen-lockfile --offline"* ]]; then
+  printf 'Wework memory E2E must install from the complete offline macOS pnpm cache\n' >&2
+  exit 1
+fi
+
 printf 'CI change classifier tests passed\n'

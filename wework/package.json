@@ -40,7 +40,7 @@
     "e2e:desktop:local-terminal": "WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true WEWORK_E2E_DESKTOP_SCENARIO_MODULE=./scenarios/local-terminal.scenario.mjs node e2e/desktop/task-flow.e2e.mjs",
     "e2e:desktop:streaming-text": "WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true WEWORK_E2E_DESKTOP_SCENARIO_MODULE=./scenarios/streaming-text.scenario.mjs node e2e/desktop/task-flow.e2e.mjs",
     "ai:verify": "node scripts/ai-verify.mjs",
-    "ai:verify:electron:build": "pnpm run prepare:electron && VITE_WEWORK_E2E=true VITE_WEWORK_RELEASE_CHANNEL=stable VITE_WEWORK_RUNTIME_MODE=local-first pnpm run build:dsh-app && VITE_WEWORK_E2E=true VITE_WEWORK_RELEASE_CHANNEL=stable VITE_WEWORK_RUNTIME_MODE=local-first pnpm --dir electron build:package",
+    "ai:verify:electron:build": "pnpm run prepare:electron && VITE_WEWORK_E2E=true VITE_WEWORK_RELEASE_CHANNEL=stable VITE_WEWORK_RUNTIME_MODE=local-first pnpm --dir electron build:package",
     "e2e:ui": "playwright test --ui"
   },
   "dependencies": {

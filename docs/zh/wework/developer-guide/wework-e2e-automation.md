@@ -139,9 +139,10 @@ GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 
 跨 runner 的 27 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
 上限，以确保完整套件处于 10 分钟关键路径预算内；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。CI 会先构建一次 Core Electron
-应用、Executor 和 Codex artifact，其中 `--build-only` 会在同一 runner 内并行
-编译相互独立的 Electron 应用和 Executor；各 Core/Cloud 分片下载并复用该 artifact，
-不再重复执行 Vite、Electron 和 Executor 构建。Rust 构建同时复用由 `main`
+应用、Executor 和 Codex artifact。Electron 打包会并行准备 Harness runtime、
+Node execution runtime 和 Executor；Harness 准备流程负责唯一一次 DSH 应用 Vite
+构建，避免重复编译同一前端。各 Core/Cloud 分片下载并复用该 artifact，不再重复
+执行 Vite、Electron 和 Executor 构建。Rust 构建同时复用由 `main`
 维护的 Cargo target cache 和 sccache 编译单元：target cache 保障 PR 与首次
 运行的延迟，sccache 降低依赖或源码变化后的增量编译成本。归档时只移除复制到
 artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 27 个分片的
@@ -150,7 +151,8 @@ artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短
 不设置该变量，继续默认构建 `release` Executor。桌面 E2E 构建跳过由并行 Lint
 工作流完整执行的重复 TypeScript
 类型检查，只保留 Vite/ Electron 的真实产物构建；测试覆盖与类型门禁均保持不变。
-插件套件需要独立构建配置，仍作为
+macOS 内存任务会同时使用 workspace 与 Electron lockfile 生成 pnpm store key，
+并离线安装依赖，避免 registry 卡顿耗尽关键路径预算。插件套件需要独立构建配置，仍作为
 单独 job 与共享 Core 构建并行。桌面分片只使用不可变 E2E 镜像中已有的运行时工具；
 ZIP fixture 改用 Python 标准库，因此不再恢复完整前端依赖缓存。Harness app 的成功
 路径保留关键里程碑截图，每次运行仍保留日志、状态快照和其他有效诊断；上传前只清理

@@ -187,6 +187,8 @@ if [[ "$macos_warmup_section" != *'name: Warm Wework macOS Electron Build Cache'
   [[ "$macos_warmup_section" != *"needs.changes.outputs.wework_target == 'true'"* ]] ||
   [[ "$macos_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
   [[ "$macos_warmup_section" != *'wework-electron-app-v1-'* ]] ||
+  [[ "$macos_warmup_section" != *'pnpm-store-v2-'* ]] ||
+  [[ "$macos_warmup_section" != *"'wework/electron/pnpm-lock.yaml'"* ]] ||
   [[ "$macos_warmup_section" != *'executor/target'* ]] ||
   [[ "$macos_warmup_section" != *'~/Library/Caches/electron'* ]] ||
   [[ "$macos_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]]; then
