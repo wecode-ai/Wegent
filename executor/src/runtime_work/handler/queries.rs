@@ -302,10 +302,10 @@ impl RuntimeWorkRpcHandler {
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
         let local_execution_running = self.is_active_local_task(&local_task_id);
         if local_execution_running && !refresh {
-            if let Some(link) = local_link
-                .as_ref()
-                .filter(|link| runtime_has_provider_transcript_reader(&link.runtime))
-            {
+            if let Some(link) = local_link.as_ref().filter(|link| {
+                runtime_has_provider_transcript_reader(&link.runtime)
+                    && !transcript_snapshot_messages(link).is_empty()
+            }) {
                 let mut messages = transcript_snapshot_messages(link);
                 append_unique_transcript_messages(
                     &mut messages,
