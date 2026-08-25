@@ -524,6 +524,87 @@ class RealCloudEnvironment {
     ])
   }
 
+  async describePluginWorkspace(pluginRoot, taskWorkspace, taskId) {
+    assert.ok(this.executorBinary, 'Cloud Executor binary is not ready')
+    assert.ok(this.remoteExecutorEnv, 'Cloud Executor environment is not initialized')
+    const output = commandOutput(
+      this.executorBinary,
+      ['plugin-workspace', 'describe', '--plugin-root', pluginRoot, '--listing-type', 'plugin'],
+      {
+        cwd: pluginRoot,
+        env: {
+          ...this.remoteExecutorEnv,
+          AUTH_TOKEN: this.authToken,
+          WEGENT_TASK_ID: String(taskId),
+          WEGENT_TASK_WORKSPACE: taskWorkspace,
+        },
+      }
+    )
+    const marker = output.split(/\r?\n/).find(line => line.startsWith('[WEGENT_PLUGIN_RESULT]'))
+    assert.ok(marker, 'Cloud Plugin Creator did not emit a Task workspace result')
+    return JSON.parse(marker.slice('[WEGENT_PLUGIN_RESULT]'.length))
+  }
+
+  async publishPluginWorkspace(pluginRoot, taskWorkspace, taskId, request) {
+    assert.ok(this.executorBinary, 'Cloud Executor binary is not ready')
+    assert.ok(this.remoteExecutorEnv, 'Cloud Executor environment is not initialized')
+    const output = commandOutput(
+      this.executorBinary,
+      [
+        'plugin-workspace',
+        'publish',
+        '--plugin-root',
+        pluginRoot,
+        '--listing-type',
+        'plugin',
+        '--request-base64',
+        Buffer.from(JSON.stringify(request), 'utf8').toString('base64'),
+      ],
+      {
+        cwd: pluginRoot,
+        env: {
+          ...this.remoteExecutorEnv,
+          AUTH_TOKEN: this.authToken,
+          WEGENT_TASK_ID: String(taskId),
+          WEGENT_TASK_WORKSPACE: taskWorkspace,
+        },
+      }
+    )
+    const marker = output.split(/\r?\n/).find(line => line.startsWith('[WEGENT_PLUGIN_RESULT]'))
+    assert.ok(marker, 'Cloud Plugin Creator publication did not emit a result')
+    return JSON.parse(marker.slice('[WEGENT_PLUGIN_RESULT]'.length))
+  }
+
+  async createPluginWorkspaceTask() {
+    const teams = await fetchJson(`${this.backendUrl}/api/teams?page=1&limit=100`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    const team = teams.items?.[0]
+    assert.ok(team?.id, 'Cloud Plugin Creator E2E requires a Team fixture')
+    const reserved = await fetchJson(`${this.backendUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    const task = await fetchJson(
+      `${this.backendUrl}/api/tasks/create?task_id=${encodeURIComponent(reserved.task_id)}`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: 'Cloud Plugin Creator E2E',
+          team_id: team.id,
+          prompt: 'Create a plugin in this Task workspace',
+          client_origin: 'wework',
+        }),
+      }
+    )
+    assert.match(String(task.id ?? ''), /^\d+$/, 'Cloud Plugin Creator task was not persisted')
+    return String(task.id)
+  }
+
   async spawnExecutor(env, logPath) {
     const executor = spawn(this.executorBinary, [], {
       cwd: weworkDir,

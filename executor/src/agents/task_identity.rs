@@ -3,14 +3,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use crate::protocol::ExecutionRequest;
 
 pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
 
+    if let Ok(executable) = std::env::current_exe() {
+        env.insert(
+            "WEGENT_EXECUTOR_BINARY".to_owned(),
+            executable.to_string_lossy().into_owned(),
+        );
+    }
+
     if !request.task_id.trim().is_empty() {
         env.insert("WEGENT_TASK_ID".to_owned(), request.task_id.clone());
+        let workspace_root = std::env::var("WORKSPACE_ROOT")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/workspace"));
+        env.insert(
+            "WEGENT_TASK_WORKSPACE".to_owned(),
+            workspace_root
+                .join(request.task_id.trim())
+                .to_string_lossy()
+                .into_owned(),
+        );
     }
     if let Some(auth_token) = non_empty(request.auth_token.as_deref()) {
         env.insert("AUTH_TOKEN".to_owned(), auth_token.to_owned());

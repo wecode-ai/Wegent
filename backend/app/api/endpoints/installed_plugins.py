@@ -884,7 +884,7 @@ def _ensure_publish_allowed(current_user: User) -> None:
 def init_plugin_submission(
     request: PluginSubmissionInitRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> PluginSubmissionInitResponse:
     visibility = request.visibility or (
         "personal" if request.purpose == "restricted_share" else "workspace"
@@ -908,7 +908,7 @@ def init_plugin_submission(
 def complete_plugin_submission(
     submission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> PluginSubmissionCompleteResponse:
     existing = plugin_marketplace_service.get_submission(
         db,
@@ -945,7 +945,7 @@ def complete_plugin_submission(
 def cancel_plugin_submission(
     submission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> PluginSubmissionItem:
     return plugin_marketplace_service.cancel_submission(
         db,
@@ -958,7 +958,7 @@ def cancel_plugin_submission(
 def get_plugin_submission(
     submission_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> PluginSubmissionItem:
     return plugin_marketplace_service.get_submission(
         db,
