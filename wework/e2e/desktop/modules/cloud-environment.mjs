@@ -790,30 +790,26 @@ class RealCloudEnvironment {
     const previousInstanceId = previousDevice?.runtime_instance_id
     const previousLog = await readFile(this.remoteExecutorLogPath, 'utf8').catch(() => '')
     await stopProcessGroup(this.remoteExecutor)
+    await this.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', this.remoteExecutorLogPath)
     this.remoteExecutor = await this.spawnExecutor(
       this.remoteExecutorEnv,
       this.remoteExecutorLogPath
     )
-
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
-      const device = await this.device(CLOUD_DEVICE_ID)
-      const currentLog = await readFile(this.remoteExecutorLogPath, 'utf8').catch(() => '')
-      if (device?.status === 'online' && currentLog.length > previousLog.length) {
-        assert.equal(
-          device.runtime_instance_id,
-          previousInstanceId,
-          'Restarting the same cloud Executor home changed its stable runtime identity'
-        )
-        return {
-          previousInstanceId,
-          runtimeInstanceId: device.runtime_instance_id,
-          logOffset: previousLog.length,
-        }
-      }
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    const device = await this.waitForDeviceStatus(
+      CLOUD_DEVICE_ID,
+      'online',
+      this.remoteExecutorLogPath
+    )
+    assert.equal(
+      device.runtime_instance_id,
+      previousInstanceId,
+      'Restarting the same cloud Executor home changed its stable runtime identity'
+    )
+    return {
+      previousInstanceId,
+      runtimeInstanceId: device.runtime_instance_id,
+      logOffset: previousLog.length,
     }
-    throw new Error('The restarted cloud Executor did not reconnect with its stable identity')
   }
 
   async startGeneratedRemoteDevice({ deviceId, deviceName, authToken }) {
