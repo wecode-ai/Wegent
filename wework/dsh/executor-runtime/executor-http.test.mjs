@@ -27,17 +27,16 @@ test('disconnects an SSE slow consumer instead of buffering indefinitely', async
   const request = executorEventRequest()
   const response = responseFixture({ writable: false })
   let listened = false
+  const replay = [1, 2, 3].map(sequence => ({
+    protocolVersion: 1,
+    sequence,
+    emittedAt: new Date().toISOString(),
+    event: 'task.updated',
+    payload: { id: `task-${sequence}` },
+  }))
   const client = {
     replay() {
-      return [
-        {
-          protocolVersion: 1,
-          sequence: 1,
-          emittedAt: new Date().toISOString(),
-          event: 'task.updated',
-          payload: { id: 'task-1' },
-        },
-      ]
+      return replay
     },
     listen() {
       listened = true
@@ -50,6 +49,9 @@ test('disconnects an SSE slow consumer instead of buffering indefinitely', async
   assert.equal(response.status, 200)
   assert.equal(response.writableEnded, true)
   assert.equal(listened, false)
+  assert.match(response.body, /id: 1/)
+  assert.doesNotMatch(response.body, /id: 2/)
+  assert.doesNotMatch(response.body, /id: 3/)
 })
 
 function executorEventRequest() {
@@ -62,24 +64,25 @@ function executorEventRequest() {
 }
 
 function responseFixture(options = {}) {
-  return {
-    status: null,
-    headers: null,
-    body: '',
-    headersSent: false,
-    writableEnded: false,
-    writeHead(status, headers) {
-      this.status = status
-      this.headers = headers
-      this.headersSent = true
-    },
-    write(body) {
-      this.body += body
-      return options.writable !== false
-    },
-    end(body = '') {
-      this.body += body
-      this.writableEnded = true
-    },
+  const response = new EventEmitter()
+  response.status = null
+  response.headers = null
+  response.body = ''
+  response.headersSent = false
+  response.destroyed = false
+  response.writableEnded = false
+  response.writeHead = function (status, headers) {
+    this.status = status
+    this.headers = headers
+    this.headersSent = true
   }
+  response.write = function (body) {
+    this.body += body
+    return options.writable !== false
+  }
+  response.end = function (body = '') {
+    this.body += body
+    this.writableEnded = true
+  }
+  return response
 }
