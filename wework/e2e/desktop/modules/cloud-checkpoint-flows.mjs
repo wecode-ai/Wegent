@@ -363,32 +363,25 @@ async function verifyCloudCheckpoint({
     await cloudEnvironment.restartCloudExecutorWithoutCodexPluginRpc()
     setPhase('cloud-plugin-auto-update-fixtures')
     await cloudEnvironment.seedPluginAutoUpdateFixtures(6)
-    setPhase('cloud-plugin-auto-update')
-    await control.command('navigate', 'body', { value: '/plugins' })
-    await control.command('waitFor', '[data-testid="plugins-workspace"]', {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await control.command('waitFor', '[data-testid="plugin-operation-notice"]', {
-      text: '6',
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
+    setPhase('cloud-plugin-auto-update-release-push')
     const completionDeadline = Date.now() + WORKBENCH_READY_TIMEOUT_MS
-    let noticeKind = ''
+    let completionError = null
     while (Date.now() < completionDeadline) {
-      noticeKind = await control
-        .command('getAttribute', '[data-testid="plugin-operation-notice"]', {
-          value: 'data-notice-kind',
-        })
-        .catch(() => '')
-      if (noticeKind === 'success') break
+      try {
+        await cloudEnvironment.assertPluginAutoUpdateComplete(codexHome, 6)
+        completionError = null
+        break
+      } catch (error) {
+        completionError = error
+      }
       await new Promise(resolve => setTimeout(resolve, 100))
     }
-    assert.equal(
-      noticeKind,
-      'success',
-      'Plugin auto-update did not finish successfully in the real Electron application'
-    )
-    await cloudEnvironment.assertPluginAutoUpdateComplete(codexHome, 6)
+    if (completionError) {
+      throw new Error(
+        'Published release events did not auto-update plugins outside the plugin page',
+        { cause: completionError }
+      )
+    }
     setPhase('cloud-plugin-auto-update-without-codex-rpc')
     await cloudEnvironment.syncPluginAutoUpdatesToCloudDevice()
     await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
