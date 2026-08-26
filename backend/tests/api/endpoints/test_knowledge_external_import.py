@@ -650,6 +650,28 @@ class TestRetryExternalDocumentImport:
         # Retry reuses the same record; no copy is created.
         assert test_db.query(KnowledgeDocument).count() == 1
 
+    def test_requeues_failed_document_after_previous_success(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(test_db, test_user.id, kb_id)
+        document.attachment_id = 123
+        document.is_active = True
+        test_db.commit()
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-import/retry"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["index_status"] == "queued"
+        assert response.json()["attachment_id"] == 123
+        assert dispatched == [document.id]
+
     def test_returns_404_for_missing_document(
         self,
         import_client: TestClient,

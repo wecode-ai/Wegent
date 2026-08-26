@@ -168,7 +168,7 @@ export function DingtalkDocumentImport({
   // Load the cached directory for one source; no background refresh, the
   // refresh button is the only trigger that pulls from the provider.
   const loadSource = useCallback(
-    async (key: DingtalkSourceKey) => {
+    async (key: DingtalkSourceKey): Promise<boolean> => {
       setSourceState(key, { loading: true, loadFailed: false })
       try {
         const status =
@@ -183,7 +183,7 @@ export function DingtalkDocumentImport({
             nodes: [],
             status,
           })
-          return
+          return true
         }
         const tree =
           key === 'docs' ? await dingtalkDocApi.getDocs() : await dingtalkDocApi.getWikispaceNodes()
@@ -194,9 +194,11 @@ export function DingtalkDocumentImport({
           nodes: tree.nodes,
           status,
         })
+        return true
       } catch {
         // Keep whatever was loaded before; only the error flag flips.
         setSourceState(key, { loading: false, loadFailed: true })
+        return false
       }
     },
     [setSourceState]
@@ -216,7 +218,12 @@ export function DingtalkDocumentImport({
       } else {
         await dingtalkDocApi.syncWikispaceNodes()
       }
-      await loadSource(activeSource)
+      const loaded = await loadSource(activeSource)
+      if (!loaded) {
+        setSourceState(activeSource, { refreshing: false, refreshFailed: true })
+        return
+      }
+      setPath([])
       setSourceState(activeSource, { refreshing: false })
     } catch {
       // Refresh failed: keep the old directory and the current selection.
@@ -344,7 +351,7 @@ export function DingtalkDocumentImport({
         <span
           className={cn(
             'flex-1 truncate text-sm',
-            importable ? 'text-text-primary' : 'text-text-secondary'
+            selectable ? 'text-text-primary' : 'text-text-secondary'
           )}
         >
           {node.name}
@@ -360,7 +367,7 @@ export function DingtalkDocumentImport({
             <ChevronRight className="w-4 h-4" />
           </Button>
         )}
-        {!importable && (
+        {!selectable && (
           <span
             className="text-xs text-text-secondary"
             data-testid={`dingtalk-node-unsupported-${node.dingtalk_node_id}`}

@@ -229,9 +229,9 @@ export function DocumentItem({
     isPendingConversion
   const showIndexingState = isReindexing || isBackendIndexing
   const isExternal = document.source_type === 'external'
-  // External documents retry through the dedicated import-retry entry — only
-  // from a failed import, since a failed import has no valid attachment to
-  // reindex. Regular documents reindex from failed or not-indexed states.
+  // External documents retry through the dedicated import-retry entry, which
+  // fetches the provider's latest body before replacing the attachment and
+  // reindexing. Regular documents reindex from failed or not-indexed states.
   const canReindex =
     !!onReindex &&
     !showIndexingState &&

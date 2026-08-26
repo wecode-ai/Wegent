@@ -772,9 +772,9 @@ export function KnowledgeDocumentTreeGrid({
             document.index_status === 'indexing' ||
             isConverting ||
             isPendingConversion
-          // One retry control whose identity depends on the document: external
-          // documents use the dedicated import-retry entry (a failed import
-          // has no valid attachment to reindex), regular documents reindex.
+          // One retry control whose identity depends on the document: failed
+          // external documents fetch the provider's latest body through the
+          // import-retry entry, while regular documents reindex their content.
           let retryAction: { testId: string; label: string } | null = null
           if (onReindex && !showIndexingState) {
             if (isExternal) {

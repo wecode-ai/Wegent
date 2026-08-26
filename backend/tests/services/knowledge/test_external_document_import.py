@@ -964,3 +964,63 @@ class TestAttachExternalDocumentContent:
         assert deleted_ids == [
             {"db": test_db, "context_id": 1111, "user_id": test_user.id}
         ]
+
+    def test_failed_previous_success_refetches_and_replaces_attachment(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+        document = self._create_placeholder(test_db, test_user)
+        document.index_generation = 1
+        document.index_status = DocumentIndexStatus.FAILED
+        document.attachment_id = 1111
+        document.is_active = True
+        document.status = DocumentStatus.ENABLED
+        test_db.commit()
+
+        fresh_content = ExternalDocumentContent(
+            name="Attach Doc",
+            file_extension="md",
+            content=b"# provider fresh body",
+            metadata={},
+        )
+        provider = SimpleNamespace(fetch_content=AsyncMock(return_value=fresh_content))
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import."
+            "get_external_document_provider",
+            lambda provider_id: provider,
+        )
+        monkeypatch.setattr(
+            "app.services.context.context_service.upload_attachment",
+            MagicMock(return_value=(SimpleNamespace(id=2222), None)),
+        )
+        deleted_ids: list[dict] = []
+        monkeypatch.setattr(
+            "app.services.context.context_service.delete_context",
+            MagicMock(side_effect=lambda **kwargs: deleted_ids.append(kwargs)),
+        )
+        monkeypatch.setattr(
+            knowledge_orchestrator,
+            "_schedule_indexing_celery",
+            lambda **kwargs: {"scheduled": True},
+        )
+
+        run_external_document_import(
+            db=test_db,
+            document=document,
+            user=test_user,
+            generation=1,
+        )
+
+        provider.fetch_content.assert_awaited_once_with(
+            test_db, test_user, document.external_resource_id
+        )
+        test_db.refresh(document)
+        assert document.attachment_id == 2222
+        assert document.file_size == len(fresh_content.content)
+        assert deleted_ids == [
+            {"db": test_db, "context_id": 1111, "user_id": test_user.id}
+        ]

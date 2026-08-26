@@ -243,7 +243,12 @@ test.describe('External DingTalk document import', () => {
       expect(stillFailed.id).toBe(failedDocument.id)
 
       // Remove the provider failure and retry to completion.
-      await configureMockImport(request, { nodeFailures: {} })
+      await configureMockImport(request, {
+        nodeFailures: {},
+        documentContents: {
+          [EXTERNAL_IMPORT_NODES.api]: `# 接口规范（更新）\n\n唯一断言标记：\`${EXTERNAL_IMPORT_MARKERS.apiV2}\``,
+        },
+      })
       await page.reload({ waitUntil: 'domcontentloaded' })
       await page.getByTestId(`retry-import-document-${failedDocument.id}`).click()
       const recovered = await waitForDocument(
@@ -258,7 +263,8 @@ test.describe('External DingTalk document import', () => {
       const documents = await listDocuments(request, context.token, context.knowledgeBaseId)
       expect(documents).toHaveLength(2)
       const chunks = await getDocumentChunks(request, context.token, recovered.id)
-      expect(chunks).toContain(EXTERNAL_IMPORT_MARKERS.api)
+      expect(chunks).toContain(EXTERNAL_IMPORT_MARKERS.apiV2)
+      expect(chunks).not.toContain(EXTERNAL_IMPORT_MARKERS.api)
     })
   })
 

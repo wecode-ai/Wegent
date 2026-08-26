@@ -848,9 +848,9 @@ export function DocumentList({
     }
   }
 
-  // Handle document reindex. External documents route to the dedicated
-  // import-retry entry instead: a failed import has no valid attachment, so
-  // the ordinary reindex flow cannot re-fetch the external body.
+  // Handle document reindex. Failed external documents route to the dedicated
+  // import-retry entry so they fetch the provider's latest body before
+  // replacing the attachment and reindexing.
   const handleReindexDocument = async (doc: KnowledgeDocument) => {
     setReindexingDocId(doc.id)
     try {

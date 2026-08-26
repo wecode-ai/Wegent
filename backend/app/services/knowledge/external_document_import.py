@@ -210,8 +210,8 @@ class ExternalDocumentImportService:
         Reuses the same KnowledgeDocument (no copy is created): the retry
         claim advances the index generation and requeues the document, then
         the regular import task re-fetches the external body. This is the
-        dedicated entry for external imports — the ordinary reindex flow
-        cannot work here because a failed import has no valid attachment.
+        dedicated entry for external imports because every retry must fetch the
+        provider's latest body before replacing the attachment and reindexing.
 
         Raises:
             ExternalDocumentImportError: With the HTTP status to surface.

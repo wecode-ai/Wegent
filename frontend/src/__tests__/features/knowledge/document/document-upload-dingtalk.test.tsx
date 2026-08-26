@@ -266,6 +266,23 @@ describe('DocumentUpload dingtalk source', () => {
     expect(await screen.findByTestId('dingtalk-document-option-doc-4')).toBeInTheDocument()
   })
 
+  it('returns to the refreshed root after refreshing inside a folder', async () => {
+    mockSyncDocs.mockResolvedValue({ added: 1, updated: 0, deleted: 0, total: 1 })
+    await openDingtalkMode()
+
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+    expect(await screen.findByTestId('dingtalk-document-option-doc-1')).toBeInTheDocument()
+
+    mockGetDocs.mockResolvedValue({
+      nodes: [docNode('doc-4', 'Fresh Root Doc')],
+      total_count: 1,
+    })
+    fireEvent.click(screen.getByTestId('dingtalk-import-refresh'))
+
+    expect(await screen.findByTestId('dingtalk-document-option-doc-4')).toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-document-option-doc-1')).not.toBeInTheDocument()
+  })
+
   it('keeps the old directory and selection when refresh fails', async () => {
     mockSyncDocs.mockRejectedValue(new Error('network down'))
     await openDingtalkMode()
@@ -280,6 +297,23 @@ describe('DocumentUpload dingtalk source', () => {
     // The cached directory and the current selection survive the failure.
     expect(screen.getByTestId('dingtalk-folder-option-folder-1')).toBeInTheDocument()
     expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 2')
+  })
+
+  it('keeps the current folder when refreshing succeeds but reloading fails', async () => {
+    mockSyncDocs.mockResolvedValue({ added: 0, updated: 1, deleted: 0, total: 5 })
+    await openDingtalkMode()
+
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+    expect(await screen.findByTestId('dingtalk-document-option-doc-1')).toBeInTheDocument()
+
+    mockGetDocs.mockRejectedValueOnce(new Error('directory unavailable'))
+    fireEvent.click(screen.getByTestId('dingtalk-import-refresh'))
+
+    expect(await screen.findByTestId('dingtalk-import-error')).toHaveTextContent(
+      'Failed to refresh'
+    )
+    expect(screen.getByTestId('dingtalk-document-option-doc-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-document-option-doc-3')).not.toBeInTheDocument()
   })
 
   it('searches documents by name across the whole tree', async () => {
@@ -304,6 +338,13 @@ describe('DocumentUpload dingtalk source', () => {
       'Cannot be imported'
     )
     expect(screen.queryByTestId('dingtalk-node-select-file-1')).not.toBeInTheDocument()
+  })
+
+  it('shows folders as selectable without an unsupported warning', async () => {
+    await openDingtalkMode()
+
+    expect(screen.getByTestId('dingtalk-node-select-folder-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-node-unsupported-folder-1')).not.toBeInTheDocument()
   })
 
   it('navigates into folders with a breadcrumb', async () => {

@@ -93,25 +93,51 @@ export async function cleanupExternalImportScenario(
   context: ExternalImportScenarioContext
 ): Promise<void> {
   const cleanupErrors: unknown[] = []
+  let documents: ExternalImportDocument[] = []
   try {
-    const documents = await listDocuments(request, context.token, context.knowledgeBaseId)
-    for (const document of documents) {
-      await request
-        .delete(`${PROVIDER_NATIVE_API_URL}/api/knowledge-documents/${document.id}`, {
-          headers: authHeaders(context.token),
-        })
-        .catch(error => cleanupErrors.push(error))
-    }
-    await request
-      .delete(`${PROVIDER_NATIVE_API_URL}/api/knowledge-bases/${context.knowledgeBaseId}`, {
-        headers: authHeaders(context.token),
-      })
-      .catch(error => cleanupErrors.push(error))
-  } finally {
-    await configureDingTalkService(request, context.token, 'docs', false).catch(() => null)
-    await resetMockMcp(request).catch(() => null)
+    documents = await listDocuments(request, context.token, context.knowledgeBaseId)
+  } catch (error) {
+    cleanupErrors.push(error)
   }
-  if (cleanupErrors.length > 0) throw cleanupErrors[0]
+  for (const document of documents) {
+    try {
+      const response = await request.delete(
+        `${PROVIDER_NATIVE_API_URL}/api/knowledge-documents/${document.id}`,
+        {
+          headers: authHeaders(context.token),
+        }
+      )
+      await expectOk(response)
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
+  }
+  try {
+    const response = await request.delete(
+      `${PROVIDER_NATIVE_API_URL}/api/knowledge-bases/${context.knowledgeBaseId}`,
+      {
+        headers: authHeaders(context.token),
+      }
+    )
+    await expectOk(response)
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  try {
+    await configureDingTalkService(request, context.token, 'docs', false)
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  try {
+    await resetMockMcp(request)
+  } catch (error) {
+    cleanupErrors.push(error)
+  }
+  if (cleanupErrors.length > 0) {
+    throw Object.assign(new Error('External import E2E cleanup failed'), {
+      errors: cleanupErrors,
+    })
+  }
 }
 
 /** Refresh the synced DingTalk directory from the mock MCP. */

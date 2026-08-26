@@ -32,6 +32,7 @@ export const EXTERNAL_IMPORT_MARKERS = {
   productV1: 'DINGTALK-PRODUCT-V1',
   productV2: 'DINGTALK-PRODUCT-V2',
   api: 'DINGTALK-API-V1',
+  apiV2: 'DINGTALK-API-V2',
   archive: 'DINGTALK-ARCHIVE-V1',
 } as const
 

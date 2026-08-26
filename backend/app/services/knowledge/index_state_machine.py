@@ -439,7 +439,7 @@ def mark_document_index_succeeded(
     """Persist a successful indexing result for the active generation.
 
     For an external document, success records source accessibility and the
-    initial import time.
+    latest successful import time.
     """
     document = (
         db.query(KnowledgeDocument)
