@@ -19,6 +19,7 @@ const scripts = [
 describe('desktop resource migration', () => {
   test('desktop entrypoints install the isolated Electron workspace', async () => {
     const packageJson = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
+    const devMacScript = await readFile(join(weworkRoot, 'scripts/dev-mac-app.sh'), 'utf8')
 
     expect(packageJson.scripts['prepare:electron']).toBe(
       'pnpm --dir electron install --frozen-lockfile'
@@ -26,6 +27,8 @@ describe('desktop resource migration', () => {
     expect(packageJson.scripts['dev:desktop']).toContain('pnpm run prepare:electron')
     expect(packageJson.scripts['dev:mac']).toBe('bash scripts/dev-mac-app.sh')
     expect(packageJson.scripts['ai:verify:electron:build']).toContain('pnpm run prepare:electron')
+    expect(devMacScript).toContain('WEWORK_USER_DATA_DIR=')
+    expect(devMacScript).toContain('io.wecode.wework.dev/$WEWORK_DEV_INSTANCE_ID')
   })
 
   test.each(scripts)('%s depends only on neutral desktop resources', async relativePath => {

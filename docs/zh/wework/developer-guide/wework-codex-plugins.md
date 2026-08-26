@@ -19,6 +19,14 @@ Wework 的插件能力兼容 Codex plugin、skill 和 app 机制。插件页负�
 
 Codex 插件运行配置位于“设置 → 集成 → 插件”，当前提供远端 Apps / Connectors 开关。设置区不再提供独立的工作树管理页，也不再提供将 Claude 和 Codex 技能目录迁移为共享软链接的操作面板；工作树生命周期由会话流程管理，技能与插件内容由插件页和 Codex app-server 管理。
 
+### Codex 插件与 Wework 插件的边界
+
+桌面管理页把插件分为 **Codex 插件** 和 **Wework 插件**。前者继续使用 Codex app-server、Wegent 云端市场和 Executor 同步链路；后者是 `wework-core` DSH profile 的 bundle 依赖，由 Electron 主进程直接管理。Wework 插件管理能力只在受管桌面运行时可用，不通过 DSH Web Server 暴露安装或卸载 HTTP 接口。
+
+Renderer 通过白名单 Electron capability 调用列举、安装、更新、启停和卸载操作。主进程将这些操作串行化，并在每次修改前快照 profile 的 `package.json`、锁文件、workspace 配置和 Wework 插件状态文件。修改后执行 `dsh --profile wework-core --dump-config` 预检；预检或包管理命令失败时恢复快照并按锁文件重新安装依赖。
+
+用户插件必须声明 `dsh.bundle.patch`。内置 DSH 包在管理页中只读展示；用户插件的顺序和停用状态记录在 profile 内的 Wework 状态文件中，再据此重建 `dsh.profile.bundles`。配置修改不会隐式重启桌面运行时，页面统一提示用户在完成一组操作后调用 `runtime.restartCoreDsh`。
+
 ## 市场和安装
 
 本地市场和 OpenAI 官方市场由 Wework 前端通过本机 executor 的 Codex app-server 读取。列表请求不限制 `marketplaceKinds`，因此 Codex 可以按照当前功能开关和登录态返回本地市场与 `openai-curated-remote` 官方市场。远程 GitHub 自定义市场会被 clone 到本地缓存目录，后续列表读取使用缓存中的 marketplace 数据和插件目录。本地市场的安装、卸载、刷新和删除都走 Codex app-server。

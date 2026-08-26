@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
@@ -58,6 +58,7 @@ import {
 import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 import { getRuntimeConfig } from '@/config/runtime'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
 
 interface PluginShareState {
@@ -108,6 +109,8 @@ interface PluginManagementWorkspaceProps {
   cloudToken?: string | null
 }
 
+type PluginManagementTab = 'codex' | 'core-dsh'
+
 export function PluginManagementWorkspace({
   sidebarCollapsed = false,
   topBarLeftActions,
@@ -157,6 +160,8 @@ export function PluginManagementWorkspace({
   const [pluginPublishError, setPluginPublishError] = useState<string | null>(null)
   const [pluginPublishShareRecovery, setPluginPublishShareRecovery] = useState(false)
   const [isPublishingPlugin, setIsPublishingPlugin] = useState(false)
+  const [activeTab, setActiveTab] = useState<PluginManagementTab>('codex')
+  const showCoreDshTab = isElectronRuntime()
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
     return createPluginApi(
@@ -171,6 +176,18 @@ export function PluginManagementWorkspace({
       })
     )
   }, [cloudToken, resolvedCloudApiBaseUrl])
+
+  const selectTab = (tab: PluginManagementTab) => {
+    setActiveTab(tab)
+    document.getElementById(`plugin-management-${tab}-tab`)?.focus()
+  }
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: PluginManagementTab) => {
+    if (!showCoreDshTab) return
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    selectTab(tab === 'codex' ? 'core-dsh' : 'codex')
+  }
 
   useEffect(() => {
     let current = true
@@ -940,123 +957,197 @@ export function PluginManagementWorkspace({
             </p>
           </div>
         </header>
-        <CoreDshPluginManagementSection />
-        {isLoadingPlugins ? (
-          <div className="py-10 text-sm text-text-secondary">
-            {t('workbench.plugins_loading_plugins', '正在加载插件')}
-          </div>
-        ) : installedPlugins.length > 0 ? (
+        {showCoreDshTab ? (
           <div
-            data-testid="plugin-management-installed-list"
-            className="rounded-[12px] border border-border/30 bg-background"
+            className="mb-5 flex min-h-11 items-end gap-6 border-b border-border md:min-h-0"
+            role="tablist"
+            aria-label={t('workbench.plugins_management_tabs_label', '插件类型')}
+            data-testid="plugin-management-surface-tabs"
           >
-            {installedPlugins.map(plugin => {
-              const marketplaceItem = plugin.raw.spec.pluginId
-                ? marketplaceById.get(String(plugin.raw.spec.pluginId))
-                : undefined
-              const listing =
-                marketplaceItem ?? findMarketplaceItemForInstalled(plugin, marketplaceItems)
-              const ownedMarketplace = findOwnedMarketplacePlugin(plugin)
-              const packableCreated =
-                listing && !marketplaceItemOwnsLocalCreatedPackage(listing)
-                  ? null
-                  : (findPackableCreatedPlugin(installedPlugins, [
-                      plugin.raw.spec.source.pluginKey,
-                      createdPluginSlug(plugin),
-                      plugin.name,
-                      ownedMarketplace?.name,
-                      ownedMarketplace?.displayName,
-                    ]) ?? (plugin.origin === 'created' ? plugin : null))
-              const ownerActions = resolvePluginOwnerActions({
-                isLocalCreated: Boolean(packableCreated),
-                ownedListing: ownedMarketplace ?? null,
-                canPublish,
-                canSharePersonalPlugins,
-              })
-              const publishLabel =
-                ownerActions.headerAction === 'publishNewVersion' ||
-                ownerActions.showPublishNewVersionInMenu
-                  ? t('workbench.plugins_publish_new_version', '发布新版本')
-                  : t('workbench.plugins_publish_to_marketplace', '发布')
-              return (
-                <div
-                  key={plugin.id}
-                  className="border-b border-border/25 last:border-b-0 first:[&_.plugin-management-row]:rounded-t-[12px] last:[&_.plugin-management-row]:rounded-b-[12px]"
-                >
-                  <InstalledPluginRow
-                    plugin={plugin}
-                    marketplaceItem={marketplaceItem}
-                    onOpen={() => openInstalledPluginDetail(plugin)}
-                    onTry={() => tryPluginInChat(plugin.raw)}
-                    onPublish={
-                      ownerActions.canOpenPublishDialog
-                        ? () => {
-                            const target =
-                              findPackableCreatedPlugin(installedPlugins, [
-                                plugin.raw.spec.source.pluginKey,
-                                createdPluginSlug(plugin),
-                                plugin.name,
-                                ownedMarketplace?.name,
-                                ownedMarketplace?.displayName,
-                              ]) ?? (isPackableCreatedPlugin(plugin) ? plugin : null)
-                            if (!target) {
-                              setPluginOperationNotice({
-                                id: `publish-missing-${plugin.id}`,
-                                kind: 'error',
-                                message: t(
-                                  'workbench.plugins_publish_source_missing',
-                                  '本地插件源文件不完整或未写入个人市场，请用「继续编辑」重新生成后再发布。'
-                                ),
-                              })
-                              return
-                            }
-                            setPluginPublishError(null)
-                            setPluginPublishShareRecovery(false)
-                            setPluginPublishTarget(target)
-                          }
-                        : undefined
-                    }
-                    publishLabel={publishLabel}
-                    onShare={
-                      ownerActions.canManageAccess
-                        ? () => void manageInstalledPluginAccess(plugin)
-                        : undefined
-                    }
-                    shareLabel={t('workbench.plugins_manage_access', '管理权限')}
-                    onCopy={
-                      marketplaceItem?.accessRole === 'recipient' && marketplaceItem.allowCopy
-                        ? () => void copyMarketplacePlugin(marketplaceItem)
-                        : undefined
-                    }
-                    onToggle={() => toggleInstalledPlugin(plugin.id)}
-                    onUninstall={() => requestUninstallPlugin(plugin.id, plugin.name)}
-                    isUninstalling={uninstallingPluginIds.has(plugin.id)}
-                  />
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          <div
-            data-testid="plugin-management-empty-state"
-            className="rounded-[14px] border border-dashed border-border/35 bg-background px-[42px] py-[42px] text-center text-text-muted"
-          >
-            <strong className="mb-1.5 block font-medium text-text-primary">
-              {t('workbench.plugins_no_installed_plugins', '还没有安装插件')}
-            </strong>
-            <p className="mb-3.5 text-sm leading-5">
-              {t('workbench.plugins_no_installed_plugins_hint', '安装后的插件会集中显示在这里。')}
-            </p>
             <button
               type="button"
-              data-testid="plugin-management-browse-marketplace-button"
-              className="inline-flex h-[31px] items-center rounded-lg bg-surface px-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
-              onClick={() => navigateTo('/plugins')}
+              id="plugin-management-codex-tab"
+              role="tab"
+              aria-selected={activeTab === 'codex'}
+              aria-controls="plugin-management-codex-panel"
+              tabIndex={activeTab === 'codex' ? 0 : -1}
+              data-testid="plugin-management-surface-wework"
+              onClick={() => setActiveTab('codex')}
+              onKeyDown={event => handleTabKeyDown(event, 'codex')}
+              className={[
+                'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',
+                activeTab === 'codex'
+                  ? 'text-text-primary'
+                  : 'text-text-muted hover:text-text-secondary',
+              ].join(' ')}
             >
-              {t('workbench.plugins_browse_marketplace', '浏览插件市场')}
+              {t('workbench.plugins_wework_surface', 'Codex 插件')}
+              {activeTab === 'codex' ? (
+                <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
+              ) : null}
+            </button>
+            <button
+              type="button"
+              id="plugin-management-core-dsh-tab"
+              role="tab"
+              aria-selected={activeTab === 'core-dsh'}
+              aria-controls="plugin-management-core-dsh-panel"
+              tabIndex={activeTab === 'core-dsh' ? 0 : -1}
+              data-testid="plugin-management-surface-core-dsh"
+              onClick={() => setActiveTab('core-dsh')}
+              onKeyDown={event => handleTabKeyDown(event, 'core-dsh')}
+              className={[
+                'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 md:h-8',
+                activeTab === 'core-dsh'
+                  ? 'text-text-primary'
+                  : 'text-text-muted hover:text-text-secondary',
+              ].join(' ')}
+            >
+              {t('workbench.plugins_core_dsh_surface', 'Wework 插件')}
+              {activeTab === 'core-dsh' ? (
+                <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
+              ) : null}
             </button>
           </div>
-        )}
+        ) : null}
+        {showCoreDshTab && activeTab === 'core-dsh' ? (
+          <div
+            id="plugin-management-core-dsh-panel"
+            role="tabpanel"
+            aria-labelledby="plugin-management-core-dsh-tab"
+            data-testid="plugin-management-core-dsh-panel"
+          >
+            <CoreDshPluginManagementSection />
+          </div>
+        ) : null}
+        {!showCoreDshTab || activeTab === 'codex' ? (
+          <div
+            id={showCoreDshTab ? 'plugin-management-codex-panel' : undefined}
+            role={showCoreDshTab ? 'tabpanel' : undefined}
+            aria-labelledby={showCoreDshTab ? 'plugin-management-codex-tab' : undefined}
+            data-testid="plugin-management-codex-panel"
+          >
+            {isLoadingPlugins ? (
+              <div className="py-10 text-sm text-text-secondary">
+                {t('workbench.plugins_loading_plugins', '正在加载插件')}
+              </div>
+            ) : installedPlugins.length > 0 ? (
+              <div
+                data-testid="plugin-management-installed-list"
+                className="rounded-[12px] border border-border/30 bg-background"
+              >
+                {installedPlugins.map(plugin => {
+                  const marketplaceItem = plugin.raw.spec.pluginId
+                    ? marketplaceById.get(String(plugin.raw.spec.pluginId))
+                    : undefined
+                  const listing =
+                    marketplaceItem ?? findMarketplaceItemForInstalled(plugin, marketplaceItems)
+                  const ownedMarketplace = findOwnedMarketplacePlugin(plugin)
+                  const packableCreated =
+                    listing && !marketplaceItemOwnsLocalCreatedPackage(listing)
+                      ? null
+                      : (findPackableCreatedPlugin(installedPlugins, [
+                          plugin.raw.spec.source.pluginKey,
+                          createdPluginSlug(plugin),
+                          plugin.name,
+                          ownedMarketplace?.name,
+                          ownedMarketplace?.displayName,
+                        ]) ?? (plugin.origin === 'created' ? plugin : null))
+                  const ownerActions = resolvePluginOwnerActions({
+                    isLocalCreated: Boolean(packableCreated),
+                    ownedListing: ownedMarketplace ?? null,
+                    canPublish,
+                    canSharePersonalPlugins,
+                  })
+                  const publishLabel =
+                    ownerActions.headerAction === 'publishNewVersion' ||
+                    ownerActions.showPublishNewVersionInMenu
+                      ? t('workbench.plugins_publish_new_version', '发布新版本')
+                      : t('workbench.plugins_publish_to_marketplace', '发布')
+                  return (
+                    <div
+                      key={plugin.id}
+                      className="border-b border-border/25 last:border-b-0 first:[&_.plugin-management-row]:rounded-t-[12px] last:[&_.plugin-management-row]:rounded-b-[12px]"
+                    >
+                      <InstalledPluginRow
+                        plugin={plugin}
+                        marketplaceItem={marketplaceItem}
+                        onOpen={() => openInstalledPluginDetail(plugin)}
+                        onTry={() => tryPluginInChat(plugin.raw)}
+                        onPublish={
+                          ownerActions.canOpenPublishDialog
+                            ? () => {
+                                const target =
+                                  findPackableCreatedPlugin(installedPlugins, [
+                                    plugin.raw.spec.source.pluginKey,
+                                    createdPluginSlug(plugin),
+                                    plugin.name,
+                                    ownedMarketplace?.name,
+                                    ownedMarketplace?.displayName,
+                                  ]) ?? (isPackableCreatedPlugin(plugin) ? plugin : null)
+                                if (!target) {
+                                  setPluginOperationNotice({
+                                    id: `publish-missing-${plugin.id}`,
+                                    kind: 'error',
+                                    message: t(
+                                      'workbench.plugins_publish_source_missing',
+                                      '本地插件源文件不完整或未写入个人市场，请用「继续编辑」重新生成后再发布。'
+                                    ),
+                                  })
+                                  return
+                                }
+                                setPluginPublishError(null)
+                                setPluginPublishShareRecovery(false)
+                                setPluginPublishTarget(target)
+                              }
+                            : undefined
+                        }
+                        publishLabel={publishLabel}
+                        onShare={
+                          ownerActions.canManageAccess
+                            ? () => void manageInstalledPluginAccess(plugin)
+                            : undefined
+                        }
+                        shareLabel={t('workbench.plugins_manage_access', '管理权限')}
+                        onCopy={
+                          marketplaceItem?.accessRole === 'recipient' && marketplaceItem.allowCopy
+                            ? () => void copyMarketplacePlugin(marketplaceItem)
+                            : undefined
+                        }
+                        onToggle={() => toggleInstalledPlugin(plugin.id)}
+                        onUninstall={() => requestUninstallPlugin(plugin.id, plugin.name)}
+                        isUninstalling={uninstallingPluginIds.has(plugin.id)}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div
+                data-testid="plugin-management-empty-state"
+                className="rounded-[14px] border border-dashed border-border/35 bg-background px-[42px] py-[42px] text-center text-text-muted"
+              >
+                <strong className="mb-1.5 block font-medium text-text-primary">
+                  {t('workbench.plugins_no_installed_plugins', '还没有安装插件')}
+                </strong>
+                <p className="mb-3.5 text-sm leading-5">
+                  {t(
+                    'workbench.plugins_no_installed_plugins_hint',
+                    '安装后的插件会集中显示在这里。'
+                  )}
+                </p>
+                <button
+                  type="button"
+                  data-testid="plugin-management-browse-marketplace-button"
+                  className="inline-flex h-[31px] items-center rounded-lg bg-surface px-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                  onClick={() => navigateTo('/plugins')}
+                >
+                  {t('workbench.plugins_browse_marketplace', '浏览插件市场')}
+                </button>
+              </div>
+            )}
+          </div>
+        ) : null}
       </div>
       {pluginShareDialog}
       {pluginPublishDialog}

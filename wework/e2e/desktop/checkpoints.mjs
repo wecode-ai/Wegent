@@ -9,6 +9,7 @@ export const DESKTOP_CHECKPOINTS = [
   'project-automation',
   'project-assignment-notification',
   'offline-local-project-space',
+  'core-dsh-plugin-management',
   'plugin-auto-update',
   'project-ai-settings',
   'model-routing',
@@ -50,6 +51,7 @@ export const DESKTOP_CHECKPOINTS = [
 ]
 
 export const PLUGIN_SEGMENTS = [
+  'core-dsh-plugin-management',
   'plugin-marketplace-lifecycle',
   'plugin-lifecycle',
   'skill-mention-rendering',

@@ -1,22 +1,30 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
-import { LoaderCircle, PackagePlus, PlugZap, RefreshCw, Trash2 } from 'lucide-react'
+import { LoaderCircle, PackagePlus, PlugZap, RefreshCw, RotateCw, Trash2 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   installCoreDshPlugin,
   readCoreDshPlugins,
   restartCoreDsh,
-  setCoreDshPluginActive,
+  setCoreDshPluginEnabled,
   type CoreDshPlugin,
   uninstallCoreDshPlugin,
+  updateCoreDshPlugin,
 } from '@/features/dsh-plugins/coreDshPlugins'
-import { isElectronRuntime } from '@/lib/runtime-environment'
+import { useTranslation } from '@/hooks/useTranslation'
 
-type Operation = 'install' | 'restart' | `toggle:${string}` | `uninstall:${string}` | null
+type Operation =
+  | 'install'
+  | 'restart'
+  | `toggle:${string}`
+  | `uninstall:${string}`
+  | `update:${string}`
+  | null
 
 export function CoreDshPluginManagementSection() {
+  const { t } = useTranslation('common')
   const [plugins, setPlugins] = useState<CoreDshPlugin[]>([])
   const [spec, setSpec] = useState('')
-  const [loading, setLoading] = useState(isElectronRuntime)
+  const [loading, setLoading] = useState(true)
   const [operation, setOperation] = useState<Operation>(null)
   const [restartRequired, setRestartRequired] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -24,26 +32,24 @@ export function CoreDshPluginManagementSection() {
   const [uninstallConfirmation, setUninstallConfirmation] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!isElectronRuntime()) return
-    const controller = new AbortController()
-    void readCoreDshPlugins(controller.signal)
+    let current = true
+    void readCoreDshPlugins()
       .then(nextPlugins => {
-        if (!controller.signal.aborted) setPlugins(nextPlugins)
+        if (current) setPlugins(nextPlugins)
       })
       .catch(reason => {
-        if (!controller.signal.aborted) {
-          setError(reason instanceof Error ? reason.message : String(reason))
-        }
+        if (current) setError(reason instanceof Error ? reason.message : String(reason))
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
+        if (current) setLoading(false)
       })
-    return () => controller.abort()
+    return () => {
+      current = false
+    }
   }, [])
 
   const userPlugins = useMemo(() => plugins.filter(plugin => !plugin.immutable), [plugins])
   const builtIns = useMemo(() => plugins.filter(plugin => plugin.immutable), [plugins])
-  if (!isElectronRuntime()) return null
 
   const run = async (next: Exclude<Operation, null>, action: () => Promise<void>) => {
     setOperation(next)
@@ -77,28 +83,36 @@ export function CoreDshPluginManagementSection() {
 
   return (
     <>
-      <section className="mb-7" data-testid="core-dsh-plugin-management">
-        <header className="mb-3">
-          <h2 className="heading-section text-text-primary">Core DSH 扩展</h2>
+      <section data-testid="core-dsh-plugin-management">
+        <header className="mb-5">
+          <h2 className="heading-section text-text-primary">
+            {t('workbench.core_dsh_plugins_title', 'Wework 插件')}
+          </h2>
           <p className="mt-1 text-sm leading-5 text-text-secondary">
-            主协议是 Wework 发布的 ctx.wework 扩展宿主，插件通过 ctx.wework.extensions.register
-            注册扩展点；当前已发布 wework.workspace.sidebar.tab，betterSidebar 仅作为兼容适配层。
+            {t(
+              'workbench.core_dsh_plugins_description',
+              '管理直接扩展 Wework 桌面能力的插件。修改会在重启 Wework 插件运行时后生效。'
+            )}
           </p>
         </header>
+
         <form
-          className="mb-3 rounded-xl border border-border/40 bg-background p-4"
+          className="mb-4 rounded-xl border border-border/40 bg-background p-4"
           data-testid="core-dsh-plugin-install-form"
           onSubmit={submit}
         >
           <label className="mb-2 block text-sm font-medium" htmlFor="core-dsh-plugin-spec">
-            手工安装 DSH 插件
+            {t('workbench.core_dsh_plugins_install_label', '安装 Wework 插件')}
           </label>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
               id="core-dsh-plugin-spec"
               value={spec}
               onChange={event => setSpec(event.target.value)}
-              placeholder="github:owner/plugin / package@version / file:/absolute/path"
+              placeholder={t(
+                'workbench.core_dsh_plugins_install_placeholder',
+                'package@version / github:owner/plugin / file:/absolute/path'
+              )}
               className="min-h-10 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary"
               data-testid="core-dsh-plugin-spec-input"
               disabled={operation !== null}
@@ -114,16 +128,22 @@ export function CoreDshPluginManagementSection() {
               ) : (
                 <PackagePlus className="h-4 w-4" />
               )}
-              安装
+              {t('workbench.core_dsh_plugins_install', '安装')}
             </button>
           </div>
         </form>
+
         {restartRequired ? (
           <div
-            className="mb-3 flex items-center justify-between rounded-xl border border-warning/40 bg-warning/10 px-4 py-3"
+            className="mb-4 flex flex-col items-start justify-between gap-3 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 sm:flex-row sm:items-center"
             data-testid="core-dsh-plugin-restart-required"
           >
-            <span className="text-sm">插件配置已更新，需要重启核心运行时。</span>
+            <span className="text-sm">
+              {t(
+                'workbench.core_dsh_plugins_restart_required',
+                '插件配置已更新。你可以继续管理插件，完成后统一重启 Wework 插件运行时。'
+              )}
+            </span>
             <button
               type="button"
               className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-warning/50 px-3 text-sm"
@@ -132,25 +152,29 @@ export function CoreDshPluginManagementSection() {
               onClick={() => void run('restart', restartCoreDsh)}
             >
               <RefreshCw className={`h-4 w-4 ${operation === 'restart' ? 'animate-spin' : ''}`} />
-              立即重启
+              {t('workbench.core_dsh_plugins_restart', '重启插件运行时')}
             </button>
           </div>
         ) : null}
+
         {error ? (
           <pre
-            className="mb-3 max-h-44 overflow-auto whitespace-pre-wrap rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive"
+            className="mb-4 max-h-44 overflow-auto whitespace-pre-wrap rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive"
             data-testid="core-dsh-plugin-management-error"
           >
             {error}
           </pre>
         ) : null}
+
         <div className="rounded-xl border border-border/40 bg-background">
           {loading ? (
-            <div className="p-4 text-sm text-text-secondary">正在读取 Core DSH 插件…</div>
+            <div className="p-4 text-sm text-text-secondary">
+              {t('workbench.core_dsh_plugins_loading', '正在读取 Wework 插件…')}
+            </div>
           ) : null}
           {!loading && userPlugins.length === 0 ? (
             <div className="border-b border-border/25 p-4 text-sm text-text-secondary">
-              尚未手工安装插件。
+              {t('workbench.core_dsh_plugins_empty', '尚未安装用户 Wework 插件。')}
             </div>
           ) : null}
           {userPlugins.map(plugin => (
@@ -158,9 +182,15 @@ export function CoreDshPluginManagementSection() {
               key={plugin.name}
               plugin={plugin}
               operation={operation}
+              onUpdate={() =>
+                void run(`update:${plugin.name}`, async () => {
+                  setPlugins(await updateCoreDshPlugin(plugin.name))
+                  setRestartRequired(true)
+                })
+              }
               onToggle={() =>
                 void run(`toggle:${plugin.name}`, async () => {
-                  setPlugins(await setCoreDshPluginActive(plugin.name, !plugin.active))
+                  setPlugins(await setCoreDshPluginEnabled(plugin.name, !plugin.enabled))
                   setRestartRequired(true)
                 })
               }
@@ -169,7 +199,9 @@ export function CoreDshPluginManagementSection() {
           ))}
           <details>
             <summary className="cursor-pointer px-4 py-3 text-sm text-text-secondary">
-              {builtIns.length} 个内置运行时插件
+              {t('workbench.core_dsh_plugins_builtins', '{{count}} 个 Wework 内置插件', {
+                count: builtIns.length,
+              })}
             </summary>
             {builtIns.map(plugin => (
               <PluginRow key={plugin.name} plugin={plugin} operation={operation} />
@@ -177,22 +209,30 @@ export function CoreDshPluginManagementSection() {
           </details>
         </div>
       </section>
+
       <ConfirmDialog
         open={installConfirmation !== null}
-        title="安装 Core DSH 插件？"
-        description="插件会以当前用户权限运行。仅安装可信的 npm、Git 或本地包。"
-        cancelLabel="取消"
-        confirmLabel="安装"
+        title={t('workbench.core_dsh_plugins_install_confirm_title', '安装 Wework 插件？')}
+        description={t(
+          'workbench.core_dsh_plugins_install_confirm_description',
+          '插件及其安装脚本会以当前用户权限运行。仅安装你信任的 npm、Git 或本地包。'
+        )}
+        cancelLabel={t('common.cancel', '取消')}
+        confirmLabel={t('workbench.core_dsh_plugins_install', '安装')}
         confirmTestId="core-dsh-plugin-install-confirm"
         onClose={() => setInstallConfirmation(null)}
         onConfirm={confirmInstall}
       />
       <ConfirmDialog
         open={uninstallConfirmation !== null}
-        title="卸载 Core DSH 插件？"
-        description={`将从 Core DSH profile 中移除 ${uninstallConfirmation ?? ''}。`}
-        cancelLabel="取消"
-        confirmLabel="卸载"
+        title={t('workbench.core_dsh_plugins_uninstall_confirm_title', '卸载 Wework 插件？')}
+        description={t(
+          'workbench.core_dsh_plugins_uninstall_confirm_description',
+          '将从 Wework 插件运行时中移除 {{name}}。',
+          { name: uninstallConfirmation ?? '' }
+        )}
+        cancelLabel={t('common.cancel', '取消')}
+        confirmLabel={t('workbench.core_dsh_plugins_uninstall', '卸载')}
         confirmTestId="core-dsh-plugin-uninstall-confirm"
         destructive
         onClose={() => setUninstallConfirmation(null)}
@@ -213,15 +253,23 @@ export function CoreDshPluginManagementSection() {
 function PluginRow({
   plugin,
   operation,
+  onUpdate,
   onToggle,
   onUninstall,
 }: {
   plugin: CoreDshPlugin
   operation: Operation
+  onUpdate?: () => void
   onToggle?: () => void
   onUninstall?: () => void
 }) {
-  const busy = operation === `toggle:${plugin.name}` || operation === `uninstall:${plugin.name}`
+  const { t } = useTranslation('common')
+  const busy =
+    operation === `toggle:${plugin.name}` ||
+    operation === `update:${plugin.name}` ||
+    operation === `uninstall:${plugin.name}`
+  const source = plugin.repository || plugin.homepage || plugin.requestedSpec
+
   return (
     <article
       className="flex min-h-[76px] items-center gap-3 border-b border-border/25 px-4 py-3"
@@ -231,40 +279,57 @@ function PluginRow({
         <PlugZap className="h-5 w-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <strong className="truncate text-sm">{plugin.displayName}</strong>
           <span
-            className={`rounded-full px-2 py-0.5 text-xs ${plugin.active ? 'bg-success/10 text-success' : 'bg-muted text-text-secondary'}`}
+            className={`rounded-full px-2 py-0.5 text-xs ${
+              plugin.enabled ? 'bg-success/10 text-success' : 'bg-muted text-text-secondary'
+            }`}
           >
-            {plugin.active ? '已激活' : '未激活'}
+            {plugin.enabled
+              ? t('workbench.core_dsh_plugins_enabled', '已启用')
+              : t('workbench.core_dsh_plugins_disabled', '已停用')}
           </span>
-          {!plugin.bundle ? (
-            <span className="rounded-full bg-warning/10 px-2 py-0.5 text-xs text-warning">
-              普通依赖
-            </span>
-          ) : null}
         </div>
         <p className="mt-1 truncate text-xs text-text-muted">
-          {plugin.name} · {plugin.version || plugin.spec}
+          {plugin.name}
+          {plugin.version ? ` · ${plugin.version}` : ''}
+          {source ? ` · ${source}` : ''}
         </p>
       </div>
       {!plugin.immutable ? (
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="min-h-8 rounded-md border border-border px-3 text-xs disabled:opacity-50"
-            data-testid={`core-dsh-plugin-toggle-${plugin.name}`}
-            disabled={operation !== null || !plugin.bundle}
-            onClick={onToggle}
+            className="flex h-11 w-11 items-center justify-center rounded-md border border-border disabled:opacity-50 md:h-8 md:w-8"
+            aria-label={t('workbench.core_dsh_plugins_update_named', '更新 {{name}}', {
+              name: plugin.displayName,
+            })}
+            data-testid={`core-dsh-plugin-update-${plugin.name}`}
+            disabled={operation !== null || !plugin.canUpdate}
+            onClick={onUpdate}
           >
-            {busy ? '…' : plugin.active ? '停用' : '激活'}
+            <RotateCw className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} />
           </button>
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-md border border-border"
-            aria-label="卸载插件"
+            className="min-h-11 min-w-11 rounded-md border border-border px-3 text-xs disabled:opacity-50 md:min-h-8 md:min-w-0"
+            data-testid={`core-dsh-plugin-toggle-${plugin.name}`}
+            disabled={operation !== null || !plugin.canToggle}
+            onClick={onToggle}
+          >
+            {plugin.enabled
+              ? t('workbench.core_dsh_plugins_disable', '停用')
+              : t('workbench.core_dsh_plugins_enable', '启用')}
+          </button>
+          <button
+            type="button"
+            className="flex h-11 w-11 items-center justify-center rounded-md border border-border disabled:opacity-50 md:h-8 md:w-8"
+            aria-label={t('workbench.core_dsh_plugins_uninstall_named', '卸载 {{name}}', {
+              name: plugin.displayName,
+            })}
             data-testid={`core-dsh-plugin-uninstall-${plugin.name}`}
-            disabled={operation !== null}
+            disabled={operation !== null || !plugin.canUninstall}
             onClick={onUninstall}
           >
             <Trash2 className="h-4 w-4" />
