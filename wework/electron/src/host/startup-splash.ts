@@ -99,6 +99,8 @@ export class StartupSplash {
   }
 
   async close(options: CloseStartupSplashOptions = {}): Promise<StartupSplashSnapshot> {
+    if (this.state === 'closed') return this.snapshot()
+
     const target = this.options.window
     if (target.isDestroyed()) {
       this.markClosed()

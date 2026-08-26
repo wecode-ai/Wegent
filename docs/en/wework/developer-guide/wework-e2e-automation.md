@@ -111,6 +111,13 @@ Matrix submissions use a 10-second timeout. If the composer already displays a s
 
 `e2e:desktop:embedded-browser` runs the embedded-browser Agent operation regression through a scenario module. It uses the real Electron renderer, Executor, Codex app-server, and browser MCP server, opens a local fixture page, and verifies the Electron `WebContentsView` bridge control path. The scenario covers bridge identity lookup, authenticated bridge requests, page open, structured `inspect`, `fill`, `click`, `wait`, `scroll`, `screenshot`, `capabilities`, high-risk action approval, and combined MCP tools such as `open_and_inspect` and `wait_and_inspect`. It also starts a long `waitFor` and then verifies an independent `click` is not blocked, preventing bridge concurrency regressions. When local-file support changes, the scenario also opens a `file://` HTML fixture, Markdown and extensionless text fixtures, and a local folder fixture through the bridge, and verifies that an unpreviewable local file shows a toast instead of entering the download list. Results are written to `embedded-browser-agent-result.json`.
 
+The `renderer-storage` checkpoint writes model, draft, and layout `localStorage`
+fixtures in the real packaged Electron app, flushes the persistence queue, and
+restarts Core DSH. It requires the page origin after restart to differ from the
+original origin before checking that all three values were restored. This makes
+the regression exercise desktop persistence across origins instead of an
+ordinary read within the same renderer process.
+
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 The main desktop runner also supports execution through ordered checkpoints.
@@ -122,7 +129,7 @@ The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
 `cloud-worktree-capability`, `cloud-worktree-create`, `cloud-worktree-queued-cancel`,
 `cloud-worktree-tools`, `cloud-worktree-archive-restore`,
 `cloud-worktree-device-restart`, `context-compaction`, `runtime-task-queue`,
-`codex-notification-isolation`, `split-workbench`, `window-lifecycle`,
+`codex-notification-isolation`, `split-workbench`, `renderer-storage`, `window-lifecycle`,
 `goal-lifecycle`, `supervisor-lifecycle`, `resilience`, `conversation-state`,
 `temporary-chat`, `workspace-attachments`, `rendering-extensions`,
 `change-request-status`, `claude-runtime`, `local-file-preview`, `local-harness`,

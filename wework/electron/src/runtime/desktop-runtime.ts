@@ -38,6 +38,7 @@ export class DesktopRuntime {
   private executor: ManagedExecutorRuntime | null = null
   private coreDsh: DshRuntime | null = null
   private coreDshPlugins: CoreDshPluginManager | null = null
+  private coreDshPort: number | null = null
   private readonly workbench = new WorkbenchRuntimeManager()
   private started = false
 
@@ -168,7 +169,7 @@ export class DesktopRuntime {
     const externalDshUrl = this.options.environment.WEWORK_CORE_DSH_URL?.trim()
     const dshCommand = this.options.environment.WEWORK_CORE_DSH_COMMAND?.trim()
     const managedRoot = this.options.environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
-    const port = externalDshUrl ? null : await freePort()
+    const port = externalDshUrl ? null : await freePort(this.coreDshPort)
     const dshUrl = externalDshUrl || `http://127.0.0.1:${port as number}`
     let command = dshCommand
     let args = jsonArrayEnvironment(this.options.environment, 'WEWORK_CORE_DSH_ARGS_JSON')
@@ -225,6 +226,7 @@ export class DesktopRuntime {
     this.coreDsh = runtime
     try {
       await runtime.start()
+      this.coreDshPort = port
     } catch (error) {
       if (this.coreDsh === runtime) this.coreDsh = null
       this.coreDshPlugins = null
@@ -241,7 +243,7 @@ export class DesktopRuntime {
   }
 }
 
-function freePort(): Promise<number> {
+function freePort(excludedPort: number | null = null): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer()
     server.once('error', reject)
@@ -253,8 +255,13 @@ function freePort(): Promise<number> {
         return
       }
       server.close(error => {
-        if (error) reject(error)
-        else resolve(address.port)
+        if (error) {
+          reject(error)
+        } else if (address.port === excludedPort) {
+          void freePort(excludedPort).then(resolve, reject)
+        } else {
+          resolve(address.port)
+        }
       })
     })
   })
