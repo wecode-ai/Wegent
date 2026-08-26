@@ -16,7 +16,7 @@ import {
 
 const changeRequestStatusPreference = vi.hoisted(() => ({ enabled: true }))
 
-vi.mock('@/tauri/appPreferences', () => ({
+vi.mock('@/desktop/appPreferences', () => ({
   getAppPreferences: vi.fn(async () => ({
     changeRequestStatusEnabled: changeRequestStatusPreference.enabled,
   })),

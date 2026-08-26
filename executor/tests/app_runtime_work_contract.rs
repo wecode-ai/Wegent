@@ -64,6 +64,26 @@ fn set_temp_codex_sqlite_home(prefix: &str) -> (EnvGuard, PathBuf) {
 }
 
 #[tokio::test]
+async fn app_runtime_rejects_unsupported_task_create_schema_version() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "codex".to_owned());
+
+    let error = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "schemaVersion": 3,
+                "runtime": "codex",
+                "message": "unsupported contract"
+            }
+        }))
+        .await
+        .expect_err("unknown runtime task create schemas must be rejected");
+
+    assert_eq!(error.code, "unsupported_schema_version");
+    assert!(error.message.contains("schemaVersion 3"));
+}
+
+#[tokio::test]
 async fn app_runtime_lists_codex_threads_through_app_server() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(

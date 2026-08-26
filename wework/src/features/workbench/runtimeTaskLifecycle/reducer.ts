@@ -24,6 +24,7 @@ export function reduceRuntimeTaskLifecycle(
       const snapshotRevivesSettledTaskWithoutIntent =
         Boolean(state.task && isRuntimeTaskAuthoritativeCompletion(state.task)) &&
         isRuntimeTaskConfirmedActive(event.task) &&
+        state.goalStatus !== null &&
         state.goalStatus !== 'active' &&
         state.expectedExecutorRunning !== true
       if (snapshotRevivesSettledTaskWithoutIntent) {

@@ -27,15 +27,15 @@ function useBackendRuntime() {
   }
 }
 
-function setTauriRuntime() {
-  Object.defineProperty(window, '__TAURI_INTERNALS__', {
-    value: {},
-    configurable: true,
-  })
+function setElectronRuntime() {
+  window.__WEWORK_RUNTIME_CONFIG__ = {
+    ...window.__WEWORK_RUNTIME_CONFIG__,
+    desktopHost: 'electron',
+  }
 }
 
-function clearTauriRuntime() {
-  delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+function clearElectronRuntime() {
+  delete window.__WEWORK_RUNTIME_CONFIG__
 }
 
 describe('AuthProvider', () => {
@@ -43,7 +43,7 @@ describe('AuthProvider', () => {
     localStorage.clear()
     sessionStorage.clear()
     delete window.__WEWORK_RUNTIME_CONFIG__
-    clearTauriRuntime()
+    clearElectronRuntime()
     window.history.pushState({}, '', '/')
   })
 
@@ -110,8 +110,9 @@ describe('AuthProvider', () => {
   })
 
   test('creates local user without redirect or backend calls in local-first mode', async () => {
-    setTauriRuntime()
+    setElectronRuntime()
     window.__WEWORK_RUNTIME_CONFIG__ = {
+      desktopHost: 'electron',
       runtimeMode: 'local-first',
     }
     const authApi = {

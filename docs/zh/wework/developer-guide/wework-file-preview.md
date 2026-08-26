@@ -8,7 +8,7 @@ Wework 文件面板使用 Markdown 渲染器预览 Markdown 文档，将其他�
 
 ## 支持范围
 
-预览器启用 office、lite 和 engineering 能力：PDF、Word、Excel、PowerPoint、图片、HTML、Markdown、代码、音频、视频，以及 Mermaid 和 PlantUML 图表。代码和文本预览不得以扩展名白名单作为能力边界：常见扩展名（包括 Dart）直接进入文本读取快速路径；未知扩展名先探测文件内容，只要内容是有效 UTF-8 文本且不包含二进制控制字节，就使用代码预览。已知二进制格式继续直接进入专用渲染器；未知二进制或渲染失败时，macOS Tauri 应用可使用系统默认应用打开文件。
+预览器启用 office、lite 和 engineering 能力：PDF、Word、Excel、PowerPoint、图片、HTML、Markdown、代码、音频、视频，以及 Mermaid 和 PlantUML 图表。代码和文本预览不得以扩展名白名单作为能力边界：常见扩展名（包括 Dart）直接进入文本读取快速路径；未知扩展名先探测文件内容，只要内容是有效 UTF-8 文本且不包含二进制控制字节，就使用代码预览。已知二进制格式继续直接进入专用渲染器；未知二进制或渲染失败时，macOS Electron 应用可使用系统默认应用打开文件。
 
 HTML 必须继续使用沙箱预览，不得允许预览内容访问 Wework 主页面的同源状态。
 
@@ -34,7 +34,7 @@ Markdown 预览和源码视图都必须拥有独立的纵向滚动区域。软�
 
 ## 数据传输
 
-本机工作区的目录枚举、文本读取和二进制分块读取由 Wework Tauri 进程直接访问磁盘，不经过 executor IPC。文本最多读取 256 KiB，二进制通过 `read_local_workspace_file_chunk` 以 1 MiB 分块读取。未知扩展名使用首个分块探测内容；如果判定为二进制，首个分块必须直接复用于后续组装，不能重复读取。项目空间中的云文件已经下载为 `Blob`，未知类型只检查前 64 KiB。每个工作区请求都携带工作区根目录并在 Rust 侧执行规范化路径校验，拒绝通过符号链接或相对路径逃逸工作区。前端按顺序组装二进制分块为 `File` 后交给查看器。
+本机工作区的目录枚举、文本读取和二进制分块读取由 Wework Electron 进程直接访问磁盘，不经过 executor IPC。文本最多读取 256 KiB，二进制通过 `read_local_workspace_file_chunk` 以 1 MiB 分块读取。未知扩展名使用首个分块探测内容；如果判定为二进制，首个分块必须直接复用于后续组装，不能重复读取。项目空间中的云文件已经下载为 `Blob`，未知类型只检查前 64 KiB。每个工作区请求都携带工作区根目录并在 Rust 侧执行规范化路径校验，拒绝通过符号链接或相对路径逃逸工作区。前端按顺序组装二进制分块为 `File` 后交给查看器。
 
 通过远端设备打开工作区时仍使用设备侧 workspace API。前端继续校验响应路径、文件名和分块偏移，不能把本机原生命令作为远端读取失败时的回退路径。
 
@@ -48,7 +48,7 @@ Markdown 预览和源码视图都必须拥有独立的纵向滚动区域。软�
 
 ## 构建资源
 
-`@file-viewer/vite-plugin` 负责在开发和生产构建中复制选中渲染器的 Worker、WASM、字体和其他离线资源。安装 `preset-office`、`preset-lite` 和 `preset-engineering`，但不要使用 `preset-all`，除非产品明确需要全部重型格式。Vite 必须预构建 Mermaid 和 PlantUML 编码依赖，确保 drawing renderer 的动态导入在 WebKit 开发环境中稳定解析。
+`@file-viewer/vite-plugin` 负责在开发和生产构建中复制选中渲染器的 Worker、WASM、字体和其他离线资源。安装 `preset-office`、`preset-lite` 和 `preset-engineering`，但不要使用 `preset-all`，除非产品明确需要全部重型格式。Vite 必须预构建 Mermaid 和 PlantUML 编码依赖，确保 drawing renderer 的动态导入在 Chromium 开发环境中稳定解析。
 
 ## 验证
 

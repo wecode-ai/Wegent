@@ -7,7 +7,7 @@ sidebar_position: 26
 Wework 将产品使用分析、桌面错误诊断和服务端可观测性分开处理：
 
 - PostHog 接收白名单产品事件。
-- Sentry 接收 React WebView 异常和 Tauri/Rust panic。
+- Sentry 接收 React WebView 异常和 Electron main-process exception。
 - 服务端与 Executor 继续通过 OpenTelemetry Collector 上报 trace 和 metric。
 
 ## 隐私边界
@@ -16,7 +16,7 @@ Wework 首次启动时会明确询问用户是否允许共享匿名使用情况�
 
 产品分析事件不得包含聊天、提示词、模型回复、代码、文件名、文件路径、仓库名、终端内容、凭据或认证信息。业务代码只能调用 `src/telemetry/client.ts`，不得直接调用 PostHog 或 Sentry SDK。新增事件必须先加入 `AnalyticsEventMap` 和运行时属性白名单。
 
-PostHog 在发送前会再次按事件级白名单删除 SDK 自动附加的 URL、referrer、用户画像和其他非必要属性；SDK 自动生成且未登记的事件会被直接丢弃。WebView 与 Tauri 原生 Sentry 事件会删除请求、用户、面包屑、附加上下文、原始异常文本、源码片段、本机文件路径和局部变量。WebView 错误栈仅保留 Wework 自身可信应用资源的文件地址、函数、行列号和 Source Map Debug ID；URL 的 query、fragment 与凭证会被删除，用户文件、外部页面和其他不可信路径会显示为 `<redacted>`。桌面 E2E 使用本地接收器验证用户选择前没有请求、明确同意后才发送，并检查真实请求体不含测试工作区路径、认证令牌、模型 Key 或用户邮箱。
+PostHog 在发送前会再次按事件级白名单删除 SDK 自动附加的 URL、referrer、用户画像和其他非必要属性；SDK 自动生成且未登记的事件会被直接丢弃。WebView 与 Electron 原生 Sentry 事件会删除请求、用户、面包屑、附加上下文、原始异常文本、源码片段、本机文件路径和局部变量。WebView 错误栈仅保留 Wework 自身可信应用资源的文件地址、函数、行列号和 Source Map Debug ID；URL 的 query、fragment 与凭证会被删除，用户文件、外部页面和其他不可信路径会显示为 `<redacted>`。桌面 E2E 使用本地接收器验证用户选择前没有请求、明确同意后才发送，并检查真实请求体不含测试工作区路径、认证令牌、模型 Key 或用户邮箱。
 
 Wework 不向 PostHog 或 Sentry 发送账户用户 ID。Sentry 使用 localStorage 中保存的 `installation_id` 标签和每次会话的 `telemetry_session_id`；PostHog 使用 SDK 自生成的 `distinct_id` 和 `$session_id`。这些标识都是匿名的、与登录账户无关，并在用户关闭遥测时旋转，避免重新开启后继续关联关闭前的数据。
 
@@ -24,21 +24,21 @@ Wework 不向 PostHog 或 Sentry 发送账户用户 ID。Sentry 使用 localStor
 
 事件只记录有产品决策价值的功能采用、漏斗结果和可靠性结果，不记录普通按钮点击。
 
-| 领域             | 事件                                                                                       |
-| ---------------- | ------------------------------------------------------------------------------------------ |
-| 应用、导航与认证 | `app_started`、`feature_opened`、`authentication_completed`                                |
-| 项目与对话       | `project_opened`、`project_created`、`project_removed`、`conversation_created`             |
+| 领域             | 事件                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| 应用、导航与认证 | `app_started`、`feature_opened`、`authentication_completed`                                      |
+| 项目与对话       | `project_opened`、`project_created`、`project_removed`、`conversation_created`                   |
 | 任务执行         | `task_started`、`first_response_completed`、`task_completed`、`task_interrupted`、`task_retried` |
-| 项目空间与看板   | `board_view_opened`、`board_item_created`、`board_item_moved`、`feature_action_completed`  |
-| 插件             | `plugin_center_opened`、`plugin_installed`、`plugin_enabled_changed`、`plugin_uninstalled` |
-| 自动化           | `automation_action_completed`                                                              |
-| 内置浏览器       | `browser_navigation_completed`、`browser_download_completed`                               |
-| 云端、交付与更新 | `cloud_connection_changed`、`delivery_completed`、`app_update_install_started`             |
-| 反馈与应用快照   | `feedback_submitted`、`appshot_received`                                                   |
-| 工作区面板       | `workspace_panel_added`、`workspace_panel_removed`                                          |
-| 设置             | `setting_changed`                                                                          |
-| AI 分析          | `$ai_trace`、`$ai_generation`、`ai_output_action_completed`、`generation_regenerated`      |
-| 隐私设置         | `telemetry_preference_changed`，仅在用户重新开启遥测后记录                                 |
+| 项目空间与看板   | `board_view_opened`、`board_item_created`、`board_item_moved`、`feature_action_completed`        |
+| 插件             | `plugin_center_opened`、`plugin_installed`、`plugin_enabled_changed`、`plugin_uninstalled`       |
+| 自动化           | `automation_action_completed`                                                                    |
+| 内置浏览器       | `browser_navigation_completed`、`browser_download_completed`                                     |
+| 云端、交付与更新 | `cloud_connection_changed`、`delivery_completed`、`app_update_install_started`                   |
+| 反馈与应用快照   | `feedback_submitted`、`appshot_received`                                                         |
+| 工作区面板       | `workspace_panel_added`、`workspace_panel_removed`                                               |
+| 设置             | `setting_changed`                                                                                |
+| AI 分析          | `$ai_trace`、`$ai_generation`、`ai_output_action_completed`、`generation_regenerated`            |
+| 隐私设置         | `telemetry_preference_changed`，仅在用户重新开启遥测后记录                                       |
 
 跨领域的资源操作统一使用 `feature_action_completed`，其 `domain` 和 `action` 都是受控枚举，覆盖项目空间、任务卡片、任务关联、附件与工作区文件、AI 表格、插件、Skill、MCP、Hooks、Sites、模型、Git、云设备、快捷短语和归档会话。关键业务的已处理失败统一使用 `operation_failed` 和有限的操作类型，不上传异常消息。资源 ID、项目名、插件名、URL、文件路径和用户输入均不属于事件属性；唯一的例外是下文描述的 AI 关联 ID，它们是按运行生成的透明关联 token，而非原始 ID。功能代码应在 API 或本机操作确认成功后打点，失败回滚路径不得误报成功。
 
@@ -46,10 +46,10 @@ Wework 不向 PostHog 或 Sentry 发送账户用户 ID。Sentry 使用 localStor
 
 Wework 针对 agent 任务 trace、LLM generation 和用户反馈上报 PostHog AI 分析事件。这些事件同样遵循隐私边界：只包含元数据和受控枚举值，绝不包含提示词、模型输出、用户文本、文件路径或凭据。
 
-| 事件              | 用途                                                                 | 关键属性                                                                                                                                                                                                                                                                             |
-| ----------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `$ai_trace`       | 一次任务运行，在运行开始和结束时各上报一次。                         | `$ai_trace_id`（运行开始时生成的透明 per-run id）、`$ai_trace_phase`（`start` 或 `end`）、`execution_target`、`duration_ms`（仅 end）、`result`（`success`、`failure` 或 `cancelled`；仅 end）、`failure_reason`（有限的失败分类；仅 result 为 `failure` 时）。                                 |
-| `$ai_generation`  | 每一次由 LLM 驱动的助手回复，从助手开始生成到生成结束进行测量。      | `$ai_generation_id`、`$ai_trace_id`（该运行所属的透明 trace id；这是 PostHog 要求并用来把 generation 归入同一 trace 的属性）、`$ai_parent_id`（同一 per-run id，保留用于树状嵌套）、`$ai_model`（运行时目录枚举）、`$ai_provider`（已知提供方的有界枚举）、`$ai_input_tokens`、`$ai_output_tokens`、`$ai_total_tokens`、`$ai_latency`（秒）、`$ai_cost`（识别到模型时的最佳 effort 美元估算）、`result`。                                           |
+| 事件             | 用途                                                            | 关键属性                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$ai_trace`      | 一次任务运行，在运行开始和结束时各上报一次。                    | `$ai_trace_id`（运行开始时生成的透明 per-run id）、`$ai_trace_phase`（`start` 或 `end`）、`execution_target`、`duration_ms`（仅 end）、`result`（`success`、`failure` 或 `cancelled`；仅 end）、`failure_reason`（有限的失败分类；仅 result 为 `failure` 时）。                                                                                                                                           |
+| `$ai_generation` | 每一次由 LLM 驱动的助手回复，从助手开始生成到生成结束进行测量。 | `$ai_generation_id`、`$ai_trace_id`（该运行所属的透明 trace id；这是 PostHog 要求并用来把 generation 归入同一 trace 的属性）、`$ai_parent_id`（同一 per-run id，保留用于树状嵌套）、`$ai_model`（运行时目录枚举）、`$ai_provider`（已知提供方的有界枚举）、`$ai_input_tokens`、`$ai_output_tokens`、`$ai_total_tokens`、`$ai_latency`（秒）、`$ai_cost`（识别到模型时的最佳 effort 美元估算）、`result`。 |
 
 任务是一个可被重复运行的稳定资源，因此 trace 关联必须限定在**单次运行**内，而不是绑定任务 ID。运行开始时，客户端生成一个透明的 `t-<base36>` trace id，本次运行期间发出的每条 `$ai_trace` 和 `$ai_generation` 都共享它；运行结束时该 id 被丢弃，下一次运行会重新生成。如果所有运行都复用同一任务 ID 派生的 trace id，不同运行会被合并进同一条 PostHog trace，导致按运行统计的时长、token、成本全部失真。每条 `$ai_generation` 在助手开始时捕获当前运行的 trace id，因此即使运行与 generation 并发结束，关联也不会丢失。若窗口在运行进行中关闭，会补发一条 `$ai_trace` `end`（`result=cancelled`），避免留下永不闭合的 trace。运行时白名单会强制 `$ai_trace_id`、`$ai_parent_id` 符合哈希后的 `t-<base36>` 格式、`$ai_generation_id` 符合 UUID 格式，因此未经哈希的原始任务 ID 永远不会作为关联属性被上报。
 
@@ -76,22 +76,22 @@ generation 的 token 数（`$ai_input_tokens`、`$ai_output_tokens`、`$ai_total
 
 前端构建变量：
 
-| 变量                                    | 用途                                       |
-| --------------------------------------- | ------------------------------------------ |
-| `VITE_WEWORK_POSTHOG_KEY`               | PostHog 项目 Key；为空时不启用产品事件上报 |
+| 变量                                    | 用途                                                                                           |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `VITE_WEWORK_POSTHOG_KEY`               | PostHog 项目 Key；为空时不启用产品事件上报                                                     |
 | `VITE_WEWORK_POSTHOG_HOST`              | PostHog 接收地址；默认 `https://us.i.posthog.com`；欧盟托管项目使用 `https://eu.i.posthog.com` |
-| `VITE_WEWORK_SENTRY_DSN`                | WebView Sentry DSN                         |
-| `VITE_WEWORK_SENTRY_TRACES_SAMPLE_RATE` | WebView 性能采样率，默认 `0.05`            |
-| `VITE_WEWORK_TELEMETRY_ENVIRONMENT`     | `development`、`staging` 或 `production`   |
-| `VITE_WEWORK_RELEASE_CHANNEL`           | 发布渠道                                   |
+| `VITE_WEWORK_SENTRY_DSN`                | WebView Sentry DSN                                                                             |
+| `VITE_WEWORK_SENTRY_TRACES_SAMPLE_RATE` | WebView 性能采样率，默认 `0.05`                                                                |
+| `VITE_WEWORK_TELEMETRY_ENVIRONMENT`     | `development`、`staging` 或 `production`                                                       |
+| `VITE_WEWORK_RELEASE_CHANNEL`           | 发布渠道                                                                                       |
 
-WebView 层在构建时读取 `VITE_WEWORK_SENTRY_DSN`，原生 Tauri 层在运行时读取 `WEWORK_SENTRY_DSN`（或在构建时嵌入）。两者应指向同一个 Sentry 项目；部署和本地开发配置时请保持这两个变量一致。原生 Tauri 层还读取 `WEWORK_TELEMETRY_ENVIRONMENT`。
+WebView 层在构建时读取 `VITE_WEWORK_SENTRY_DSN`，原生 Electron 层在运行时读取 `WEWORK_SENTRY_DSN`（或在构建时嵌入）。两者应指向同一个 Sentry 项目；部署和本地开发配置时请保持这两个变量一致。原生 Electron 层还读取 `WEWORK_TELEMETRY_ENVIRONMENT`。
 
 ## 纵深防御部署设置
 
 客户端脱敏是第一道防线，但项目级服务端设置也必须尽量减少持久化数据。
 
-WebView 与 Tauri 原生层使用的 Sentry 项目应：
+WebView 与 Electron 原生层使用的 Sentry 项目应：
 
 - 开启 `scrubIPAddresses`，避免 Sentry 保存客户端 IP。
 - 开启 `dataScrubberDefaults` 与 `enhancedPrivacy`，对事件、面包屑和 trace 数据启用内置 PII 脱敏。
@@ -118,7 +118,12 @@ WebView 与 Tauri 原生层使用的 Sentry 项目应：
     }
   },
   "applications": {
-    "freeform": ["remove_ips", "remove_emails", "remove_paths", "remove_tokens"],
+    "freeform": [
+      "remove_ips",
+      "remove_emails",
+      "remove_paths",
+      "remove_tokens"
+    ],
     "username": ["remove_ips", "remove_emails"],
     "$string": ["remove_emails", "remove_paths", "remove_tokens"]
   }

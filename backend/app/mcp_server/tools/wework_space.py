@@ -1094,7 +1094,7 @@ def download_delivery_asset(
         )
     },
 )
-def finalize_delivery(
+async def finalize_delivery(
     token_info: MCPAuthInfo,
     delivery_id: str,
     fulfillments: list[dict[str, Any]] | None = None,
@@ -1106,17 +1106,29 @@ def finalize_delivery(
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
-        _read_item(db, project, resolved_item_id, token_info.user_id)
+        item = _read_item(db, project, resolved_item_id, token_info.user_id)
+        ready_before = issue_workflow_start_service.ready_robot_stage_ids(item)
         _delivery_draft_for_binding(db, token_info, resolved_item_id, delivery_id)
-        return _delivery_view(
+        delivery = delivery_service.finalize(
             db,
-            delivery_service.finalize(
-                db,
-                delivery_id,
-                token_info.user_id,
-                DeliveryFinalize.model_validate({"fulfillments": fulfillments or []}),
-            ),
+            delivery_id,
+            token_info.user_id,
+            DeliveryFinalize.model_validate({"fulfillments": fulfillments or []}),
         )
+        db.refresh(item)
+        newly_ready = (
+            issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
+        )
+        if newly_ready:
+            started = await issue_workflow_start_service.continue_ready_stages(
+                db,
+                item=item,
+                user_id=token_info.user_id,
+                stage_ids=newly_ready,
+            )
+            if started:
+                db.refresh(delivery)
+        return _delivery_view(db, delivery)
 
 
 @mcp_tool(server="wework_space")

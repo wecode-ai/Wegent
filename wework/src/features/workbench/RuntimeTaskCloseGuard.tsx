@@ -3,9 +3,13 @@ import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
-import { disposeTauriListener } from '@/tauri/disposeTauriListener'
-import { closeMainWindowToTray, installRuntimeTaskCloseGuard } from '@/tauri/runtimeTaskCloseGuard'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
+import { disposeDesktopListener } from '@/desktop/disposeDesktopListener'
+import {
+  cancelMainWindowClose,
+  closeMainWindowToTray,
+  installRuntimeTaskCloseGuard,
+} from '@/desktop/runtimeTaskCloseGuard'
 
 export function RuntimeTaskCloseGuard() {
   const { t } = useTranslation('common')
@@ -13,7 +17,7 @@ export function RuntimeTaskCloseGuard() {
   const [closing, setClosing] = useState(false)
 
   useEffect(() => {
-    if (!isTauriRuntime()) return undefined
+    if (!isDesktopRuntime()) return undefined
 
     let unlisten: (() => void) | undefined
     let cancelled = false
@@ -24,7 +28,7 @@ export function RuntimeTaskCloseGuard() {
     })
       .then(nextUnlisten => {
         if (cancelled) {
-          disposeTauriListener(nextUnlisten, 'runtime task close guard')
+          disposeDesktopListener(nextUnlisten, 'runtime task close guard')
           return
         }
         unlisten = nextUnlisten
@@ -35,7 +39,7 @@ export function RuntimeTaskCloseGuard() {
 
     return () => {
       cancelled = true
-      if (unlisten) disposeTauriListener(unlisten, 'runtime task close guard')
+      if (unlisten) disposeDesktopListener(unlisten, 'runtime task close guard')
     }
   }, [])
 
@@ -47,9 +51,14 @@ export function RuntimeTaskCloseGuard() {
       description={t('workbench.close_to_tray_hint_description')}
       cancelLabel={t('workbench.close_to_tray_hint_keep_open')}
       confirmLabel={t('workbench.close_to_tray_hint_action')}
-      onCancel={() => {
+      onCancel={async () => {
         if (closing) return
         setCloseDialogOpen(false)
+        try {
+          await cancelMainWindowClose()
+        } catch (error) {
+          console.error('Failed to cancel close-to-tray confirmation:', error)
+        }
       }}
       onConfirm={async () => {
         setClosing(true)
@@ -73,7 +82,7 @@ interface RuntimeTaskCloseConfirmDialogProps {
   description: string
   cancelLabel: string
   confirmLabel: string
-  onCancel: () => void
+  onCancel: () => Promise<void>
   onConfirm: () => Promise<void>
 }
 
@@ -88,7 +97,7 @@ function RuntimeTaskCloseConfirmDialog({
   onConfirm,
 }: RuntimeTaskCloseConfirmDialogProps) {
   useEscapeKey(() => {
-    if (!closing) onCancel()
+    if (!closing) void onCancel()
   }, open && !closing)
 
   if (!open) return null
@@ -117,7 +126,9 @@ function RuntimeTaskCloseConfirmDialog({
             variant="outline"
             data-testid="runtime-task-close-cancel-button"
             disabled={closing}
-            onClick={onCancel}
+            onClick={() => {
+              void onCancel()
+            }}
           >
             {cancelLabel}
           </Button>

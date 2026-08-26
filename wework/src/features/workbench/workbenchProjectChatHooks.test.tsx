@@ -179,6 +179,65 @@ describe('workbench project chat hooks', () => {
     expect(onSelectionChange).not.toHaveBeenCalled()
   })
 
+  test('preserves a task composer override when the model catalog refreshes', async () => {
+    const projectModel: UnifiedModel = {
+      name: 'project-model',
+      type: 'runtime',
+      config: {
+        weworkModelKind: 'codex-provider',
+        ui: {
+          family: 'codex-provider',
+          reasoningEfforts: ['low', 'medium', 'high'],
+        },
+      },
+    }
+    const overrideModel: UnifiedModel = {
+      name: 'override-model',
+      type: 'runtime',
+      config: {
+        weworkModelKind: 'codex-provider',
+        ui: {
+          family: 'codex-provider',
+          reasoningEfforts: ['low', 'medium', 'high'],
+        },
+      },
+    }
+    const refreshedProjectModel = { ...projectModel, displayName: 'Project Model Updated' }
+    const refreshedOverrideModel = { ...overrideModel, displayName: 'Override Model Updated' }
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [projectModel, overrideModel] })
+        .mockResolvedValueOnce({ data: [refreshedProjectModel, refreshedOverrideModel] }),
+    }
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        scopeKey: 'new-task:project:7',
+        persistSelection: false,
+        selectionConfig: {
+          modelName: projectModel.name,
+          modelType: projectModel.type,
+          options: { reasoning: 'medium' },
+        },
+      })
+    )
+
+    await waitFor(() => expect(result.current.selectedModel).toBe(projectModel))
+    act(() => {
+      result.current.setSelectedModel(overrideModel)
+      result.current.setSelectedModelOption('reasoning', 'high')
+    })
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+
+    await waitFor(() => expect(result.current.selectedModel).toBe(refreshedOverrideModel))
+    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' })
+  })
+
   test('falls back to the refreshed model default when the selected option is removed', async () => {
     const originalModel: UnifiedModel = {
       name: 'local-model:api-sol',
@@ -693,7 +752,7 @@ describe('workbench project chat hooks', () => {
     }
 
     const { result, rerender } = renderHook(
-      ({ locked }: { locked: boolean }) => useWorkbenchSkills({ api, teamId: 2, locked }),
+      ({ locked }: { locked: boolean }) => useWorkbenchSkills({ api, locked }),
       { initialProps: { locked: false } }
     )
 

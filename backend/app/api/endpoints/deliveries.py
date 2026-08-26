@@ -8,6 +8,7 @@ import logging
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -323,11 +324,18 @@ def find_runtime_task_cloud_context(
     "/runtime-tasks/cloud-context/status",
     response_model=LoopItemResponse | None,
 )
-def update_runtime_task_cloud_status(
+async def update_runtime_task_cloud_status(
     values: RuntimeTaskStatusUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse | None:
+    current_item = loop_item_service.find_for_runtime_task(
+        db,
+        current_user.id,
+        values.device_id,
+        values.task_id,
+    )
+    ready_before = issue_workflow_start_service.ready_robot_stage_ids(current_item)
     item = update_workflow_task_status(
         db,
         user_id=current_user.id,
@@ -339,6 +347,18 @@ def update_runtime_task_cloud_status(
         return None
     db.commit()
     db.refresh(item)
+    newly_ready = (
+        issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
+    )
+    if newly_ready:
+        started = await issue_workflow_start_service.continue_ready_stages(
+            db,
+            item=item,
+            user_id=current_user.id,
+            stage_ids=newly_ready,
+        )
+        if started:
+            db.refresh(item)
     publish_loop_item_changed(
         db,
         item=item,
@@ -454,17 +474,6 @@ async def create_loop_item(
     project = cloud_project_service.get(db, project_id, current_user.id)
     created = loop_item_provider_router.create(db, project, current_user, values)
     response = LoopItemResponse.model_validate(created.values)
-    planning_run = None
-    if (
-        created.internal_item is not None
-        and response.workflow
-        and response.workflow.advancement_policy == "ai"
-    ):
-        planning_run = issue_workflow_planning_service.ensure_run(
-            db,
-            issue=created.internal_item,
-            user_id=current_user.id,
-        )
     from app.services.project_automations import (
         ProjectAutomationEvent,
         project_automation_processor,
@@ -479,36 +488,20 @@ async def create_loop_item(
                 subject_id=str(created.values["id"]),
                 source=project.task_provider,
                 actor_user_id=current_user.id,
-                payload={
-                    **response.model_dump(mode="json"),
-                    **(
-                        {
-                            "workflow_run_id": planning_run.id,
-                            "workflow_plan_version": (
-                                planning_run.metadata_json or {}
-                            ).get("plan_version"),
-                        }
-                        if planning_run is not None
-                        else {}
-                    ),
-                },
-            ),
-            automation_id=(
-                response.workflow.ai_automation_rule_id
-                if response.workflow and response.workflow.advancement_policy == "ai"
-                else None
+                payload=response.model_dump(mode="json"),
             ),
         )
     except Exception:
         db.rollback()
         logger.exception(
-            "Project automation processing failed after task creation project=%s task=%s",
+            "Project automation processing failed after task creation "
+            "project=%s task=%s",
             project.id,
             created.values.get("id"),
         )
     if created.internal_item is not None:
         db.refresh(created.internal_item)
-        if created.internal_item.status == "pending":
+        if created.internal_item.status in {"pending", "in_progress"}:
             await issue_workflow_start_service.start(
                 db,
                 item=created.internal_item,
@@ -891,6 +884,7 @@ async def report_loop_item_workflow_outcome(
 async def update_loop_item(
     item_id: str,
     values: LoopItemUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemResponse:
@@ -905,6 +899,9 @@ async def update_loop_item(
             if item is None:
                 raise RuntimeError("External robot assignment index is unavailable")
             await dispatch_board_team_assignment(db, item=item, user=current_user)
+            from app.tasks.robot_queue_tasks import consume_queues_background
+
+            background_tasks.add_task(consume_queues_background)
             response = external_loop_item_provider.get(db, item_id, current_user.id)
         return LoopItemResponse.model_validate(response)
     existing = loop_item_service.get(db, item_id, current_user.id)
@@ -915,7 +912,22 @@ async def update_loop_item(
         child_id=item.id,
         commit=True,
     )
-    if previous_status == "inbox" and item.status == "pending":
+    workflow_updated = "workflow" in values.model_fields_set
+    should_start_workflow = item.status in {"pending", "in_progress"} and (
+        previous_status not in {"pending", "in_progress"} or workflow_updated
+    )
+    logger.info(
+        "[issue-workflow-start] update item=%s project=%s previous_status=%s "
+        "status=%s workflow_updated=%s should_start=%s fields=%s",
+        item.id,
+        item.cloud_project_id,
+        previous_status,
+        item.status,
+        workflow_updated,
+        should_start_workflow,
+        sorted(values.model_fields_set),
+    )
+    if should_start_workflow:
         project = cloud_project_service.get(
             db, int(item.cloud_project_id), current_user.id
         )
@@ -930,6 +942,28 @@ async def update_loop_item(
         from app.services.board_team_execution import dispatch_board_team_assignment
 
         await dispatch_board_team_assignment(db, item=item, user=current_user)
+        from app.tasks.robot_queue_tasks import consume_queues_background
+
+        background_tasks.add_task(consume_queues_background)
+        db.refresh(item)
+    elif item.assignee_agent_id and (
+        "execution_config" in values.model_fields_set
+        or (
+            previous_status not in {"pending", "in_progress"}
+            and item.status in {"pending", "in_progress"}
+        )
+    ):
+        item = loop_item_service.refresh_agent_execution_configuration(
+            db,
+            item=item,
+            user_id=current_user.id,
+        )
+        from app.services.board_team_execution import dispatch_board_team_assignment
+
+        await dispatch_board_team_assignment(db, item=item, user=current_user)
+        from app.tasks.robot_queue_tasks import consume_queues_background
+
+        background_tasks.add_task(consume_queues_background)
         db.refresh(item)
     publish_loop_item_changed(
         db,
@@ -1179,18 +1213,34 @@ def discard_delivery_draft(
 
 
 @router.post("/deliveries/{delivery_id}/finalize", response_model=DeliveryResponse)
-def finalize_delivery(
+async def finalize_delivery(
     delivery_id: str,
     values: DeliveryFinalize | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DeliveryResponse:
+    draft = delivery_service.get_delivery(db, delivery_id, current_user.id)
+    item = loop_item_service.get(db, draft.loop_item_id, current_user.id)
+    ready_before = issue_workflow_start_service.ready_robot_stage_ids(item)
     delivery = delivery_service.finalize(
         db,
         delivery_id,
         current_user.id,
         values or DeliveryFinalize(),
     )
+    db.refresh(item)
+    newly_ready = (
+        issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
+    )
+    if newly_ready:
+        started = await issue_workflow_start_service.continue_ready_stages(
+            db,
+            item=item,
+            user_id=current_user.id,
+            stage_ids=newly_ready,
+        )
+        if started:
+            db.refresh(delivery)
     return _delivery_response(db, delivery)
 
 

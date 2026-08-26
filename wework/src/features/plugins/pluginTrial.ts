@@ -1,10 +1,18 @@
-import type { InstalledPlugin, LocalDeviceApp, PluginPathComponent } from '@/types/api'
+import type {
+  InstalledPlugin,
+  LocalDeviceApp,
+  PluginPathComponent,
+  ProjectWithTasks,
+} from '@/types/api'
 import {
   currentPluginLogoAppearanceMode,
   resolveInstalledPluginLogoUrl,
   resolvePluginLogo,
 } from '@/components/plugins/plugin-assets'
-import { getComposerApps } from '@/components/chat/composer/composerAppsSnapshot'
+import {
+  getComposerApps,
+  removeComposerAppsByPluginIdentity,
+} from '@/components/chat/composer/composerAppsSnapshot'
 import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
 import { composerAppPluginKey } from './composerPluginMetadata'
 import { managedMarketplaceName } from './pluginMarketplaceIdentity'
@@ -49,6 +57,11 @@ interface PendingPluginTrial {
   templates: PluginPathComponent[]
   app?: LocalDeviceApp
   openInNewChat?: boolean
+  targetProject?: ProjectWithTasks
+  targetWorkspace?: {
+    deviceId: string
+    path: string
+  }
 }
 
 interface PluginReferenceTrial {
@@ -58,6 +71,11 @@ interface PluginReferenceTrial {
   templates?: PluginPathComponent[]
   prompt?: string
   openInNewChat?: boolean
+  targetProject?: ProjectWithTasks
+  targetWorkspace?: {
+    deviceId: string
+    path: string
+  }
 }
 
 interface PluginTrialOptions {
@@ -352,6 +370,8 @@ export function queuePluginReferenceTrial({
   templates = [],
   prompt,
   openInNewChat = false,
+  targetProject,
+  targetWorkspace,
 }: PluginReferenceTrial): boolean {
   const normalizedPluginName = pluginName.trim()
   const normalizedMarketplaceName = marketplaceName.trim()
@@ -365,6 +385,8 @@ export function queuePluginReferenceTrial({
     pluginName: normalizedDisplayName,
     templates,
     openInNewChat,
+    targetProject,
+    targetWorkspace,
   })
 }
 
@@ -387,6 +409,25 @@ export function consumePluginTrial(): PendingPluginTrial | null {
           ? payload.app
           : undefined,
       openInNewChat: payload.openInNewChat === true,
+      targetProject:
+        payload.targetProject &&
+        typeof payload.targetProject === 'object' &&
+        typeof payload.targetProject.id === 'number' &&
+        typeof payload.targetProject.name === 'string'
+          ? (payload.targetProject as ProjectWithTasks)
+          : undefined,
+      targetWorkspace:
+        payload.targetWorkspace &&
+        typeof payload.targetWorkspace === 'object' &&
+        typeof payload.targetWorkspace.deviceId === 'string' &&
+        payload.targetWorkspace.deviceId.trim() &&
+        typeof payload.targetWorkspace.path === 'string' &&
+        payload.targetWorkspace.path.trim()
+          ? {
+              deviceId: payload.targetWorkspace.deviceId.trim(),
+              path: payload.targetWorkspace.path.trim(),
+            }
+          : undefined,
     }
   } catch {
     return null
@@ -397,7 +438,8 @@ export function consumePluginTrialInput(): string | null {
   return consumePluginTrial()?.input ?? null
 }
 
-export function notifyLocalPluginSkillsChanged() {
+export function notifyLocalPluginSkillsChanged(removedPluginIdentities: readonly string[] = []) {
+  removeComposerAppsByPluginIdentity(removedPluginIdentities)
   window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
 }
 

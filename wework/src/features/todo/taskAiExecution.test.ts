@@ -184,7 +184,7 @@ describe('startTaskAiRun model resolution', () => {
     )
   })
 
-  it('resolves the project AI configured model against the shared model list', async () => {
+  it('does not infer a Runtime model from the robot record', async () => {
     const { runtime } = await run({
       agent: agent(kimiModel.name),
       models: [kimiModel],
@@ -192,18 +192,12 @@ describe('startTaskAiRun model resolution', () => {
       selectedModelOptions: {},
     })
 
-    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        executionModel: expect.objectContaining({
-          modelId: kimiModel.name,
-          modelOptions: expect.objectContaining({ codexProviderId: 'wecode-moonshot' }),
-        }),
-      })
-    )
+    const options = runtime.createProjectRuntimeTask.mock.calls[0]?.[1]
+    expect(options).not.toHaveProperty('executionModel')
+    expect(options).not.toHaveProperty('modelSelection')
   })
 
-  it('keeps a raw name override when the configured model is not in the list', async () => {
+  it('does not preserve a legacy raw model fallback', async () => {
     const { runtime } = await run({
       agent: agent('legacy-raw-model'),
       models: [],
@@ -211,16 +205,9 @@ describe('startTaskAiRun model resolution', () => {
       selectedModelOptions: {},
     })
 
-    expect(runtime.createProjectRuntimeTask).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        executionModel: {
-          modelId: 'legacy-raw-model',
-          modelType: null,
-          modelOptions: {},
-        },
-      })
-    )
+    const options = runtime.createProjectRuntimeTask.mock.calls[0]?.[1]
+    expect(options).not.toHaveProperty('executionModel')
+    expect(options).not.toHaveProperty('modelSelection')
   })
 
   it('does not override the model when neither a comment nor a project model is configured', async () => {

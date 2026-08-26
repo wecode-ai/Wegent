@@ -1338,6 +1338,38 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(warn).not.toHaveBeenCalled()
   })
 
+  test('maps processing block content deltas to runtime message actions', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onBlockUpdated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      deviceId: 'device-1',
+      blockId: 'text-1',
+      contentDelta: 'next',
+      status: 'streaming',
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'block_updated',
+        subtaskId: 'turn-1',
+        blockId: 'text-1',
+        updates: {
+          contentDelta: 'next',
+          status: 'streaming',
+        },
+      }),
+    ])
+  })
+
   test('emits onAssistantFirstToken once per turn on the first content chunk', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',

@@ -4,7 +4,7 @@ sidebar_position: 19
 
 # Project Execution State-of-Truth Refactoring
 
-> Implementation status: the state-of-truth path and concurrency extension are complete; full Backend, Wework, and Executor regression, MySQL migration rollback/upgrade, and real Tauri desktop acceptance have passed.
+> Implementation status: the state-of-truth path and concurrency extension are complete; full Backend, Wework, and Executor regression, MySQL migration rollback/upgrade, and real Electron desktop acceptance have passed.
 >
 > Hard constraint: no new database tables. This change only extends the existing MySQL/SQLite `loop_item_executions` tables and continues using existing LoopItem, chat-message, and Automation Run storage.
 

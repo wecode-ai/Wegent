@@ -28,6 +28,7 @@ export function mergeRuntimeConversationTurns(
   const snapshotUserMessageIds = new Set(
     snapshotTurns.flatMap(runtimeConversationTurnClientUserMessageIds)
   )
+  const snapshotIndexByAssistantItemId = uniqueSnapshotIndexByAssistantItemId(snapshotTurns)
   const merged = snapshotTurns.map(snapshotTurn => {
     const localIndex =
       (snapshotTurn.id === null ? undefined : localIndexByTurnId.get(snapshotTurn.id)) ??
@@ -41,6 +42,18 @@ export function mergeRuntimeConversationTurns(
 
   localTurns.forEach((turn, index) => {
     if (emittedLocalIndexes.has(index)) return
+    const aliasSnapshotIndexes = new Set(
+      runtimeConversationTurnAssistantItemIds(turn)
+        .map(id => snapshotIndexByAssistantItemId.get(id))
+        .filter((snapshotIndex): snapshotIndex is number => snapshotIndex !== undefined)
+    )
+    if (aliasSnapshotIndexes.size === 1) {
+      const snapshotIndex = aliasSnapshotIndexes.values().next().value
+      if (snapshotIndex !== undefined) {
+        merged[snapshotIndex] = mergeRuntimeConversationTurn(turn, merged[snapshotIndex])
+        return
+      }
+    }
     if (
       runtimeConversationTurnClientUserMessageIds(turn).some(id => snapshotUserMessageIds.has(id))
     ) {
@@ -53,6 +66,25 @@ export function mergeRuntimeConversationTurns(
   return orderRuntimeConversationTurns(merged)
 }
 
+function uniqueSnapshotIndexByAssistantItemId(
+  turns: RuntimeConversationTurn[]
+): Map<string, number> {
+  const indexes = new Map<string, number>()
+  const duplicates = new Set<string>()
+  turns.forEach((turn, index) => {
+    runtimeConversationTurnAssistantItemIds(turn).forEach(id => {
+      const existing = indexes.get(id)
+      if (existing === undefined) {
+        indexes.set(id, index)
+      } else if (existing !== index) {
+        duplicates.add(id)
+      }
+    })
+  })
+  duplicates.forEach(id => indexes.delete(id))
+  return indexes
+}
+
 function runtimeConversationTurnClientUserMessageIds(turn: RuntimeConversationTurn): string[] {
   return Array.from(
     new Set([
@@ -60,6 +92,10 @@ function runtimeConversationTurnClientUserMessageIds(turn: RuntimeConversationTu
       ...turn.items.flatMap(item => (item.type === 'user_message' ? [item.id] : [])),
     ])
   )
+}
+
+function runtimeConversationTurnAssistantItemIds(turn: RuntimeConversationTurn): string[] {
+  return turn.items.flatMap(item => (item.type === 'user_message' ? [] : [item.id]))
 }
 
 export function reduceRuntimeConversationTurns(
@@ -371,12 +407,17 @@ function mergeRuntimeConversationItems(
   snapshotItems: RuntimeConversationItem[],
   preserveLocalTerminal = false
 ): RuntimeConversationItem[] {
-  const reconciledLocalItems = localItems.filter(
-    localItem =>
-      !snapshotItems.some(snapshotItem =>
+  const matchedSnapshotIndexes = new Set<number>()
+  const reconciledLocalItems = localItems.filter(localItem => {
+    const snapshotIndex = snapshotItems.findIndex(
+      (snapshotItem, index) =>
+        !matchedSnapshotIndexes.has(index) &&
         isEquivalentAssistantTextRepresentation(localItem, snapshotItem)
-      )
-  )
+    )
+    if (snapshotIndex < 0) return true
+    matchedSnapshotIndexes.add(snapshotIndex)
+    return false
+  })
   const localById = new Map(reconciledLocalItems.map(item => [item.id, item]))
   const mergedSnapshotItems = snapshotItems.map(item =>
     mergeRuntimeConversationItem(localById.get(item.id), item, preserveLocalTerminal)
@@ -413,7 +454,11 @@ function isEquivalentAssistantTextRepresentation(
   local: RuntimeConversationItem,
   snapshot: RuntimeConversationItem
 ): boolean {
-  if (local.id === snapshot.id || local.type === snapshot.type) return false
+  if (local.id === snapshot.id) return false
+  if (local.type === 'assistant_text' && snapshot.type === 'assistant_text') {
+    return local.content === snapshot.content
+  }
+  if (local.type === snapshot.type) return false
   const localContent = assistantTextRepresentationContent(local)
   const snapshotContent = assistantTextRepresentationContent(snapshot)
   return localContent !== undefined && localContent === snapshotContent
@@ -558,6 +603,7 @@ function updateStartedTurn(
   if (!action.subtaskId) return turns
   const existingIndex = turns.findIndex(turn => turn.id === action.subtaskId)
   if (existingIndex >= 0) {
+    if (turns[existingIndex].status === 'cancelled') return turns
     return replaceAt(turns, existingIndex, {
       ...turns[existingIndex],
       status: 'streaming',
@@ -576,18 +622,20 @@ function updateStartedTurn(
           )
       )
     : turns.findLastIndex(
-        turn => turn.id === null && (turn.status === 'pending' || turn.status === 'streaming')
+        turn =>
+          turn.id === null &&
+          (turn.status === 'pending' || turn.status === 'streaming' || turn.status === 'cancelled')
       )
   if (optimisticIndex >= 0) {
     const optimistic = turns[optimisticIndex]
     return replaceAt(turns, optimisticIndex, {
       ...optimistic,
       id: action.subtaskId,
-      status: 'streaming',
-      completedAt: undefined,
-      error: undefined,
-      errorType: undefined,
-      stoppedNotice: undefined,
+      status: optimistic.status === 'cancelled' ? 'cancelled' : 'streaming',
+      completedAt: optimistic.status === 'cancelled' ? optimistic.completedAt : undefined,
+      error: optimistic.status === 'cancelled' ? optimistic.error : undefined,
+      errorType: optimistic.status === 'cancelled' ? optimistic.errorType : undefined,
+      stoppedNotice: optimistic.status === 'cancelled' ? optimistic.stoppedNotice : undefined,
       items: optimistic.items.map(item =>
         item.type === 'user_message'
           ? {
@@ -620,6 +668,7 @@ function updateTurn(
   if (!turnId) return turns
   const index = turns.findIndex(turn => turn.id === turnId)
   if (index < 0) return turns
+  if (turns[index].status === 'cancelled') return turns
   return replaceAt(turns, index, update(turns[index]))
 }
 
@@ -631,6 +680,7 @@ function updateFailedTurn(
   if (!turnId) return turns
   const existingIndex = turns.findIndex(turn => turn.id === turnId)
   if (existingIndex >= 0) {
+    if (turns[existingIndex].status === 'cancelled') return turns
     return replaceAt(turns, existingIndex, update(turns[existingIndex]))
   }
   const optimisticIndex = turns.findLastIndex(
@@ -812,8 +862,26 @@ function upsertBlocks(
           ? preserveProcessingBlockTiming(next[index].block, block)
           : block,
     }
-    next = index < 0 ? [...next, canonicalItem] : replaceAt(next, index, canonicalItem)
+    next =
+      index < 0
+        ? insertRuntimeBlockBeforeLaterGuidance(next, canonicalItem)
+        : replaceAt(next, index, canonicalItem)
   }
+  return next
+}
+
+function insertRuntimeBlockBeforeLaterGuidance(
+  items: RuntimeConversationItem[],
+  blockItem: Extract<RuntimeConversationItem, { type: 'block' }>
+): RuntimeConversationItem[] {
+  const guidanceIndex = items.findIndex(item => {
+    if (item.type !== 'user_message' || item.message.runtimeGuidance !== true) return false
+    const guidanceCreatedAt = Date.parse(item.message.createdAt ?? '')
+    return Number.isFinite(guidanceCreatedAt) && blockItem.block.createdAt <= guidanceCreatedAt
+  })
+  if (guidanceIndex < 0) return [...items, blockItem]
+  const next = [...items]
+  next.splice(guidanceIndex, 0, blockItem)
   return next
 }
 
@@ -850,7 +918,10 @@ function upsertRuntimeBlock(
 
   const existingIndex = items.findIndex(item => item.id === block.id)
   if (existingIndex >= 0) {
-    if (items[existingIndex]?.type === 'assistant_text' && turnStatus === 'done') {
+    if (
+      items[existingIndex]?.type === 'assistant_text' &&
+      (turnStatus === 'done' || block.type === 'text')
+    ) {
       return items
     }
     return upsertBlocks(items, [block])
@@ -1049,7 +1120,7 @@ function mergeProcessingBlockUpdate(
   block: ProcessingBlock,
   updates: Extract<RuntimePaneMessageAction, { type: 'block_updated' }>['updates']
 ): ProcessingBlock {
-  const { durationMs, ...directUpdates } = updates
+  const { contentDelta, durationMs, ...directUpdates } = updates
   let merged = {
     ...block,
     ...directUpdates,
@@ -1058,6 +1129,15 @@ function mergeProcessingBlockUpdate(
       completedAt: block.createdAt + Math.max(0, durationMs),
     }),
   } as ProcessingBlock
+  if (
+    typeof contentDelta === 'string' &&
+    (merged.type === 'thinking' || merged.type === 'text' || merged.type === 'plan')
+  ) {
+    merged = {
+      ...merged,
+      content: `${merged.content}${contentDelta}`,
+    } as ProcessingBlock
+  }
   if (merged.type === 'tool' && block.type === 'tool') {
     merged.toolInput = updates.toolInput ?? block.toolInput
   }

@@ -868,7 +868,7 @@ implementation and WCAG conflict.
 - File paths, terminals, permissions, and external applications reflect the
   actual current environment.
 - Keep pane resize and open/close motion stable under window zoom.
-- Verify changes through the isolated real-Tauri flow in `AGENTS.md`, never a
+- Verify changes through the isolated real-Electron flow in `AGENTS.md`, never a
   personal Wework window.
 
 ## 13. Implementation and review contract
@@ -899,7 +899,7 @@ For each material UI change, review:
 - Do keyboard behavior, accessible names, focus restoration, reduced motion,
   long translations, and constrained widths work?
 - Are light and dark themes both correct?
-- Was the affected flow verified in the isolated real Tauri application with a
+- Was the affected flow verified in the isolated real Electron application with a
   screenshot of the final normal state and any critical transient state?
 
 When a screenshot feels wrong, compare it in this order: composition, surface

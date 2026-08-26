@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { installTelemetry, isTelemetryEnabled, setTelemetryEnabled, track } from './client'
-import { isTauriRuntime } from '@/lib/runtime-environment'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import { updateAppPreferences } from '@/tauri/appPreferences'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
+import { updateAppPreferences } from '@/desktop/appPreferences'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TelemetryConsentDialog } from './TelemetryConsentDialog'
 import { isOfficialReleaseBuild } from './config'
 
 function appSurface(): 'main' | 'popout' | 'workspace' {
-  const label = isTauriRuntime() ? getCurrentWindow().label : 'main'
+  const label = isElectronRuntime() ? getDesktopWindowLabel() : 'main'
   if (label === 'popout-window') return 'popout'
   if (label?.startsWith('workspace-')) return 'workspace'
   return 'main'
@@ -53,7 +52,12 @@ export function TelemetryBridge() {
   }, [appPreferences?.loaded, consentAsked, effectiveTelemetryEnabled, officialRelease, surface])
 
   useEffect(() => {
-    if (officialRelease || !isTauriRuntime() || !appPreferences?.loaded || consentAsked === true) {
+    if (
+      officialRelease ||
+      !isElectronRuntime() ||
+      !appPreferences?.loaded ||
+      consentAsked === true
+    ) {
       return
     }
     void updateAppPreferences({

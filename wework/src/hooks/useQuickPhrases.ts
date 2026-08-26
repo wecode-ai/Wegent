@@ -5,7 +5,7 @@ import {
   getAppPreferences,
   type AppPreferences,
   type QuickPhrase,
-} from '@/tauri/appPreferences'
+} from '@/desktop/appPreferences'
 
 export function useQuickPhrases(): QuickPhrase[] {
   const [phrases, setPhrases] = useState(defaultQuickPhrases)

@@ -7,7 +7,7 @@ import {
   type WeworkUpdateDownloadProgress,
   type WeworkUpdateInfo,
 } from '@/lib/app-updater'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { useAppVersion } from '@/hooks/useAppVersion'
 import { track } from '@/telemetry/client'
 import {
@@ -98,7 +98,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   } | null>(null)
   const simulationTimerRef = useRef<number | null>(null)
   const installedReleaseNotes =
-    isTauriRuntime() && appVersion && pendingReleaseNotes?.version === appVersion
+    isElectronRuntime() && appVersion && pendingReleaseNotes?.version === appVersion
       ? pendingReleaseNotes
       : null
 
@@ -325,7 +325,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   useEffect(() => clearSimulationTimer, [clearSimulationTimer])
 
   useEffect(() => {
-    if (!isTauriRuntime() || !appVersion) return
+    if (!isElectronRuntime() || !appVersion) return
 
     if (pendingReleaseNotes && pendingReleaseNotes.version !== appVersion) {
       clearPendingWeworkReleaseNotes()
@@ -333,7 +333,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, [appVersion, pendingReleaseNotes])
 
   useEffect(() => {
-    if (!isTauriRuntime()) return
+    if (!isElectronRuntime()) return
 
     const maybeAutoCheck = () => {
       if (availableUpdate || status === 'installing') return

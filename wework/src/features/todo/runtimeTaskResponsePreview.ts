@@ -70,19 +70,16 @@ export function finalAssistantTranscriptText(transcript: {
   messages: readonly RuntimeResponseMessage[]
   turns: readonly RuntimeResponseTurn[]
 }): string | null {
-  const messageResponse = finalAssistantMessagesText(transcript.messages)
-  if (messageResponse) return messageResponse
+  const latestTurn = transcript.turns.at(-1)
+  if (!latestTurn) return finalAssistantMessagesText(transcript.messages)
 
-  for (const turn of [...transcript.turns].reverse()) {
-    const content = turn.items
-      .flatMap(item =>
-        item.type === 'assistant_text' && typeof item.content === 'string' ? [item.content] : []
-      )
-      .join('\n')
-      .trim()
-    if (content) return content
-  }
-  return null
+  const content = latestTurn.items
+    .flatMap(item =>
+      item.type === 'assistant_text' && typeof item.content === 'string' ? [item.content] : []
+    )
+    .join('\n')
+    .trim()
+  return content || null
 }
 
 function messageText(message: RuntimeResponseMessage): string {

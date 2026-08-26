@@ -60,6 +60,8 @@ pub(crate) struct Automation {
     #[serde(default)]
     pub notification_policy: NotificationPolicy,
     #[serde(default)]
+    pub task_request: Value,
+    #[serde(default)]
     pub task_payload: Value,
     #[serde(default)]
     pub continuation_payload: Option<Value>,
@@ -697,6 +699,7 @@ mod tests {
             enabled: true,
             conversation_mode: ConversationMode::Independent,
             notification_policy: NotificationPolicy::AllRuns,
+            task_request: json!({}),
             task_payload: json!({}),
             continuation_payload: None,
             next_run_at: Some(Utc.with_ymd_and_hms(2026, 8, 16, 8, 45, 0).unwrap()),
@@ -787,6 +790,13 @@ mod tests {
                 enabled: true,
                 conversation_mode: ConversationMode::Independent,
                 notification_policy: NotificationPolicy::AllRuns,
+                task_request: json!({
+                    "schemaVersion": 2,
+                    "deviceId": "local-device",
+                    "runtimeProjectKey": "local:wework",
+                    "runtime": "codex",
+                    "message": "Summarize"
+                }),
                 task_payload: json!({"workspacePath": "/tmp"}),
                 continuation_payload: None,
                 next_run_at: None,
@@ -826,6 +836,13 @@ mod tests {
                 enabled: true,
                 conversation_mode: ConversationMode::Independent,
                 notification_policy: NotificationPolicy::AllRuns,
+                task_request: json!({
+                    "schemaVersion": 2,
+                    "deviceId": "local-device",
+                    "runtimeProjectKey": "local:wework",
+                    "runtime": "codex",
+                    "message": "Summarize"
+                }),
                 task_payload: json!({"workspacePath": "/tmp"}),
                 continuation_payload: None,
                 next_run_at: None,
@@ -836,7 +853,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(second.list().len(), 1);
-        assert_eq!(second.get(&automation.id).unwrap().name, "Shared");
+        let stored = second.get(&automation.id).unwrap();
+        assert_eq!(stored.name, "Shared");
+        assert_eq!(stored.task_request["schemaVersion"], 2);
+        assert_eq!(stored.task_request["runtimeProjectKey"], "local:wework");
         fs::remove_file(path).unwrap();
     }
 }

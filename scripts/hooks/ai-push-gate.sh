@@ -39,6 +39,169 @@ should_run_full_tests() {
     [ "${AI_PUSH_FULL_TESTS:-0}" = "1" ]
 }
 
+collect_wework_test_scope() {
+    WEWORK_RENDERER_CHANGED=0
+    WEWORK_RENDERER_FULL_TESTS=0
+    WEWORK_ELECTRON_CHANGED=0
+    WEWORK_DSH_CHANGED=0
+    WEWORK_SCRIPTS_CHANGED=0
+    WEWORK_RELATED_FILES=()
+
+    while IFS= read -r changed_file; do
+        [ -z "$changed_file" ] && continue
+
+        case "$changed_file" in
+            wework/electron/*)
+                WEWORK_ELECTRON_CHANGED=1
+                ;;
+            wework/dsh/*)
+                WEWORK_DSH_CHANGED=1
+                ;;
+            wework/scripts/*)
+                WEWORK_SCRIPTS_CHANGED=1
+                ;;
+            wework/src/*.[cm][jt]s|wework/src/*.[cm][jt]sx|wework/src/*.js|wework/src/*.jsx|wework/src/*.ts|wework/src/*.tsx)
+                WEWORK_RENDERER_CHANGED=1
+                if [ ! -e "$changed_file" ] ||
+                    [ "$changed_file" = "wework/src/test/setup.ts" ]; then
+                    WEWORK_RENDERER_FULL_TESTS=1
+                else
+                    WEWORK_RELATED_FILES+=("${changed_file#wework/}")
+                fi
+                ;;
+            wework/package.json)
+                WEWORK_RENDERER_CHANGED=1
+                ;;
+            wework/src/*|wework/wecode/*|wework/vite.config.*|wework/tsconfig*.json|wework/eslint.config.*)
+                WEWORK_RENDERER_CHANGED=1
+                WEWORK_RENDERER_FULL_TESTS=1
+                ;;
+        esac
+    done < <(printf '%s\n' "$CHANGED_FILES")
+}
+
+collect_node_test_files() {
+    local directory="$1"
+    find "$directory" -type f -name '*.test.mjs' -print 2>/dev/null | sort
+}
+
+append_unique_file() {
+    local candidate="$1"
+    local existing
+
+    for existing in "${WEWORK_FOCUSED_TEST_FILES[@]}"; do
+        [ "$existing" = "$candidate" ] && return
+    done
+    WEWORK_FOCUSED_TEST_FILES+=("$candidate")
+}
+
+collect_wework_renderer_tests() {
+    local source_file
+    local base_path
+    local candidate
+    local source_directory
+
+    WEWORK_FOCUSED_TEST_FILES=()
+
+    for source_file in "${WEWORK_RELATED_FILES[@]}"; do
+        case "$source_file" in
+            *.test.js|*.test.jsx|*.test.ts|*.test.tsx|*.test.mjs|*.test.mts)
+                append_unique_file "$source_file"
+                continue
+                ;;
+        esac
+
+        base_path="${source_file%.*}"
+        candidate=""
+        for test_suffix in test.ts test.tsx test.js test.jsx test.mts test.mjs; do
+            if [ -f "wework/$base_path.$test_suffix" ]; then
+                candidate="$base_path.$test_suffix"
+                break
+            fi
+        done
+
+        if [ -n "$candidate" ]; then
+            append_unique_file "$candidate"
+        else
+            source_directory=$(dirname "$source_file")
+            while IFS= read -r candidate; do
+                append_unique_file "$candidate"
+            done < <(
+                find "wework/$source_directory" -maxdepth 1 -type f \
+                    \( -name '*.test.js' -o -name '*.test.jsx' \
+                    -o -name '*.test.ts' -o -name '*.test.tsx' \
+                    -o -name '*.test.mjs' -o -name '*.test.mts' \) \
+                    -print 2>/dev/null |
+                    sed 's#^wework/##' |
+                    sort
+            )
+        fi
+    done
+}
+
+run_wework_unit_tests() {
+    local test_exit=0
+
+    : > "$TEMP_DIR/wework_test.log"
+
+    if [ "$WEWORK_RENDERER_CHANGED" -eq 1 ]; then
+        if [ "$WEWORK_RENDERER_FULL_TESTS" -eq 1 ]; then
+            echo -e "   Running full renderer unit tests with $WEWORK_TEST_WORKERS workers..."
+            if ! VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
+                pnpm --filter wework exec vitest run --dir src --pool=threads \
+                >> "$TEMP_DIR/wework_test.log" 2>&1; then
+                test_exit=1
+            fi
+        else
+            collect_wework_renderer_tests
+            if [ "${#WEWORK_FOCUSED_TEST_FILES[@]}" -gt 0 ]; then
+                echo -e "   Running focused renderer unit tests with $WEWORK_TEST_WORKERS workers..."
+                if ! VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
+                    pnpm --filter wework exec vitest run --pool=threads \
+                    "${WEWORK_FOCUSED_TEST_FILES[@]}" \
+                    >> "$TEMP_DIR/wework_test.log" 2>&1; then
+                    test_exit=1
+                fi
+            else
+                echo -e "   ${YELLOW}↪ Renderer unit tests: SKIPPED (no colocated tests)${NC}"
+            fi
+        fi
+    fi
+
+    if [ "$WEWORK_ELECTRON_CHANGED" -eq 1 ] && [ "$ELECTRON_INSTALL_EXIT" -eq 0 ]; then
+        echo -e "   Running Electron unit tests..."
+        if ! pnpm --dir wework/electron test >> "$TEMP_DIR/wework_test.log" 2>&1; then
+            test_exit=1
+        fi
+    fi
+
+    if [ "$WEWORK_DSH_CHANGED" -eq 1 ]; then
+        echo -e "   Running DSH unit tests..."
+        DSH_TEST_FILES=()
+        while IFS= read -r test_file; do
+            DSH_TEST_FILES+=("${test_file#wework/}")
+        done < <(collect_node_test_files "wework/dsh")
+        if ! pnpm --filter wework test \
+            "${DSH_TEST_FILES[@]}" >> "$TEMP_DIR/wework_test.log" 2>&1; then
+            test_exit=1
+        fi
+    fi
+
+    if [ "$WEWORK_SCRIPTS_CHANGED" -eq 1 ]; then
+        echo -e "   Running Wework script unit tests..."
+        SCRIPT_TEST_FILES=()
+        while IFS= read -r test_file; do
+            SCRIPT_TEST_FILES+=("${test_file#wework/}")
+        done < <(collect_node_test_files "wework/scripts")
+        if ! pnpm --filter wework test \
+            "${SCRIPT_TEST_FILES[@]}" >> "$TEMP_DIR/wework_test.log" 2>&1; then
+            test_exit=1
+        fi
+    fi
+
+    return "$test_exit"
+}
+
 resolve_default_base() {
     local remote_name="${1:-}"
     local candidate=""
@@ -384,27 +547,51 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         echo -e "   ${YELLOW}   Run 'pnpm install' from the repository root to install dependencies${NC}"
         WARNINGS+=("Wework: node_modules not found, checks skipped")
     else
-        echo -e "   Running ESLint and TypeScript in parallel..."
+        collect_wework_test_scope
+        echo -e "   Running static checks and unit tests in parallel..."
 
         pnpm --filter wework lint > "$TEMP_DIR/wework_eslint.log" 2>&1 &
         ESLINT_PID=$!
 
-        pnpm --filter wework typecheck > "$TEMP_DIR/wework_tsc.log" 2>&1 &
-        TSC_PID=$!
+        TSC_PID=""
+        ELECTRON_TSC_PID=""
+        TSC_EXIT=0
+        ELECTRON_TSC_EXIT=0
+
+        if [ "$WEWORK_RENDERER_CHANGED" -eq 1 ]; then
+            pnpm --filter wework typecheck > "$TEMP_DIR/wework_tsc.log" 2>&1 &
+            TSC_PID=$!
+        fi
+
+        if [ "$WEWORK_ELECTRON_CHANGED" -eq 1 ]; then
+            CI=true pnpm --filter wework run prepare:electron > "$TEMP_DIR/wework_electron_install.log" 2>&1
+            ELECTRON_INSTALL_EXIT=$?
+            if [ "$ELECTRON_INSTALL_EXIT" -eq 0 ]; then
+                pnpm --dir wework/electron typecheck > "$TEMP_DIR/wework_electron_tsc.log" 2>&1 &
+                ELECTRON_TSC_PID=$!
+            else
+                ELECTRON_TSC_EXIT=$ELECTRON_INSTALL_EXIT
+            fi
+        fi
+
+        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-4}"
+        run_wework_unit_tests &
+        WEWORK_TEST_PID=$!
 
         wait "$ESLINT_PID"
         ESLINT_EXIT=$?
 
-        wait "$TSC_PID"
-        TSC_EXIT=$?
+        if [ -n "$TSC_PID" ]; then
+            wait "$TSC_PID"
+            TSC_EXIT=$?
+        fi
 
-        # Vitest's jsdom workers are CPU and memory intensive. Let the suite use
-        # the machine after the static checks finish instead of making all three
-        # processes contend for the same resources.
-        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
-        echo -e "   Running unit tests with $WEWORK_TEST_WORKERS workers..."
-        VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
-            pnpm --filter wework test > "$TEMP_DIR/wework_test.log" 2>&1
+        if [ -n "$ELECTRON_TSC_PID" ]; then
+            wait "$ELECTRON_TSC_PID"
+            ELECTRON_TSC_EXIT=$?
+        fi
+
+        wait "$WEWORK_TEST_PID"
         TEST_EXIT=$?
 
         if [ $ESLINT_EXIT -eq 0 ]; then
@@ -416,13 +603,30 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_LOGS+=("$TEMP_DIR/wework_eslint.log")
         fi
 
-        if [ $TSC_EXIT -eq 0 ]; then
-            echo -e "   ${GREEN}✅ TypeScript: PASSED${NC}"
-        else
-            echo -e "   ${RED}❌ TypeScript: FAILED${NC}"
-            CHECK_FAILED=1
-            FAILED_CHECKS+=("Wework TypeScript")
-            FAILED_LOGS+=("$TEMP_DIR/wework_tsc.log")
+        if [ "$WEWORK_RENDERER_CHANGED" -eq 1 ]; then
+            if [ $TSC_EXIT -eq 0 ]; then
+                echo -e "   ${GREEN}✅ TypeScript: PASSED${NC}"
+            else
+                echo -e "   ${RED}❌ TypeScript: FAILED${NC}"
+                CHECK_FAILED=1
+                FAILED_CHECKS+=("Wework TypeScript")
+                FAILED_LOGS+=("$TEMP_DIR/wework_tsc.log")
+            fi
+        fi
+
+        if [ "$WEWORK_ELECTRON_CHANGED" -eq 1 ]; then
+            if [ $ELECTRON_TSC_EXIT -eq 0 ]; then
+                echo -e "   ${GREEN}✅ Electron TypeScript: PASSED${NC}"
+            else
+                echo -e "   ${RED}❌ Electron TypeScript: FAILED${NC}"
+                CHECK_FAILED=1
+                FAILED_CHECKS+=("Wework Electron TypeScript")
+                if [ "$ELECTRON_INSTALL_EXIT" -ne 0 ]; then
+                    FAILED_LOGS+=("$TEMP_DIR/wework_electron_install.log")
+                else
+                    FAILED_LOGS+=("$TEMP_DIR/wework_electron_tsc.log")
+                fi
+            fi
         fi
 
         if [ $TEST_EXIT -eq 0 ]; then

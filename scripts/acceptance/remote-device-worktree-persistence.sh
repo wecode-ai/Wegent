@@ -17,7 +17,8 @@ VOLUME_NAME="${WEGENT_ACCEPTANCE_VOLUME_NAME:-$CONTAINER_PREFIX-home}"
 KEEP_ARTIFACTS="${WEGENT_ACCEPTANCE_KEEP_ARTIFACTS:-0}"
 ALLOW_EXISTING_VOLUME="${WEGENT_ACCEPTANCE_ALLOW_EXISTING_VOLUME:-0}"
 EXECUTOR_HOME="/home/wegent/.wecode/wegent-executor"
-PROBE_TARGET="/opt/wegent-acceptance/executor-home-persistence-probe.sh"
+PROBE_TARGET_DIR="/opt/wegent-acceptance"
+PROBE_TARGET="$PROBE_TARGET_DIR/executor-home-persistence-probe.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PROBE_SCRIPT="$SCRIPT_DIR/executor-home-persistence-probe.sh"
 
@@ -30,6 +31,9 @@ done
     fail "logical device ID contains unsupported characters: $DEVICE_ID"
 }
 [ -x "$PROBE_SCRIPT" ] || fail "persistence probe is not executable: $PROBE_SCRIPT"
+for helper in executor-rpc-probe.py executor-persistence-json.py; do
+    [ -f "$SCRIPT_DIR/$helper" ] || fail "persistence probe helper is missing: $helper"
+done
 command -v "$DOCKER_BIN" >/dev/null 2>&1 || {
     fail "Docker CLI not found: $DOCKER_BIN"
 }
@@ -95,7 +99,7 @@ start_container() {
         -e WEGENT_ACCEPTANCE_VOLUME_ID="$VOLUME_ID" \
         -e WEGENT_ACCEPTANCE_PROBE_ID="$PROBE_ID" \
         --mount "type=volume,src=$VOLUME_NAME,dst=$EXECUTOR_HOME" \
-        --mount "type=bind,src=$PROBE_SCRIPT,dst=$PROBE_TARGET,readonly" \
+        --mount "type=bind,src=$SCRIPT_DIR,dst=$PROBE_TARGET_DIR,readonly" \
         "$image" \
         >/dev/null
 }

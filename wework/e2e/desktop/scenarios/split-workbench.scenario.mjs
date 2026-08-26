@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 
+import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPOSER = '[data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]'
 const FIRST_PROMPT = 'SPLIT LEFT TASK'
@@ -753,7 +755,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const readyCountBeforeReload = control.readyCount
       await control.command('reloadMainWindow', 'body')
       await control.awaitReadyAfter(readyCountBeforeReload)
-      await control.command('waitFor', PANE_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.workbench?.isBootstrapping === false &&
+          Number(snapshot.workbench?.runtimeWorkSummary?.totalTasks ?? 0) >= 2,
+        'Reloading did not finish bootstrapping both split tasks',
+        uiTimeoutMs
+      )
+      await waitForElementCount(control, PANE_SELECTOR, 2, uiTimeoutMs)
       assert.equal(
         Number(await control.command('getElementCount', PANE_SELECTOR)),
         2,

@@ -4,7 +4,6 @@ import { createPortal } from 'react-dom'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
@@ -209,7 +208,6 @@ export function WorkspaceTabStrip({
 }: WorkspaceTabStripProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
-  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const {
     tabs,
     activeTabId,
@@ -240,7 +238,7 @@ export function WorkspaceTabStrip({
   useOutsideMenu(Boolean(contextMenu), contextMenuRef, () => setContextMenu(null))
 
   useEffect(() => {
-    if (!addMenuPosition || !experimentalFeaturesEnabled) return
+    if (!addMenuPosition) return
     let cancelled = false
     void harnessAppsApi
       .list()
@@ -253,7 +251,7 @@ export function WorkspaceTabStrip({
     return () => {
       cancelled = true
     }
-  }, [addMenuPosition, experimentalFeaturesEnabled])
+  }, [addMenuPosition])
 
   useEffect(() => {
     if (tabs.length > 0 && visibleTabs.length === 0) {
@@ -391,7 +389,7 @@ export function WorkspaceTabStrip({
         >
           <Plus aria-hidden="true" className="h-4 w-4" />
         </button>
-        <div className="min-w-0 flex-1 self-stretch" data-tauri-drag-region />
+        <div className="electron-titlebar-drag-region min-w-0 flex-1 self-stretch" />
       </div>
       {addMenuPosition
         ? createPortal(
@@ -426,7 +424,7 @@ export function WorkspaceTabStrip({
                   {label}
                 </button>
               ))}
-              {availableKindSet.has('auxiliary') && experimentalFeaturesEnabled ? (
+              {availableKindSet.has('auxiliary') ? (
                 <>
                   {installedSmartApps.map(installation => (
                     <button

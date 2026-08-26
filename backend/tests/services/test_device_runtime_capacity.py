@@ -12,6 +12,7 @@ from app.schemas.device import DeviceHeartbeatPayload
 from app.services.device.capacity import (
     get_runtime_capacity,
     get_runtime_capacity_sync,
+    validate_runtime_capacity_observation_sync,
 )
 
 pytestmark = pytest.mark.unit
@@ -60,6 +61,30 @@ def test_sync_capacity_requires_matching_runtime_identity(
         )
 
     assert capacity is None
+
+
+def test_pull_capacity_uses_current_observation(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    _device(test_db, test_user)
+
+    capacity = validate_runtime_capacity_observation_sync(
+        test_db,
+        owner_user_id=test_user.id,
+        device_id="app-route",
+        runtime_instance_id="runtime-1",
+        runtime_capacity={
+            "limit": 4,
+            "active": 1,
+            "active_task_ids": ["manual-1"],
+            "queued": 2,
+        },
+    )
+
+    assert capacity is not None
+    assert (capacity.limit, capacity.active, capacity.queued) == (4, 1, 2)
+    assert capacity.active_task_ids == frozenset({"manual-1"})
 
 
 @pytest.mark.asyncio

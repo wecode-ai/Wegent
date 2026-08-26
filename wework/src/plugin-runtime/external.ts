@@ -1,5 +1,6 @@
-import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import type { Plugin } from '@deepseek-ai/cordis'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { normalizeBrowserUrl } from '@/lib/browser-url'
 
 import type { WorkbenchRouteRegistry } from './routes'
 import type { WorkbenchSlotRegistry } from './slots'
@@ -61,13 +62,13 @@ function createDesktopClient(plugin: InspectedWorkbenchPlugin): WorkbenchDesktop
   if (!plugin.manifest.desktop) return null
   return {
     authorize(capability) {
-      return invoke<boolean>('workbench_plugin_authorize_capability', {
+      return invokeDesktopHost<boolean>('plugins.authorizeCapability', {
         pluginRoot: plugin.root,
         capability,
       })
     },
     request<T>(capability: string, method: string, params: unknown = {}): Promise<T> {
-      return invoke<T>('workbench_plugin_request', {
+      return invokeDesktopHost<T>('plugins.request', {
         pluginId: plugin.manifest.name,
         capability,
         method,
@@ -75,13 +76,13 @@ function createDesktopClient(plugin: InspectedWorkbenchPlugin): WorkbenchDesktop
       })
     },
     start() {
-      return invoke<void>('workbench_plugin_start', {
+      return invokeDesktopHost<void>('plugins.start', {
         pluginId: plugin.manifest.name,
         pluginRoot: plugin.root,
       })
     },
     stop() {
-      return invoke<void>('workbench_plugin_stop', {
+      return invokeDesktopHost<void>('plugins.stop', {
         pluginId: plugin.manifest.name,
       })
     },
@@ -136,7 +137,12 @@ export class ExternalWorkbenchPluginLoader {
     const module =
       plugin.frontendPath && plugin.manifest.frontend
         ? resolveFrontendModule(
-            await this.importer(convertFileSrc(plugin.frontendPath)),
+            await this.importer(
+              normalizeBrowserUrl(plugin.frontendPath) ??
+                (() => {
+                  throw new Error(`Invalid plugin frontend path: ${plugin.frontendPath}`)
+                })()
+            ),
             plugin.manifest.frontend.export?.trim() || 'default'
           )
         : null
@@ -201,6 +207,5 @@ export class ExternalWorkbenchPluginLoader {
 }
 
 export async function listDeviceWorkbenchPlugins(): Promise<InspectedWorkbenchPlugin[]> {
-  if (!isTauri()) return []
-  return invoke<InspectedWorkbenchPlugin[]>('workbench_plugin_list')
+  return invokeDesktopHost<InspectedWorkbenchPlugin[]>('plugins.list')
 }

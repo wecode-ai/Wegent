@@ -3,6 +3,7 @@ import type { DeviceInfo } from '@/types/api'
 import {
   getExecutorOfflineDeviceId,
   getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceIds,
   findWorkbenchDevice,
   getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
@@ -89,23 +90,32 @@ describe('workbench-device', () => {
   })
 
   test('finds a device by its socket and runtime route aliases', () => {
-    const devices = [
-      createDevice({
-        device_id: 'logical-device',
-        socket_device_id: 'socket-device',
-        runtime_routes: [
-          {
-            kind: 'cloud-relay',
-            device_id: 'cloud-device',
-            runtime_device_id: 'runtime-device',
-            status: 'online',
-          },
-        ],
-      }),
-    ]
+    const device = createDevice({
+      device_id: 'logical-device',
+      app_device_id: 'app-device',
+      socket_device_id: 'socket-device',
+      runtime_instance_id: 'runtime-instance',
+      runtime_routes: [
+        {
+          kind: 'cloud-relay',
+          device_id: 'cloud-device',
+          runtime_device_id: 'runtime-device',
+          status: 'online',
+        },
+      ],
+    })
+    const devices = [device]
 
     expect(findWorkbenchDevice(devices, 'socket-device')?.device_id).toBe('logical-device')
     expect(findWorkbenchDevice(devices, 'runtime-device')?.device_id).toBe('logical-device')
+    expect(getWorkbenchDeviceIds(device)).toEqual([
+      'logical-device',
+      'app-device',
+      'socket-device',
+      'runtime-instance',
+      'cloud-device',
+      'runtime-device',
+    ])
   })
 
   test('uses the device IP for unavailable messages without exposing the device id', () => {

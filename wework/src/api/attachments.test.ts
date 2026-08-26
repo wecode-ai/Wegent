@@ -5,7 +5,6 @@ const originalCreateObjectUrl = URL.createObjectURL
 
 const httpMocks = vi.hoisted(() => ({
   createHttpClient: vi.fn(),
-  shouldUseTauriFetch: vi.fn(),
 }))
 
 vi.mock('@/config/runtime', () => ({
@@ -22,7 +21,6 @@ vi.mock('@/config/runtime', () => ({
 
 vi.mock('./http', () => ({
   createHttpClient: httpMocks.createHttpClient,
-  shouldUseTauriFetch: httpMocks.shouldUseTauriFetch,
 }))
 
 function mockClient(overrides = {}) {
@@ -39,7 +37,6 @@ function mockClient(overrides = {}) {
 describe('attachment API', () => {
   beforeEach(() => {
     httpMocks.createHttpClient.mockReset()
-    httpMocks.shouldUseTauriFetch.mockReset()
   })
 
   afterEach(() => {
@@ -47,8 +44,8 @@ describe('attachment API', () => {
     URL.createObjectURL = originalCreateObjectUrl
   })
 
-  test('uploads through the platform HTTP client in Tauri to avoid WebView CORS', async () => {
-    const post = vi.fn().mockResolvedValue({
+  test('uploads through XMLHttpRequest and preserves progress in Electron', async () => {
+    const response = {
       id: 7,
       filename: 'image.png',
       file_size: 5,
@@ -57,23 +54,39 @@ describe('attachment API', () => {
       text_length: null,
       error_message: null,
       error_code: null,
+    }
+    const open = vi.fn()
+    const send = vi.fn(function (this: XMLHttpRequest) {
+      this.upload.dispatchEvent(
+        new ProgressEvent('progress', { lengthComputable: true, loaded: 5, total: 5 })
+      )
+      Object.defineProperty(this, 'status', { configurable: true, value: 200 })
+      Object.defineProperty(this, 'responseText', {
+        configurable: true,
+        value: JSON.stringify(response),
+      })
+      this.dispatchEvent(new Event('load'))
     })
-    httpMocks.shouldUseTauriFetch.mockReturnValue(true)
-    httpMocks.createHttpClient.mockReturnValue(mockClient({ post }))
+    class XMLHttpRequestMock extends EventTarget {
+      upload = new EventTarget()
+      status = 0
+      responseText = ''
+      open = open
+      send = send
+      setRequestHeader = vi.fn()
+    }
+    vi.stubGlobal('XMLHttpRequest', XMLHttpRequestMock)
     URL.createObjectURL = vi.fn(() => 'blob:uploaded-image-preview')
     const progress = vi.fn()
     const file = new File(['image'], 'image.png', { type: 'image/png' })
 
     const attachment = await uploadAttachment(file, progress)
 
-    expect(httpMocks.createHttpClient).toHaveBeenCalledWith({
-      baseUrl: '/api',
-      getToken: expect.any(Function),
-    })
-    expect(post).toHaveBeenCalledWith('/attachments/upload', expect.any(FormData))
-    expect((post.mock.calls[0][1] as FormData).get('file')).toBe(file)
-    expect(progress).toHaveBeenNthCalledWith(1, 0)
-    expect(progress).toHaveBeenNthCalledWith(2, 100)
+    expect(open).toHaveBeenCalledWith('POST', '/api/attachments/upload')
+    expect(send).toHaveBeenCalledWith(expect.any(FormData))
+    expect((send.mock.calls[0][0] as FormData).get('file')).toBe(file)
+    expect(progress).toHaveBeenCalledOnce()
+    expect(progress).toHaveBeenCalledWith(100)
     expect(attachment).toMatchObject({
       id: 7,
       filename: 'image.png',

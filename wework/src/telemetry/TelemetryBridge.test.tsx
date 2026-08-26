@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   track: vi.fn(),
   updateAppPreferences: vi.fn().mockResolvedValue(undefined),
   officialRelease: true,
-  tauriRuntime: false,
+  electronRuntime: false,
 }))
 
 vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
@@ -20,11 +20,8 @@ vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: () => mocks.tauriRuntime,
-}))
-
-vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({ label: 'main' }),
+  getDesktopWindowLabel: () => 'main',
+  isElectronRuntime: () => mocks.electronRuntime,
 }))
 
 vi.mock('./client', () => ({
@@ -38,7 +35,7 @@ vi.mock('./config', () => ({
   isOfficialReleaseBuild: () => mocks.officialRelease,
 }))
 
-vi.mock('@/tauri/appPreferences', () => ({
+vi.mock('@/desktop/appPreferences', () => ({
   updateAppPreferences: mocks.updateAppPreferences,
 }))
 
@@ -52,7 +49,7 @@ describe('TelemetryBridge', () => {
     mocks.preferences.preferences.telemetryConsentAsked = true
     mocks.preferences.preferences.telemetryEnabled = true
     mocks.officialRelease = true
-    mocks.tauriRuntime = false
+    mocks.electronRuntime = false
   })
 
   it('initializes once and starts telemetry again after it is re-enabled', async () => {
@@ -113,7 +110,7 @@ describe('TelemetryBridge', () => {
 
   it('enables telemetry by default without prompting in development builds', async () => {
     mocks.officialRelease = false
-    mocks.tauriRuntime = true
+    mocks.electronRuntime = true
     mocks.preferences.preferences.telemetryConsentAsked = false
     mocks.preferences.preferences.telemetryEnabled = false
 

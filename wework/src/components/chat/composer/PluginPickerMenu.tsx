@@ -77,7 +77,7 @@ export function PluginPickerMenu({
   const [query, setQuery] = useState('')
   const [apps, setApps] = useState<LocalDeviceApp[]>(() => paintComposerApps(getComposerApps()))
   const hasCachedAppsRef = useRef(apps.length > 0)
-  const [loading, setLoading] = useState(() => Boolean(onListLocalApps) && apps.length === 0)
+  const [loading, setLoading] = useState(false)
   const [reloadToken, setReloadToken] = useState(0)
 
   const applySharedApps = (
@@ -129,17 +129,15 @@ export function PluginPickerMenu({
   useEffect(() => {
     let current = true
     let retryTimer: number | null = null
-    if (!onListLocalApps) return
-    if (!hasCachedAppsRef.current) setLoading(true)
+    if (!open || !onListLocalApps) return
 
     const applySharedOrRetry = (attempt: number) => {
       requestComposerAppsSync()
       if (applySharedApps()) return true
       hasCachedAppsRef.current = false
       setApps([])
-      // Install → notify can race ahead of plugin/installed. Retry whether the
-      // menu is open or closed so the toolbar does not stay empty after a
-      // transient cloud/list failure on first paint.
+      // Install → notify can race ahead of plugin/installed. Retry while the
+      // menu remains open so a transient first-paint failure can recover.
       if (attempt < 30) {
         retryTimer = window.setTimeout(() => load(attempt + 1), attempt < 6 ? 500 : 1000)
       }

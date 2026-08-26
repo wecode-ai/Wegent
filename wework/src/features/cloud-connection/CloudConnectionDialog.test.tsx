@@ -54,6 +54,29 @@ describe('CloudConnectionDialog', () => {
     expect(screen.getByTestId('cloud-backend-url-input')).toHaveValue('https://saved.example.com')
   })
 
+  it('starts cloud authorization when pressing Enter in the Backend URL input', async () => {
+    const connectWithAuthorization = vi.fn().mockResolvedValue(undefined)
+    const onClose = vi.fn()
+
+    renderDialog(
+      {
+        ...cloudConnection('https://saved.example.com'),
+        connectWithAuthorization,
+      },
+      onClose
+    )
+
+    await userEvent.click(screen.getByTestId('cloud-backend-url-input'))
+    await userEvent.keyboard('{Enter}')
+
+    expect(connectWithAuthorization).toHaveBeenCalledWith(
+      'https://saved.example.com',
+      expect.any(Function),
+      ''
+    )
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the optional Socket URL in collapsed advanced settings', async () => {
     const connection = {
       ...cloudConnection('https://saved.example.com'),

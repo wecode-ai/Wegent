@@ -1,6 +1,42 @@
 import '@testing-library/jest-dom/vitest'
 import { beforeEach } from 'vitest'
 
+const electronHostInvokePath = '/wework/electron-host/v1/invoke'
+const nativeFetch = globalThis.fetch.bind(globalThis)
+let testAppPreferences: Record<string, unknown> = {}
+
+function requestUrl(input: RequestInfo | URL): string {
+  return typeof input === 'string' || input instanceof URL ? String(input) : input.url
+}
+
+async function defaultElectronHostFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  if (requestUrl(input) !== electronHostInvokePath) {
+    return nativeFetch(input, init)
+  }
+
+  const request = JSON.parse(String(init?.body ?? '{}')) as {
+    capability?: string
+    params?: { patch?: Record<string, unknown> }
+  }
+  if (request.capability === 'preferences.get') {
+    return Response.json({ ok: true, result: { ...testAppPreferences } })
+  }
+  if (request.capability === 'preferences.update') {
+    testAppPreferences = {
+      ...testAppPreferences,
+      ...(request.params?.patch ?? {}),
+    }
+    return Response.json({ ok: true, result: { ...testAppPreferences } })
+  }
+
+  return nativeFetch(input, init)
+}
+
+globalThis.fetch = defaultElectronHostFetch
+
 if (typeof window.ClipboardEvent === 'undefined') {
   window.ClipboardEvent = Event as unknown as typeof ClipboardEvent
 }
@@ -146,6 +182,7 @@ installStorageGlobal('localStorage')
 installStorageGlobal('sessionStorage')
 
 beforeEach(() => {
+  testAppPreferences = {}
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,
     value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)',

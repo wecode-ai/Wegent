@@ -10,15 +10,11 @@ const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
 }))
 
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn().mockResolvedValue(vi.fn()),
-}))
-
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: () => true,
+  isElectronRuntime: () => true,
 }))
 
-vi.mock('@/tauri/executionEnvironments', () => ({
+vi.mock('@/desktop/executionEnvironments', () => ({
   installExecutionEnvironment: mocks.install,
   listExecutionEnvironments: mocks.list,
   removeExecutionEnvironment: mocks.remove,

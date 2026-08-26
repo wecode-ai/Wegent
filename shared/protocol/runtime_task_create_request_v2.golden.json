@@ -1,0 +1,125 @@
+{
+  "fullBackendProject": {
+    "schemaVersion": 2,
+    "projectId": 7,
+    "deviceWorkspaceId": 9,
+    "deviceId": "cloud-device-1",
+    "taskId": "runtime-contract-1",
+    "runtime": "codex",
+    "runtimePermissionMode": "plan",
+    "message": "Implement and verify the requested change",
+    "clientUserMessageId": "message-contract-1",
+    "title": "Runtime V2 contract",
+    "modelId": "moonshot-kimi-k2.7-code-highspeed",
+    "modelType": "public",
+    "modelOptions": {
+      "reasoningEffort": "high",
+      "collaborationMode": "default",
+      "weworkCloudModelNamespace": "default",
+      "weworkCloudModelResourceUserId": "0",
+      "weworkCloudModelUpstreamApiFormat": "openai-responses"
+    },
+    "modelSelection": {
+      "modelName": "moonshot-kimi-k2.7-code-highspeed",
+      "modelType": "public",
+      "options": {
+        "reasoningEffort": "high",
+        "collaborationMode": "default",
+        "weworkCloudModelNamespace": "default",
+        "weworkCloudModelResourceUserId": "0",
+        "weworkCloudModelUpstreamApiFormat": "openai-responses"
+      }
+    },
+    "projectInstructions": "Follow the repository contributor guide.",
+    "projectPlugins": [
+      {
+        "id": "github@openai",
+        "pluginName": "github",
+        "marketplaceId": "openai",
+        "displayName": "GitHub"
+      }
+    ],
+    "additionalSkills": [
+      {
+        "name": "project-space",
+        "namespace": "default",
+        "is_public": true
+      }
+    ],
+    "attachmentIds": [
+      11
+    ],
+    "attachments": [
+      {
+        "id": 11,
+        "filename": "requirements.md",
+        "file_size": 128,
+        "mime_type": "text/markdown",
+        "status": "ready",
+        "file_extension": "md",
+        "created_at": "2026-08-24T00:00:00Z"
+      }
+    ],
+    "execution": {
+      "workspace": {
+        "source": "git_worktree",
+        "branch": "fix/runtime-v2-contract"
+      }
+    },
+    "initialGoal": {
+      "objective": "Complete the implementation and verification",
+      "status": "active",
+      "tokenBudget": 100000
+    },
+    "initialSupervisor": {
+      "mode": "auto",
+      "instructions": "Check progress and correct deviations",
+      "modelSelection": {
+        "modelName": "moonshot-kimi-k2.7-code-highspeed",
+        "modelType": "public",
+        "options": {
+          "reasoningEffort": "medium",
+          "weworkCloudModelNamespace": "default",
+          "weworkCloudModelResourceUserId": "0",
+          "weworkCloudModelUpstreamApiFormat": "openai-responses"
+        }
+      },
+      "intervalSeconds": 60
+    },
+    "ephemeral": false,
+    "cloudProjectId": "700000000000000001",
+    "deliveryId": "00000000-0000-0000-0000-000000000001",
+    "origin": {
+      "type": "board_task",
+      "cloudProjectId": "700000000000000001",
+      "loopItemId": "issue-contract-1"
+    },
+    "additionalContext": {
+      "workflowStageInput": {
+        "kind": "application",
+        "value": "Stage input snapshot"
+      },
+      "externalIssue": {
+        "kind": "untrusted",
+        "value": "Untrusted external issue text"
+      }
+    }
+  },
+  "deviceProject": {
+    "schemaVersion": 2,
+    "deviceId": "local-device-1",
+    "runtimeProjectKey": "local:wegent",
+    "runtimeProjectName": "Wegent",
+    "runtimeWorkspaceRoots": [
+      "/workspace/Wegent"
+    ],
+    "taskId": "runtime-contract-2",
+    "runtime": "codex",
+    "message": "Run against the stable device project binding",
+    "modelId": "local-model",
+    "modelType": "runtime",
+    "modelOptions": {
+      "reasoningEffort": "medium"
+    }
+  }
+}

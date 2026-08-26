@@ -116,6 +116,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       rows,
       textareaRef,
       className,
+      nativeEmptyCaret = false,
       skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
       disableAutocomplete = false,
       onKeyDown,
@@ -158,12 +159,16 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     const appsSourceRef = useRef<typeof onListLocalApps>(undefined)
     const mountedRef = useRef(true)
     const editorRef = useRef<ComposerEditorHandle | null>(null)
+    const focusRequestExpiresAtRef = useRef(0)
     const valueRef = useRef(value)
 
     useImperativeHandle(
       ref,
       () => ({
-        focus: () => editorRef.current?.focus(),
+        focus: () => {
+          focusRequestExpiresAtRef.current = Date.now() + 2_000
+          editorRef.current?.focus()
+        },
         getValue: () => editorRef.current?.getSnapshot().value ?? valueRef.current,
         setValue: (nextValue, selectionOffset = nextValue.length) => {
           valueRef.current = nextValue
@@ -637,10 +642,6 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       },
       [loadLocalApps, loadLocalSkills]
     )
-
-    useEffect(() => {
-      loadLocalApps()
-    }, [loadLocalApps])
 
     useEffect(() => {
       // Publish whatever slash autocomplete is currently showing so the toolbar
@@ -1464,12 +1465,18 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
           }}
           onClick={() => updateAutocompleteTrigger()}
           onFocus={() => updateAutocompleteTrigger()}
+          onReady={() => {
+            if (focusRequestExpiresAtRef.current >= Date.now()) {
+              editorRef.current?.focus()
+            }
+          }}
           disabled={disabled}
           placeholder={placeholder}
           testId={testId}
           rows={rows}
           textareaRef={textareaRef}
           className={className}
+          nativeEmptyCaret={nativeEmptyCaret}
         />
         {showSkillMenu && (
           <ComposerMentionMenu

@@ -163,7 +163,7 @@ export function WorkspacePanelCards({
   )
   const localTerminalRuntimeAvailable = isLocalTerminalAvailable()
   const localTerminalCheckKey = [
-    localTerminalRuntimeAvailable ? 'tauri-macos' : 'unavailable',
+    localTerminalRuntimeAvailable ? 'electron' : 'unavailable',
     projectDevice?.device_id ?? '',
     projectDevice?.device_type ?? '',
     projectDevice?.bind_shell ?? '',

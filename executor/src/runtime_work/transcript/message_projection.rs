@@ -610,7 +610,12 @@ pub(super) fn collect_assistant_message(
                     ));
                 }
                 AssistantMessagePhase::Final => {
-                    if !duplicates_completed_plan_block(&content, &assistant.blocks) {
+                    if !duplicates_completed_plan_block(&content, &assistant.blocks)
+                        && !assistant
+                            .assistant_parts
+                            .iter()
+                            .any(|part| part.content == content)
+                    {
                         assistant.assistant_parts.push(AssistantTextPart {
                             id: item_id(item, "assistant-text"),
                             content,

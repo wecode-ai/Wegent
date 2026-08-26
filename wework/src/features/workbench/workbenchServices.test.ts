@@ -85,7 +85,8 @@ vi.mock('@/lib/runtime-mode', () => ({
 }))
 
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: vi.fn(() => true),
+  isDesktopRuntime: vi.fn(() => true),
+  isElectronRuntime: vi.fn(() => true),
 }))
 
 import { createDefaultWorkbenchServices } from './workbenchServices'

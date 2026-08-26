@@ -47,6 +47,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const flushTimeoutRef = useRef<number | null>(null)
   const flushFrameRef = useRef<number | null>(null)
   const composerRef = useRef<ChatInputHandle>(null)
+  const focusConsumerIdRef = useRef(Symbol('workbench-composer-focus'))
   const committedValueRef = useRef(value)
   const pendingChangeRef = useRef(onChange)
   const programmaticUpdateDepthRef = useRef(0)
@@ -62,11 +63,15 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     const focusRequestedComposer = (event: Event) => {
       const detail = (event as CustomEvent<WorkbenchComposerFocusDetail>).detail
       if (props.disabled || !scopeKey || detail?.scopeKey !== scopeKey) return
-      consumeWorkbenchComposerFocusRequest(scopeKey)
+      if (!consumeWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)) return
       focusComposer()
     }
     window.addEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
-    if (!props.disabled && scopeKey && consumeWorkbenchComposerFocusRequest(scopeKey)) {
+    if (
+      !props.disabled &&
+      scopeKey &&
+      consumeWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)
+    ) {
       focusComposer()
     }
     return () => {

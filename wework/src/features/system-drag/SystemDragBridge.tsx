@@ -1,14 +1,13 @@
 import { useEffect, useRef } from 'react'
-import { invoke } from '@tauri-apps/api/core'
-import { emitTo, listen } from '@tauri-apps/api/event'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { getAppPreferences, updateAppPreferences } from '@/tauri/appPreferences'
+import { getAppPreferences, updateAppPreferences } from '@/desktop/appPreferences'
 import {
   findRuntimeTask,
   findRuntimeTaskWorkspace,
 } from '@/features/workbench/workbenchRuntimeHelpers'
 import { resolveStoredWorkspacePaths } from '@/lib/workspace-path-transfer'
 import { applyWorkspacePathTransfer } from '@/components/chat/composer/composerPathTransfer'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 
 interface SystemDropPayload {
   action: 'new-chat' | 'follow-up' | 'stash'
@@ -29,31 +28,9 @@ export function SystemDragBridge() {
   }, [workbench])
 
   useEffect(() => {
-    void emitTo('system-drag-panel', 'wework-system-drag-context', {
-      conversationTitle: currentTask?.title ?? null,
-    }).catch(() => undefined)
+    const context = { conversationTitle: currentTask?.title ?? null }
+    void invokeDesktopHost('systemDrag.setContext', context)
   }, [currentTask?.title])
-
-  useEffect(() => {
-    let cancelled = false
-    let dispose: (() => void) | undefined
-    void listen('wework-system-drag-context-requested', () => {
-      const task = findRuntimeTask(
-        latest.current.state.runtimeWork,
-        latest.current.state.currentRuntimeTask
-      )
-      void emitTo('system-drag-panel', 'wework-system-drag-context', {
-        conversationTitle: task?.title ?? null,
-      })
-    }).then(unlisten => {
-      if (cancelled) unlisten()
-      else dispose = unlisten
-    })
-    return () => {
-      cancelled = true
-      dispose?.()
-    }
-  }, [])
 
   const apply = async (payload: SystemDropPayload, input = latest.current.projectChat.input) => {
     const current = latest.current
@@ -77,24 +54,11 @@ export function SystemDragBridge() {
       current.projectChat.setInput,
       current.projectChat.handleFileSelect
     )
-    void invoke('log_system_drag_debug', {
-      stage: 'main_files_loaded',
-      action: payload.action,
-      rawPathCount: payload.paths.length,
-      uniquePathCount: new Set(payload.paths).size,
-    })
   }
 
   useEffect(() => {
     let cancelled = false
-    let dispose: (() => void) | undefined
     const handlePayload = (payload: SystemDropPayload) => {
-      void invoke('log_system_drag_debug', {
-        stage: 'main_bridge_received',
-        action: payload.action,
-        rawPathCount: payload.paths.length,
-        uniquePathCount: new Set(payload.paths).size,
-      })
       if (payload.action === 'stash') {
         void getAppPreferences().then(preferences => {
           const createdAt = Date.now()
@@ -129,18 +93,15 @@ export function SystemDragBridge() {
       }
       void apply(payload)
     }
-    void invoke<SystemDropPayload[]>('take_pending_system_drag_drops').then(payloads => {
-      if (!cancelled) payloads.forEach(handlePayload)
-    })
-    void listen<SystemDropPayload>('wework-system-drag-drop', event => {
-      if (!cancelled) handlePayload(event.payload)
-    }).then(unlisten => {
-      if (cancelled) unlisten()
-      else dispose = unlisten
-    })
+    const takePending = () =>
+      invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending').then(payloads => {
+        if (!cancelled) payloads.forEach(handlePayload)
+      })
+    void takePending()
+    const poll = window.setInterval(() => void takePending(), 250)
     return () => {
       cancelled = true
-      dispose?.()
+      window.clearInterval(poll)
     }
   }, [])
 

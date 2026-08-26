@@ -9,6 +9,7 @@ the queue. The task row keeps the assignment chain; this table records each
 run's lifecycle (approval, queuing, capacity-gated claiming, lease, retries).
 """
 
+import json
 from datetime import datetime
 
 from sqlalchemy import (
@@ -168,9 +169,9 @@ class LoopItemExecution(Base):
         String(255), nullable=False, default="", server_default=""
     )
     runtime_task_id = Column(String(255), nullable=False, default="", server_default="")
-    # Kept for schema compatibility with existing installations. New
-    # executions compile requests from live configuration and never write a
-    # request or model credentials to this column.
+    # Stores the immutable, non-secret RuntimeTaskCreateRequest V2 intent plus
+    # queue selection metadata. Provider credentials are materialized only by
+    # the Local or Cloud compiler and are never persisted here.
     execution_payload = Column(Text, nullable=False, default="")
     version = Column(Integer, nullable=False, default=1, server_default="1")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -183,10 +184,13 @@ class LoopItemExecution(Base):
         # order + FIFO tie-break.
         Index(
             "idx_exec_device_status_order",
+            "executor_owner_user_id",
             "execution_device_id",
+            "execution_environment",
             "status",
             "priority_weight",
             "queued_at",
+            "id",
         ),
         Index("idx_exec_agent_status", "agent_id", "status"),
         Index("idx_exec_team_status", "team_id", "status"),
@@ -208,9 +212,49 @@ class LoopItemExecution(Base):
     def executor_type(self) -> str:
         """Return the transport role without persisting redundant state."""
 
+        configured = self.runtime_selection.get("executor_kind")
+        if configured in {"generic_robot", "automation_manager"}:
+            return str(configured)
         if self.agent_id:
             return "project_robot"
         return "wegent_team" if self.team_id else "automation_manager"
+
+    @property
+    def runtime_selection(self) -> dict:
+        """Return the non-secret Runtime selection intent."""
+
+        value = self.execution_intent
+        selection = value.get("runtime_selection")
+        if isinstance(selection, dict):
+            return selection
+        # V1 rows stored the selection dictionary directly.
+        return value
+
+    @property
+    def runtime_request(self) -> dict:
+        """Return the immutable producer request stored for this execution."""
+
+        request = self.execution_intent.get("runtime_request")
+        return request if isinstance(request, dict) else {}
+
+    @property
+    def runtime_origin_context(self) -> dict:
+        """Return the enqueue-time origin context used to build the request."""
+
+        context = self.execution_intent.get("origin_context")
+        return context if isinstance(context, dict) else {}
+
+    @property
+    def execution_intent(self) -> dict:
+        """Decode the persisted non-secret execution intent envelope."""
+
+        if not self.execution_payload:
+            return {}
+        try:
+            value = json.loads(self.execution_payload)
+        except (TypeError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
 
     @property
     def optional_team_id(self) -> int | None:

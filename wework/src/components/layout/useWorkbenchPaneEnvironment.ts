@@ -68,7 +68,13 @@ export function applySharedChangeRequestSnapshot(
   environmentInfo: EnvironmentInfo,
   snapshot: TaskChangeRequestSnapshot
 ): EnvironmentInfo {
-  if (snapshot.error && !snapshot.changeRequest) return environmentInfo
+  if (snapshot.error || snapshot.stale) return environmentInfo
+  if (
+    environmentInfo.changeRequest &&
+    ['unavailable', 'unauthenticated', 'error'].includes(environmentInfo.changeRequest.state)
+  ) {
+    return environmentInfo
+  }
   const provider = snapshot.changeRequest?.provider ?? environmentInfo.changeRequest?.provider
   if (!provider) return environmentInfo
   return {
@@ -81,6 +87,13 @@ export function applySharedChangeRequestSnapshot(
         }
       : { provider, state: 'not_found' },
   }
+}
+
+export function resolveEnvironmentExecutionDeviceId(
+  currentRuntimeTask: { deviceId: string } | null,
+  workspaceTarget: WorkspaceTarget | null
+): string | undefined {
+  return currentRuntimeTask?.deviceId || workspaceTarget?.deviceId
 }
 
 export function useWorkbenchPaneEnvironment({
@@ -468,10 +481,17 @@ export function useWorkbenchPaneEnvironment({
             devicesRef.current,
             latestActiveWorkspaceTarget?.deviceId ?? info.deviceId
           )
+          const executionDeviceId = resolveEnvironmentExecutionDeviceId(
+            currentRuntimeTask,
+            latestActiveWorkspaceTarget
+          )
+          const executionDevice = findWorkbenchDevice(devicesRef.current, executionDeviceId)
           logLoad(loading ? 'partial_published' : 'completed', {
             branchName: info.branchName,
             changeRequestState: info.changeRequest?.state,
             changeRequestNumber: info.changeRequest?.changeRequest?.number,
+            executionDeviceId,
+            workspaceDeviceId: actualDevice?.device_id,
           })
           setEnvironmentInfo(current => {
             const preserveCurrentFields =
@@ -490,10 +510,11 @@ export function useWorkbenchPaneEnvironment({
                 ? { changeRequest: current.changeRequest }
                 : {}),
               workspaceRoots,
-              executionTarget: actualDevice
-                ? isCloudDevice(actualDevice)
+              executionDeviceId,
+              executionTarget: executionDevice
+                ? isCloudDevice(executionDevice)
                   ? 'cloud'
-                  : isRemoteDevice(actualDevice)
+                  : isRemoteDevice(executionDevice)
                     ? 'remote'
                     : 'local'
                 : info.executionTarget,
@@ -528,6 +549,7 @@ export function useWorkbenchPaneEnvironment({
     [
       activeWorkspaceTarget?.deviceId,
       activeWorkspaceTarget?.path,
+      currentRuntimeTask,
       environmentWorkspaceReady,
       loadEnvironmentInfo,
       workspaceRoots,
@@ -536,10 +558,12 @@ export function useWorkbenchPaneEnvironment({
     ]
   )
 
-  const refreshEnvironmentInfo = useCallback(
-    () => loadCurrentEnvironmentInfo({ force: true, showLoading: true }),
-    [loadCurrentEnvironmentInfo]
-  )
+  const refreshEnvironmentInfo = useCallback(async () => {
+    await Promise.all([
+      loadCurrentEnvironmentInfo({ force: true, showLoading: true }),
+      changeRequestMonitor?.refresh({ shareInflight: false }),
+    ])
+  }, [changeRequestMonitor, loadCurrentEnvironmentInfo])
 
   useEffect(() => {
     if (!activeConversationProjectKey && !currentRuntimeTaskKey) return

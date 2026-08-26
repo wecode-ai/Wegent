@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
@@ -34,9 +34,10 @@ export function ChromeTitlebar({
   showFeedback = true,
   availableWorkspaceTabKinds,
 }: ChromeTitlebarProps) {
-  const isTauri = isTauriRuntime()
+  const isElectron = isElectronRuntime()
+  const isDesktop = isDesktopRuntime()
   const platform = getPlatform()
-  const feedbackSlotVisible = isTauri && platform === 'mac'
+  const feedbackSlotVisible = isDesktop && platform === 'mac'
   const fixedActionsWidth = showWorkspacePortals
     ? feedbackSlotVisible
       ? '6.75rem'
@@ -54,39 +55,41 @@ export function ChromeTitlebar({
       )}
     >
       {/* macOS: traffic light spacer (left) */}
-      {isTauri && platform === 'mac' && (
-        <div
-          className="w-[92px] shrink-0 self-stretch"
-          data-testid="macos-traffic-light-spacer"
-          data-tauri-drag-region
-        >
+      {isDesktop && platform === 'mac' && (
+        <div className="w-[92px] shrink-0 self-stretch" data-testid="macos-traffic-light-spacer">
           <MacOSTitleBarDragRegion />
         </div>
       )}
 
       {beforeTabs && (
-        <div data-testid="chrome-titlebar-before-tabs" className="mr-1 flex shrink-0 items-center">
+        <div
+          data-testid="chrome-titlebar-before-tabs"
+          className="electron-titlebar-interactive-region mr-1 flex shrink-0 items-center"
+        >
           {beforeTabs}
         </div>
       )}
 
       <WorkspaceTabStrip availableKinds={availableWorkspaceTabKinds} />
       {afterTabs && (
-        <div data-testid="chrome-titlebar-after-tabs" className="ml-3 flex shrink-0 items-center">
+        <div
+          data-testid="chrome-titlebar-after-tabs"
+          className="electron-titlebar-interactive-region ml-3 flex shrink-0 items-center"
+        >
           {afterTabs}
         </div>
       )}
 
-      {showWorkspacePortals && isTauri && <TitlebarExtensionSlot />}
+      {showWorkspacePortals && isDesktop && <TitlebarExtensionSlot />}
       {showWorkspacePortals && (
         <div
           data-testid="titlebar-right-workspace-zone"
           className="pointer-events-none absolute top-0 z-chrome flex h-full items-center"
           style={{
             right:
-              isTauri && platform === 'win'
+              isDesktop && platform === 'win'
                 ? `calc(138px + ${fixedActionsWidth})`
-                : isTauri && platform === 'linux'
+                : isDesktop && platform === 'linux'
                   ? `calc(138px + ${fixedActionsWidth})`
                   : fixedActionsWidth,
             width: 'var(--right-workspace-titlebar-width, auto)',
@@ -97,7 +100,7 @@ export function ChromeTitlebar({
             data-testid="titlebar-right-panel"
             className="pointer-events-auto relative flex min-w-0 flex-1 self-stretch items-center"
           >
-            {isTauri ? (
+            {isDesktop ? (
               <div data-testid="titlebar-right-panel-drag-region" className="absolute inset-0 z-0">
                 <MacOSTitleBarDragRegion className="h-full w-full" />
               </div>
@@ -115,14 +118,14 @@ export function ChromeTitlebar({
             <div
               id={TITLEBAR_ACTIONS_PORTAL_ID}
               data-testid="titlebar-actions"
-              className="pointer-events-auto flex h-full w-[5rem] shrink-0 items-center justify-end gap-1"
+              className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-[5rem] shrink-0 items-center justify-end gap-1"
             />
           )}
           {feedbackSlotVisible && (
             <div
               id={TITLEBAR_FEEDBACK_PORTAL_ID}
               data-testid="titlebar-feedback"
-              className="pointer-events-auto flex h-full w-7 shrink-0 items-center justify-center"
+              className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-7 shrink-0 items-center justify-center"
             >
               {showFeedback && <TopnavFeedbackButton />}
             </div>
@@ -131,18 +134,16 @@ export function ChromeTitlebar({
       )}
 
       {/* Linux: right spacer for native window controls */}
-      {isTauri && platform === 'linux' && (
-        <div className="w-[138px] shrink-0 self-stretch" data-tauri-drag-region>
+      {isDesktop && platform === 'linux' && (
+        <div className="electron-titlebar-drag-region w-[138px] shrink-0 self-stretch">
           <MacOSTitleBarDragRegion />
         </div>
       )}
 
       {/* Windows: custom window frame controls */}
-      {isTauri && platform === 'win' && (
-        <div
-          className="relative z-chrome w-[138px] shrink-0 self-stretch"
-          data-tauri-drag-region={false}
-        >
+      {((isDesktop && platform === 'win') ||
+        (isElectron && (platform === 'win' || platform === 'linux'))) && (
+        <div className="electron-titlebar-interactive-region relative z-chrome w-[138px] shrink-0 self-stretch">
           <WindowFrameControls className="h-full justify-end" />
         </div>
       )}

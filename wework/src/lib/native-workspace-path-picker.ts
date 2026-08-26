@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core'
-import { isTauriRuntime } from './runtime-environment'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { isDesktopRuntime } from './runtime-environment'
 
 export interface NativeWorkspacePath {
   path: string
@@ -13,20 +13,32 @@ export interface NativeWorkspacePathPickerOptions {
 }
 
 export function canOpenNativeWorkspacePathPicker(): boolean {
-  return isTauriRuntime()
+  return isDesktopRuntime()
 }
 
 export async function openNativeWorkspacePathPicker(
   initialDirectory?: string,
   options: NativeWorkspacePathPickerOptions = {}
 ): Promise<NativeWorkspacePath[]> {
-  if (!isTauriRuntime()) return []
-
-  const selected = await invoke<NativeWorkspacePath[]>('pick_workspace_paths', {
-    initialDirectory: initialDirectory?.trim() || null,
-    directoriesOnly: options.directoriesOnly ?? false,
-    multiple: options.multiple ?? true,
-    defaultToHome: options.defaultToHome ?? false,
-  })
-  return selected.filter(item => item.path.trim().length > 0)
+  const properties = [
+    options.directoriesOnly ? 'openDirectory' : 'openFile',
+    ...((options.multiple ?? true) ? ['multiSelections'] : []),
+    ...(options.directoriesOnly ? ['createDirectory'] : []),
+  ]
+  const selected = await invokeDesktopHost<{ canceled: boolean; filePaths: string[] }>(
+    'dialog.open',
+    {
+      defaultPath: initialDirectory?.trim() || undefined,
+      properties,
+    }
+  )
+  if (selected.canceled) return []
+  return Promise.all(
+    selected.filePaths.map(async path => {
+      const metadata = await invokeDesktopHost<{ isDirectory: boolean }>('filesystem.stat', {
+        path,
+      })
+      return { path, isDirectory: metadata.isDirectory }
+    })
+  )
 }
