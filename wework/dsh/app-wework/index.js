@@ -1,5 +1,5 @@
 import { createReadStream, readFileSync } from 'node:fs'
-import { readFile, stat } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
@@ -11,6 +11,7 @@ export const inject = ['webServer']
 export const APP_BASE_PATH = '/wework/app'
 const API_PROXY_PATH = '/wework/api'
 const SOCKET_PROXY_PATH = '/wework/socket.io'
+const DEEP_LINK_PARAMETER = '__wework_route'
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), 'web')
 const indexPath = join(webRoot, 'index.html')
 
@@ -82,9 +83,8 @@ export async function serveWeworkApp(req, res) {
     res.end()
     return
   }
-  const pathname = decodeURIComponent(
-    new URL(req.url ?? APP_BASE_PATH, 'http://localhost').pathname
-  )
+  const requestUrl = new URL(req.url ?? APP_BASE_PATH, 'http://localhost')
+  const pathname = decodeURIComponent(requestUrl.pathname)
   const relativePath = pathname.slice(APP_BASE_PATH.length).replace(/^\/+/, '')
   if (relativePath === 'runtime-config.js') {
     const body = runtimeConfigScript(
@@ -117,17 +117,11 @@ export async function serveWeworkApp(req, res) {
   }
 
   if (asset === indexPath) {
-    const body = injectRuntimeConfig(
-      await readFile(indexPath, 'utf8'),
-      process.env,
-      desktopWindowLabel(req.headers['x-wework-window-label'])
-    )
-    res.writeHead(200, {
-      'content-type': MIME_TYPES['.html'],
+    res.writeHead(302, {
       'cache-control': 'no-store',
-      'content-length': Buffer.byteLength(body),
+      location: coreDshDeepLinkLocation(requestUrl),
     })
-    res.end(req.method === 'HEAD' ? undefined : body)
+    res.end()
     return
   }
 
@@ -142,6 +136,16 @@ export async function serveWeworkApp(req, res) {
     return
   }
   createReadStream(asset).pipe(res)
+}
+
+export function coreDshDeepLinkLocation(value) {
+  const requestUrl = value instanceof URL ? value : new URL(value, 'http://localhost')
+  const location = new URL('/', 'http://localhost')
+  location.searchParams.set(
+    DEEP_LINK_PARAMETER,
+    `${requestUrl.pathname}${requestUrl.search}${requestUrl.hash}`
+  )
+  return `${location.pathname}${location.search}`
 }
 
 export function injectRuntimeConfig(html, environment = process.env, windowLabel = 'main') {
@@ -199,9 +203,17 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       'VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS'
     ),
   })
-  return `window.__WEWORK_RUNTIME_CONFIG__=${escapeJsonForHtml(
+  return `${restoreDeepLinkScript()}window.__WEWORK_RUNTIME_CONFIG__=${escapeJsonForHtml(
     runtimeConfig
   )};window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__=${escapeJsonForHtml(desktopE2EConfig)}`
+}
+
+function restoreDeepLinkScript() {
+  return `(()=>{const value=new URLSearchParams(window.location.search).get(${JSON.stringify(
+    DEEP_LINK_PARAMETER
+  )});if(!value)return;try{const target=new URL(value,window.location.origin);const base=${JSON.stringify(
+    APP_BASE_PATH
+  )};if(target.origin===window.location.origin&&(target.pathname===base||target.pathname.startsWith(base+'/'))){window.history.replaceState(window.history.state,'',target.pathname+target.search+target.hash)}}catch{}})();`
 }
 
 export function weworkIndexAssets(html) {

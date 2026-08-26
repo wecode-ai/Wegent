@@ -68,6 +68,7 @@ export interface CoreDshRuntime {
 
 export interface CoreDshLaunch {
   command: string
+  entry: string
   args: string[]
   cwd: string
   dshHome: string
@@ -105,6 +106,7 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
   })
   return {
     command: nodeCommand,
+    entry: runtime.entry,
     args: embeddedNodeArguments(options.environment, [
       runtime.entry,
       '--profile',

@@ -79,6 +79,28 @@ describe('CoreDshPluginManager', () => {
     await fixture.remove()
   })
 
+  test('uses Electron embedded Node arguments for plugin commands', async () => {
+    const runCommand = vi.fn(async () => ({ stdout: '', stderr: '' }))
+    const fixture = await createFixture({
+      environment: { ELECTRON_RUN_AS_NODE: '1' },
+      runCommand,
+    })
+
+    await fixture.manager().update('dsh-alpha')
+
+    const pnpmCall = runCommand.mock.calls.find(([, args]) => args.includes('update'))
+    expect(pnpmCall?.[1].slice(0, 2)).toEqual([
+      '--expose-internals',
+      join(fixture.runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'),
+    ])
+    const preflightCall = runCommand.mock.calls.find(([, args]) => args.includes('--dump-config'))
+    expect(preflightCall?.[1].slice(0, 2)).toEqual([
+      '--expose-internals',
+      join(fixture.runtimeRoot, 'dsh.js'),
+    ])
+    await fixture.remove()
+  })
+
   test('parses only the exact pnpm git build matcher', () => {
     expect(
       parseBlockedBuildMatcher(
@@ -91,6 +113,7 @@ describe('CoreDshPluginManager', () => {
 
 async function createFixture(
   options: {
+    environment?: NodeJS.ProcessEnv
     runCommand?: (
       command: string,
       args: string[],
@@ -163,7 +186,7 @@ async function createFixture(
         runtimeRoot,
         dshEntry: join(runtimeRoot, 'dsh.js'),
         nodeCommand: process.execPath,
-        environment: {},
+        environment: options.environment ?? {},
         runCommand:
           options.runCommand ??
           (async () => ({

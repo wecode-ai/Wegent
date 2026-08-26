@@ -196,7 +196,7 @@ export class DesktopRuntime {
       this.coreDshPlugins = new CoreDshPluginManager({
         dshHome: launch.dshHome,
         runtimeRoot: launch.cwd,
-        dshEntry: launch.args[0],
+        dshEntry: launch.entry,
         nodeCommand: launch.command,
         environment: launch.environment,
       })

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { join, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
-import * as tar from 'tar'
 
 const MARKER_NAME = 'e2e-component-update.marker'
 
@@ -27,16 +27,7 @@ export async function createDesktopScenario({ electronUserDataDirectory, resultD
     recursive: true,
   })
   await writeFile(join(source, MARKER_NAME), 'component update activated\n')
-  await tar.c(
-    {
-      cwd: source,
-      file: archive,
-      gzip: true,
-      mtime: new Date(0),
-      portable: true,
-    },
-    ['.']
-  )
+  await createTarArchive(source, archive)
   const archiveBytes = await readFile(archive)
   const archiveSha256 = sha256(archiveBytes)
   const contentSha256 = await hashTree(source)
@@ -220,4 +211,26 @@ async function fileSha256(path) {
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
+}
+
+function createTarArchive(source, archive) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn('tar', ['-czf', archive, '-C', source, '.'], {
+      env: {
+        ...process.env,
+        COPYFILE_DISABLE: '1',
+      },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    })
+    let stderr = ''
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', chunk => {
+      stderr += chunk
+    })
+    child.once('error', reject)
+    child.once('exit', code => {
+      if (code === 0) resolvePromise()
+      else reject(new Error(`tar exited with code ${code ?? 'unknown'}: ${stderr.trim()}`))
+    })
+  })
 }
