@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 
 const PROFILE_NAME = 'wework-core'
 const NATIVE_PROVIDER = '@wework-e2e/native-dsh-provider'
@@ -165,7 +166,6 @@ async function assertReleasePackageResources() {
   const [components] = await Promise.all([
     readFile(join(resourcesRoot, 'components.json'), 'utf8').then(JSON.parse),
     readFile(join(resourcesRoot, 'harness-runtime', 'runtimes.json')),
-    readFile(join(resourcesRoot, 'node-runtime', 'runtime.json')),
     readFile(join(resourcesRoot, 'codex', 'WEGENT_CODEX_BINARY.json')),
     readFile(join(resourcesRoot, 'wework-core-plugins', 'wework-app', 'package.json')),
     readFile(
@@ -181,7 +181,6 @@ async function assertReleasePackageResources() {
     'coreDsh',
     'electron',
     'executor',
-    'node',
     'weworkCorePlugins',
   ])
   for (const component of Object.values(components.components)) {
@@ -209,6 +208,7 @@ export async function createDesktopScenario({ electronUserDataDirectory, resultD
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await verifyEmbeddedNodeSkillRuntime(electronUserDataDirectory, resultDir)
       await control.command('waitFor', 'body[data-native-dsh-provider-loaded]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -250,4 +250,48 @@ export async function createDesktopScenario({ electronUserDataDirectory, resultD
       }
     },
   }
+}
+
+async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
+  const binDirectory = join(userDataDirectory, 'managed-runtimes', 'electron-node', 'bin')
+  const skillScript = join(resultDir, 'embedded-node-skill.ts')
+  await writeFile(
+    skillScript,
+    'const runtime: string = `electron-node:${process.versions.node}`\nconsole.log(runtime)\n'
+  )
+  const output = await runNodeSkill(skillScript, binDirectory)
+  assert.match(
+    output,
+    /^electron-node:\d+\.\d+\.\d+$/m,
+    'A Codex skill TypeScript script did not run through Electron embedded Node'
+  )
+}
+
+function runNodeSkill(script, binDirectory) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn('node', [script], {
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+        PATH: `${binDirectory}${delimiter}${process.env.PATH ?? ''}`,
+      },
+      shell: process.platform === 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', chunk => {
+      stdout += chunk
+    })
+    child.stderr.on('data', chunk => {
+      stderr += chunk
+    })
+    child.once('error', reject)
+    child.once('exit', code => {
+      if (code === 0) resolvePromise(stdout.trim())
+      else reject(new Error(`Embedded Node skill script failed (${code}): ${stderr.trim()}`))
+    })
+  })
 }

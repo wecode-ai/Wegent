@@ -1144,9 +1144,9 @@ async function main() {
       ...(harnessRuntimes
         ? {
             WEWORK_HARNESS_RUNTIME_ROOT: harnessRuntimes.harnessRuntimeRoot,
-            WEWORK_NODE_RUNTIME_ROOT: harnessRuntimes.nodeRuntimeRoot,
           }
         : {}),
+      ...(desktopScenario?.appEnvironment ?? {}),
       ...(RUNS_PLUGIN_E2E
         ? {
             GIT_CONFIG_COUNT: '1',
@@ -3877,6 +3877,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     await blockingNetworkProxy?.stop()
     await stopDesktopAppProcess(app)
     await control.close()
+    await desktopScenario?.cleanup?.()
     await rm(codexSqliteHome, { recursive: true, force: true })
     if (appBundlePath && process.platform === 'darwin') {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])

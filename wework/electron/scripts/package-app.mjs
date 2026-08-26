@@ -71,7 +71,6 @@ const applications = await packager({
   },
   extraResource: [
     join(electronRoot, 'resources', 'harness-runtime'),
-    join(electronRoot, 'resources', 'node-runtime'),
     join(electronRoot, 'resources', 'bin'),
     join(electronRoot, 'resources', 'bundled-plugins'),
     join(sharedResourcesRoot, 'icons'),

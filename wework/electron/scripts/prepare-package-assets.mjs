@@ -35,7 +35,6 @@ const [executorPath] = await Promise.all([
     ? Promise.resolve(resolve(configuredExecutorPath))
     : buildExecutor(executorProfile),
   run(pnpmCommand, ['prepare:harness-runtime', '--materialize'], weworkRoot),
-  run(pnpmCommand, ['prepare:execution-runtime', '--materialize'], weworkRoot),
 ])
 
 await rm(resourcesRoot, { recursive: true, force: true })
@@ -60,11 +59,6 @@ await writeFile(
   { mode: 0o600 }
 )
 await cp(
-  join(weworkRoot, 'node_modules', '.cache', 'execution-runtime-node-dev'),
-  join(resourcesRoot, 'node-runtime'),
-  { recursive: true }
-)
-await cp(
   join(sharedResourcesRoot, 'bundled-plugins', 'wework-personal'),
   join(resourcesRoot, 'bundled-plugins', 'wework-personal'),
   { recursive: true }
@@ -86,9 +80,6 @@ const packagedExecutor = join(resourcesRoot, 'bin', executorName)
 await cp(executorPath, packagedExecutor)
 if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
 const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
-const nodeRuntime = JSON.parse(
-  await readFile(join(resourcesRoot, 'node-runtime', 'runtime.json'), 'utf8')
-)
 const codexRuntime = JSON.parse(
   await readFile(join(codexResources, 'WEGENT_CODEX_BINARY.json'), 'utf8')
 )
@@ -98,13 +89,9 @@ await writeFile(
     {
       schemaVersion: 1,
       appVersion: electronPackage.version,
+      channel: process.env.VITE_WEWORK_RELEASE_CHANNEL?.trim() || 'development',
       components: {
         electron: { version: electronPackage.devDependencies.electron },
-        node: {
-          version: nodeRuntime.version,
-          path: 'node-runtime',
-          sha256: await hashTree(join(resourcesRoot, 'node-runtime')),
-        },
         coreDsh: {
           version: packagedRuntimes.find(runtime => runtime.role === 'core')?.dshVersion,
           path: 'harness-runtime',

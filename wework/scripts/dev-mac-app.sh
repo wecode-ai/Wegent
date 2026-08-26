@@ -31,7 +31,6 @@ Environment:
   WEWORK_USER_DATA_DIR             Electron user data. Defaults to a directory isolated by worktree.
   WEWORK_DEV_EXECUTOR_PATH         Executor command. Defaults to the source sidecar.
   WEWORK_DEV_HARNESS_RUNTIME_ROOT  Harness runtime. Defaults to the worktree runtime.
-  WEWORK_DEV_NODE_PATH             Node runtime. Defaults to the worktree runtime.
   WEWORK_DEV_CODEX_BINARY          Codex binary. Defaults to the repository-locked binary.
   WEWORK_DEV_DWS_BINARY            DWS binary. Defaults to the repository-prepared binary.
   WEWORK_DRY_RUN=1                 Print the resolved launch configuration without starting.
@@ -170,7 +169,6 @@ else
   )"
 fi
 export WEWORK_HARNESS_RUNTIME_ROOT="${WEWORK_DEV_HARNESS_RUNTIME_ROOT:-$WEWORK_DIR/node_modules/.cache/harness-runtime-dev}"
-export WEWORK_NODE_PATH="${WEWORK_DEV_NODE_PATH:-$WEWORK_DIR/node_modules/.cache/execution-runtime-node-dev/bin/node}"
 
 if [ -n "${WEWORK_DEV_CODEX_BINARY:-}" ]; then
   export CODEX_BINARY_PATH="$WEWORK_DEV_CODEX_BINARY"
@@ -195,7 +193,6 @@ print_configuration() {
   echo "  WEGENT_EXECUTOR_BINARY=${WEGENT_EXECUTOR_BINARY:-<managed by command>}"
   echo "  WEGENT_EXECUTOR_HOME=${WEGENT_EXECUTOR_HOME:-<release app default>}"
   echo "  WEWORK_HARNESS_RUNTIME_ROOT=$WEWORK_HARNESS_RUNTIME_ROOT"
-  echo "  WEWORK_NODE_PATH=$WEWORK_NODE_PATH"
   echo "  CODEX_BINARY_PATH=$CODEX_BINARY_PATH"
   echo "  DWS_BINARY_PATH=$DWS_BINARY_PATH"
 }
@@ -220,7 +217,6 @@ if [ -z "${WEWORK_DEV_CODEX_BINARY:-}" ]; then
   WEWORK_CODEX_TARGET="$MACOS_TARGET" pnpm run prepare:codex
 fi
 WEWORK_DWS_TARGET="$MACOS_TARGET" pnpm run prepare:dws
-pnpm run prepare:execution-runtime -- --materialize
 pnpm run prepare:harness-runtime -- --materialize
 
 if [ "$MANAGED_SOURCE_EXECUTOR" = "true" ]; then
@@ -238,11 +234,6 @@ if [ ! -x "$DWS_BINARY_PATH" ]; then
   echo "Error: DWS binary is not executable: $DWS_BINARY_PATH" >&2
   exit 1
 fi
-if [ ! -x "$WEWORK_NODE_PATH" ]; then
-  echo "Error: Node runtime is not executable: $WEWORK_NODE_PATH" >&2
-  exit 1
-fi
-
 if [ "${#ELECTRON_ARGS[@]}" -gt 0 ]; then
   pnpm --dir electron dev -- "${ELECTRON_ARGS[@]}"
 else
