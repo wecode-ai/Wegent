@@ -35,7 +35,9 @@ WeWork_<version>_linux_x64.AppImage
 Electron releases use `electron-updater` and the `latest*.yml` or `beta*.yml`
 files in the rolling `wework-updater` Release. Before installing a downloaded
 update, Wework shuts down its local runtime and then restarts into the new
-version.
+version. A channel that has not published an Electron release may omit its YAML
+manifest; the client treats that state as no available update rather than a
+network failure. Other update-check failures remain visible.
 
 The same release also emits signed manifests and artifacts for the legacy Tauri
 updater so installed Tauri builds can migrate through the existing Update UI:
@@ -107,3 +109,8 @@ beta releases advance only beta. The workflow installs the dependencies owned
 by `wework/electron`, prepares bundled sidecars, and calls the unified Electron
 build command. Desktop resource changes belong in `wework/resources/` or the
 Electron packaging scripts, not in a duplicated workflow resource list.
+
+A rolling channel may skip an equal-version upload only when both Electron YAML
+manifests and all three legacy Tauri JSON manifests exist. The workflow repairs
+an incomplete equal version and fails for an incomplete newer version instead
+of overwriting it with an older release.
