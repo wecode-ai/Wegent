@@ -6477,6 +6477,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         projectId: 7,
         deviceWorkspaceId: 11,
+        deviceId: 'device-1',
         message: '修复 CI',
         initialGoal: {
           objective: '修复 CI',
@@ -7429,6 +7430,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         projectId: 7,
         deviceWorkspaceId: 22,
+        deviceId: 'device-1',
         message: '修复 CI',
       })
     )
@@ -7493,6 +7495,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         projectId: 7,
         deviceWorkspaceId: 22,
+        deviceId: 'remote-device',
         message: '修复 CI',
       })
     )
