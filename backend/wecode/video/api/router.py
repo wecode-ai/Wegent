@@ -22,7 +22,9 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import Response, StreamingResponse
+from sqlalchemy.orm import Session
 
+from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
 from app.models.user import User
@@ -56,6 +58,27 @@ HOP_BY_HOP_HEADERS = {
 }
 
 logger = logging.getLogger(__name__)
+
+
+def _get_media_user(
+    request: Request,
+    token: str | None = Depends(security.oauth2_scheme_optional),
+    db: Session = Depends(get_db),
+) -> User:
+    """Authenticate native media requests through a header or same-origin cookie."""
+    effective_token = token or request.cookies.get("auth_token")
+    user = (
+        security.get_current_user_from_token(effective_token, db)
+        if effective_token
+        else None
+    )
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
 
 
 def _user_uid(current_user: User) -> str:
@@ -210,7 +233,7 @@ def aigc_video_health(
 async def aigc_video_playback(
     video_url: str = Query(..., min_length=1),
     range_header: str | None = Header(None, alias="Range"),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_get_media_user),
 ) -> StreamingResponse:
     """Refresh the anti-hotlink signature before browser-native playback."""
     del current_user
@@ -238,7 +261,7 @@ async def aigc_video_playback(
 @router.get("/media/image")
 async def aigc_video_image(
     image_url: str = Query(..., min_length=1),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_get_media_user),
 ) -> StreamingResponse:
     """Proxy allowlisted storyboard images with a browser-safe content type."""
     del current_user
