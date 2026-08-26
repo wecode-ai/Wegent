@@ -1,21 +1,23 @@
-// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export type GenerationStatus = 0 | 1 | 2 | 3 | 9 | 10
+/**
+ * Storyboard types - 分镜相关类型定义
+ */
 
 export interface VideoClip {
   id: number
-  generation_status: GenerationStatus
+  generation_status: 0 | 1 | 2 | 3 | 9 | 10
   progress: number
   model_video_url: string
   video_cover_url: string
   media_id: string
   duration: number
   error_message: string | null
-  task_uuid?: string | null
-  subtitle_srt?: string
-  volume?: number
+  task_uuid?: string | null // 进行中的视频生成任务UUID，用于恢复轮询
+  subtitle_srt?: string // SRT format subtitles for this video clip
+  volume?: number // Clip volume in composition, 0-1, default 1
 }
 
 export interface StoryboardVideoVersion extends VideoClip {
@@ -27,10 +29,11 @@ export interface StoryboardVideoVersion extends VideoClip {
   source?: string
   create_time: string
   created_at?: string
+  createTime?: string
   is_selected: boolean
-  enabled?: boolean
-  trim_start?: number | null
-  trim_end?: number | null
+  enabled?: boolean // Whether this version is active in composition preview
+  trim_start?: number | null // Trim start in seconds from backend
+  trim_end?: number | null // Trim end in seconds from backend
 }
 
 export interface Storyboard {
@@ -63,7 +66,7 @@ export interface Storyboard {
   has_pending_video_generation?: boolean
   pending_video_clip_id?: number | null
   estimated_video_credit_cost?: number | null
-  task_uuid?: string | null
+  task_uuid?: string | null // 进行中的任务UUID，用于恢复轮询
   create_time: string
   update_time: string
 }
@@ -86,6 +89,11 @@ export interface StoryboardUpdateData {
   mood?: string
   camera_notes?: string
   duration_seconds?: number
+  voiceover?: {
+    character_id: string
+    text: string
+    duration_seconds: number
+  }
   dialogue?: string
   audio_sfx?: string
 }
@@ -111,14 +119,17 @@ export interface TaskStatusResponse {
     percentage?: number
     stage?: string
   }
+  result?: Record<string, unknown>
   error?: string
 }
 
-export type VideoGenerateResponse =
+// 单分镜视频生成响应类型
+export type SingleVideoGenerateResponse =
   | {
       action: 'free_generate' | 'charged_generate'
       task_uuid: string
       message: string
+      created_at?: string
     }
   | {
       action: 'confirm_charge'
@@ -130,8 +141,10 @@ export type VideoGenerateResponse =
       action: 'insufficient_credits' | 'billing_error'
       message: string
       credit_cost?: number
+      balance?: Record<string, unknown>
     }
 
+// 单分镜视频生成请求参数
 export interface GenerateSingleVideoParams {
   storyboard_id: number
   task_id: number

@@ -6,8 +6,11 @@ import { apiClient } from '@/apis/client'
 import type { ScriptDetail } from './types'
 
 export const scriptApi = {
-  getScript(scriptId: number): Promise<ScriptDetail> {
-    return apiClient.get<ScriptDetail>(`/aigc-video/api/v2/scripts/${scriptId}`)
+  getScript(scriptId: number, options?: { shareToken?: string }): Promise<ScriptDetail> {
+    const query = options?.shareToken
+      ? `?share_token=${encodeURIComponent(options.shareToken)}`
+      : ''
+    return apiClient.get<ScriptDetail>(`/aigc-video/api/v2/scripts/${scriptId}${query}`)
   },
 
   updateDraftScript(
