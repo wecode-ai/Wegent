@@ -41,14 +41,14 @@ export function StoryboardVersionSelector({
     >
       <SelectTrigger
         aria-label="分镜视频版本"
-        className="h-[22px] w-auto min-w-[97px] gap-[4px] rounded-none border-0 bg-transparent p-0 text-[14px] leading-[22px] text-[#636363] focus:ring-0 focus:ring-offset-0 [&>svg]:h-[14px] [&>svg]:w-[14px] [&>svg]:text-[#939393]"
+        className="h-[22px] w-auto min-w-[97px] gap-[4px] rounded-none border-0 bg-transparent p-0 text-[14px] leading-[22px] text-[#636363] focus:ring-0 focus:ring-offset-0 [&>svg]:h-[14px] [&>svg]:w-[14px] [&>svg]:text-text-muted"
         style={{ fontFamily: "'PingFang TC', sans-serif" }}
       >
         {currentVersion ? (
           <span className="flex items-center">
             <span className="text-[14px] text-[#636363]">历史V{currentVersion.version_no}</span>
             {getVersionTimestamp(currentVersion) && (
-              <span className="ml-1 text-[14px] text-[#939393]">
+              <span className="ml-1 text-[14px] text-text-muted">
                 {formatRelativeTime(getVersionTimestamp(currentVersion))}
               </span>
             )}
@@ -68,18 +68,18 @@ export function StoryboardVersionSelector({
             <SelectItem
               key={version.id}
               value={version.id.toString()}
-              className={`relative h-auto min-h-[38px] px-[10px] py-[9px] text-[14px] text-[#333333] rounded-[6px] ${isSelected ? 'bg-[#F5F5F5]' : ''} data-[highlighted]:bg-[#F5F5F5] [&>span:first-child]:hidden`}
+              className={`relative h-auto min-h-[38px] px-[10px] py-[9px] text-[14px] text-text-primary rounded-[6px] ${isSelected ? 'bg-muted' : ''} data-[highlighted]:bg-muted [&>span:first-child]:hidden`}
               style={{ fontFamily: "'PingFang SC', sans-serif" }}
             >
               <span className="flex flex-col justify-center pr-6">
                 <span>历史V{version.version_no}</span>
-                <span className="text-[12px] text-[#939393]">
+                <span className="text-[12px] text-text-muted">
                   {formatRelativeTime(getVersionTimestamp(version))}
                 </span>
               </span>
               {isSelected && (
                 <span className="absolute right-[10px] top-1/2 flex h-[14px] w-[14px] -translate-y-1/2 items-center justify-center">
-                  <Check className="h-[14px] w-[14px] text-[#333333]" strokeWidth={2} />
+                  <Check className="h-[14px] w-[14px] text-text-primary" strokeWidth={2} />
                 </span>
               )}
             </SelectItem>

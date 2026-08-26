@@ -168,7 +168,7 @@ export function ImageLightbox({
           aria-label={prevAriaLabel}
           title="Previous (←)"
         >
-          <ArrowLeftIcon className="h-6 w-6 text-[#333333]" />
+          <ArrowLeftIcon className="h-6 w-6 text-text-primary" />
         </button>
       ) : null}
 
@@ -183,7 +183,7 @@ export function ImageLightbox({
           aria-label={nextAriaLabel}
           title="Next (→)"
         >
-          <ArrowRightIcon className="h-6 w-6 text-[#333333]" />
+          <ArrowRightIcon className="h-6 w-6 text-text-primary" />
         </button>
       ) : null}
 

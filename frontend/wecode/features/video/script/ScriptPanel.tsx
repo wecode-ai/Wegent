@@ -15,6 +15,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { scriptApi } from './api'
 import type { ScriptDetail } from './types'
+import videoThemeStyles from '../components/videoTheme.module.css'
 
 interface MarkdownChildrenProps {
   children?: ReactNode
@@ -22,37 +23,41 @@ interface MarkdownChildrenProps {
 
 const scriptMarkdownComponents = {
   h1: ({ children }: MarkdownChildrenProps) => (
-    <h1 className="!mb-[34px] !mt-0 !text-[30px] !font-medium !leading-[34px] !text-[#333333]">
+    <h1 className="!mb-[34px] !mt-0 !text-[30px] !font-medium !leading-[34px] !text-text-primary">
       {children}
     </h1>
   ),
   h2: ({ children }: MarkdownChildrenProps) => (
-    <h2 className="!mb-7 !mt-7 !text-2xl !font-medium !leading-7 !text-[#333333]">{children}</h2>
+    <h2 className="!mb-7 !mt-7 !text-2xl !font-medium !leading-7 !text-text-primary">{children}</h2>
   ),
   h3: ({ children }: MarkdownChildrenProps) => (
-    <h3 className="!mb-4 !mt-6 !text-base !font-medium !leading-6 !text-[#333333]">{children}</h3>
+    <h3 className="!mb-4 !mt-6 !text-base !font-medium !leading-6 !text-text-primary">
+      {children}
+    </h3>
   ),
   h4: ({ children }: MarkdownChildrenProps) => (
-    <h4 className="!mb-3 !mt-5 !text-sm !font-medium !leading-5 !text-[#333333]">{children}</h4>
+    <h4 className="!mb-3 !mt-5 !text-sm !font-medium !leading-5 !text-text-primary">{children}</h4>
   ),
   p: ({ children }: MarkdownChildrenProps) => (
-    <p className="!mb-3 !text-[15px] !leading-7 !text-[#333333]">{children}</p>
+    <p className="!mb-3 !text-[15px] !leading-7 !text-text-primary">{children}</p>
   ),
   ul: ({ children }: MarkdownChildrenProps) => (
-    <ul className="!mb-3 !list-disc !pl-6 !text-[15px] !leading-7 !text-[#333333]">{children}</ul>
+    <ul className="!mb-3 !list-disc !pl-6 !text-[15px] !leading-7 !text-text-primary">
+      {children}
+    </ul>
   ),
   ol: ({ children }: MarkdownChildrenProps) => (
-    <ol className="!mb-3 !list-decimal !pl-6 !text-[15px] !leading-7 !text-[#333333]">
+    <ol className="!mb-3 !list-decimal !pl-6 !text-[15px] !leading-7 !text-text-primary">
       {children}
     </ol>
   ),
   li: ({ children }: MarkdownChildrenProps) => <li className="!mb-1">{children}</li>,
   strong: ({ children }: MarkdownChildrenProps) => (
-    <strong className="!font-medium !text-[#333333]">{children}</strong>
+    <strong className="!font-medium !text-text-primary">{children}</strong>
   ),
-  hr: () => <hr className="!my-7 !border-0 !border-t !border-[#eeeeee]" />,
+  hr: () => <hr className="!my-7 !border-0 !border-t !border-border" />,
   blockquote: ({ children }: MarkdownChildrenProps) => (
-    <blockquote className="!my-4 !border-l-2 !border-[#ff8200] !pl-4 !text-[15px] !leading-7 !text-[#666666]">
+    <blockquote className="!my-4 !border-l-2 !border-[#ff8200] !pl-4 !text-[15px] !leading-7 !text-text-secondary">
       {children}
     </blockquote>
   ),
@@ -137,7 +142,10 @@ export function ScriptPanel({ scriptId, onClose, children }: ScriptPanelProps) {
   const validUpdatedAt = updatedAt && !Number.isNaN(updatedAt.getTime()) ? updatedAt : null
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col" data-testid="video-script-panel">
+    <div
+      className={`flex h-full min-h-0 w-full flex-col ${videoThemeStyles.panel}`}
+      data-testid="video-script-panel"
+    >
       <div className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
         <div className="min-w-0">
           <h3 className="truncate text-sm font-medium text-text-primary">

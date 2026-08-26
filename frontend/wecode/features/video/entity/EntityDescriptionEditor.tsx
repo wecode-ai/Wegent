@@ -105,7 +105,7 @@ export function EntityDescriptionEditor({
           <button
             type="button"
             onClick={onCancel}
-            className="text-xs text-[#333333] transition-colors hover:bg-black/10"
+            className="text-xs text-text-primary transition-colors hover:bg-black/10"
             style={{
               backgroundColor: 'rgba(51, 51, 51, 0.06)',
               padding: '3px 14px',

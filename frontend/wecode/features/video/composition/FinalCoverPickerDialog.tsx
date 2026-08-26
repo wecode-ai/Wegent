@@ -12,6 +12,7 @@ import type { FinalVideoCover } from '../script/types'
 import type { CompositionClip } from './types'
 import { VideoFilmstripSelector } from './VideoFilmstrip'
 import { getClipSourceDuration } from './utils'
+import videoThemeStyles from '../components/videoTheme.module.css'
 
 interface FinalCoverPickerDialogProps {
   open: boolean
@@ -176,17 +177,17 @@ export function FinalCoverPickerDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="!fixed left-[50%] top-[50%] z-[2147483646] flex flex-col gap-0 overflow-hidden rounded-[12px] border-0 bg-white p-0 text-[#333333] shadow-[0_4px_8.75px_0_rgba(182,182,182,0.25)]"
+        className={`!fixed left-[50%] top-[50%] z-[2147483646] flex flex-col gap-0 overflow-hidden rounded-[12px] border-0 p-0 shadow-[0_4px_8.75px_0_rgba(182,182,182,0.25)] ${videoThemeStyles.panel}`}
         hideCloseButton
         style={{ width: '1000px', height: '700px', maxWidth: 'none' }}
       >
-        <DialogHeader className="relative flex-shrink-0 h-[54px] flex flex-row items-center justify-between px-6 border-b border-[#f2f2f2]">
-          <DialogTitle className="text-[15px] font-medium text-[#000000]">封面设计</DialogTitle>
+        <DialogHeader className="relative flex-shrink-0 h-[54px] flex flex-row items-center justify-between px-6 border-b border-border">
+          <DialogTitle className="text-[15px] font-medium text-text-primary">封面设计</DialogTitle>
           <button
             type="button"
             aria-label="Close"
             onClick={() => onOpenChange(false)}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-[#939393] transition-opacity hover:text-[#333333] focus:outline-none"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-text-muted transition-opacity hover:text-text-primary focus:outline-none"
           >
             <X className="h-4 w-4" />
           </button>
@@ -235,7 +236,7 @@ export function FinalCoverPickerDialog({
                     draggable={false}
                   />
                 ) : (
-                  <div className="text-center text-sm text-[#939393]">点击下方时间轴选择封面</div>
+                  <div className="text-center text-sm text-text-muted">点击下方时间轴选择封面</div>
                 )}
               </div>
             </div>
@@ -357,7 +358,7 @@ export function FinalCoverPickerDialog({
           >
             <button
               type="button"
-              className="inline-flex items-center justify-center gap-1 rounded-md border border-[#e1e1e1] bg-white px-3 py-1.5 text-sm font-normal text-[#333333] disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-1 rounded-md border border-[#e1e1e1] bg-white px-3 py-1.5 text-sm font-normal text-text-primary disabled:opacity-50"
               onClick={() => onOpenChange(false)}
               disabled={isSubmitting}
             >

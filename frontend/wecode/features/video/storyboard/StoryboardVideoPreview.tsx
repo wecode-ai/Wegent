@@ -288,7 +288,7 @@ export function StoryboardVideoPreview({
             <rect x="7.5" y="10.5" width="1" height="1" fill="white" />
           </svg>
           <span
-            className="text-[15px] text-[#333333]"
+            className="text-[15px] text-text-primary"
             style={{ fontFamily: "'PingFang SC', sans-serif", lineHeight: '100%' }}
           >
             {t('video_generation_failed')}
@@ -477,7 +477,7 @@ export function StoryboardVideoPreview({
         />
       ) : (
         <div
-          className="flex items-center justify-center text-sm text-[#939393]"
+          className="flex items-center justify-center text-sm text-text-muted"
           style={{ height: imageHeight }}
         >
           {t('no_image')}

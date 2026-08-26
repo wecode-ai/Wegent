@@ -517,7 +517,7 @@ function TimeRuler({
 
   return (
     <div
-      className="relative cursor-default select-none bg-[#FBFBFB]"
+      className="relative cursor-default select-none bg-surface"
       style={{ height: RULER_HEIGHT, width: timelineWidth }}
       onMouseDown={handleMouseDown}
     >
@@ -1085,7 +1085,7 @@ function AudioWaveformTrack({
     <button
       type="button"
       data-timeline-selectable="bgm"
-      className="relative h-full w-full overflow-hidden rounded-lg bg-[#FBFBFB] text-left"
+      className="relative h-full w-full overflow-hidden rounded-lg bg-surface text-left"
       style={{ cursor: hoverCursor }}
       onClick={e => {
         if (!hasDraggedRef.current) {
@@ -1416,7 +1416,7 @@ export function ClipTimeline({
             <>
               <button
                 type="button"
-                className="flex h-5 w-5 items-center justify-center rounded-md text-[#333333] transition-colors hover:bg-[#f5f5f7] hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-30"
+                className="flex h-5 w-5 items-center justify-center rounded-md text-text-primary transition-colors hover:bg-[#f5f5f7] hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-30"
                 onClick={onUndo}
                 disabled={!canUndo}
                 title="撤销 (Ctrl+Z)"
@@ -1444,7 +1444,7 @@ export function ClipTimeline({
               </button>
               <button
                 type="button"
-                className="flex h-5 w-5 items-center justify-center rounded-md text-[#333333] transition-colors hover:bg-[#f5f5f7] hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-30"
+                className="flex h-5 w-5 items-center justify-center rounded-md text-text-primary transition-colors hover:bg-[#f5f5f7] hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-30"
                 onClick={onRedo}
                 disabled={!canRedo}
                 title="重做 (Ctrl+Y)"
@@ -1480,11 +1480,11 @@ export function ClipTimeline({
         >
           <button
             type="button"
-            className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-[#f2f2f2] text-[#333333] transition-colors hover:bg-[#e5e5e5]"
+            className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-[#f2f2f2] text-text-primary transition-colors hover:bg-[#e5e5e5]"
             onClick={() => handleSetPixelsPerSecond(pixelsPerSecond / TIMELINE_ZOOM_BUTTON_RATIO)}
             title="缩小时间线"
           >
-            <Minus className="h-3 w-3 text-[#333333]" />
+            <Minus className="h-3 w-3 text-text-primary" />
             <span className="sr-only">缩小</span>
           </button>
           <CompactSlider
@@ -1500,23 +1500,23 @@ export function ClipTimeline({
           />
           <button
             type="button"
-            className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-[#f2f2f2] text-[#333333] transition-colors hover:bg-[#e5e5e5]"
+            className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-[#f2f2f2] text-text-primary transition-colors hover:bg-[#e5e5e5]"
             onClick={() => handleSetPixelsPerSecond(pixelsPerSecond * TIMELINE_ZOOM_BUTTON_RATIO)}
             title="放大时间线"
           >
-            <Plus className="h-3 w-3 text-[#333333]" />
+            <Plus className="h-3 w-3 text-text-primary" />
             <span className="sr-only">放大</span>
           </button>
         </div>
       </div>
       <section
-        className="w-full min-w-0 max-w-full flex-1 overflow-hidden rounded-sm border-x border-t border-border bg-[#FBFBFB] flex flex-col"
+        className="w-full min-w-0 max-w-full flex-1 overflow-hidden rounded-sm border-x border-t border-border bg-surface flex flex-col"
         aria-label="Timeline"
       >
         <TooltipProvider delayDuration={300}>
           <div className="relative flex min-w-0 max-w-full overflow-hidden flex-1">
             <div
-              className="flex-shrink-0 self-stretch border-r border-border bg-[#FBFBFB]"
+              className="flex-shrink-0 self-stretch border-r border-border bg-surface"
               style={{ width: TRACK_LABEL_WIDTH }}
             >
               <div
@@ -1532,7 +1532,7 @@ export function ClipTimeline({
                     <div className="flex items-center gap-1.5">
                       <IconVideo className="h-4 w-4" />
                       <span
-                        className="text-[14px] text-[#333333] leading-[18px] whitespace-nowrap"
+                        className="text-[14px] text-text-primary leading-[18px] whitespace-nowrap"
                         style={{ fontFamily: "'PingFang SC', -apple-system, sans-serif" }}
                       >
                         视频
@@ -1558,7 +1558,7 @@ export function ClipTimeline({
                     <div className="flex items-center gap-1.5">
                       <IconSubtitle className="h-4 w-4" />
                       <span
-                        className="text-[14px] text-[#333333] leading-[18px] whitespace-nowrap"
+                        className="text-[14px] text-text-primary leading-[18px] whitespace-nowrap"
                         style={{ fontFamily: "'PingFang SC', -apple-system, sans-serif" }}
                       >
                         字幕
@@ -1584,7 +1584,7 @@ export function ClipTimeline({
                     <div className="flex items-center gap-1.5">
                       <IconAudio className="h-4 w-4" />
                       <span
-                        className="text-[14px] text-[#333333] leading-[18px] whitespace-nowrap"
+                        className="text-[14px] text-text-primary leading-[18px] whitespace-nowrap"
                         style={{ fontFamily: "'PingFang SC', -apple-system, sans-serif" }}
                       >
                         音频
@@ -1647,7 +1647,7 @@ export function ClipTimeline({
                           <>
                             <PencilEditIcon className="h-4 w-4" />
                             <span
-                              className="text-[12px] text-[#333333]"
+                              className="text-[12px] text-text-primary"
                               style={{ fontFamily: "'PingFang SC', -apple-system, sans-serif" }}
                             >
                               封面
@@ -1833,7 +1833,7 @@ export function ClipTimeline({
             </div>
           </div>
           {timelineHasHorizontalOverflow && (
-            <div className="flex border-t border-border bg-[#FBFBFB]">
+            <div className="flex border-t border-border bg-surface">
               <div
                 className="flex-shrink-0 border-r border-border"
                 style={{ width: TRACK_LABEL_WIDTH }}

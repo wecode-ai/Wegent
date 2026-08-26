@@ -56,6 +56,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { scriptApi } from '../script/api'
 import { getAigcVideoImageUrl, getAigcVideoPlaybackUrl } from '../aigc_video/mediaUrls'
+import videoThemeStyles from '../components/videoTheme.module.css'
 
 interface CompositionEditorProps {
   scriptId: number
@@ -1350,11 +1351,11 @@ export function CompositionEditor({
   return (
     <div
       data-testid="video-composition-editor"
-      className="flex h-full w-full min-w-0 max-w-full flex-col overflow-hidden p-1 bg-[linear-gradient(180deg,rgb(var(--color-bg-base))_0%,rgb(var(--color-bg-surface))_100%)] text-text-primary"
+      className={`flex h-full w-full min-w-0 max-w-full flex-col overflow-hidden p-1 bg-[linear-gradient(180deg,rgb(var(--color-bg-base))_0%,rgb(var(--color-bg-surface))_100%)] text-text-primary ${videoThemeStyles.panel}`}
       style={{ fontFamily: "'PingFang SC', -apple-system, sans-serif" }}
     >
       {/* Top action bar */}
-      <div className="flex flex-shrink-0 items-center justify-between border-b border-border/80 bg-[#FFFFFF] px-5 h-12 shadow-[0_1px_0_rgba(15,23,42,0.03)]">
+      <div className="flex flex-shrink-0 items-center justify-between border-b border-border/80 bg-base px-5 h-12 shadow-[0_1px_0_rgba(15,23,42,0.03)]">
         <div className="flex min-w-0 items-center gap-3">
           <button
             className="flex items-center gap-1 text-sm text-text-secondary hover:text-text-primary h-8 min-w-[44px]"
@@ -1403,7 +1404,7 @@ export function CompositionEditor({
       <div className="flex min-h-0 min-w-0 flex-1 mt-1 gap-1 overflow-hidden">
         {/* Left: Preview */}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden border border-border/80 bg-[#FFFFFF] shadow-[0_18px_60px_rgba(15,23,42,0.04)]">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden border border-border/80 bg-base shadow-[0_18px_60px_rgba(15,23,42,0.04)]">
             <div className="min-h-0 flex-1 px-4 pt-4 pb-0">
               <CompositionPreview
                 clips={clips}
@@ -1434,7 +1435,7 @@ export function CompositionEditor({
 
         {/* Right: Inspector */}
         <div style={{ width: 426 }} className="flex-shrink-0">
-          <div className="h-full overflow-hidden border border-border/80 bg-[#FFFFFF] shadow-[0_18px_60px_rgba(15,23,42,0.03)]">
+          <div className="h-full overflow-hidden border border-border/80 bg-base shadow-[0_18px_60px_rgba(15,23,42,0.03)]">
             <ClipInspector
               clip={inspectorClip}
               clipIndex={inspectorClipIndex}
@@ -1484,7 +1485,7 @@ export function CompositionEditor({
           borderBottomStyle: 'solid',
           borderBottomColor: 'rgba(228, 228, 228, 0.8)',
         }}
-        className="flex-shrink-0 overflow-hidden border border-border/80 bg-[#FFFFFF] shadow-[0_-18px_60px_rgba(15,23,42,0.04)] mt-1"
+        className="flex-shrink-0 overflow-hidden border border-border/80 bg-base shadow-[0_-18px_60px_rgba(15,23,42,0.04)] mt-1"
       >
         <ClipTimeline
           clips={clips}

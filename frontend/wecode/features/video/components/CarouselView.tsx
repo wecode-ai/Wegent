@@ -180,7 +180,7 @@ export function CarouselView({
             style={{ width: titleRowWidth }}
           >
             <h3
-              className="text-[15px] text-[#333333] leading-[1.53] text-center"
+              className="text-[15px] text-text-primary leading-[1.53] text-center"
               style={{ fontFamily: "'PingFang TC', sans-serif" }}
             >
               {title}
@@ -207,7 +207,7 @@ export function CarouselView({
               onClick={onPrev}
               className="absolute left-0 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white flex items-center justify-center z-10 shadow-[0_2px_8.75px_0_rgba(160,160,160,0.25)] hover:shadow-[0_2px_8.75px_0_rgba(160,160,160,0.35)] active:shadow-[0_1px_4px_0_rgba(160,160,160,0.25)] focus-visible:outline-none transition-shadow"
             >
-              <ArrowLeftIcon className="w-6 h-6 text-[#333333]" />
+              <ArrowLeftIcon className="w-6 h-6 text-text-primary" />
             </button>
           )}
 
@@ -239,7 +239,7 @@ export function CarouselView({
                   height: isMobile && !useResponsiveMobileMediaFrame ? '100%' : displayHeight,
                 }}
               >
-                <Loader2 className="w-8 h-8 animate-spin text-[#939393]" />
+                <Loader2 className="w-8 h-8 animate-spin text-text-muted" />
               </div>
             ) : renderMedia ? (
               useResponsiveMobileMediaFrame ? (
@@ -270,8 +270,8 @@ export function CarouselView({
               <div
                 className={
                   useResponsiveMobileMediaFrame
-                    ? 'absolute inset-0 flex items-center justify-center text-sm text-[#939393]'
-                    : 'flex items-center justify-center text-sm text-[#939393] w-full h-full'
+                    ? 'absolute inset-0 flex items-center justify-center text-sm text-text-muted'
+                    : 'flex items-center justify-center text-sm text-text-muted w-full h-full'
                 }
               >
                 {t('no_content')}
@@ -311,7 +311,7 @@ export function CarouselView({
                     <rect x="7.5" y="10.5" width="1" height="1" fill="white" />
                   </svg>
                   <span
-                    className="text-[15px] text-[#333333]"
+                    className="text-[15px] text-text-primary"
                     style={{ fontFamily: "'PingFang SC', sans-serif", lineHeight: '100%' }}
                   >
                     {mediaType === 'video'
@@ -329,7 +329,7 @@ export function CarouselView({
               onClick={onNext}
               className="absolute right-0 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white flex items-center justify-center z-10 shadow-[0_2px_8.75px_0_rgba(160,160,160,0.25)] hover:shadow-[0_2px_8.75px_0_rgba(160,160,160,0.35)] active:shadow-[0_1px_4px_0_rgba(160,160,160,0.25)] focus-visible:outline-none transition-shadow"
             >
-              <ArrowRightIcon className="w-6 h-6 text-[#333333]" />
+              <ArrowRightIcon className="w-6 h-6 text-text-primary" />
             </button>
           )}
         </div>
@@ -341,9 +341,9 @@ export function CarouselView({
               onClick={onEditStart}
               className="flex items-center gap-[2px] px-3 py-1.5 rounded-[20px] active:bg-[#f0f1f2] transition-colors [@media(hover:hover)]:hover:bg-[#f0f1f2]"
             >
-              <EditIcon className="w-4 h-4 text-[#333333]" />
+              <EditIcon className="w-4 h-4 text-text-primary" />
               <span
-                className="text-sm text-[#333333]"
+                className="text-sm text-text-primary"
                 style={{ fontFamily: "'PingFang SC', sans-serif" }}
               >
                 {t('edit')}
@@ -355,10 +355,10 @@ export function CarouselView({
               className="flex items-center gap-[3px] px-3 py-1.5 rounded-[20px] active:bg-[#f0f1f2] transition-colors disabled:opacity-50 [@media(hover:hover)]:hover:bg-[#f0f1f2]"
             >
               <RegenerateIcon
-                className={`w-4 h-4 text-[#333333] ${isRegenerating ? 'animate-spin' : ''}`}
+                className={`w-4 h-4 text-text-primary ${isRegenerating ? 'animate-spin' : ''}`}
               />
               <span
-                className="text-sm text-[#333333]"
+                className="text-sm text-text-primary"
                 style={{ fontFamily: "'PingFang SC', sans-serif" }}
               >
                 {t('regenerate')}
@@ -370,9 +370,9 @@ export function CarouselView({
                 disabled={isReplacing}
                 className="flex items-center gap-[3px] px-3 py-1.5 rounded-[20px] active:bg-[#f0f1f2] transition-colors disabled:opacity-50 [@media(hover:hover)]:hover:bg-[#f0f1f2]"
               >
-                <ReplaceImageIcon className="w-4 h-4 text-[#333333]" />
+                <ReplaceImageIcon className="w-4 h-4 text-text-primary" />
                 <span
-                  className="text-sm text-[#333333]"
+                  className="text-sm text-text-primary"
                   style={{ fontFamily: "'PingFang SC', sans-serif" }}
                 >
                   {mediaType === 'video' ? t('replace_video') : t('replace_image')}

@@ -13,7 +13,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Loader2 } from 'lucide-react'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { CarouselView } from '@wecode/features/video/components/CarouselView'
 import {
   storyboardApis,
@@ -39,6 +39,7 @@ import {
   hasSuccessfulSelectedStoryboardVersion,
 } from './generationAvailability'
 import { getAigcVideoImageUrl } from '../aigc_video/mediaUrls'
+import videoThemeStyles from '../components/videoTheme.module.css'
 
 interface StoryboardPanelProps {
   scriptId: number
@@ -1175,8 +1176,8 @@ export function StoryboardPanel({
       data-testid="video-storyboard-panel"
       className={
         embedded
-          ? `flex flex-col h-full w-full max-w-full bg-white pb-[10px] overflow-hidden rounded-t-[10px] ${readOnly ? 'rounded-[24px]' : ''}`
-          : 'fixed right-0 top-[56px] bottom-[10px] w-[720px] z-50 flex flex-col bg-white pb-[10px]'
+          ? `flex flex-col h-full w-full max-w-full pb-[10px] overflow-hidden rounded-t-[10px] ${videoThemeStyles.panel} ${readOnly ? 'rounded-[24px]' : ''}`
+          : `fixed right-0 top-[56px] bottom-[10px] w-[720px] z-50 flex flex-col pb-[10px] ${videoThemeStyles.panel}`
       }
       style={
         embedded
@@ -1192,18 +1193,18 @@ export function StoryboardPanel({
         {/* Title area */}
         <div className="flex-1 min-w-0">
           <h2
-            className="text-sm text-[#333333] truncate"
+            className="text-sm text-text-primary truncate"
             style={{ fontFamily: "'PingFang SC', sans-serif" }}
           >
             {scriptState.loading ? (
-              <span className="text-[#939393]">{t('loading')}</span>
+              <span className="text-text-muted">{t('loading')}</span>
             ) : (
               scriptState.title || t('storyboard_management')
             )}
           </h2>
           {subtitle && (
             <p
-              className="text-[10px] text-[#939393] leading-[1.8]"
+              className="text-[10px] text-text-muted leading-[1.8]"
               style={{ fontFamily: "'PingFang SC', sans-serif" }}
             >
               {subtitle}
@@ -1216,7 +1217,7 @@ export function StoryboardPanel({
           {!readOnly && (
             <div className="flex h-8 items-center gap-3">
               <button
-                className="inline-flex h-8 w-[108px] items-center justify-center gap-1 whitespace-nowrap rounded-md px-3 py-1.5 text-[14px] font-normal leading-5 text-[#333333] transition-opacity"
+                className="inline-flex h-8 w-[108px] items-center justify-center gap-1 whitespace-nowrap rounded-md px-3 py-1.5 text-[14px] font-normal leading-5 text-text-primary transition-opacity"
                 disabled={isGenerateAllDisabled}
                 style={{
                   fontFamily: "'PingFang SC', sans-serif",
@@ -1232,7 +1233,7 @@ export function StoryboardPanel({
               {!isMobile ? (
                 <>
                   <button
-                    className="inline-flex h-8 w-[88px] items-center justify-center gap-1 whitespace-nowrap rounded-md px-3 py-1.5 text-[14px] font-normal leading-5 text-[#333333] transition-opacity"
+                    className="inline-flex h-8 w-[88px] items-center justify-center gap-1 whitespace-nowrap rounded-md px-3 py-1.5 text-[14px] font-normal leading-5 text-text-primary transition-opacity"
                     disabled={!canComposeStoryboardVideo}
                     style={{
                       fontFamily: "'PingFang SC', sans-serif",
@@ -1277,8 +1278,8 @@ export function StoryboardPanel({
       <div className="flex-1 overflow-y-scroll">
         {loading ? (
           <div className="flex flex-col items-center justify-center h-64 gap-4">
-            <Loader2 className="w-6 h-6 animate-spin text-[#939393]" />
-            <p className="text-sm text-[#939393]">{t('loading_storyboards')}</p>
+            <Loader2 className="w-6 h-6 animate-spin text-text-muted" />
+            <p className="text-sm text-text-muted">{t('loading_storyboards')}</p>
           </div>
         ) : storyboards.length > 0 ? (
           <>
@@ -1294,7 +1295,7 @@ export function StoryboardPanel({
                   style={{ width: '100%' }}
                 >
                   <h3
-                    className="text-[15px] text-[#333333] leading-[1.53] text-center"
+                    className="text-[15px] text-text-primary leading-[1.53] text-center"
                     style={{ fontFamily: "'PingFang TC', sans-serif" }}
                   >
                     {`${t('video')}${(currentStoryboard.sequence_number ?? 0) + 1}`}
@@ -1365,7 +1366,7 @@ export function StoryboardPanel({
           </>
         ) : (
           <div className="flex flex-col items-center justify-center h-64 gap-4">
-            <p className="text-sm text-[#939393]">{t('no_storyboards')}</p>
+            <p className="text-sm text-text-muted">{t('no_storyboards')}</p>
           </div>
         )}
       </div>
@@ -1385,6 +1386,7 @@ export function StoryboardPanel({
             e.stopPropagation()
           }}
         >
+          <DialogTitle className="sr-only">分镜剪辑</DialogTitle>
           {isCompositionEditorOpen && (
             <CompositionEditor
               scriptId={scriptId}

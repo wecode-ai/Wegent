@@ -500,8 +500,8 @@ export function CompositionPreview({
       <div
         className={
           isFullscreen
-            ? 'flex items-center px-0 h-[60px] bg-[#FFFFFF]'
-            : 'flex items-center px-0 h-[60px] bg-[#FFFFFF]'
+            ? 'flex items-center px-0 h-[60px] bg-base'
+            : 'flex items-center px-0 h-[60px] bg-base'
         }
       >
         {/* Controls row */}

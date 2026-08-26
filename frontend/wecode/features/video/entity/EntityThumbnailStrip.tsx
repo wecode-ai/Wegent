@@ -172,9 +172,9 @@ export function EntityThumbnailStrip({
           />
           <button
             onClick={handleScrollLeft}
-            className="absolute left-0 top-1/2 -translate-y-1/2 w-[22px] h-[22px] rounded-[6px] bg-white border border-[#eeeeee] flex items-center justify-center hover:bg-gray-50 shadow-md"
+            className="absolute left-0 top-1/2 -translate-y-1/2 w-[22px] h-[22px] rounded-[6px] bg-white border border-border flex items-center justify-center hover:bg-gray-50 shadow-md"
           >
-            <ChevronLeft className="w-3.5 h-3.5 text-[#333333]" />
+            <ChevronLeft className="w-3.5 h-3.5 text-text-primary" />
           </button>
         </>
       )}
@@ -191,9 +191,9 @@ export function EntityThumbnailStrip({
           />
           <button
             onClick={handleScrollRight}
-            className="absolute right-0 top-1/2 -translate-y-1/2 w-[22px] h-[22px] rounded-[6px] bg-white border border-[#eeeeee] flex items-center justify-center hover:bg-gray-50 shadow-md"
+            className="absolute right-0 top-1/2 -translate-y-1/2 w-[22px] h-[22px] rounded-[6px] bg-white border border-border flex items-center justify-center hover:bg-gray-50 shadow-md"
           >
-            <ChevronRight className="w-3.5 h-3.5 text-[#333333]" />
+            <ChevronRight className="w-3.5 h-3.5 text-text-primary" />
           </button>
         </>
       )}

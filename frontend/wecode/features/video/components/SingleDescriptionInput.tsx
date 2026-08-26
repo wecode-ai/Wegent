@@ -299,7 +299,7 @@ export function SingleDescriptionInput({
             {showMaxLength && (
               <div className="flex items-center justify-start" style={{ marginTop: '10px' }}>
                 <span
-                  className="text-xs text-[#939393]"
+                  className="text-xs text-text-muted"
                   style={{
                     fontFamily: "'Microsoft YaHei', sans-serif",
                     lineHeight: '12px',
@@ -322,7 +322,7 @@ export function SingleDescriptionInput({
             <button
               type="button"
               onClick={onCancel}
-              className="text-xs text-[#333333] transition-colors hover:bg-black/10"
+              className="text-xs text-text-primary transition-colors hover:bg-black/10"
               style={{
                 backgroundColor: 'rgba(51, 51, 51, 0.06)',
                 padding: '3px 14px',
@@ -402,7 +402,7 @@ export function SingleDescriptionInput({
           {showMaxLength && (
             <div className="flex items-center justify-start" style={{ marginTop: '10px' }}>
               <span
-                className="text-xs text-[#939393]"
+                className="text-xs text-text-muted"
                 style={{
                   fontFamily: "'Microsoft YaHei', sans-serif",
                   lineHeight: '12px',

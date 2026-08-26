@@ -172,7 +172,7 @@ export function ClipInspector({
   ]
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-[#FFFFFF]">
+    <div className="flex h-full flex-col overflow-hidden bg-base">
       <div
         data-testid="composition-inspector-tabs"
         className="flex flex-row items-center gap-[30px] h-[42px] border-b border-border/70 px-4"
@@ -254,10 +254,10 @@ export function ClipInspector({
                 return (
                   <div
                     data-inspector-card
-                    className="rounded-[6px] border border-border bg-[#F5F5F5] px-3 py-[10px] h-[90px] overflow-y-auto"
+                    className="rounded-[6px] border border-border bg-muted px-3 py-[10px] h-[90px] overflow-y-auto"
                   >
                     <p
-                      className="text-[#333333] leading-5"
+                      className="text-text-primary leading-5"
                       style={{
                         fontSize: '13px',
                         fontFamily: "'PingFang SC', -apple-system, sans-serif",
@@ -321,7 +321,7 @@ export function ClipInspector({
                       音量
                     </label>
                     <span
-                      className="flex items-center justify-center h-5 min-w-[34px] px-1.5 rounded-[3px] bg-[#E6E6E6] text-[#333333]"
+                      className="flex items-center justify-center h-5 min-w-[34px] px-1.5 rounded-[3px] bg-[#E6E6E6] text-text-primary"
                       style={{
                         fontSize: '13px',
                         fontFamily: "'PingFang SC', -apple-system, sans-serif",
@@ -440,8 +440,8 @@ export function ClipInspector({
                             data-inspector-card
                             className={`relative rounded-[6px] border p-3 transition-colors cursor-pointer ${
                               selectedSubtitleId === sub.id
-                                ? 'bg-[#FBFBFB] border-[#FF8200] ring-1 ring-[#FF8200]'
-                                : 'bg-[#FBFBFB] border-[#FBFBFB]'
+                                ? 'bg-surface border-[#FF8200] ring-1 ring-[#FF8200]'
+                                : 'bg-surface border-[#FBFBFB]'
                             } ${sub.regenerating ? 'opacity-60' : ''}`}
                             onClick={e => {
                               if (
@@ -623,8 +623,8 @@ export function ClipInspector({
                       data-inspector-card
                       className={`relative rounded-[6px] border p-3 cursor-pointer transition-colors ${
                         selectedBgmIdx === segment.idx
-                          ? 'bg-[#FBFBFB] border-[#FF8200] ring-1 ring-[#FF8200]'
-                          : 'bg-[#FBFBFB] border-[#FBFBFB]'
+                          ? 'bg-surface border-[#FF8200] ring-1 ring-[#FF8200]'
+                          : 'bg-surface border-[#FBFBFB]'
                       } ${segment.status === 'pending' ? 'opacity-60' : ''}`}
                       onClick={e => {
                         if (
@@ -741,7 +741,7 @@ export function ClipInspector({
                               音量
                             </label>
                             <span
-                              className="flex items-center justify-center h-5 min-w-[34px] px-1.5 rounded-[3px] bg-[#E6E6E6] text-[#333333]"
+                              className="flex items-center justify-center h-5 min-w-[34px] px-1.5 rounded-[3px] bg-[#E6E6E6] text-text-primary"
                               style={{
                                 fontSize: '13px',
                                 fontFamily: "'PingFang SC', -apple-system, sans-serif",
