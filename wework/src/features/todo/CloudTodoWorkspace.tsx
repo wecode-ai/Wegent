@@ -3746,7 +3746,7 @@ export function CloudTodoWorkspace({
                 {projectHeaderLevel < 2 ? (
                   <nav
                     ref={projectHeaderTabsRef}
-                    className="relative z-10 ml-8 flex shrink-0 items-center gap-0.5 rounded-lg bg-muted p-0.5"
+                    className="electron-titlebar-interactive-region relative z-10 ml-8 flex shrink-0 items-center gap-0.5 rounded-lg bg-muted p-0.5"
                   >
                     <button
                       type="button"
@@ -3826,7 +3826,7 @@ export function CloudTodoWorkspace({
                 ) : (
                   <span
                     ref={projectHeaderTabsRef}
-                    className="relative z-10 ml-2 inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary"
+                    className="electron-titlebar-interactive-region relative z-10 ml-2 inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary"
                   >
                     <select
                       aria-label="视图切换"
@@ -3861,7 +3861,7 @@ export function CloudTodoWorkspace({
                       data-testid="cloud-project-ask-ai"
                       aria-label={t('workbench.project_chat')}
                       onClick={openProjectAssistant}
-                      className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
+                      className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
                     >
                       <Bot className="h-3.5 w-3.5" />
                       {projectHeaderLevel < 1 ? t('workbench.project_chat') : null}
@@ -3889,7 +3889,7 @@ export function CloudTodoWorkspace({
                             : t('todo.search_issues', '搜索 Issue')
                         }
                         onClick={() => setProjectSearchOpen(current => !current)}
-                        className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
+                        className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
                       >
                         <Search className="h-3.5 w-3.5" />
                         {projectHeaderLevel < 1
@@ -3921,7 +3921,7 @@ export function CloudTodoWorkspace({
                           onClick={() =>
                             boardParent ? openTodoCreation(boardParent) : openIssueCreation()
                           }
-                          className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
+                          className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
                         >
                           <Plus className="h-3.5 w-3.5" />
                           {projectHeaderLevel < 1
@@ -3940,7 +3940,7 @@ export function CloudTodoWorkspace({
                     testId="cloud-project-header-more"
                     icon={Ellipsis}
                     placement="bottom-end"
-                    triggerClassName="relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                    triggerClassName="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary"
                     items={[
                       ...(!projectAssistantOpen
                         ? [
@@ -3988,7 +3988,7 @@ export function CloudTodoWorkspace({
                       onClick={() =>
                         boardParent ? openTodoCreation(boardParent) : openIssueCreation()
                       }
-                      className="relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg bg-text-primary text-background transition hover:opacity-90"
+                      className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg bg-text-primary text-background transition hover:opacity-90"
                     >
                       <Plus className="h-3.5 w-3.5" />
                     </button>

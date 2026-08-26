@@ -3257,7 +3257,7 @@ describe('CloudTodoWorkspace', () => {
     )
   })
 
-  it('keeps the project header above the macOS drag region and opens new issue', async () => {
+  it('keeps project header controls interactive above the macOS drag region', async () => {
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
@@ -3268,6 +3268,16 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     expect(screen.getByTestId('cloud-project-header')).toHaveClass('relative', 'z-10')
+    expect(screen.getByTestId('cloud-project-board-view').parentElement).toHaveClass(
+      'electron-titlebar-interactive-region'
+    )
+    expect(screen.getByTestId('cloud-project-ask-ai')).toHaveClass(
+      'electron-titlebar-interactive-region'
+    )
+    expect(screen.getByTestId('cloud-project-task-search-toggle')).toHaveClass(
+      'electron-titlebar-interactive-region'
+    )
+    expect(screen.getByTestId('cloud-todo-add')).toHaveClass('electron-titlebar-interactive-region')
     await userEvent.click(screen.getByTestId('cloud-todo-add'))
 
     expect(screen.getByTestId('workspace-issue-composer')).toBeInTheDocument()
