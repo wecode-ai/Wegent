@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHttpClient } from '@/api/http'
+import { updateAppPreferences } from '@/desktop/appPreferences'
 import type { OpenCloudAuthorizationUrl } from './CloudConnectionContext'
 import { CloudConnectionProvider } from './CloudConnectionProvider'
 import { saveStoredCloudConnection } from './cloudConnectionStorage'
@@ -192,6 +193,46 @@ describe('CloudConnectionProvider', () => {
       '/plugins/builtin/wegent-sites/ensure-installed',
       {}
     )
+  })
+
+  it('restores the cloud connection from desktop preferences on a new local origin', async () => {
+    const storedConnection = {
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://backend-socket.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://cloud.example.com',
+      token: 'cloud-token',
+      tokenExpiresAt: null,
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    }
+    await updateAppPreferences({ cloudConnection: storedConnection })
+    localStorage.clear()
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') {
+        return Promise.resolve({
+          web_url: 'https://cloud.example.com',
+          socket_url: 'wss://backend-socket.example.com',
+        })
+      }
+      if (endpoint === '/users/me') return Promise.resolve(storedConnection.user)
+      return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+    )
+    expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).toMatchObject({
+      token: 'cloud-token',
+      user: { id: 7, user_name: 'alice' },
+    })
   })
 
   it('keeps the cached cloud connection when the initial refresh times out', async () => {

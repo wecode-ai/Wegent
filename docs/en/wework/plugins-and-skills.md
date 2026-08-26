@@ -8,6 +8,17 @@ A Skill gives AI task-specific instructions and resources. A plugin can package 
 
 Open **Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
 
+## Manage Codex plugins and Wework plugins
+
+In the Wework desktop app, open **Plugins → Manage plugins** and switch between two management surfaces:
+
+- **Codex plugins** provide Skills, MCP servers, applications, and commands to AI. They are installed through Codex or Wegent plugin marketplaces and are used in tasks and conversations.
+- **Wework plugins** are DSH bundles that directly extend the local Wework desktop runtime. They are not regular Codex plugins and do not appear in the task plugin picker.
+
+From **Wework plugins**, install a plugin from an npm package, Git source, or absolute local directory. Wework shows a trust confirmation because the plugin and its installation scripts run with the current user's permissions. User-installed plugins can be updated, enabled, disabled, or uninstalled. Bundled Wework runtime plugins are displayed as read-only and cannot be changed or removed here.
+
+Wework validates the resulting DSH profile after each install, update, enable, disable, or uninstall operation. If validation fails, it restores the previous dependencies and configuration so the runtime is not left unbootable. After successful changes, continue managing plugins and choose **Restart plugin runtime** once when ready. Enabled and disabled states persist across Wework restarts.
+
 ## Import a personal plugin
 
 On the **Plugins** page, choose **Create → Import plugin** to import a standard ZIP package that follows the `wework-plugins` format. The ZIP root must contain `.codex-plugin/plugin.json`, and any Skills or MCP servers must be included in the same plugin package. Encrypted or password-protected ZIP files are not supported.
@@ -20,7 +31,7 @@ Smart apps continue to display an **Experimental** badge, but their availability
 
 Open **+ → Smart apps** from the top tab bar to go directly to **Applications → Smart apps**, or open **Applications** first and switch among **Sites / Mini Programs / Smart apps**. Smart apps have three sections: **Marketplace** discovers and installs official apps and apps shared directly with you; **Installed** binds models and manages local app execution and removal; **My creations** creates, imports, and publishes apps.
 
-Choose **Create Smart app** from **My creations**, enter a name and save location, and Wework creates a valid DSH Web-preset directory, links it directly into the local list, and opens a new chat with the bundled Smart App Builder plugin. A dedicated development-preview tab opens in the right workspace by default. Its single toolbar row shows the workbench name, runtime status, **Add plugins**, **Refresh page**, and **Reload DSH**. Startup and reload use a DSH-specific progress view instead of the regular built-in browser's empty URL state. Refresh the current page after frontend-only changes, or reload the DSH runtime after dependency or Harness configuration changes.
+Choose **Create Smart app** from **My creations**, enter a name and save location, and Wework creates a valid DSH Web-preset directory, links it directly into the local list, and opens a new chat with the bundled Smart App Builder plugin. Creation and continued development use the local device and directory and do not require a cloud connection. A dedicated development-preview tab opens in the right workspace by default. Its single toolbar row shows the workbench name, runtime status, **Add plugins**, **Refresh page**, and **Reload DSH**. Startup and reload use a DSH-specific progress view instead of the regular built-in browser's empty URL state. Refresh the current page after frontend-only changes, or reload the DSH runtime after dependency or Harness configuration changes.
 
 A workbench is not a one-time generation. Whether it is stopped or running, choose **Add DSH plugins** from the preview toolbar or the workbench menu and enter an npm package, Git URL, archive URL, or local plugin directory. Wework stops the workbench when necessary, updates the manifest and plugin contents, and reloads it automatically. Local directories are copied into the workbench's `plugins/` directory, so exported ZIP packages include them. Choose **Develop workbench** to let Smart App Builder read the same manifest, dependencies, source, and `cordis.patch.yml` and continue applying incremental changes. **Show in file manager** opens the editable directory, and Wework validates linked contents again when listing or starting the app.
 

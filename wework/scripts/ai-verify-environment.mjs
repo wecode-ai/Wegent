@@ -32,6 +32,8 @@ export function buildAiVerifyEnvironment(
     VITE_WEWORK_E2E: 'true',
     VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
     VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN: token,
+    WEWORK_E2E_CONTROL_TOKEN: token,
+    WEWORK_E2E_CONTROL_URL: controlUrl,
     CODEX_HOME: codexHome,
     WEGENT_CODEX_HOME: codexHome,
     ...(nativeCodexHome ? { WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome } : {}),

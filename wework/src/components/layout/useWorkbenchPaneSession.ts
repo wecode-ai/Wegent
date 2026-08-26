@@ -9,6 +9,7 @@ import {
   DEBUG_SNAPSHOT_DEBOUNCE_MS,
 } from '@/lib/debugPanel'
 import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
+import { appendBufferedRuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessageBuffer'
 import {
   deriveRuntimePaneStatus,
   isRuntimeTaskBusyError,
@@ -34,7 +35,11 @@ import {
 } from '@/components/chat/requestUserInputMessages'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
-import { visibleRuntimeGoal } from '@/lib/runtime-goal'
+import {
+  projectRuntimeGoalContinuing,
+  shouldReconcileActiveRuntimeGoalTranscript,
+  visibleRuntimeGoal,
+} from '@/lib/runtime-goal'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import { appendConversationMentionContext } from '@/lib/conversation-mentions'
 import {
@@ -55,8 +60,10 @@ import type {
   RuntimeRollbackRequest,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
   RuntimeTurnNavigationItem,
 } from '@/types/api'
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type {
   GuidanceWorkbenchMessage,
   RuntimePaneQueuedMessage,
@@ -126,6 +133,7 @@ interface RuntimePaneSendOptions {
   modelSelection?: ModelSelectionConfig | null
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   onRuntimeTaskCreated?: (address: RuntimeTaskAddress) => void
   onRuntimeTaskReady?: (address: RuntimeTaskAddress) => void
@@ -158,7 +166,8 @@ interface PendingRuntimeGoalState {
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const configuredRuntimeTranscriptPageSize = Number(
-  import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
+  getDesktopE2ERuntimeConfig().transcriptPageSize ??
+    import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
 )
 const RUNTIME_TRANSCRIPT_PAGE_SIZE =
   import.meta.env.VITE_WEWORK_E2E === 'true' &&
@@ -344,10 +353,18 @@ export function useWorkbenchPaneSession({
   const queuedMessageBusyBlockSnapshotsRef = useRef(
     new Map<string, RuntimeTaskLifecycleSnapshot | null>()
   )
-  const resumePausedQueueAfterTurnRef = useRef<string | null>(null)
+  const resumePausedQueueAfterTurnRef = useRef<{
+    scopeKey: string
+    previousLifecycle: RuntimeTaskLifecycleSnapshot | null
+    observedManualTurn: boolean
+  } | null>(null)
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
+  const goalTranscriptReconciliationRef = useRef<{
+    key: string
+    attempts: number
+  } | null>(null)
   const messageActionFrameRef = useRef<number | null>(null)
   const retryInFlightRef = useRef(false)
   const lastSubmittedRetryMessageRef = useRef<WorkbenchMessage | null>(null)
@@ -411,7 +428,7 @@ export function useWorkbenchPaneSession({
         return
       }
 
-      pendingMessageActionsRef.current.push(action)
+      appendBufferedRuntimePaneMessageAction(pendingMessageActionsRef.current, action)
       if (messageActionFrameRef.current !== null) return
       messageActionFrameRef.current = requestAnimationFrame(() => {
         messageActionFrameRef.current = null
@@ -482,12 +499,22 @@ export function useWorkbenchPaneSession({
 
   useEffect(() => {
     const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-    if (
-      resumePausedQueueAfterTurnRef.current !== queuedMessageScopeKey ||
-      (lifecycle?.turn.phase !== 'streaming' && lifecycle?.turn.outcome === null)
-    ) {
-      return
+    const pendingResume = resumePausedQueueAfterTurnRef.current
+    if (!pendingResume || pendingResume.scopeKey !== queuedMessageScopeKey || !lifecycle) return
+
+    if (!pendingResume.observedManualTurn) {
+      const previousTurn = pendingResume.previousLifecycle?.turn
+      const turnChanged =
+        !previousTurn ||
+        previousTurn.id !== lifecycle.turn.id ||
+        previousTurn.phase !== lifecycle.turn.phase ||
+        previousTurn.outcome !== lifecycle.turn.outcome
+      if (!turnChanged) return
+      pendingResume.observedManualTurn = true
     }
+
+    if (lifecycle.turn.phase === 'streaming' || lifecycle.turn.outcome === null) return
+
     resumePausedQueueAfterTurnRef.current = null
     setQueuedMessagesPaused(false)
   }, [
@@ -1687,26 +1714,12 @@ export function useWorkbenchPaneSession({
         return
       }
 
-      setQueuedMessages(messages =>
-        messages.map(message =>
-          message.id === id
-            ? {
-                ...message,
-                status: 'sending',
-                deliveryMode: 'guidance',
-                error: undefined,
-                notice: '正在引导当前对话',
-              }
-            : message
-        )
-      )
-
       try {
         const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
         const messageAttachments = queuedMessage.attachments ?? []
         const attachmentIds = remoteAttachmentIds(messageAttachments)
         const attachments = localRuntimeAttachments(messageAttachments)
-        const result = await sendRuntimePaneGuidance({
+        const guidanceRequest = sendRuntimePaneGuidance({
           address: currentRuntimeTask,
           message: queuedMessage.content,
           clientGuidanceId: id,
@@ -1714,7 +1727,27 @@ export function useWorkbenchPaneSession({
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(additionalContext ? { additionalContext } : {}),
         })
+        setQueuedMessages(messages =>
+          messages.map(message =>
+            message.id === id
+              ? {
+                  ...message,
+                  status: 'sending',
+                  deliveryMode: 'guidance',
+                  awaitingGuidanceAcceptance: true,
+                  error: undefined,
+                  notice: '正在引导当前对话',
+                }
+              : message
+          )
+        )
+        const result = await guidanceRequest
         if (result.sent) {
+          setQueuedMessages(messages =>
+            messages.map(message =>
+              message.id === id ? { ...message, awaitingGuidanceAcceptance: undefined } : message
+            )
+          )
           markRuntimeTerminalAdditionalContextDelivered(additionalContext)
           if (result.turnId) {
             appendOptimisticRuntimeConversationGuidance(
@@ -1733,7 +1766,13 @@ export function useWorkbenchPaneSession({
           setQueuedMessages(messages =>
             messages.map(message =>
               message.id === id
-                ? { ...message, status: 'failed', notice: undefined, error: '引导发送失败' }
+                ? {
+                    ...message,
+                    status: 'failed',
+                    awaitingGuidanceAcceptance: undefined,
+                    notice: undefined,
+                    error: '引导发送失败',
+                  }
                 : message
             )
           )
@@ -1751,7 +1790,13 @@ export function useWorkbenchPaneSession({
         setQueuedMessages(messages =>
           messages.map(message =>
             message.id === id
-              ? { ...message, status: 'failed', notice: undefined, error: '引导发送失败' }
+              ? {
+                  ...message,
+                  status: 'failed',
+                  awaitingGuidanceAcceptance: undefined,
+                  notice: undefined,
+                  error: '引导发送失败',
+                }
               : message
           )
         )
@@ -1979,6 +2024,7 @@ export function useWorkbenchPaneSession({
             codeCommentContexts,
             additionalContext: options.additionalContext,
             cloudProjectId: options.cloudProjectId,
+            origin: options.origin,
             ...(options.runtime ? { runtime: options.runtime } : {}),
             ...(options.runtimeExecutablePath
               ? { runtimeExecutablePath: options.runtimeExecutablePath }
@@ -2028,6 +2074,7 @@ export function useWorkbenchPaneSession({
             initialGoal: pendingInitialGoal,
             additionalContext: resolvedAdditionalContext,
             cloudProjectId: options.cloudProjectId,
+            origin: options.origin,
             initialSupervisor: options.initialSupervisor,
             ...(options.runtime ? { runtime: options.runtime } : {}),
             ...(options.runtimeExecutablePath
@@ -2301,18 +2348,23 @@ export function useWorkbenchPaneSession({
       const interruptedGuidance = queuedMessages.find(isInterruptedGuidance)
       if (!interruptedGuidance) {
         const queuedMessage = queuedMessages.find(message => message.status === 'queued')
+        const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
+        if (queuedMessage && queuedMessageScopeKey) {
+          resumePausedQueueAfterTurnRef.current = {
+            scopeKey: queuedMessageScopeKey,
+            previousLifecycle: lifecycle,
+            observedManualTurn: false,
+          }
+        }
         const sent = await send(inputOverride, options)
-        if (!sent) return
+        if (!sent) {
+          resumePausedQueueAfterTurnRef.current = null
+          return
+        }
         if (!queuedMessage) {
           setQueuedMessagesPaused(false)
           return
         }
-        const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-        if (lifecycle?.turn.phase === 'streaming' || lifecycle?.turn.outcome !== null) {
-          setQueuedMessagesPaused(false)
-          return
-        }
-        resumePausedQueueAfterTurnRef.current = queuedMessageScopeKey
         return
       }
 
@@ -2431,7 +2483,9 @@ export function useWorkbenchPaneSession({
       setError('当前对话还没有可压缩的 Codex 线程')
       return false
     }
-    if (paneStatus.isBusy) {
+    const currentTaskIsBusy =
+      lifecycleStore.getTask(currentRuntimeTask)?.derived.isBusy ?? paneStatus.isBusy
+    if (currentTaskIsBusy) {
       setError('当前回复进行中，完成后再压缩上下文')
       return false
     }
@@ -2439,7 +2493,14 @@ export function useWorkbenchPaneSession({
       return send('/compact')
     }
     return compactRuntimePaneTask(currentRuntimeTask, { onError: setError })
-  }, [compactRuntimePaneTask, currentRuntimeTask, paneStatus.isBusy, send, setError])
+  }, [
+    compactRuntimePaneTask,
+    currentRuntimeTask,
+    lifecycleStore,
+    paneStatus.isBusy,
+    send,
+    setError,
+  ])
 
   const setCurrentGoal = useCallback(async () => {
     projectChat.setSelectedModelOption('collaborationMode', 'default')
@@ -2571,18 +2632,15 @@ export function useWorkbenchPaneSession({
     if (shouldPauseQueue) {
       setQueuedMessagesPaused(true)
     }
-    const interruptedTurn = optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
     const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
     if (!cancelled) {
-      if (interruptedTurn) {
-        restoreOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
-      }
       if (shouldPauseQueue) {
         setQueuedMessagesPaused(false)
       }
       return
     }
 
+    optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
     void refreshWorkLists()
   }, [
     cancelRuntimePaneTask,
@@ -2620,7 +2678,128 @@ export function useWorkbenchPaneSession({
   }, [clearRuntimeGoal, currentRuntimeTask, goal, lifecycleStore, refreshWorkLists])
 
   const cancelGuidanceMessage = useCallback(() => undefined, [])
-  const goalContinuing = goal?.status === 'active' && goalContinuation?.status === 'started'
+  const goalContinuing = projectRuntimeGoalContinuing({
+    goal,
+    continuation: goalContinuation,
+    taskRunning: paneStatus.taskExecution.running,
+    messages,
+    activeAssistantMessage,
+  })
+
+  useEffect(() => {
+    const shouldReconcile = shouldReconcileActiveRuntimeGoalTranscript({
+      goalContinuing,
+      messages,
+      activeAssistantMessage,
+    })
+    if (!runtimeTaskLoadTarget || transcriptLoading || !shouldReconcile) {
+      if (!shouldReconcile) {
+        goalTranscriptReconciliationRef.current = null
+      }
+      return
+    }
+
+    const { address, identityKey } = runtimeTaskLoadTarget
+    const activeTurnId =
+      activeAssistantMessage?.turnId?.trim() ||
+      activeAssistantMessage?.subtaskId?.trim() ||
+      activeAssistantMessage?.id
+    const reconciliationKey = `${identityKey}:${activeTurnId}`
+    if (goalTranscriptReconciliationRef.current?.key !== reconciliationKey) {
+      goalTranscriptReconciliationRef.current = {
+        key: reconciliationKey,
+        attempts: 0,
+      }
+    }
+    if ((goalTranscriptReconciliationRef.current?.attempts ?? 0) >= 30) {
+      return
+    }
+
+    let cancelled = false
+    let retryTimeout: number | null = null
+    const reconcile = async () => {
+      if (cancelled) return
+      if (rebuildingTranscriptRef.current) {
+        retryTimeout = window.setTimeout(() => void reconcile(), 1_000)
+        return
+      }
+
+      const reconciliation = goalTranscriptReconciliationRef.current
+      if (!reconciliation || reconciliation.key !== reconciliationKey) return
+      if (reconciliation.attempts >= 30) return
+      reconciliation.attempts += 1
+      const attempt = reconciliation.attempts
+      const hydrationToken = beginRuntimeConversationHydration(address)
+      rebuildingTranscriptRef.current = true
+      rebuildingTranscriptIdentityRef.current = identityKey
+      try {
+        const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
+          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          refresh: true,
+        })
+        if (cancelled || runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) {
+          abortRuntimeConversationHydration(address, hydrationToken)
+          return
+        }
+
+        const nextMessages = completeRuntimeConversationHydration(
+          address,
+          hydrationToken,
+          transcript.turns
+        )
+        dispatchMessages({ type: 'reset', messages: nextMessages })
+        lifecycleStore.syncTranscript(address, transcript, { preserveActiveTurn: true })
+        console.info('[Wework] Active Goal transcript projection reconciled', {
+          address: runtimeAddressDebug(address),
+          attempt,
+          transcriptMessageCount: transcript.messages.length,
+          restoredMessageCount: nextMessages.length,
+        })
+
+        if (
+          attempt < 30 &&
+          shouldReconcileActiveRuntimeGoalTranscript({
+            goalContinuing: true,
+            messages: nextMessages,
+            activeAssistantMessage,
+          })
+        ) {
+          retryTimeout = window.setTimeout(() => void reconcile(), 1_000)
+        }
+      } catch (error) {
+        abortRuntimeConversationHydration(address, hydrationToken)
+        if (!cancelled && attempt < 30) {
+          retryTimeout = window.setTimeout(() => void reconcile(), 1_000)
+        }
+        console.error('[Wework] Active Goal transcript projection reconciliation failed', {
+          address: runtimeAddressDebug(address),
+          attempt,
+          error,
+        })
+      } finally {
+        if (rebuildingTranscriptIdentityRef.current === identityKey) {
+          rebuildingTranscriptRef.current = false
+          rebuildingTranscriptIdentityRef.current = null
+        }
+      }
+    }
+
+    void reconcile()
+    return () => {
+      cancelled = true
+      if (retryTimeout !== null) {
+        window.clearTimeout(retryTimeout)
+      }
+    }
+  }, [
+    activeAssistantMessage,
+    dispatchMessages,
+    goalContinuing,
+    lifecycleStore,
+    messages,
+    runtimeTaskLoadTarget,
+    transcriptLoading,
+  ])
 
   useEffect(() => {
     if (!debugSnapshotEnabled) return

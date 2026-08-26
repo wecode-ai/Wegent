@@ -63,6 +63,9 @@ describe('loadTaskChangeRequests', () => {
                 statusCheckRollup: { state: 'SUCCESS' },
                 mergeable: 'MERGEABLE',
                 mergeStateStatus: 'CLEAN',
+                commits: {
+                  nodes: [{ commit: { committedDate: '2026-08-20T11:00:00Z' } }],
+                },
                 mergeQueueEntry: null,
                 timelineItems: {
                   nodes: [
@@ -100,6 +103,72 @@ describe('loadTaskChangeRequests', () => {
     })
   })
 
+  it('clears a previous merge queue failure after a new head commit is pushed', async () => {
+    const executeCommand = vi.fn(async (_deviceId: string, request: { command_key: string }) => {
+      if (request.command_key === 'git_github_pull_requests_batch') {
+        return {
+          success: true,
+          stdout: [
+            {
+              number: 10,
+              html_url: 'https://github.com/wecode-ai/Wegent/pull/10',
+              title: 'Feature A',
+              state: 'open',
+              head: { ref: 'feature/a' },
+              updated_at: '2026-08-20T12:00:00Z',
+            },
+          ],
+          stderr: '',
+        }
+      }
+      return {
+        success: true,
+        stdout: {
+          data: {
+            repository: {
+              pr0: {
+                state: 'OPEN',
+                statusCheckRollup: { state: 'PENDING' },
+                mergeable: 'MERGEABLE',
+                mergeStateStatus: 'CLEAN',
+                commits: {
+                  nodes: [{ commit: { committedDate: '2026-08-20T12:00:00Z' } }],
+                },
+                mergeQueueEntry: null,
+                timelineItems: {
+                  nodes: [
+                    {
+                      __typename: 'RemovedFromMergeQueueEvent',
+                      createdAt: '2026-08-20T11:30:00Z',
+                      reason: 'Required status check failed',
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+        stderr: '',
+      }
+    })
+
+    const snapshots = await loadTaskChangeRequests({ executeCommand }, [targets[0]])
+
+    expect(executeCommand).toHaveBeenNthCalledWith(
+      2,
+      'device-1',
+      expect.objectContaining({
+        args: ['-f', expect.stringContaining('commits(last: 1)')],
+      })
+    )
+    expect(snapshots[0].changeRequest).toMatchObject({
+      number: 10,
+      checks: 'pending',
+      mergeQueue: 'not_queued',
+      mergeQueueReason: null,
+    })
+  })
+
   it('queries separate repositories once each instead of once per task', async () => {
     const executeCommand = vi.fn().mockResolvedValue({
       success: true,
@@ -118,5 +187,54 @@ describe('loadTaskChangeRequests', () => {
     ])
 
     expect(executeCommand).toHaveBeenCalledTimes(2)
+  })
+
+  it('loads check conclusions for merged pull requests', async () => {
+    const executeCommand = vi.fn(async (_deviceId: string, request: { command_key: string }) => {
+      if (request.command_key === 'git_github_pull_requests_batch') {
+        return {
+          success: true,
+          stdout: [
+            {
+              number: 12,
+              html_url: 'https://github.com/wecode-ai/Wegent/pull/12',
+              title: 'Merged feature',
+              state: 'closed',
+              merged_at: '2026-08-20T12:00:00Z',
+              head: { ref: 'feature/a' },
+            },
+          ],
+          stderr: '',
+        }
+      }
+      return {
+        success: true,
+        stdout: {
+          data: {
+            repository: {
+              pr0: {
+                state: 'MERGED',
+                mergedAt: '2026-08-20T12:00:00Z',
+                statusCheckRollup: { state: 'SUCCESS' },
+                mergeable: 'UNKNOWN',
+                mergeStateStatus: 'UNKNOWN',
+                mergeQueueEntry: null,
+                timelineItems: { nodes: [] },
+              },
+            },
+          },
+        },
+        stderr: '',
+      }
+    })
+
+    const snapshots = await loadTaskChangeRequests({ executeCommand }, [targets[0]])
+
+    expect(executeCommand).toHaveBeenCalledTimes(2)
+    expect(snapshots[0].changeRequest).toMatchObject({
+      number: 12,
+      state: 'merged',
+      checks: 'success',
+    })
   })
 })

@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import type { UnlistenFn } from '@/desktop/disposeDesktopListener'
 
 export const HARNESS_APP_LAUNCH_PROGRESS_EVENT = 'harness-app-launch-progress'
 
@@ -73,13 +73,13 @@ export const harnessAppsApi = {
     displayName: string
     description: string
   }) {
-    return invoke<HarnessAppInstallation>('create_harness_app_directory', input)
+    return invokeDesktopHost<HarnessAppInstallation>('smartApps.createDirectory', input)
   },
   linkDirectory(directoryPath: string) {
-    return invoke<HarnessAppInstallation>('link_harness_app_directory', { directoryPath })
+    return invokeDesktopHost<HarnessAppInstallation>('smartApps.linkDirectory', { directoryPath })
   },
   addPlugin(installationId: string, pluginSpec: string) {
-    return invoke<HarnessAppInstallation>('add_harness_app_plugin', {
+    return invokeDesktopHost<HarnessAppInstallation>('smartApps.addPlugin', {
       installationId,
       pluginSpec,
     })
@@ -88,13 +88,13 @@ export const harnessAppsApi = {
     installationId: string,
     input: { parentPath: string; name: string; displayName: string }
   ) {
-    return invoke<HarnessAppInstallation>('copy_harness_app_to_directory', {
+    return invokeDesktopHost<HarnessAppInstallation>('smartApps.copyToDirectory', {
       installationId,
       ...input,
     })
   },
   preview(archivePath: string) {
-    return invoke<HarnessAppPreview>('preview_harness_app', { archivePath })
+    return invokeDesktopHost<HarnessAppPreview>('smartApps.preview', { archivePath })
   },
   download(input: {
     downloadUrl: string
@@ -103,39 +103,28 @@ export const harnessAppsApi = {
     smartAppId: number
     releaseId: number
   }) {
-    return invoke<HarnessAppPreview>('download_harness_app_package', {
-      downloadUrl: input.downloadUrl,
-      expectedSha256: input.sha256,
-      expectedSize: input.sizeBytes,
-      smartAppId: input.smartAppId,
-      releaseId: input.releaseId,
-    })
+    return invokeDesktopHost<HarnessAppPreview>('smartApps.download', input)
   },
   export(installationId: string) {
-    return invoke<HarnessAppExport>('export_harness_app_package', { installationId })
+    return invokeDesktopHost<HarnessAppExport>('smartApps.export', { installationId })
   },
   async exportToDownloads(installationId: string): Promise<HarnessAppSavedExport> {
-    const exported = await invoke<HarnessAppExport>('export_harness_app_package', {
+    return invokeDesktopHost<HarnessAppSavedExport>('smartApps.exportToDownloads', {
       installationId,
     })
-    const destinationPath = await invoke<string>('download_local_file_to_downloads', {
-      sourcePath: exported.archivePath,
-      filename: `${exported.manifest.name}-${exported.manifest.version}.zip`,
-    })
-    return { ...exported, destinationPath }
   },
   upload(archivePath: string, uploadUrl: string) {
-    return invoke<void>('upload_harness_app_package', { archivePath, uploadUrl })
+    return invokeDesktopHost<void>('smartApps.upload', { archivePath, uploadUrl })
   },
   list() {
-    return invoke<HarnessAppInstallation[]>('list_harness_apps')
+    return invokeDesktopHost<HarnessAppInstallation[]>('smartApps.list')
   },
   install(
     preview: HarnessAppPreview,
     modelKey: string | null,
     source: { smartAppId: number; releaseId: number } | null = null
   ) {
-    return invoke<HarnessAppInstallation>('install_harness_app', {
+    return invokeDesktopHost<HarnessAppInstallation>('smartApps.install', {
       archivePath: preview.archivePath,
       expectedSha256: preview.sha256,
       modelKey,
@@ -149,7 +138,7 @@ export const harnessAppsApi = {
     contextBaseUrl: string | null = null,
     contextToken: string | null = null
   ) {
-    return invoke<HarnessAppInstallation>('start_harness_app', {
+    return invokeDesktopHost<HarnessAppInstallation>('smartApps.start', {
       installationId,
       modelBaseUrl,
       contextBaseUrl,
@@ -157,23 +146,22 @@ export const harnessAppsApi = {
     })
   },
   stop(installationId: string) {
-    return invoke<void>('stop_harness_app', { installationId })
+    return invokeDesktopHost<void>('smartApps.stop', { installationId })
   },
   update(installationId: string, updates: { modelKey?: string; resident?: boolean }) {
-    return invoke<HarnessAppInstallation>('update_harness_app', {
+    return invokeDesktopHost<HarnessAppInstallation>('smartApps.update', {
       installationId,
       ...updates,
     })
   },
   delete(installationId: string, deleteData = false) {
-    return invoke<void>('delete_harness_app', { installationId, deleteData })
+    return invokeDesktopHost<void>('smartApps.delete', { installationId, deleteData })
   },
 }
 
 export function listenHarnessAppLaunchProgress(
   callback: (progress: HarnessAppLaunchProgress) => void
 ): Promise<UnlistenFn> {
-  return listen<HarnessAppLaunchProgress>(HARNESS_APP_LAUNCH_PROGRESS_EVENT, event => {
-    callback(event.payload)
-  })
+  void callback
+  return Promise.resolve(() => undefined)
 }

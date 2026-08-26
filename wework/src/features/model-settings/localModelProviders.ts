@@ -1,5 +1,3 @@
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
-import { shouldUseTauriFetch } from '@/api/http'
 import {
   DEEPSEEK_V4_CONTEXT_WINDOW,
   DEEPSEEK_V4_FLASH_MODEL_ID,
@@ -244,7 +242,7 @@ export function localModelSupportsImageInput(config: LocalModelConfig): boolean 
 }
 
 function defaultFetcher(): typeof fetch {
-  return shouldUseTauriFetch() ? (tauriFetch as typeof fetch) : globalThis.fetch.bind(globalThis)
+  return globalThis.fetch.bind(globalThis)
 }
 
 function modelListError(body: unknown): string | null {

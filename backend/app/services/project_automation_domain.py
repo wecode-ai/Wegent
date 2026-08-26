@@ -18,9 +18,6 @@ from app.models.kind import Kind
 from app.services.execution.team_readiness import (
     validate_team_execution_readiness,
 )
-from app.services.loop_item_executions.profile import (
-    validate_wework_execution_target,
-)
 from app.services.share import team_share_service
 
 ASSIGNMENT_MODES = {"manual", "ai_managed"}
@@ -83,19 +80,36 @@ def text(value: object) -> str | None:
 
 
 def assignment_mode(value: dict) -> str:
-    configured = value.get("assignment_mode")
-    if configured in ASSIGNMENT_MODES:
-        return str(configured)
+    action = value.get("action")
+    if action == "execute":
+        return "manual"
+    if action == "ai_assign":
+        return "ai_managed"
     raise ValueError("Automation assignment mode is missing or invalid")
 
 
 def manager_type(value: dict) -> str | None:
-    configured = value.get("manager_type")
+    configured = manager_config(value).get("type")
     if configured is None:
         return None
     if configured not in MANAGER_TYPES:
         raise ValueError("Automation manager type is invalid")
     return str(configured)
+
+
+def manager_config(value: dict) -> dict:
+    manager = value.get("manager")
+    return dict(manager) if isinstance(manager, dict) else {}
+
+
+def role_config(value: dict) -> dict:
+    role = value.get("role")
+    return dict(role) if isinstance(role, dict) else {}
+
+
+def runtime_config(value: dict) -> dict:
+    runtime = value.get("runtime")
+    return dict(runtime) if isinstance(runtime, dict) else {}
 
 
 def project_agent(
@@ -155,8 +169,16 @@ def validate_assignment(
     model: str | None,
     environment: str | None,
     device_id: str | None,
+    role_source: str = "agent",
 ) -> None:
     if mode == "manual":
+        if role_source == "generic":
+            if agent_id:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Generic automation role cannot bind a robot",
+                )
+            return
         if not agent_id:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -169,17 +191,6 @@ def validate_assignment(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignment mode"
         )
     if manager == "custom":
-        if not model or not environment or not device_id:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Custom AI manager configuration is incomplete",
-            )
-        validate_wework_execution_target(
-            db,
-            user_id=user_id,
-            environment=environment,
-            execution_device_id=device_id,
-        )
         return
     if manager == "wegent":
         runnable_wegent_team(db, user_id, wegent_team_id)

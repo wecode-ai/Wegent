@@ -3,12 +3,10 @@ import { describe, expect, test, vi } from 'vitest'
 import { WorkbenchPluginRuntime } from './runtime'
 import { ExternalWorkbenchPluginLoader, type InspectedWorkbenchPlugin } from './external'
 
-const tauriInvoke = vi.hoisted(() => vi.fn())
+const desktopInvoke = vi.hoisted(() => vi.fn())
 
-vi.mock('@tauri-apps/api/core', () => ({
-  convertFileSrc: (path: string) => `asset://localhost/${path}`,
-  invoke: tauriInvoke,
-  isTauri: () => true,
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: desktopInvoke,
 }))
 
 function inspectedPlugin(): InspectedWorkbenchPlugin {
@@ -50,13 +48,13 @@ describe('ExternalWorkbenchPluginLoader', () => {
 
     await loader.load(plugin)
     expect(importer).not.toHaveBeenCalled()
-    expect(tauriInvoke).toHaveBeenCalledWith('workbench_plugin_start', {
+    expect(desktopInvoke).toHaveBeenCalledWith('plugins.start', {
       pluginId: 'example',
       pluginRoot: '/plugins/example',
     })
 
     await loader.unload('example')
-    expect(tauriInvoke).toHaveBeenCalledWith('workbench_plugin_stop', {
+    expect(desktopInvoke).toHaveBeenCalledWith('plugins.stop', {
       pluginId: 'example',
     })
   })
@@ -117,7 +115,7 @@ describe('ExternalWorkbenchPluginLoader', () => {
     expect(runtime.routes.resolve('/external')?.id).toBe('external.route')
     expect(runtime.apps.resolve('external')?.path).toBe('/external')
     expect(runtime.settings.resolve('external')?.path).toBe('/settings/external')
-    expect(importer).toHaveBeenCalledWith('asset://localhost//plugins/example/frontend.js')
+    expect(importer).toHaveBeenCalledWith('file:///plugins/example/frontend.js')
 
     await loader.unload('example')
     expect(runtime.routes.resolve('/external')).toBeNull()

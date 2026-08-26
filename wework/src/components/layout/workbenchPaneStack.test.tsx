@@ -94,12 +94,14 @@ function PaneContent({ pane }: { pane: WorkbenchPaneIdentity }) {
 
 function Stack({
   activePane,
+  activeTestId = 'active-pane',
   onPaneFocus = () => undefined,
   retainedResourceKeys = [],
   workbenchVisible = true,
   followActivePane = false,
 }: {
   activePane: WorkbenchPaneIdentity
+  activeTestId?: string | null
   onPaneFocus?: (pane: WorkbenchPaneIdentity) => void
   retainedResourceKeys?: string[]
   workbenchVisible?: boolean
@@ -123,7 +125,7 @@ function Stack({
         layout={renderedLayout}
         validRuntimeKeys={[...paneByKey.keys()]}
         retainedResourceKeys={retainedResourceKeys}
-        activeTestId="active-pane"
+        activeTestId={activeTestId}
         workbenchVisible={workbenchVisible}
         resolvePane={key => paneByKey.get(key) ?? null}
         getPaneTitle={pane => pane.currentRuntimeTask?.taskId ?? 'blank'}
@@ -173,7 +175,7 @@ describe('SplitWorkbenchPaneStack', () => {
 
   it('keeps the focused pane active for task-scoped resources while its workspace tab is hidden', () => {
     persistTwoPaneLayout()
-    render(<Stack activePane={paneOne} workbenchVisible={false} />)
+    render(<Stack activePane={paneOne} activeTestId={null} workbenchVisible={false} />)
 
     expect(screen.getByTestId('pane-content-one')).toHaveAttribute('data-active', 'false')
     expect(screen.getByTestId('pane-content-one')).toHaveAttribute('data-visible', 'false')
@@ -181,6 +183,7 @@ describe('SplitWorkbenchPaneStack', () => {
     expect(screen.getByTestId('pane-content-two')).toHaveAttribute('data-visible', 'false')
     expect(screen.queryByTestId('pane-header-action-one')).not.toBeInTheDocument()
     expect(screen.queryByTestId('pane-header-action-two')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('active-pane')).not.toBeInTheDocument()
   })
 
   it('does not mutate the controlled layout when the external active pane changes', async () => {

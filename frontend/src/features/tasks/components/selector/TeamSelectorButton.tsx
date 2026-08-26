@@ -103,7 +103,7 @@ export default function TeamSelectorButton({
     const currentPage = getCurrentTargetPageByMode(currentMode)
     if (targetPage !== currentPage) {
       const targetParams = new URLSearchParams({ teamId: String(team.id) })
-      for (const param of ['projectId', 'deviceId', 'device_id']) {
+      for (const param of ['projectId', 'conversationGroupId', 'deviceId', 'device_id']) {
         const value = searchParams.get(param)
         if (value) targetParams.set(param, value)
       }

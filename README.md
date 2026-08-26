@@ -107,7 +107,7 @@ See [wework/README.md](wework/README.md) for desktop development, build, and rel
 
 | Directory                  | Responsibility                                     |
 | -------------------------- | -------------------------------------------------- |
-| `wework/`                  | Wegent Desktop (Tauri, Vite, React)                |
+| `wework/`                  | Wegent Desktop (Electron, Vite, React)             |
 | `executor/`                | Local and remote agent task execution environments |
 | `frontend/`                | Wegent platform web administration                 |
 | `backend/`                 | REST API and core business logic                   |

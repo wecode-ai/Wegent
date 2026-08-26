@@ -31,7 +31,11 @@ def test_build_generates_skill_identity_token(test_db, mocker):
     )
     mocker.patch.object(builder, "_get_bot_for_subtask", return_value=bot)
     mocker.patch.object(builder, "_build_workspace", return_value={})
-    mocker.patch.object(builder, "_build_user_info", return_value={"id": 7})
+    mocker.patch.object(
+        builder,
+        "_build_user_info",
+        return_value={"id": 7, "git_token": "iOuoSwc/HrF6ZhttvtSNeQ=="},
+    )
     mocker.patch.object(builder, "_get_model_config", return_value={})
     mocker.patch.object(builder, "_get_base_system_prompt", return_value="sys")
     mocker.patch.object(builder, "_inject_conditional_provider_skills", return_value=[])
@@ -60,6 +64,7 @@ def test_build_generates_skill_identity_token(test_db, mocker):
     assert result.executor_name == "executor-1"
     assert result.executor_namespace == "default"
     assert result.backend_url == settings.BACKEND_INTERNAL_URL
+    assert result.git_auth_transport == "encrypted_request_token"
 
 
 def test_generate_skill_identity_token_uses_sandbox_task_type(test_db):

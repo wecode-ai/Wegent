@@ -3,7 +3,7 @@ import {
   APP_PREFERENCES_CHANGED_EVENT,
   defaultAppPreferences,
   getAppPreferences,
-} from '@/tauri/appPreferences'
+} from '@/desktop/appPreferences'
 import { AppPreferencesContext, type AppPreferencesState } from './appPreferencesContext'
 
 export function AppPreferencesProvider({ children }: { children: ReactNode }) {

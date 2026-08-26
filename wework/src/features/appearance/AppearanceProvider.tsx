@@ -11,6 +11,8 @@ import {
 import type { AppearanceConfig, AppearanceUpdate, ResolvedAppearanceMode } from './types'
 import { WEWORK_RESET_FONT_SIZE_EVENT, WEWORK_STEP_FONT_SIZE_EVENT } from '@/lib/keybindings'
 import { normalizeCodeFontSize, normalizeUiFontSize } from './typography'
+import { updateAppPreferences } from '@/desktop/appPreferences'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 
 function getInitialState(): {
   appearance: AppearanceConfig
@@ -30,6 +32,13 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
     applyAppearance(state.appearance, state.resolvedMode)
     writeStoredAppearance(state.appearance)
   }, [state])
+
+  useEffect(() => {
+    if (!isElectronRuntime()) return
+    void updateAppPreferences({ appearanceMode: state.appearance.mode }).catch(error => {
+      console.error('[Wework] Failed to persist the startup appearance mode:', error)
+    })
+  }, [state.appearance.mode])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return

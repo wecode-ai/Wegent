@@ -8,10 +8,36 @@ import {
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
-import { updateAppPreferences } from '@/tauri/appPreferences'
+import { updateAppPreferences } from '@/desktop/appPreferences'
 import type { InstalledPlugin } from '@/types/api'
 import './i18n'
 import App from './App'
+
+const desktopHostMocks = vi.hoisted(() => {
+  const preferences: Record<string, unknown> = {}
+  return {
+    preferences,
+    invoke: vi.fn(
+      async (capability: string, params: Record<string, unknown> = {}): Promise<unknown> => {
+        if (capability === 'preferences.get') return { ...preferences }
+        if (capability === 'preferences.update') {
+          Object.assign(preferences, params.patch)
+          return { ...preferences }
+        }
+        if (capability === 'browser.events') return { events: [], nextCursor: 0 }
+        if (capability === 'plugins.list') return []
+        if (capability === 'smartApps.list') return []
+        if (capability === 'executor.plugins.personal.list') return { items: [] }
+        if (capability === 'runtime.listCoreDshPlugins') return []
+        return {}
+      }
+    ),
+  }
+})
+
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: desktopHostMocks.invoke,
+}))
 
 const localCodexPluginMocks = vi.hoisted(() => ({
   listInstalledPlugins: vi.fn(),
@@ -19,25 +45,6 @@ const localCodexPluginMocks = vi.hoisted(() => ({
 }))
 const workbenchProviderMocks = vi.hoisted(() => ({
   mounts: vi.fn(),
-}))
-
-vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({
-    label: 'main',
-    startDragging: vi.fn(),
-    minimize: vi.fn(),
-    toggleMaximize: vi.fn(),
-    close: vi.fn(),
-    isMaximized: vi.fn().mockResolvedValue(false),
-    innerSize: vi.fn().mockResolvedValue({
-      width: 1280,
-      height: 720,
-      toLogical: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
-    }),
-    scaleFactor: vi.fn().mockResolvedValue(1),
-    onResized: vi.fn().mockResolvedValue(vi.fn()),
-    onScaleChanged: vi.fn().mockResolvedValue(vi.fn()),
-  }),
 }))
 
 const localPathMocks = vi.hoisted(() => ({
@@ -49,15 +56,25 @@ vi.mock('@/lib/local-terminal', async importOriginal => {
   return {
     ...actual,
     localPathExists: localPathMocks.exists,
+    listLocalHarnesses: vi.fn().mockResolvedValue([]),
+    listLocalHarnessSessions: vi.fn().mockResolvedValue([]),
   }
 })
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
   getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
-  requestLocalExecutor: vi.fn().mockResolvedValue({}),
+  requestLocalExecutor: vi.fn(async (capability: string) => {
+    if (capability === 'executor.plugins.personal.list') {
+      return { marketplacePath: '', plugins: [] }
+    }
+    if (capability === 'executor.plugins.store.list') {
+      return { storePath: '', plugins: [] }
+    }
+    return {}
+  }),
   subscribeLocalExecutorEvents: vi.fn().mockResolvedValue(vi.fn()),
   connectLocalExecutorToBackend: vi
     .fn()
@@ -102,7 +119,6 @@ const workbenchValue: WorkbenchContextValue = {
   services: {},
   state: {
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
-    defaultTeam: null,
     projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
     devices: [],
     runtimeWork: null,
@@ -871,7 +887,9 @@ function mockSystemSkillsFetch() {
 
 describe('App plugins route', () => {
   beforeEach(() => {
-    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    for (const key of Object.keys(desktopHostMocks.preferences)) {
+      delete desktopHostMocks.preferences[key]
+    }
     localStorage.clear()
     sessionStorage.clear()
     vi.stubEnv('DEV', false)
@@ -880,6 +898,11 @@ describe('App plugins route', () => {
       configurable: true,
       value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
     })
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      desktopHost: 'electron',
+      runtimeMode: 'backend',
+    }
+    desktopHostMocks.invoke.mockClear()
     workbenchValue.state.runtimeWork = null
     workbenchValue.state.currentRuntimeTask = null
     workbenchValue.state.devices = [
@@ -897,7 +920,7 @@ describe('App plugins route', () => {
     workbenchValue.state.standaloneDeviceId = 'local-device'
     vi.mocked(workbenchValue.openRuntimeTask).mockReset().mockResolvedValue(undefined)
     vi.mocked(workbenchValue.startNewSkillChat).mockReset().mockResolvedValue(false)
-    localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue({ items: [] })
+    localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue([])
     localCodexPluginMocks.listSkills.mockReset().mockResolvedValue([])
     workbenchProviderMocks.mounts.mockClear()
     localPathMocks.exists.mockReset().mockResolvedValue(false)
@@ -934,13 +957,10 @@ describe('App plugins route', () => {
   }, 10_000)
 
   test('shows Sites as unavailable instead of calling a relative API in disconnected local mode', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
     window.__WEWORK_RUNTIME_CONFIG__ = {
       ...window.__WEWORK_RUNTIME_CONFIG__,
       runtimeMode: 'local-first',
+      desktopHost: 'electron',
     }
     const fetchMock = vi.mocked(fetch)
     fetchMock.mockResolvedValue({
@@ -963,13 +983,10 @@ describe('App plugins route', () => {
   })
 
   test('loads Sites from the authenticated cloud Backend in local mode', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
     window.__WEWORK_RUNTIME_CONFIG__ = {
       ...window.__WEWORK_RUNTIME_CONFIG__,
       runtimeMode: 'local-first',
+      desktopHost: 'electron',
     }
     localStorage.setItem(
       'wework.cloudConnection',
@@ -1633,13 +1650,10 @@ describe('App plugins route', () => {
   })
 
   test('requires a cloud connection before installing Sites in local-first mode', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
     window.__WEWORK_RUNTIME_CONFIG__ = {
       ...window.__WEWORK_RUNTIME_CONFIG__,
       runtimeMode: 'local-first',
+      desktopHost: 'electron',
     }
     cacheApplicationTypes()
     window.history.pushState({}, '', '/sites')
@@ -1727,7 +1741,7 @@ describe('App plugins route', () => {
       'macos-titlebar-drag-region'
     )
 
-    expect(pluginsDragRegion).toHaveAttribute('data-tauri-drag-region')
+    expect(pluginsDragRegion).toHaveClass('electron-titlebar-drag-region')
     expect(screen.getByTestId('plugins-topbar-drag-region')).toContainElement(pluginsDragRegion)
     expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '插件' })).toBeInTheDocument()
@@ -1750,18 +1764,14 @@ describe('App plugins route', () => {
       within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
     )
 
-    expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
+    expect(screen.getByTestId('auxiliary-expand-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-page-content')).toHaveClass('md:pl-6')
 
-    await userEvent.click(screen.getByTestId('expand-sidebar-button'))
+    await userEvent.click(screen.getByTestId('auxiliary-expand-sidebar-button'))
     expect(await screen.findByTestId('plugins-button')).toBeInTheDocument()
   })
 
-  test('uses the global Chrome titlebar on collapsed plugin routes in Tauri', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+  test('uses the global Chrome titlebar on collapsed plugin routes in Electron', async () => {
     localStorage.setItem('wework.desktop.sidebar.collapsed', 'true')
     window.history.pushState({}, '', '/plugins')
 
@@ -1832,7 +1842,13 @@ describe('App plugins route', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/plugins/manage'))
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理插件' })).toBeInTheDocument()
-    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('plugin-management-page-content')).getAllByRole('tab')
+    ).toHaveLength(2)
+    expect(screen.getByTestId('plugin-management-surface-wework')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
     expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
     expect(screen.getByTestId('plugin-management-browse-marketplace-button')).toBeInTheDocument()
     expect(screen.queryByPlaceholderText('供应商 Token')).not.toBeInTheDocument()
@@ -1926,7 +1942,35 @@ describe('App plugins route', () => {
     expect(await screen.findByRole('heading', { name: '管理插件' })).toBeInTheDocument()
     expect(screen.queryByText('Custom Docs MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('wehot')).not.toBeInTheDocument()
-    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugin-management-codex-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-management-core-dsh-panel')).not.toBeInTheDocument()
+  })
+
+  test('switches between Codex and Core DSH plugin management tabs', async () => {
+    window.history.pushState({}, '', '/plugins/manage')
+
+    renderApp()
+
+    expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
+    expect(screen.queryByTestId('core-dsh-plugin-management')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugin-management-surface-core-dsh'))
+
+    expect(screen.getByTestId('plugin-management-surface-core-dsh')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('core-dsh-plugin-management')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-management-codex-panel')).not.toBeInTheDocument()
+
+    await userEvent.keyboard('{ArrowLeft}')
+
+    expect(screen.getByTestId('plugin-management-surface-wework')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('plugin-management-codex-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('core-dsh-plugin-management')).not.toBeInTheDocument()
   })
 
   test('refreshes composer plugin candidates after toggling an installed plugin', async () => {

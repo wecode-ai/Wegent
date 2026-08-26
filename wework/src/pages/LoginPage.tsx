@@ -11,7 +11,7 @@ import { useAuth } from '@/features/auth/useAuth'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { QrcodeLoginPage } from './QrcodeLoginPage'
 
 function getRedirectTarget(): string {
@@ -61,7 +61,7 @@ export function LoginPage() {
   const redirectTarget = getRedirectTarget()
   const showPasswordLogin = config.loginMode === 'password' || config.loginMode === 'all'
   const showOidcLogin = config.loginMode === 'oidc' || config.loginMode === 'all'
-  const showQrcodeOnlyLogin = isMobile || isTauriRuntime()
+  const showQrcodeOnlyLogin = isMobile || isDesktopRuntime()
   const isResolvingInitialUserState = authLoading && !user
 
   useEffect(() => {

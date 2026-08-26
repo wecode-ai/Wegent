@@ -1,0 +1,4 @@
+# Windows batch scripts rely on CRLF line endings for reliable cmd.exe
+# label parsing; convert on checkout regardless of the committing platform.
+*.cmd text eol=crlf
+*.bat text eol=crlf

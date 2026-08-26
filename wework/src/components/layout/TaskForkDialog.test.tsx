@@ -10,6 +10,10 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 
+vi.mock('@/e2e/automation', () => ({
+  shouldUseNativeProjectDirectoryPicker: () => false,
+}))
+
 function source(overrides: Partial<RuntimeTaskAddress> = {}): RuntimeTaskAddress {
   return {
     deviceId: 'local-1',

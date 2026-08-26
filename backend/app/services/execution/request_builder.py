@@ -27,6 +27,11 @@ from app.schemas.kind import Skill as SkillCRD
 from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
 from app.services.auth import create_skill_identity_token
+from app.services.execution.git_credentials import (
+    build_execution_git_user_info,
+    classify_git_auth_transport,
+    extract_git_domain,
+)
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
 from app.services.mcp_provider_registry import (
     get_mcp_service_by_skill_name,
@@ -43,10 +48,9 @@ from app.services.skill_resolution import (
     find_skill_by_ref,
 )
 from app.services.user_mcp_service import user_mcp_service
-from app.stores.tasks import task_store
+from app.stores.tasks import subtask_store, task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
-from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
@@ -226,7 +230,7 @@ class TaskRequestBuilder:
         if workspace and workspace.get("repository"):
             repo = workspace["repository"]
             git_url = repo.get("gitUrl")
-            git_domain = repo.get("gitDomain")
+            git_domain = repo.get("gitDomain") or extract_git_domain(git_url)
             git_repo = repo.get("gitRepo")
             git_repo_id = repo.get("gitRepoId")
             branch_name = repo.get("branchName") or workspace.get("branch")
@@ -235,6 +239,7 @@ class TaskRequestBuilder:
 
         # Build user info with git_domain to match correct git account
         user_info = self._build_user_info(user, git_domain)
+        git_auth_transport = classify_git_auth_transport(user_info)
 
         # Get model config with full resolution (decryption, placeholder replacement)
         model_config = self._get_model_config(
@@ -457,7 +462,20 @@ class TaskRequestBuilder:
         )
         resolved_bot_namespace = getattr(bot, "namespace", None) or "default"
         fork_runtime = self._extract_task_fork_runtime(task)
-        inherited_sessions = self._extract_inherited_sessions(fork_runtime)
+        fork_sessions = self._extract_inherited_sessions(fork_runtime)
+        persisted_sessions: list[dict[str, Any]] = []
+        if getattr(subtask, "executor_deleted_at", False):
+            persisted_sessions = self._extract_persisted_sessions(
+                subtask_store.list_assistant_by_task(
+                    self.db,
+                    task_id=task.id,
+                    owner_user_id=user.id,
+                )
+            )
+        inherited_sessions = self._merge_inherited_sessions(
+            fork_sessions,
+            persisted_sessions,
+        )
 
         execution_request = ExecutionRequest(
             task_id=task.id,
@@ -504,6 +522,7 @@ class TaskRequestBuilder:
             git_repo=git_repo,
             git_repo_id=git_repo_id,
             branch_name=branch_name,
+            git_auth_transport=git_auth_transport,
             message_id=subtask.message_id,
             user_message_id=None,
             is_group_chat=is_group_chat,
@@ -572,6 +591,63 @@ class TaskRequestBuilder:
         if not isinstance(sessions, list):
             return []
         return [session for session in sessions if isinstance(session, dict)]
+
+    @staticmethod
+    def _extract_persisted_sessions(subtasks: list[Any]) -> list[dict[str, Any]]:
+        sessions: list[dict[str, Any]] = []
+        for subtask in reversed(subtasks):
+            result = getattr(subtask, "result", None)
+            if not isinstance(result, dict):
+                continue
+            session = TaskRequestBuilder._normalize_executor_session(
+                result.get("executor_session")
+            )
+            if session:
+                sessions.append(session)
+        return TaskRequestBuilder._merge_inherited_sessions(sessions)
+
+    @staticmethod
+    def _normalize_executor_session(session: Any) -> dict[str, Any] | None:
+        if not isinstance(session, dict):
+            return None
+        agent = session.get("agent")
+        session_id = session.get("sessionId") or session.get("session_id")
+        thread_id = session.get("threadId") or session.get("thread_id")
+        if not agent or not (session_id or thread_id):
+            return None
+
+        normalized: dict[str, Any] = {"agent": str(agent)}
+        if session_id:
+            normalized["sessionId"] = str(session_id)
+        if thread_id:
+            normalized["threadId"] = str(thread_id)
+        bot_id = session.get("botId", session.get("bot_id"))
+        if bot_id is not None:
+            normalized["botId"] = bot_id
+        return normalized
+
+    @staticmethod
+    def _merge_inherited_sessions(
+        *session_groups: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        for sessions in session_groups:
+            for session in sessions:
+                normalized = TaskRequestBuilder._normalize_executor_session(session)
+                if not normalized:
+                    continue
+                identity = (
+                    str(normalized.get("agent") or ""),
+                    str(normalized.get("botId") or ""),
+                    str(normalized.get("sessionId") or ""),
+                    str(normalized.get("threadId") or ""),
+                )
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                merged.append(normalized)
+        return merged
 
     def resolve_request_preload_skills(
         self,
@@ -2583,45 +2659,7 @@ Response template:
         Returns:
             User info dictionary with matched git account info
         """
-        user_info = {
-            "id": user.id,
-            "name": user.user_name,
-            "git_domain": None,
-            "git_token": None,
-            "git_id": None,
-            "git_login": None,
-            "git_email": None,
-        }
-
-        # git_info is a list of git account configurations
-        git_info_list = user.git_info or []
-        if not isinstance(git_info_list, list):
-            # Handle edge case where git_info might be a dict (legacy)
-            git_info_list = [git_info_list] if git_info_list else []
-
-        if not git_info_list:
-            return user_info
-
-        # Find matching git_info entry by domain
-        matched_git_info = None
-        if git_domain:
-            for git_info in git_info_list:
-                if domains_match(git_info.get("git_domain", ""), git_domain):
-                    matched_git_info = git_info
-                    break
-
-        # Fallback to first entry if no domain match
-        if not matched_git_info and git_info_list:
-            matched_git_info = git_info_list[0]
-
-        if matched_git_info:
-            user_info["git_domain"] = matched_git_info.get("git_domain")
-            user_info["git_token"] = matched_git_info.get("git_token")
-            user_info["git_id"] = matched_git_info.get("git_id")
-            user_info["git_login"] = matched_git_info.get("git_login")
-            user_info["git_email"] = matched_git_info.get("git_email")
-
-        return user_info
+        return build_execution_git_user_info(user, git_domain)
 
     def _build_workspace(self, task: TaskResource) -> dict:
         """Build workspace configuration.

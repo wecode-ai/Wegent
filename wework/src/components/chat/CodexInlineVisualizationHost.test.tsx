@@ -2,15 +2,25 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CodexInlineVisualizationHost } from './CodexInlineVisualizationHost'
 
-const invokeMock = vi.hoisted(() => vi.fn())
+const runtimeMock = vi.hoisted(() => ({
+  electron: false,
+}))
+const desktopHostMock = vi.hoisted(() => ({
+  invokeDesktopHost: vi.fn(),
+}))
 
-vi.mock('@tauri-apps/api/core', () => ({
-  convertFileSrc: (path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`,
-  invoke: invokeMock,
+vi.mock('@/lib/runtime-environment', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/runtime-environment')>()),
+  isElectronRuntime: () => runtimeMock.electron,
+}))
+vi.mock('@/api/dsh/desktopHost', () => desktopHostMock)
+vi.mock('@/desktop/inlineVisualization', () => ({
+  readInlineVisualizationHtml: desktopHostMock.invokeDesktopHost,
 }))
 
 beforeEach(() => {
-  invokeMock.mockReset()
+  runtimeMock.electron = true
+  desktopHostMock.invokeDesktopHost.mockReset()
 })
 
 afterEach(() => {
@@ -19,7 +29,7 @@ afterEach(() => {
 
 describe('CodexInlineVisualizationHost', () => {
   test('loads an absolute ChatGPT visualize path without file change metadata', async () => {
-    invokeMock.mockResolvedValue('<div>可视化内容</div>')
+    desktopHostMock.invokeDesktopHost.mockResolvedValue('<div>可视化内容</div>')
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:absolute-visualization')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
 
@@ -36,13 +46,15 @@ describe('CodexInlineVisualizationHost', () => {
     expect(host).toHaveAttribute('data-visualization-mode', 'wide')
     expect(frame).toHaveAttribute('title', 'Latency')
     await waitFor(() => expect(frame).toHaveAttribute('src', 'blob:absolute-visualization'))
-    expect(invokeMock).toHaveBeenCalledWith('read_inline_visualization_html', {
-      path: '/tmp/codex/visualizations/latency.html',
-    })
+    expect(desktopHostMock.invokeDesktopHost).toHaveBeenCalledWith(
+      '/tmp/codex/visualizations/latency.html'
+    )
   })
 
   test('loads the unique nested fragment as a UTF-8 sandbox document and resizes safely', async () => {
-    invokeMock.mockResolvedValue('<h2>月度趋势</h2><svg style="stroke:var(--viz-series-1)"></svg>')
+    desktopHostMock.invokeDesktopHost.mockResolvedValue(
+      '<h2>月度趋势</h2><svg style="stroke:var(--viz-series-1)"></svg>'
+    )
     let documentBlob: Blob | undefined
     vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => {
       documentBlob = blob
@@ -83,7 +95,7 @@ describe('CodexInlineVisualizationHost', () => {
     expect(document).toContain('<h2>月度趋势</h2>')
     expect(document).toContain('--viz-series-1: var(--primary)')
     expect(document).toContain(
-      '<base href="asset://localhost/workspace/.codex/visualizations/2026/07/23/thread/">'
+      '<base href="file:///workspace/.codex/visualizations/2026/07/23/thread/">'
     )
     const token = document?.match(/token:(?:&quot;|")([^&"]+)/)?.[1]
     expect(token).toBeTruthy()
@@ -104,6 +116,36 @@ describe('CodexInlineVisualizationHost', () => {
 
     unmount()
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:inline-visualization')
+  })
+
+  test('loads an Electron visualization through the declared local file capability', async () => {
+    runtimeMock.electron = true
+    const fragment = '<div>Electron 可视化</div>'
+    desktopHostMock.invokeDesktopHost.mockResolvedValue({
+      chunkBase64: Buffer.from(fragment).toString('base64'),
+      bytesRead: Buffer.byteLength(fragment),
+      eof: true,
+      size: Buffer.byteLength(fragment),
+    })
+    let documentBlob: Blob | undefined
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => {
+      documentBlob = blob
+      return 'blob:electron-visualization'
+    })
+
+    render(
+      <CodexInlineVisualizationHost
+        file="/tmp/codex/visualizations/electron chart.html"
+        title="Electron chart"
+      />
+    )
+
+    const frame = screen.getByTestId('codex-inline-visualization-frame')
+    await waitFor(() => expect(frame).toHaveAttribute('src', 'blob:electron-visualization'))
+    expect(desktopHostMock.invokeDesktopHost).toHaveBeenCalledWith(
+      '/tmp/codex/visualizations/electron chart.html'
+    )
+    expect(await documentBlob?.text()).toContain('<base href="file:///tmp/codex/visualizations/">')
   })
 
   test('does not render an ambiguous basename match', () => {

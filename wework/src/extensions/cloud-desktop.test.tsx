@@ -5,6 +5,7 @@ import { cloudDesktopExtension } from './cloud-desktop'
 
 describe('cloud desktop fallback extension', () => {
   test('keeps cloud desktop capabilities unavailable without an internal overlay', () => {
+    const unsupportedInternalPageFixture = 'internal-app://localhost/extension-page.html'
     const DeviceAction = cloudDesktopExtension.DeviceAction
     const deviceActionView = render(
       <DeviceAction deviceId="device-1" disabled={false} onOpened={() => undefined} />
@@ -24,8 +25,6 @@ describe('cloud desktop fallback extension', () => {
     expect(cloudDesktopExtension.available).toBe(false)
     expect(deviceActionView.container).toBeEmptyDOMElement()
     expect(workspaceActionView.container).toBeEmptyDOMElement()
-    expect(cloudDesktopExtension.isInternalPageUrl('tauri://localhost/extension-page.html')).toBe(
-      false
-    )
+    expect(cloudDesktopExtension.isInternalPageUrl(unsupportedInternalPageFixture)).toBe(false)
   })
 })

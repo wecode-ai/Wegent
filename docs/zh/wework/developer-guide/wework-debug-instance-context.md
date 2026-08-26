@@ -23,7 +23,7 @@ Wework 支持从一个正在运行的 Wework 内置 Terminal 中启动另一个�
 `wework/scripts/dev-mac-app.sh` 会读取父窗口变量，并自动生成调试实例变量：
 
 - `WEWORK_DEV_TITLE`: 调试实例短标题，优先使用 `WEWORK_PARENT_TITLE`，否则使用 Git branch，最后使用 worktree 目录名。
-- `WEWORK_DEV_PORT`: 当前 Vite/Tauri dev server 端口。
+- `WEWORK_DEV_PORT`: 当前 Vite/ Electron dev server 端口。
 - `WEWORK_DEV_WORKTREE`: 当前 worktree 根路径。
 - `WEWORK_DEV_BRANCH`: 当前 Git branch，detached HEAD 时为空。
 

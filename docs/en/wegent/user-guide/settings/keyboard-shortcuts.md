@@ -4,11 +4,11 @@ sidebar_position: 5
 
 # Keyboard Shortcuts
 
-The Wework desktop app provides local keyboard shortcuts when running in Tauri. Shortcut settings are stored only on the current device. They are not written to Backend and are not synced through a cloud connection.
+The Wework desktop app provides local keyboard shortcuts when running in Electron. Shortcut settings are stored only on the current device. They are not written to Backend and are not synced through a cloud connection.
 
 ## Open Settings
 
-In the Tauri desktop app, open **Settings → Personal → Keyboard Shortcuts** to view and edit local shortcuts. Each row shows the command name, description, current key binding, and actions to reset or clear the binding.
+In the Electron desktop app, open **Settings → Personal → Keyboard Shortcuts** to view and edit local shortcuts. Each row shows the command name, description, current key binding, and actions to reset or clear the binding.
 
 After a shortcut is changed, Wework refreshes the shortcut listeners in the current window immediately.
 

@@ -282,15 +282,19 @@ export function ModelSelector({
   }, [])
   const activateControl = useCallback(
     (controlId: string) => {
-      setActiveDesktopSubmenu({ type: 'control', id: controlId })
+      setActiveDesktopSubmenu(current =>
+        current?.type === 'control' && current.id === controlId
+          ? current
+          : { type: 'control', id: controlId }
+      )
     },
     [setActiveDesktopSubmenu]
   )
   const activateModels = useCallback(() => {
-    setActiveDesktopSubmenu({ type: 'models' })
+    setActiveDesktopSubmenu(current => (current?.type === 'models' ? current : { type: 'models' }))
   }, [setActiveDesktopSubmenu])
   const clearDesktopSubmenu = useCallback(() => {
-    setActiveDesktopSubmenu({ type: 'none' })
+    setActiveDesktopSubmenu(current => (current?.type === 'none' ? current : { type: 'none' }))
   }, [setActiveDesktopSubmenu])
   const activateMobileFamily = useCallback(
     (familyId: string) => {

@@ -30,7 +30,7 @@ import {
 } from '@/features/plugins/pluginTrial'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type {
   DeviceCapabilityItemResult,
@@ -216,7 +216,7 @@ export function SitesPage() {
   const { logout } = useAuth()
   const cloudConnection = useCloudConnection()
   const isMobile = useIsMobile()
-  const isTauri = isTauriRuntime()
+  const isDesktop = isElectronRuntime()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -523,7 +523,7 @@ export function SitesPage() {
   }
 
   const topBarLeftActions =
-    !isMobile && !isTauri ? (
+    !isMobile && !isDesktop ? (
       sidebarCollapsed ? (
         <DesktopWindowControls
           sidebarCollapsed
@@ -541,7 +541,7 @@ export function SitesPage() {
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-background text-text-primary">
       <div className="flex flex-1 overflow-hidden">
-        {!isMobile && isTauri && (
+        {!isMobile && isDesktop && (
           <DesktopCollapsedSidebarToggle
             collapsed={sidebarCollapsed}
             onToggle={() => setSidebarCollapsed(false)}
@@ -650,13 +650,9 @@ export function SitesPage() {
           smartAppsMode={smartAppsView === 'owned' ? 'owned' : 'marketplace'}
           smartAppsContent={
             smartAppsView === 'owned' ? (
-              <SmartAppsMarketplacePage
-                api={smartAppsApi}
-                mode="owned"
-                onCreateProject={createProject}
-              />
+              <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />
             ) : (
-              <SmartAppsMarketplacePage api={smartAppsApi} onCreateProject={createProject} />
+              <SmartAppsMarketplacePage api={smartAppsApi} />
             )
           }
           sidebarCollapsed={sidebarCollapsed && !isMobile}

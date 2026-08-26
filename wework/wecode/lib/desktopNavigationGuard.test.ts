@@ -6,15 +6,12 @@ let cleanup: (() => void) | undefined
 afterEach(() => {
   cleanup?.()
   cleanup = undefined
-  delete (window as Window & { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
+  delete window.__WEWORK_RUNTIME_CONFIG__
   document.body.replaceChildren()
 })
 
-function enableTauri() {
-  Object.defineProperty(window, '__TAURI_INTERNALS__', {
-    configurable: true,
-    value: {},
-  })
+function enableDesktopRuntime() {
+  window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
 }
 
 function dispatchBackspace(target: Element = document.body) {
@@ -29,14 +26,14 @@ function dispatchBackspace(target: Element = document.body) {
 
 describe('installDesktopNavigationGuard', () => {
   test('prevents Backspace navigation in the desktop app', () => {
-    enableTauri()
+    enableDesktopRuntime()
     cleanup = installDesktopNavigationGuard(document)
 
     expect(dispatchBackspace().defaultPrevented).toBe(true)
   })
 
   test('allows Backspace in editable elements', () => {
-    enableTauri()
+    enableDesktopRuntime()
     cleanup = installDesktopNavigationGuard(document)
 
     const input = document.createElement('input')
@@ -57,7 +54,7 @@ describe('installDesktopNavigationGuard', () => {
   })
 
   test('removes the listener during cleanup', () => {
-    enableTauri()
+    enableDesktopRuntime()
     cleanup = installDesktopNavigationGuard(document)
     cleanup()
     cleanup = undefined

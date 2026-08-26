@@ -19,6 +19,14 @@ Plugin marketplaces are not split into local and cloud modes. Wework shows the O
 
 Codex plugin runtime configuration is available under Settings → Integrations → Plugins and currently exposes the remote Apps / Connectors switch. Settings no longer includes a standalone worktree management page or an action panel that migrates Claude and Codex skill directories into shared symlinks. Worktree lifecycle is managed by conversation flows, while skill and plugin content is managed through the plugin pages and Codex app-server.
 
+### Boundary between Codex plugins and Wework plugins
+
+The desktop management page separates **Codex plugins** from **Wework plugins**. Codex plugins continue to use the Codex app-server, Wegent cloud marketplace, and Executor synchronization paths. Wework plugins are bundle dependencies of the `wework-core` DSH profile and are managed directly by the Electron main process. Wework plugin management is available only in the managed desktop runtime and does not expose installation or removal HTTP endpoints through the DSH web server.
+
+The renderer invokes allowlisted Electron capabilities to list, install, update, enable, disable, and uninstall plugins. The main process serializes these operations and snapshots the profile `package.json`, lockfile, workspace configuration, and Wework plugin state before each mutation. It then validates the result with `dsh --profile wework-core --dump-config`. If package management or validation fails, it restores the snapshot and reinstalls dependencies from the lockfile.
+
+User plugins must declare `dsh.bundle.patch`. Bundled DSH packages are read-only in the management UI. User plugin order and disabled state are stored in a Wework state file inside the profile and used to rebuild `dsh.profile.bundles`. Configuration changes do not restart the desktop runtime implicitly; the UI prompts the user to call `runtime.restartCoreDsh` after completing a group of changes.
+
 ## Marketplace and Install
 
 Wework reads local marketplaces and the OpenAI official marketplace through the Codex app-server exposed by the local executor. List requests do not restrict `marketplaceKinds`, allowing Codex to return both local marketplaces and the `openai-curated-remote` official marketplace according to the active feature flags and authentication state. Custom remote GitHub marketplaces are cloned into a local cache directory, and later reads use the cached marketplace data and plugin folders. Local marketplace installation, uninstall, refresh, and removal all go through Codex app-server.

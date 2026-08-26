@@ -18,7 +18,7 @@ sidebar_position: 18
 6. executor 通过 Socket.IO ack 一次性返回完成结果。
 7. Backend 按命令定义中的 `post_processor` 对结果做可选后处理。
 
-该 RPC 与 `task:execute` 解耦，适合短命令和一次性诊断命令。长时间交互式终端、实时 stdout/stderr 流式输出不通过该 RPC 承载。macOS WeWork App 的本地项目终端使用 Tauri 本地 PTY 嵌入在页面内，见下文“macOS App 本地终端”。
+该 RPC 与 `task:execute` 解耦，适合短命令和一次性诊断命令。长时间交互式终端、实时 stdout/stderr 流式输出不通过该 RPC 承载。macOS WeWork App 的本地项目终端使用 Electron 本地 PTY 嵌入在页面内，见下文“macOS App 本地终端”。
 
 ## API
 
@@ -109,14 +109,14 @@ local executor 优先使用 Backend 下发的 `argv` 执行命令；缺少 `argv
 
 ## macOS App 本地终端
 
-WeWork macOS App 访问本机 local executor 项目时，可以在工作区面板内嵌入本地终端。该终端由 App 通过 Tauri command 在本机创建 PTY，并用前端 `xterm` 组件渲染输入输出流；它不经过 `/devices/{device_id}/commands` RPC。
+WeWork macOS App 访问本机 local executor 项目时，可以在工作区面板内嵌入本地终端。该终端由 App 通过 Electron IPC command 在本机创建 PTY，并用前端 `xterm` 组件渲染输入输出流；它不经过 `/devices/{device_id}/commands` RPC。
 
 启用条件：
 
-- 运行环境必须是 macOS Tauri App；普通浏览器和 iOS App 不启用。
+- 运行环境必须是 macOS Electron app；普通浏览器和 iOS App 不启用。
 - 项目绑定的设备必须是 local Claude Code 设备。
 - App 与 executor 必须对应同一个后端。App 会把当前 `apiBaseUrl` 传给 native 层，native 层优先扫描正在运行的 `wegent-executor` 进程，并按进程环境中的 `WEGENT_BACKEND_URL` 匹配。
 - 如果进程匹配不到，native 层才回退读取 `WEGENT_EXECUTOR_HOME`、`~/.wecode/wegent-executor/device-config.json`、`~/.wegent-executor/device-config.json` 等本地配置。
-- 对项目终端，当前任务执行工作区路径或项目 `localPath` 在当前 Mac 上存在时也可作为同机信号，用于处理多个 executor 配置文件不同步的情况。终端启动时会把同一个路径作为 Tauri PTY 的 `cwd`。
+- 对项目终端，当前任务执行工作区路径或项目 `localPath` 在当前 Mac 上存在时也可作为同机信号，用于处理多个 executor 配置文件不同步的情况。终端启动时会把同一个路径作为 Electron-hosted PTY 的 `cwd`。
 
 这个判断不使用 IP 或 MAC 地址。IP 在代理、VPN、容器网络和本机回环场景下容易重复或失真；MAC 地址也可能因权限、虚拟网卡和隐私策略不稳定。运行中 executor 进程与后端 URL 匹配是更接近实际连接状态的信号。

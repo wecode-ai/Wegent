@@ -73,13 +73,13 @@ function stubSessionFetch(
   return fetchMock
 }
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
+vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: invokeMock }))
 
 describe('buildVncPageUrl', () => {
   beforeEach(() => {
     invokeMock.mockReset()
     invokeMock.mockImplementation(command => {
-      if (command === 'get_vnc_external_bridge_url') {
+      if (command === 'vnc.externalBridgeUrl') {
         return Promise.resolve('http://127.0.0.1:43123')
       }
       return Promise.resolve(undefined)
@@ -111,7 +111,7 @@ describe('buildVncPageUrl', () => {
     })
     const parsedUrl = new URL(url)
 
-    expect(invokeMock).toHaveBeenCalledWith('prepare_vnc_session', {
+    expect(invokeMock).toHaveBeenCalledWith('vnc.prepareSession', {
       sessionId,
       token: 'cloud token',
       wsUrl: 'wss://cloud.example.com/wework/vnc-proxy/device%2F1',
@@ -133,7 +133,7 @@ describe('buildVncPageUrl', () => {
     })
     const parsedUrl = new URL(url)
 
-    expect(invokeMock).toHaveBeenCalledWith('get_vnc_external_bridge_url')
+    expect(invokeMock).toHaveBeenCalledWith('vnc.externalBridgeUrl')
     expect(parsedUrl.origin).toBe('http://127.0.0.1:43123')
     expect(parsedUrl.pathname).toBe('/vnc.html')
     expect(parsedUrl.searchParams.get('sessionId')).toBe('123e4567-e89b-42d3-a456-426614174000')
@@ -165,7 +165,7 @@ describe('buildVncPageUrl', () => {
       token: 'token',
     })
 
-    expect(invokeMock).toHaveBeenLastCalledWith('prepare_vnc_session', {
+    expect(invokeMock).toHaveBeenLastCalledWith('vnc.prepareSession', {
       sessionId,
       token: 'token',
       wsUrl,

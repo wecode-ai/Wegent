@@ -20,13 +20,26 @@ use std::os::unix::fs::symlink;
 #[test]
 fn executor_archive_includes_workspace_and_sanitized_claude_home() {
     let root = temp_root("executor-archive");
-    let workspace = root.join("workspace").join("1385");
+    let task_id = "1385";
+    let workspace = root.join("workspace").join(task_id);
     let home = root.join("home");
     write_file(
         &workspace.join(".claude/workspace-memory.md"),
         "workspace-context",
     );
-    write_file(&workspace.join(".claude_session_id"), "session-id");
+    let session_file = home
+        .join(".wegent-executor/sessions")
+        .join(task_id)
+        .join(".claude_session_id_987");
+    write_file(&session_file, "session-id");
+    write_file(
+        &home.join(".wegent-executor/sessions/other-task/.claude_session_id_987"),
+        "other-session",
+    );
+    write_file(
+        &home.join(".wegent-executor/sessions/1385/request.json"),
+        "sensitive-runtime-state",
+    );
     write_file(&workspace.join(".git/HEAD"), "ref: refs/heads/main");
     write_file(&workspace.join("node_modules/skip.txt"), "skip");
     write_file(&home.join(".claude/home-memory.md"), "home-context");
@@ -41,6 +54,7 @@ fn executor_archive_includes_workspace_and_sanitized_claude_home() {
 
     let archive = create_runtime_archive(ArchiveOptions {
         mode: ArchiveMode::Executor,
+        task_id: task_id.to_owned(),
         workspace_path: workspace.clone(),
         home_path: home.clone(),
         max_size_bytes: 10 * 1024 * 1024,
@@ -51,7 +65,9 @@ fn executor_archive_includes_workspace_and_sanitized_claude_home() {
     assert!(archive.session_file_included);
     assert!(archive.git_included);
     assert!(names.contains(&"workspace/.claude/workspace-memory.md".to_owned()));
-    assert!(names.contains(&"workspace/.claude_session_id".to_owned()));
+    assert!(
+        names.contains(&"home/.wegent-executor/sessions/1385/.claude_session_id_987".to_owned())
+    );
     assert!(names.contains(&"workspace/.git/HEAD".to_owned()));
     assert!(names.contains(&"home/.claude/home-memory.md".to_owned()));
     assert!(names.contains(&"home/.claude.json".to_owned()));
@@ -60,15 +76,24 @@ fn executor_archive_includes_workspace_and_sanitized_claude_home() {
     assert!(!names.contains(&"home/.ssh/id_rsa".to_owned()));
     assert!(!names.contains(&"home/.npmrc".to_owned()));
     assert!(!names.contains(&"home/.local/share/code-server/cert/tls.crt".to_owned()));
+    assert!(!names
+        .contains(&"home/.wegent-executor/sessions/other-task/.claude_session_id_987".to_owned()));
+    assert!(!names.contains(&"home/.wegent-executor/sessions/1385/request.json".to_owned()));
 
     fs::remove_dir_all(workspace.join(".claude")).unwrap();
-    fs::remove_file(workspace.join(".claude_session_id")).unwrap();
     fs::remove_dir_all(workspace.join(".git")).unwrap();
     fs::remove_dir_all(home.join(".claude")).unwrap();
     fs::remove_file(home.join(".claude.json")).unwrap();
+    fs::remove_dir_all(home.join(".wegent-executor")).unwrap();
 
-    let restored =
-        restore_runtime_archive(&archive.bytes, ArchiveMode::Executor, &workspace, &home).unwrap();
+    let restored = restore_runtime_archive(
+        &archive.bytes,
+        ArchiveMode::Executor,
+        task_id,
+        &workspace,
+        &home,
+    )
+    .unwrap();
 
     assert!(restored.success);
     assert!(restored.session_restored);
@@ -89,6 +114,11 @@ fn executor_archive_includes_workspace_and_sanitized_claude_home() {
         fs::read_to_string(home.join(".claude.json")).unwrap(),
         r#"{"theme":"dark"}"#
     );
+    assert_eq!(fs::read_to_string(session_file).unwrap(), "session-id");
+    assert!(!home.join(".wegent-executor/sessions/other-task").exists());
+    assert!(!home
+        .join(".wegent-executor/sessions/1385/request.json")
+        .exists());
 }
 
 #[test]
@@ -103,6 +133,7 @@ fn sandbox_archive_includes_workspace_and_home_but_excludes_runtime_directories(
 
     let archive = create_runtime_archive(ArchiveOptions {
         mode: ArchiveMode::Sandbox,
+        task_id: "4680".to_owned(),
         workspace_path: workspace.clone(),
         home_path: home.clone(),
         max_size_bytes: 10 * 1024 * 1024,
@@ -118,7 +149,14 @@ fn sandbox_archive_includes_workspace_and_home_but_excludes_runtime_directories(
     fs::remove_file(workspace.join("project.txt")).unwrap();
     fs::remove_file(home.join("notes.md")).unwrap();
 
-    restore_runtime_archive(&archive.bytes, ArchiveMode::Sandbox, &workspace, &home).unwrap();
+    restore_runtime_archive(
+        &archive.bytes,
+        ArchiveMode::Sandbox,
+        "4680",
+        &workspace,
+        &home,
+    )
+    .unwrap();
 
     assert_eq!(
         fs::read_to_string(workspace.join("project.txt")).unwrap(),
@@ -139,8 +177,14 @@ fn restore_supports_legacy_archive_without_workspace_prefix() {
     fs::create_dir_all(&home).unwrap();
     let archive = legacy_archive();
 
-    let restored =
-        restore_runtime_archive(&archive, ArchiveMode::Executor, &workspace, &home).unwrap();
+    let restored = restore_runtime_archive(
+        &archive,
+        ArchiveMode::Executor,
+        "5728299",
+        &workspace,
+        &home,
+    )
+    .unwrap();
 
     assert!(restored.success);
     assert!(restored.session_restored);
@@ -171,6 +215,7 @@ fn archive_rejects_missing_workspace_and_max_size_overflow() {
 
     let missing = create_runtime_archive(ArchiveOptions {
         mode: ArchiveMode::Executor,
+        task_id: "3579".to_owned(),
         workspace_path: workspace.clone(),
         home_path: home.clone(),
         max_size_bytes: 1024,
@@ -181,6 +226,7 @@ fn archive_rejects_missing_workspace_and_max_size_overflow() {
     write_file(&workspace.join("keep.txt"), "keep");
     let too_large = create_runtime_archive(ArchiveOptions {
         mode: ArchiveMode::Executor,
+        task_id: "3579".to_owned(),
         workspace_path: workspace,
         home_path: home,
         max_size_bytes: 0,
@@ -201,9 +247,15 @@ fn restore_skips_unsafe_home_members_from_old_archives() {
         ("home/.local/share/code-server/cert/tls.crt", "runtime-cert"),
         ("home/.ssh/id_rsa", "secret"),
         ("home/.claude/home-memory.md", "claude-home"),
+        (
+            "home/.wegent-executor/sessions/9764/.claude_session_id_987",
+            "invalid session id",
+        ),
     ]);
 
-    restore_runtime_archive(&archive, ArchiveMode::Executor, &workspace, &home).unwrap();
+    let restored =
+        restore_runtime_archive(&archive, ArchiveMode::Executor, "9764", &workspace, &home)
+            .unwrap();
 
     assert_eq!(
         fs::read_to_string(workspace.join("keep.txt")).unwrap(),
@@ -215,6 +267,10 @@ fn restore_skips_unsafe_home_members_from_old_archives() {
     );
     assert!(!home.join(".local/share/code-server").exists());
     assert!(!home.join(".ssh").exists());
+    assert!(!restored.session_restored);
+    assert!(!home
+        .join(".wegent-executor/sessions/9764/.claude_session_id_987")
+        .exists());
 }
 
 #[cfg(unix)]
@@ -235,6 +291,7 @@ fn archive_includes_symlink_entries_without_following_targets() {
 
     let archive = create_runtime_archive(ArchiveOptions {
         mode: ArchiveMode::Sandbox,
+        task_id: "2490".to_owned(),
         workspace_path: workspace,
         home_path: home,
         max_size_bytes: 10 * 1024 * 1024,
@@ -264,6 +321,7 @@ fn archive_survives_dangling_symlinks() {
 
     let archive = create_runtime_archive(ArchiveOptions {
         mode: ArchiveMode::Sandbox,
+        task_id: "10170482707511".to_owned(),
         workspace_path: workspace,
         home_path: home,
         max_size_bytes: 10 * 1024 * 1024,
@@ -273,6 +331,36 @@ fn archive_survives_dangling_symlinks() {
 
     assert!(names.contains(&"workspace/keep.txt".to_owned()));
     assert!(names.contains(&"workspace/.gitlab/CLAUDE.md".to_owned()));
+}
+
+#[cfg(unix)]
+#[test]
+fn executor_archive_excludes_symlink_session_markers() {
+    let root = temp_root("executor-session-symlink");
+    let task_id = "1385";
+    let workspace = root.join("workspace").join(task_id);
+    let home = root.join("home");
+    let marker = home.join(".wegent-executor/sessions/1385/.claude_session_id_987");
+    let outside = root.join("outside-session");
+    write_file(&workspace.join("keep.txt"), "keep");
+    write_file(&outside, "session-id");
+    fs::create_dir_all(marker.parent().unwrap()).unwrap();
+    symlink(&outside, &marker).unwrap();
+
+    let archive = create_runtime_archive(ArchiveOptions {
+        mode: ArchiveMode::Executor,
+        task_id: task_id.to_owned(),
+        workspace_path: workspace,
+        home_path: home,
+        max_size_bytes: 10 * 1024 * 1024,
+    })
+    .unwrap();
+    let names = archive_names(&archive.bytes);
+
+    assert!(!archive.session_file_included);
+    assert!(
+        !names.contains(&"home/.wegent-executor/sessions/1385/.claude_session_id_987".to_owned())
+    );
 }
 
 fn archive_names(bytes: &[u8]) -> Vec<String> {

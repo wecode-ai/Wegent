@@ -109,7 +109,7 @@ Wework 弹窗在没有运行任务时使用固定高度的紧凑输入面板。�
 
 排查切换任务后终端未重绘时，前端日志会记录终端类型、任务与会话标识、激活阶段、xterm 行列数、容器尺寸和隐藏状态；不会记录终端输出、命令或工作区路径。
 
-排查 `[Terminal connection failed]` 时，按同一个会话标识串联 `Local terminal start`、`Local terminal connection`、`Tauri local terminal attach` 和 `Local terminal close` 日志。日志会记录宿主进程、子进程、任务、工作区路径、连接阶段和关闭原因，从而区分输出监听、退出监听、原生 attach、会话不存在和主动关闭等情况。上述日志不记录终端输入、输出、执行命令或环境变量内容。
+排查 `[Terminal connection failed]` 时，按同一个会话标识串联 `Local terminal start`、`Local terminal connection`、` Electron local terminal attach` 和 `Local terminal close` 日志。日志会记录宿主进程、子进程、任务、工作区路径、连接阶段和关闭原因，从而区分输出监听、退出监听、原生 attach、会话不存在和主动关闭等情况。上述日志不记录终端输入、输出、执行命令或环境变量内容。
 
 ## 展开右侧工作区
 

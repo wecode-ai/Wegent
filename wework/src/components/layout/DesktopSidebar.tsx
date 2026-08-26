@@ -68,6 +68,7 @@ import {
   autoRepairStatus,
   buildChangeRequestRepairPrompt,
 } from '@/features/workbench/changeRequestStatus'
+import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import {
   getRuntimeConversationQueuePaused,
   subscribeRuntimeConversation,
@@ -99,7 +100,7 @@ import {
 import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { openLocalWorkspace } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import {
   isEditableShortcutTarget,
@@ -1638,11 +1639,16 @@ function RuntimeTaskRow({
     if (!workbench || !changeRequest || !autoRepairStatus(changeRequest)) return
     setRepairingChangeRequest(true)
     try {
-      await workbench.sendRuntimePaneMessage({
-        address: taskAddress,
-        message: buildChangeRequestRepairPrompt(changeRequest, task.title),
-        source: { source: 'manual' },
-      })
+      const prompt = buildChangeRequestRepairPrompt(changeRequest, task.title)
+      const optimisticUserMessage = createRuntimeUserMessage(prompt)
+      await workbench.sendRuntimePaneMessage(
+        {
+          address: taskAddress,
+          message: prompt,
+          source: { source: 'manual' },
+        },
+        { optimisticUserMessage }
+      )
     } finally {
       setRepairingChangeRequest(false)
     }
@@ -3074,7 +3080,7 @@ export function DesktopSidebar({
   const showCloudConnectionEntry = isCloudConnectionUiAvailable()
   const platform = getPlatform()
   const usesOverlayTitlebar = false
-  const isWindowsTauri = isTauriRuntime() && platform === 'win'
+  const isWindowsDesktop = isElectronRuntime() && platform === 'win'
   const appUpdate = useOptionalAppUpdate()
   const installedReleaseNotes = appUpdate?.installedReleaseNotes ?? null
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
@@ -3871,7 +3877,7 @@ export function DesktopSidebar({
     <aside
       data-testid={containerTestId}
       data-sidebar-translucent={
-        isWindowsTauri && !(background.imagePath && background.inSidebar) ? 'false' : undefined
+        isWindowsDesktop && !(background.imagePath && background.inSidebar) ? 'false' : undefined
       }
       aria-hidden={collapsed}
       onPointerEnter={onPointerEnter}
@@ -4020,7 +4026,7 @@ export function DesktopSidebar({
                   selected={activeItem === 'plugins'}
                   onClick={onOpenPlugins}
                   onPointerEnter={() => {
-                    if (!isTauriRuntime()) return
+                    if (!isDesktopRuntime()) return
                     void import('@/components/plugins/workspace/prefetchPluginsWorkspace').then(
                       module => module.prefetchPluginsWorkspace()
                     )

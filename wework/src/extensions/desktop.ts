@@ -1,4 +1,4 @@
-import { installTraySettingsNavigation } from '@/tauri/trayNavigation'
+import { installTraySettingsNavigation } from '@/desktop/trayNavigation'
 
 export function installDesktopExtensions() {
   installTraySettingsNavigation()

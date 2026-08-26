@@ -1,12 +1,5 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  type PointerEvent as ReactPointerEvent,
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { Copy, SquarePen, X } from 'lucide-react'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { DesktopWorkbenchMain } from '@/components/layout/DesktopWorkbenchMain'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import {
@@ -18,7 +11,7 @@ import {
   openPopoutTaskInMain,
   setPopoutWindowExpanded,
   setPopoutWindowOverlayActive,
-} from '@/tauri/popoutWindow'
+} from '@/desktop/popoutWindow'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -111,18 +104,6 @@ export function PopoutWorkbenchPage() {
   const closeWindow = useCallback(() => {
     void dismissPopoutWindow()
   }, [])
-  const startWindowDrag = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    if (event.button !== 0 || !(event.target instanceof Element)) return
-    if (
-      event.target.closest(
-        'button, a, input, textarea, select, [contenteditable="true"], [role="button"], [role="textbox"], [data-popout-no-drag]'
-      )
-    ) {
-      return
-    }
-    void getCurrentWindow().startDragging()
-  }, [])
-
   useEscapeKey(closeWindow)
 
   useEffect(() => {
@@ -213,8 +194,7 @@ export function PopoutWorkbenchPage() {
       {expanded ? (
         <header
           data-testid="popout-window-header"
-          data-tauri-drag-region
-          className="relative flex h-11 shrink-0 items-center border-b border-border/40 px-3"
+          className="electron-titlebar-drag-region relative flex h-11 shrink-0 items-center border-b border-border/40 px-3"
         >
           <button
             type="button"
@@ -257,7 +237,7 @@ export function PopoutWorkbenchPage() {
           </div>
         </header>
       ) : null}
-      <div className="popout-window-content flex min-h-0 flex-1" onPointerDown={startWindowDrag}>
+      <div className="popout-window-content flex min-h-0 flex-1">
         <DesktopWorkbenchMain
           visible
           sidebarCollapsed

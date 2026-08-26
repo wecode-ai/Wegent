@@ -4,7 +4,7 @@ import {
   defaultAppPreferences,
   getAppPreferences,
   type AppPreferences,
-} from '@/tauri/appPreferences'
+} from '@/desktop/appPreferences'
 import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
@@ -17,7 +17,7 @@ import {
 } from '@/components/layout/runtimeTaskSidebarHelpers'
 import { getRuntimeTaskNotificationText } from './runtimeTaskNotificationContent'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
-import { isMainWindowFocused, subscribeMainWindowFocus } from '@/tauri/windowFocus'
+import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import type {
   RuntimeTaskLifecycleStore,
   RuntimeTaskLifecycleStoreSnapshot,
