@@ -1,119 +1,85 @@
-# Smart Workbench Card Design QA
+# Applications layout design QA
 
-## Evidence
+## Comparison target
 
 - Source visual truth:
-  - Marketplace: `/Users/junlong5/.codex/attachments/eac378b1-df14-4f78-a237-47cee84467bb/image-3.png`
-  - My workbenches: `/Users/junlong5/.codex/attachments/eac378b1-df14-4f78-a237-47cee84467bb/image-4.png`
+  - My: `/Users/junlong5/.codex/generated_images/01a03d17-3e77-7ef2-a61b-ba2ab3de9a90/exec-72fff9de-aa43-4eb8-92ae-2765bf454277.png`
+  - Market: `/Users/junlong5/.codex/generated_images/01a03d17-3e77-7ef2-a61b-ba2ab3de9a90/exec-46eee616-97d2-4f73-8cca-99ffd9a945c5.png`
+  - Site: `/Users/junlong5/.codex/generated_images/01a03d17-3e77-7ef2-a61b-ba2ab3de9a90/exec-9be266aa-53d7-415f-be2f-dfd5709c5ba2.png`
+  - Mini Program: `/Users/junlong5/.codex/generated_images/01a03d17-3e77-7ef2-a61b-ba2ab3de9a90/exec-f3bb0013-fcbe-4036-b20c-eb4a9bad8a13.png`
 - Rendered implementation:
-  - Marketplace: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/desktop-e2e/2026-08-22T03-31-44-835Z-23569/harness-apps-03-marketplace.png`
-  - My workbenches: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/ai-verify/2026-08-22T03-14-28-928Z-8807/owned-final.png`
-  - My workbench action menu: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/ai-verify/2026-08-22T03-14-28-928Z-8807/owned-actions-final.png`
-- Combined comparison inputs:
-  - `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa-smart-apps/marketplace-full-comparison.png`
-  - `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa-smart-apps/marketplace-cards-comparison.png`
-  - `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa-smart-apps/owned-full-comparison.png`
-  - `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa-smart-apps/owned-cards-comparison.png`
+  - Market: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa/market-iteration-1.png`
+  - My empty: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa/owned-iteration-1.png`
+  - My with card: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa/owned-card-iteration-1.png`
+  - Site: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa/site-iteration-1.png`
+  - Mini Program: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa/miniapp-iteration-1.png`
 
-## Viewport and state
+## Environment and normalization
 
-- Source pixels: Marketplace `1586 x 992`; My workbenches `1584 x 993`.
-- Automated desktop capture: `1280 x 720`, light theme, macOS Wework shell.
-- Final manual Tauri capture: `2560 x 1440` Retina capture of a `1280 x 720` window.
-- States checked: installable Marketplace card, running Marketplace card, imported/created My cards, model selector, publish/run/open actions, visibility state, overflow actions, and local removal entry.
-- Full comparisons normalize each side to a common `1280 x 720` panel for one-input inspection. Dynamic catalog count and fixture icon differences are not treated as layout differences.
+- Runtime: isolated packaged Electron application, local-first mode, light theme, Chinese locale.
+- CSS viewport: `1386 x 869`; implementation capture: `2772 x 1738`; `deviceScaleFactor: 2`.
+- Source visuals: `1584 x 993`; conceptual desktop density `1`.
+- Both sets use the same desktop aspect ratio. Comparisons were normalized by full-frame aspect ratio and application content bounds. Geometry findings use Electron CSS-pixel metrics, not raw image pixels.
+- State: disconnected cloud marketplace, local owned collection, unavailable Site and Mini Program services.
 
-## Style details checked
+## Full-view comparison evidence
 
-- Card shell: two-column grid, compact `16px` radius, neutral hairline border, white surface, no decorative shadow.
-- Marketplace card: approximately `208px` high with icon/title/source, two-line description, tags, visibility/status/version, model/size, and a right-aligned primary action.
-- My card: approximately `256px` high with the same top grammar plus model/update/member metadata and management actions anchored at the bottom.
-- Typography: existing Wework system font and text tokens; title, secondary copy, tags, and metadata preserve the source hierarchy and truncation behavior.
-- Icons: real catalog icon when supplied; Circle Plus for `创建工作台`; Download for `导入工作台`; existing Lucide icons for visibility, status, version, run/open, and overflow.
-- Controls: visibility is a compact outlined control; status colors remain semantic; destructive local removal is isolated in the overflow menu.
-- Header and filters: `市场 / 我的` remain the only Smart Workbench section tabs; My owns the title, description, create/import actions, search, and segmented ownership filters.
+The four source images and four Electron captures were opened together in the same comparison input. The implementation preserves the selected visual hierarchy: constant Applications header, invariant primary tabs, one aligned context toolbar, matching neutral controls, and a shared bordered content surface.
 
-## Product-copy decisions
+Measured Electron geometry across Market, My, Site, and Mini Program:
 
-- The explicit user instruction overrides the Marketplace reference copy: `智能工作台市场` and `发现官方工作台，以及成员定向分享给你的工作台。` are intentionally absent.
-- The creation action is `创建工作台`, not `创建智能工作台`.
-- The My action label is `管理范围`, matching the visibility-management intent.
+- Shared content container: `1120px` wide.
+- Context toolbar: `1056 x 36`, `left: 285`, `top: 242.8828125` in every state.
+- Site and Mini Program unavailable surfaces: `1056 x 320`, `left: 285`, `top: 298.8828125`.
+- Owned card: `520 x 211`; with the `16px` grid gap, two tracks resolve exactly to `(1056 - 16) / 2 = 520px`.
 
-## Findings and fixes
+No horizontal or vertical layout shift was observed while switching all four states.
 
-1. P1 card fidelity: production cards used a different information order and action density from the selected design.
-   - Fix: both modes now share one card grammar while keeping their state-specific metadata and actions.
-2. P1 content hierarchy: My previously rendered its page title inside the list section, which separated the create/import actions from the page identity.
-   - Fix: My title and actions now occupy the top page header; the card section starts after the shared application-type and section navigation.
-3. P2 card density: My cards briefly compressed below the reference management-card height.
-   - Fix: My cards use a `256px` minimum height; Marketplace cards remain `208px`.
-4. P2 icon and copy mismatch: the create action used the wrong icon and longer name.
-   - Fix: it now uses Circle Plus and `创建工作台`.
-5. P1 interaction regression coverage: the desktop scenario still searched for the old direct Stop buttons after Stop moved into overflow.
-   - Fix: the scenario now opens the matching card action menu and selects Stop, including duplicate installation IDs by scoping to the running card.
+## Focused region comparison evidence
 
-## Final comparison
+- Header and action slot: the My actions align with the title block and retain outline/primary hierarchy; Site and Mini Program use the same inverse-neutral Create control.
+- Primary and secondary navigation: the application underline tabs remain fixed while Market/My use the selected segmented control treatment.
+- Toolbar: search, marketplace selects, and owned filters share the same height, radius, border, and focus token.
+- Empty states: Market, Site, and Mini Program share one 320px surface and icon/title/body rhythm, with state-specific copy.
+- Card: the isolated created-workbench fixture confirms the target two-column width, 211px height, icon/title hierarchy, semantic status color, divider, model selector, and right-aligned action group.
 
-- Marketplace: card height, inner padding, information order, metadata grouping, and install/open action placement match the selected compact card direction. The surrounding page header intentionally follows the explicit copy-removal requirement rather than the reference title block.
-- My: title/actions, card height, visibility/status/version row, model row, bottom actions, and overflow menu match the selected management-card direction.
-- Responsive behavior: cards collapse to one column below the existing desktop breakpoint; header actions return to normal document flow below `md`, preventing overlap.
-- Accessibility: native buttons/selects remain keyboard reachable, icon-only overflow controls retain accessible labels, focus styles are preserved, and destructive removal remains a labeled menu action followed by confirmation.
-- No actionable P0, P1, or P2 visual differences remain.
+## Findings
 
-## Verification
+- No actionable P0, P1, or P2 differences remain.
+- P3: the isolated My capture contains one created card rather than the two installed cards in the source. This is test-data variance; grid metrics and a rendered real card confirm the selected two-column geometry.
 
-- `pnpm --filter wework typecheck`
-- `pnpm --filter wework test src/pages/SmartAppsMarketplacePage.test.tsx src/components/sites/SitesWorkspace.test.tsx` — 32 tests passed.
-- Focused ESLint and Prettier checks passed for the changed page, workspace shell, translations, tests, and desktop scenario.
-- `pnpm --filter wework e2e:desktop -- --segment harness-apps` passed with no assertion errors. Evidence: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/desktop-e2e/2026-08-22T03-31-44-835Z-23569/`.
-- Final current-code Tauri visual evidence: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/ai-verify/2026-08-22T03-14-28-928Z-8807/`.
+Required fidelity surfaces:
 
-## Installed state and package export follow-up
+- Fonts and typography: existing Wework font stack, semantic sizes, weights, line heights, truncation, and wrapping match the source hierarchy.
+- Spacing and layout rhythm: shared width, fixed toolbar position, 16px card gap, surface radius, borders, and vertical rhythm match the selected design.
+- Colors and tokens: neutral application chrome, blue experimental badge/focus, and green semantic runtime state are correctly scoped.
+- Image quality and assets: no raster product imagery is required; all visible symbols use the existing Lucide icon library and render sharply at `@2x`.
+- Copy and content: constant Applications title/subtitle and state-specific marketplace/Site/Mini Program copy match the approved direction.
+- Accessibility and responsiveness: semantic tabs and labels are retained, focus rings use shared tokens, desktop controls are 36px, and mobile variants remain at least 44px.
 
-- The installed state now uses the semantic success token defined by the Wework design system: `#00A240` in light mode and `#40C977` in dark mode. This fixes the previously muted/gray installed label without introducing green product chrome.
-- Created or locally imported workbenches expose `导出安装包` in the existing overflow menu. Marketplace packages installed from another owner do not expose this redistribution action.
-- Export invokes the deterministic local package exporter, copies the resulting ZIP into the user's Downloads directory, and reports success or failure without removing the card.
-- Current-code Tauri evidence after restarting the real desktop build so the Tailwind configuration was reloaded:
-  - Installed success color and export menu: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/ai-verify/2026-08-22T04-15-00-018Z-49727/owned-installed-green-export-menu.png`
-  - Export confirmation: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/ai-verify/2026-08-22T04-15-00-018Z-49727/owned-export-success.png`
-  - Exported ZIP evidence: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/ai-verify/2026-08-22T04-15-00-018Z-49727/exported-dsh-e2e-smoke-0.1.0.zip`
-- Focused Vitest coverage passed: 12 tests across the page interaction and local export API. TypeScript, ESLint, and Prettier checks also passed.
-- The complete `harness-apps` desktop E2E segment passed in `3m 4s`; evidence: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/desktop-e2e/2026-08-22T03-57-25-039Z-38966/`.
+## Interaction and runtime checks
 
-## Smart Workbench detail-dialog follow-up
+- Switched Market to My and back through the segmented navigation.
+- Switched Smart Workbench, Site, and Mini Program through the primary tab list.
+- Exercised the owned `Installed` zero-result filter and recovered with `All`.
+- Created an isolated blank workbench and verified the resulting real card.
+- Verified disconnected marketplace, Site unavailable, and Mini Program unavailable states.
+- Electron debug snapshot reported `workbench.error: null` and no runtime logs.
+- The isolated Electron session was stopped and the temporary fixture directory was moved to Trash.
 
-### Evidence
+## Comparison history
 
-- Source baseline: `/var/folders/v7/cdzm7jt91951hnc_97lch7h40000gn/T/codex-clipboard-907fdcc0-19a4-47bd-a701-3ff63a999283.png`
-- Final real-Tauri capture: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/desktop-e2e/2026-08-22T04-34-05-147Z-62472/harness-apps-03-details.png`
-- One-input before/after comparison: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa-smart-app-details/detail-dialog-before-after.png`
-- The source is a `2774 x 1738` Retina screenshot. The implementation is a `1280 x 720` automated desktop capture. Both were normalized to `1280 x 720` panels for the combined inspection.
+- Pass 1: compared all four valid post-build Electron captures with their source visuals. No P0/P1/P2 findings were identified, so no post-comparison visual fix iteration was required.
+- A pre-build stale package capture was discarded as build troubleshooting and was not used as design-QA evidence.
 
-### Findings and fixes
+## Implementation checklist
 
-1. P1 content hierarchy: the source rendered Markdown as a dense text block, so headings, capability lists, and narrative copy were difficult to scan.
-   - Fix: explicit semantic renderers now provide visible heading levels, list markers, paragraph rhythm, code styling, and blockquote treatment. A duplicated first heading matching the app title is removed.
-2. P1 long-content behavior: the source allowed the whole dialog to become one tall surface, which could move identity and the primary action out of view.
-   - Fix: the dialog is a bounded flex column with a fixed identity header, independently scrolling content, and a fixed action footer.
-3. P2 metadata density: the source used one oversized gray strip with weak separation between scan status, package size, and update date.
-   - Fix: the trust row is a compact three-part hairline group with semantic icons and success color reserved for the scan result.
-4. P2 action balance: the source footer felt visually detached and oversized relative to the content.
-   - Fix: the action now uses the shared small-button density in a bordered footer, with download, loading, and installed icons reflecting state.
-5. Accessibility: the source lacked a labelled dialog relationship and predictable keyboard close behavior.
-   - Fix: the dialog is labelled by its visible title, close receives initial focus, Escape and backdrop close are supported, and all new interactive surfaces retain visible focus treatment.
-
-### Final comparison
-
-- The final dialog preserves the existing neutral Wework system, icon asset, information, and install flow.
-- The combined comparison confirms a clearer identity-to-trust-to-description-to-action reading order, visible Markdown list semantics, tighter spacing, and a stable footer.
-- Responsive bounds use the existing desktop/mobile breakpoints; the bottom corners flatten only on narrow viewports where the dialog behaves as a bottom sheet.
-- No actionable P0, P1, or P2 visual differences remain for the requested redesign.
-
-### Verification
-
-- Focused Vitest: `12` tests passed, including long Markdown structure, fixed regions, duplicate-heading removal, and Escape close.
-- TypeScript, focused ESLint, and Prettier checks passed.
-- `pnpm --filter wework e2e:desktop -- --segment harness-apps` passed with no assertion errors after exercising detail open, long Markdown rendering, fixed footer, Escape close, install, launch, stop, export, and removal paths.
-- E2E evidence: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/desktop-e2e/2026-08-22T04-34-05-147Z-62472/`.
+- [x] Constant header and 1120px application shell
+- [x] Fixed primary tabs and header action slot
+- [x] Shared 36px context toolbar in all four states
+- [x] Segmented Market/My navigation
+- [x] Equal two-column card geometry and aligned actions
+- [x] State-specific unavailable copy and icons
+- [x] Real Electron interaction, geometry, screenshot, and error verification
 
 final result: passed

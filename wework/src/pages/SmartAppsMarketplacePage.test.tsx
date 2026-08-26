@@ -215,6 +215,7 @@ describe('SmartAppsMarketplacePage', () => {
     ).not.toBeInTheDocument()
     expect(screen.queryByTestId('smart-apps-created-create')).not.toBeInTheDocument()
     expect(screen.queryByTestId('smart-apps-import-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('applications-context-toolbar')).toHaveClass('md:h-9')
     expect(screen.getByTestId('smart-app-marketplace-item-7')).toHaveClass('min-h-52')
   })
 

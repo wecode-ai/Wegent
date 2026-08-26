@@ -973,7 +973,7 @@ describe('App plugins route', () => {
     renderApp()
 
     expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
-      '应用功能尚未推出'
+      '站点功能尚未推出'
     )
     expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith('/api/sites'))).toBe(
       false

@@ -657,7 +657,6 @@ export function SitesPage() {
           createNotice={createNotice}
           onOpenPlugins={() => navigateTo('/plugins')}
           smartAppsEnabled={experimentalFeatures.enabled}
-          smartAppsMode={smartAppsView === 'owned' ? 'owned' : 'marketplace'}
           smartAppsContent={
             smartAppsView === 'owned' ? (
               <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />
