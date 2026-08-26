@@ -24,9 +24,20 @@ pnpm --dir wework/electron install --frozen-lockfile
 pnpm --filter wework dev:windows
 ```
 
-This command loads the Wework renderer through the `wework/electron` main
-process. Electron exchanges JSONL with the Executor sidecar through child
-process stdin/stdout, without a Unix domain socket or fixed TCP port.
+This command is driven by `wework/scripts/dev-windows-app.ps1` (the Windows
+counterpart of `dev-mac-app.sh`): it prepares Electron resources (icons and
+bundled plugins), Codex/DWS binaries, the Node runtime, and the Harness runtime
+(including the core DSH), builds the Executor, and then starts the
+`wework/electron` main process to load the Wework renderer. Electron exchanges
+JSONL with the Executor sidecar through child process stdin/stdout, without a
+Unix domain socket or fixed TCP port.
+
+Runtime and Executor build caches default to `%LOCALAPPDATA%\wegent\` (override
+with `WEWORK_DEV_CACHE_ROOT` or `WEGENT_CARGO_TARGET_ROOT`); the first
+preparation is slow and later runs are incremental. Pass
+`-- --executor-isolation` to use a temporary Executor Home, or set
+`WEWORK_DRY_RUN=1` to print only the resolved launch configuration. If a
+download stalls, set the `HTTP_PROXY`/`HTTPS_PROXY` environment variables first.
 
 ## Build
 
