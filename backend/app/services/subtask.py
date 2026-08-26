@@ -398,22 +398,22 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
 
         # Delete the edited message AND all subsequent messages
         # This allows frontend to send a fresh new message without duplicates
-        deleted_count = self.delete_subtasks_from(
+        deleted_count = subtask_store.delete_from_message_id(
             db,
             task_id=task_id,
             from_message_id=message_id,
-            user_id=user_id,
+            owner_user_id=user_id,
         )
 
-        if latest_executor is not None and not bool(
-            latest_executor.executor_deleted_at
-        ):
+        if latest_executor is not None:
             self._persist_task_executor_reference(
                 db,
                 task_id=task_id,
-                executor_namespace=latest_executor.executor_namespace or "",
-                executor_name=latest_executor.executor_name or "",
+                executor_namespace=latest_executor.namespace,
+                executor_name=latest_executor.name,
+                executor_deleted_at=latest_executor.deleted_at,
             )
+        db.commit()
 
         logger.info(
             f"User {user_id} deleted message {subtask_id} for editing, deleted {deleted_count} messages total"
@@ -428,13 +428,14 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         task_id: int,
         executor_namespace: str,
         executor_name: str,
+        executor_deleted_at: bool,
     ) -> None:
         """Persist the last executor reference on the task for sandbox reuse."""
         if not executor_name:
-            return
-        task = task_store.get_by_id(db, task_id=task_id)
+            raise ValueError("Cannot persist an empty executor name")
+        task = task_store.get_by_id_for_update(db, task_id=task_id)
         if task is None:
-            return
+            raise RuntimeError(f"Task {task_id} not found while preserving executor")
         json_data = dict(task.json or {})
         metadata = json_data.get("metadata")
         if not isinstance(metadata, dict):
@@ -446,8 +447,8 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             metadata["labels"] = labels
         labels["lastExecutorName"] = executor_name
         labels["lastExecutorNamespace"] = executor_namespace or ""
+        labels["lastExecutorDeletedAt"] = "true" if executor_deleted_at else "false"
         task_store.update_json(db, task=task, payload=json_data)
-        db.commit()
 
 
 subtask_service = SubtaskService(Subtask)

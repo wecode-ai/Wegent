@@ -14,7 +14,11 @@ from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.task_run_metric_hooks import queue_bulk_subtask_status_metrics
-from app.stores.tasks.interfaces import FailedSubtaskDetail, TaskAccessStore
+from app.stores.tasks.interfaces import (
+    ExecutorReference,
+    FailedSubtaskDetail,
+    TaskAccessStore,
+)
 from shared.models.db.enums import ContextType
 
 
@@ -128,9 +132,10 @@ class SqlAlchemySubtaskStore:
         else:
             # Fall back to the task-level executor reference persisted when a
             # ChatGPT-style message edit deleted the original assistant subtask.
-            executor_namespace, executor_name, executor_deleted_at = (
-                self._task_executor_reference(db, task_id=task_id)
-            )
+            reference = self._take_task_executor_reference(db, task_id=task_id)
+            executor_namespace = reference.namespace
+            executor_name = reference.name
+            executor_deleted_at = reference.deleted_at
 
         subtask = Subtask(
             user_id=user_id,
@@ -156,25 +161,47 @@ class SqlAlchemySubtaskStore:
         db.add(subtask)
         return subtask
 
-    def _task_executor_reference(
+    def _take_task_executor_reference(
         self,
         db: Session,
         *,
         task_id: int,
-    ) -> tuple[str, str, bool]:
-        """Return the task-level executor reference used to reuse a sandbox."""
-        task = db.query(TaskResource).filter(TaskResource.id == task_id).first()
+    ) -> ExecutorReference:
+        """Consume the task-level executor reference used to reuse a sandbox."""
+        task = (
+            db.query(TaskResource)
+            .filter(TaskResource.id == task_id)
+            .with_for_update()
+            .first()
+        )
         if task is None or not isinstance(task.json, dict):
-            return "", "", False
-        metadata = task.json.get("metadata") or {}
-        if not isinstance(metadata, dict):
-            return "", "", False
-        labels = metadata.get("labels") or {}
-        if not isinstance(labels, dict):
-            return "", "", False
-        executor_name = labels.get("lastExecutorName") or ""
-        executor_namespace = labels.get("lastExecutorNamespace") or ""
-        return executor_namespace, executor_name, False
+            return ExecutorReference("", "", False)
+        return self._consume_task_executor_reference(task)
+
+    @staticmethod
+    def _consume_task_executor_reference(task: TaskResource) -> ExecutorReference:
+        """Move a task-level executor handoff into a new assistant subtask."""
+        json_data = dict(task.json)
+        raw_metadata = json_data.get("metadata")
+        if not isinstance(raw_metadata, dict):
+            return ExecutorReference("", "", False)
+        metadata = dict(raw_metadata)
+        raw_labels = metadata.get("labels")
+        if not isinstance(raw_labels, dict):
+            return ExecutorReference("", "", False)
+        labels = dict(raw_labels)
+        executor_name = labels.pop("lastExecutorName", "") or ""
+        executor_namespace = labels.pop("lastExecutorNamespace", "") or ""
+        executor_deleted_at = labels.pop("lastExecutorDeletedAt", False)
+        if executor_name:
+            metadata["labels"] = labels
+            json_data["metadata"] = metadata
+            task.json = json_data
+        return ExecutorReference(
+            namespace=executor_namespace,
+            name=executor_name,
+            deleted_at=executor_deleted_at is True or executor_deleted_at == "true",
+        )
 
     def get_latest_assistant_executor_from(
         self,
@@ -183,7 +210,7 @@ class SqlAlchemySubtaskStore:
         task_id: int,
         from_message_id: int,
         owner_user_id: Optional[int] = None,
-    ):
+    ) -> Optional[ExecutorReference]:
         """Return the newest assistant executor inside a deletion range."""
         query = db.query(
             Subtask.executor_namespace,
@@ -197,7 +224,14 @@ class SqlAlchemySubtaskStore:
             Subtask.executor_name.isnot(None),
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
-        return query.order_by(Subtask.id.desc()).first()
+        row = query.order_by(Subtask.id.desc()).first()
+        if row is None:
+            return None
+        return ExecutorReference(
+            namespace=row.executor_namespace or "",
+            name=row.executor_name or "",
+            deleted_at=bool(row.executor_deleted_at),
+        )
 
     def create_user_and_assistant_subtasks(
         self,

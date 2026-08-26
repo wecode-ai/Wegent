@@ -683,6 +683,125 @@ def test_create_assistant_subtask_inherits_executor_from_same_shard_previous(
     assert subtask.executor_deleted_at is True
 
 
+def test_create_assistant_subtask_consumes_task_executor_reference(
+    test_db, fixed_clock
+):
+    user_id = 24
+    task_id_value = new_task_id(user_id, 1)
+    task_model = task_model_for_user(user_id)
+    task = task_model(
+        id=task_id_value,
+        user_id=user_id,
+        kind="Task",
+        name="regenerated-task",
+        namespace="default",
+        json={
+            "kind": "Task",
+            "metadata": {
+                "labels": {
+                    "lastExecutorName": "executor-regenerate",
+                    "lastExecutorNamespace": "wb-plat-ide",
+                    "lastExecutorDeletedAt": "true",
+                    "unrelated": "preserved",
+                }
+            },
+        },
+        is_active=1,
+        client_origin="frontend",
+        project_id=0,
+        is_group_chat=False,
+    )
+    test_db.add(task)
+    test_db.flush()
+    subtask_id = encode_user_scoped_id(user_id, SEQUENCE_BASE + 24)
+    store = ShardedSubtaskStore(
+        global_id_allocator=RecordingGlobalIdAllocator([subtask_id])
+    )
+
+    subtask = store.create_assistant_subtask(
+        test_db,
+        user_id=user_id,
+        task_id=task_id_value,
+        team_id=25,
+        title="Assistant response",
+        bot_ids=[3],
+        message_id=2,
+        parent_id=1,
+    )
+    test_db.flush()
+
+    assert subtask.executor_namespace == "wb-plat-ide"
+    assert subtask.executor_name == "executor-regenerate"
+    assert subtask.executor_deleted_at is True
+    assert task.json["metadata"]["labels"] == {"unrelated": "preserved"}
+
+
+def test_get_latest_assistant_executor_from_shard_deletion_range(test_db):
+    user_id = 25
+    task_id_value = new_task_id(user_id, 1)
+    task_model = task_model_for_user(user_id)
+    test_db.add(
+        task_model(
+            id=task_id_value,
+            user_id=user_id,
+            kind="Task",
+            name="regenerated-task",
+            namespace="default",
+            json={"kind": "Task"},
+            is_active=1,
+            client_origin="frontend",
+            project_id=0,
+            is_group_chat=False,
+        )
+    )
+    test_db.add_all(
+        [
+            shard_subtask(
+                task_id_value=task_id_value,
+                user_id=user_id,
+                sequence=1,
+                message_id=2,
+                role=SubtaskRole.ASSISTANT,
+                executor_namespace="wb-plat-ide",
+                executor_name="executor-old",
+            ),
+            shard_subtask(
+                task_id_value=task_id_value,
+                user_id=user_id,
+                sequence=2,
+                message_id=4,
+                role=SubtaskRole.ASSISTANT,
+                executor_namespace="wb-plat-ide",
+                executor_name="executor-new",
+                executor_deleted_at=True,
+            ),
+        ]
+    )
+    test_db.flush()
+    store = ShardedSubtaskStore()
+
+    reference = store.get_latest_assistant_executor_from(
+        test_db,
+        task_id=task_id_value,
+        from_message_id=3,
+        owner_user_id=user_id,
+    )
+
+    assert reference is not None
+    assert reference.namespace == "wb-plat-ide"
+    assert reference.name == "executor-new"
+    assert reference.deleted_at is True
+    assert (
+        store.get_latest_assistant_executor_from(
+            test_db,
+            task_id=task_id_value,
+            from_message_id=3,
+            owner_user_id=user_id + 1,
+        )
+        is None
+    )
+
+
 def test_global_allocator_retries_duplicate_subtask_id(test_db, fixed_clock):
     task_id_value = new_task_id(23, 1)
     shard_model = subtask_model_for_task_id(task_id_value)

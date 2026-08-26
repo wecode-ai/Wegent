@@ -12,7 +12,7 @@ from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
-from app.stores.tasks.interfaces import FailedSubtaskDetail
+from app.stores.tasks.interfaces import ExecutorReference, FailedSubtaskDetail
 from app.stores.tasks.sqlalchemy_subtask_store import SqlAlchemySubtaskStore
 from wecode.task_sharding.global_id_allocator import (
     GlobalIdAllocator,
@@ -554,35 +554,33 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
             .first()
         )
         if previous is None:
-            return self._task_executor_reference(db, task_id=task_id)
+            reference = self._take_task_executor_reference(db, task_id=task_id)
+            return reference.namespace, reference.name, reference.deleted_at
         return (
             previous.executor_namespace or "",
             previous.executor_name or "",
             bool(previous.executor_deleted_at),
         )
 
-    def _task_executor_reference(
+    def _take_task_executor_reference(
         self,
         db: Session,
         *,
         task_id: int,
-    ) -> tuple[str, str, bool]:
-        """Return the task-level executor reference used to reuse a sandbox."""
+    ) -> ExecutorReference:
+        """Consume the task-level executor reference used to reuse a sandbox."""
         if not is_new_task_id(task_id):
-            return super()._task_executor_reference(db, task_id=task_id)
+            return super()._take_task_executor_reference(db, task_id=task_id)
         task_model = task_model_for_task_id(task_id)
-        task = db.query(task_model).filter(task_model.id == task_id).first()
+        task = (
+            db.query(task_model)
+            .filter(task_model.id == task_id)
+            .with_for_update()
+            .first()
+        )
         if task is None or not isinstance(task.json, dict):
-            return "", "", False
-        metadata = task.json.get("metadata") or {}
-        if not isinstance(metadata, dict):
-            return "", "", False
-        labels = metadata.get("labels") or {}
-        if not isinstance(labels, dict):
-            return "", "", False
-        executor_name = labels.get("lastExecutorName") or ""
-        executor_namespace = labels.get("lastExecutorNamespace") or ""
-        return executor_namespace, executor_name, False
+            return ExecutorReference("", "", False)
+        return self._consume_task_executor_reference(task)
 
     def get_latest_assistant_executor_from(
         self,
@@ -591,7 +589,7 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         task_id: int,
         from_message_id: int,
         owner_user_id: int | None = None,
-    ):
+    ) -> ExecutorReference | None:
         """Return the newest assistant executor inside a deletion range."""
         if not is_new_task_id(task_id):
             return super().get_latest_assistant_executor_from(
@@ -605,7 +603,7 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         ):
             return None
         model = subtask_model_for_task_id(task_id)
-        return (
+        row = (
             db.query(
                 model.executor_namespace,
                 model.executor_name,
@@ -620,6 +618,13 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
             )
             .order_by(model.id.desc())
             .first()
+        )
+        if row is None:
+            return None
+        return ExecutorReference(
+            namespace=row.executor_namespace or "",
+            name=row.executor_name or "",
+            deleted_at=bool(row.executor_deleted_at),
         )
 
     def _allocate_subtask_id(self, user_id: int) -> int:

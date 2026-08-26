@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from app.stores.tasks.interfaces import (
+    ExecutorReference,
     FailedSubtaskDetail,
     SubtaskStore,
     TaskAccessStore,
@@ -18,6 +19,7 @@ subtask_store: SubtaskStore = SqlAlchemySubtaskStore()
 task_access_store: TaskAccessStore = SqlAlchemyTaskAccessStore()
 
 __all__ = [
+    "ExecutorReference",
     "FailedSubtaskDetail",
     "SqlAlchemySubtaskStore",
     "SqlAlchemyTaskAccessStore",

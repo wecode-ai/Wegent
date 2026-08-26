@@ -4,6 +4,7 @@
 
 from datetime import datetime, timedelta
 
+import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -48,6 +49,7 @@ def _subtask(
     sender_user_id: int = 0,
     executor_namespace: str = "",
     executor_name: str = "",
+    executor_deleted_at: bool = False,
 ) -> Subtask:
     return Subtask(
         id=subtask_id,
@@ -59,6 +61,7 @@ def _subtask(
         role=role,
         executor_namespace=executor_namespace,
         executor_name=executor_name,
+        executor_deleted_at=executor_deleted_at,
         prompt=f"prompt-{message_id}",
         status=status,
         progress=100,
@@ -245,12 +248,6 @@ def test_edit_user_message_deletes_edited_message_and_later_messages(
     )
     test_db.commit()
 
-    latest = subtask_store.get_latest_assistant_executor_from(
-        test_db,
-        task_id=109,
-        from_message_id=1,
-        owner_user_id=10,
-    )
     returned_subtask_id, message_id, deleted_count = subtask_service.edit_user_message(
         test_db,
         subtask_id=1072,
@@ -314,6 +311,7 @@ def test_edit_user_message_persists_executor_reference_for_reuse(
                 role=SubtaskRole.ASSISTANT,
                 executor_namespace="wb-plat-ide",
                 executor_name="wegent-task-user-abc123",
+                executor_deleted_at=True,
             ),
         ]
     )
@@ -334,6 +332,7 @@ def test_edit_user_message_persists_executor_reference_for_reuse(
     labels = task.json["metadata"]["labels"]
     assert labels["lastExecutorName"] == "wegent-task-user-abc123"
     assert labels["lastExecutorNamespace"] == "wb-plat-ide"
+    assert labels["lastExecutorDeletedAt"] == "true"
 
     # The frontend resend creates a fresh assistant subtask that must reuse
     # the executor captured before the edit instead of allocating a new sandbox.
@@ -349,6 +348,8 @@ def test_edit_user_message_persists_executor_reference_for_reuse(
     )
     assert assistant.executor_name == "wegent-task-user-abc123"
     assert assistant.executor_namespace == "wb-plat-ide"
+    assert assistant.executor_deleted_at is True
+    assert "lastExecutorName" not in task.json["metadata"]["labels"]
 
 
 def test_create_assistant_subtask_falls_back_to_task_executor_reference(
@@ -358,6 +359,7 @@ def test_create_assistant_subtask_falls_back_to_task_executor_reference(
     task.json["metadata"]["labels"] = {
         "lastExecutorName": "wegent-task-user-xyz789",
         "lastExecutorNamespace": "wb-plat-ide",
+        "lastExecutorDeletedAt": "false",
     }
     test_db.add(task)
     test_db.commit()
@@ -374,3 +376,48 @@ def test_create_assistant_subtask_falls_back_to_task_executor_reference(
     )
     assert assistant.executor_name == "wegent-task-user-xyz789"
     assert assistant.executor_namespace == "wb-plat-ide"
+    assert assistant.executor_deleted_at is False
+    assert "lastExecutorName" not in task.json["metadata"]["labels"]
+
+
+def test_edit_user_message_rolls_back_deletion_when_reference_save_fails(
+    test_db: Session,
+    monkeypatch,
+) -> None:
+    test_db.add(_task(111, owner_id=10))
+    test_db.add_all(
+        [
+            _subtask(subtask_id=1111, task_id=111, user_id=10, message_id=1),
+            _subtask(
+                subtask_id=1112,
+                task_id=111,
+                user_id=10,
+                message_id=2,
+                role=SubtaskRole.ASSISTANT,
+                executor_namespace="wb-plat-ide",
+                executor_name="wegent-task-user-rollback",
+            ),
+        ]
+    )
+    test_db.commit()
+
+    def fail_to_persist(*args, **kwargs) -> None:
+        raise RuntimeError("task update failed")
+
+    monkeypatch.setattr(
+        subtask_service,
+        "_persist_task_executor_reference",
+        fail_to_persist,
+    )
+
+    with pytest.raises(RuntimeError, match="task update failed"):
+        subtask_service.edit_user_message(
+            test_db,
+            subtask_id=1111,
+            new_content="edited",
+            user_id=10,
+        )
+    test_db.rollback()
+
+    assert test_db.get(Subtask, 1111) is not None
+    assert test_db.get(Subtask, 1112) is not None
