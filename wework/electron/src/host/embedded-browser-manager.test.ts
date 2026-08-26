@@ -50,12 +50,21 @@ class FakeWebContents extends EventEmitter {
   getTitle = vi.fn(() => '')
   getURL = vi.fn(() => this.url)
   isDestroyed = vi.fn(() => this.destroyed)
+  isDevToolsOpened = vi.fn(() => this.devToolsOpened)
   isLoading = vi.fn(() => true)
   loadURL = vi.fn<(url: string) => Promise<void>>()
+  openDevTools = vi.fn(() => {
+    this.devToolsOpened = true
+  })
+  closeDevTools = vi.fn(() => {
+    this.devToolsOpened = false
+  })
   capturePage = vi.fn()
   reload = vi.fn()
   setWindowOpenHandler = vi.fn()
   setZoomFactor = vi.fn()
+  devToolsWebContents: object | null = {}
+  private devToolsOpened = false
 
   commitUrl(url: string): void {
     this.url = url
@@ -189,5 +198,43 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     expect(contents.capturePage).toHaveBeenCalledOnce()
     expect(contents.debugger.sendCommand).not.toHaveBeenCalled()
     await rm(directory, { recursive: true, force: true })
+  })
+
+  test('waits for browser layout to settle before verifying a detached Inspector', async () => {
+    vi.useFakeTimers()
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    try {
+      const manager = new EmbeddedBrowserManager(directory)
+      const contents = new FakeWebContents()
+      contents.loadURL.mockImplementation(async url => {
+        contents.commitUrl(url)
+      })
+      manager.attach('workspace-browser', contents as unknown as WebContents)
+      await manager.open({
+        label: 'workspace-browser',
+        url: 'https://example.test/',
+        bounds: { x: 0, y: 0, width: 800, height: 600 },
+        visible: true,
+        navigateExisting: true,
+      })
+
+      const verification = manager.verifyDetachedInspector('workspace-browser')
+      setTimeout(() => {
+        manager.setBounds('workspace-browser', { x: 0, y: 0, width: 801, height: 600 }, true)
+      }, 600)
+      await vi.advanceTimersByTimeAsync(2_500)
+
+      await expect(verification).resolves.toMatchObject({
+        beforeFrame: [0, 0, 801, 600],
+        afterFrame: [0, 0, 801, 600],
+        visible: true,
+        closedVisible: false,
+      })
+      expect(contents.openDevTools).toHaveBeenCalledWith({ mode: 'detach', activate: true })
+      expect(contents.closeDevTools).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })

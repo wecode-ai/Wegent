@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  macosCodesignIdentityArguments,
   macosCodesignKeychainArguments,
   macosSigningFingerprint,
   signPreparedMacOsBinaries,
@@ -45,6 +46,22 @@ describe('macosCodesignKeychainArguments', () => {
 
   test('uses the default keychain search list when no path is configured', () => {
     expect(macosCodesignKeychainArguments()).toEqual([])
+  })
+})
+
+describe('macosCodesignIdentityArguments', () => {
+  test('selects the keychain before resolving the signing identity', () => {
+    expect(
+      macosCodesignIdentityArguments(
+        'Developer ID Application: Example',
+        '/tmp/signing.keychain-db'
+      )
+    ).toEqual([
+      '--keychain',
+      '/tmp/signing.keychain-db',
+      '--sign',
+      'Developer ID Application: Example',
+    ])
   })
 })
 
