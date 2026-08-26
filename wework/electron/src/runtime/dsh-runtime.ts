@@ -107,6 +107,7 @@ async function waitForHttp(url: string, signal: AbortSignal): Promise<void> {
 }
 
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason)
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, milliseconds)
     timer.unref()

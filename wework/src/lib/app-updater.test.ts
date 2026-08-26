@@ -1,8 +1,21 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { checkForWeworkUpdate, getWeworkUpdateTarget } from './app-updater'
+import {
+  checkForWeworkUpdate,
+  downloadPendingWeworkUpdate,
+  getWeworkUpdateTarget,
+  installPendingWeworkUpdate,
+} from './app-updater'
+
+const desktopHostMocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+}))
 
 vi.mock('./runtime-environment', () => ({
   isElectronRuntime: () => true,
+}))
+
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: desktopHostMocks.invoke,
 }))
 
 function setUserAgent(userAgent: string) {
@@ -10,7 +23,11 @@ function setUserAgent(userAgent: string) {
 }
 
 describe('getWeworkUpdateTarget', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    desktopHostMocks.invoke.mockReset()
+  })
 
   test('routes stable macOS updates to the stable Darwin manifest', () => {
     setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
@@ -27,9 +44,58 @@ describe('getWeworkUpdateTarget', () => {
     expect(() => getWeworkUpdateTarget('stable')).toThrow()
   })
 
-  test('reports that automatic updates are not implemented by Electron yet', async () => {
+  test('does not invoke the Electron updater on Linux', async () => {
+    setUserAgent('Mozilla/5.0 (X11; Linux x86_64)')
+
     await expect(checkForWeworkUpdate('stable')).rejects.toThrow(
-      'Automatic updates are not yet available in the Electron desktop host.'
+      'Wework updater is not available on Linux'
     )
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalled()
+  })
+
+  test('checks for updates through the Electron desktop capability', async () => {
+    const update = {
+      currentVersion: '0.2.6',
+      version: '0.2.7',
+      body: 'Changes',
+    }
+    desktopHostMocks.invoke.mockResolvedValue(update)
+
+    await expect(checkForWeworkUpdate('stable')).resolves.toEqual(update)
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('appUpdate.check', {
+      channel: 'stable',
+    })
+  })
+
+  test('downloads and installs a checked update through Electron capabilities', async () => {
+    const update = {
+      currentVersion: '0.2.6',
+      version: '0.2.7',
+      body: 'Changes',
+    }
+    desktopHostMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'appUpdate.check') return update
+      if (capability === 'appUpdate.downloadProgress') {
+        return { downloadedBytes: 100, totalBytes: 100 }
+      }
+      return undefined
+    })
+    const onProgress = vi.fn()
+
+    await checkForWeworkUpdate('stable')
+    await downloadPendingWeworkUpdate()
+    await installPendingWeworkUpdate(onProgress)
+
+    expect(desktopHostMocks.invoke.mock.calls).toEqual(
+      expect.arrayContaining([
+        ['appUpdate.download'],
+        ['appUpdate.downloadProgress'],
+        ['appUpdate.install'],
+      ])
+    )
+    expect(onProgress).toHaveBeenLastCalledWith({
+      downloadedBytes: 100,
+      totalBytes: 100,
+    })
   })
 })

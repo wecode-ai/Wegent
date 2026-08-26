@@ -15,6 +15,25 @@ fn defaults_to_ten_parallel_runtime_tasks() {
     assert_eq!(DEFAULT_MAX_CONCURRENT_TASKS, 10);
 }
 
+#[test]
+fn running_task_count_uses_process_local_execution_state() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let (first_cancel, _first_cancel_rx) = oneshot::channel();
+    let (_first_stopped, first_stopped_rx) = oneshot::channel();
+    let first_execution = handler
+        .start_local_task_execution("task-1".to_owned(), None, first_cancel, first_stopped_rx)
+        .expect("first local execution should start");
+    let (second_cancel, _second_cancel_rx) = oneshot::channel();
+    let (_second_stopped, second_stopped_rx) = oneshot::channel();
+    handler
+        .start_local_task_execution("task-2".to_owned(), None, second_cancel, second_stopped_rx)
+        .expect("second local execution should start");
+
+    assert_eq!(handler.running_task_count()["runningCount"], 2);
+    assert!(handler.finish_local_task_execution("task-1", first_execution));
+    assert_eq!(handler.running_task_count()["runningCount"], 1);
+}
+
 #[tokio::test]
 async fn runtime_capacity_rpc_reports_scheduler_truth() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");

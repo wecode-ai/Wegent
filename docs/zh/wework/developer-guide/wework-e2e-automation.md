@@ -133,26 +133,34 @@ node e2e/utils/mock-connector-upstream-server.mjs
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
-完整 Core 和 Cloud 套件各固定使用 8 个 GitHub Actions matrix job；每个 job
+完整 Core 套件固定使用 17 个 GitHub Actions matrix job，Cloud 套件使用 15 个；每个 job
 串行运行其 checkpoint，避免多个真实 Electron、WebView 和 Executor 栈在同一
 GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 10 秒门槛。
-跨 runner 的 16 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡，
-新增或明显变慢的 checkpoint 必须重新校准分片，不能靠增加 runner、删覆盖或
-重跑失败用例来缩短关键路径。CI 会先构建一次 Core Electron
-应用、Executor 和 Codex artifact，其中 `--build-only` 会在同一 runner 内并行
-编译相互独立的 Electron 应用和 Executor；各 Core/Cloud 分片下载并复用该 artifact，
-不再重复执行 Vite、Electron 和 Executor 构建。Rust 构建同时复用由 `main`
+跨 runner 的 32 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
+上限，以确保完整套件处于 10 分钟关键路径预算内；新增或明显变慢的 checkpoint
+必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。包含 2200 个增量的
+Codex 通知隔离压力场景和耗时较长的插件自动更新 checkpoint 各自使用独立分片；
+通知场景使用定向的 30 秒渲染预算，不改变共享的 10 秒 UI 超时。CI 会先构建一次 Core Electron
+应用、Executor 和 Codex artifact。Electron 打包会并行准备 Harness runtime、
+Node execution runtime 和 Executor；Harness 准备流程负责唯一一次 DSH 应用 Vite
+构建，避免重复编译同一前端。各 Core/Cloud 分片下载并复用该 artifact，不再重复
+执行 Vite、Electron 和 Executor 构建。Rust 构建同时复用由 `main`
 维护的 Cargo target cache 和 sccache 编译单元：target cache 保障 PR 与首次
 运行的延迟，sccache 降低依赖或源码变化后的增量编译成本。归档时只移除复制到
-artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 16 个分片的
+artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 32 个分片的
 上传和下载时间。桌面 E2E 和对应的 cache warmup 显式设置
 `WEWORK_EXECUTOR_PROFILE=debug`，避免为测试 artifact 优化 Executor；正式打包
 不设置该变量，继续默认构建 `release` Executor。桌面 E2E 构建跳过由并行 Lint
 工作流完整执行的重复 TypeScript
 类型检查，只保留 Vite/ Electron 的真实产物构建；测试覆盖与类型门禁均保持不变。
-插件套件需要独立构建配置，仍作为
-单独 job 与共享 Core 构建并行。成功和失败诊断都保留完整证据；PNG 等已压缩文件
-上传时禁用二次压缩，避免诊断归档延长流水线尾部。
+macOS 内存任务会同时使用 workspace 与 Electron lockfile 生成 pnpm store key，
+并离线安装依赖，避免 registry 卡顿耗尽关键路径预算。其大段流式 Markdown 响应使用
+定向的 30 秒完成预算，普通内存测试交互仍保持共享的 10 秒超时。插件套件需要独立构建配置，仍作为
+单独 job 与共享 Core 构建并行。桌面分片只使用不可变 E2E 镜像中已有的运行时工具；
+ZIP fixture 改用 Python 标准库，因此不再恢复完整前端依赖缓存。Harness app 的成功
+路径保留关键里程碑截图，每次运行仍保留日志、状态快照和其他有效诊断；上传前只清理
+无法帮助复现问题的 Chromium 临时缓存。PNG 等已压缩文件上传时禁用二次压缩，避免
+诊断归档延长流水线尾部。
 merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
 重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。映射规则位于
 `.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
@@ -232,7 +240,7 @@ GitHub Actions 的 Executor E2E job 会在恢复 Python、Node.js 和 Playwright
 
 内存场景仅支持 macOS。它会通过真实 Codex 工具调用执行一个开发任务，再向真实 Electron renderer 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试先等待 Web Content 内存基线稳定，再每 500 毫秒采集 Wework 关联的全部 Electron renderer 进程的聚合 physical footprint，并将采样、DOM 节点数和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为峰值增长不超过 384 MiB、完成后的稳定态增长不超过 224 MiB、稳定窗口内最大波动范围不超过 16 MiB。DOM 门禁检查虚拟列表收敛后的稳定窗口，默认不得保留超过 900 个节点；流式渲染期间的瞬时峰值仍会记录在诊断中，但不会把收敛前的短暂渲染误判为泄漏。各阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`、`WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB` 和 `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES` 调整。
 
-并发内存场景同样仅支持 macOS。它会创建并同时保持 10 个 Responses 流，采集 Wework 主进程、Electron renderer/GPU/network、Executor 和 Codex app-server 的进程组 physical footprint，并将证据写入 `concurrent-memory.json`。门禁要求整个进程组峰值低于 800 MiB，可通过 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB` 调整；场景还会在首尾任务之间切换，并等待各自的 prompt 内容重新出现。
+并发内存场景同样仅支持 macOS。它会创建并同时保持 10 个 Responses 流，采集 Wework 主进程、Electron renderer/GPU/network、Executor 和 Codex app-server 的进程组 physical footprint，并将证据写入 `concurrent-memory.json`。相对于稳定基线，峰值和活跃稳定平台的增长都不得超过 320 MiB，稳定采样窗口内的波动不得超过 64 MiB；可分别通过 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB`、`WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB` 和 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB` 调整。场景还会在首尾任务之间切换，并等待各自的 prompt 内容重新出现。
 
 ## Responses API Mock
 
@@ -427,9 +435,10 @@ GitHub Actions 将 plugins、core 和 cloud 三个 Linux 桌面场景作为矩�
 每个场景使用独立 runner、HOME、Executor Home、端口和诊断 artifact，保留原有
 真实 Electron、Executor 与 Codex 验证语义，同时避免三个场景在同一个 job 中串行等待。
 矩阵关闭 fail-fast，使一个场景失败时其他场景仍能完成并上传各自诊断。
-三类场景会注入不同的构建期 Vite 环境变量，因此 Electron 应用 artifact必须按
-E2E 命令隔离。plugins 场景不得恢复 core 或 cloud 场景生成的应用二进制，否则
-编译进应用的 Codex Home 初始化开关可能不匹配当前测试。
+三类场景复用同一个预构建 Electron artifact。Codex Home 初始化、云端地址和测试
+凭据等场景差异由 Electron 启动时注入的 desktop E2E runtime config 控制，不再
+编译进应用二进制；因此 plugins、core 和 cloud 可共享应用构建，同时仍保持各自
+独立的运行目录与进程状态。
 
 Linux 桌面场景会把 Electron 系统依赖下载得到的 `.deb` 文件缓存在 runner 用户目录，
 并按操作系统、CPU 架构和自然周轮换缓存。每次运行仍执行 `apt-get update`，旧缓存

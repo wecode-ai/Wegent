@@ -1,3 +1,4 @@
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from './runtime-environment'
 import { getPlatform } from './platform'
 
@@ -44,10 +45,43 @@ export async function checkForWeworkUpdate(
   if (!isElectronRuntime()) {
     throw new Error('Wework updater is only available in the desktop app.')
   }
+  getWeworkUpdateTarget(channel)
 
-  void channel
-  pendingUpdate = null
-  throw new Error('Automatic updates are not yet available in the Electron desktop host.')
+  try {
+    const update = await invokeDesktopHost<WeworkUpdateInfo | null>('appUpdate.check', { channel })
+    if (!update) {
+      pendingUpdate = null
+      return null
+    }
+    pendingUpdate = {
+      ...update,
+      download: async onProgress => {
+        const timer = onProgress
+          ? window.setInterval(() => {
+              void invokeDesktopHost<WeworkUpdateDownloadProgress>('appUpdate.downloadProgress')
+                .then(onProgress)
+                .catch(() => undefined)
+            }, 250)
+          : null
+        try {
+          await invokeDesktopHost<void>('appUpdate.download')
+        } finally {
+          if (timer !== null) window.clearInterval(timer)
+          if (onProgress) {
+            const progress = await invokeDesktopHost<WeworkUpdateDownloadProgress>(
+              'appUpdate.downloadProgress'
+            ).catch(() => null)
+            if (progress) onProgress(progress)
+          }
+        }
+      },
+      install: () => invokeDesktopHost<void>('appUpdate.install'),
+    }
+    return update
+  } catch (error) {
+    pendingUpdate = null
+    throw new Error(errorMessage(error), { cause: error })
+  }
 }
 
 export async function downloadPendingWeworkUpdate(

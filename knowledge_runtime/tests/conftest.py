@@ -8,9 +8,9 @@ from collections.abc import Iterator
 from unittest.mock import MagicMock
 
 import pytest
-from knowledge_runtime.services.config_resolver import ConfigResolver
 from sqlalchemy.orm import Session
 
+from knowledge_runtime.services.config_resolver import ConfigResolver
 from shared.models.db import Kind, User
 from shared.testing import capability_reference_database
 

@@ -140,13 +140,30 @@ describe('bundled plugin resources', () => {
     expect(script).toContain("'--exclude=test-results'")
   })
 
-  test('uses the shared release build command in GitHub desktop releases', () => {
+  test('uses the Electron release builder and publishes both updater protocols', () => {
     const workflow = readFileSync(
       resolve(process.cwd(), '../.github/workflows/wework-app.yml'),
       'utf8'
     )
+    const packageManifest = JSON.parse(
+      readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')
+    ) as {
+      scripts: Record<string, string>
+    }
+    const installerHooks = readFileSync(
+      resolve(process.cwd(), 'electron/scripts/installer.nsh'),
+      'utf8'
+    )
 
     expect(workflow).toContain('pnpm --filter wework build:release')
+    expect(packageManifest.scripts['build:release']).toContain('pnpm --dir electron build:release')
+    expect(workflow).toContain('generate-desktop-update-manifests.mjs')
+    expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY')
+    expect(workflow).toContain('release-manifests/*')
+    expect(workflow).toMatch(/gh release edit "\$RELEASE_TAG"[\s\S]*--target "\$RELEASE_SHA"/)
+    expect(installerHooks).toContain('Software\\you\\WeWork')
+    expect(installerHooks).toContain('InstallLocation')
+    expect(installerHooks).toContain('${GetOptions} $R0 "/P"')
   })
 
   test('publishes packaged Electron artifacts for all desktop platforms', () => {
@@ -158,6 +175,8 @@ describe('bundled plugin resources', () => {
     expect(workflow).toContain('macos-14')
     expect(workflow).toContain('windows-latest')
     expect(workflow).toContain('ubuntu-latest')
-    expect(workflow).toContain('name: wework-${{ needs.prepare-release.outputs.version }}-')
+    expect(workflow).toContain('macOS arm64')
+    expect(workflow).toContain('macOS x64')
+    expect(workflow).toContain('merge-multiple: true')
   })
 })

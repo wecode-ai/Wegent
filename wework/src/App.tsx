@@ -344,6 +344,12 @@ export function WorkspaceTabSurface({
               loadTaskComposerCatalogs
               prewarmComposerApps={prewarmComposerApps}
               publishDebugSnapshots={active && !iframe}
+              syncCoreDshModels={
+                tab.fixed &&
+                tab.kind === 'task' &&
+                isElectronRuntime() &&
+                getDesktopWindowLabel() === 'main'
+              }
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >

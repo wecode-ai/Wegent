@@ -256,6 +256,22 @@ def test_subtask_lookup_methods_filter_optional_owner_user_id(
         )
         is None
     )
+    assert (
+        store.get_basic_by_id_for_update(
+            test_db,
+            subtask_id=owned.id,
+            owner_user_id=10,
+        )
+        == owned
+    )
+    assert (
+        store.get_basic_by_id_for_update(
+            test_db,
+            subtask_id=owned.id,
+            owner_user_id=20,
+        )
+        is None
+    )
     assert store.list_by_task_unfiltered(
         test_db,
         task_id=12,

@@ -45,7 +45,6 @@ import {
   readFile,
   rm,
   selectE2EModel,
-  writeFile,
 } from './shared.mjs'
 
 import {
@@ -54,14 +53,12 @@ import {
   waitForControlValueIncludes,
   waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
+import { createZipFixture } from './zip-fixtures.mjs'
 
 async function createDirectRemoteMcpPluginZip(root) {
-  const { default: JSZip } = await import('jszip')
   const archivePath = join(root, 'direct-remote-mcp-plugin.zip')
-  const zip = new JSZip()
-  zip.file(
-    '.codex-plugin/plugin.json',
-    JSON.stringify({
+  await createZipFixture(archivePath, {
+    '.codex-plugin/plugin.json': JSON.stringify({
       name: 'direct-remote-mcp-plugin',
       version: '1.0.0',
       description: 'Desktop E2E direct remote MCP plugin',
@@ -77,21 +74,15 @@ async function createDirectRemoteMcpPluginZip(root) {
         capabilities: ['MCP'],
         defaultPrompt: 'Use the remote MCP server.',
       },
-    })
-  )
-  zip.file(
-    '.mcp.json',
-    JSON.stringify({
+    }),
+    '.mcp.json': JSON.stringify({
       remote: {
         url: 'https://mcp.example.com/mcp',
       },
-    })
-  )
-  zip.file(
-    'skills/direct-remote/SKILL.md',
-    '---\nname: direct-remote\ndescription: Exercise direct remote MCP parsing.\n---\n'
-  )
-  await writeFile(archivePath, await zip.generateAsync({ type: 'nodebuffer' }))
+    }),
+    'skills/direct-remote/SKILL.md':
+      '---\nname: direct-remote\ndescription: Exercise direct remote MCP parsing.\n---\n',
+  })
   return archivePath
 }
 

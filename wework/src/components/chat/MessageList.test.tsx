@@ -4186,9 +4186,11 @@ describe('MessageList', () => {
     expect(screen.getByTestId('copy-message-icon')).toBeInTheDocument()
   })
 
-  test('uses the Electron host clipboard when the browser clipboard is unavailable', async () => {
+  test('uses the Electron host clipboard instead of the browser clipboard', async () => {
     runtimeMock.electron = true
     desktopHostMock.invoke.mockResolvedValue(undefined)
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    stubClipboardWriteText(writeText)
 
     render(
       <MessageList
@@ -4212,6 +4214,7 @@ describe('MessageList', () => {
         text: '复制到系统剪贴板',
       })
     )
+    expect(writeText).not.toHaveBeenCalled()
     expect(await screen.findByTestId('copy-message-success-icon')).toBeInTheDocument()
   })
 
