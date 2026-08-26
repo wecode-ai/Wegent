@@ -7,7 +7,7 @@ import React from 'react'
 import { render, screen } from '@testing-library/react'
 
 import MessageBubble, { type Message } from '@/features/tasks/components/message/MessageBubble'
-import type { Team } from '@/types/api'
+import type { TaskDetail, Team } from '@/types/api'
 
 jest.mock('@/hooks/useTraceAction', () => ({
   useTraceAction: () => ({
@@ -92,6 +92,7 @@ const mockMixedContentView = jest.fn()
 const mockThinkingDisplay = jest.fn()
 const mockSourceReferences = jest.fn()
 const mockGeminiAnnotations = jest.fn()
+const mockFinalPromptMessage = jest.fn()
 
 jest.mock('@/features/tasks/components/message/thinking', () => ({
   ReasoningDisplay: (props: { reasoningContent: string; isStreaming?: boolean }) => {
@@ -105,6 +106,7 @@ jest.mock('@/features/tasks/components/message/thinking/MixedContentView', () =>
   default: (props: {
     blocks?: Array<{ type: string; content?: string }>
     hideToolDetails?: boolean
+    onAskUserSubmit?: unknown
   }) => {
     mockMixedContentView(props)
     return <div data-testid="mixed-content-view" />
@@ -119,18 +121,16 @@ jest.mock('@/features/tasks/components/message/thinking/ThinkingDisplay', () => 
   },
 }))
 
-jest.mock('@/features/tasks/components/clarification/ClarificationForm', () => ({
-  __esModule: true,
-  default: () => null,
-}))
-
 jest.mock('@/features/tasks/components/clarification', () => ({
   AskUserForm: () => null,
 }))
 
 jest.mock('@/features/tasks/components/message/FinalPromptMessage', () => ({
   __esModule: true,
-  default: () => null,
+  default: (props: unknown) => {
+    mockFinalPromptMessage(props)
+    return <div data-testid="final-prompt-message" />
+  },
 }))
 
 jest.mock('@/features/tasks/components/clarification/ClarificationAnswerSummary', () => ({
@@ -183,6 +183,7 @@ describe('MessageBubble', () => {
     mockStreamingWaitIndicator.mockClear()
     mockBubbleTools.mockClear()
     mockVideoConfigBadge.mockClear()
+    mockFinalPromptMessage.mockClear()
   })
 
   it('does not display a video config badge for image generation', () => {
@@ -332,6 +333,138 @@ describe('MessageBubble', () => {
     rerender(<MessageBubble {...props} onSaveToKnowledge={jest.fn()} />)
 
     expect(mockBubbleTools).not.toHaveBeenCalled()
+  })
+
+  it('re-renders an interactive block when its submit callback changes', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      subtaskStatus: 'RUNNING',
+      status: 'streaming',
+      result: {
+        blocks: [
+          {
+            id: 'interactive-form',
+            type: 'tool',
+            status: 'done',
+            tool_name: 'interactive_form_question',
+            tool_use_id: 'interactive-form',
+          },
+        ],
+      },
+    }
+    const firstSubmit = jest.fn()
+    const latestSubmit = jest.fn()
+    const props = {
+      msg,
+      index: 0,
+      selectedTaskDetail: null,
+      selectedTeam: makeTeam(),
+      theme: 'light' as const,
+      t,
+    }
+    const { rerender } = render(<MessageBubble {...props} onAskUserSubmit={firstSubmit} />)
+
+    mockMixedContentView.mockClear()
+    rerender(<MessageBubble {...props} onAskUserSubmit={latestSubmit} />)
+
+    expect(mockMixedContentView).toHaveBeenCalledWith(
+      expect.objectContaining({ onAskUserSubmit: latestSubmit })
+    )
+  })
+
+  it('renders card blocks when the message text contains a final-format keyword', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$正在合成最终视频',
+      timestamp: new Date('2026-08-25T13:15:41Z').getTime(),
+      subtaskStatus: 'COMPLETED',
+      status: 'completed',
+      result: {
+        blocks: [
+          {
+            id: 'card-video',
+            type: 'card',
+            status: 'done',
+            card_id: 'card-video',
+            card_type: 'video_director_generation',
+            card_status: 'populated',
+            card_data: {},
+          },
+        ],
+      },
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+      />
+    )
+
+    expect(mockMixedContentView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: [expect.objectContaining({ id: 'card-video', type: 'card' })],
+      })
+    )
+    expect(mockFinalPromptMessage).not.toHaveBeenCalled()
+  })
+
+  it('renders a strict final requirement prompt as a confirmation card before text blocks', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '',
+      timestamp: new Date('2026-08-26T12:51:13Z').getTime(),
+      subtaskId: 274878057582,
+      subtaskStatus: 'COMPLETED',
+      status: 'completed',
+      result: {
+        blocks: [
+          {
+            id: 'final-text',
+            type: 'text',
+            status: 'done',
+            content: [
+              '以下是整合后的最终版本。',
+              '',
+              '## ✅ Final Requirement Prompt',
+              '',
+              'Build the shopping website.',
+            ].join('\n'),
+          },
+        ],
+      },
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={{ id: 274878057571 } as TaskDetail}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        isPendingConfirmation
+      />
+    )
+
+    expect(mockFinalPromptMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          type: 'final_prompt',
+          final_prompt: 'Build the shopping website.',
+        },
+        taskId: 274878057571,
+        subtaskId: 274878057582,
+        isPendingConfirmation: true,
+      })
+    )
+    expect(mockMixedContentView).not.toHaveBeenCalled()
   })
 
   it('preserves Deep Research citation links in regular messages', () => {

@@ -105,6 +105,13 @@
     "confirm_hint": "用这条消息继续",
     "confirming": "处理中..."
   },
+  "weiboVideoBinding": {
+    "title": "绑定微博账号以获得完整视频能力",
+    "description": "建议绑定微博账号以获得完整视频能力。也可以暂不绑定并继续上传，后续可在个人设置里调整微博账号绑定。",
+    "confirmBind": "确认绑定并上传",
+    "continueWithoutBinding": "暂不绑定，继续上传",
+    "bindSuccess": "微博账号已绑定，继续上传视频"
+  },
   "status": {
     "typing": "AI 正在输入...",
     "thinking": "AI 正在思考...",
@@ -113,6 +120,15 @@
     "disconnected": "连接断开",
     "reconnecting": "正在重连...（第 {{count}} 次尝试）",
     "reconnected": "已重新连接"
+  },
+  "cards": {
+    "video_director": {
+      "title": "视频生成",
+      "completed": "视频已生成",
+      "processing": "正在创建视频",
+      "failed": "视频生成失败",
+      "view_detail": "查看详情"
+    }
   },
   "messages": {
     "assistant": "AI 助手",
@@ -739,6 +755,7 @@
       "adaptive": "自适应"
     },
     "generating": "正在生成视频...",
+    "loading": "正在加载视频...",
     "preparing": "准备中...",
     "progress": "生成进度: {{progress}}%",
     "completed": "视频生成完成",
@@ -750,6 +767,14 @@
     "duration_section": "时长",
     "duration_auto": "智能时长",
     "resolution_section": "分辨率"
+  },
+  "asyncCards": {
+    "loading": "正在加载卡片...",
+    "pleaseWait": "任务处理中，请稍候",
+    "failed": "异步任务执行失败",
+    "videoTitle": "创意视频",
+    "viewDetails": "查看详情",
+    "panelDescription": "查看当前结果，并继续下一阶段的视频创作"
   },
   "image": {
     "title": "图片生成",

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { Check, ChevronDown, Video } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Video } from 'lucide-react'
 import { useState } from 'react'
 
 import type { VideoGenerationMode } from '@/apis/models'
@@ -16,6 +16,8 @@ interface VideoGenerationModeSelectorProps {
   value?: string
   onChange: (modeId: string) => void
   disabled?: boolean
+  triggerVariant?: 'default' | 'menu-item'
+  popoverSide?: 'top' | 'right' | 'bottom' | 'left'
 }
 
 export default function VideoGenerationModeSelector({
@@ -23,6 +25,8 @@ export default function VideoGenerationModeSelector({
   value,
   onChange,
   disabled = false,
+  triggerVariant = 'default',
+  popoverSide,
 }: VideoGenerationModeSelectorProps) {
   const [open, setOpen] = useState(false)
   const selectedMode = modes.find(mode => mode.id === value) ?? modes[0]
@@ -38,19 +42,34 @@ export default function VideoGenerationModeSelector({
           type="button"
           disabled={disabled}
           className={cn(
-            'flex h-9 min-w-0 items-center gap-1.5 rounded-full border border-border',
-            'bg-base px-3 text-xs text-text-primary transition-colors hover:bg-hover',
+            'flex min-w-0 items-center gap-1.5',
+            triggerVariant === 'menu-item'
+              ? 'h-11 w-full rounded-md px-3'
+              : 'h-9 rounded-full border border-border px-3',
+            'bg-base text-xs text-text-primary transition-colors hover:bg-hover',
             'disabled:cursor-not-allowed disabled:opacity-50'
           )}
           data-testid="video-generation-mode-selector"
         >
           <Video className="h-4 w-4 shrink-0" />
-          <span className="max-w-28 truncate">{selectedMode.label}</span>
-          <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
+          <span
+            className={cn(
+              'truncate',
+              triggerVariant === 'menu-item' ? 'flex-1 text-left text-sm' : 'max-w-28'
+            )}
+          >
+            {selectedMode.label}
+          </span>
+          {triggerVariant === 'menu-item' ? (
+            <ChevronRight className="h-4 w-4 shrink-0 opacity-60" />
+          ) : (
+            <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
+          )}
         </button>
       </PopoverTrigger>
       <PopoverContent
         align="start"
+        side={popoverSide ?? (triggerVariant === 'menu-item' ? 'right' : undefined)}
         sideOffset={4}
         className="w-auto min-w-40 rounded-xl border border-border bg-base p-1 shadow-xl"
       >

@@ -26,6 +26,7 @@ import redis
 import socketio
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
 from app.core.config import settings
@@ -66,6 +67,7 @@ HIGH_FREQUENCY_HTTP_PATHS = {
     "/api/internal/callback",
     "/api/internal/callback/batch",
 }
+SENSITIVE_QUERY_PARAM_NAMES = {"access_token", "api_key", "signature", "token"}
 
 # Initialize logging at module level for use in lifespan
 setup_logging()
@@ -91,6 +93,24 @@ def _format_forwarded_headers_for_log(headers) -> str:
         return ""
 
     return f" headers={{{', '.join(forwarded_headers)}}}"
+
+
+def _format_query_params_for_log(query_params: QueryParams) -> str:
+    return str(
+        QueryParams(
+            [
+                (
+                    name,
+                    (
+                        "[REDACTED]"
+                        if name.lower() in SENSITIVE_QUERY_PARAM_NAMES
+                        else value
+                    ),
+                )
+                for name, value in query_params.multi_items()
+            ]
+        )
+    )
 
 
 def _request_context_fields(request_body: str) -> tuple[object, object, object]:
@@ -698,7 +718,8 @@ def create_app():
 
         # Pre-request logging with request ID
         request_log_message = (
-            f"request : {request.method} {request.url.path} {request.query_params} "
+            f"request : {request.method} {request.url.path} "
+            f"{_format_query_params_for_log(request.query_params)} "
             f"{request_id} {client_ip} [{username}]{forwarded_headers_log}"
         )
         high_frequency_request = request.url.path in HIGH_FREQUENCY_HTTP_PATHS
@@ -777,7 +798,8 @@ def create_app():
 
         # Post-request logging with request ID
         response_log_message = (
-            f"response: {request.method} {request.url.path} {request.query_params} "
+            f"response: {request.method} {request.url.path} "
+            f"{_format_query_params_for_log(request.query_params)} "
             f"{request_id} {client_ip} [{username}]{forwarded_headers_log} "
             f"{response.status_code} {process_time:.2f}ms"
         )

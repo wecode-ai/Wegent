@@ -3,7 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MessageBlock } from '../message-blocks'
-import { mergeBlocksForDone, mergeStreamingBlocks } from './TaskStateMachine.blockMerging'
+import {
+  mergeBlocksForDone,
+  mergeMessageBlock,
+  mergeStreamingBlocks,
+} from './TaskStateMachine.blockMerging'
 import { generateMessageId, mergeChunkContent } from './TaskStateMachine.messageUtils'
 import type {
   Event,
@@ -30,6 +34,15 @@ interface ChatChunkReducerResult {
   notifyListenersImmediately: boolean
 }
 
+function getRenderPayloadType(block: Partial<MessageBlock>): string | undefined {
+  const renderPayload = 'render_payload' in block ? block.render_payload : undefined
+  if (!renderPayload || typeof renderPayload !== 'object' || Array.isArray(renderPayload)) {
+    return undefined
+  }
+  const type = (renderPayload as { type?: unknown }).type
+  return typeof type === 'string' ? type : undefined
+}
+
 export function reduceChatStartEvent({
   state,
   event,
@@ -52,17 +65,20 @@ export function reduceChatStartEvent({
     return state
   }
 
-  const initialResult = event.shellType ? { shell_type: event.shellType } : undefined
+  const streamingMessage = existingMessage?.status === 'streaming' ? existingMessage : undefined
+  const initialResult = event.shellType
+    ? { ...streamingMessage?.result, shell_type: event.shellType }
+    : streamingMessage?.result
   const newMessages = new Map(state.messages)
   newMessages.set(aiMessageId, {
     id: aiMessageId,
     type: 'ai',
     status: 'streaming',
-    content: '',
-    timestamp: Date.now(),
+    content: streamingMessage?.content || '',
+    timestamp: streamingMessage?.timestamp || Date.now(),
     subtaskId: event.subtaskId,
-    messageId: event.messageId,
-    botName: event.botName,
+    messageId: event.messageId ?? streamingMessage?.messageId,
+    botName: event.botName ?? streamingMessage?.botName,
     result: initialResult,
   })
 
@@ -192,6 +208,83 @@ export function reduceChatChunkEvent({
     },
     pendingChunks,
     notifyListenersImmediately: true,
+  }
+}
+
+export function reduceChatBlockUpdatedEvent({
+  state,
+  event,
+}: ChatEventReducerParams<
+  Extract<Event, { type: 'CHAT_BLOCK_UPDATED' }>
+>): TaskMachineInternalState {
+  const aiMessageId = generateMessageId('ai', event.subtaskId)
+  const existingMessage = state.messages.get(aiMessageId)
+  const isCardUpdate = 'card_id' in event.block || 'card_type' in event.block
+  const renderPayloadType = getRenderPayloadType(event.block)
+  const inferredType =
+    event.block.type || (isCardUpdate ? 'card' : renderPayloadType ? 'tool' : undefined)
+  if (!existingMessage) {
+    if (!inferredType) return state
+
+    const block = {
+      ...event.block,
+      type: inferredType,
+    } as MessageBlock
+    const isTerminalBlock =
+      block.status === 'done' ||
+      (block.type === 'card' &&
+        (block.card_status === 'populated' || block.card_status === 'error'))
+    console.info('[TaskStateMachine][block_updated] Created missing assistant message', {
+      task_id: state.taskId,
+      subtask_id: event.subtaskId,
+      block_id: block.id,
+      block_type: block.type,
+      card_status: block.type === 'card' ? block.card_status : null,
+      terminal: isTerminalBlock,
+    })
+    const messages = new Map(state.messages)
+    messages.set(aiMessageId, {
+      id: aiMessageId,
+      type: 'ai',
+      status: isTerminalBlock ? 'completed' : 'streaming',
+      content: '',
+      timestamp: Date.now(),
+      subtaskId: event.subtaskId,
+      result: {
+        blocks: [block],
+      },
+    })
+    return {
+      ...state,
+      messages,
+    }
+  }
+
+  const existingBlocks = existingMessage.result?.blocks || []
+  const existingIndex = existingBlocks.findIndex(block => block.id === event.block.id)
+  if (existingIndex < 0 && !inferredType) return state
+
+  const blocks = [...existingBlocks]
+  if (existingIndex >= 0) {
+    blocks[existingIndex] = mergeMessageBlock(blocks[existingIndex], event.block)
+  } else {
+    blocks.push({
+      ...event.block,
+      type: inferredType,
+    } as MessageBlock)
+  }
+
+  const messages = new Map(state.messages)
+  messages.set(aiMessageId, {
+    ...existingMessage,
+    result: {
+      ...existingMessage.result,
+      blocks,
+    },
+  })
+  return {
+    ...state,
+    messages,
   }
 }
 

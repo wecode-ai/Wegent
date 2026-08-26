@@ -107,6 +107,7 @@ from wecode.api.transition_page import router as transition_page_router
 from wecode.api.user_search_with_erp import router as user_search_with_erp_router
 from wecode.config.task_sharding_config import task_sharding_settings
 from wecode.runtime import initialize_internal_runtime
+from wecode.video.api.router import router as aigc_video_router
 
 initialize_internal_runtime()
 
@@ -177,6 +178,7 @@ api_router.include_router(
     tags=["wecode", "agent-usage"],
 )
 api_router.include_router(auth_router, prefix="/internal/auth", tags=["internal"])
+api_router.include_router(aigc_video_router, prefix="/aigc-video", tags=["aigc-video"])
 # Internal multimodal endpoints (converter-facing): GCS proxy + fid→CDN resolver.
 # attachments_video provides GET /attachments/{id}/video-download-url (injected
 # into MultimodalDispatchContext.video_download_url_path by weibo_multimodal_patch).

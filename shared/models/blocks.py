@@ -31,6 +31,7 @@ class BlockType(str, Enum):
     TEXT = "text"
     SUBAGENT = "subagent"
     GUIDANCE = "guidance"
+    CARD = "card"
 
 
 class BlockStatus(str, Enum):
@@ -274,8 +275,52 @@ class GuidanceBlock:
         )
 
 
+@dataclass
+class CardBlock:
+    """Generic card block whose UI is selected by ``card_type``."""
+
+    id: str
+    card_id: str
+    card_type: str
+    card_status: str
+    card_data: Dict[str, Any] = field(default_factory=dict)
+    card_preview_data: Dict[str, Any] = field(default_factory=dict)
+    card_error: Optional[str] = None
+    status: str = BlockStatus.PENDING.value
+    timestamp: int = 0
+    type: Literal["card"] = "card"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "type": self.type,
+            "status": self.status,
+            "timestamp": self.timestamp,
+            "card_id": self.card_id,
+            "card_type": self.card_type,
+            "card_status": self.card_status,
+            "card_data": self.card_data,
+            "card_preview_data": self.card_preview_data,
+            "card_error": self.card_error,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CardBlock":
+        return cls(
+            id=data.get("id", ""),
+            card_id=str(data.get("card_id", "")),
+            card_type=str(data.get("card_type", "")),
+            card_status=str(data.get("card_status", "pending")),
+            card_data=data.get("card_data", {}),
+            card_preview_data=data.get("card_preview_data", {}),
+            card_error=data.get("card_error"),
+            status=data.get("status", BlockStatus.PENDING.value),
+            timestamp=data.get("timestamp", 0),
+        )
+
+
 # Type alias for any block type
-MessageBlock = Union[ToolBlock, TextBlock, SubagentBlock, GuidanceBlock]
+MessageBlock = Union[ToolBlock, TextBlock, SubagentBlock, GuidanceBlock, CardBlock]
 
 
 def block_from_dict(data: Dict[str, Any]) -> MessageBlock:
@@ -296,6 +341,8 @@ def block_from_dict(data: Dict[str, Any]) -> MessageBlock:
         return SubagentBlock.from_dict(data)
     elif block_type == BlockType.GUIDANCE.value:
         return GuidanceBlock.from_dict(data)
+    elif block_type == BlockType.CARD.value:
+        return CardBlock.from_dict(data)
     else:
         # Default to text block for unknown types
         return TextBlock.from_dict(data)
@@ -404,6 +451,46 @@ def create_text_block(
         "status": BlockStatus.STREAMING.value,
         "timestamp": ts,
     }
+
+
+def create_card_block(
+    card_id: str | int,
+    card_type: str,
+    card_data: Optional[Dict[str, Any]] = None,
+    card_status: str = "populated",
+    card_preview_data: Optional[Dict[str, Any]] = None,
+    card_error: Optional[str] = None,
+    block_id: Optional[str] = None,
+    timestamp: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Create a generic card block for persistence and streaming."""
+    import time
+
+    ts = timestamp if timestamp is not None else int(time.time() * 1000)
+    normalized_card_id = str(card_id)
+    normalized_block_id = block_id or (
+        normalized_card_id
+        if normalized_card_id.startswith("card-")
+        else f"card-{normalized_card_id}"
+    )
+    block_status = {
+        "pending": BlockStatus.PENDING.value,
+        "partial_ready": BlockStatus.STREAMING.value,
+        "populated": BlockStatus.DONE.value,
+        "error": BlockStatus.ERROR.value,
+        "expired": BlockStatus.ERROR.value,
+    }.get(card_status, BlockStatus.DONE.value)
+    return CardBlock(
+        id=normalized_block_id,
+        card_id=normalized_card_id,
+        card_type=card_type,
+        card_status=card_status,
+        card_data=card_data or {},
+        card_preview_data=card_preview_data or {},
+        card_error=card_error,
+        status=block_status,
+        timestamp=ts,
+    ).to_dict()
 
 
 def create_guidance_block(

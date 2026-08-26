@@ -25,8 +25,16 @@ export function buildRecoverJoinOptions(
   const maxMessageId = getMaxMessageId(state)
   const joinOptions: RecoverJoinOptions = {
     forceRefresh: true,
-    afterMessageId: event.syncAfterMessageId ?? maxMessageId,
+    afterMessageId:
+      event.reason === 'websocket-reconnect'
+        ? undefined
+        : event.syncAfterMessageId ?? maxMessageId,
   }
+
+  // Existing messages can contain async blocks that keep changing after their
+  // message ID and the parent task status are terminal. A reconnect therefore
+  // needs a full snapshot; an incremental message-ID cursor cannot recover
+  // updates that were missed while the socket was disconnected.
 
   if (event.resumeFromCursor !== undefined) {
     joinOptions.resumeFromCursor = event.resumeFromCursor

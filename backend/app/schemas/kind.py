@@ -534,12 +534,29 @@ class TeamInputPlaceholder(LocalizedInputPlaceholder):
     desktop: Optional[LocalizedInputPlaceholder] = None
 
 
+class ModeSpec(BaseModel):
+    """Model selectors exposed for specialized task modes."""
+
+    allowedModelCategories: List[ModelCategoryType] = Field(
+        default_factory=list,
+        description="Model categories available for user selection.",
+    )
+    hiddenVideoParams: Optional[List[str]] = Field(
+        default=None,
+        description="Video parameters owned by the workflow and hidden from users.",
+    )
+
+
 class TeamSpec(QuickPhraseMixin):
     """Team specification"""
 
     members: List[TeamMember]
     collaborationModel: str  # solo、pipeline、route、coordinate、collaborate
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    modeSpec: Optional[ModeSpec] = Field(
+        default=None,
+        description="Optional media selectors exposed while retaining chat execution.",
+    )
     description: Optional[str] = None  # Team description
     icon: Optional[str] = None  # Icon ID from preset icon library
     displayConfig: TeamDisplayConfig = Field(default_factory=TeamDisplayConfig)
@@ -890,6 +907,15 @@ class SkillProviderConfig(BaseModel):
     )
 
 
+class SkillRuntimeConfig(BaseModel):
+    """Optional execution policies declared by a Skill."""
+
+    returnDirectTools: List[str] = Field(
+        default_factory=list,
+        description="Tool names whose successful result should end the current turn.",
+    )
+
+
 class SkillSpec(BaseModel):
     """Skill specification"""
 
@@ -922,6 +948,10 @@ class SkillSpec(BaseModel):
         None,
         description="Provider configuration for dynamic loading. "
         "If specified, the provider will be loaded from the skill .",
+    )
+    runtime: Optional[SkillRuntimeConfig] = Field(
+        None,
+        description="Optional Chat runtime policies for this Skill.",
     )
     mcpServers: Optional[Dict[str, Any]] = Field(
         None,
