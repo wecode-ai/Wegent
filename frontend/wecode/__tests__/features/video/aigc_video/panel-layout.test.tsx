@@ -5,6 +5,14 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { AigcVideoPanel } from '@wecode/features/video/aigc_video/AigcVideoPanel'
+import { scriptApi } from '@wecode/features/video/script/api'
+
+jest.mock('@wecode/features/video/script/api', () => ({
+  scriptApi: {
+    getScript: jest.fn(),
+    updateDraftScript: jest.fn(),
+  },
+}))
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -22,6 +30,10 @@ jest.mock('@/components/common/EnhancedMarkdown', () => ({
 }))
 
 describe('AigcVideoPanel layout', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
   it('renders as an embedded panel and sends workflow actions', async () => {
     const onClose = jest.fn()
     const onChatButtonClick = jest.fn().mockResolvedValue(undefined)
@@ -57,5 +69,32 @@ describe('AigcVideoPanel layout', () => {
 
     fireEvent.click(screen.getByTestId('aigc-video-panel-close'))
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads the complete script instead of rendering the truncated card preview', async () => {
+    jest.mocked(scriptApi.getScript).mockResolvedValue({
+      script_id: 12,
+      task_id: 3,
+      title: '晨光里的温柔时刻',
+      is_draft: true,
+      draft_content: '# 晨光里的温柔时刻\n\n完整的第二幕与结尾内容',
+    })
+
+    render(
+      <AigcVideoPanel
+        embedded
+        onClose={jest.fn()}
+        panelProps={{
+          title: '晨光里的温柔时刻',
+          link: '/chat?taskId=3&openPanel=script&scriptId=12',
+          previewText: '# 晨光里的温柔时刻\n\n**旁...',
+        }}
+      />
+    )
+
+    expect(await screen.findByTestId('video-script-panel')).toBeInTheDocument()
+    expect(scriptApi.getScript).toHaveBeenCalledWith(12)
+    expect(screen.getByText(/完整的第二幕与结尾内容/)).toBeInTheDocument()
+    expect(screen.queryByText(/旁\.\.\./)).not.toBeInTheDocument()
   })
 })

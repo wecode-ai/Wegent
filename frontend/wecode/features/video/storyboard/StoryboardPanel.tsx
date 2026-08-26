@@ -19,16 +19,6 @@ import {
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -70,9 +60,7 @@ interface ScriptState {
   finalVideoCover: FinalVideoCover | null
 }
 
-type PendingCharge =
-  | { type: 'single'; params: GenerateSingleVideoParams; token: string; message: string }
-  | { type: 'all'; params: GenerateAllVideosParams; token: string; message: string }
+type GenerationType = 'single' | 'all'
 
 const wait = (milliseconds: number) =>
   new Promise<void>(resolve => window.setTimeout(resolve, milliseconds))
@@ -126,7 +114,6 @@ export function StoryboardPanel({
   const [saving, setSaving] = useState(false)
   const [busyIds, setBusyIds] = useState<Set<number>>(() => new Set())
   const [progress, setProgress] = useState(0)
-  const [pendingCharge, setPendingCharge] = useState<PendingCharge | null>(null)
   const [compositionOpen, setCompositionOpen] = useState(false)
   const [replacingImage, setReplacingImage] = useState(false)
   const [replacingVideo, setReplacingVideo] = useState(false)
@@ -367,27 +354,8 @@ export function StoryboardPanel({
 
   const handleGenerationResponse = async (
     response: VideoGenerateResponse,
-    type: PendingCharge['type'],
-    params: GenerateSingleVideoParams | GenerateAllVideosParams
+    type: GenerationType
   ) => {
-    if (response.action === 'confirm_charge') {
-      if (type === 'single') {
-        setPendingCharge({
-          type,
-          params: params as GenerateSingleVideoParams,
-          token: response.billing_token,
-          message: response.message,
-        })
-      } else {
-        setPendingCharge({
-          type,
-          params: params as GenerateAllVideosParams,
-          token: response.billing_token,
-          message: response.message,
-        })
-      }
-      return
-    }
     if (!('task_uuid' in response)) {
       throw new Error(response.message)
     }
@@ -408,7 +376,7 @@ export function StoryboardPanel({
     }
     try {
       const response = await storyboardApis.generateSingleVideo(params)
-      await handleGenerationResponse(response, 'single', params)
+      await handleGenerationResponse(response, 'single')
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -421,35 +389,7 @@ export function StoryboardPanel({
     const params: GenerateAllVideosParams = { task_id: taskId, script_id: scriptId }
     try {
       const response = await storyboardApis.generateAllVideos(params)
-      await handleGenerationResponse(response, 'all', params)
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        description: error instanceof Error ? error.message : t('storyboard.generateFailed'),
-      })
-    }
-  }
-
-  const confirmCharge = async () => {
-    const charge = pendingCharge
-    if (!charge) return
-    setPendingCharge(null)
-    try {
-      if (charge.type === 'single') {
-        const response = await storyboardApis.generateSingleVideo({
-          ...charge.params,
-          confirm_charge: true,
-          billing_token: charge.token,
-        })
-        await handleGenerationResponse(response, 'single', charge.params)
-      } else {
-        const response = await storyboardApis.generateAllVideos({
-          ...charge.params,
-          confirm_charge: true,
-          billing_token: charge.token,
-        })
-        await handleGenerationResponse(response, 'all', charge.params)
-      }
+      await handleGenerationResponse(response, 'all')
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -866,29 +806,6 @@ export function StoryboardPanel({
           {t('storyboard.empty')}
         </div>
       )}
-
-      <AlertDialog
-        open={Boolean(pendingCharge)}
-        onOpenChange={open => !open && setPendingCharge(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('storyboard.confirmTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>{pendingCharge?.message}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel data-testid="video-storyboard-charge-cancel">
-              {t('cancel')}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => void confirmCharge()}
-              data-testid="video-storyboard-charge-confirm"
-            >
-              {t('storyboard.confirmGenerate')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <Dialog open={compositionOpen} onOpenChange={setCompositionOpen}>
         <DialogContent
