@@ -383,6 +383,11 @@ export function WorkbenchProvider({
     currentRuntimeTask: state.currentRuntimeTask,
     standaloneChatKey: state.standaloneChatKey,
   })
+  const modelSelectionScopeKey = getModelSelectionScopeKey({
+    userId: currentUser.id,
+    currentProjectId: state.currentProject?.id ?? null,
+    currentRuntimeTask: state.currentRuntimeTask,
+  })
   const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>(() =>
     workspaceTabId ? (consumeWorkspaceTabTransfer(workspaceTabId)?.draftInputByScope ?? {}) : {}
   )
@@ -891,7 +896,7 @@ export function WorkbenchProvider({
     api: resolvedServices.modelApi,
     locked: false,
     enabled: taskComposerCatalogsEnabled,
-    scopeKey: projectChatScopeKey,
+    scopeKey: modelSelectionScopeKey,
     persistSelection: !state.currentRuntimeTask && !usesLocalProjectScopedSelection,
     selectionConfig: modelSelectionConfig,
     defaultSelectionConfig: defaultModelSelectionConfig,
@@ -3003,4 +3008,21 @@ function getProjectChatScopeKey({
     return getRuntimeTaskChatScopeKey(currentRuntimeTask)
   }
   return `blank:${standaloneChatKey}`
+}
+
+function getModelSelectionScopeKey({
+  userId,
+  currentProjectId,
+  currentRuntimeTask,
+}: {
+  userId: number
+  currentProjectId: number | null
+  currentRuntimeTask: RuntimeTaskAddress | null
+}): string {
+  if (currentRuntimeTask) {
+    return `user:${userId}:${getRuntimeTaskChatScopeKey(currentRuntimeTask)}`
+  }
+  return currentProjectId === null
+    ? `user:${userId}:new-task:standalone`
+    : `user:${userId}:new-task:project:${currentProjectId}`
 }

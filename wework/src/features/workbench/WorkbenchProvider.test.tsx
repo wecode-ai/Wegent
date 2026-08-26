@@ -1014,6 +1014,12 @@ function ProjectSendProbe({
       <span data-testid="project-collaboration-mode">
         {workbench.projectChat.selectedModelOptions.collaborationMode ?? 'default'}
       </span>
+      <span data-testid="project-selected-model">
+        {workbench.projectChat.selectedModel?.name ?? 'none'}
+      </span>
+      <span data-testid="project-reasoning-effort">
+        {workbench.projectChat.selectedModelOptions.reasoning ?? 'none'}
+      </span>
       <span data-testid="runtime-context-window">
         {workbench.projectChat.contextUsage?.modelContextWindow ?? 'none'}
       </span>
@@ -1224,6 +1230,21 @@ function ProjectSendProbe({
         onClick={() => workbench.projectChat.setSelectedModelOption('collaborationMode', 'plan')}
       >
         enable plan mode
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const model = workbench.projectChat.models.find(item => item.name === 'override-model')
+          if (model) workbench.projectChat.setSelectedModel(model)
+        }}
+      >
+        select override model
+      </button>
+      <button
+        type="button"
+        onClick={() => workbench.projectChat.setSelectedModelOption('reasoning', 'high')}
+      >
+        set high reasoning
       </button>
       <button
         type="button"
@@ -6917,6 +6938,117 @@ describe('WorkbenchProvider runtime tasks', () => {
         ],
       })
     )
+  })
+
+  test('remembers a local project task model and reasoning for the next task', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: {
+                id: 7,
+                key: 'project-7',
+                name: 'Wegent',
+                source: 'local_project',
+                aiSettings: {
+                  modelSelection: {
+                    modelName: 'project-model',
+                    modelType: 'runtime',
+                    options: { reasoning: 'medium' },
+                  },
+                },
+              },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'codex',
+      })),
+      getRuntimeTranscript: vi.fn(async (address: RuntimeTranscriptRequest) => ({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: 'codex',
+        messages: [],
+      })),
+    })
+    const models: UnifiedModel[] = [
+      {
+        name: 'project-model',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: {
+            family: 'codex-provider',
+            reasoningEfforts: ['low', 'medium', 'high'],
+          },
+        },
+      },
+      {
+        name: 'override-model',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: {
+            family: 'codex-provider',
+            reasoningEfforts: ['low', 'medium', 'high'],
+          },
+        },
+      },
+    ]
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-selected-model')).toHaveTextContent('project-model')
+    )
+    expect(screen.getByTestId('project-reasoning-effort')).toHaveTextContent('medium')
+
+    await userEvent.click(screen.getByText('select override model'))
+    await userEvent.click(screen.getByText('set high reasoning'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: 'override-model',
+        modelOptions: expect.objectContaining({ reasoning: 'high' }),
+      })
+    )
+
+    await userEvent.click(screen.getByText('start new project chat'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('project-selected-model')).toHaveTextContent('override-model')
+    )
+    expect(screen.getByTestId('project-reasoning-effort')).toHaveTextContent('high')
   })
 
   test('stores one canonical model identity for selection and execution', async () => {

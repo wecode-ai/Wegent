@@ -284,6 +284,9 @@ const PROJECT_AI_MODEL_ID = 'wework-deepseek-v4-pro'
 const PROJECT_AI_MODEL_LABEL = 'wework-deepseek-v4-pro'
 const PROJECT_AI_MODEL_VALUE = `runtime:${PROJECT_AI_MODEL_ID}`
 const PROJECT_AI_UPSTREAM_MODEL_ID = 'deepseek-v4-pro'
+const REMEMBERED_TASK_MODEL_ID = 'gpt-5.6-sol'
+const REMEMBERED_TASK_MODEL_LABEL = 'GPT 5.6 Sol'
+const REMEMBERED_TASK_REASONING = 'high'
 const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
 const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
 
@@ -426,6 +429,23 @@ async function waitForProjectComposerPlugin(control) {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   return itemTestId
+}
+
+async function selectRememberedTaskModel(control) {
+  await selectE2EModel(control, REMEMBERED_TASK_MODEL_ID, REMEMBERED_TASK_MODEL_LABEL)
+  await control.command('click', '[data-testid="model-selector-button"]')
+  await control.command('click', '[data-testid="model-control-menu-reasoning"]')
+  await control.command('waitFor', '[data-testid="model-control-reasoning-high"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('click', '[data-testid="model-control-reasoning-high"]')
+  assert.match(
+    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    /High|高/,
+    'The task composer did not select GPT 5.6 Sol with high reasoning'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
 }
 
 async function verifyProjectAiSettings({
@@ -640,6 +660,50 @@ async function verifyProjectAiSettings({
     'A new conversation retained obsolete project instructions'
   )
   await captureVerificationScreenshot(control, 'project-ai-settings-10-next-conversation.png')
+
+  setPhase('project-ai-settings-remember-task-model')
+  await control.command('clickWhenEnabled', newConversationSelector)
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectRememberedTaskModel(control)
+  const overriddenConversationRequest = await sendProjectAiCheckpointPrompt(
+    control,
+    composerSelector,
+    { createsConversation: true }
+  )
+  assert.equal(
+    overriddenConversationRequest.body.model,
+    REMEMBERED_TASK_MODEL_ID,
+    'The task-specific model override was not forwarded to Codex'
+  )
+  assert.equal(
+    overriddenConversationRequest.body.reasoning?.effort,
+    REMEMBERED_TASK_REASONING,
+    'The task-specific reasoning effort was not forwarded to Codex'
+  )
+  assert.ok(
+    JSON.stringify(overriddenConversationRequest.body).includes(PROJECT_AI_UPDATED_INSTRUCTIONS),
+    'The task-specific model override dropped the project instructions'
+  )
+
+  setPhase('project-ai-settings-next-task-remembers-model')
+  await control.command('clickWhenEnabled', newConversationSelector)
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
+  await control.command('click', '[data-testid="model-selector-button"]')
+  assert.match(
+    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    /High|高/,
+    'The next task did not remember the selected model and reasoning effort'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'project-ai-settings-11-next-task-model-remembered.png'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
 }
 
 async function verifyLocalModelRouting({
