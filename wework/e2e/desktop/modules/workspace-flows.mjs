@@ -658,7 +658,7 @@ async function verifyWorkspaceIssueCreation(control) {
   })
   await control.command(
     'waitFor',
-    `${boardContentSelector} [data-testid="cloud-todo-column-inbox"]`,
+    `${boardContentSelector} [data-testid="cloud-todo-column-pending"]`,
     {
       text: 'WEWORK_DESKTOP_E2E_ISSUE',
       visible: true,
