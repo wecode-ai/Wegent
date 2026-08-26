@@ -643,15 +643,37 @@ async function retainSecondTaskWorkspace(control, timeoutMs) {
   await control.command('click', '[data-testid="workspace-tab-add"]')
   await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', { timeoutMs })
   await control.command('click', '[data-testid="workspace-tab-add-task"]')
-  await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
-  const secondTabId = await control.command(
-    'getAttribute',
-    '[data-workspace-tab-content][aria-hidden="false"]',
-    { value: 'data-workspace-tab-content' }
+  const startedAt = Date.now()
+  let secondTabId = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    secondTabId = await control.command(
+      'getAttribute',
+      '[data-workspace-tab-content][aria-hidden="false"]',
+      { value: 'data-workspace-tab-content' }
+    )
+    if (secondTabId && secondTabId !== activeTabId) break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.ok(
+    secondTabId && secondTabId !== activeTabId,
+    'The second task workspace tab was not created'
   )
-  assert.notEqual(secondTabId, activeTabId, 'The second task workspace tab was not created')
+  const secondWorkbenchSelector =
+    `[data-workspace-tab-content="${secondTabId}"] ` + '[data-testid="desktop-workbench-main"]'
+  await control.command('waitFor', secondWorkbenchSelector, { timeoutMs })
+  await control.command(
+    'waitFor',
+    `${secondWorkbenchSelector} [data-testid="chat-message-input"]`,
+    {
+      timeoutMs,
+    }
+  )
   await control.command('click', `[data-testid="workspace-tab-select-${activeTabId}"]`)
-  await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
+  await control.command(
+    'waitFor',
+    `[data-workspace-tab-content="${activeTabId}"] ${COMPOSER_SELECTOR}`,
+    { timeoutMs }
+  )
   assert.ok(
     Number(
       await control.command(
