@@ -322,9 +322,13 @@ vi.mock('@/config/runtime', () => ({
   stripAppBasePath: (path: string) => path,
 }))
 
-vi.mock('@/api/http', () => ({
-  createHttpClient: vi.fn(() => ({})),
-}))
+vi.mock('@/api/http', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/api/http')>()
+  return {
+    ...actual,
+    createHttpClient: vi.fn(() => ({})),
+  }
+})
 
 vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),

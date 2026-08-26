@@ -493,6 +493,20 @@ mod tests {
     }
 
     #[test]
+    fn http_git_urls_reject_embedded_credentials_and_queries() {
+        assert!(git_url_contains_credentials(
+            "https://octocat:token@github.com/org/repo.git"
+        ));
+        assert!(git_url_contains_credentials(
+            "https://github.com/org/repo.git?token=secret"
+        ));
+        assert!(!git_url_contains_credentials(
+            "https://github.com/org/repo.git"
+        ));
+        assert!(!git_url_contains_credentials("git@github.com:org/repo.git"));
+    }
+
+    #[test]
     fn resolves_project_workspace_path_first() {
         let request = ExecutionRequest {
             task_id: "10".to_owned(),

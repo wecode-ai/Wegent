@@ -89,7 +89,7 @@ Desktop Wework's **Integrations → Appshots** settings show macOS Appshots stat
 
 ### Wework Context Settings
 
-In desktop Wework, the left settings menu groups **General**, **Cloud connection**, **Appearance**, **Context**, **Models**, **Proxy**, **Keyboard shortcuts**, and **About** under **Personal**. On mobile, the settings home keeps a **Personal** entry; opening it provides General, Appearance, Context, Models, and About.
+In desktop Wework, the left settings menu groups **General**, **Cloud connection**, **Appearance**, **Context**, **Models**, **Proxy**, **Keyboard shortcuts**, and **About** under **Personal**. On mobile, the settings home provides **Cloud connection** and **Personal** entries. Cloud connection manages connection state, cloud devices, and device Git configuration, while Personal provides General, Appearance, Context, Models, and About.
 
 Use **Settings → Personal → Context** to configure two local context behaviors:
 

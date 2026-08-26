@@ -55,6 +55,8 @@ Settings are grouped by capability:
 
 "Models" is the shared entry for local models and Codex `auth.json`. Local model configs are always available; cloud Codex auth sync, upload, import, and proxy switches must use the cloud connection. When disconnected, the page only shows local auth status and cloud feature guidance and does not write local state to the server.
 
+**Device Git configuration** appears below the device list under **Settings → Cloud connection**, not under Git hosting. After connecting to the cloud, the user must explicitly select an online ClaudeCode cloud or remote device and click sync before Wework writes cloud Git account configuration to that target. Local devices, busy devices, and unselected devices are not modified.
+
 ## Service Merge
 
 Workbench services have three layers:
