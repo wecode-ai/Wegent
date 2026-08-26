@@ -24,7 +24,7 @@
 
 ## Full-view comparison evidence
 
-The four source images and four Electron captures were opened together in the same comparison input. The implementation preserves the selected visual hierarchy: constant Applications header, invariant primary tabs, one aligned context toolbar, matching neutral controls, and a shared bordered content surface.
+The four source images and five Electron captures covering four application states were opened together in the same comparison input. The implementation preserves the selected visual hierarchy: constant Applications header, invariant primary tabs, one aligned context toolbar, matching neutral controls, and a shared bordered content surface.
 
 Measured Electron geometry across Market, My, Site, and Mini Program:
 
