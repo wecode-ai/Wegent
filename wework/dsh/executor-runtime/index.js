@@ -73,6 +73,8 @@ export async function handleExecutorEvents(req, res, client) {
     dispose()
   }
   req.once('close', disconnect)
+  res.once('close', disconnect)
+  res.on('error', disconnect)
   try {
     const replay = client.replay(after)
     res.writeHead(200, {

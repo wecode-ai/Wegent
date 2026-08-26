@@ -743,15 +743,14 @@ impl CodexNotificationEventMapper {
             process_text.accepts(block_type, process_kind, item_id.as_deref())
         }) {
             process_text.content.push_str(&delta);
-            if delta.len() == 1
-                && process_text
-                    .content
-                    .len()
-                    .saturating_sub(process_text.emitted_content_len)
-                    < PROCESS_TEXT_UPDATE_MIN_CHARS
-            {
+            let pending_content_len = process_text
+                .content
+                .len()
+                .saturating_sub(process_text.emitted_content_len);
+            if delta.len() == 1 && pending_content_len < PROCESS_TEXT_UPDATE_MIN_CHARS {
                 return;
             }
+            let pending_delta = process_text.content[process_text.emitted_content_len..].to_owned();
             process_text.emitted_content_len = process_text.content.len();
             emit_response_event(
                 emit_context.event_tx,
@@ -762,7 +761,7 @@ impl CodexNotificationEventMapper {
                 json!({
                     "block_id": process_text.id.clone(),
                     "updates": {
-                        "content_delta": delta,
+                        "content_delta": pending_delta,
                         "status": "streaming",
                     }
                 }),
@@ -818,7 +817,8 @@ impl CodexNotificationEventMapper {
         if let Some(process_text) = self.process_text.as_mut().filter(|process_text| {
             process_text.accepts(block_type, process_kind, item_id.as_deref())
         }) {
-            process_text.content = text.clone();
+            let emitted_content = &process_text.content[..process_text.emitted_content_len];
+            let updates = terminal_content_updates(emitted_content, &text);
             emit_response_event(
                 emit_context.event_tx,
                 emit_context.device_id,
@@ -827,10 +827,7 @@ impl CodexNotificationEventMapper {
                 emit_context.request,
                 json!({
                     "block_id": process_text.id.clone(),
-                    "updates": {
-                        "content": text,
-                        "status": "done",
-                    }
+                    "updates": updates,
                 }),
             );
             self.reset_process_text();
@@ -982,7 +979,7 @@ impl CodexNotificationEventMapper {
             json!({
                 "block_id": block_id,
                 "updates": {
-                    "content": content.clone(),
+                    "content_delta": delta,
                     "status": "streaming",
                 }
             }),
@@ -999,8 +996,8 @@ impl CodexNotificationEventMapper {
         text: String,
     ) {
         let block_id = plan_block_id(params);
-        let had_streaming_block = self.plan_blocks.remove(&block_id).is_some();
-        if had_streaming_block {
+        let streamed_content = self.plan_blocks.remove(&block_id);
+        if let Some(streamed_content) = streamed_content {
             emit_response_event(
                 event_tx,
                 device_id,
@@ -1009,10 +1006,7 @@ impl CodexNotificationEventMapper {
                 request,
                 json!({
                     "block_id": block_id,
-                    "updates": {
-                        "content": text,
-                        "status": "done",
-                    }
+                    "updates": terminal_content_updates(&streamed_content, &text),
                 }),
             );
             return;
@@ -1343,6 +1337,22 @@ fn emit_context_compaction_event(
         request,
         json!({"block": context_compaction_block(params)}),
     );
+}
+
+fn terminal_content_updates(streamed_content: &str, completed_content: &str) -> Value {
+    if let Some(delta) = completed_content.strip_prefix(streamed_content) {
+        if delta.is_empty() {
+            return json!({ "status": "done" });
+        }
+        return json!({
+            "content_delta": delta,
+            "status": "done",
+        });
+    }
+    json!({
+        "content": completed_content,
+        "status": "done",
+    })
 }
 
 fn is_context_compaction_notification(params: &Value) -> bool {
@@ -2123,6 +2133,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn terminal_content_update_does_not_repeat_streamed_content() {
+        assert_eq!(
+            terminal_content_updates("already streamed", "already streamed"),
+            json!({"status": "done"})
+        );
+    }
+
+    #[test]
+    fn terminal_content_update_only_sends_an_unstreamed_suffix() {
+        assert_eq!(
+            terminal_content_updates("already", "already streamed"),
+            json!({"content_delta": " streamed", "status": "done"})
+        );
+    }
+
+    #[test]
+    fn terminal_content_update_repairs_a_mismatched_stream_with_the_final_snapshot() {
+        assert_eq!(
+            terminal_content_updates("streamed text", "canonical text"),
+            json!({"content": "canonical text", "status": "done"})
+        );
+    }
+
+    #[test]
     fn emits_client_user_message_id_with_runtime_response_events() {
         let (event_tx, mut event_rx) = broadcast::channel(1);
         let request = ExecutionRequest {
@@ -2777,10 +2811,8 @@ mod tests {
         assert_eq!(created["payload"]["data"]["block"]["type"], "text");
         assert_eq!(completed["event"], "response.block.updated");
         assert_eq!(completed["payload"]["data"]["block_id"], "msg-progress");
-        assert_eq!(
-            completed["payload"]["data"]["updates"]["content"],
-            "I will inspect."
-        );
+        assert!(completed["payload"]["data"]["updates"]["content"].is_null());
+        assert!(completed["payload"]["data"]["updates"]["content_delta"].is_null());
         assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
         assert!(event_rx.try_recv().is_err());
     }
@@ -3721,8 +3753,8 @@ mod tests {
         assert_eq!(updated["event"], "response.block.updated");
         assert_eq!(updated["payload"]["data"]["block_id"], "plan-turn-1-plan");
         assert_eq!(
-            updated["payload"]["data"]["updates"]["content"],
-            "# Plan\n\n- Inspect the repo."
+            updated["payload"]["data"]["updates"]["content_delta"],
+            "\n- Inspect the repo."
         );
         assert_eq!(updated["payload"]["data"]["updates"]["status"], "streaming");
 
@@ -3731,10 +3763,8 @@ mod tests {
             .expect("completed event should be emitted");
         assert_eq!(completed["event"], "response.block.updated");
         assert_eq!(completed["payload"]["data"]["block_id"], "plan-turn-1-plan");
-        assert_eq!(
-            completed["payload"]["data"]["updates"]["content"],
-            "# Plan\n\n- Inspect the repo."
-        );
+        assert!(completed["payload"]["data"]["updates"]["content"].is_null());
+        assert!(completed["payload"]["data"]["updates"]["content_delta"].is_null());
         assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
     }
 
