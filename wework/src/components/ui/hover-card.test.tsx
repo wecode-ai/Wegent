@@ -140,6 +140,39 @@ describe('HoverCard', () => {
     expect(screen.queryAllByRole('dialog')).toHaveLength(1)
   })
 
+  test('stays open while focus moves between descendants of the same hovered anchor', async () => {
+    vi.useFakeTimers()
+    render(
+      <HoverCard
+        testId="multi-focus-anchor-hover-card"
+        interactive
+        content={<div>Task details</div>}
+      >
+        <div>
+          <button type="button">Open task</button>
+          <button type="button">Pin task</button>
+        </div>
+      </HoverCard>
+    )
+
+    const firstAction = screen.getByRole('button', { name: 'Open task' })
+    const secondAction = screen.getByRole('button', { name: 'Pin task' })
+    fireEvent.mouseEnter(firstAction)
+    await act(async () => vi.advanceTimersByTime(450))
+    expect(screen.getByTestId('multi-focus-anchor-hover-card')).toBeInTheDocument()
+
+    fireEvent.focus(firstAction)
+    fireEvent.blur(firstAction, { relatedTarget: secondAction })
+    fireEvent.focus(secondAction)
+    await act(async () => vi.advanceTimersByTime(120))
+    expect(screen.getByTestId('multi-focus-anchor-hover-card')).toBeInTheDocument()
+
+    fireEvent.mouseLeave(secondAction)
+    fireEvent.pointerMove(document.body)
+    await act(async () => vi.advanceTimersByTime(120))
+    expect(screen.queryByTestId('multi-focus-anchor-hover-card')).not.toBeInTheDocument()
+  })
+
   test('keeps an interactive card open while using a nested portal menu', async () => {
     vi.useFakeTimers()
     const onClick = vi.fn()

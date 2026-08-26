@@ -184,12 +184,18 @@ export function HoverCard({
     [keepOpen, open, openOnFocus, pin, shouldPinInteraction]
   )
 
-  const handleBlurCapture = useCallback(() => {
-    focusWithinRef.current = false
-    window.queueMicrotask(() => {
-      if (!focusWithinRef.current) scheduleClose()
-    })
-  }, [scheduleClose])
+  const handleBlurCapture = useCallback(
+    (event: FocusEvent<HTMLDivElement>) => {
+      focusWithinRef.current = false
+      if (event.relatedTarget instanceof Node && anchorRef.current?.contains(event.relatedTarget)) {
+        return
+      }
+      window.queueMicrotask(() => {
+        if (!focusWithinRef.current) scheduleClose()
+      })
+    },
+    [scheduleClose]
+  )
 
   useEffect(
     () => () => {
