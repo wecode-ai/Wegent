@@ -15,6 +15,15 @@ import {
   workflowExecutionConfigForAgent,
 } from './workflowExecutionConfig'
 
+function deviceHasId(device: DeviceInfo, deviceId: string): boolean {
+  return [
+    device.device_id,
+    device.app_device_id,
+    device.socket_device_id,
+    ...(device.runtime_routes ?? []).map(route => route.device_id),
+  ].some(candidate => candidate?.trim() === deviceId)
+}
+
 export function WorkflowExecutionConfigFields({
   value,
   onChange,
@@ -45,6 +54,9 @@ export function WorkflowExecutionConfigFields({
   const complete = workflowExecutionConfigComplete(value)
   const selectedModelKey = value.model ? `${value.model_type ?? ''}:${value.model}` : ''
   const selectedDeviceId = value.execution_device_id?.trim() ?? ''
+  const selectedDevice = selectedDeviceId
+    ? devices.find(device => deviceHasId(device, selectedDeviceId))
+    : undefined
   const deviceOptions: MenuOption[] = [
     {
       value: '',
@@ -52,7 +64,7 @@ export function WorkflowExecutionConfigFields({
     },
   ]
 
-  if (selectedDeviceId && !devices.some(device => device.device_id === selectedDeviceId)) {
+  if (selectedDeviceId && !selectedDevice) {
     deviceOptions.push({
       value: selectedDeviceId,
       label: t('workbench.environment_device_unknown', '未知设备'),
@@ -69,9 +81,10 @@ export function WorkflowExecutionConfigFields({
       const label = local
         ? t('todo.workflow_execution_local_device', '本机')
         : device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')
+      const optionValue = device === selectedDevice ? selectedDeviceId : device.device_id
 
       return {
-        value: device.device_id,
+        value: optionValue,
         label,
         icon: local ? (
           <Laptop aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />

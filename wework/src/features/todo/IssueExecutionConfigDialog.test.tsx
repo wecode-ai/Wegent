@@ -366,6 +366,70 @@ describe('IssueExecutionConfigDialog', () => {
     )
   })
 
+  it('resolves a persisted cloud registration id through the local device runtime routes', async () => {
+    render(
+      <IssueExecutionConfigDialog
+        item={
+          {
+            ...item,
+            assignee_agent_id: null,
+            execution_config: {
+              agent_id: null,
+              runtime_profile_id: null,
+              execution_device_id: 'cloud-registration',
+              model: 'local-model',
+              model_type: 'runtime',
+              model_options: {},
+              workspace_binding: { type: 'standalone' },
+            },
+          } as never
+        }
+        projectChatAgentApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        runtimeProfileApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        modelApi={
+          {
+            listModels: vi.fn().mockResolvedValue({
+              data: [{ name: 'local-model', type: 'runtime', displayName: 'Local Model' }],
+            }),
+          } as never
+        }
+        deviceApi={
+          {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                device_id: 'local-device',
+                name: 'Local Executor',
+                status: 'online',
+                runtime_routes: [
+                  {
+                    kind: 'local-ipc',
+                    device_id: 'local-device',
+                    runtime_device_id: 'local-device',
+                    status: 'online',
+                  },
+                  {
+                    kind: 'cloud-relay',
+                    device_id: 'cloud-registration',
+                    runtime_device_id: 'local-device',
+                    status: 'online',
+                  },
+                ],
+              },
+            ]),
+          } as never
+        }
+        localProjects={[]}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    const device = await screen.findByTestId('issue-execution-config-fields-device')
+    expect(device.firstElementChild).toHaveAttribute('data-value', 'cloud-registration')
+    expect(device).toHaveTextContent('本机')
+    expect(device).not.toHaveTextContent('未知设备')
+  })
+
   it('reports no online runtime only when no online execution device exists', async () => {
     render(
       <IssueExecutionConfigDialog
