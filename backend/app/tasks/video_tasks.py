@@ -16,11 +16,12 @@ handler to ensure:
 import asyncio
 import logging
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from celery import states
-from celery.exceptions import Ignore, Retry
+from celery.exceptions import Ignore
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
@@ -43,6 +44,94 @@ CANCEL_KEY_PREFIX = "chat:cancel:"
 
 # Celery task ID prefix for video polling tasks
 VIDEO_POLL_TASK_ID_PREFIX = "video_poll_"
+VIDEO_POLL_SCHEDULE_KEY_PREFIX = "video_poll_scheduled:"
+VIDEO_POLL_SCHEDULE_LEASE_SECONDS = max(
+    POLL_INTERVAL_SECONDS,
+    settings.VIDEO_POLL_SCHEDULE_LEASE_SECONDS,
+)
+VIDEO_SHUTDOWN_HANDOFF_DELAY_SECONDS = max(
+    POLL_INTERVAL_SECONDS,
+    settings.VIDEO_SHUTDOWN_HANDOFF_DELAY_SECONDS,
+)
+
+_RELEASE_REDIS_TOKEN_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+end
+return 0
+"""
+
+
+def _video_poll_schedule_key(subtask_id: int) -> str:
+    return f"{VIDEO_POLL_SCHEDULE_KEY_PREFIX}{subtask_id}"
+
+
+def _get_video_poll_redis_client():
+    import redis
+
+    redis_url = settings.CELERY_BROKER_URL or settings.REDIS_URL
+    return redis.from_url(
+        redis_url,
+        decode_responses=True,
+        socket_timeout=0.5,
+        socket_connect_timeout=0.5,
+        retry_on_timeout=False,
+    )
+
+
+def _acquire_video_poll_schedule(subtask_id: int) -> Optional[str]:
+    """Reserve one queued video polling task for a subtask."""
+    token = str(uuid.uuid4())
+    client = None
+    try:
+        client = _get_video_poll_redis_client()
+        acquired = client.set(
+            _video_poll_schedule_key(subtask_id),
+            token,
+            nx=True,
+            ex=VIDEO_POLL_SCHEDULE_LEASE_SECONDS,
+        )
+        return token if acquired else None
+    except Exception as exc:
+        logger.warning(
+            "[video_tasks] Failed to acquire video poll schedule lease; "
+            "allowing dispatch: subtask_id=%d error=%s",
+            subtask_id,
+            exc,
+        )
+        return token
+    finally:
+        if client is not None:
+            client.close()
+
+
+def _release_video_poll_schedule(
+    subtask_id: int,
+    token: Optional[str],
+) -> None:
+    """Release a queued video polling reservation when the task starts."""
+    if not token:
+        return
+
+    client = None
+    try:
+        client = _get_video_poll_redis_client()
+        client.eval(
+            _RELEASE_REDIS_TOKEN_SCRIPT,
+            1,
+            _video_poll_schedule_key(subtask_id),
+            token,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[video_tasks] Failed to release video poll schedule lease: "
+            "subtask_id=%d error=%s",
+            subtask_id,
+            exc,
+        )
+    finally:
+        if client is not None:
+            client.close()
 
 
 def _estimate_polling_progress(
@@ -73,13 +162,11 @@ def dispatch_video_polling_task(
     poll_count: int = 0,
     last_progress: int = 0,
     card_context: Optional[Dict[str, Any]] = None,
-) -> str:
+) -> Optional[str]:
     """
     Dispatch a video polling Celery task with a fixed task_id.
 
-    Uses fixed task_id based on subtask_id to prevent duplicate tasks.
-    If a task with the same ID already exists in the queue, Celery
-    will not create a duplicate.
+    Uses a Redis schedule lease so only one poll is queued per subtask.
 
     Args:
         subtask_id: Subtask ID
@@ -96,10 +183,20 @@ def dispatch_video_polling_task(
         card_context: External CardBlock polling metadata
 
     Returns:
-        Celery task ID
+        Celery task ID, or None when another poll is already queued.
     """
-    # Use fixed task_id based on subtask_id to prevent duplicate tasks
     celery_task_id = f"{VIDEO_POLL_TASK_ID_PREFIX}{subtask_id}"
+    scheduled_token = _acquire_video_poll_schedule(subtask_id)
+    if scheduled_token is None:
+        logger.info(
+            "[video_tasks] Skip duplicate polling dispatch: "
+            "celery_task_id=%s subtask_id=%d job_id=%s",
+            celery_task_id,
+            subtask_id,
+            job_id,
+        )
+        return None
+
     request_id = get_request_id() or init_request_context()
 
     logger.info(
@@ -108,24 +205,29 @@ def dispatch_video_polling_task(
         f"request_id={request_id}"
     )
 
-    poll_video_job.apply_async(
-        kwargs={
-            "subtask_id": subtask_id,
-            "task_id": task_id,
-            "user_id": user_id,
-            "job_id": job_id,
-            "provider_protocol": provider_protocol,
-            "video_block_id": video_block_id,
-            "model_config": model_config,
-            "message_id": message_id,
-            "intent_result": intent_result,
-            "poll_count": poll_count,
-            "last_progress": last_progress,
-            "card_context": card_context,
-            "request_id": request_id,
-        },
-        task_id=celery_task_id,
-    )
+    try:
+        poll_video_job.apply_async(
+            kwargs={
+                "subtask_id": subtask_id,
+                "task_id": task_id,
+                "user_id": user_id,
+                "job_id": job_id,
+                "provider_protocol": provider_protocol,
+                "video_block_id": video_block_id,
+                "model_config": model_config,
+                "message_id": message_id,
+                "intent_result": intent_result,
+                "poll_count": poll_count,
+                "last_progress": last_progress,
+                "card_context": card_context,
+                "request_id": request_id,
+                "scheduled_token": scheduled_token,
+            },
+            task_id=celery_task_id,
+        )
+    except Exception:
+        _release_video_poll_schedule(subtask_id, scheduled_token)
+        raise
 
     return celery_task_id
 
@@ -355,6 +457,109 @@ def _update_subtask_status_sync(
         db.close()
 
 
+def _schedule_video_job_poll(
+    *,
+    subtask_id: int,
+    task_id: int,
+    user_id: int,
+    job_id: str,
+    provider_protocol: str,
+    video_block_id: str,
+    model_config: Dict[str, Any],
+    message_id: Optional[int],
+    intent_result: Optional[Dict[str, Any]],
+    poll_count: int,
+    last_progress: int,
+    card_context: Optional[Dict[str, Any]],
+    request_id: str,
+    countdown: int,
+) -> bool:
+    """Schedule the next video poll through the shared Celery broker."""
+    scheduled_token = _acquire_video_poll_schedule(subtask_id)
+    if scheduled_token is None:
+        logger.info(
+            "[video_tasks] Skip duplicate next poll dispatch: "
+            "subtask_id=%d job_id=%s poll_count=%d",
+            subtask_id,
+            job_id,
+            poll_count,
+        )
+        return False
+
+    try:
+        poll_video_job.apply_async(
+            kwargs={
+                "subtask_id": subtask_id,
+                "task_id": task_id,
+                "user_id": user_id,
+                "job_id": job_id,
+                "provider_protocol": provider_protocol,
+                "video_block_id": video_block_id,
+                "model_config": model_config,
+                "message_id": message_id,
+                "intent_result": intent_result,
+                "poll_count": poll_count,
+                "last_progress": last_progress,
+                "card_context": card_context,
+                "request_id": request_id,
+                "scheduled_token": scheduled_token,
+            },
+            countdown=countdown,
+        )
+    except Exception:
+        _release_video_poll_schedule(subtask_id, scheduled_token)
+        raise
+    return True
+
+
+def _is_stale_video_poll_attempt(
+    subtask_id: int,
+    incoming_poll_count: int,
+) -> bool:
+    """Return True when this poll message is behind the persisted poll owner."""
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        subtask = subtask_store.get_basic_by_id(db, subtask_id=subtask_id)
+        result = subtask.result if subtask else None
+        if not isinstance(result, dict):
+            return False
+
+        video_job = result.get("video_job")
+        if not isinstance(video_job, dict):
+            return False
+
+        persisted_poll_count = video_job.get("poll_count")
+        if not isinstance(persisted_poll_count, int):
+            return False
+
+        return persisted_poll_count > incoming_poll_count
+    except Exception as exc:
+        logger.warning(
+            "[video_tasks] Failed to inspect video poll freshness: "
+            "subtask_id=%d poll_count=%d error=%s",
+            subtask_id,
+            incoming_poll_count,
+            exc,
+        )
+        return False
+    finally:
+        db.close()
+
+
+def _is_local_shutdown_in_progress() -> bool:
+    """Return True when the current backend process is shutting down."""
+    try:
+        from app.core.local_shutdown import is_local_shutdown
+        from app.core.shutdown import shutdown_manager
+
+        return is_local_shutdown() or shutdown_manager.is_shutting_down
+    except Exception as exc:
+        logger.warning("[video_tasks] Failed to read shutdown state: %s", exc)
+        return False
+
+
 def _run_async(coro):
     """Helper to run async code in sync context."""
     loop = asyncio.new_event_loop()
@@ -368,10 +573,6 @@ def _run_async(coro):
 @celery_app.task(
     bind=True,
     name="app.tasks.video_tasks.poll_video_job",
-    max_retries=MAX_POLL_COUNT,
-    default_retry_delay=POLL_INTERVAL_SECONDS,
-    autoretry_for=(Exception,),
-    retry_backoff=False,  # Fixed interval
 )
 def poll_video_job(
     self,
@@ -388,6 +589,7 @@ def poll_video_job(
     last_progress: int = 0,
     card_context: Optional[Dict[str, Any]] = None,
     request_id: Optional[str] = None,
+    scheduled_token: Optional[str] = None,
 ):
     """
     Poll video generation job status.
@@ -429,15 +631,27 @@ def poll_video_job(
     )
     from shared.utils.error_classifier import format_error_message
 
+    incoming_poll_count = poll_count
     poll_count += 1
     logger.info(
         f"[video_tasks] Polling job: job_id={job_id}, subtask_id={subtask_id}, "
         f"poll_count={poll_count}/{MAX_POLL_COUNT}"
     )
+    _release_video_poll_schedule(subtask_id, scheduled_token)
+
+    if _is_stale_video_poll_attempt(subtask_id, incoming_poll_count):
+        logger.info(
+            "[video_tasks] Ignoring stale duplicated poll: "
+            "job_id=%s task_id=%d subtask_id=%d incoming_poll=%d",
+            job_id,
+            task_id,
+            subtask_id,
+            incoming_poll_count,
+        )
+        raise Ignore()
 
     if card_context:
         return _poll_async_card(
-            celery_task=self,
             subtask_id=subtask_id,
             task_id=task_id,
             user_id=user_id,
@@ -473,6 +687,32 @@ def poll_video_job(
         _update_task_status_after_subtask(task_id)
 
         # Don't retry
+        raise Ignore()
+
+    if _is_local_shutdown_in_progress():
+        logger.info(
+            "[video_tasks] Polling handed off during shutdown: "
+            "job_id=%s task_id=%d subtask_id=%d",
+            job_id,
+            task_id,
+            subtask_id,
+        )
+        _schedule_video_job_poll(
+            subtask_id=subtask_id,
+            task_id=task_id,
+            user_id=user_id,
+            job_id=job_id,
+            provider_protocol=provider_protocol,
+            video_block_id=video_block_id,
+            model_config=model_config,
+            message_id=message_id,
+            intent_result=intent_result,
+            poll_count=incoming_poll_count,
+            last_progress=last_progress,
+            card_context=card_context,
+            request_id=request_id,
+            countdown=VIDEO_SHUTDOWN_HANDOFF_DELAY_SECONDS,
+        )
         raise Ignore()
 
     try:
@@ -567,48 +807,26 @@ def poll_video_job(
             _update_task_status_after_subtask(task_id)
             raise Ignore()
 
-        # Retry with updated state
-        raise self.retry(
+        _schedule_video_job_poll(
+            subtask_id=subtask_id,
+            task_id=task_id,
+            user_id=user_id,
+            job_id=job_id,
+            provider_protocol=provider_protocol,
+            video_block_id=video_block_id,
+            model_config=model_config,
+            message_id=message_id,
+            intent_result=intent_result,
+            poll_count=poll_count,
+            last_progress=current_progress,
+            card_context=card_context,
+            request_id=request_id,
             countdown=POLL_INTERVAL_SECONDS,
-            kwargs={
-                "subtask_id": subtask_id,
-                "task_id": task_id,
-                "user_id": user_id,
-                "job_id": job_id,
-                "provider_protocol": provider_protocol,
-                "video_block_id": video_block_id,
-                "model_config": model_config,
-                "message_id": message_id,
-                "intent_result": intent_result,
-                "poll_count": poll_count,
-                "last_progress": current_progress,
-                "card_context": card_context,
-                "request_id": request_id,
-            },
         )
+        raise Ignore()
 
     except Ignore:
         raise
-    except Retry:
-        # Retry exception is normal Celery behavior - let it propagate
-        raise
-    except self.MaxRetriesExceededError:
-        logger.error(f"[video_tasks] Max retries exceeded: job_id={job_id}")
-        emit_video_error(
-            task_id=task_id,
-            subtask_id=subtask_id,
-            message_id=message_id,
-            video_block_id=video_block_id,
-            error_message="Video generation timed out after maximum retries",
-            progress=last_progress,
-        )
-        _update_subtask_status_sync(
-            subtask_id,
-            "FAILED",
-            error="Video generation timed out after maximum retries",
-        )
-        _update_task_status_after_subtask(task_id)
-        raise Ignore()
     except Exception as e:
         logger.exception(f"[video_tasks] Error polling job {job_id}: {e}")
         error_message = format_error_message(e)
@@ -631,7 +849,6 @@ def poll_video_job(
 
 def _poll_async_card(
     *,
-    celery_task,
     subtask_id: int,
     task_id: int,
     user_id: int,
@@ -742,6 +959,32 @@ def _poll_async_card(
         _update_task_status_after_subtask(task_id)
         raise Ignore()
 
+    if _is_local_shutdown_in_progress():
+        logger.info(
+            "[video_tasks] Async card polling handed off during shutdown: "
+            "job_id=%s task_id=%d subtask_id=%d",
+            job_id,
+            task_id,
+            subtask_id,
+        )
+        _schedule_video_job_poll(
+            subtask_id=subtask_id,
+            task_id=task_id,
+            user_id=user_id,
+            job_id=job_id,
+            provider_protocol=provider_protocol,
+            video_block_id=video_block_id,
+            model_config=model_config,
+            message_id=message_id,
+            intent_result=intent_result,
+            poll_count=max(0, poll_count - 1),
+            last_progress=last_progress,
+            card_context=card_context,
+            request_id=request_id,
+            countdown=VIDEO_SHUTDOWN_HANDOFF_DELAY_SECONDS,
+        )
+        raise Ignore()
+
     try:
         snapshot = _run_async(fetch_async_card_snapshot(query_url))
         block = persist_snapshot(
@@ -769,55 +1012,45 @@ def _poll_async_card(
             fail("Video generation timed out", snapshot.progress)
             raise Ignore()
 
-        raise celery_task.retry(
+        _schedule_video_job_poll(
+            subtask_id=subtask_id,
+            task_id=task_id,
+            user_id=user_id,
+            job_id=job_id,
+            provider_protocol=provider_protocol,
+            video_block_id=video_block_id,
+            model_config=model_config,
+            message_id=message_id,
+            intent_result=intent_result,
+            poll_count=poll_count,
+            last_progress=snapshot.progress,
+            card_context=card_context,
+            request_id=request_id,
             countdown=POLL_INTERVAL_SECONDS,
-            kwargs={
-                "subtask_id": subtask_id,
-                "task_id": task_id,
-                "user_id": user_id,
-                "job_id": job_id,
-                "provider_protocol": provider_protocol,
-                "video_block_id": video_block_id,
-                "model_config": model_config,
-                "message_id": message_id,
-                "intent_result": intent_result,
-                "poll_count": poll_count,
-                "last_progress": snapshot.progress,
-                "card_context": card_context,
-                "request_id": request_id,
-            },
-        )
-    except Ignore:
-        raise
-    except Retry:
-        raise
-    except celery_task.MaxRetriesExceededError:
-        fail(
-            "Video generation timed out after maximum retries",
-            last_progress,
         )
         raise Ignore()
+    except Ignore:
+        raise
     except Exception as exc:
         error_message = format_error_message(exc)
         if poll_count < MAX_POLL_COUNT:
-            raise celery_task.retry(
+            _schedule_video_job_poll(
+                subtask_id=subtask_id,
+                task_id=task_id,
+                user_id=user_id,
+                job_id=job_id,
+                provider_protocol=provider_protocol,
+                video_block_id=video_block_id,
+                model_config=model_config,
+                message_id=message_id,
+                intent_result=intent_result,
+                poll_count=poll_count,
+                last_progress=last_progress,
+                card_context=card_context,
+                request_id=request_id,
                 countdown=POLL_INTERVAL_SECONDS,
-                kwargs={
-                    "subtask_id": subtask_id,
-                    "task_id": task_id,
-                    "user_id": user_id,
-                    "job_id": job_id,
-                    "provider_protocol": provider_protocol,
-                    "video_block_id": video_block_id,
-                    "model_config": model_config,
-                    "message_id": message_id,
-                    "intent_result": intent_result,
-                    "poll_count": poll_count,
-                    "last_progress": last_progress,
-                    "card_context": card_context,
-                    "request_id": request_id,
-                },
             )
+            raise Ignore()
         fail(error_message, last_progress)
         raise Ignore()
 

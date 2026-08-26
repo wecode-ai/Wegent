@@ -5,7 +5,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from celery.exceptions import Ignore, Retry
+from celery.exceptions import Ignore
 
 from app.services.execution.agents.video.async_card import AsyncCardSnapshot
 from app.services.execution.agents.video.extensions import PreparedVideoArtifact
@@ -16,7 +16,9 @@ from app.tasks.video_tasks import (
     _handle_completion,
     _merge_video_job_result,
     _poll_async_card,
+    _schedule_video_job_poll,
     dispatch_video_polling_task,
+    poll_video_job,
 )
 from app.tasks.video_websocket import (
     _event_log_context,
@@ -208,6 +210,10 @@ def test_video_progress_prefers_provider_value_over_estimate() -> None:
 def test_dispatch_video_polling_task_propagates_request_id() -> None:
     with (
         patch(
+            "app.tasks.video_tasks._acquire_video_poll_schedule",
+            return_value="schedule-token",
+        ),
+        patch(
             "app.tasks.video_tasks.get_request_id",
             return_value="trace-123",
         ),
@@ -229,6 +235,10 @@ def test_dispatch_video_polling_task_propagates_request_id() -> None:
 
 def test_dispatch_video_polling_task_generates_request_id() -> None:
     with (
+        patch(
+            "app.tasks.video_tasks._acquire_video_poll_schedule",
+            return_value="schedule-token",
+        ),
         patch("app.tasks.video_tasks.get_request_id", return_value=None),
         patch(
             "app.tasks.video_tasks.init_request_context",
@@ -248,6 +258,118 @@ def test_dispatch_video_polling_task_generates_request_id() -> None:
         )
 
     assert apply_async.call_args.kwargs["kwargs"]["request_id"] == "generated"
+
+
+def test_dispatch_video_polling_task_skips_when_schedule_lease_exists() -> None:
+    with (
+        patch(
+            "app.tasks.video_tasks._acquire_video_poll_schedule",
+            return_value=None,
+        ),
+        patch("app.tasks.video_tasks.poll_video_job.apply_async") as apply_async,
+    ):
+        celery_task_id = dispatch_video_polling_task(
+            subtask_id=20,
+            task_id=10,
+            user_id=30,
+            job_id="job-1",
+            provider_protocol="seedance",
+            video_block_id="video-1",
+            model_config={},
+            message_id=None,
+        )
+
+    assert celery_task_id is None
+    apply_async.assert_not_called()
+
+
+def test_schedule_video_job_poll_includes_schedule_token() -> None:
+    with (
+        patch(
+            "app.tasks.video_tasks._acquire_video_poll_schedule",
+            return_value="schedule-token",
+        ),
+        patch("app.tasks.video_tasks.poll_video_job.apply_async") as apply_async,
+    ):
+        scheduled = _schedule_video_job_poll(
+            subtask_id=20,
+            task_id=10,
+            user_id=30,
+            job_id="job-1",
+            provider_protocol="seedance",
+            video_block_id="video-1",
+            model_config={},
+            message_id=None,
+            intent_result=None,
+            poll_count=4,
+            last_progress=42,
+            card_context=None,
+            request_id="request-1",
+            countdown=3,
+        )
+
+    assert scheduled
+    assert apply_async.call_args.kwargs["kwargs"]["scheduled_token"] == "schedule-token"
+    assert apply_async.call_args.kwargs["countdown"] == 3
+
+
+def test_poll_video_job_ignores_stale_duplicate_without_polling_provider() -> None:
+    with (
+        patch("app.tasks.video_tasks._release_video_poll_schedule"),
+        patch("app.tasks.video_tasks._is_stale_video_poll_attempt", return_value=True),
+        patch(
+            "app.services.execution.agents.video.providers.get_video_provider"
+        ) as get_provider,
+    ):
+        with pytest.raises(Ignore):
+            poll_video_job.run(
+                subtask_id=20,
+                task_id=10,
+                user_id=30,
+                job_id="job-1",
+                provider_protocol="seedance",
+                video_block_id="video-1",
+                model_config={},
+                message_id=None,
+                poll_count=4,
+                last_progress=42,
+                scheduled_token="schedule-token",
+            )
+
+    get_provider.assert_not_called()
+
+
+def test_poll_video_job_hands_off_during_shutdown_without_polling_provider() -> None:
+    with (
+        patch("app.tasks.video_tasks._release_video_poll_schedule"),
+        patch("app.tasks.video_tasks._is_stale_video_poll_attempt", return_value=False),
+        patch("app.tasks.video_tasks._check_cancellation_sync", return_value=False),
+        patch(
+            "app.tasks.video_tasks._is_local_shutdown_in_progress", return_value=True
+        ),
+        patch("app.tasks.video_tasks._schedule_video_job_poll") as schedule,
+        patch(
+            "app.services.execution.agents.video.providers.get_video_provider"
+        ) as get_provider,
+    ):
+        with pytest.raises(Ignore):
+            poll_video_job.run(
+                subtask_id=20,
+                task_id=10,
+                user_id=30,
+                job_id="job-1",
+                provider_protocol="seedance",
+                video_block_id="video-1",
+                model_config={},
+                message_id=None,
+                poll_count=4,
+                last_progress=42,
+                scheduled_token="schedule-token",
+            )
+
+    get_provider.assert_not_called()
+    assert schedule.call_args.kwargs["poll_count"] == 4
+    assert schedule.call_args.kwargs["last_progress"] == 42
 
 
 def test_merge_video_job_result_persists_refresh_placeholder() -> None:
@@ -394,7 +516,6 @@ def test_async_card_poll_completion_persists_populated_card() -> None:
         patch("app.tasks.video_websocket.emit_card_done") as emit_done,
     ):
         result = _poll_async_card(
-            celery_task=MagicMock(),
             subtask_id=2,
             task_id=1,
             user_id=3,
@@ -427,9 +548,6 @@ def test_async_card_poll_partial_ready_persists_progress_before_retry() -> None:
         progress_text="分镜已完成",
         card={"link": "https://workflow.example.com/task/1"},
     )
-    celery_task = MagicMock()
-    celery_task.retry.side_effect = Retry()
-
     with (
         patch(
             "app.services.execution.agents.video.async_card."
@@ -438,11 +556,11 @@ def test_async_card_poll_partial_ready_persists_progress_before_retry() -> None:
         ),
         patch("app.tasks.video_tasks._check_cancellation_sync", return_value=False),
         patch("app.tasks.video_tasks._update_subtask_video_job_sync") as persist,
+        patch("app.tasks.video_tasks._schedule_video_job_poll") as schedule,
         patch("app.tasks.video_websocket.emit_card_updated") as emit,
     ):
-        with pytest.raises(Retry):
+        with pytest.raises(Ignore):
             _poll_async_card(
-                celery_task=celery_task,
                 subtask_id=2,
                 task_id=1,
                 user_id=3,
@@ -463,6 +581,8 @@ def test_async_card_poll_partial_ready_persists_progress_before_retry() -> None:
 
     assert persist.call_args.args[2]["card_status"] == "partial_ready"
     assert persist.call_args.args[2]["card_preview_data"]["progress"] == 62
+    assert schedule.call_args.kwargs["poll_count"] == 1
+    assert schedule.call_args.kwargs["last_progress"] == 62
     emit.assert_called_once()
 
 
@@ -523,7 +643,6 @@ def test_async_card_poll_terminal_states(
     ):
         with pytest.raises(Ignore):
             _poll_async_card(
-                celery_task=MagicMock(),
                 subtask_id=2,
                 task_id=1,
                 user_id=3,

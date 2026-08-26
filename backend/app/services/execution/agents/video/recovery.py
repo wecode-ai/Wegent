@@ -167,10 +167,10 @@ def _do_recover_video_jobs() -> int:
                 f"poll_count={poll_count}"
             )
 
-            # Re-queue Celery task with fixed task_id to prevent duplicates
+            # Re-queue through the shared schedule lease.
             from app.tasks.video_tasks import dispatch_video_polling_task
 
-            dispatch_video_polling_task(
+            celery_task_id = dispatch_video_polling_task(
                 subtask_id=subtask.id,
                 task_id=task_id,
                 user_id=user_id,
@@ -194,11 +194,18 @@ def _do_recover_video_jobs() -> int:
                 ),
             )
 
-            recovered_count += 1
-            logger.info(
-                f"[video_recovery] Successfully re-queued video job: "
-                f"subtask_id={subtask.id}, job_id={job_id}"
-            )
+            if celery_task_id:
+                recovered_count += 1
+                logger.info(
+                    f"[video_recovery] Successfully re-queued video job: "
+                    f"subtask_id={subtask.id}, job_id={job_id}, "
+                    f"celery_task_id={celery_task_id}"
+                )
+            else:
+                logger.info(
+                    f"[video_recovery] Video job already has a queued poll: "
+                    f"subtask_id={subtask.id}, job_id={job_id}"
+                )
 
         return recovered_count
 
