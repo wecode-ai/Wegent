@@ -926,6 +926,14 @@ impl WorktreeManager {
                 .to_string();
         let root = PathBuf::from(&state.settings.resolved_worktree_root);
         remember_root(&mut state.known_roots, &root);
+        // Re-key persisted records by their normalized path so records written
+        // with platform-native separators (legacy Windows backslash keys or
+        // trailing separators) resolve under the canonical lookup key.
+        state.records = state
+            .records
+            .into_values()
+            .map(|record| (normalized_path_key(Path::new(&record.path)), record))
+            .collect();
         state
     }
 
@@ -2132,6 +2140,45 @@ mod tests {
             normalized_path_key(Path::new("/tmp/wegent-worktrees/task-1/repository/")),
             "/tmp/wegent-worktrees/task-1/repository"
         );
+    }
+
+    #[test]
+    fn load_rekeys_persisted_records_by_normalized_path() {
+        let root = test_directory("wegent-worktree-load-rekey-test");
+        let managed_root = root.join("managed");
+        let record_path = managed_root.join("task-1/source");
+        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+        let record = ManagedWorktree {
+            worktree_id: "task-1".to_owned(),
+            path: record_path.display().to_string(),
+            repository_name: "source".to_owned(),
+            ..ManagedWorktree::default()
+        };
+        // Simulate a legacy persisted record keyed without normalization (a
+        // trailing separator on any platform, or backslash separators on
+        // Windows) so the canonical lookup key must be derived on load.
+        let legacy_key = format!("{}/", record.path);
+        manager
+            .save(&WorktreeState {
+                version: STATE_VERSION,
+                settings: WorktreeSettings {
+                    worktree_root: managed_root.display().to_string(),
+                    resolved_worktree_root: managed_root.display().to_string(),
+                    ..WorktreeSettings::default()
+                },
+                known_roots: vec![managed_root.display().to_string()],
+                records: HashMap::from([(legacy_key, record)]),
+            })
+            .unwrap();
+
+        let loaded = manager.load();
+        let migrated = loaded
+            .records
+            .get(&normalized_path_key(&record_path))
+            .expect("persisted record should be re-keyed on load");
+        assert_eq!(migrated.worktree_id, "task-1");
+        assert_eq!(loaded.records.len(), 1, "legacy key must not survive");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
