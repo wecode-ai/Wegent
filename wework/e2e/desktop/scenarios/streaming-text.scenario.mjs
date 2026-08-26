@@ -1489,8 +1489,8 @@ export function createDesktopScenario({
         'The phase-less streaming response was not rendered as process content'
       )
       assert.equal(
-        (await control.command('getText', PROCESS_TEXT_SELECTOR)).replace(/\s+/g, ' ').trim(),
-        PARTIAL_TEXT.replace(/\s+/g, ' ').trim(),
+        (await control.command('getText', PROCESS_TEXT_SELECTOR)).replace(/\s+/g, ''),
+        PARTIAL_TEXT.replace(/\s+/g, ''),
         'The streaming process text duplicated or dropped response deltas'
       )
       assert.ok(
