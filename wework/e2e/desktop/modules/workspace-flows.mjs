@@ -558,6 +558,20 @@ async function verifyWorkspaceIssueCreation(control) {
     'workspace-issue-02-created.png',
     boardContentSelector
   )
+  const issueStatusSelector = `${boardContentSelector} [data-testid="cloud-todo-detail-status"]`
+  await control.command('select', issueStatusSelector, { value: 'pending' })
+  assert.equal(
+    await control.command('getValue', issueStatusSelector),
+    'pending',
+    'The Issue did not enter pending before verifying its task composer'
+  )
+  await control.command(
+    'clickWhenEnabled',
+    `${boardContentSelector} [data-testid="cloud-todo-save"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   await control.command('click', `${boardContentSelector} [data-testid="cloud-todo-create-task"]`)
   const activeTaskPanel = `${boardContentSelector} [data-testid="cloud-todo-panel-stack"][data-conversation-open="true"]`
   const taskPanelBackdrop = '[data-testid="ai-chat-modal-backdrop"][data-presentation="sidebar"]'
