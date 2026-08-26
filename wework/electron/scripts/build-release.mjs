@@ -2,11 +2,14 @@ import { spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
+
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const requestedPlatform = process.env.WEWORK_RELEASE_PLATFORM?.trim()
 const requestedArch = process.env.WEWORK_RELEASE_ARCH?.trim()
 const platform = requestedPlatform || process.platform
 const arch = requestedArch || process.arch
+const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const platformFlag = {
   darwin: '--mac',
   macos: '--mac',
@@ -23,7 +26,7 @@ if (!['arm64', 'x64'].includes(arch)) {
 }
 
 await run(
-  'pnpm',
+  pnpmCommand,
   [
     'exec',
     'electron-builder',
@@ -39,7 +42,8 @@ await run(
 
 function run(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { cwd, stdio: 'inherit' })
+    const resolved = wrapWindowsScriptCommand(command, args)
+    const child = spawn(resolved.command, resolved.args, { cwd, stdio: 'inherit' })
     child.once('error', reject)
     child.once('exit', code => {
       if (code === 0) resolvePromise()

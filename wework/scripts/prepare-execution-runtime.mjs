@@ -8,7 +8,10 @@ import { fileURLToPath } from 'node:url'
 import { constants as zlibConstants, createGzip } from 'node:zlib'
 import { spawn } from 'node:child_process'
 
-import { macosSigningFingerprint } from './lib/deepseek-harness-signing.mjs'
+import {
+  macosCodesignIdentityArguments,
+  macosSigningFingerprint,
+} from './lib/deepseek-harness-signing.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const resourceDirectory = path.join(root, 'resources', 'bundled-execution-runtimes')
@@ -52,17 +55,18 @@ async function sha256(pathname) {
 async function signAndValidateNode(nodePath) {
   if (process.platform === 'darwin') {
     const identity = process.env.APPLE_SIGNING_IDENTITY?.trim() || '-'
-    const args = [
-      '--force',
-      '--options',
-      'runtime',
-      '--entitlements',
-      nodeEntitlements,
-      '--sign',
-      identity,
-    ]
-    if (identity !== '-') args.splice(1, 0, '--timestamp')
-    await run('codesign', [...args, nodePath])
+    const args = ['--force', '--options', 'runtime', '--entitlements', nodeEntitlements]
+    if (identity !== '-') {
+      args.splice(1, 0, '--timestamp')
+    }
+    args.push(
+      ...macosCodesignIdentityArguments(
+        identity,
+        identity === '-' ? undefined : process.env.MACOS_KEYCHAIN_PATH
+      ),
+      nodePath
+    )
+    await run('codesign', args)
   }
   await run(nodePath, ['-e', 'process.stdout.write(process.versions.node)'])
 }

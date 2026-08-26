@@ -8,6 +8,10 @@ import shlex
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from app.services.device.git_credentials_command import (
+    SYNC_GIT_CREDENTIALS_COMMAND,
+)
+
 
 class CommandRegistryError(ValueError):
     """Raised when a local device command definition is invalid."""
@@ -164,9 +168,20 @@ print(
 """.strip()
 
 
+def managed_git_cli_command(command: str) -> str:
+    """Load Wegent-managed CLI config before executing a fixed command."""
+
+    argv = shlex.split(command)
+    shell = (
+        'if [ -f "$HOME/.wecode/git-auth/env.sh" ]; then '
+        '. "$HOME/.wecode/git-auth/env.sh"; fi; exec "$@"'
+    )
+    return " ".join(shlex.quote(part) for part in ["sh", "-c", shell, "--", *argv])
+
+
 def git_hosting_cli_status_command(tool: str) -> str:
     """Build a safe CLI status command for a fixed provider tool."""
-    return (
+    return managed_git_cli_command(
         f"python3 -c {shlex.quote(GIT_HOSTING_CLI_STATUS_SCRIPT)} {shlex.quote(tool)}"
     )
 
@@ -1639,7 +1654,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         post_processor="json",
     ),
     "git_github_pull_requests": LocalDeviceCommandDefinition(
-        command=(
+        command=managed_git_cli_command(
             "gh pr list --state all --limit 20 "
             "--json number,url,title,state,isDraft,statusCheckRollup,"
             "mergeable,mergeStateStatus --head"
@@ -1647,7 +1662,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         post_processor="json",
     ),
     "git_github_pull_requests_batch": LocalDeviceCommandDefinition(
-        command=(
+        command=managed_git_cli_command(
             "gh api --method GET "
             "'repos/{owner}/{repo}/pulls?state=all&per_page=100' "
             "--jq '[.[] | {number, html_url, title, state, draft, "
@@ -1656,7 +1671,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         post_processor="json",
     ),
     "git_github_pull_request_merge_queue": LocalDeviceCommandDefinition(
-        command=(
+        command=managed_git_cli_command(
             "gh api graphql "
             "-f 'query=query($url:URI!){resource(url:$url){"
             "... on PullRequest{mergeQueueEntry{id}}}}'"
@@ -1664,18 +1679,18 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         post_processor="json",
     ),
     "git_github_pull_request_merge_queue_batch": LocalDeviceCommandDefinition(
-        command="gh api graphql",
+        command=managed_git_cli_command("gh api graphql"),
         post_processor="json",
     ),
     "git_gitlab_merge_requests": LocalDeviceCommandDefinition(
-        command=(
+        command=managed_git_cli_command(
             "glab mr list --all --per-page 20 --order updated_at --sort desc "
             "--output json --source-branch"
         ),
         post_processor="json",
     ),
     "git_gitlab_merge_requests_batch": LocalDeviceCommandDefinition(
-        command=(
+        command=managed_git_cli_command(
             "glab mr list --all --per-page 100 --order updated_at --sort desc "
             "--output json"
         ),
@@ -1706,6 +1721,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "open_terminal": LocalDeviceCommandDefinition(command=OPEN_TERMINAL_COMMAND),
     "sync_runtime_auth_file": LocalDeviceCommandDefinition(
         command=SYNC_RUNTIME_AUTH_FILE_COMMAND,
+        post_processor="json",
+    ),
+    "sync_git_credentials": LocalDeviceCommandDefinition(
+        command=SYNC_GIT_CREDENTIALS_COMMAND,
         post_processor="json",
     ),
     "read_runtime_auth_file": LocalDeviceCommandDefinition(

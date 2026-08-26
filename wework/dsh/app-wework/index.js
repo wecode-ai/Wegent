@@ -4,13 +4,11 @@ import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { CoreDshPluginManager } from './plugin-manager.js'
 
 export const name = 'wework-app'
-export const inject = ['webServer', 'weworkDesktop']
+export const inject = ['webServer']
 
 export const APP_BASE_PATH = '/wework/app'
-const PLUGIN_API_PATH = '/wework/dsh/plugins'
 const API_PROXY_PATH = '/wework/api'
 const SOCKET_PROXY_PATH = '/wework/socket.io'
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), 'web')
@@ -36,16 +34,7 @@ const MIME_TYPES = {
 
 export function apply(ctx) {
   const backendUrl = resolveBackendUrl(process.env)
-  const pluginManager = new CoreDshPluginManager()
   register(ctx, 'prefix', APP_BASE_PATH, serveWeworkApp)
-  register(ctx, 'exact', PLUGIN_API_PATH, (req, res) =>
-    handlePluginRequest(req, res, pluginManager, ctx.weworkDesktop, '')
-  )
-  for (const action of ['install', 'activate', 'deactivate', 'uninstall', 'restart']) {
-    register(ctx, 'exact', `${PLUGIN_API_PATH}/${action}`, (req, res) =>
-      handlePluginRequest(req, res, pluginManager, ctx.weworkDesktop, action)
-    )
-  }
   if (!backendUrl) return
 
   register(ctx, 'prefix', API_PROXY_PATH, (req, res) =>
@@ -64,90 +53,8 @@ export function apply(ctx) {
   )
 }
 
-export async function handlePluginRequest(req, res, manager, desktop, action) {
-  if (!trustedBrowserRequest(req)) {
-    sendJson(res, 403, { ok: false, error: { message: 'Forbidden' } })
-    return
-  }
-  if (!action && req.method === 'GET') {
-    sendJson(res, 200, { plugins: await manager.inventory() })
-    return
-  }
-  if (req.method !== 'POST') {
-    res.writeHead(405, { allow: action ? 'POST' : 'GET' })
-    res.end()
-    return
-  }
-  try {
-    if (action === 'restart') {
-      sendJson(res, 202, { ok: true })
-      setTimeout(() => void desktop.runtime.restartCoreDsh(), 25)
-      return
-    }
-    const body = await readJsonBody(req)
-    let plugins
-    if (action === 'install') plugins = await manager.install(body.spec)
-    else if (action === 'activate') plugins = await manager.setActive(body.name, true)
-    else if (action === 'deactivate') plugins = await manager.setActive(body.name, false)
-    else if (action === 'uninstall') plugins = await manager.uninstall(body.name)
-    else throw new Error(`Unknown plugin action: ${action}`)
-    sendJson(res, 200, { ok: true, result: { plugins } })
-  } catch (error) {
-    sendJson(res, 400, {
-      ok: false,
-      error: {
-        message: error instanceof Error ? error.message : String(error),
-        details: {
-          stdout: error?.stdout ?? '',
-          stderr: error?.stderr ?? '',
-        },
-      },
-    })
-  }
-}
-
 function register(ctx, kind, path, handler) {
   ctx.effect(() => ctx.webServer.register({ kind, path, handler }), `wework-app: ${path}`)
-}
-
-function trustedBrowserRequest(req) {
-  const remoteAddress = req.socket?.remoteAddress ?? ''
-  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteAddress)) return false
-  const origin = singleHeader(req.headers.origin)
-  const host = singleHeader(req.headers.host)
-  if (!origin) return true
-  if (!host) return false
-  try {
-    return new URL(origin).host === host
-  } catch {
-    return false
-  }
-}
-
-async function readJsonBody(req) {
-  const chunks = []
-  let bytes = 0
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    bytes += buffer.byteLength
-    if (bytes > 64 * 1024) throw new Error('Plugin request is too large')
-    chunks.push(buffer)
-  }
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
-  } catch {
-    throw new Error('Plugin request body is not valid JSON')
-  }
-}
-
-function sendJson(res, status, value) {
-  const body = JSON.stringify(value)
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'content-length': Buffer.byteLength(body),
-  })
-  res.end(body)
 }
 
 function singleHeader(value) {

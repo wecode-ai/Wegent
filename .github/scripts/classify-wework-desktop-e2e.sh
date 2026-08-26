@@ -11,6 +11,7 @@ core_segments=(
   project-automation
   project-assignment-notification
   offline-local-project-space
+  core-dsh-plugin-management
   project-ai-settings
   model-routing
   permission-modes
@@ -24,10 +25,12 @@ core_segments=(
   runtime-terminal-convergence
   running-conversation-history
   codex-notification-isolation
+  executor-stream-recovery
   context-compaction
   split-workbench
   native-window-startup
   native-window-chrome
+  renderer-storage
   tray-lifecycle
   conversation-state
   temporary-chat
@@ -115,9 +118,9 @@ core_shards=(
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter
   rendering-extensions
-  runtime-task-queue,native-window-startup
+  runtime-task-queue,native-window-startup,renderer-storage
   local-harness,running-conversation-history,native-window-chrome
-  codex-notification-isolation
+  codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
   model-routing
 )
 
@@ -276,6 +279,20 @@ classify_wework_path() {
       ;;
     wework/e2e/utils/mcp-elicitation-server.mjs)
       select_target "core:permission-modes"
+      return
+      ;;
+
+    # Core DSH plugin management owns an Electron-backed desktop checkpoint.
+    wework/src/components/plugins/CoreDshPluginManagementSection* | \
+      wework/src/features/dsh-plugins/* | \
+      wework/electron/src/runtime/core-dsh-plugin-manager*)
+      select_target "core:core-dsh-plugin-management"
+      return
+      ;;
+    wework/src/components/plugins/PluginManagementWorkspace*)
+      select_target "core:core-dsh-plugin-management"
+      select_target "core:project-ai-settings"
+      select_target "plugins:plugin-lifecycle"
       return
       ;;
 
@@ -515,6 +532,20 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs)
       select_target "core:codex-notification-isolation"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs)
+      select_target "core:executor-stream-recovery"
+      return
+      ;;
+
+    # Git hosting preferences and explicit device synchronization share one
+    # independently bootstrapped real-Tauri checkpoint.
+    wework/src/api/devices* | \
+      wework/src/components/settings/GitHostingSettingsPage* | \
+      wework/src/types/gitCredentials.ts | \
+      wework/e2e/desktop/scenarios/change-request-status.scenario.mjs)
+      select_target "core:change-request-status"
       return
       ;;
 

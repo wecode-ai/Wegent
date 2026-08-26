@@ -122,7 +122,8 @@ function responseCompleted(id) {
   }
 }
 
-function assistantMessage(text) {
+function assistantMessage(text, phase) {
+  const phaseFields = phase ? { phase } : {}
   return {
     type: 'response.output_item.done',
     item: {
@@ -130,6 +131,7 @@ function assistantMessage(text) {
       type: 'message',
       role: 'assistant',
       content: [{ type: 'output_text', text, annotations: [] }],
+      ...phaseFields,
     },
   }
 }
@@ -789,7 +791,7 @@ export function createDesktopScenario({
           sse([
             responseCreated(responseId),
             ...reasoningEvents('wework-long-code-reasoning', LONG_CODE_REASONING, 4),
-            assistantMessage(LONG_CODE_COMPLETION),
+            assistantMessage(LONG_CODE_COMPLETION, 'final_answer'),
             responseCompleted(responseId),
           ])
         )

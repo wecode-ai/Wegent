@@ -21,6 +21,7 @@ import type {
   UpgradeDeviceOptions,
   UpgradeDeviceResponse,
 } from '@/types/devices'
+import type { DeviceGitAccountSyncResult, GitAccountSyncSummary } from '@/types/gitCredentials'
 import { filterClaudeCodeDevices } from '@/lib/device-capabilities'
 import {
   normalizeAbsoluteWorkspacePath,
@@ -112,6 +113,16 @@ export function createDeviceApi(client: HttpClient) {
     listDevices: fetchDevices,
 
     getAllDevices: fetchDevices,
+
+    getGitAccountSyncSummary(): Promise<GitAccountSyncSummary> {
+      return client.get('/users/me/git-accounts/sync-summary')
+    },
+
+    syncGitAccounts(deviceId: string, allowEmpty = false): Promise<DeviceGitAccountSyncResult> {
+      return client.put(`/devices/${encodeURIComponent(deviceId)}/git-accounts`, {
+        allow_empty: allowEmpty,
+      })
+    },
 
     getRuntimeSettings(deviceId: string): Promise<DeviceRuntimeSettingsResponse> {
       return client.get(`/devices/${encodeURIComponent(deviceId)}/runtime-settings`)

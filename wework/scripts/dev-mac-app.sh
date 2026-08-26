@@ -99,6 +99,15 @@ build_dev_title() {
   basename "$PROJECT_DIR"
 }
 
+build_dev_instance_id() {
+  node -e "
+    const { createHash } = require('node:crypto')
+    process.stdout.write(
+      createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 12)
+    )
+  " "$PROJECT_DIR"
+}
+
 resolve_macos_target() {
   case "$(uname -m)" in
     arm64)
@@ -137,6 +146,8 @@ export VITE_WEWORK_DEV_BRANCH="$WEWORK_DEV_BRANCH"
 export VITE_WEWORK_PARENT_TITLE="${WEWORK_PARENT_TITLE:-}"
 export VITE_WEWORK_PARENT_PROJECT="${WEWORK_PARENT_PROJECT:-}"
 export VITE_WEWORK_PARENT_WORKSPACE="${WEWORK_PARENT_WORKSPACE:-}"
+WEWORK_DEV_INSTANCE_ID="$(build_dev_instance_id)"
+export WEWORK_USER_DATA_DIR="${WEWORK_USER_DATA_DIR:-$HOME/Library/Application Support/io.wecode.wework.dev/$WEWORK_DEV_INSTANCE_ID}"
 export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$(wework_resolve_backend_base_url)}"
 export VITE_WEWORK_RELEASE_CHANNEL="${VITE_WEWORK_RELEASE_CHANNEL:-development}"
 export VITE_WEWORK_RUNTIME_MODE="${VITE_WEWORK_RUNTIME_MODE:-local-first}"
@@ -169,6 +180,7 @@ print_configuration() {
   echo "  WEWORK_DEV_TITLE=$WEWORK_DEV_TITLE"
   echo "  WEWORK_DEV_WORKTREE=$WEWORK_DEV_WORKTREE"
   echo "  WEWORK_DEV_BRANCH=${WEWORK_DEV_BRANCH:-<detached>}"
+  echo "  WEWORK_USER_DATA_DIR=$WEWORK_USER_DATA_DIR"
   echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
   echo "  WEWORK_EXECUTOR_PATH=$WEWORK_EXECUTOR_PATH"
   echo "  WEGENT_EXECUTOR_BINARY=${WEGENT_EXECUTOR_BINARY:-<managed by command>}"
@@ -186,17 +198,11 @@ fi
 cd "$WEWORK_DIR"
 pnpm run prepare:electron
 node electron/node_modules/electron/install.js
-mkdir -p electron/resources
-for resource in icons bundled-plugins; do
-  if [ ! -e "electron/resources/$resource" ]; then
-    ln -s "../../resources/$resource" "electron/resources/$resource"
-  fi
-done
-if [ ! -f electron/resources/icons/32x32.png ]; then
+if [ ! -f resources/icons/32x32.png ]; then
   echo "Error: Electron development icons are unavailable." >&2
   exit 1
 fi
-if [ ! -f electron/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json ]; then
+if [ ! -f resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json ]; then
   echo "Error: Electron bundled plugins are unavailable." >&2
   exit 1
 fi

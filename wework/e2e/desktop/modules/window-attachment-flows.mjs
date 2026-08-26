@@ -611,6 +611,42 @@ async function verifyBackgroundTaskWindowLifecycle({
       appProcessId,
       'Wework remained alive after quitting from macOS while the main window was closed to tray'
     )
+    const forcedExitApp = await restartDesktopApp()
+    const runtimeDiagnostics = JSON.parse(
+      await control.command('getDesktopRuntimeDiagnostics', 'body')
+    )
+    const forcedExitDshPid = Number(runtimeDiagnostics.coreDshPid)
+    const forcedExitExecutorPid = Number(runtimeDiagnostics.executorPid)
+    assert.ok(forcedExitDshPid > 0, 'Core DSH PID was unavailable before forced Electron exit')
+    assert.ok(forcedExitExecutorPid > 0, 'Executor PID was unavailable before forced Electron exit')
+
+    process.kill(forcedExitApp.pid, 'SIGKILL')
+    await Promise.all([
+      waitForProcessExit(forcedExitApp.pid, 'Wework remained alive after the forced Electron exit'),
+      waitForProcessExit(
+        forcedExitDshPid,
+        'Core DSH remained alive after its Electron owner exited'
+      ),
+      waitForProcessExit(
+        forcedExitExecutorPid,
+        'Executor remained alive after its Electron owner exited'
+      ),
+    ])
+    await writeFile(
+      join(resultDir, 'forced-electron-exit-lifecycle.json'),
+      `${JSON.stringify(
+        {
+          appProcessId: forcedExitApp.pid,
+          coreDshProcessId: forcedExitDshPid,
+          executorProcessId: forcedExitExecutorPid,
+          appAlive: processIsAlive(forcedExitApp.pid),
+          coreDshAlive: processIsAlive(forcedExitDshPid),
+          executorAlive: processIsAlive(forcedExitExecutorPid),
+        },
+        null,
+        2
+      )}\n`
+    )
     await restartDesktopApp()
   }
   return taskRowTestId

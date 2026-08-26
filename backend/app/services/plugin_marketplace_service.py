@@ -16,7 +16,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from io import BytesIO
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from fastapi import HTTPException
 from packaging.version import Version
@@ -75,6 +75,9 @@ from app.services.plugin_package_storage import (
     PluginPackageStorageError,
     plugin_package_storage,
 )
+from app.services.plugin_release_notification_service import (
+    notify_plugin_release_available,
+)
 from app.services.plugin_upstream_adapter import (
     AdaptedUpstreamPackage,
     adapt_upstream_package,
@@ -115,8 +118,23 @@ class _UserPluginAccessContext:
 class PluginMarketplaceService:
     """Own the cloud marketplace while leaving runtime installation to Codex."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        release_notifier: Callable[[Session, int], int] | None = None,
+    ) -> None:
         self._resolved_interface_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._release_notifier = release_notifier
+
+    def _notify_release_available(self, db: Session, release_id: int) -> None:
+        if not self._release_notifier:
+            return
+        try:
+            self._release_notifier(db, release_id)
+        except Exception:
+            logger.exception(
+                "Plugin release notification failed after publication: release_id=%s",
+                release_id,
+            )
 
     def reconcile_stale_installed_catalog_refs(
         self, db: Session, *, user_id: int
@@ -755,6 +773,8 @@ class PluginMarketplaceService:
                 db.rollback()
                 raise
             db.refresh(result.release)
+        if result.created:
+            self._notify_release_available(db, result.release.id)
         return result
 
     def init_submission(
@@ -1142,6 +1162,8 @@ class PluginMarketplaceService:
             db.commit()
             raise
         db.refresh(submission)
+        if submission.status == "approved":
+            self._notify_release_available(db, submission.release_id)
         return self._submission_item(submission)
 
     def get_submission(
@@ -1224,6 +1246,8 @@ class PluginMarketplaceService:
             plugin.status = "published" if has_published else "draft"
         db.commit()
         db.refresh(submission)
+        if approved:
+            self._notify_release_available(db, submission.release_id)
         return self._submission_item(submission)
 
     def _apply_release_listing(self, plugin: Plugin, release: PluginRelease) -> None:
@@ -1580,6 +1604,7 @@ class PluginMarketplaceService:
                 .first()
             )
             plugin = db.get(Plugin, upstream.plugin_id)
+            previous_release_id = plugin.latest_release_id if plugin else 0
             latest = (
                 db.get(PluginRelease, plugin.latest_release_id)
                 if plugin and plugin.latest_release_id
@@ -1619,6 +1644,13 @@ class PluginMarketplaceService:
                 db.commit()
             raise
         db.refresh(upstream)
+        plugin = db.get(Plugin, upstream.plugin_id)
+        if (
+            plugin
+            and plugin.latest_release_id
+            and plugin.latest_release_id != previous_release_id
+        ):
+            self._notify_release_available(db, plugin.latest_release_id)
         return self._upstream_item(upstream)
 
     def sync_enabled_upstreams(self, db: Session) -> list[PluginUpstreamItem]:
@@ -3135,4 +3167,6 @@ class PluginMarketplaceService:
         return InstalledPlugin.model_validate(payload)
 
 
-plugin_marketplace_service = PluginMarketplaceService()
+plugin_marketplace_service = PluginMarketplaceService(
+    release_notifier=notify_plugin_release_available
+)

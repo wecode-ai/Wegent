@@ -70,12 +70,13 @@ describe('StartupSplash', () => {
     expect(html).toContain('class="workbench-scene"')
     expect(html).toContain('id="morph-primary"')
     expect(html).toContain('class="stage-indicator"')
-    expect(html).toContain('class="workbench-window"')
-    expect(html).toContain('class="side-card side-card-left"')
-    expect(html).toContain('class="connection connection-left"')
+    expect(html).toContain('class="robot"')
+    expect(html).toContain('class="human"')
+    expect(html).toContain('class="human-working-arm"')
+    expect(html).toContain('class="robot-working-arm"')
     expect(html).toContain('aria-valuemax="3"')
-    expect(styles).toContain('@keyframes window-arrive')
-    expect(styles).toContain('@keyframes connection-flow')
+    expect(styles).toContain('@keyframes robot-bob')
+    expect(styles).toContain('@keyframes human-bob')
     expect(html).toContain('document.documentElement.dataset.theme = theme')
     expect(styles).toContain(":root[data-theme='dark']")
     expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
@@ -151,8 +152,34 @@ describe('StartupSplash', () => {
     await show()
 
     await splash.close({ capturePath: '/tmp/wework-e2e/startup-splash.png' })
+    await splash.close({ capturePath: '/tmp/wework-e2e/startup-splash-second.png' })
 
     expect(target.webContents.capturePage).toHaveBeenCalledOnce()
+    expect(writePng).toHaveBeenCalledWith(
+      '/tmp/wework-e2e/startup-splash.png',
+      Buffer.from('splash-png')
+    )
+    expect(writePng).toHaveBeenCalledOnce()
+  })
+
+  test('shares one close operation across concurrent callers', async () => {
+    const { show, splash, target, writePng } = createFixture()
+    await show()
+    let finishCapture: (() => void) | undefined
+    target.webContents.capturePage.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finishCapture = () => resolve({ toPNG: () => Buffer.from('splash-png') })
+        })
+    )
+
+    const first = splash.close({ capturePath: '/tmp/wework-e2e/startup-splash.png' })
+    const second = splash.close({ capturePath: '/tmp/wework-e2e/startup-splash-second.png' })
+    finishCapture?.()
+
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2)
+    expect(target.webContents.capturePage).toHaveBeenCalledOnce()
+    expect(writePng).toHaveBeenCalledOnce()
     expect(writePng).toHaveBeenCalledWith(
       '/tmp/wework-e2e/startup-splash.png',
       Buffer.from('splash-png')

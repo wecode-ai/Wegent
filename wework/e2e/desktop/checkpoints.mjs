@@ -9,6 +9,7 @@ export const DESKTOP_CHECKPOINTS = [
   'project-automation',
   'project-assignment-notification',
   'offline-local-project-space',
+  'core-dsh-plugin-management',
   'plugin-auto-update',
   'plugin-workspace-publication',
   'project-ai-settings',
@@ -26,11 +27,13 @@ export const DESKTOP_CHECKPOINTS = [
   'context-compaction',
   'runtime-task-queue',
   'runtime-terminal-convergence',
+  'executor-stream-recovery',
   'running-conversation-history',
   'codex-notification-isolation',
   'split-workbench',
   'native-window-startup',
   'native-window-chrome',
+  'renderer-storage',
   'tray-lifecycle',
   'window-lifecycle',
   'goal-lifecycle',
@@ -51,6 +54,7 @@ export const DESKTOP_CHECKPOINTS = [
 ]
 
 export const PLUGIN_SEGMENTS = [
+  'core-dsh-plugin-management',
   'plugin-marketplace-lifecycle',
   'plugin-lifecycle',
   'skill-mention-rendering',

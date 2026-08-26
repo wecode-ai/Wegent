@@ -305,6 +305,7 @@ jobs:
 
       - name: Upload Wework desktop Core E2E build diagnostics
         if: failure()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-core-e2e-build-diagnostics
@@ -407,6 +408,7 @@ jobs:
 
       - name: Upload Wework desktop E2E diagnostics
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-${{ matrix.id }}-e2e-diagnostics
@@ -508,6 +510,7 @@ jobs:
 
       - name: Upload Wework desktop Cloud E2E diagnostics
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-${{ matrix.id }}-e2e-diagnostics
@@ -604,6 +607,7 @@ jobs:
 
       - name: Upload Wework desktop E2E diagnostics
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-${{ matrix.id }}-e2e-diagnostics
@@ -745,8 +749,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pnpm install --frozen-lockfile --offline
-          pnpm --dir wework/electron install --frozen-lockfile --offline
+          pnpm install --frozen-lockfile
+          pnpm --dir wework/electron install --frozen-lockfile
 
       - name: Save shared macOS pnpm store
         if: github.ref == 'refs/heads/main' && steps.macos-pnpm-cache.outputs.cache-hit != 'true'
@@ -827,6 +831,7 @@ jobs:
 
       - name: Upload Wework desktop memory diagnostics
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-memory-e2e-diagnostics

@@ -8,6 +8,17 @@ A Skill gives AI task-specific instructions and resources. A plugin can package 
 
 Open **Plugins** to inspect installed plugins and manage their capabilities. Review a plugin's tools and permissions before enabling it for a workspace.
 
+## Manage Codex plugins and Wework plugins
+
+In the Wework desktop app, open **Plugins → Manage plugins** and switch between two management surfaces:
+
+- **Codex plugins** provide Skills, MCP servers, applications, and commands to AI. They are installed through Codex or Wegent plugin marketplaces and are used in tasks and conversations.
+- **Wework plugins** are DSH bundles that directly extend the local Wework desktop runtime. They are not regular Codex plugins and do not appear in the task plugin picker.
+
+From **Wework plugins**, install a plugin from an npm package, Git source, or absolute local directory. Wework shows a trust confirmation because the plugin and its installation scripts run with the current user's permissions. User-installed plugins can be updated, enabled, disabled, or uninstalled. Bundled Wework runtime plugins are displayed as read-only and cannot be changed or removed here.
+
+Wework validates the resulting DSH profile after each install, update, enable, disable, or uninstall operation. If validation fails, it restores the previous dependencies and configuration so the runtime is not left unbootable. After successful changes, continue managing plugins and choose **Restart plugin runtime** once when ready. Enabled and disabled states persist across Wework restarts.
+
 ## Import a personal plugin
 
 On the **Plugins** page, choose **Create → Import plugin** to import a standard ZIP package that follows the `wework-plugins` format. The ZIP root must contain `.codex-plugin/plugin.json`, and any Skills or MCP servers must be included in the same plugin package. Encrypted or password-protected ZIP files are not supported.

@@ -3,6 +3,8 @@ import { chmod, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
+
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const weworkRoot = resolve(electronRoot, '..')
 const repositoryRoot = resolve(weworkRoot, '..')
@@ -10,14 +12,15 @@ const executorRoot = join(repositoryRoot, 'executor')
 const resourcesRoot = join(electronRoot, 'resources')
 const sharedResourcesRoot = join(weworkRoot, 'resources')
 const executorProfile = resolveExecutorProfile()
+const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 
 const configuredExecutorPath = process.env.WEWORK_EXECUTOR_PATH?.trim()
 const [executorPath] = await Promise.all([
   configuredExecutorPath
     ? Promise.resolve(resolve(configuredExecutorPath))
     : buildExecutor(executorProfile),
-  run('pnpm', ['prepare:harness-runtime', '--materialize'], weworkRoot),
-  run('pnpm', ['prepare:execution-runtime', '--materialize'], weworkRoot),
+  run(pnpmCommand, ['prepare:harness-runtime', '--materialize'], weworkRoot),
+  run(pnpmCommand, ['prepare:execution-runtime', '--materialize'], weworkRoot),
 ])
 
 await rm(resourcesRoot, { recursive: true, force: true })
@@ -100,7 +103,8 @@ async function buildExecutor(profile) {
 
 function run(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { cwd, stdio: 'inherit' })
+    const resolved = wrapWindowsScriptCommand(command, args)
+    const child = spawn(resolved.command, resolved.args, { cwd, stdio: 'inherit' })
     child.once('error', reject)
     child.once('exit', code => {
       if (code === 0) resolvePromise()
@@ -111,7 +115,8 @@ function run(command, args, cwd) {
 
 function capture(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, {
+    const resolved = wrapWindowsScriptCommand(command, args)
+    const child = spawn(resolved.command, resolved.args, {
       cwd,
       stdio: ['ignore', 'pipe', 'inherit'],
     })

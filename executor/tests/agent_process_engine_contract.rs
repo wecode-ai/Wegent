@@ -289,6 +289,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
 async fn agent_process_engine_clones_git_workspace_before_running_claude() {
     let _lock = env_lock().lock().await;
     let workspace_root = unique_dir("claude-git-workspace-root");
+    let executor_home = unique_dir("claude-git-executor-home");
     let bin_dir = unique_dir("claude-git-bin");
     let marker = unique_dir("claude-git-marker").join("git-args.txt");
     fs::create_dir_all(&bin_dir).unwrap();
@@ -298,10 +299,17 @@ async fn agent_process_engine_clones_git_workspace_before_running_claude() {
         r#"#!/bin/sh
 if [ ! -d ".git" ]; then exit 30; fi
 if [ ! -f "source.txt" ]; then exit 31; fi
+if [ ! -x "$GIT_ASKPASS" ]; then exit 32; fi
+if [ "$(cat "$WEGENT_GIT_USERNAME_FILE")" != "octocat" ]; then exit 33; fi
+if [ "$(cat "$WEGENT_GIT_TOKEN_FILE")" != "ghp_test_token" ]; then exit 34; fi
+if [ "$GH_TOKEN" != "ghp_test_token" ]; then exit 35; fi
 printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}\n' "$(pwd)"
 "#,
     );
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let _home = EnvGuard::set("HOME", &executor_home.display().to_string());
+    let _aes_key = EnvGuard::set("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012");
+    let _aes_iv = EnvGuard::set("GIT_TOKEN_AES_IV", "1234567890123456");
     let path_value = format!(
         "{}:{}",
         bin_dir.display(),
@@ -312,6 +320,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
         task_id: "85".to_owned(),
+        subtask_id: "8501".to_owned(),
         prompt: json!("run in cloned repo"),
         bot: json!([{"id": 325, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
@@ -321,6 +330,19 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
                 json!("https://github.com/wecode-ai/Wegent.git"),
             ),
             ("branch_name".to_owned(), json!("feature/test")),
+            ("git_domain".to_owned(), json!("github.com")),
+            (
+                "git_auth_transport".to_owned(),
+                json!("encrypted_request_token"),
+            ),
+            (
+                "user".to_owned(),
+                json!({
+                    "git_domain": "github.com",
+                    "git_login": "octocat",
+                    "git_token": "iOuoSwc/HrF6ZhttvtSNeQ=="
+                }),
+            ),
         ]),
         ..ExecutionRequest::default()
     };
@@ -336,6 +358,12 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
     );
     let git_args = fs::read_to_string(marker).unwrap();
     assert!(git_args.contains("clone --branch feature/test --single-branch"));
+    assert!(git_args.contains("https://github.com/wecode-ai/Wegent.git"));
+    assert!(!git_args.contains("ghp_test_token"));
+    assert!(!git_args.contains("iOuoSwc/HrF6ZhttvtSNeQ=="));
+    let git_config = fs::read_to_string(expected_cwd.join(".git/config")).unwrap();
+    assert!(git_config.contains("url = https://github.com/wecode-ai/Wegent.git"));
+    assert!(!git_config.contains("ghp_test_token"));
 }
 
 #[cfg(unix)]
@@ -1166,6 +1194,7 @@ if [ "$1" = "clone" ]; then
   DEST="$2"
   mkdir -p "$DEST/.git"
   printf '%s\n%s\n' "$URL" "$BRANCH" > "$DEST/source.txt"
+  printf '[remote "origin"]\n\turl = %s\n' "$URL" > "$DEST/.git/config"
   exit 0
 fi
 if [ "$1" = "-C" ] && [ "$3" = "config" ]; then

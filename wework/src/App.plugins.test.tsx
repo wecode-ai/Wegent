@@ -28,6 +28,7 @@ const desktopHostMocks = vi.hoisted(() => {
         if (capability === 'plugins.list') return []
         if (capability === 'smartApps.list') return []
         if (capability === 'executor.plugins.personal.list') return { items: [] }
+        if (capability === 'runtime.listCoreDshPlugins') return []
         return {}
       }
     ),
@@ -1842,8 +1843,12 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理插件' })).toBeInTheDocument()
     expect(
-      within(screen.getByTestId('plugin-management-page-content')).queryByRole('tab')
-    ).not.toBeInTheDocument()
+      within(screen.getByTestId('plugin-management-page-content')).getAllByRole('tab')
+    ).toHaveLength(2)
+    expect(screen.getByTestId('plugin-management-surface-wework')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
     expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
     expect(screen.getByTestId('plugin-management-browse-marketplace-button')).toBeInTheDocument()
     expect(screen.queryByPlaceholderText('供应商 Token')).not.toBeInTheDocument()
@@ -1933,9 +1938,35 @@ describe('App plugins route', () => {
     expect(await screen.findByRole('heading', { name: '管理插件' })).toBeInTheDocument()
     expect(screen.queryByText('Custom Docs MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('wehot')).not.toBeInTheDocument()
-    expect(
-      within(screen.getByTestId('plugin-management-page-content')).queryByRole('tab')
-    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugin-management-codex-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-management-core-dsh-panel')).not.toBeInTheDocument()
+  })
+
+  test('switches between Codex and Core DSH plugin management tabs', async () => {
+    window.history.pushState({}, '', '/plugins/manage')
+
+    renderApp()
+
+    expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
+    expect(screen.queryByTestId('core-dsh-plugin-management')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugin-management-surface-core-dsh'))
+
+    expect(screen.getByTestId('plugin-management-surface-core-dsh')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('core-dsh-plugin-management')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-management-codex-panel')).not.toBeInTheDocument()
+
+    await userEvent.keyboard('{ArrowLeft}')
+
+    expect(screen.getByTestId('plugin-management-surface-wework')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('plugin-management-codex-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('core-dsh-plugin-management')).not.toBeInTheDocument()
   })
 
   test('refreshes composer plugin candidates after toggling an installed plugin', async () => {

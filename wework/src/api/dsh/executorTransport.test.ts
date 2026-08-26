@@ -91,10 +91,8 @@ describe('DSH executor transport', () => {
     })
   })
 
-  test('coalesces text deltas and flushes them before a terminal event', () => {
+  test('delivers text deltas without waiting for animation frames', () => {
     let onMessage: ((event: MessageEvent<string>) => void) | null = null
-    const animationFrames = new Map<number, FrameRequestCallback>()
-    let nextFrameId = 1
     vi.stubGlobal(
       'EventSource',
       class {
@@ -107,41 +105,35 @@ describe('DSH executor transport', () => {
         close() {}
       }
     )
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-      const frameId = nextFrameId++
-      animationFrames.set(frameId, callback)
-      return frameId
-    })
-    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => {
-      animationFrames.delete(frameId)
-    })
+    const requestAnimationFrame = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame)
     const listener = vi.fn()
 
     const unsubscribe = subscribeDshExecutorEvents(listener)
-    for (let index = 0; index < 2200; index += 1) {
-      emitExecutorEvent(
-        onMessage,
-        eventEnvelope(index + 1, 'response.output_text.delta', 'x', index)
-      )
-    }
-    emitExecutorEvent(onMessage, eventEnvelope(2201, 'response.completed'))
+    emitExecutorEvent(onMessage, eventEnvelope(1, 'response.output_text.delta', 'first', 0))
+    emitExecutorEvent(onMessage, eventEnvelope(2, 'response.output_text.delta', 'second', 5))
 
     expect(listener).toHaveBeenCalledTimes(2)
     expect(listener).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        sequence: 2200,
+        sequence: 1,
         event: 'response.output_text.delta',
         payload: expect.objectContaining({
-          data: expect.objectContaining({ delta: 'x'.repeat(2200), offset: 0 }),
+          data: expect.objectContaining({ delta: 'first', offset: 0 }),
         }),
       })
     )
     expect(listener).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ sequence: 2201, event: 'response.completed' })
+      expect.objectContaining({
+        sequence: 2,
+        payload: expect.objectContaining({
+          data: expect.objectContaining({ delta: 'second', offset: 5 }),
+        }),
+      })
     )
-    expect(animationFrames.size).toBe(0)
+    expect(requestAnimationFrame).not.toHaveBeenCalled()
 
     unsubscribe()
   })

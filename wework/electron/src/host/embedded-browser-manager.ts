@@ -554,7 +554,7 @@ export class EmbeddedBrowserManager {
   }> {
     const entry = this.required(this.activeLabel(label))
     const contents = entry.contents
-    const beforeFrame = browserFrame(entry.bounds)
+    const beforeFrame = await waitForSettledFrame(entry, 5_000)
     const beforeWindowCount = this.nativeWindowCount()
     contents.openDevTools({ mode: 'detach', activate: true })
     await waitForState(
@@ -821,7 +821,31 @@ async function waitForStableFrame(
     }
     await new Promise(resolve => setTimeout(resolve, 50))
   }
-  throw new Error('Detached embedded browser Inspector changed the browser frame')
+  throw new Error(
+    `Detached embedded browser Inspector changed the browser frame: expected=${expectedFrame.join(
+      ','
+    )} actual=${browserFrame(entry.bounds).join(',')}`
+  )
+}
+
+async function waitForSettledFrame(entry: BrowserEntry, timeoutMs: number): Promise<number[]> {
+  const deadline = Date.now() + timeoutMs
+  let frame = browserFrame(entry.bounds)
+  let stableSamples = 0
+  while (Date.now() <= deadline) {
+    const currentFrame = browserFrame(entry.bounds)
+    if (currentFrame.every((value, index) => value === frame[index])) {
+      stableSamples += 1
+      if (stableSamples >= 20) return currentFrame
+    } else {
+      frame = currentFrame
+      stableSamples = 1
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(
+    `Timed out waiting for embedded browser frame to settle: actual=${frame.join(',')}`
+  )
 }
 
 function validBounds(bounds: BrowserBounds): BrowserBounds {

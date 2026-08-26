@@ -1700,7 +1700,7 @@ async fn app_ipc_describes_the_versioned_desktop_protocol() {
     assert_eq!(description["device_id"], "device-1");
     assert_eq!(description["runtime_instance_id"], "runtime-1");
     assert_eq!(description["features"]["structured_errors"], true);
-    assert_eq!(description["features"]["event_resume"], false);
+    assert_eq!(description["features"]["event_resume"], true);
     assert!(description["transports"]
         .as_array()
         .unwrap()

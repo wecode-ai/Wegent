@@ -24,6 +24,10 @@ from pydantic import StrictBool
 
 from .knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 
+GIT_AUTH_TRANSPORT_NONE = "none"
+GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN = "encrypted_request_token"
+GIT_AUTH_TRANSPORT_LEGACY_USER_SECRET = "legacy_user_secret"
+
 
 class EventType(str, Enum):
     """Unified execution event types.
@@ -154,6 +158,7 @@ class ExecutionRequest:
     git_repo_id: Optional[int] = None
     branch_name: Optional[str] = None
     git_url: Optional[str] = None
+    git_auth_transport: str = GIT_AUTH_TRANSPORT_NONE
 
     # === Session Configuration ===
     message_id: Optional[int] = None

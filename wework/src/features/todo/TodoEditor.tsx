@@ -3027,37 +3027,21 @@ export function TodoEditor(props: TodoEditorProps) {
         </div>
 
         {workspacePanel && item ? (
-          <footer
+          <div
             data-testid="cloud-todo-attachment-footer"
-            className="task-detail-attachment-footer"
+            className="task-detail-workspace-attachments task-detail-rail-sections"
           >
-            <span className="flex min-w-0 items-center gap-2">
-              <Paperclip className="h-4 w-4 shrink-0" />
-              <span>附件</span>
-            </span>
-            {attachmentError ? (
-              <span className="min-w-0 flex-1 truncate text-destructive" role="alert">
-                {attachmentError}
-              </span>
-            ) : (
-              <span className="flex-1" />
-            )}
-            <span>{visibleAttachments.length}</span>
-            <label className="task-detail-attachment-upload">
-              {attachmentBusy ? '上传中…' : '＋ 上传'}
-              <input
-                data-testid="cloud-todo-attachment-input"
-                type="file"
-                multiple
-                disabled={attachmentBusy}
-                onChange={event => {
-                  void addAttachments(event.target.files)
-                  event.target.value = ''
-                }}
-                className="sr-only"
-              />
-            </label>
-          </footer>
+            <TodoAttachmentSection
+              attachments={visibleAttachments}
+              busy={attachmentBusy}
+              error={attachmentError}
+              editable
+              compactRail
+              onAdd={addAttachments}
+              onOpen={openAttachment}
+              onRemove={removeAttachment}
+            />
+          </div>
         ) : null}
 
         {!twoColumn ? (

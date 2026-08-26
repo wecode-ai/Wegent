@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.2.6",
+  "version": "0.2.7-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,7 +13,7 @@
     "prepare:dws": "node scripts/prepare-dws-binary.mjs",
     "prepare:execution-runtime": "node scripts/prepare-execution-runtime.mjs",
     "prepare:harness-runtime": "node scripts/prepare-harness-runtime.mjs",
-    "build:dsh-app": "WEWORK_DSH_APP_OUT_DIR=$PWD/dsh/app-wework/web vite build",
+    "build:dsh-app": "vite build --base /wework/app/ --outDir dsh/app-wework/web --emptyOutDir",
     "build": "tsc -b && vite build",
     "build:desktop": "pnpm run ai:verify:electron:build",
     "build:release": "pnpm run prepare:electron && pnpm run prepare:codex --materialize && pnpm run prepare:dws && pnpm run build:dsh-app && pnpm --dir electron build:release",
@@ -40,6 +40,7 @@
     "e2e:desktop:local-terminal": "WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true WEWORK_E2E_DESKTOP_SCENARIO_MODULE=./scenarios/local-terminal.scenario.mjs node e2e/desktop/task-flow.e2e.mjs",
     "e2e:desktop:streaming-text": "WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true WEWORK_E2E_DESKTOP_SCENARIO_MODULE=./scenarios/streaming-text.scenario.mjs node e2e/desktop/task-flow.e2e.mjs",
     "ai:verify": "node scripts/ai-verify.mjs",
+    "ai:verify:electron:prepare": "node scripts/prepare-ai-verify-electron.mjs",
     "ai:verify:electron:build": "pnpm run prepare:electron && VITE_WEWORK_E2E=true VITE_WEWORK_RELEASE_CHANNEL=stable VITE_WEWORK_RUNTIME_MODE=local-first pnpm --dir electron build:package",
     "e2e:ui": "playwright test --ui"
   },
