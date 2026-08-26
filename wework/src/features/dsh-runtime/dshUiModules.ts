@@ -1,5 +1,4 @@
 const modulePromises = new Map<string, Promise<unknown>>()
-const loadedModules = new Map<string, unknown>()
 
 declare global {
   interface Window {
@@ -22,19 +21,10 @@ export function importDshUiModule<T>(module: string): Promise<T> {
       ? injected()
       : Promise.resolve(injected)
     : import(/* @vite-ignore */ url)
-  const loaded = loading.then(value => {
-    loadedModules.set(url, value)
-    return value
-  })
-  modulePromises.set(url, loaded)
-  return loaded as Promise<T>
-}
-
-export function getLoadedDshUiModule<T>(module: string): T | null {
-  return (loadedModules.get(dshUiModuleUrl(module)) as T | undefined) ?? null
+  modulePromises.set(url, loading)
+  return loading as Promise<T>
 }
 
 export function clearDshUiModuleCache(): void {
   modulePromises.clear()
-  loadedModules.clear()
 }

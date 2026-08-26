@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 
 export interface EmbeddedNodeEnvironmentOptions {
@@ -24,6 +24,7 @@ export async function prepareEmbeddedNodeEnvironment(
     ...options.environment,
     ELECTRON_RUN_AS_NODE: '1',
     WEWORK_NODE_PATH: options.electronExecutable,
+    WEWORK_NODE_BIN: binDirectory,
     NODE: options.electronExecutable,
     npm_node_execpath: options.electronExecutable,
     PATH: prependPath(binDirectory, options.environment.PATH),
@@ -38,16 +39,11 @@ export function embeddedNodeArguments(
 }
 
 async function writeUnixLauncher(path: string, electronExecutable: string): Promise<void> {
-  await rm(path, { force: true })
-  try {
-    await symlink(electronExecutable, path)
-  } catch {
-    await writeFile(
-      path,
-      `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec ${shellQuote(electronExecutable)} "$@"\n`,
-      { mode: 0o700 }
-    )
-  }
+  await writeFile(
+    path,
+    `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec ${shellQuote(electronExecutable)} "$@"\n`,
+    { mode: 0o700 }
+  )
   await chmod(path, 0o700)
 }
 

@@ -8,7 +8,10 @@ import {
   pathExists,
   withTimeout,
 } from './shared.mjs'
-import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
+import {
+  ensureExperimentalFeaturesDisabled,
+  ensureExperimentalFeaturesEnabled,
+} from './preferences-automation-flows.mjs'
 
 const ROOT_SELECTOR = '[data-testid="wework-dsh-root"]'
 const DESKTOP_HOST_INVOKE_PATH = '/wework/electron-host/v1/invoke'
@@ -208,6 +211,7 @@ export async function verifyCoreDshUiPluginComposition({
     assert.equal(installed.enabled, true, `${plugin.name} was disabled in the final inventory`)
   }
   await control.command('navigate', 'body', { value: '/' })
+  await ensureExperimentalFeaturesDisabled(control)
 }
 
 async function assertFeatureAbsent(control, plugin) {

@@ -272,7 +272,6 @@ function runNodeSkill(script, binDirectory) {
     const child = spawn('node', [script], {
       env: {
         ...process.env,
-        ELECTRON_RUN_AS_NODE: '1',
         PATH: `${binDirectory}${delimiter}${process.env.PATH ?? ''}`,
       },
       shell: process.platform === 'win32',

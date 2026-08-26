@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readlink, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -24,11 +24,14 @@ describe('prepareEmbeddedNodeEnvironment', () => {
     const launcher = join(dataDirectory, 'managed-runtimes', 'electron-node', 'bin', 'node')
 
     expect(environment.WEWORK_NODE_PATH).toBe(process.execPath)
+    expect(environment.WEWORK_NODE_BIN).toBe(join(launcher, '..'))
     expect(environment.NODE).toBe(process.execPath)
     expect(environment.npm_node_execpath).toBe(process.execPath)
     expect(environment.ELECTRON_RUN_AS_NODE).toBe('1')
     expect(environment.PATH?.split(delimiter)[0]).toBe(join(launcher, '..'))
-    expect(await readlink(launcher)).toBe(process.execPath)
+    expect((await stat(launcher)).isFile()).toBe(true)
+    expect(await readFile(launcher, 'utf8')).toContain('export ELECTRON_RUN_AS_NODE=1')
+    expect(await readFile(launcher, 'utf8')).toContain(process.execPath)
   })
 
   test('creates a Windows command launcher without a standalone Node runtime', async () => {
