@@ -4,7 +4,7 @@ import type {
   DshSidebarNavigationModule,
   WeworkDshSidebarNavigationModuleProps,
 } from './dshSidebarNavigation'
-import { importDshUiModule } from './dshUiModules'
+import { getLoadedDshUiModule, importDshUiModule } from './dshUiModules'
 
 function DshSidebarNavigationModuleLoader({
   module,
@@ -17,6 +17,8 @@ function DshSidebarNavigationModuleLoader({
 export function DshSidebarNavigationSurface(props: WeworkDshSidebarNavigationModuleProps) {
   const module = props.item.module
   if (!module) return null
+  const loaded = getLoadedDshUiModule<DshSidebarNavigationModule>(module)
+  if (loaded) return createElement(loaded.default, props)
   return (
     <Suspense fallback={null}>
       <DshSidebarNavigationModuleLoader {...props} module={module} />

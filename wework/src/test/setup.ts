@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest'
-import { beforeEach } from 'vitest'
+import { beforeAll, beforeEach } from 'vitest'
 import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
+import { clearDshUiModuleCache, importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
 
 const electronHostInvokePath = '/wework/electron-host/v1/invoke'
 const nativeFetch = globalThis.fetch.bind(globalThis)
@@ -248,6 +249,20 @@ function installDefaultDshUiTestRuntime() {
   }
 }
 
+function installDefaultDshUiTestModules() {
+  window.__WEWORK_DSH_UI_MODULES__ = {
+    'plugins/wework-ui-cloud-work-sidebar.js': () =>
+      import('../../dsh/ui-cloud-work/src/sidebar-navigation'),
+    'plugins/wework-ui-core-settings.js': () =>
+      import('../../dsh/ui-core-settings/src/settings-page'),
+    'plugins/wework-ui-core-apps.js': () => import('../../dsh/ui-core-apps/src/app-surface'),
+    'plugins/wework-ui-plugin-center-catalog.js': {
+      default: () => null,
+      preload: () => undefined,
+    },
+  }
+}
+
 function requestUrl(input: RequestInfo | URL): string {
   return typeof input === 'string' || input instanceof URL ? String(input) : input.url
 }
@@ -424,19 +439,17 @@ function installStorageGlobal(name: StorageName) {
 installStorageGlobal('localStorage')
 installStorageGlobal('sessionStorage')
 
+beforeAll(async () => {
+  clearDshUiModuleCache()
+  installDefaultDshUiTestModules()
+  await Promise.all(
+    Object.keys(window.__WEWORK_DSH_UI_MODULES__).map(module => importDshUiModule(module))
+  )
+})
+
 beforeEach(() => {
   installDefaultDshUiTestRuntime()
-  window.__WEWORK_DSH_UI_MODULES__ = {
-    'plugins/wework-ui-cloud-work-sidebar.js': () =>
-      import('../../dsh/ui-cloud-work/src/sidebar-navigation'),
-    'plugins/wework-ui-core-settings.js': () =>
-      import('../../dsh/ui-core-settings/src/settings-page'),
-    'plugins/wework-ui-core-apps.js': () => import('../../dsh/ui-core-apps/src/app-surface'),
-    'plugins/wework-ui-plugin-center-catalog.js': {
-      default: () => null,
-      preload: () => undefined,
-    },
-  }
+  installDefaultDshUiTestModules()
   testAppPreferences = {}
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,

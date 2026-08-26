@@ -17,7 +17,7 @@ import {
   type WebContents,
 } from 'electron'
 import electronUpdater from 'electron-updater'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { release } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1132,12 +1132,21 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const packagedExecutor = join(resourcesRoot, 'bin', executorName)
   const nodeName = process.platform === 'win32' ? 'node.exe' : 'node'
   const packagedNode = join(resourcesRoot, 'node-runtime', 'bin', nodeName)
+  const codexDescriptorPath = join(resourcesRoot, 'codex', 'WEGENT_CODEX_BINARY.json')
+  const codexDescriptor = existsSync(codexDescriptorPath)
+    ? (JSON.parse(readFileSync(codexDescriptorPath, 'utf8')) as { binaryPath?: unknown })
+    : null
+  const packagedCodex =
+    typeof codexDescriptor?.binaryPath === 'string'
+      ? join(resourcesRoot, 'codex', codexDescriptor.binaryPath)
+      : null
   const nodePath =
     process.env.WEWORK_NODE_PATH?.trim() ||
     (existsSync(packagedNode) ? packagedNode : process.execPath)
   return {
     ...process.env,
     WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
+    WEWORK_CORE_PLUGIN_ROOT: join(resourcesRoot, 'wework-core-plugins'),
     WEWORK_NODE_PATH: nodePath,
     WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
       resourcesRoot,
@@ -1149,6 +1158,9 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       : existsSync(packagedExecutor)
         ? { WEWORK_EXECUTOR_PATH: packagedExecutor }
         : {}),
+    ...(process.env.CODEX_BINARY_PATH?.trim() || !packagedCodex || !existsSync(packagedCodex)
+      ? {}
+      : { CODEX_BINARY_PATH: packagedCodex, CODEX_BIN: packagedCodex }),
     ...(nodePath === process.execPath ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
 }

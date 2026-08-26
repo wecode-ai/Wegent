@@ -19,7 +19,7 @@ const CORE_PLUGIN_PACKAGES = [
 ] as const
 type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
 const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(4).map(([packageName]) => packageName)
-const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example', 'dsh-better-sidebar'] as const
+const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
 const CORE_HOST_BUNDLES = [
   '@deepseek-ai/dsh-base',
   '@wegent/dsh-electron-host',
@@ -90,7 +90,10 @@ export type CommandRunner = (
 ) => Promise<void>
 
 export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Promise<CoreDshLaunch> {
-  const runtime = await selectCoreDshRuntime(options.runtimeRoot)
+  const runtime = await selectCoreDshRuntime(
+    options.runtimeRoot,
+    options.environment.WEWORK_CORE_PLUGIN_ROOT
+  )
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(options.dataDirectory, 'dsh-core')
   const managedUiPlugins = !usesEmptyUiPluginProfile(options.environment)
@@ -115,12 +118,18 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
   }
 }
 
-export async function selectCoreDshRuntime(root: string): Promise<CoreDshRuntime> {
+export async function selectCoreDshRuntime(
+  root: string,
+  configuredPluginsRoot?: string
+): Promise<CoreDshRuntime> {
   const runtime = await selectBundledDshRuntime(root, 'core', CORE_DSH_VERSION)
+  const pluginsRoot = configuredPluginsRoot?.trim()
+    ? resolve(configuredPluginsRoot)
+    : runtime.pluginsRoot
   const pluginRoots = Object.fromEntries(
     CORE_PLUGIN_PACKAGES.map(([packageName, directory]) => [
       packageName,
-      join(runtime.pluginsRoot, directory),
+      join(pluginsRoot, directory),
     ])
   ) as Record<CorePluginPackage, string>
   await Promise.all(
@@ -180,19 +189,43 @@ async function prepareProfile(options: {
   const managedBundles = options.managedUiPlugins ? CORE_BUNDLES : CORE_HOST_BUNDLES
   const currentManifest = await readJsonFile(join(profileRoot, 'package.json'))
   const currentManifestRoot = objectRecord(currentManifest)
+  const currentDependencies = stringRecord(currentManifestRoot.dependencies)
+  const currentProfile = objectRecord(objectRecord(currentManifestRoot.dsh).profile)
+  const currentBundles = stringArray(currentProfile.bundles)
+  const recoveredUserPlugins = await recoverInstalledDshDependencies(
+    profileRoot,
+    currentDependencies,
+    currentBundles,
+    new Set([...managedDependencyNames, ...REMOVED_CORE_DEPENDENCIES])
+  )
+  const removedDependencies = new Set<string>(
+    REMOVED_CORE_DEPENDENCIES.filter(
+      name => Object.hasOwn(currentDependencies, name) || currentBundles.includes(name)
+    )
+  )
   const stampIsCurrent = await stampMatches(join(profileRoot, PROFILE_STAMP), expectedStamp)
   const coreDependenciesAreCurrent = hasCurrentCoreDependencies(
     currentManifest,
     managedDependencies
   )
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
-  if (stampIsCurrent && !hasRemovedCoreDependency(currentManifest) && coreDependenciesAreCurrent) {
+  if (
+    stampIsCurrent &&
+    removedDependencies.size === 0 &&
+    recoveredUserPlugins.dependencies.size === 0 &&
+    coreDependenciesAreCurrent
+  ) {
     await ensureCoreWorkspace(workspacePath)
     return
   }
 
   await mkdir(profileRoot, { recursive: true, mode: 0o700 })
-  if (currentManifest && !coreDependenciesAreCurrent) {
+  if (
+    currentManifest &&
+    (!coreDependenciesAreCurrent ||
+      removedDependencies.size > 0 ||
+      recoveredUserPlugins.dependencies.size > 0)
+  ) {
     await Promise.all(
       [
         join(profileRoot, 'pnpm-lock.yaml'),
@@ -201,19 +234,13 @@ async function prepareProfile(options: {
       ].map(path => rm(path, { force: true }))
     )
   }
-  const currentDependencies = stringRecord(currentManifestRoot.dependencies)
   const userDependencies = Object.fromEntries(
     Object.entries(currentDependencies).filter(
-      ([name]) =>
-        !managedDependencyNames.includes(name) && !REMOVED_CORE_DEPENDENCIES.includes(name as never)
+      ([name]) => !managedDependencyNames.includes(name) && !removedDependencies.has(name)
     )
   )
-  const currentProfile = objectRecord(objectRecord(currentManifestRoot.dsh).profile)
-  const currentBundles = stringArray(currentProfile.bundles)
-  const userBundles = currentBundles.filter(
-    bundle =>
-      !managedBundles.includes(bundle as never) &&
-      !REMOVED_CORE_DEPENDENCIES.includes(bundle as never)
+  const userBundles = recoveredUserPlugins.bundles.filter(
+    bundle => !managedBundles.includes(bundle as never) && !removedDependencies.has(bundle)
   )
   await writeFile(
     join(profileRoot, 'package.json'),
@@ -223,6 +250,7 @@ async function prepareProfile(options: {
         private: true,
         dependencies: {
           ...userDependencies,
+          ...Object.fromEntries(recoveredUserPlugins.dependencies),
           ...managedDependencies,
         },
         dsh: {
@@ -288,6 +316,75 @@ async function readJsonFile(path: string): Promise<unknown | null> {
   }
 }
 
+async function recoverInstalledDshDependencies(
+  profileRoot: string,
+  dependencies: Record<string, string>,
+  bundles: string[],
+  excludedPackages: ReadonlySet<string>
+): Promise<{ dependencies: Map<string, string>; bundles: string[] }> {
+  const recovered = new Map<string, string>()
+  const discoveredBundles = new Set(bundles)
+  const dependencyGraph = new Map<string, string[]>()
+  const pending = [...bundles]
+  const visited = new Set<string>()
+
+  while (pending.length > 0) {
+    const packageName = pending.shift()
+    if (!packageName || visited.has(packageName) || excludedPackages.has(packageName)) continue
+    visited.add(packageName)
+
+    const manifest = objectRecord(
+      await readJsonFile(
+        join(profileRoot, 'node_modules', ...packageName.split('/'), 'package.json')
+      )
+    )
+    const requirements = {
+      ...stringRecord(manifest.dependencies),
+      ...stringRecord(manifest.optionalDependencies),
+      ...stringRecord(manifest.peerDependencies),
+    }
+    const pluginDependencies: string[] = []
+    for (const requiredName of Object.keys(requirements)) {
+      if (excludedPackages.has(requiredName)) continue
+      const installedManifest = objectRecord(
+        await readJsonFile(
+          join(profileRoot, 'node_modules', ...requiredName.split('/'), 'package.json')
+        )
+      )
+      const installedDsh = objectRecord(installedManifest.dsh)
+      if (
+        installedManifest.name !== requiredName ||
+        typeof installedManifest.version !== 'string' ||
+        !installedDsh.bundle
+      ) {
+        continue
+      }
+      pluginDependencies.push(requiredName)
+      discoveredBundles.add(requiredName)
+      pending.push(requiredName)
+      if (!Object.hasOwn(dependencies, requiredName)) {
+        recovered.set(requiredName, installedManifest.version)
+      }
+    }
+    dependencyGraph.set(packageName, pluginDependencies)
+  }
+
+  const orderedBundles: string[] = []
+  const ordering = new Set<string>()
+  const ordered = new Set<string>()
+  const visit = (packageName: string): void => {
+    if (ordered.has(packageName) || ordering.has(packageName)) return
+    ordering.add(packageName)
+    for (const dependency of dependencyGraph.get(packageName) ?? []) visit(dependency)
+    ordering.delete(packageName)
+    ordered.add(packageName)
+    orderedBundles.push(packageName)
+  }
+  for (const packageName of discoveredBundles) visit(packageName)
+
+  return { dependencies: recovered, bundles: orderedBundles }
+}
+
 async function readTextFile(path: string): Promise<string | null> {
   try {
     return await readFile(path, 'utf8')
@@ -311,14 +408,6 @@ function objectRecord(value: unknown): Record<string, unknown> {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter(item => typeof item === 'string') : []
-}
-
-function hasRemovedCoreDependency(manifest: unknown): boolean {
-  const root = objectRecord(manifest)
-  const profile = objectRecord(objectRecord(root.dsh).profile)
-  const dependencies = stringRecord(root.dependencies)
-  const bundles = stringArray(profile.bundles)
-  return REMOVED_CORE_DEPENDENCIES.some(name => name in dependencies || bundles.includes(name))
 }
 
 function hasCurrentCoreDependencies(

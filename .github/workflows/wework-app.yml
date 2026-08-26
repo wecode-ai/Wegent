@@ -273,6 +273,15 @@ jobs:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
         run: pnpm --filter wework build:release
 
+      - name: Verify formal release package startup
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        env:
+          CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
+          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
+          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
+          WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
+        run: pnpm --filter wework e2e:desktop -- --segment release-package-startup
+
       - name: Prepare installer and legacy bridge assets
         shell: bash
         env:

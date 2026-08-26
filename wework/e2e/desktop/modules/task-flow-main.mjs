@@ -952,6 +952,7 @@ async function main() {
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
       executorHome,
+      electronUserDataDirectory,
       homePath,
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
@@ -1078,11 +1079,16 @@ async function main() {
     const needsPackagedHarnessRuntime =
       SELECTED_DESKTOP_SEGMENT === 'harness-apps' ||
       (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition'))
+    const usesReleasePackageRuntimeAssets =
+      desktopScenario?.usesReleasePackageRuntimeAssets === true
     const harnessRuntimes = needsPackagedHarnessRuntime
       ? await prepareHarnessRuntimeRoots(appBinary)
       : null
     const electronCoreRuntimeRoot =
-      harnessRuntimes?.harnessRuntimeRoot || process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || null
+      harnessRuntimes?.harnessRuntimeRoot ||
+      (usesReleasePackageRuntimeAssets
+        ? null
+        : process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || null)
     if (electronCoreRuntimeRoot) {
       assert.equal(
         await pathExists(electronCoreRuntimeRoot),
@@ -1149,6 +1155,10 @@ async function main() {
             WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome,
           }
         : {}),
+    }
+    if (usesReleasePackageRuntimeAssets) {
+      delete appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT
+      delete appEnvironment.WEWORK_NODE_PATH
     }
     delete appEnvironment.WEGENT_APP_IPC_DEVICE_ID
     const electronLaunchArguments =

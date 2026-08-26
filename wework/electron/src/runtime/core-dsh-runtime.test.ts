@@ -319,7 +319,7 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 
-  test('repairs stale managed paths and removes obsolete managed sidebar plugins', async () => {
+  test('repairs stale managed paths without removing native DSH plugins', async () => {
     const root = await temporaryDirectory('core-dsh-stale-dependency-')
     const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
     const dataDirectory = join(root.path, 'data')
@@ -334,9 +334,35 @@ describe('core DSH runtime', () => {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
     manifest.dependencies['@wegent/dsh-app-wework'] = 'file:/deleted/runtime/wework-app'
     manifest.dependencies['@wegent/dsh-sidebar-example'] = 'file:/obsolete'
-    manifest.dependencies['dsh-turn-review'] = '1.2.3'
-    manifest.dsh.profile.bundles.push('@wegent/dsh-sidebar-example', 'dsh-turn-review')
+    manifest.dependencies['@wework-e2e/native-dsh-consumer'] = 'file:./fixtures/consumer'
+    manifest.dependencies['@wework-e2e/independent-dsh-plugin'] = '1.2.3'
+    manifest.dsh.profile.bundles.push(
+      '@wegent/dsh-sidebar-example',
+      '@wework-e2e/native-dsh-provider',
+      '@wework-e2e/native-dsh-consumer',
+      '@wework-e2e/independent-dsh-plugin'
+    )
     await writeFile(manifestPath, JSON.stringify(manifest))
+    const consumerRoot = join(profileRoot, 'node_modules', '@wework-e2e', 'native-dsh-consumer')
+    await mkdir(consumerRoot, { recursive: true })
+    await writeFile(
+      join(consumerRoot, 'package.json'),
+      JSON.stringify({
+        name: '@wework-e2e/native-dsh-consumer',
+        peerDependencies: { '@wework-e2e/native-dsh-provider': '*' },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      })
+    )
+    const providerRoot = join(profileRoot, 'node_modules', '@wework-e2e', 'native-dsh-provider')
+    await mkdir(providerRoot, { recursive: true })
+    await writeFile(
+      join(providerRoot, 'package.json'),
+      JSON.stringify({
+        name: '@wework-e2e/native-dsh-provider',
+        version: '2.1.0',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      })
+    )
     const lockfilePaths = [
       join(profileRoot, 'pnpm-lock.yaml'),
       join(profileRoot, 'node_modules', '.pnpm', 'lock.yaml'),
@@ -358,7 +384,16 @@ describe('core DSH runtime', () => {
     )
     expect(repaired.dependencies).not.toHaveProperty('@wegent/dsh-sidebar-example')
     expect(repaired.dsh.profile.bundles).not.toContain('@wegent/dsh-sidebar-example')
-    expect(repaired.dependencies['dsh-turn-review']).toBe('1.2.3')
+    expect(repaired.dependencies['@wework-e2e/native-dsh-provider']).toBe('2.1.0')
+    expect(repaired.dependencies['@wework-e2e/native-dsh-consumer']).toBe(
+      'file:./fixtures/consumer'
+    )
+    expect(repaired.dsh.profile.bundles).toContain('@wework-e2e/native-dsh-provider')
+    expect(repaired.dsh.profile.bundles).toContain('@wework-e2e/native-dsh-consumer')
+    expect(repaired.dsh.profile.bundles.indexOf('@wework-e2e/native-dsh-provider')).toBeLessThan(
+      repaired.dsh.profile.bundles.indexOf('@wework-e2e/native-dsh-consumer')
+    )
+    expect(repaired.dependencies['@wework-e2e/independent-dsh-plugin']).toBe('1.2.3')
     await Promise.all(
       lockfilePaths.map(path =>
         expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })

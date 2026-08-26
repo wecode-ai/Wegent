@@ -139,7 +139,7 @@ export function DesktopAppSwitcher({
             ? t('workbench.app_wegent_requires_cloud', '连接云端后可用')
             : undefined,
         disabled:
-          Boolean(app.requiresCloud) && !cloudConnection?.isConnected && activeApp !== app.key,
+          Boolean(app.requiresCloud) && !cloudConnection?.isConnected && activeApp !== app.id,
       }))
   }, [activeApp, cloudConnection?.isConnected, registeredApps, t])
   const displayedAppKey = rollingLabel ? displayedKey : activeApp

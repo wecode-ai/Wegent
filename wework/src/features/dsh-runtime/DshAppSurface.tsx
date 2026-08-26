@@ -3,7 +3,7 @@ import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import type { WeworkDshApp } from './dshApps'
 import { DshSlotSurface } from './DshSlotSurface'
 import { WEWORK_DSH_SLOTS } from './dshUiSlots'
-import { importDshUiModule } from './dshUiModules'
+import { getLoadedDshUiModule, importDshUiModule } from './dshUiModules'
 
 export interface WeworkDshAppModuleProps {
   active: boolean
@@ -30,6 +30,8 @@ export function DshAppSurface({
   tab: WorkspaceTab
 }) {
   if (app.module) {
+    const loaded = getLoadedDshUiModule<DshAppModule>(app.module)
+    if (loaded) return createElement(loaded.default, { active, app, tab })
     return (
       <Suspense fallback={<div className="h-full min-h-0" data-testid="dsh-app-loading" />}>
         <DshAppModuleLoader active={active} app={app} module={app.module} tab={tab} />

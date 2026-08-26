@@ -31,6 +31,7 @@ export const DESKTOP_CHECKPOINTS = [
   'running-conversation-history',
   'codex-notification-isolation',
   'split-workbench',
+  'release-package-startup',
   'native-window-startup',
   'native-window-chrome',
   'renderer-storage',
