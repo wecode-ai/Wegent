@@ -95,6 +95,23 @@ describe('runtimeTaskProjection', () => {
     ).toBe(false)
   })
 
+  test('always prefers executor state over a persisted sidebar projection', () => {
+    const cached = task({
+      cachedProjection: true,
+      updatedAt: 1_786_676_401_000,
+    })
+    const running = task({
+      running: true,
+      status: 'running',
+      threadStatus: 'active',
+      turnStatus: 'inProgress',
+      updatedAt: 1_786_676_400_000,
+    })
+
+    expect(shouldReplaceRuntimeTaskProjection(cached, running)).toBe(true)
+    expect(shouldReplaceRuntimeTaskProjection(running, cached)).toBe(false)
+  })
+
   test('normalizes completed executor state into one terminal projection', () => {
     expect(
       normalizeRuntimeTaskSummary(

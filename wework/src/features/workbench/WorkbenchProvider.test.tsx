@@ -8774,7 +8774,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
     )
     expect(
-      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v1.1') ?? '{}')
+      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.1') ?? '{}')
         .runtimeWork.projects
     ).toEqual([])
 
@@ -8928,7 +8928,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.removeRuntimeWorkspace).not.toHaveBeenCalled()
     expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1)
     expect(
-      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v1.1') ?? '{}')
+      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.1') ?? '{}')
         .runtimeWork.projects
     ).toEqual([])
   })
