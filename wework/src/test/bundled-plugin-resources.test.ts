@@ -154,9 +154,14 @@ describe('bundled plugin resources', () => {
       resolve(process.cwd(), 'electron/scripts/installer.nsh'),
       'utf8'
     )
+    const builderConfig = readFileSync(
+      resolve(process.cwd(), 'electron/electron-builder.config.cjs'),
+      'utf8'
+    )
 
     expect(workflow).toContain('pnpm --filter wework build:release')
     expect(packageManifest.scripts['build:release']).toContain('pnpm --dir electron build:release')
+    expect(builderConfig).toContain("executableName: 'wework'")
     expect(workflow).toContain('generate-desktop-update-manifests.mjs')
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY')
     expect(workflow).toContain('release-manifests/*')
