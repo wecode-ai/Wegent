@@ -21,6 +21,7 @@ pub enum ArchiveMode {
 #[derive(Debug, Clone)]
 pub struct ArchiveOptions {
     pub mode: ArchiveMode,
+    pub task_id: String,
     pub workspace_path: PathBuf,
     pub home_path: PathBuf,
     pub max_size_bytes: u64,
@@ -75,31 +76,34 @@ pub fn create_runtime_archive(options: ArchiveOptions) -> Result<RuntimeArchive,
     // Dereferencing a dangling symlink fails to read the (missing) target and
     // aborts the whole archive; storing the link itself always succeeds.
     builder.follow_symlinks(false);
-    let mut session_file_included = false;
-    let mut git_included = false;
+    let mut contents = ArchiveContents::default();
     let mut member_count = 0usize;
 
     if options.home_path.exists() {
         member_count += append_tree(
             &mut builder,
-            &options.home_path,
-            Path::new("home"),
-            TreeKind::Home,
-            options.mode,
-            &mut session_file_included,
-            &mut git_included,
+            ArchiveTreeContext {
+                source_root: &options.home_path,
+                archive_root: Path::new("home"),
+                kind: TreeKind::Home,
+                mode: options.mode,
+                task_id: &options.task_id,
+            },
+            &mut contents,
         )?;
     }
 
     if options.workspace_path.is_dir() {
         member_count += append_tree(
             &mut builder,
-            &options.workspace_path,
-            Path::new("workspace"),
-            TreeKind::Workspace,
-            options.mode,
-            &mut session_file_included,
-            &mut git_included,
+            ArchiveTreeContext {
+                source_root: &options.workspace_path,
+                archive_root: Path::new("workspace"),
+                kind: TreeKind::Workspace,
+                mode: options.mode,
+                task_id: &options.task_id,
+            },
+            &mut contents,
         )?;
     }
     if options.mode == ArchiveMode::Sandbox && member_count == 0 {
@@ -119,14 +123,15 @@ pub fn create_runtime_archive(options: ArchiveOptions) -> Result<RuntimeArchive,
 
     Ok(RuntimeArchive {
         bytes,
-        session_file_included,
-        git_included,
+        session_file_included: contents.session_file_included,
+        git_included: contents.git_included,
     })
 }
 
 pub fn restore_runtime_archive(
     bytes: &[u8],
     mode: ArchiveMode,
+    task_id: &str,
     workspace_path: &Path,
     home_path: &Path,
 ) -> Result<RestoreResult, ArchiveError> {
@@ -140,28 +145,36 @@ pub fn restore_runtime_archive(
 
     for entry in archive.entries()? {
         let mut entry = entry?;
-        if !is_restorable_entry(entry.header().entry_type()) {
+        let entry_type = entry.header().entry_type();
+        if !is_restorable_entry(entry_type) {
             continue;
         }
 
         let path = entry.path()?.to_path_buf();
-        if is_session_archive_member(&path) {
-            session_restored = true;
+        let session_member = is_session_archive_member(&path, task_id);
+        if session_member && !entry_type.is_file() {
+            continue;
         }
-        if has_component(&path, ".git") {
-            git_restored = true;
-        }
-        let Some(destination) = destination_for_member(&path, mode, workspace_path, home_path)
+        let Some(destination) =
+            destination_for_member(&path, mode, task_id, workspace_path, home_path)
         else {
             continue;
         };
+        if has_component(&path, ".git") {
+            git_restored = true;
+        }
 
         if let Some(parent) = destination.path.parent() {
             fs::create_dir_all(parent)?;
         }
         entry.unpack(&destination.path)?;
-
-        let _ = destination;
+        if session_member {
+            if is_valid_session_marker_file(&destination.path) {
+                session_restored = true;
+            } else {
+                let _ = fs::remove_file(&destination.path);
+            }
+        }
     }
 
     Ok(RestoreResult {
@@ -181,34 +194,34 @@ struct Destination {
     path: PathBuf,
 }
 
-fn append_tree(
-    builder: &mut Builder<GzEncoder<Vec<u8>>>,
-    source_root: &Path,
-    archive_root: &Path,
+#[derive(Clone, Copy)]
+struct ArchiveTreeContext<'a> {
+    source_root: &'a Path,
+    archive_root: &'a Path,
     kind: TreeKind,
     mode: ArchiveMode,
-    session_file_included: &mut bool,
-    git_included: &mut bool,
+    task_id: &'a str,
+}
+
+#[derive(Default)]
+struct ArchiveContents {
+    session_file_included: bool,
+    git_included: bool,
+}
+
+fn append_tree(
+    builder: &mut Builder<GzEncoder<Vec<u8>>>,
+    context: ArchiveTreeContext<'_>,
+    contents: &mut ArchiveContents,
 ) -> Result<usize, ArchiveError> {
     let mut member_count = 0;
-    for path in collect_direct_children(source_root)? {
-        let relative = path.strip_prefix(source_root).unwrap_or(&path);
-        if should_skip_archive_member(kind, mode, relative) {
+    for path in collect_direct_children(context.source_root)? {
+        let relative = path.strip_prefix(context.source_root).unwrap_or(&path);
+        if should_skip_archive_member(context.kind, context.mode, context.task_id, relative) {
             continue;
         }
 
-        if relative
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().starts_with(".claude_session_id"))
-        {
-            *session_file_included = true;
-        }
-        if relative.file_name().is_some_and(|name| name == ".git") {
-            *git_included = true;
-        }
-
-        member_count +=
-            append_path_recursive(builder, source_root, &path, archive_root, kind, mode)?;
+        member_count += append_path_recursive(builder, &path, context, contents)?;
     }
     Ok(member_count)
 }
@@ -223,20 +236,28 @@ fn collect_direct_children(root: &Path) -> Result<Vec<PathBuf>, ArchiveError> {
 
 fn append_path_recursive(
     builder: &mut Builder<GzEncoder<Vec<u8>>>,
-    source_root: &Path,
     path: &Path,
-    archive_root: &Path,
-    kind: TreeKind,
-    mode: ArchiveMode,
+    context: ArchiveTreeContext<'_>,
+    contents: &mut ArchiveContents,
 ) -> Result<usize, ArchiveError> {
-    let relative = path.strip_prefix(source_root).unwrap_or(path);
-    if should_skip_archive_member(kind, mode, relative) {
+    let relative = path.strip_prefix(context.source_root).unwrap_or(path);
+    if should_skip_archive_member(context.kind, context.mode, context.task_id, relative) {
         return Ok(0);
     }
 
     let metadata = fs::symlink_metadata(path)?;
-    let archive_path = archive_root.join(relative);
+    let archive_path = context.archive_root.join(relative);
+    let session_member = is_session_relative_path(context.kind, relative, context.task_id);
+    if session_member && (!metadata.is_file() || !is_valid_session_marker_file(path)) {
+        return Ok(0);
+    }
+    if has_component(relative, ".git") {
+        contents.git_included = true;
+    }
     if metadata.is_file() || metadata.file_type().is_symlink() {
+        if session_member {
+            contents.session_file_included = true;
+        }
         builder.append_path_with_name(path, archive_path)?;
         return Ok(1);
     }
@@ -247,8 +268,7 @@ fn append_path_recursive(
     builder.append_dir(&archive_path, path)?;
     let mut member_count = 1;
     for child in collect_direct_children(path)? {
-        member_count +=
-            append_path_recursive(builder, source_root, &child, archive_root, kind, mode)?;
+        member_count += append_path_recursive(builder, &child, context, contents)?;
     }
     Ok(member_count)
 }
@@ -256,13 +276,14 @@ fn append_path_recursive(
 fn destination_for_member(
     member: &Path,
     mode: ArchiveMode,
+    task_id: &str,
     workspace_path: &Path,
     home_path: &Path,
 ) -> Option<Destination> {
     let clean = clean_relative_path(member)?;
     let (kind, relative) = split_member(&clean);
 
-    if should_skip_restore_member(kind, mode, &relative) {
+    if should_skip_restore_member(kind, mode, task_id, &relative) {
         return None;
     }
 
@@ -289,30 +310,55 @@ fn split_member(path: &Path) -> (TreeKind, PathBuf) {
     (TreeKind::Workspace, path.to_owned())
 }
 
-fn should_skip_archive_member(kind: TreeKind, mode: ArchiveMode, relative: &Path) -> bool {
+fn should_skip_archive_member(
+    kind: TreeKind,
+    mode: ArchiveMode,
+    task_id: &str,
+    relative: &Path,
+) -> bool {
     if relative.as_os_str().is_empty() {
         return true;
     }
     if kind == TreeKind::Home
         && mode == ArchiveMode::Executor
-        && !is_executor_home_allowed(relative)
+        && !is_executor_home_allowed(relative, task_id)
     {
         return true;
     }
     should_exclude_archive_path(relative)
 }
 
-fn should_skip_restore_member(kind: TreeKind, mode: ArchiveMode, relative: &Path) -> bool {
+fn should_skip_restore_member(
+    kind: TreeKind,
+    mode: ArchiveMode,
+    task_id: &str,
+    relative: &Path,
+) -> bool {
     if relative.as_os_str().is_empty() || should_exclude_archive_path(relative) {
         return true;
     }
-    kind == TreeKind::Home && mode == ArchiveMode::Executor && !is_executor_home_allowed(relative)
+    kind == TreeKind::Home
+        && mode == ArchiveMode::Executor
+        && !is_executor_home_allowed(relative, task_id)
 }
 
-fn is_executor_home_allowed(relative: &Path) -> bool {
-    relative.components().next().is_some_and(|component| {
+fn is_executor_home_allowed(relative: &Path, task_id: &str) -> bool {
+    if relative.components().next().is_some_and(|component| {
         component.as_os_str() == ".claude" || component.as_os_str() == ".claude.json"
-    })
+    }) {
+        return true;
+    }
+
+    let executor_root = Path::new(".wegent-executor");
+    let sessions_root = executor_root.join("sessions");
+    let task_session_root = sessions_root.join(task_id);
+    relative == executor_root
+        || relative == sessions_root
+        || relative == task_session_root
+        || relative
+            .parent()
+            .is_some_and(|parent| parent == task_session_root)
+            && relative.file_name().is_some_and(is_session_marker_name)
 }
 
 fn should_exclude_archive_path(relative: &Path) -> bool {
@@ -365,9 +411,56 @@ fn is_restorable_entry(entry_type: EntryType) -> bool {
     entry_type.is_file() || entry_type.is_dir() || entry_type.is_symlink()
 }
 
-fn is_session_archive_member(path: &Path) -> bool {
-    path.file_name()
-        .is_some_and(|name| name.to_string_lossy().starts_with(".claude_session_id"))
+fn is_session_archive_member(path: &Path, task_id: &str) -> bool {
+    let Some(clean) = clean_relative_path(path) else {
+        return false;
+    };
+    let (kind, relative) = split_member(&clean);
+    is_session_relative_path(kind, &relative, task_id)
+}
+
+fn is_session_relative_path(kind: TreeKind, relative: &Path, task_id: &str) -> bool {
+    match kind {
+        TreeKind::Workspace => {
+            relative
+                .parent()
+                .is_some_and(|parent| parent.as_os_str().is_empty())
+                && relative.file_name().is_some_and(is_session_marker_name)
+        }
+        TreeKind::Home => {
+            let task_session_root = Path::new(".wegent-executor").join("sessions").join(task_id);
+            relative
+                .parent()
+                .is_some_and(|parent| parent == task_session_root)
+                && relative.file_name().is_some_and(is_session_marker_name)
+        }
+    }
+}
+
+fn is_session_marker_name(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy();
+    name == ".claude_session_id"
+        || name
+            .strip_prefix(".claude_session_id_")
+            .is_some_and(|suffix| {
+                !suffix.is_empty()
+                    && suffix
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            })
+}
+
+fn is_valid_session_marker_file(path: &Path) -> bool {
+    fs::read_to_string(path)
+        .ok()
+        .is_some_and(|value| is_valid_session_identifier(value.trim()))
+}
+
+fn is_valid_session_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 fn has_component(path: &Path, component: &str) -> bool {
