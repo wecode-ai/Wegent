@@ -22,10 +22,12 @@ describe('getAigcVideoPlaybackUrl', () => {
     expect(getAigcVideoPlaybackUrl(source)).toBe(source)
   })
 
-  it('keeps Sina image CDN URLs direct', () => {
+  it('routes Sina image CDN URLs through the image proxy', () => {
     const source = 'https://wx1.sinaimg.cn/large/example.jpg'
 
-    expect(getAigcVideoImageUrl(source)).toBe(source)
+    expect(getAigcVideoImageUrl(source)).toBe(
+      `/api/aigc-video/media/image?image_url=${encodeURIComponent(source)}`
+    )
   })
 
   it('routes Weibo video CDN covers through the image proxy', () => {

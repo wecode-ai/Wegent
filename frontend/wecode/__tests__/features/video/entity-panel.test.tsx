@@ -56,7 +56,10 @@ describe('EntityPanel', () => {
 
     expect(await screen.findByTestId('entity-panel')).toBeInTheDocument()
     expect(mockListEntities).toHaveBeenCalledWith(27)
-    expect(screen.getByTestId('entity-image-101')).toHaveAttribute('src', imageUrl)
+    expect(screen.getByTestId('entity-image-101')).toHaveAttribute(
+      'src',
+      `/api/aigc-video/media/image?image_url=${encodeURIComponent(imageUrl)}`
+    )
     expect(screen.getAllByText('星际观察员')).toHaveLength(2)
     expect(screen.getByText('站在深空观测站中的年轻观察员')).toBeInTheDocument()
   })
