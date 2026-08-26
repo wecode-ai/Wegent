@@ -23,6 +23,7 @@ import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCa
 import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
@@ -4430,7 +4431,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   chatContentResizing && 'transition-none'
                 )}
                 contentFooter={
-                  isCreatingWorktree ? <WorktreeCreationStatus className="py-8" /> : undefined
+                  isCreatingWorktree ? (
+                    <WorktreeCreationStatus className="py-8" />
+                  ) : (
+                    <PluginWorkspaceConversationResult
+                      taskId={currentRuntimeTask?.taskId}
+                      workspacePath={currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath}
+                      messages={paneMessages}
+                      waiting={paneSession.status.isWaitingForAssistantIndicator}
+                      onOpenFile={path => void openWorkspaceFileFromMessage(path)}
+                      onSendAction={(message, additionalContext) =>
+                        paneSession.send(message, { additionalContext })
+                      }
+                    />
+                  )
                 }
                 contentFooterClassName={DESKTOP_MESSAGE_LIST_WIDTH_CLASS}
                 stickyFooterClassName={cn(

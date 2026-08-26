@@ -577,6 +577,10 @@ class SubtaskStore(Protocol):
         self, db: Session, *, subtask_id: int, owner_user_id: Optional[int] = None
     ) -> Optional[Subtask]: ...
 
+    def get_basic_by_id_for_update(
+        self, db: Session, *, subtask_id: int, owner_user_id: Optional[int] = None
+    ) -> Optional[Subtask]: ...
+
     def get_by_id_and_role(
         self,
         db: Session,

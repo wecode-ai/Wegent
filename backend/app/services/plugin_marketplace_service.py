@@ -763,6 +763,7 @@ class PluginMarketplaceService:
         *,
         user_id: int,
         request: PluginSubmissionInitRequest,
+        task_binding: tuple[int, int] | None = None,
     ) -> PluginSubmissionInitResponse:
         self._validate_slug(request.slug)
         self._validate_version(request.version)
@@ -849,6 +850,16 @@ class PluginMarketplaceService:
                     "filename": request.filename,
                     "requestedVisibility": visibility,
                     **({"pendingAccess": pending_access} if pending_access else {}),
+                    **(
+                        {
+                            "taskBinding": {
+                                "taskId": task_binding[0],
+                                "subtaskId": task_binding[1],
+                            }
+                        }
+                        if task_binding
+                        else {}
+                    ),
                 },
                 created_by_user_id=user_id,
             )
@@ -954,6 +965,26 @@ class PluginMarketplaceService:
         db.refresh(submission)
         return self._submission_item(submission)
 
+    def ensure_submission_task_binding(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        submission_id: int,
+        task_id: int,
+        subtask_id: int,
+    ) -> None:
+        """Ensure a task token only operates on its own submission."""
+        submission = self._owned_submission(db, user_id, submission_id)
+        release = db.get(PluginRelease, submission.release_id)
+        report = release.scan_report_json if release else {}
+        binding = report.get("taskBinding") if isinstance(report, dict) else None
+        if not isinstance(binding, dict) or binding != {
+            "taskId": task_id,
+            "subtaskId": subtask_id,
+        }:
+            raise HTTPException(status_code=404, detail="Submission not found")
+
     def _resolve_submission_visibility(
         self, request: PluginSubmissionInitRequest
     ) -> str:
@@ -1050,6 +1081,7 @@ class PluginMarketplaceService:
             staging_report = release.scan_report_json or {}
             requested_visibility = staging_report.get("requestedVisibility")
             pending_access = staging_report.get("pendingAccess")
+            task_binding = staging_report.get("taskBinding")
             scanned_report = self._scan_report(
                 parsed,
                 security_report,
@@ -1063,6 +1095,8 @@ class PluginMarketplaceService:
                 scanned_report["requestedVisibility"] = requested_visibility
             if isinstance(pending_access, dict):
                 scanned_report["pendingAccess"] = pending_access
+            if isinstance(task_binding, dict):
+                scanned_report["taskBinding"] = task_binding
             release.scan_report_json = scanned_report
             if submission.purpose == "restricted_share":
                 plugin.visibility = "personal"

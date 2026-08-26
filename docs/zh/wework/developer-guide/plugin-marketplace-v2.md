@@ -155,28 +155,34 @@ sequenceDiagram
 
 Wework 调用目录、安装、更新和卸载接口时携带本机 Executor 的稳定 `device_id`。目录中的“已安装”只在该设备 `state=installed` 且 `actual_release_id` 等于账号期望 Release 时成立；账号已有安装意图但当前设备为 `pending/failed` 时仍显示可安装和具体设备错误。一次操作只因当前设备失败而返回 `502`，其他设备失败记录在 `plugin_device_installations` 并等待重连补同步。设备 WebSocket 重连完成后会再次回写逐插件结果，清除已完成的卸载或旧失败状态。
 
-### 本地创建与发布
+### Plugin Creator 创建与发布
 
 ```mermaid
 flowchart LR
-  A[创建插件或 Skill] --> B[wework-personal]
-  B --> C[Codex App Server 本地安装]
-  C --> D[我创建的]
-  D -->|显式发布| E[本地校验与 SHA256]
-  E --> F[签名 URL 直传对象存储]
-  F --> G[服务端路径/大小/敏感文件扫描]
-  G --> H[人工审核]
-  H -->|通过| I[不可变 Release]
-  H -->|拒绝| J[修改后新版本重投]
+  A[创建插件或 Skill] --> B{执行设备}
+  B -->|本机| C[wework-personal]
+  C --> D[Codex App Server 本地安装]
+  D --> E[我创建的]
+  B -->|云端| F[Task 工作区源码]
+  F --> G[对话结果卡]
+  E -->|显式发布| H[重新校验、打包与 SHA256]
+  G -->|显式分享或发布| H
+  H --> I[签名 URL 直传对象存储]
+  I --> J[服务端路径/大小/敏感文件扫描]
+  J --> K{发布范围}
+  K -->|人| L[扫描通过后生效]
+  K -->|组织或全部| M[人工审核]
+  M -->|通过| N[不可变 Release]
+  M -->|拒绝| O[修改后新版本重投]
 ```
 
-本地创建不会产生云端 Plugin、Release 或包。发布完成后，本地原件仍是“我创建的 · 已发布”，不会被市场副本替换。
+创建阶段不会产生云端 Plugin、Release 或包。本机创建继续写入 `wework-personal`；云端 Plugin Creator 只把源码写入当前 Task 工作区，并在现有对话消息中保存结果标记。它不新增草稿表，也不会把未发布内容合并到插件中心。后续回到原对话点击“查看插件”“分享”或“发布”时，系统恢复同一个 Task 工作区并重新校验、打包；Task 被永久删除后，未发布源码也随之不可用。
 
 发布入口统一为「人 / 组织 / 全部」三个范围：`visibility=personal` 对应定向分享（扫描通过后立即生效，`purpose=restricted_share`）；`workspace` / `public` 进入人工审核（`purpose=marketplace_publish`）。个人范围可在投稿时携带 `targets` 与 `allowCopy`，服务端在 init 阶段校验接收者，并在扫描通过后写入 `resource_members`。
 
-创建任务应写入受管市场 `wework-personal`。若 Plugin Creator 仍落到 Codex 默认 `personal`（`~/plugins` + `~/.agents`），列表刷新与发布打包前会把插件原子迁入 `wework-personal`、同步市场清单并优先以该市场为准，避免重复条目。
+本机创建任务应写入受管市场 `wework-personal`。若本机 Plugin Creator 仍落到 Codex 默认 `personal`（`~/plugins` + `~/.agents`），列表刷新与发布打包前会把插件原子迁入 `wework-personal`、同步市场清单并优先以该市场为准，避免重复条目。云端创建必须限制在 `$WEGENT_TASK_WORKSPACE/plugins/<plugin-name>`，不得写入 `$HOME` 或个人 Marketplace。
 
-Wework 的“发布到市场”不要求用户手工选择 ZIP。Electron 根据本地 Marketplace 和插件键定位目录，原生打包并校验 `.codex-plugin/plugin.json`、符号链接、越界路径、50 MB 压缩包上限和 200 MB 展开上限；单 Skill Plugin 自动以 `listing_type=skill` 投稿。
+Wework 的“发布到市场”不要求用户手工选择 ZIP。本机插件由 Electron 根据 Marketplace 和插件键定位、原生打包，云端插件由当前 Task 的 Executor 对工作区源码打包。两条路径都校验 `.codex-plugin/plugin.json`、符号链接、越界路径和 50 MB 压缩包上限，并复用现有投稿、对象存储、扫描、ACL 与审核接口；服务端扫描继续执行 200 MB 展开上限，单 Skill Plugin 自动以 `listing_type=skill` 投稿。
 
 ### 定向分享与个人副本
 

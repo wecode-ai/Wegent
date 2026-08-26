@@ -74,13 +74,14 @@ cloud_segments=(
   automation-lifecycle
   project-automation
   plugin-auto-update
+  plugin-workspace-publication
 )
 # Group checkpoints by observed Cloud CI duration and order each shard from
 # longest to shortest so the eight serial runners finish at similar times.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
   conversation-state,supervisor-lifecycle,priority-filter,plugin-auto-update
-  model-routing,cloud-worktree-queued-cancel,telemetry-consent
+  model-routing,cloud-worktree-queued-cancel,telemetry-consent,plugin-workspace-publication
   window-lifecycle,cloud-project-creation,cloud-worktree-capability
   project-automation,automation-lifecycle,workspace-tabs
   resilience,cloud-worktree-device-restart,browser-multi-tabs
