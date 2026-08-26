@@ -110,32 +110,31 @@ class SqlAlchemySubtaskStore:
         executor_namespace = ""
         executor_name = ""
         executor_deleted_at = False
-        previous = (
-            db.query(
-                Subtask.executor_namespace,
-                Subtask.executor_name,
-                Subtask.executor_deleted_at,
-            )
-            .filter(
-                Subtask.task_id == task_id,
-                Subtask.role == SubtaskRole.ASSISTANT,
-                Subtask.executor_name != "",
-                Subtask.executor_name.isnot(None),
-            )
-            .order_by(Subtask.id.desc())
-            .first()
-        )
-        if previous:
-            executor_namespace = previous.executor_namespace or ""
-            executor_name = previous.executor_name or ""
-            executor_deleted_at = bool(previous.executor_deleted_at)
-        else:
-            # Fall back to the task-level executor reference persisted when a
-            # ChatGPT-style message edit deleted the original assistant subtask.
-            reference = self._take_task_executor_reference(db, task_id=task_id)
+        reference = self._take_task_executor_reference(db, task_id=task_id)
+        if reference.name:
             executor_namespace = reference.namespace
             executor_name = reference.name
             executor_deleted_at = reference.deleted_at
+        else:
+            previous = (
+                db.query(
+                    Subtask.executor_namespace,
+                    Subtask.executor_name,
+                    Subtask.executor_deleted_at,
+                )
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.role == SubtaskRole.ASSISTANT,
+                    Subtask.executor_name != "",
+                    Subtask.executor_name.isnot(None),
+                )
+                .order_by(Subtask.id.desc())
+                .first()
+            )
+            if previous:
+                executor_namespace = previous.executor_namespace or ""
+                executor_name = previous.executor_name or ""
+                executor_deleted_at = bool(previous.executor_deleted_at)
 
         subtask = Subtask(
             user_id=user_id,

@@ -302,12 +302,22 @@ def test_edit_user_message_persists_executor_reference_for_reuse(
     test_db.add(_task(109, owner_id=10))
     test_db.add_all(
         [
-            _subtask(subtask_id=1091, task_id=109, user_id=10, message_id=1),
+            _subtask(subtask_id=1089, task_id=109, user_id=10, message_id=1),
+            _subtask(
+                subtask_id=1090,
+                task_id=109,
+                user_id=10,
+                message_id=2,
+                role=SubtaskRole.ASSISTANT,
+                executor_namespace="wb-plat-ide",
+                executor_name="wegent-task-user-old",
+            ),
+            _subtask(subtask_id=1091, task_id=109, user_id=10, message_id=3),
             _subtask(
                 subtask_id=1092,
                 task_id=109,
                 user_id=10,
-                message_id=2,
+                message_id=4,
                 role=SubtaskRole.ASSISTANT,
                 executor_namespace="wb-plat-ide",
                 executor_name="wegent-task-user-abc123",
@@ -324,7 +334,9 @@ def test_edit_user_message_persists_executor_reference_for_reuse(
         user_id=10,
     )
 
-    assert (returned_subtask_id, message_id, deleted_count) == (1091, 1, 2)
+    assert (returned_subtask_id, message_id, deleted_count) == (1091, 3, 2)
+    assert test_db.get(Subtask, 1089) is not None
+    assert test_db.get(Subtask, 1090) is not None
     assert test_db.get(Subtask, 1091) is None
     assert test_db.get(Subtask, 1092) is None
 
@@ -343,8 +355,8 @@ def test_edit_user_message_persists_executor_reference_for_reuse(
         team_id=1,
         title="assistant",
         bot_ids=[],
-        message_id=3,
-        parent_id=1,
+        message_id=4,
+        parent_id=3,
     )
     assert assistant.executor_name == "wegent-task-user-abc123"
     assert assistant.executor_namespace == "wb-plat-ide"

@@ -535,6 +535,10 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
     def _latest_assistant_executor(
         self, db: Session, *, task_id: int
     ) -> tuple[str, str, bool]:
+        reference = self._take_task_executor_reference(db, task_id=task_id)
+        if reference.name:
+            return reference.namespace, reference.name, reference.deleted_at
+
         model = self._subtask_model_for_task_lookup(
             db, task_id=task_id, owner_user_id=None
         )
@@ -554,8 +558,7 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
             .first()
         )
         if previous is None:
-            reference = self._take_task_executor_reference(db, task_id=task_id)
-            return reference.namespace, reference.name, reference.deleted_at
+            return "", "", False
         return (
             previous.executor_namespace or "",
             previous.executor_name or "",
