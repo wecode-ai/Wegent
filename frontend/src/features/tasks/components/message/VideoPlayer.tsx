@@ -246,6 +246,19 @@ export function VideoPlayer({
     [useMessageDisplaySize]
   )
 
+  const messagePlayerStyle = useMessageDisplaySize
+    ? messageDisplaySize
+      ? {
+          width: messageDisplaySize.width,
+          height: messageDisplaySize.height,
+        }
+      : {
+          width: MESSAGE_VIDEO_SHORT_EDGE,
+          height: MESSAGE_VIDEO_SHORT_EDGE,
+          visibility: 'hidden' as const,
+        }
+    : undefined
+
   // Placeholder mode: show loading state with progress
   if (isPlaceholder) {
     return (
@@ -288,14 +301,7 @@ export function VideoPlayer({
         useMessageDisplaySize && 'inline-block',
         className
       )}
-      style={
-        messageDisplaySize
-          ? {
-              width: messageDisplaySize.width,
-              height: messageDisplaySize.height,
-            }
-          : undefined
-      }
+      style={messagePlayerStyle}
       onMouseEnter={() => setShowControls(true)}
       onMouseLeave={() => setShowControls(false)}
       onTouchStart={() => setShowControls(true)}

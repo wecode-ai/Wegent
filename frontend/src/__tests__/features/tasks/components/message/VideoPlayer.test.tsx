@@ -106,6 +106,38 @@ describe('VideoPlayer', () => {
     expect(video).toHaveClass('h-full', 'object-contain')
   })
 
+  it('hides the compact message player until its aspect ratio is known', () => {
+    const { container } = render(
+      <VideoPlayer videoUrl="https://example.com/result.mp4" useMessageDisplaySize />
+    )
+    const player = screen.getByTestId('generated-video-player')
+    const video = container.querySelector('video') as HTMLVideoElement
+
+    expect(player).toHaveStyle({
+      width: '202px',
+      height: '202px',
+      visibility: 'hidden',
+    })
+
+    Object.defineProperties(video, {
+      videoWidth: {
+        configurable: true,
+        value: 720,
+      },
+      videoHeight: {
+        configurable: true,
+        value: 1280,
+      },
+    })
+    fireEvent.loadedMetadata(video)
+
+    expect(player).toHaveStyle({
+      width: '202px',
+      height: '359px',
+    })
+    expect(player).not.toHaveStyle({ visibility: 'hidden' })
+  })
+
   it('seeks backward and forward with the arrow keys', () => {
     const { container } = render(
       <VideoPlayer videoUrl="https://example.com/result.mp4" duration={20} />
