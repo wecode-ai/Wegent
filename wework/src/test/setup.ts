@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom/vitest'
-import { beforeAll, beforeEach } from 'vitest'
+import { beforeEach } from 'vitest'
 import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
-import { clearDshUiModuleCache, importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
+import { clearDshUiModuleCache } from '@/features/dsh-runtime/dshUiModules'
 
 const electronHostInvokePath = '/wework/electron-host/v1/invoke'
 const nativeFetch = globalThis.fetch.bind(globalThis)
@@ -439,15 +439,8 @@ function installStorageGlobal(name: StorageName) {
 installStorageGlobal('localStorage')
 installStorageGlobal('sessionStorage')
 
-beforeAll(async () => {
-  clearDshUiModuleCache()
-  installDefaultDshUiTestModules()
-  await Promise.all(
-    Object.keys(window.__WEWORK_DSH_UI_MODULES__).map(module => importDshUiModule(module))
-  )
-})
-
 beforeEach(() => {
+  clearDshUiModuleCache()
   installDefaultDshUiTestRuntime()
   installDefaultDshUiTestModules()
   testAppPreferences = {}
