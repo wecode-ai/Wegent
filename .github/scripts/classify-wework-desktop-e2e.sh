@@ -25,6 +25,7 @@ core_segments=(
   runtime-terminal-convergence
   running-conversation-history
   codex-notification-isolation
+  executor-stream-recovery
   context-compaction
   split-workbench
   native-window-startup
@@ -118,7 +119,7 @@ core_shards=(
   rendering-extensions
   runtime-task-queue,native-window-startup
   local-harness,running-conversation-history,native-window-chrome
-  codex-notification-isolation,core-dsh-plugin-management
+  codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
   model-routing
 )
 
@@ -530,6 +531,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs)
       select_target "core:codex-notification-isolation"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs)
+      select_target "core:executor-stream-recovery"
       return
       ;;
 

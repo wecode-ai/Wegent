@@ -8,7 +8,7 @@ import { gzipSync } from 'node:zlib'
 import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
 import { LocalEndpointTransport } from './local-endpoint-transport.js'
 
-test('negotiates local endpoint RPC and buffers sequenced events', async () => {
+test('negotiates local endpoint RPC without owning event history', async () => {
   const fixture = await executorFixture()
   const client = new ExecutorRuntimeClient({
     transport: new LocalEndpointTransport({
@@ -16,29 +16,13 @@ test('negotiates local endpoint RPC and buffers sequenced events', async () => {
       token: fixture.token,
       reconnectDelayMs: 10,
     }),
-    bufferSize: 2,
   })
   try {
     await client.start()
     assert.equal(client.describe().protocol_version, 1)
     assert.deepEqual(await client.request('executor.health'), { healthy: true })
-    fixture.broadcast({
-      type: 'event',
-      event: 'task.updated',
-      payload: { id: '1' },
-    })
-    await waitFor(() => client.replay(0).some(event => event.event === 'task.updated'))
-    client.publish({ event: 'task.updated', payload: { id: '2' } })
-    client.publish({ event: 'task.updated', payload: { id: '3' } })
-    client.publish({ event: 'task.updated', payload: { id: '4' } })
-    assert.throws(
-      () => client.replay(1),
-      error => error instanceof ExecutorRuntimeError && error.code === 'event_history_lost'
-    )
-    assert.deepEqual(
-      client.replay(3).map(event => event.sequence),
-      [4]
-    )
+    assert.equal(client.replay, undefined)
+    assert.equal(client.listen, undefined)
     assert.deepEqual(await client.request('codex.app_server_request'), { healthy: true })
     assert.throws(
       () => client.request('untrusted.execute'),
@@ -151,32 +135,29 @@ async function executorFixture(options = {}) {
           continue
         }
         if (message.method === 'executor.protocol.describe') {
-          setTimeout(
-            () => {
-              socket.write(
-                `${JSON.stringify({
-                  type: 'response',
-                  id: message.id,
-                  ok: true,
-                  result: {
-                    protocol_version: 1,
-                    device_id: 'local-device',
-                    capabilities: ['executor.health'],
-                    renderer_methods: ['codex.app_server_request', 'executor.health'],
-                    transports: ['local-endpoint-ndjson'],
-                    features: {
-                      request_response: true,
-                      events: true,
-                      structured_errors: true,
-                      compressed_responses: true,
-                      event_resume: false,
-                    },
+          setTimeout(() => {
+            socket.write(
+              `${JSON.stringify({
+                type: 'response',
+                id: message.id,
+                ok: true,
+                result: {
+                  protocol_version: 1,
+                  device_id: 'local-device',
+                  capabilities: ['executor.health'],
+                  renderer_methods: ['codex.app_server_request', 'executor.health'],
+                  transports: ['local-endpoint-ndjson'],
+                  features: {
+                    request_response: true,
+                    events: true,
+                    structured_errors: true,
+                    compressed_responses: true,
+                    event_resume: false,
                   },
-                })}\n`
-              )
-            },
-            options.descriptionDelayMs ?? 0
-          )
+                },
+              })}\n`
+            )
+          }, options.descriptionDelayMs ?? 0)
         } else {
           const result = options.compressedHealthResponse
             ? {

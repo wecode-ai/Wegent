@@ -72,6 +72,10 @@ Executor 启动的设备命令必须关闭 stdin，不能继承承载 App JSONL 
 
 工具输出事件最多携带 64 KiB，文件变化事件中的 diff 预览最多携带 128 KiB；完整 patch 仍保存在可读取的 artifact 中。Wework 收到 `executor.event_lagged` 后会重新拉取当前任务和全部运行中任务的 transcript，并使用稳定的客户端消息 ID 将 transcript 与尚未落盘的乐观用户消息合并。因此任务切换或事件积压后，运行状态、用户输入和 AI 输出会从同一份恢复结果重新收敛。
 
+Wework 的 DSH 通道通过独立的本地 endpoint 连接订阅 executor 事件。事件序号、断线重放和历史丢失检测全部由 executor 负责：executor 为事件分配单调递增的 `sequence`，并维护同时受 4096 条事件和 8 MiB 限制的内存日志；客户端重连时携带最后已消费的序号，executor 原子地返回其后的日志快照并继续发送实时事件，避免快照与订阅之间的竞态。请求序号已经落后于日志窗口或超出当前最新序号时，executor 发送带 `event_history_lost` 原因的 `executor.event_lagged`，由 Wework 通过 transcript 重新收敛。
+
+Electron 层不保存事件日志、不生成序号，也不实现重放或合并策略。它只把 executor 的专用事件 socket 桥接为 renderer 使用的 SSE；如果 `res.write()` 表示浏览器端产生 HTTP 背压，Electron 会关闭上游 socket 和当前 SSE，让 renderer 使用最后已消费的 executor 序号重新连接。这样锁屏、系统休眠或 renderer reload 不会让未消费事件在 Electron 中无界增长，也不会把流正确性绑定到 Electron 的调度状态。
+
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本地 app IPC 端点服务 Wework App 和 core DSH，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
 ### Executor 启动环境与 Codex Home 初始化
