@@ -100,6 +100,16 @@ describe('desktop resource migration', () => {
     expect(source).toContain('linux_${installerArchitecture}\\\\.AppImage')
   })
 
+  test('signs legacy updater assets through the Windows command interpreter', async () => {
+    const source = await readFile(
+      join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
+      'utf8'
+    )
+
+    expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
+    expect(source).toContain('wrapWindowsScriptCommand(command, args)')
+  })
+
   test('desktop E2E reuses packaged Harness runtime assets', async () => {
     const source = await readFile(
       join(weworkRoot, 'e2e/desktop/modules/desktop-build-flows.mjs'),

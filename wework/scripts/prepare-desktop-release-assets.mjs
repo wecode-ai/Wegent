@@ -6,8 +6,11 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { create } from 'tar'
 
+import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+
 const weworkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const installerRoot = join(weworkRoot, 'electron', 'release-installer')
+const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const [platform, arch, version, outputDirectory] = process.argv.slice(2)
 
 if (!platform || !arch || !version || !outputDirectory) {
@@ -62,7 +65,7 @@ async function signBridge(path) {
     throw new Error('TAURI_SIGNING_PRIVATE_KEY is required for legacy updater bridge assets.')
   }
   await run(
-    'pnpm',
+    pnpmCommand,
     ['--dir', join(weworkRoot, 'electron'), 'exec', 'tauri', 'signer', 'sign', path],
     weworkRoot
   )
@@ -98,7 +101,8 @@ function escape(value) {
 
 function run(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { cwd, stdio: 'inherit' })
+    const resolved = wrapWindowsScriptCommand(command, args)
+    const child = spawn(resolved.command, resolved.args, { cwd, stdio: 'inherit' })
     child.once('error', reject)
     child.once('exit', code => {
       if (code === 0) resolvePromise()
