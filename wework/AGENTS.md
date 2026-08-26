@@ -97,7 +97,7 @@ pnpm --filter wework ai:verify close-to-tray --session <session-path>
 pnpm --filter wework ai:verify stop --session <session-path>
 ```
 
-- `start` prepares and launches Electron directly from the source application directory, waits for the WebView, creates an isolated executor home, links local Codex authentication only for that session, and gives the app its own stdio-managed executor child. Use `start --packaged true` only when validating the final app bundle, packaged resources, or macOS application identity.
+- `start` prepares and launches Electron directly from the source application directory, waits for the WebView, creates an isolated executor home, links local Codex authentication only for that session, and gives the app its own stdio-managed executor child. `start --packaged true` builds the app bundle before launching it; use that mode only when validating packaged resources or macOS application identity.
 - Use `start --codex-home-initialization true` to verify the first-run Codex migration flow with a session-local native Codex home and synthetic authentication; it does not read or modify personal Codex credentials.
 - Session files and credentials are secrets: never print their contents. Always stop the session; it removes the auth link and terminates the isolated process group.
 - Begin with `snapshot`, use existing `data-testid` selectors, and assert a visible text or stable element after each critical action.
