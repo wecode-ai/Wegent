@@ -1,7 +1,9 @@
 import {
   describeDshExecutor,
   DshExecutorTransportError,
+  reconnectDshExecutorEvents,
   requestDshExecutor,
+  subscribeDshExecutorEvents,
 } from './executorTransport'
 
 describe('DSH executor transport', () => {
@@ -88,4 +90,71 @@ describe('DSH executor transport', () => {
       retryable: true,
     })
   })
+
+  test('replaces a stale executor event stream after system resume', () => {
+    const sources: FakeEventSource[] = []
+    vi.stubGlobal(
+      'EventSource',
+      class extends FakeEventSource {
+        constructor(url: string) {
+          super(url)
+          sources.push(this)
+        }
+      }
+    )
+    const listener = vi.fn()
+    const unsubscribe = subscribeDshExecutorEvents(listener)
+
+    expect(sources).toHaveLength(1)
+    sources[0].onmessage?.({
+      data: JSON.stringify({
+        protocolVersion: 1,
+        sequence: 7,
+        emittedAt: '2026-08-25T00:00:00.000Z',
+        event: 'response.output_text.delta',
+        payload: { taskId: 'task-1', delta: 'before sleep' },
+      }),
+    } as MessageEvent)
+
+    reconnectDshExecutorEvents()
+
+    expect(sources).toHaveLength(2)
+    expect(sources[0].closed).toBe(true)
+    expect(sources[1].url).toBe('/wework/executor/v1/events?after=7')
+
+    sources[0].onmessage?.({
+      data: JSON.stringify({
+        protocolVersion: 1,
+        sequence: 8,
+        emittedAt: '2026-08-25T00:00:01.000Z',
+        event: 'response.output_text.delta',
+        payload: { taskId: 'task-1', delta: 'stale' },
+      }),
+    } as MessageEvent)
+    sources[1].onmessage?.({
+      data: JSON.stringify({
+        protocolVersion: 1,
+        sequence: 8,
+        emittedAt: '2026-08-25T00:00:01.000Z',
+        event: 'response.output_text.delta',
+        payload: { taskId: 'task-1', delta: 'after wake' },
+      }),
+    } as MessageEvent)
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    unsubscribe()
+    expect(sources[1].closed).toBe(true)
+  })
 })
+
+class FakeEventSource {
+  onmessage: ((event: MessageEvent) => void) | null = null
+  onerror: (() => void) | null = null
+  closed = false
+
+  constructor(readonly url: string) {}
+
+  close() {
+    this.closed = true
+  }
+}

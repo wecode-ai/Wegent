@@ -20,6 +20,7 @@ import type {
   PluginSubmissionInitResponse,
   PluginSubmissionItem,
 } from '@/types/api'
+import { sha256Hex } from './fileHash'
 import type { HttpClient } from './http'
 
 export interface PluginShareUserSearchItem {
@@ -165,10 +166,7 @@ export function createPluginApi(client: HttpClient) {
         | 'allowCopy'
       >
     ): Promise<PluginSubmissionCompleteResponse> {
-      const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-      const sha256 = Array.from(new Uint8Array(digest), byte =>
-        byte.toString(16).padStart(2, '0')
-      ).join('')
+      const sha256 = await sha256Hex(file)
       const initialized = await client.post<PluginSubmissionInitResponse>(
         '/plugins/submissions/init',
         {

@@ -1,17 +1,16 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from '@/lib/runtime-environment'
-import { copyLocalExecutorDebugInfo } from '@/desktop/localExecutor'
 
 export async function copyTextToClipboard(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch (error) {
+      if (!isElectronRuntime()) throw error
+    }
   }
 
-  if (isElectronRuntime()) {
-    await copyLocalExecutorDebugInfo(text)
-    return
-  }
   if (isElectronRuntime()) {
     await invokeDesktopHost<void>('clipboard.writeText', { text })
     return

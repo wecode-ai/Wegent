@@ -168,6 +168,7 @@ export interface WorkbenchServices {
   executorClient?: ExecutorClient
   userApi?: ReturnType<typeof createUserApi>
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
+  recoverRuntimeConnections?: () => Promise<void>
   projectChatClient?: ProjectChatClient
   localProjectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>

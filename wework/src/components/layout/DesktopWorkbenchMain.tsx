@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
+import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
@@ -3711,7 +3712,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
   const openWorkspaceFileFromMessage = useCallback(
     async (path: string, options?: WorkspaceFileOpenOptions) => {
-      const trimmedPath = path.trim()
+      const trimmedPath = decodeMarkdownFilePath(path.trim())
       if (!trimmedPath) return
       const attachmentTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
       const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices)

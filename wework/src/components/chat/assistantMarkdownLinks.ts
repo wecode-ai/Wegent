@@ -14,6 +14,22 @@ export type MarkdownLinkTarget =
     }
 
 const HTML_FILE_PATTERN = /\.(?:html?|xhtml)$/i
+// Protected Markdown links may be encoded again by intermediate URL normalizers.
+const MAX_MARKDOWN_FILE_PATH_DECODE_PASSES = 16
+
+export function decodeMarkdownFilePath(path: string): string {
+  let decodedPath = path
+  for (let pass = 0; pass < MAX_MARKDOWN_FILE_PATH_DECODE_PASSES; pass += 1) {
+    try {
+      const nextPath = decodeURIComponent(decodedPath)
+      if (nextPath === decodedPath) return decodedPath
+      decodedPath = nextPath
+    } catch {
+      return decodedPath
+    }
+  }
+  return decodedPath
+}
 
 // Assistant responses frequently reference repository files with relative or
 // absolute filesystem paths. Rendering those as plain anchors makes the browser
@@ -32,7 +48,7 @@ export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
     try {
       return {
         kind: 'file',
-        path: decodeURIComponent(value.slice('folder://'.length)),
+        path: decodeMarkdownFilePath(value.slice('folder://'.length)),
         isDirectory: true,
       }
     } catch {
@@ -43,7 +59,10 @@ export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
     return { kind: 'file', ...splitMarkdownFileLineSuffix(localPathFromMarkdownImageSrc(value)) }
   }
   if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return { kind: 'external' }
-  return { kind: 'file', ...splitMarkdownFileLineSuffix(value) }
+  return {
+    kind: 'file',
+    ...splitMarkdownFileLineSuffix(decodeMarkdownFilePath(value)),
+  }
 }
 
 export function isHtmlFilePath(path: string): boolean {

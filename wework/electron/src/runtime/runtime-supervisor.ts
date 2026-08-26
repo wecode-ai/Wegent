@@ -108,7 +108,7 @@ export class RuntimeSupervisor extends EventEmitter<RuntimeSupervisorEvents> {
     this.child = child
     this.attach(child)
     this.emit('spawn', child)
-    await this.writeLog('supervisor', `spawned pid=${child.pid ?? 'unknown'}`)
+    void this.writeLog('supervisor', `spawned pid=${child.pid ?? 'unknown'}`)
 
     try {
       await spawned

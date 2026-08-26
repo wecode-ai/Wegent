@@ -26,8 +26,11 @@ const mocks = vi.hoisted(() => {
   const cloudCreateDockerRemoteDeviceCommand = vi.fn()
   const cloudRuntimeIpcRequest = vi.fn()
   const cloudRuntimeIpcSubscribe = vi.fn(async () => vi.fn())
+  const cloudRuntimeIpcReconnect = vi.fn().mockResolvedValue(undefined)
   const localChatStreamSubscribe = vi.fn(() => vi.fn())
   const cloudRuntimeChatStreamSubscribe = vi.fn(() => vi.fn())
+  const localRecoverRuntimeConnections = vi.fn().mockResolvedValue(undefined)
+  const cloudRecoverRuntimeConnections = vi.fn().mockResolvedValue(undefined)
   const readElectronLocalFile = vi.fn()
   const localUploadAttachment = vi.fn()
   const localDeleteAttachment = vi.fn()
@@ -101,6 +104,7 @@ const mocks = vi.hoisted(() => {
       deleteAttachment: localDeleteAttachment,
     },
     chatStream: { subscribe: localChatStreamSubscribe },
+    recoverRuntimeConnections: localRecoverRuntimeConnections,
   }
 
   const cloudServices = {
@@ -143,6 +147,7 @@ const mocks = vi.hoisted(() => {
     userApi: { updateCurrentUser: cloudUpdateCurrentUser },
     chatStream: { subscribe: vi.fn(() => vi.fn()) },
     socketClient: { ensureConnected: vi.fn(), dispose: vi.fn() },
+    recoverRuntimeConnections: cloudRecoverRuntimeConnections,
     workspaceSessionApi: cloudWorkspaceSessionApi,
   }
 
@@ -169,8 +174,11 @@ const mocks = vi.hoisted(() => {
     cloudCreateDockerRemoteDeviceCommand,
     cloudRuntimeIpcRequest,
     cloudRuntimeIpcSubscribe,
+    cloudRuntimeIpcReconnect,
     localChatStreamSubscribe,
     cloudRuntimeChatStreamSubscribe,
+    localRecoverRuntimeConnections,
+    cloudRecoverRuntimeConnections,
     readElectronLocalFile,
     localUploadAttachment,
     localDeleteAttachment,
@@ -304,6 +312,7 @@ vi.mock('@/api/backend/runtimeIpc', () => ({
   createCloudRuntimeIpcClient: () => ({
     request: mocks.cloudRuntimeIpcRequest,
     subscribe: mocks.cloudRuntimeIpcSubscribe,
+    reconnect: mocks.cloudRuntimeIpcReconnect,
     dispose: vi.fn(),
   }),
 }))
@@ -513,6 +522,16 @@ describe('createHybridWorkbenchServices', () => {
       file_extension: '.png',
       created_at: '2026-08-11T00:00:00.000Z',
     })
+  })
+
+  it('recovers local and cloud runtime transports together', async () => {
+    const services = createServices()
+
+    await services.recoverRuntimeConnections?.()
+
+    expect(mocks.localRecoverRuntimeConnections).toHaveBeenCalledTimes(1)
+    expect(mocks.cloudRecoverRuntimeConnections).toHaveBeenCalledTimes(1)
+    expect(mocks.cloudRuntimeIpcReconnect).toHaveBeenCalledTimes(1)
   })
 
   it('reads a local attachment through the Electron host before uploading it to cloud', async () => {

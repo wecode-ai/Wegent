@@ -16,17 +16,21 @@
     "title": "Projects",
     "empty": "No projects, click + to create"
   },
+  "createMenu": {
+    "title": "Create project or group"
+  },
   "actions": {
+    "menu": "More actions",
     "edit": "Edit",
     "delete": "Delete"
   },
   "create": {
-    "title": "New Project",
-    "description": "Create a new project to organize your tasks",
-    "nameLabel": "Project Name",
-    "namePlaceholder": "Enter project name",
+    "title": "New Group",
+    "description": "Create a new group to organize your conversations",
+    "nameLabel": "Group Name",
+    "namePlaceholder": "Enter group name",
     "descriptionLabel": "Description (optional)",
-    "descriptionPlaceholder": "Enter project description",
+    "descriptionPlaceholder": "Enter group description",
     "colorLabel": "Color",
     "submit": "Create",
     "cancel": "Cancel"
