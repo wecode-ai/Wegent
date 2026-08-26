@@ -900,6 +900,9 @@ export interface ProjectTask {
   task_id: number
   task_title: string
   task_status: TaskStatus
+  device_id?: string | null
+  execution_workspace_source?: string | null
+  execution_workspace_path?: string | null
   is_group_chat: boolean
   project_id: number
   updated_at?: string | null

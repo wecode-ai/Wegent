@@ -6,10 +6,6 @@ interface TeamListResponse {
   items: Team[]
 }
 
-function isActive(team: Team): boolean {
-  return team.is_active !== false
-}
-
 export function createTeamApi(client: HttpClient) {
   async function listTeams(requestOptions?: Pick<HttpRequestOptions, 'signal'>): Promise<Team[]> {
     const response = requestOptions
@@ -20,15 +16,5 @@ export function createTeamApi(client: HttpClient) {
 
   return {
     listTeams,
-    async getDefaultWorkbenchTeam(): Promise<Team> {
-      const teams = (await listTeams()).filter(isActive)
-      const weworkTeam = teams.find(team => team.default_for_modes?.includes('wework'))
-
-      if (!weworkTeam) {
-        throw new Error('Wework default team is not configured')
-      }
-
-      return weworkTeam
-    },
   }
 }

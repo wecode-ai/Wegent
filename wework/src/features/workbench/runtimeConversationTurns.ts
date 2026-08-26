@@ -913,7 +913,10 @@ function upsertRuntimeBlock(
 
   const existingIndex = items.findIndex(item => item.id === block.id)
   if (existingIndex >= 0) {
-    if (items[existingIndex]?.type === 'assistant_text' && turnStatus === 'done') {
+    if (
+      items[existingIndex]?.type === 'assistant_text' &&
+      (turnStatus === 'done' || block.type === 'text')
+    ) {
       return items
     }
     return upsertBlocks(items, [block])
@@ -1112,7 +1115,7 @@ function mergeProcessingBlockUpdate(
   block: ProcessingBlock,
   updates: Extract<RuntimePaneMessageAction, { type: 'block_updated' }>['updates']
 ): ProcessingBlock {
-  const { durationMs, ...directUpdates } = updates
+  const { contentDelta, durationMs, ...directUpdates } = updates
   let merged = {
     ...block,
     ...directUpdates,
@@ -1121,6 +1124,15 @@ function mergeProcessingBlockUpdate(
       completedAt: block.createdAt + Math.max(0, durationMs),
     }),
   } as ProcessingBlock
+  if (
+    typeof contentDelta === 'string' &&
+    (merged.type === 'thinking' || merged.type === 'text' || merged.type === 'plan')
+  ) {
+    merged = {
+      ...merged,
+      content: `${merged.content}${contentDelta}`,
+    } as ProcessingBlock
+  }
   if (merged.type === 'tool' && block.type === 'tool') {
     merged.toolInput = updates.toolInput ?? block.toolInput
   }

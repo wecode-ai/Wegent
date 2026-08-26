@@ -557,6 +557,13 @@ async function openOptimisticTemporaryRuntimeTask(
   address: RuntimeTaskAddress,
   options: CreateTemporaryRuntimeTaskOptions
 ) {
+  address.runtimeHandle ??= {
+    modelSelection: {
+      modelName: 'test-model',
+      modelType: 'user',
+      options: {},
+    },
+  }
   if (options?.optimisticUserMessage) {
     applyRuntimeConversationAction(address, {
       type: 'user_added',
@@ -792,7 +799,6 @@ describe('DesktopWorkbenchLayout', () => {
   const baseProps = {
     state: {
       user: null,
-      defaultTeam: null,
       projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
       devices: [],
       runtimeWork: null,
@@ -7874,6 +7880,65 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('decodes an encoded assistant file path before opening it in the workspace panel', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const filePath = '/workspace/project/README file.md'
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: filePath,
+      name: 'README file.md',
+      content: 'opened encoded file path',
+      truncated: false,
+      size: 24,
+      modifiedAt: null,
+    })
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [],
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        messages={[
+          {
+            id: 'assistant-encoded-file-link',
+            role: 'assistant',
+            content: '[README file.md](/workspace/project/README%2520file.md)',
+            status: 'done',
+            createdAt: '2026-08-25T08:00:00.000Z',
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'opened encoded file path'
+    )
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      'local-device',
+      filePath,
+      '/workspace/project'
+    )
+    expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(filePath)
+  })
+
   test('opens a markdown directory link in the workspace tree without reading it as a file', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
@@ -8881,12 +8946,17 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('keeps the environment info panel open until its icon is clicked', async () => {
     mockDesktopWorkbenchMainWidth(1024)
+    const environmentRuntimeTask = {
+      ...activeProjectRuntimeTask,
+      deviceId: 'e13e1a10-5377-4a87-a3b3-634a098d0bb4',
+      workspacePath: '/workspace/projects/github_wegent',
+    }
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{
           ...baseProps.state,
-          currentRuntimeTask: activeProjectRuntimeTask,
+          currentRuntimeTask: environmentRuntimeTask,
           currentProject: activeProjectState.currentProject,
           devices: [
             {
@@ -8951,8 +9021,9 @@ describe('DesktopWorkbenchLayout', () => {
     const deviceButton = await screen.findByTestId('environment-device-button')
     expect(deviceSection).toContainElement(deviceButton)
     expect(deviceButton).toHaveTextContent('设备')
-    expect(deviceButton).toHaveTextContent('10.23.45.67')
+    expect(deviceButton).toHaveTextContent('yunpeng7-executor-0bb4')
     expect(deviceButton).not.toHaveTextContent('云设备')
+    expect(deviceButton).not.toHaveTextContent('10.23.45.67')
     expect(deviceButton).not.toHaveTextContent('e13e1a10')
     expect(deviceButton).not.toHaveTextContent('8ef4')
     expect(screen.queryByTestId('environment-device-id')).not.toBeInTheDocument()

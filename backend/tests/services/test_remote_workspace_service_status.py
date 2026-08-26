@@ -104,6 +104,55 @@ def test_status_connected_and_available_via_executor():
     assert status.reason is None
 
 
+def test_executor_alive_returns_true_on_success_payload() -> None:
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+    with patch.object(
+        service,
+        "_get_executor_payload",
+        return_value={"status": "success", "base_url": "http://runtime"},
+    ):
+        result = service.executor_alive("executor-1", "default")
+
+    assert result is True
+
+
+def test_executor_alive_returns_false_on_no_pod_found() -> None:
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+    with patch.object(
+        service,
+        "_get_executor_payload",
+        return_value={
+            "status": "failed",
+            "error_msg": "No pod found for executor executor-1",
+        },
+    ):
+        result = service.executor_alive("executor-1", "default")
+
+    assert result is False
+
+
+def test_executor_alive_treats_transport_failure_as_alive() -> None:
+    """A None payload (network error, non-200, invalid JSON) must NOT trigger recovery."""
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+    with patch.object(service, "_get_executor_payload", return_value=None):
+        result = service.executor_alive("executor-1", "default")
+
+    assert result is True
+
+
+def test_executor_alive_treats_unknown_error_as_alive() -> None:
+    """An unexpected error_msg must NOT trigger recovery; let dispatch surface it."""
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+    with patch.object(
+        service,
+        "_get_executor_payload",
+        return_value={"status": "failed", "error_msg": "Pod is not running"},
+    ):
+        result = service.executor_alive("executor-1", "default")
+
+    assert result is True
+
+
 def test_status_prefers_latest_non_deleted_executor_binding():
     service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
     task_detail = {

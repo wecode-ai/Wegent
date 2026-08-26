@@ -9,6 +9,7 @@ const scripts = [
   'electron/scripts/copy-static.mjs',
   'electron/scripts/package-app.mjs',
   'electron/scripts/prepare-package-assets.mjs',
+  'scripts/dev-mac-app.sh',
   'scripts/prepare-codex-binary.mjs',
   'scripts/prepare-dws-binary.mjs',
   'scripts/prepare-execution-runtime.mjs',
@@ -23,6 +24,7 @@ describe('desktop resource migration', () => {
       'pnpm --dir electron install --frozen-lockfile'
     )
     expect(packageJson.scripts['dev:desktop']).toContain('pnpm run prepare:electron')
+    expect(packageJson.scripts['dev:mac']).toBe('bash scripts/dev-mac-app.sh')
     expect(packageJson.scripts['ai:verify:electron:build']).toContain('pnpm run prepare:electron')
   })
 
@@ -30,6 +32,29 @@ describe('desktop resource migration', () => {
     const source = await readFile(join(weworkRoot, relativePath), 'utf8')
 
     expect(source).not.toContain(legacyRustDesktopDirectory)
+  })
+
+  test('packages production dependencies from the locked Electron workspace', async () => {
+    const source = await readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8')
+
+    expect(source).toContain("'--config.inject-workspace-packages=true'")
+    expect(source).toContain("'--config.node-linker=hoisted'")
+    expect(source).toContain("'deploy',")
+    expect(source).toContain("'--prod',")
+    expect(source).not.toContain("'--legacy'")
+    expect(source).not.toContain("'npm',")
+    expect(source).not.toContain("'install', '--omit=dev'")
+  })
+
+  test('defaults packaged executors to release with an explicit debug E2E profile', async () => {
+    const source = await readFile(
+      join(weworkRoot, 'electron/scripts/prepare-package-assets.mjs'),
+      'utf8'
+    )
+
+    expect(source).toContain("process.env.WEWORK_EXECUTOR_PROFILE?.trim() || 'release'")
+    expect(source).toContain("configured === 'debug' || configured === 'release'")
+    expect(source).toContain("profile === 'release' ? ['--release'] : []")
   })
 
   test.each([

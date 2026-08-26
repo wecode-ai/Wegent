@@ -1444,13 +1444,9 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
 
     expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent(
-      '当前设备未连接到云端，暂时无法安装插件。请恢复连接后重试。'
-    )
-    expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
-      'data-notice-kind',
-      'error'
-    )
+    const notice = await screen.findByTestId('plugin-operation-notice')
+    expect(notice).toHaveTextContent('当前设备未连接到云端，暂时无法安装插件。请恢复连接后重试。')
+    expect(notice).toHaveAttribute('data-notice-kind', 'error')
     expect(
       vi
         .mocked(fetch)

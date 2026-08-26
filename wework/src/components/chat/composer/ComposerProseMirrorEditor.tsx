@@ -75,6 +75,7 @@ interface ComposerProseMirrorEditorProps {
   ) => void
   onClick: () => void
   onFocus: () => void
+  onReady?: () => void
   disabled?: boolean
   placeholder: string
   testId: string
@@ -93,6 +94,7 @@ export const ComposerProseMirrorEditor = forwardRef<
 >(function ComposerProseMirrorEditor(props, forwardedRef) {
   const mountRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const pendingFocusRef = useRef(false)
   const textareaRefRef = useRef(props.textareaRef)
   const callbacksRef = useRef(props)
   const internalValueRef = useRef(props.value)
@@ -112,7 +114,13 @@ export const ComposerProseMirrorEditor = forwardRef<
         return viewRef.current?.dom ?? null
       },
       focus() {
-        viewRef.current?.focus()
+        const view = viewRef.current
+        if (!view) {
+          pendingFocusRef.current = true
+          return
+        }
+        pendingFocusRef.current = false
+        view.focus()
       },
       getSnapshot() {
         return viewRef.current ? readComposerSnapshot(viewRef.current.state) : emptySnapshot()
@@ -408,6 +416,11 @@ export const ComposerProseMirrorEditor = forwardRef<
     ;(textareaRefRef.current as { current: HTMLElement | null }).current = view.dom
     defineComposerValueProperty(view)
     callbacksRef.current.onSnapshotChange(readComposerSnapshot(view.state))
+    callbacksRef.current.onReady?.()
+    if (pendingFocusRef.current) {
+      pendingFocusRef.current = false
+      view.focus()
+    }
 
     return () => {
       if (inputFrameRequest !== null) window.cancelAnimationFrame(inputFrameRequest)

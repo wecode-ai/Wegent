@@ -283,6 +283,29 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let schema_version = payload
+            .get("schemaVersion")
+            .or_else(|| payload.get("schema_version"))
+            .map(|value| {
+                value.as_u64().ok_or_else(|| {
+                    AppIpcError::new(
+                        "bad_request",
+                        "runtime task create schemaVersion must be an integer",
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(1);
+        if !matches!(schema_version, 1 | 2) {
+            return Err(AppIpcError::new(
+                "unsupported_schema_version",
+                format!("runtime task create schemaVersion {schema_version} is unsupported"),
+            ));
+        }
+        if schema_version == 2 {
+            crate::runtime_work::task_create_contract::validate_runtime_task_create_v2(&payload)
+                .map_err(|error| AppIpcError::new("invalid_request", error))?;
+        }
         let runtime = string_field(&payload, "runtime").unwrap_or_else(|| "codex".to_owned());
         if !is_codex_runtime(&runtime) && !is_claude_runtime(&runtime) {
             return Err(AppIpcError::new(
@@ -306,6 +329,38 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         set_runtime_task_title(&mut request, &title);
+        log_executor_event(
+            "runtime task create identity",
+            &[
+                ("task_id", local_task_id.clone()),
+                ("schema_version", schema_version.to_string()),
+                ("device_id", self.device_id.clone()),
+                (
+                    "selected_model",
+                    string_field(&payload, "modelId")
+                        .or_else(|| string_field(&payload, "model_id"))
+                        .unwrap_or_default(),
+                ),
+                (
+                    "selected_model_type",
+                    string_field(&payload, "modelType")
+                        .or_else(|| string_field(&payload, "model_type"))
+                        .unwrap_or_default(),
+                ),
+                (
+                    "upstream_model",
+                    string_field(&request.model_config, "model_id")
+                        .or_else(|| string_field(&request.model_config, "model"))
+                        .unwrap_or_default(),
+                ),
+                (
+                    "upstream_protocol",
+                    string_field(&request.model_config, "protocol")
+                        .or_else(|| string_field(&request.model_config, "api_format"))
+                        .unwrap_or_default(),
+                ),
+            ],
+        );
         if is_codex_runtime(&runtime) {
             if let (Some(project_key), Some(project_name)) = (
                 request.runtime_project_key.as_deref(),
@@ -366,13 +421,25 @@ impl RuntimeWorkRpcHandler {
             .or(inherited_workspace_path)
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| {
-                id_field(&payload, "local_project_id")
-                    .and_then(|value| value.parse::<u64>().ok())
-                    .and_then(|project_id| {
+                request
+                    .runtime_project_key
+                    .as_deref()
+                    .and_then(|project_key| {
                         CodexGlobalProjectIndex::load()
-                            .project_for_ui_id(&self.device_id, project_id)
+                            .project_for_key(project_key)
                             .map(|project| project.workspace_path.clone())
                     })
+            })
+            .or_else(|| {
+                (schema_version == 1).then(|| {
+                    id_field(&payload, "local_project_id")
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .and_then(|project_id| {
+                            CodexGlobalProjectIndex::load()
+                                .project_for_ui_id(&self.device_id, project_id)
+                                .map(|project| project.workspace_path.clone())
+                        })
+                })?
             })
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
             .ok_or_else(|| {
@@ -938,17 +1005,22 @@ impl RuntimeWorkRpcHandler {
         };
         let had_active_local_execution = self.is_active_local_task(&local_task_id);
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
-        if let Some(thread_id) = thread_id.as_deref() {
-            if self
-                .settle_local_execution_from_terminal_codex_turn(
-                    &local_task_id,
-                    thread_id,
-                    "interrupt_and_send_provider_terminal",
-                    PROVIDER_STATE_RECONCILIATION_TIMEOUT,
-                )
-                .await
-            {
-                return self.send_message_after_local_checks(payload).await;
+        if had_active_local_execution {
+            self.request_active_turn_stop(&local_task_id);
+        }
+        if !had_active_local_execution {
+            if let Some(thread_id) = thread_id.as_deref() {
+                if self
+                    .settle_local_execution_from_terminal_codex_turn(
+                        &local_task_id,
+                        thread_id,
+                        "interrupt_and_send_provider_terminal",
+                        PROVIDER_STATE_RECONCILIATION_TIMEOUT,
+                    )
+                    .await
+                {
+                    return self.send_message_after_local_checks(payload).await;
+                }
             }
         }
         let local_stop = self.abort_active_turn(&local_task_id);
@@ -1486,7 +1558,10 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if is_codex {
+        if had_active_local_execution {
+            self.request_active_turn_stop(&local_task_id);
+        }
+        if is_codex && !had_active_local_execution {
             if let Some(thread_id) = thread_id.as_deref() {
                 if self
                     .settle_local_execution_from_terminal_codex_turn(

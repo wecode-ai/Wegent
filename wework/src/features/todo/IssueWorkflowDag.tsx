@@ -25,6 +25,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import type { Delivery, WorkflowNodeInstance } from '@/api/deliveries'
+import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { layoutWorkflowGraph } from './workflowGraph'
@@ -33,6 +34,11 @@ import {
   type WorkflowDeliverableDraft,
 } from './WorkflowStageCompletionDialog'
 import { workflowDeliverableTypeLabel } from './workflowDeliverables'
+import {
+  getCurrentWorkflowNode,
+  isWorkflowNodeCompleted,
+  workflowNodeStatusLabel,
+} from './workflowStagePresentation'
 
 interface WorkflowTaskBinding {
   id: number
@@ -46,6 +52,7 @@ interface IssueWorkflowDagProps {
   nodes: WorkflowNodeInstance[]
   tasks: WorkflowTaskBinding[]
   deliveries?: Delivery[]
+  executionError?: string | null
   selectedTaskId?: string | null
   onCreateTask?: (stageId: string) => void
   onRunAutomation?: (stageId: string, automationRuleId: string) => void | Promise<void>
@@ -75,47 +82,10 @@ type RuntimeStageFlowNode = Node<RuntimeStageNodeData, 'runtimeStage'>
 
 const NODE_WIDTH = 208
 const NODE_HEIGHT = 112
-const CURRENT_STAGE_STATUS_PRIORITY: WorkflowNodeInstance['status'][] = [
-  'running',
-  'awaiting_approval',
-  'awaiting_deliverables',
-  'changes_requested',
-  'failed',
-  'queued',
-  'ready',
-]
 const CURRENT_STAGE_FIT_VIEW_OPTIONS = {
   padding: 0.25,
   maxZoom: 1,
 } as const
-
-function getCurrentWorkflowNodeId(nodes: WorkflowNodeInstance[]): string | null {
-  for (const status of CURRENT_STAGE_STATUS_PRIORITY) {
-    const currentNode = nodes.find(node => node.status === status)
-    if (currentNode) return currentNode.id
-  }
-
-  const lastCompletedNode = nodes.findLast(node =>
-    ['completed', 'forced_completed'].includes(node.status)
-  )
-  return lastCompletedNode?.id ?? nodes[0]?.id ?? null
-}
-
-function workflowNodeStatusLabel(
-  t: (key: string) => string,
-  status: WorkflowNodeInstance['status']
-): string {
-  if (status === 'blocked') return t('todo.workflow_node_blocked')
-  if (status === 'ready') return t('todo.workflow_node_ready')
-  if (status === 'queued') return t('todo.workflow_node_queued')
-  if (status === 'running') return t('todo.workflow_node_running')
-  if (status === 'awaiting_approval') return t('todo.workflow_node_awaiting_approval')
-  if (status === 'awaiting_deliverables') return t('todo.workflow_node_awaiting_deliverables')
-  if (status === 'changes_requested') return t('todo.workflow_node_changes_requested')
-  if (status === 'completed') return t('todo.workflow_node_completed')
-  if (status === 'forced_completed') return t('todo.workflow_node_forced_completed')
-  return t('todo.workflow_node_failed')
-}
 
 function workflowTaskStatusLabel(t: (key: string) => string, status?: string): string {
   if (status === 'running') return t('todo.workflow_task_status_running')
@@ -124,10 +94,6 @@ function workflowTaskStatusLabel(t: (key: string) => string, status?: string): s
   if (status === 'cancelled') return t('todo.workflow_task_status_cancelled')
   if (status === 'archived') return t('todo.workflow_task_status_archived')
   return t('todo.workflow_task_status_pending')
-}
-
-function isWorkflowNodeCompleted(status: WorkflowNodeInstance['status']): boolean {
-  return status === 'completed' || status === 'forced_completed'
 }
 
 function requirementDelivery(
@@ -150,6 +116,7 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
   const { t } = useTranslation('common')
   const { stage, tasks, selected, onSelect } = data
   const statusLabel = workflowNodeStatusLabel(t, stage.status)
+  const automated = workflowNodeExecutionMode(stage) === 'robot'
 
   return (
     <article
@@ -172,14 +139,8 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
       <header className="min-w-0">
         <span className="block truncate text-sm font-medium text-text-primary">{stage.name}</span>
         <span className="issue-workflow-node-kind">
-          {stage.automation_rule_id ? (
-            <Bot className="h-3.5 w-3.5" />
-          ) : (
-            <UserRound className="h-3.5 w-3.5" />
-          )}
-          {stage.automation_rule_id
-            ? t('todo.workflow_ai_execution')
-            : t('todo.workflow_stage_human_execution')}
+          {automated ? <Bot className="h-3.5 w-3.5" /> : <UserRound className="h-3.5 w-3.5" />}
+          {automated ? t('todo.workflow_ai_execution') : t('todo.workflow_stage_human_execution')}
         </span>
       </header>
       <footer className="issue-workflow-node-footer">
@@ -200,6 +161,7 @@ export function IssueWorkflowDag({
   nodes,
   tasks,
   deliveries = [],
+  executionError,
   selectedTaskId,
   onCreateTask,
   onRunAutomation,
@@ -229,7 +191,7 @@ export function IssueWorkflowDag({
   } | null>(null)
   const graphContainerRef = useRef<HTMLDivElement | null>(null)
   const flowInstanceRef = useRef<ReactFlowInstance<RuntimeStageFlowNode, Edge> | null>(null)
-  const currentStageId = useMemo(() => getCurrentWorkflowNodeId(nodes), [nodes])
+  const currentStageId = useMemo(() => getCurrentWorkflowNode(nodes)?.id ?? null, [nodes])
   const effectiveSelectedStageId =
     stageSelection?.currentStageId === currentStageId &&
     nodes.some(stage => stage.id === stageSelection.stageId)
@@ -399,11 +361,14 @@ export function IssueWorkflowDag({
           <div>
             {detailStages.map(stage => {
               const stageTasks = tasks.filter(task => task.workflow_node_id === stage.id)
-              const automated = Boolean(stage.automation_rule_id)
+              const automated = workflowNodeExecutionMode(stage) === 'robot'
               const startHumanStage = stageTasks.length === 0 && stage.status === 'ready'
               const awaitingApproval = stage.status === 'awaiting_approval'
               const canRunAutomation =
-                automated && ['ready', 'failed'].includes(stage.status) && Boolean(onRunAutomation)
+                automated &&
+                Boolean(stage.automation_rule_id) &&
+                ['ready', 'failed'].includes(stage.status) &&
+                Boolean(onRunAutomation)
               const canSubmitDeliverables =
                 automated && stage.status === 'awaiting_deliverables' && Boolean(onCompleteStage)
               const canCreateTask =
@@ -418,6 +383,8 @@ export function IssueWorkflowDag({
                 ].includes(stage.status) &&
                 Boolean(onCreateTask)
               const requirements = stage.required_deliverables ?? []
+              const stageExecutionError =
+                stage.execution_error ?? (stage.status === 'failed' ? executionError : null)
               const fulfilledIds = new Set(stage.fulfilled_deliverable_ids ?? [])
               const requirementDeliveries = new Map(
                 requirements.map(requirement => [
@@ -460,6 +427,14 @@ export function IssueWorkflowDag({
                         : t('todo.workflow_stage_human_execution')}
                     </span>
                   </header>
+                  {stageExecutionError ? (
+                    <div
+                      data-testid={`cloud-todo-workflow-execution-error-${stage.id}`}
+                      className="break-words rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700"
+                    >
+                      {stageExecutionError}
+                    </div>
+                  ) : null}
                   <div className="issue-workflow-stage-actions">
                     {canSubmitDeliverables ? (
                       <button

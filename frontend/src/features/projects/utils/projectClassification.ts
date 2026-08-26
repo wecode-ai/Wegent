@@ -17,7 +17,3 @@ export function isPathlessProject(project: ProjectConfigSource): boolean {
 export function canImportOrdinaryTaskToProject(project: ProjectConfigSource): boolean {
   return isPathlessProject(project)
 }
-
-export function canStartProjectConversation(project: ProjectConfigSource): boolean {
-  return isWorkspaceProject(project)
-}

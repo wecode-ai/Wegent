@@ -9,7 +9,10 @@ import {
   buildHarnessUserContext,
   type HarnessContextRegistration,
 } from '@/features/harness-apps/harnessContext'
+import { reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
 import i18n from '@/i18n'
 import type {
   ArchivedConversationsListRequest,
@@ -63,6 +66,8 @@ import type {
   RuntimeTaskQueueReorderRequest,
   RuntimeTaskQueueReorderResponse,
   RuntimeTaskRenameRequest,
+  RuntimeTaskStatusReplayRequest,
+  RuntimeTaskStatusReplayResponse,
   RuntimeSettings,
   RuntimeSendRequest,
   RuntimeSendResponse,
@@ -95,7 +100,6 @@ import type {
   RuntimeWorktreePrepareRequest,
   RuntimeWorktreeSettings,
   RuntimeWorktreeSettingsPatch,
-  Team,
   UnifiedModel,
   User,
 } from '@/types/api'
@@ -124,6 +128,7 @@ import {
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { buildConversationWorkspacePath } from '@/lib/runtime-conversation-workspace'
 import {
   normalizeWorkspaceTextFile,
   splitAbsoluteWorkspaceFilePath,
@@ -199,14 +204,10 @@ const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 const STALE_CODEX_PROVIDER_MODEL_PREFIX = 'codex-provider:'
 const DEFAULT_GPT_56_CATALOG_MODEL_ID = 'wework-gpt-5.6-sol'
 
-export const LOCAL_WORKBENCH_TEAM = {
+const WEWORK_EXECUTION_IDENTITY = {
   id: 0,
-  name: 'local-wework',
-  displayName: 'Local WeWork',
-  is_active: true,
-  default_for_modes: ['wework'],
-  recommended_mode: 'code',
-} satisfies Team
+  name: 'Wework',
+}
 
 function localCodexModelFamily(model: CodexOfficialModel): string {
   if (model.providerType !== 'provider') return 'codex-official'
@@ -870,6 +871,8 @@ function runtimeTaskTitle(data: RuntimeTaskCreateRequest): string {
 function runtimeWorkspacePath(data: RuntimeTaskCreateRequest): string | null {
   const explicitPath = stringValue(data.workspacePath)
   if (explicitPath) return explicitPath
+  const projectPath = localRuntimeProjectWorkspacePath(data.runtimeProjectKey)
+  if (projectPath) return projectPath
   const execution = recordValue(data.execution)
   const workspace = recordValue(execution.workspace)
   return stringValue(workspace.path)
@@ -1323,7 +1326,6 @@ interface BuildLocalRuntimeExecutionRequestInput {
   runtime: string
   runtimeExecutablePath?: string
   runtimePermissionMode?: RuntimeTaskCreateRequest['runtimePermissionMode']
-  teamId: number
   title: string
   message: string
   bot?: Array<Record<string, unknown>>
@@ -1429,8 +1431,8 @@ function buildLocalRuntimeExecutionRequest(
   return {
     task_id: taskId,
     subtask_id: subtaskId,
-    team_id: input.teamId,
-    team_name: LOCAL_WORKBENCH_TEAM.name,
+    team_id: WEWORK_EXECUTION_IDENTITY.id,
+    team_name: WEWORK_EXECUTION_IDENTITY.name,
     team_namespace: 'default',
     task_title: input.title,
     subtask_title: `${input.title} - Assistant`,
@@ -1547,7 +1549,9 @@ async function prepareLocalRuntimeWorkspace(
 ): Promise<LocalRuntimeWorkspace | null> {
   const sourceWorkspacePath = runtimeWorkspacePath(data)
   if (!sourceWorkspacePath) {
-    if (data.standaloneChatWorkspace) return null
+    if (data.standaloneChatWorkspace || data.runtimeProjectKey || data.workspaceSourceTask) {
+      return null
+    }
     throw new Error('workspacePath is required')
   }
   const requestedSource = runtimeWorkspaceSource(data)
@@ -1578,6 +1582,114 @@ async function prepareLocalRuntimeWorkspace(
     workspaceSource: 'git_worktree',
     branch,
   }
+}
+
+async function resolveLocalRuntimeTaskWorkspace(
+  data: RuntimeTaskCreateRequest,
+  localDeviceId: string,
+  requestWithLocalDevice: RequestWithLocalDevice,
+  adaptListResponse: (response: unknown, deviceId: string) => RuntimeWorkListResponse,
+  createStandaloneWorkspace = true
+): Promise<RuntimeTaskCreateRequest> {
+  if (runtimeWorkspacePath(data)) return data
+
+  const needsRuntimeWork =
+    data.projectId != null ||
+    data.deviceWorkspaceId != null ||
+    Boolean(data.runtimeProjectKey) ||
+    Boolean(data.workspaceSourceTask)
+  let runtimeWork: RuntimeWorkListResponse | null = null
+  if (needsRuntimeWork) {
+    const response = await requestWithLocalDevice<unknown, Record<string, never>>(
+      'runtime.tasks.list',
+      {}
+    )
+    runtimeWork = adaptListResponse(response, localDeviceId)
+  }
+
+  if (data.workspaceSourceTask) {
+    if (data.workspaceSourceTask.deviceId !== localDeviceId) {
+      throw new Error('Inherited workflow workspace belongs to another device')
+    }
+    const workspaces = [
+      ...(runtimeWork?.projects.flatMap(project => project.deviceWorkspaces) ?? []),
+      ...(runtimeWork?.chats ?? []),
+    ]
+    for (const workspace of workspaces) {
+      const sourceTask = workspace.tasks.find(
+        candidate => candidate.taskId === data.workspaceSourceTask?.taskId
+      )
+      if (sourceTask) {
+        return {
+          ...data,
+          workspacePath: sourceTask.workspacePath || workspace.workspacePath,
+        }
+      }
+    }
+    throw new Error('Inherited workflow workspace is unavailable')
+  }
+
+  const projects = runtimeWork?.projects ?? []
+  const selectedProject = projects.find(project => {
+    if (data.projectId != null && project.project.id === data.projectId) return true
+    return Boolean(data.runtimeProjectKey && project.project.key === data.runtimeProjectKey)
+  })
+  const selectedWorkspace =
+    selectedProject?.deviceWorkspaces.find(
+      workspace =>
+        workspace.deviceId === localDeviceId &&
+        workspace.available &&
+        (data.deviceWorkspaceId == null || workspace.id === data.deviceWorkspaceId)
+    ) ??
+    projects
+      .flatMap(project => project.deviceWorkspaces)
+      .find(
+        workspace =>
+          data.deviceWorkspaceId != null &&
+          workspace.id === data.deviceWorkspaceId &&
+          workspace.deviceId === localDeviceId &&
+          workspace.available
+      )
+  if (selectedWorkspace) {
+    return { ...data, workspacePath: selectedWorkspace.workspacePath }
+  }
+  const rootPath = selectedProject?.project.roots?.[0]?.path
+  if (rootPath) return { ...data, workspacePath: rootPath }
+  if (data.projectId != null || data.deviceWorkspaceId != null || data.runtimeProjectKey) {
+    const binding =
+      data.projectId != null
+        ? `project ${data.projectId}`
+        : data.deviceWorkspaceId != null
+          ? `workspace ${data.deviceWorkspaceId}`
+          : `project '${data.runtimeProjectKey}'`
+    throw new Error(`Bound local ${binding} is unavailable on device ${localDeviceId}`)
+  }
+
+  if (!data.standaloneChatWorkspace || !createStandaloneWorkspace) return data
+  const taskId = data.taskId ?? createRuntimeExecutionIds(data)[0]
+  const home = await executeLocalDeviceCommand(
+    requestWithLocalDevice,
+    {
+      deviceId: localDeviceId,
+      command_key: 'home_dir',
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    },
+    'Failed to resolve home directory'
+  )
+  const workspacePath = buildConversationWorkspacePath(commandText(home), data.message, taskId)
+  await executeLocalDeviceCommand(
+    requestWithLocalDevice,
+    {
+      deviceId: localDeviceId,
+      command_key: 'mkdir_p',
+      args: [workspacePath],
+      timeout_seconds: 15,
+      max_output_bytes: 4096,
+    },
+    'Failed to create conversation workspace'
+  )
+  return { ...data, workspacePath }
 }
 
 async function createLocalRuntimeTaskPayload(
@@ -1621,7 +1733,6 @@ async function createLocalRuntimeTaskPayload(
     ? buildLocalRuntimeExecutionRequest({
         taskId: `friendly-title-${normalizedData.taskId ?? turnSeed}-${createRuntimeTurnSeed()}`,
         runtime: 'codex',
-        teamId: normalizedData.teamId,
         title: 'Generate friendly task title',
         message: [
           '为下面的用户请求生成一个简洁、具体、适合作为任务标题的中文标题。',
@@ -1656,7 +1767,6 @@ async function createLocalRuntimeTaskPayload(
       runtime: normalizedData.runtime,
       runtimeExecutablePath: normalizedData.runtimeExecutablePath,
       runtimePermissionMode: normalizedData.runtimePermissionMode,
-      teamId: normalizedData.teamId,
       title: runtimeTaskTitle(normalizedData),
       message: normalizedData.message,
       bot: normalizedData.bot,
@@ -1737,7 +1847,6 @@ function createLocalRuntimeSendPayload(
       executionRequest: buildLocalRuntimeExecutionRequest({
         taskId,
         runtime,
-        teamId: LOCAL_WORKBENCH_TEAM.id,
         title: taskId,
         message: normalizedData.message,
         turnSeed,
@@ -1781,7 +1890,6 @@ function createLocalRuntimeSendPayload(
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId,
       runtime,
-      teamId: LOCAL_WORKBENCH_TEAM.id,
       title: taskId,
       message: normalizedData.message,
       turnSeed,
@@ -2358,6 +2466,11 @@ export function createRuntimeWorkApiFromIpc(
 
   return {
     prepareRuntimeModel,
+    replayRuntimeTaskStatuses(
+      data: RuntimeTaskStatusReplayRequest
+    ): Promise<RuntimeTaskStatusReplayResponse> {
+      return requestWithLocalDevice('runtime.tasks.status.replay', data)
+    },
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
       const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()
@@ -2793,22 +2906,33 @@ export function createRuntimeWorkApiFromIpc(
         runtime: data.runtime,
       })
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      const resolvedData = await resolveLocalRuntimeTaskWorkspace(
+        data,
+        localDeviceId,
+        requestWithLocalDevice,
+        adaptListResponse
+      )
       logRuntimeTaskCreateStage('local-device-resolved', {
-        taskId: data.taskId ?? null,
+        taskId: resolvedData.taskId ?? null,
         requestedDeviceId: data.deviceId ?? null,
         deviceId: localDeviceId,
         elapsedMs: Date.now() - startedAt,
       })
-      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+      if (
+        !(await prepareRuntimeModel({
+          deviceId: localDeviceId,
+          modelId: resolvedData.modelId,
+        }))
+      ) {
         throw modelCatalogSyncCancelled()
       }
       logRuntimeTaskCreateStage('local-primary-model-prepared', {
-        taskId: data.taskId ?? null,
+        taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
-        modelId: data.modelId ?? null,
+        modelId: resolvedData.modelId ?? null,
         elapsedMs: Date.now() - startedAt,
       })
-      const supervisorModelId = data.initialSupervisor?.modelSelection?.modelName
+      const supervisorModelId = resolvedData.initialSupervisor?.modelSelection?.modelName
       if (
         supervisorModelId &&
         !(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: supervisorModelId }))
@@ -2816,13 +2940,13 @@ export function createRuntimeWorkApiFromIpc(
         throw modelCatalogSyncCancelled()
       }
       logRuntimeTaskCreateStage('local-supervisor-model-prepared', {
-        taskId: data.taskId ?? null,
+        taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
         supervisorModelId: supervisorModelId ?? null,
         elapsedMs: Date.now() - startedAt,
       })
       const payload = await createLocalRuntimeTaskPayload(
-        data,
+        resolvedData,
         localDeviceId,
         requestWithLocalDevice,
         options.cloudModelGateway,
@@ -2830,18 +2954,18 @@ export function createRuntimeWorkApiFromIpc(
         requireLocalCodexCatalog
       )
       logRuntimeTaskCreateStage('local-payload-built', {
-        taskId: data.taskId ?? null,
+        taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
         elapsedMs: Date.now() - startedAt,
       })
-      debugLocalRuntimeCreatePayload(data, payload)
-      logLocalIssueRuntimeContext('create-payload-built', data, payload)
+      debugLocalRuntimeCreatePayload(resolvedData, payload)
+      logLocalIssueRuntimeContext('create-payload-built', resolvedData, payload)
       const executionRequest = recordValue(payload.executionRequest)
       console.info('[Wework] Friendly task title request', {
-        taskId: data.taskId,
-        enabled: Boolean(data.friendlyTitle),
+        taskId: resolvedData.taskId,
+        enabled: Boolean(resolvedData.friendlyTitle),
         executionRequestIncluded: Boolean(payload.friendlyTitleExecutionRequest),
-        modelId: data.friendlyTitle?.modelId ?? null,
+        modelId: resolvedData.friendlyTitle?.modelId ?? null,
       })
       console.info('[Wework] Local runtime execution identity', {
         taskId: stringValue(executionRequest.task_id),
@@ -2849,7 +2973,7 @@ export function createRuntimeWorkApiFromIpc(
         userName: stringValue(executionRequest.user_name),
       })
       logRuntimeTaskCreateStage('local-rpc-dispatched', {
-        taskId: data.taskId ?? null,
+        taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
         method: 'runtime.tasks.create',
         elapsedMs: Date.now() - startedAt,
@@ -2860,7 +2984,7 @@ export function createRuntimeWorkApiFromIpc(
         localDeviceId
       )
       logRuntimeTaskCreateStage('local-rpc-resolved', {
-        taskId: data.taskId ?? null,
+        taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
         elapsedMs: Date.now() - startedAt,
         accepted: response.accepted ?? true,
@@ -2870,12 +2994,12 @@ export function createRuntimeWorkApiFromIpc(
         stringValue(responseRecord.workspacePath) ??
         stringValue(responseRecord.workspace_path) ??
         stringValue(payload.workspacePath) ??
-        requiredRuntimeWorkspacePath(data)
+        requiredRuntimeWorkspacePath(resolvedData)
       const taskId =
         stringValue(responseRecord.taskId) ??
         stringValue(responseRecord.task_id) ??
         stringValue(executionRequest.task_id) ??
-        createRuntimeExecutionIds(data)[0]
+        createRuntimeExecutionIds(resolvedData)[0]
       const runtimeHandle = recordValue(
         responseRecord.runtimeHandle ?? responseRecord.runtime_handle
       )
@@ -2885,7 +3009,7 @@ export function createRuntimeWorkApiFromIpc(
         deviceId: localDeviceId,
         taskId,
         workspacePath,
-        runtime: response.runtime ?? data.runtime,
+        runtime: response.runtime ?? resolvedData.runtime,
         ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
       }
     },
@@ -3001,10 +3125,23 @@ export function createAutomationApiFromIpc(
   const resolveDeviceId =
     options.resolveDeviceId ??
     (async (data?: Record<string, unknown>) => stringValue(data?.deviceId) ?? LOCAL_DEVICE_ID)
+  const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
 
   const prepareAutomation = async (data: AutomationMutation) => {
     const localDeviceId = await resolveDeviceId(
       data.taskRequest as unknown as Record<string, unknown>
+    )
+    const taskRequest: RuntimeTaskCreateRequest = {
+      ...data.taskRequest,
+      schemaVersion: 2,
+      deviceId: localDeviceId,
+    }
+    const resolvedTaskRequest = await resolveLocalRuntimeTaskWorkspace(
+      taskRequest,
+      localDeviceId,
+      requestWithLocalDevice,
+      adaptListResponse,
+      false
     )
     const continuationRequest =
       data.conversationMode === 'continue_thread' && data.continuationPayload
@@ -3012,8 +3149,8 @@ export function createAutomationApiFromIpc(
         : null
     const modelIds = new Set(
       [
-        data.taskRequest.modelId,
-        data.taskRequest.initialSupervisor?.modelSelection?.modelName,
+        taskRequest.modelId,
+        taskRequest.initialSupervisor?.modelSelection?.modelName,
         continuationRequest?.modelId,
       ].filter((modelId): modelId is string => Boolean(modelId))
     )
@@ -3023,7 +3160,7 @@ export function createAutomationApiFromIpc(
       }
     }
     const taskPayload = await createLocalRuntimeTaskPayload(
-      data.taskRequest,
+      resolvedTaskRequest,
       localDeviceId,
       requestWithLocalDevice,
       options.cloudModelGateway,
@@ -3049,6 +3186,8 @@ export function createAutomationApiFromIpc(
       timezone: data.timezone,
       enabled: data.enabled,
       conversationMode: data.conversationMode,
+      notificationPolicy: data.notificationPolicy,
+      taskRequest,
       taskPayload,
       continuationPayload,
     }
@@ -3146,6 +3285,18 @@ function summarizeLocalModelOptions(
 }
 
 export function createLocalAppServices(deps: LocalAppServicesDeps = {}): WorkbenchServices {
+  const localPluginApi = createLocalCodexPluginApi()
+  const projectPluginApi: NonNullable<WorkbenchServices['pluginApi']> = {
+    async listPlugins() {
+      const [appsResult, installedResult] = await Promise.allSettled([
+        localPluginApi.listApps(),
+        localPluginApi.listInstalledPlugins(),
+      ])
+      const apps = appsResult.status === 'fulfilled' ? appsResult.value : []
+      const installed = installedResult.status === 'fulfilled' ? installedResult.value.items : []
+      return buildProjectPluginCatalog(installed, apps)
+    },
+  }
   const ensure = deps.ensure ?? ensureLocalExecutorStarted
   const request = deps.request ?? requestLocalExecutor
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
@@ -3340,8 +3491,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const aitableApi = createLocalAITableApi(request)
   const dwsApi = createDwsApi(request)
   const teamApi = {
-    listTeams: async () => [LOCAL_WORKBENCH_TEAM],
-    getDefaultWorkbenchTeam: async () => LOCAL_WORKBENCH_TEAM,
+    listTeams: async () => [],
   }
   const modelApi = {
     listModels: async () => {
@@ -3386,7 +3536,6 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       const executionRequest = buildLocalRuntimeExecutionRequest({
         taskId: `branch-name-${createRuntimeTurnSeed()}`,
         runtime: 'codex',
-        teamId: LOCAL_WORKBENCH_TEAM.id,
         title: 'Generate Git branch name',
         message: [
           'Generate a concise Git branch name for the work described below.',
@@ -3495,9 +3644,11 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         deviceApi,
         modelApi,
         teamApi,
+        pluginApi: projectPluginApi,
       },
     },
     runtimeWorkApi,
+    pluginApi: projectPluginApi,
     branchNameApi,
     automationApi,
     attachmentApi: createLocalAttachmentApi(),
@@ -3517,5 +3668,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       importRuntimeAuthJson: () => cloudConnectionRequired('importRuntimeAuthJson'),
     },
     chatStream: getRuntimeChatStream(subscribe, request),
+    async recoverRuntimeConnections() {
+      reconnectDshExecutorEvents()
+    },
   } as unknown as WorkbenchServices
 }

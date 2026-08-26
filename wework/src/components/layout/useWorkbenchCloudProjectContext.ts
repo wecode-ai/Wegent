@@ -26,7 +26,9 @@ import type {
   RuntimeAdditionalContext,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
 } from '@/types/api'
+import { rememberProjectTaskStore } from '@/features/workbench/projectTaskTracking'
 
 interface PendingTodoBinding {
   paneKey: string
@@ -44,6 +46,7 @@ interface PendingAutoJoinResolution {
 interface CloudSubmissionContext {
   additionalContext: RuntimeAdditionalContext | undefined
   cloudProjectId: string | undefined
+  origin: RuntimeTaskCreateRequest['origin']
   onRuntimeTaskCreated: (address: RuntimeTaskAddress) => void
 }
 
@@ -114,6 +117,7 @@ function pendingBindingTargetsTask(address: RuntimeTaskAddress): boolean {
 }
 
 function publishBoundProjectSpaceContext(update: BoundProjectSpaceContextUpdate) {
+  rememberProjectTaskStore(update.task, update.project.project_store)
   const pendingBinding = pendingTodoBindingsByTask.get(runtimeTaskKey(update.task))
   if (pendingBinding) clearPendingBinding(pendingBinding)
   for (const listener of boundProjectSpaceContextListeners) listener(update)
@@ -893,6 +897,15 @@ export function useWorkbenchCloudProjectContext({
           cloudProjectAdditionalContext(submissionProject, submissionItem) ??
           cloudAdditionalContext,
         cloudProjectId: runtimeCloudProjectId(submissionProject),
+        origin:
+          submissionProject && submissionItem
+            ? {
+                type: 'board_task',
+                projectStore: submissionProject.project_store,
+                cloudProjectId: submissionProject.id,
+                loopItemId: submissionItem.id,
+              }
+            : undefined,
         onRuntimeTaskCreated: address => {
           const pendingBinding = pendingTodoBindingsByPane.get(paneKey)
           if (pendingBinding) {

@@ -565,7 +565,7 @@ impl RuntimeWorkRpcHandler {
         event_mapper: &mut CodexNotificationEventMapper,
         message: Value,
     ) {
-        if !self.is_current_local_task_execution(local_task_id, execution_id) {
+        if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
             return;
         }
         self.sync_runtime_task_goal_from_notification(local_task_id, &message);
@@ -620,6 +620,9 @@ impl RuntimeWorkRpcHandler {
                     &[("error", error.to_string())],
                 ),
             }
+        }
+        if !self.is_local_task_execution_accepting_notifications(local_task_id, execution_id) {
+            return;
         }
         let mut event_request = request.clone();
         if let Some(active_turn) = active_turn {
