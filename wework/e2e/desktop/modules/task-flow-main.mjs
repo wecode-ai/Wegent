@@ -3,6 +3,8 @@ import {
   verifyLocalExecutorUsesCloudSocketUrl,
 } from './cloud-environment.mjs'
 
+import { tmpdir } from 'node:os'
+
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 
 import {
@@ -869,6 +871,7 @@ async function main() {
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
   const codexHome = join(executorHome, 'codex')
+  const codexSqliteHome = join(tmpdir(), 'wework-desktop-e2e', String(process.pid), 'codex-sqlite')
   const nativeCodexHome = join(resultDir, 'native-codex')
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
   const marketplacePluginPath = join(resultDir, 'marketplace-plugin')
@@ -880,6 +883,7 @@ async function main() {
     mkdir(secondaryProjectPath, { recursive: true }),
     mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
+    mkdir(codexSqliteHome, { recursive: true }),
   ])
   await Promise.all([
     writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
@@ -1078,6 +1082,7 @@ async function main() {
       ...process.env,
       CODEX_BINARY_PATH: resolvedAppCodexBinary,
       CODEX_BIN: resolvedAppCodexBinary,
+      CODEX_SQLITE_HOME: codexSqliteHome,
       HOME: homePath,
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: executorHome,
@@ -3821,6 +3826,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     await blockingNetworkProxy?.stop()
     await stopDesktopAppProcess(app)
     await control.close()
+    await rm(codexSqliteHome, { recursive: true, force: true })
     if (appBundlePath && process.platform === 'darwin') {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
     }
