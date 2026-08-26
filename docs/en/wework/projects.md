@@ -59,6 +59,12 @@ New conversations started in that local project inherit the selected project spa
 
 The default project space belongs to the local project's settings and is stored with that project's device-local state; the project space does not keep a reverse link. Use the composer's **+** menu to select, replace, or remove the project space for an individual conversation before sending.
 
+## Issue details and execution tasks
+
+Opening an issue from a project-space board shows its attachments directly in the detail panel, with actions to download, remove, or upload more files. The detail view keeps each file name and size visible instead of showing only an attachment count, so the context can be checked before execution starts.
+
+Selecting **New task** in the issue detail opens the task conversation sidebar on the right. Describe the work in the composer and send it to create and link the execution task. Wework keeps this input step even when the issue is already **Pending** and never starts an empty task directly.
+
 ## Project-space files
 
 The **Files** tab in a project space shows shared files and delivery snapshots together. Shared files support upload, folder creation, rename or move, delete, and open; delivery snapshots come from completed tasks and remain read-only. Select the preview action next to any shared file, delivery snapshot, or local task attachment to open it in the reusable workspace file preview panel on the right. The original download or open action remains available.
