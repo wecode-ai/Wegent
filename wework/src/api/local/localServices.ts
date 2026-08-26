@@ -3589,13 +3589,17 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     localProjectChatAgentApi,
     localLoopItemExecutionApi,
     localHarnessModelApi: {
-      async resolveLaunch(harnessId: LocalHarnessId, option: LocalHarnessModelOption | null) {
+      async resolveLaunch(
+        harnessId: LocalHarnessId,
+        option: LocalHarnessModelOption | null,
+        scope?: string
+      ) {
         if (!option) return null
         await ensureStatus()
         const registration = await request<HarnessProxyRegistration>(
           'runtime.harness_proxy.register',
           {
-            scope: `harness:${harnessId}:${crypto.randomUUID()}`,
+            scope: scope?.trim() || `harness:${harnessId}:${crypto.randomUUID()}`,
             upstream: harnessProxyUpstream(harnessId, option, deps.cloudModelGateway),
           }
         )

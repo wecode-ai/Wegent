@@ -143,6 +143,7 @@ export class DesktopRuntime {
     let args = jsonArrayEnvironment(this.options.environment, 'WEWORK_CORE_DSH_ARGS_JSON')
     let cwd: string | undefined
     let dshHome: string | undefined
+    let runtimeEnvironment = this.options.environment
     if (!externalDshUrl && !dshCommand) {
       if (!managedRoot) {
         throw new Error(
@@ -159,6 +160,7 @@ export class DesktopRuntime {
       args = launch.args
       cwd = launch.cwd
       dshHome = launch.dshHome
+      runtimeEnvironment = launch.environment
     }
     const runtime = new DshRuntime({
       name: 'dsh-core',
@@ -175,7 +177,7 @@ export class DesktopRuntime {
       logDirectory: this.options.logDirectory,
       logFileName: 'dsh-core-runtime.log',
       env: {
-        ...this.options.environment,
+        ...runtimeEnvironment,
         ...this.options.hostPipe.environment(),
         ...(dshHome ? { DSH_HOME: dshHome } : {}),
         ...this.executor?.environment(),

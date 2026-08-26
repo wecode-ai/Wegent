@@ -161,6 +161,7 @@ import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTab
 import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
 import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
 import { normalizeAiModelId } from '@/telemetry/modelCatalog'
+import { CoreDshModelSync } from '@/features/dsh-models/CoreDshModelSyncBridge'
 
 export type { WorkbenchServices } from './workbenchServices'
 
@@ -194,6 +195,7 @@ export function WorkbenchProvider({
   loadTaskComposerCatalogs = true,
   prewarmComposerApps = true,
   publishDebugSnapshots = true,
+  syncCoreDshModels = false,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
 }: WorkbenchProviderProps) {
@@ -2984,6 +2986,13 @@ export function WorkbenchProvider({
       >
         <WorkbenchContext.Provider value={value}>
           <WorkbenchPaneContext.Provider value={paneValue}>
+            <CoreDshModelSync
+              enabled={syncCoreDshModels}
+              models={conversationModels}
+              selectedModel={modelSelection.selectedModel}
+              selectedModelOptions={modelSelection.selectedModelOptions}
+              services={resolvedServices}
+            />
             {children}
           </WorkbenchPaneContext.Provider>
         </WorkbenchContext.Provider>

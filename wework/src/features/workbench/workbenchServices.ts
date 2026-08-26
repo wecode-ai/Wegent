@@ -180,7 +180,8 @@ export interface WorkbenchServices {
   localHarnessModelApi?: {
     resolveLaunch: (
       harnessId: LocalHarnessId,
-      option: LocalHarnessModelOption | null
+      option: LocalHarnessModelOption | null,
+      scope?: string
     ) => Promise<LocalHarnessModelLaunchConfig | null>
     unregisterProxy: (token: string) => Promise<void>
     unregisterContext: (token: string) => Promise<void>
