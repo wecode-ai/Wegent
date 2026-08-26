@@ -9,6 +9,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex as StdMutex,
     },
+    time::Duration,
 };
 
 use serde_json::{json, Value};
@@ -203,6 +204,47 @@ impl BackendConnectionHandler for LocalBackendConnectionController {
             }))
         })
     }
+
+    fn backend_quota<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            let connection = {
+                let state = self.state.lock().await;
+                state.connection.clone()
+            }
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection is not configured",
+                )
+            })?;
+            let endpoint = format!(
+                "{}/api/quota/claude/quota",
+                connection.backend_url.trim_end_matches('/')
+            );
+            let response = reqwest::Client::new()
+                .get(endpoint)
+                .bearer_auth(&connection.auth_token)
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("backend_quota_unavailable", error.to_string())
+                })?;
+            let status = response.status();
+            let payload = response.json::<Value>().await.map_err(|error| {
+                AppIpcError::new("backend_quota_invalid_response", error.to_string())
+            })?;
+            if !status.is_success() {
+                return Err(AppIpcError::new(
+                    "backend_quota_unavailable",
+                    format!("Backend quota request failed with HTTP {status}"),
+                ));
+            }
+            Ok(payload)
+        })
+    }
 }
 
 fn normalized_connection(connection: &ConnectionConfig) -> Option<ConnectionConfig> {
@@ -281,7 +323,9 @@ fn optional_connection_field(
 
 #[cfg(test)]
 mod tests {
+    use axum::{http::HeaderMap, routing::get, Json, Router};
     use serde_json::json;
+    use tokio::net::TcpListener;
 
     use super::{connection_from_params, normalized_connection, LocalBackendConnectionController};
     use crate::{
@@ -320,6 +364,53 @@ mod tests {
             .expect("backend status should be available");
         assert_eq!(status["configured"], true);
         assert_eq!(status["connected"], false);
+    }
+
+    #[tokio::test]
+    async fn reads_backend_quota_without_exposing_the_auth_token() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/api/quota/claude/quota",
+                    get(|headers: HeaderMap| async move {
+                        assert_eq!(
+                            headers
+                                .get("authorization")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("Bearer wg-token")
+                        );
+                        Json(json!({
+                            "data": {"remaining": 845.21},
+                            "quota_source": "AIGC额度",
+                        }))
+                    }),
+                ),
+            )
+            .await
+            .unwrap();
+        });
+        let controller = LocalBackendConnectionController::start(DeviceConfig {
+            connection: ConnectionConfig {
+                backend_url: format!("http://{address}"),
+                socket_url: String::new(),
+                auth_token: "wg-token".to_owned(),
+                runtime_auth_token: "runtime-wg-token".to_owned(),
+            },
+            ..DeviceConfig::default()
+        })
+        .await;
+
+        let quota = controller
+            .backend_quota()
+            .await
+            .expect("backend quota should be available");
+
+        assert_eq!(quota["data"]["remaining"], 845.21);
+        assert_eq!(quota["quota_source"], "AIGC额度");
+        server.abort();
     }
 
     #[test]

@@ -299,24 +299,28 @@ describe('createLocalAppServices', () => {
       apiKey: 'second-provider-secret',
       catalogReady: false,
     })
-    const secondLaunch = await services.localHarnessModelApi?.resolveLaunch('claude_code', {
-      key: 'second-local',
-      label: 'Second Harness Model',
-      source: 'local',
-      model: {
-        name: `local-model:${secondConfig.id}`,
-        type: 'runtime',
-        provider: 'local',
-        displayName: 'Second Harness Model',
-        modelId: 'second-upstream-model',
-        config: { weworkModelKind: 'model-interface' },
+    const secondLaunch = await services.localHarnessModelApi?.resolveLaunch(
+      'claude_code',
+      {
+        key: 'second-local',
+        label: 'Second Harness Model',
+        source: 'local',
+        model: {
+          name: `local-model:${secondConfig.id}`,
+          type: 'runtime',
+          provider: 'local',
+          displayName: 'Second Harness Model',
+          modelId: 'second-upstream-model',
+          config: { weworkModelKind: 'model-interface' },
+        },
       },
-    })
+      'core-dsh:model-a'
+    )
 
     expect(request).toHaveBeenLastCalledWith(
       'runtime.harness_proxy.register',
       expect.objectContaining({
-        scope: expect.stringMatching(/^harness:claude_code:/),
+        scope: 'core-dsh:model-a',
         upstream: expect.objectContaining({
           request_url: 'https://second-model.example.com/v1/messages',
           api_format: 'anthropic-messages',

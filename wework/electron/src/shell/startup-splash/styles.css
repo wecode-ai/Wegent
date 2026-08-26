@@ -46,12 +46,11 @@ body {
   border-radius: 22px;
   background: rgb(250 250 250 / 97%);
   box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
-  -webkit-app-region: drag;
 }
 
 .workbench-scene {
   width: 300px;
-  height: 126px;
+  height: 132px;
 }
 
 .workbench {
@@ -61,163 +60,106 @@ body {
   overflow: visible;
 }
 
-.floor-line {
+.baseline,
+.connection {
   fill: none;
-  stroke: rgb(23 23 23 / 9%);
+  stroke: rgb(23 23 23 / 12%);
   stroke-width: 1.5;
   stroke-linecap: round;
-  stroke-dasharray: 266;
-  animation: floor-arrive 700ms ease-out both;
 }
 
-.robot {
-  transform-box: fill-box;
-  transform-origin: center bottom;
-  animation: robot-bob 2.2s ease-in-out infinite;
+.baseline {
+  stroke-dasharray: 210;
+  animation: baseline-arrive 620ms ease-out both;
 }
 
-.robot-head rect,
-.robot-body rect,
-.toolbox rect,
-.monitor-shell,
-.keyboard rect,
-.assembly-piece rect,
-.assembly-piece circle {
-  fill: #fff;
+.connection {
+  stroke-dasharray: 36;
+  animation: connection-flow 1.8s ease-in-out infinite;
+}
+
+.connection-right {
+  animation-delay: 300ms;
+}
+
+.connection-pulse {
+  fill: #7c3aed;
+  opacity: 0;
+}
+
+.connection-pulse-left {
+  animation: pulse-left 1.8s ease-in-out infinite;
+}
+
+.connection-pulse-right {
+  animation: pulse-right 1.8s 300ms ease-in-out infinite;
+}
+
+.side-card {
+  fill: rgb(23 23 23 / 2%);
   stroke: rgb(23 23 23 / 16%);
   stroke-width: 1.5;
-}
-
-.robot-head,
-.robot-body,
-.robot-antenna,
-.robot-arm,
-.robot-leg,
-.toolbox,
-.monitor,
-.keyboard,
-.human,
-.human-face,
-.human-working-arm,
-.robot-sparks,
-.assembly-piece {
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.robot-head {
   transform-box: fill-box;
   transform-origin: center;
-  animation: robot-head-tilt 2.8s ease-in-out infinite;
 }
 
-.robot-ear,
-.robot-smile,
-.robot-antenna path,
-.robot-arm,
-.robot-leg {
+.side-card path {
   fill: none;
-  stroke: rgb(23 23 23 / 44%);
-  stroke-width: 2;
+  stroke: rgb(23 23 23 / 32%);
+  stroke-width: 1.5;
 }
 
-.robot-antenna {
-  fill: none;
-  stroke: #7c3aed;
-  stroke-width: 1.75;
-  transform-box: fill-box;
-  transform-origin: center bottom;
-  animation: antenna-wiggle 1.8s ease-in-out infinite;
-}
-
-.robot-antenna-tip {
+.side-card circle {
   fill: #7c3aed;
   stroke: none;
-  animation: antenna-pulse 1.2s ease-in-out infinite;
 }
 
-.robot-eyes {
-  fill: #7c3aed;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: robot-blink 3.6s infinite;
+.side-card-left {
+  animation: card-arrive-left 620ms 120ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
 }
 
-.robot-body {
-  fill: none;
-  stroke: rgb(23 23 23 / 28%);
-  stroke-width: 1.5;
+.side-card-right {
+  animation: card-arrive-right 620ms 220ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
 }
 
-.robot-body circle {
-  fill: rgb(124 58 237 / 8%);
+.side-card-right rect + rect {
+  fill: rgb(124 58 237 / 7%);
   stroke: #7c3aed;
-  stroke-width: 1.5;
-  animation: chest-pulse 1.8s ease-in-out infinite;
 }
 
-.robot-working-arm {
-  transform-box: view-box;
-  transform-origin: 82px 61px;
-  animation: working-arm 800ms ease-in-out infinite alternate;
-}
-
-.robot-hand {
-  fill: #fff;
+.side-card-right path {
   stroke: #7c3aed;
   stroke-width: 1.75;
 }
 
-.toolbox {
-  fill: none;
-  stroke: rgb(23 23 23 / 35%);
-  stroke-width: 1.5;
+.workbench-window {
   transform-box: fill-box;
-  transform-origin: center bottom;
-  animation: toolbox-arrive 540ms 260ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
+  transform-origin: center;
+  animation: window-arrive 560ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
 }
 
-.monitor {
-  transform-box: fill-box;
-  transform-origin: center bottom;
-  animation: monitor-arrive 620ms 120ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
-}
-
-.monitor-shell {
-  fill: rgb(23 23 23 / 3%);
-}
-
-.monitor-screen {
+.window-shell {
   fill: #fff;
-  stroke: rgb(23 23 23 / 10%);
-  stroke-width: 1;
+  stroke: rgb(23 23 23 / 18%);
+  stroke-width: 1.5;
 }
 
-.monitor-stand {
+.window-toolbar,
+.window-content-line {
   fill: none;
-  stroke: rgb(23 23 23 / 24%);
-  stroke-width: 2;
+  stroke: rgb(23 23 23 / 12%);
+  stroke-width: 1.5;
   stroke-linecap: round;
 }
 
-.monitor-status {
-  fill: #7c3aed;
-  transition:
-    fill 260ms ease,
-    opacity 260ms ease;
+.window-control {
+  fill: rgb(23 23 23 / 16%);
 }
 
-body[data-stage='0'] .monitor-status {
-  opacity: 0.4;
-}
-
-body[data-stage='1'] .monitor-status {
-  animation: status-pulse 700ms ease-in-out infinite;
-}
-
-body[data-stage='2'] .monitor-status {
-  fill: #22a06b;
-  opacity: 1;
+.window-content-line {
+  stroke: rgb(23 23 23 / 18%);
 }
 
 .morph-icon {
@@ -228,102 +170,20 @@ body[data-stage='2'] .monitor-status {
   stroke-linejoin: round;
 }
 
-.keyboard {
-  fill: none;
-  stroke: rgb(23 23 23 / 24%);
-  stroke-width: 1;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: keyboard-place 3.45s cubic-bezier(0.2, 0.85, 0.25, 1) infinite;
-}
-
-.human {
-  transform-box: fill-box;
-  transform-origin: center bottom;
-  animation: human-bob 2.4s 300ms ease-in-out infinite;
-}
-
-.human-head,
-.human-body {
-  fill: #fff;
-  stroke: rgb(23 23 23 / 16%);
-  stroke-width: 1.5;
-}
-
-.human-hair,
-.human-face,
-.human-arm {
-  fill: none;
-  stroke: rgb(23 23 23 / 38%);
-  stroke-width: 1.5;
-}
-
-.human-hair {
-  stroke: #7c3aed;
-  stroke-width: 2;
-}
-
-.human-face circle {
-  fill: rgb(23 23 23 / 48%);
-  stroke: none;
-}
-
-.human-working-arm {
-  transform-box: fill-box;
-  transform-origin: right top;
-  animation: human-arm-place 1.1s ease-in-out infinite alternate;
-}
-
-.human-hand {
-  fill: #fff;
-  stroke: #7c3aed;
-  stroke-width: 1.75;
-}
-
-.robot-sparks {
-  fill: none;
-  stroke: #7c3aed;
-  stroke-width: 1.75;
-  opacity: 0;
-  animation: sparks-pop 800ms ease-out infinite;
-}
-
-.robot-sparks circle {
-  fill: #7c3aed;
-  stroke: none;
-}
-
-.assembly-piece {
-  fill: none;
-  stroke: #7c3aed;
-  stroke-width: 1.25;
-  opacity: 0;
-  transform-box: fill-box;
-  transform-origin: center;
-}
-
-.assembly-piece-one {
-  animation: piece-install 3.45s 180ms ease-in-out infinite;
-}
-
-.assembly-piece-two {
-  animation: piece-install 3.45s 1.9s ease-in-out infinite;
-}
-
 .splash-copy {
   height: 42px;
   margin-top: 2px;
   text-align: center;
 }
 
-h1 {
+.splash h1 {
   margin: 0;
   font-size: 16px;
   font-weight: 500;
   letter-spacing: -0.015em;
 }
 
-p {
+.splash p {
   margin: 4px 0 0;
   color: rgb(23 23 23 / 62%);
   font-size: 12px;
@@ -333,7 +193,7 @@ p {
     transform 140ms ease;
 }
 
-p.is-changing {
+.splash p.is-changing {
   opacity: 0;
   transform: translateY(2px);
 }
@@ -362,9 +222,9 @@ p.is-changing {
   background: #7c3aed;
 }
 
-@keyframes floor-arrive {
+@keyframes baseline-arrive {
   from {
-    stroke-dashoffset: 266;
+    stroke-dashoffset: 210;
   }
 
   to {
@@ -372,189 +232,90 @@ p.is-changing {
   }
 }
 
-@keyframes robot-bob {
+@keyframes connection-flow {
   0%,
   100% {
-    transform: translateY(0);
-  }
-
-  50% {
-    transform: translateY(-2px);
-  }
-}
-
-@keyframes robot-head-tilt {
-  0%,
-  55%,
-  100% {
-    transform: rotate(0);
-  }
-
-  70% {
-    transform: rotate(3deg);
-  }
-}
-
-@keyframes antenna-wiggle {
-  0%,
-  100% {
-    transform: rotate(-5deg);
-  }
-
-  50% {
-    transform: rotate(5deg);
-  }
-}
-
-@keyframes antenna-pulse {
-  0%,
-  100% {
-    opacity: 0.5;
-  }
-
-  50% {
-    opacity: 1;
-  }
-}
-
-@keyframes robot-blink {
-  0%,
-  42%,
-  46%,
-  100% {
-    transform: scaleY(1);
-  }
-
-  44% {
-    transform: scaleY(0.12);
-  }
-}
-
-@keyframes chest-pulse {
-  0%,
-  100% {
-    opacity: 0.55;
-  }
-
-  50% {
-    opacity: 1;
-  }
-}
-
-@keyframes working-arm {
-  from {
-    transform: rotate(-5deg);
-  }
-
-  to {
-    transform: rotate(7deg);
-  }
-}
-
-@keyframes toolbox-arrive {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.94);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes monitor-arrive {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.94);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes status-pulse {
-  0%,
-  100% {
+    stroke-dashoffset: 36;
     opacity: 0.35;
   }
 
   50% {
+    stroke-dashoffset: 0;
     opacity: 1;
   }
 }
 
-@keyframes keyboard-place {
+@keyframes pulse-left {
   0%,
-  8% {
+  20% {
     opacity: 0;
-    transform: translateX(24px);
-  }
-
-  28%,
-  100% {
-    opacity: 1;
     transform: translateX(0);
-  }
-}
-
-@keyframes human-bob {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-
-  50% {
-    transform: translateY(-1.5px);
-  }
-}
-
-@keyframes human-arm-place {
-  from {
-    transform: rotate(2deg) translateX(2px);
-  }
-
-  to {
-    transform: rotate(-4deg) translateX(-2px);
-  }
-}
-
-@keyframes sparks-pop {
-  0%,
-  100% {
-    opacity: 0;
-    transform: scale(0.7);
   }
 
   35%,
-  60% {
+  65% {
     opacity: 1;
-    transform: scale(1);
+  }
+
+  80%,
+  100% {
+    opacity: 0;
+    transform: translateX(36px);
   }
 }
 
-@keyframes piece-install {
+@keyframes pulse-right {
   0%,
-  10% {
+  20% {
     opacity: 0;
-    transform: translate(0, 0) scale(0.7) rotate(-8deg);
+    transform: translateX(0);
   }
 
-  25% {
+  35%,
+  65% {
     opacity: 1;
   }
 
-  50% {
-    opacity: 1;
-    transform: translate(35px, -10px) scale(1) rotate(4deg);
-  }
-
-  65%,
+  80%,
   100% {
     opacity: 0;
-    transform: translate(47px, -8px) scale(0.65) rotate(0);
+    transform: translateX(-36px);
+  }
+}
+
+@keyframes card-arrive-left {
+  from {
+    opacity: 0;
+    transform: translateX(10px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes card-arrive-right {
+  from {
+    opacity: 0;
+    transform: translateX(-10px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes window-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -565,53 +326,44 @@ p.is-changing {
     box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
   }
 
-  .floor-line {
-    stroke: rgb(255 255 255 / 10%);
+  .baseline,
+  .connection {
+    stroke: rgb(255 255 255 / 12%);
   }
 
-  .robot-head rect,
-  .robot-body rect,
-  .toolbox rect,
-  .monitor-shell,
-  .keyboard rect,
-  .assembly-piece rect,
-  .assembly-piece circle,
-  .robot-hand,
-  .human-head,
-  .human-body,
-  .human-hand {
+  .side-card {
+    fill: rgb(255 255 255 / 2%);
+    stroke: rgb(255 255 255 / 18%);
+  }
+
+  .side-card path {
+    stroke: rgb(255 255 255 / 34%);
+  }
+
+  .side-card-right rect + rect {
+    fill: rgb(124 58 237 / 10%);
+    stroke: #8b5cf6;
+  }
+
+  .side-card-right path {
+    stroke: #8b5cf6;
+  }
+
+  .window-shell {
     fill: #222;
     stroke: rgb(255 255 255 / 18%);
   }
 
-  .assembly-piece rect,
-  .assembly-piece circle {
-    fill: #222;
-    stroke: #7c3aed;
+  .window-toolbar,
+  .window-content-line {
+    stroke: rgb(255 255 255 / 14%);
   }
 
-  .robot-ear,
-  .robot-smile,
-  .robot-arm,
-  .robot-leg,
-  .toolbox,
-  .monitor-stand,
-  .keyboard,
-  .human-face,
-  .human-arm {
-    stroke: rgb(255 255 255 / 42%);
+  .window-control {
+    fill: rgb(255 255 255 / 18%);
   }
 
-  .human-face circle {
-    fill: rgb(255 255 255 / 52%);
-  }
-
-  .monitor-screen {
-    fill: #1b1b1b;
-    stroke: rgb(255 255 255 / 10%);
-  }
-
-  p {
+  .splash p {
     color: rgb(255 255 255 / 52%);
   }
 
@@ -621,37 +373,20 @@ p.is-changing {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .floor-line,
-  .robot,
-  .robot-head,
-  .robot-antenna,
-  .robot-antenna-tip,
-  .robot-eyes,
-  .robot-body circle,
-  .robot-working-arm,
-  .toolbox,
-  .monitor,
-  .monitor-status,
-  .keyboard,
-  .human,
-  .human-working-arm,
-  .robot-sparks,
-  .assembly-piece {
+  .baseline,
+  .connection,
+  .connection-pulse,
+  .side-card,
+  .workbench-window {
     animation: none;
   }
 
-  .floor-line {
-    stroke-dashoffset: 0;
-  }
-
-  .robot-sparks,
-  .assembly-piece {
+  .connection-pulse {
     display: none;
   }
 
-  p,
-  .stage-dot,
-  .monitor-status {
+  .splash p,
+  .stage-dot {
     transition: none;
   }
 }

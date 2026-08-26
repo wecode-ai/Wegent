@@ -152,4 +152,34 @@ describe('applySharedChangeRequestSnapshot', () => {
       hint: 'Install GitHub CLI',
     })
   })
+
+  test('keeps an explicit Environment lookup failure instead of showing an older shared result', () => {
+    const result = applySharedChangeRequestSnapshot(
+      {
+        ...environmentInfo,
+        changeRequest: {
+          provider: 'github',
+          state: 'unavailable',
+          hint: 'Install GitHub CLI',
+        },
+      },
+      {
+        target: {
+          deviceId: 'local',
+          taskId: 'runtime-48',
+          workspacePath: '/workspace',
+          remoteUrl: 'https://github.com/wecode-ai/Wegent.git',
+          branch: 'fix/shared-pr-state',
+        },
+        changeRequest: environmentInfo.changeRequest?.changeRequest ?? null,
+        fetchedAt: '2026-08-21T00:00:00Z',
+      }
+    )
+
+    expect(result.changeRequest).toEqual({
+      provider: 'github',
+      state: 'unavailable',
+      hint: 'Install GitHub CLI',
+    })
+  })
 })

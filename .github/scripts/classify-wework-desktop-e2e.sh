@@ -74,33 +74,51 @@ cloud_segments=(
   automation-lifecycle
   project-automation
   plugin-auto-update
+  plugin-workspace-publication
 )
-# Group checkpoints by observed Cloud CI duration and order each shard from
-# longest to shortest so the eight serial runners finish at similar times.
+# Group checkpoints by observed Cloud CI duration so every serial shard stays
+# below the desktop suite's critical-path budget. Keep 15 Cloud shards so the
+# 17 Core shards and Plugins job fit the observed 33-runner Linux capacity.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  conversation-state,supervisor-lifecycle,priority-filter,plugin-auto-update
-  model-routing,cloud-worktree-queued-cancel,telemetry-consent
-  window-lifecycle,cloud-project-creation,cloud-worktree-capability
-  project-automation,automation-lifecycle,workspace-tabs
-  resilience,cloud-worktree-device-restart,browser-multi-tabs
-  embedded-browser,cloud-worktree-create,cloud-worktree-tools
-  goal-lifecycle,workspace-attachments,cloud-worktree-archive-restore
-  core-task-flow,rendering-extensions
+  core-task-flow
+  embedded-browser,cloud-worktree-device-restart,cloud-project-creation
+  goal-lifecycle,cloud-worktree-archive-restore
+  rendering-extensions
+  project-automation
+  window-lifecycle
+  priority-filter,cloud-worktree-tools
+  resilience,telemetry-consent
+  cloud-worktree-create,automation-lifecycle,browser-multi-tabs
+  workspace-tabs,cloud-worktree-capability
+  supervisor-lifecycle,conversation-state
+  model-routing
+  plugin-auto-update,plugin-workspace-publication
+  cloud-worktree-queued-cancel
+  workspace-attachments
 )
-# Group checkpoints by observed Core CI duration and order each shard so the
-# eight serial runners stay balanced while reusing the same prebuilt
-# application.
+# Group checkpoints by observed Core CI duration so every serial shard stays
+# below the desktop suite's critical-path budget while reusing the same
+# prebuilt application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  core-task-flow,remote-device-onboarding,runtime-terminal-convergence,browser-toolbar-actions,temporary-chat
-  conversation-state,supervisor-lifecycle,project-ai-settings,change-request-status,task-attachments
-  goal-lifecycle,project-assignment-notification,split-workbench,runtime-task-queue,context-compaction
-  window-lifecycle,project-automation,running-conversation-history,permission-modes,local-file-preview
-  harness-apps,workspace-tabs,priority-filter,codex-notification-isolation,cloud-space-mention
-  model-routing,workspace-attachments,offline-local-project-space,native-window-startup
-  rendering-extensions,embedded-browser,native-window-chrome,tray-lifecycle
-  resilience,claude-runtime,automation-lifecycle,local-harness
+  harness-apps
+  supervisor-lifecycle,remote-device-onboarding
+  temporary-chat,local-file-preview
+  goal-lifecycle,embedded-browser,permission-modes,tray-lifecycle
+  conversation-state,project-ai-settings,offline-local-project-space,cloud-space-mention
+  claude-runtime,workspace-tabs,task-attachments
+  core-task-flow,change-request-status,context-compaction
+  window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions
+  project-automation
+  resilience
+  workspace-attachments,automation-lifecycle
+  project-assignment-notification,split-workbench,priority-filter
+  rendering-extensions
+  runtime-task-queue,native-window-startup
+  local-harness,running-conversation-history,native-window-chrome
+  codex-notification-isolation
+  model-routing
 )
 
 validate_core_shards() {

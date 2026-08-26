@@ -254,6 +254,13 @@ class SqlAlchemySubtaskStore:
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         return query.first()
 
+    def get_basic_by_id_for_update(
+        self, db: Session, *, subtask_id: int, owner_user_id: Optional[int] = None
+    ) -> Optional[Subtask]:
+        query = db.query(Subtask).filter(Subtask.id == subtask_id)
+        query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        return query.with_for_update().one_or_none()
+
     def get_by_id_and_role(
         self,
         db: Session,

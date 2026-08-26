@@ -450,6 +450,46 @@ describe('runtimeConversationTurns', () => {
     ])
   })
 
+  test('reconciles streamed and transcript assistant text aliases with different item ids', () => {
+    const content = 'WEWORK_DESKTOP_E2E_GOAL_IDLE_INITIAL_COMPLETE'
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'provider-turn-1',
+        items: [
+          {
+            id: 'streamed-assistant-item',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-25T07:20:37.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'provider-turn-1',
+        items: [
+          {
+            id: 'canonical-assistant-item',
+            type: 'assistant_text',
+            content,
+            createdAt: '2026-08-25T07:20:37.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]?.items).toEqual(snapshot[0]?.items)
+    expect(projectRuntimeConversationTurns(merged).map(message => message.content)).toEqual([
+      content,
+    ])
+  })
+
   test('does not synthesize a Codex turn from a terminal event', () => {
     const turns = reduceRuntimeConversationTurns(
       [

@@ -64,6 +64,7 @@ import {
   BACKGROUND_FOLLOW_UP_RESTORE_PROMPT,
   BACKGROUND_FOLLOW_UP_RESTORE_TEXT,
   BLOCKED_CLOUD_MODEL_PATH,
+  BACKGROUND_GUIDANCE_CONTINUATION,
   CANCELLATION_COMPLETION_TEXT,
   CANCELLATION_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
@@ -232,6 +233,9 @@ import {
 } from './shared.mjs'
 
 const DESKTOP_CONTROL_COMMAND_INTERVAL_MS = 250
+const PLUGIN_WORKSPACE_PUBLISH_CALL_ID = 'wework-plugin-workspace-publish'
+const PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX = 'Run this exact command: '
+const PLUGIN_WORKSPACE_RESULT_MARKER = '[WEGENT_PLUGIN_RESULT]'
 const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'getAttribute',
@@ -242,6 +246,68 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'text',
   'waitFor',
 ])
+
+function findNestedString(value, predicate) {
+  if (typeof value === 'string') return predicate(value) ? value : null
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const match = findNestedString(item, predicate)
+      if (match) return match
+    }
+    return null
+  }
+  if (!value || typeof value !== 'object') return null
+  for (const item of Object.values(value)) {
+    const match = findNestedString(item, predicate)
+    if (match) return match
+  }
+  return null
+}
+
+function pluginWorkspacePublishCommand(body) {
+  const context = findNestedString(body, value =>
+    value.includes(PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX)
+  )
+  if (!context) return null
+  const commandLine = context
+    .split(/\r?\n/u)
+    .find(line => line.startsWith(PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX))
+  return commandLine?.slice(PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX.length) ?? null
+}
+
+function publishedPluginWorkspaceResult(body) {
+  const output = findNestedString(
+    body,
+    value =>
+      value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && value.includes('"status":"published"')
+  )
+  if (!output) return null
+  const line = output
+    .split(/\r?\n/u)
+    .find(
+      candidate =>
+        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) &&
+        candidate.includes('"status":"published"')
+    )
+  if (!line) return null
+  return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
+}
+
+function readyPluginWorkspaceResult(body) {
+  const output = findNestedString(
+    body,
+    value => value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && value.includes('"status":"ready"')
+  )
+  if (!output) return null
+  const line = output
+    .split(/\r?\n/u)
+    .find(
+      candidate =>
+        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && candidate.includes('"status":"ready"')
+    )
+  if (!line) return null
+  return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
+}
 
 class DesktopE2EServer {
   constructor(
@@ -1756,6 +1822,40 @@ class DesktopE2EServer {
       return
     }
 
+    const publishCommand = pluginWorkspacePublishCommand(body)
+    if (requestContainsToolOutput(body, PLUGIN_WORKSPACE_PUBLISH_CALL_ID)) {
+      const publishedResult = publishedPluginWorkspaceResult(body)
+      assert.ok(
+        publishedResult,
+        'The Plugin Creator publish command did not return a result marker'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(publishedResult),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+    if (publishCommand) {
+      const tool = selectShellToolCommand(body, publishCommand, this.cloudWorkspacePath)
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall(PLUGIN_WORKSPACE_PUBLISH_CALL_ID, tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    const readyResult = readyPluginWorkspaceResult(body)
+    if (readyResult) {
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(readyResult),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (JSON.stringify(body).includes(PLUGIN_CREATOR_PROMPT)) {
       this.writeSse(response, [
         responseCreated(responseId),
@@ -2071,7 +2171,42 @@ class DesktopE2EServer {
       // immediate mock response can otherwise race the live image-view rendering.
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
       if (this.initialCompletionHeld) {
+        const text = `${BACKGROUND_GUIDANCE_CONTINUATION}\n\n${COMPLETION_TEXT}`
+        const stream = streamingTextEvents(responseId, text)
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(
+          createSse([
+            ...stream.start,
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: BACKGROUND_GUIDANCE_CONTINUATION,
+              offset: 0,
+            },
+          ])
+        )
         await this.initialCompletionRelease
+        response.end(
+          createSse([
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: `\n\n${COMPLETION_TEXT}`,
+              offset: BACKGROUND_GUIDANCE_CONTINUATION.length,
+            },
+            ...stream.finish,
+          ])
+        )
+        return
       }
       const responseEvents = [
         responseCreated(responseId),

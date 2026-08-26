@@ -6,6 +6,7 @@ import {
   isRemoteDevice,
 } from '@/lib/device-capabilities'
 import { raceWithTimeout } from '@/lib/promise-timeout'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
   DeviceInfo,
   DeviceRuntimeRoute,
@@ -715,7 +716,10 @@ function mergeRuntimeProjects(
         ? {
             ...existing.project,
             ...normalizedProject.project,
-            id: existing.project.id,
+            id:
+              existing.project.id ??
+              normalizedProject.project.id ??
+              runtimeProjectUiId(normalizedProject.project),
             key: normalizedProject.project.key,
             sidebarStateKey: existing.project.sidebarStateKey ?? existing.project.key,
             stateDeviceId: existing.project.stateDeviceId,

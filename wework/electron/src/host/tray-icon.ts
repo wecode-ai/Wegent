@@ -7,6 +7,8 @@ const MACOS_TRAY_TEXT_GAP = 8
 const MACOS_TRAY_TEXT_FONT_SIZE = 18
 const MACOS_TRAY_TEXT_CHARACTER_WIDTH = 11
 const MACOS_TRAY_TEXT_RIGHT_PADDING = 2
+const MACOS_TRAY_RUNNING_METER_WIDTH = 6
+const MACOS_TRAY_RUNNING_METER_GAP = 8
 
 export interface NativeImageFactory {
   createFromBitmap(
@@ -47,12 +49,35 @@ function usageLines(title: string | null): string[] {
     .slice(0, 2)
 }
 
-function createMacosTraySvg(icon: NativeImage, lines: string[]): string {
-  const textWidth = Math.max(...lines.map(line => line.length)) * MACOS_TRAY_TEXT_CHARACTER_WIDTH
+function createRunningMeter(runningCount: number, showRunningStatus: boolean): string {
+  if (!showRunningStatus) return ''
+  const level = Math.min(4, Math.max(0, runningCount))
+  const fillHeight = Math.round((level / 4) * 30)
+  const fill =
+    fillHeight > 0
+      ? `<rect x="42" y="${33 - fillHeight}" width="4" height="${fillHeight}" opacity="0.92"/>`
+      : ''
+  return `<g fill="black"><path d="M41 2h6v32h-6zM42 3v30h4V3z" fill-rule="evenodd" opacity="0.47"/>${fill}</g>`
+}
+
+function createMacosTraySvg(
+  icon: NativeImage,
+  lines: string[],
+  runningCount: number,
+  showRunningStatus: boolean
+): string {
+  const meterWidth = showRunningStatus
+    ? MACOS_TRAY_RUNNING_METER_WIDTH + MACOS_TRAY_RUNNING_METER_GAP
+    : 0
+  const textWidth =
+    (lines.length > 0 ? Math.max(...lines.map(line => line.length)) : 0) *
+    MACOS_TRAY_TEXT_CHARACTER_WIDTH
   const width =
-    MACOS_TRAY_ICON_PIXEL_SIZE + MACOS_TRAY_TEXT_GAP + textWidth + MACOS_TRAY_TEXT_RIGHT_PADDING
+    MACOS_TRAY_ICON_PIXEL_SIZE +
+    meterWidth +
+    (lines.length > 0 ? MACOS_TRAY_TEXT_GAP + textWidth + MACOS_TRAY_TEXT_RIGHT_PADDING : 0)
   const iconDataUrl = `data:image/png;base64,${icon.toPNG({ scaleFactor: 1 }).toString('base64')}`
-  const textX = MACOS_TRAY_ICON_PIXEL_SIZE + MACOS_TRAY_TEXT_GAP
+  const textX = MACOS_TRAY_ICON_PIXEL_SIZE + meterWidth + MACOS_TRAY_TEXT_GAP
   const text = lines
     .map((line, index) => {
       const y = lines.length === 1 ? 25 : index === 0 ? 14 : 31
@@ -63,6 +88,7 @@ function createMacosTraySvg(icon: NativeImage, lines: string[]): string {
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${MACOS_TRAY_ICON_PIXEL_SIZE}" viewBox="0 0 ${width} ${MACOS_TRAY_ICON_PIXEL_SIZE}">`,
     `<image href="${iconDataUrl}" width="${MACOS_TRAY_ICON_PIXEL_SIZE}" height="${MACOS_TRAY_ICON_PIXEL_SIZE}"/>`,
+    createRunningMeter(runningCount, showRunningStatus),
     `<g fill="black" font-family="SFMono-Regular,Menlo,monospace" font-size="${MACOS_TRAY_TEXT_FONT_SIZE}" font-weight="600" xml:space="preserve">${text}</g>`,
     '</svg>',
   ].join('')
@@ -72,7 +98,11 @@ export function createTrayIcon(
   images: NativeImageFactory,
   iconPath: string,
   usageTitle: string | null = null,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
+  status: { runningCount: number; showRunningStatus: boolean } = {
+    runningCount: 0,
+    showRunningStatus: false,
+  }
 ): NativeImage {
   const source = images.createFromPath(iconPath)
   if (source.isEmpty()) {
@@ -97,12 +127,12 @@ export function createTrayIcon(
   )
   const lines = usageLines(usageTitle)
   const rendered =
-    lines.length === 0
+    lines.length === 0 && !status.showRunningStatus
       ? baseIcon
       : images.createFromDataURL(
-          `data:image/svg+xml;base64,${Buffer.from(createMacosTraySvg(baseIcon, lines)).toString(
-            'base64'
-          )}`
+          `data:image/svg+xml;base64,${Buffer.from(
+            createMacosTraySvg(baseIcon, lines, status.runningCount, status.showRunningStatus)
+          ).toString('base64')}`
         )
   if (rendered.isEmpty()) {
     throw new Error('macOS tray icon could not be rendered')

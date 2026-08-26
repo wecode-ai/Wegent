@@ -37,7 +37,10 @@ flowchart LR
 Required invariants:
 
 1. Only the target Executor holding the source repository may create, delete, or restore a Worktree.
-2. `deviceId` is part of Worktree identity; no cross-device fallback or migration is implicit.
+2. `deviceId` records the device that created or most recently prepared the Worktree and remains
+   available for routing and diagnostics. It is not Worktree ownership or an operation permission:
+   an Executor must not block task execution, reconciliation, archival, restoration, or cleanup
+   solely because a persisted record contains a different `deviceId`.
 3. Backend never executes Git and never owns filesystem truth.
 4. A Runtime Task binds to at most one managed Worktree.
 5. Worktree IDs derive from stable unique task IDs.

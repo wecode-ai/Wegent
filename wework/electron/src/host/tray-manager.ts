@@ -23,6 +23,13 @@ export interface TrayMenuState {
   unreadCount: number
 }
 
+export interface TrayNativeStatus {
+  usageTitle: string | null
+  usageTooltip: string | null
+  runningCount: number
+  showRunningStatus: boolean
+}
+
 export type TrayAction =
   | { type: 'open-app'; source: 'tray-icon' | 'tray-menu' }
   | { type: 'open-settings'; source: 'tray-menu' }
@@ -58,7 +65,7 @@ export interface TrayManagerDependencies<
   createTray: () => TTray
   buildMenu: (template: TrayMenuTemplateItem[]) => TMenu
   dispatchAction: (action: TrayAction) => void
-  applyTitle?: (tray: TTray, title: string) => void
+  applyIcon?: (tray: TTray, state: TrayMenuState) => void
   platform?: NodeJS.Platform
   defaultTooltip?: string
 }
@@ -196,6 +203,7 @@ export class ElectronTrayManager<
   private readonly defaultTooltip: string
   private tray: TTray | null = null
   private state: TrayMenuState = EMPTY_STATE
+  private nativeStatus: TrayNativeStatus | null = null
   private menuTemplate: TrayMenuTemplateItem[] = []
   private menuActions = new Map<string, TrayAction>()
 
@@ -238,6 +246,13 @@ export class ElectronTrayManager<
     }
   }
 
+  setNativeStatus(status: TrayNativeStatus): void {
+    this.nativeStatus = status
+    if (this.tray) {
+      this.applyState()
+    }
+  }
+
   activate(activation: TrayActivation): boolean {
     if (activation.type === 'click' || activation.type === 'double-click') {
       this.dependencies.dispatchAction({ type: 'open-app', source: 'tray-icon' })
@@ -253,11 +268,12 @@ export class ElectronTrayManager<
   }
 
   snapshot(): TraySnapshot {
+    const state = this.effectiveState()
     return {
       created: this.tray !== null,
-      title: this.state.usageTitle,
+      title: state.usageTitle,
       titleSupported: this.platform === 'darwin',
-      tooltip: this.state.usageTooltip?.trim() || this.defaultTooltip,
+      tooltip: state.usageTooltip?.trim() || this.defaultTooltip,
       menu: this.menuTemplate.map(toSnapshotItem),
     }
   }
@@ -268,53 +284,68 @@ export class ElectronTrayManager<
       return
     }
 
-    this.rebuildMenu()
+    const state = this.effectiveState()
+    this.rebuildMenu(state)
     tray.setContextMenu(this.dependencies.buildMenu(this.menuTemplate))
-    tray.setToolTip(this.state.usageTooltip?.trim() || this.defaultTooltip)
+    tray.setToolTip(state.usageTooltip?.trim() || this.defaultTooltip)
     if (this.platform === 'darwin' && tray.setTitle) {
-      const title = this.state.usageTitle?.trim() ?? ''
-      if (this.dependencies.applyTitle) {
-        this.dependencies.applyTitle(tray, title)
+      if (this.dependencies.applyIcon) {
+        this.dependencies.applyIcon(tray, state)
       } else {
-        tray.setTitle(title)
+        tray.setTitle(state.usageTitle?.trim() ?? '')
       }
     }
   }
 
-  private rebuildMenu(): void {
-    const labels = labelsForLanguage(this.state.language)
+  private effectiveState(): TrayMenuState {
+    if (!this.nativeStatus) return this.state
+    return {
+      ...this.state,
+      usageTitle: this.nativeStatus.usageTitle,
+      usageTooltip:
+        [this.nativeStatus.usageTooltip?.trim(), this.state.usageTooltip?.trim()]
+          .filter(Boolean)
+          .join('\n') || null,
+      runningCount: this.nativeStatus.runningCount,
+      hasRunningTasks: this.nativeStatus.runningCount > 0,
+      showRunningStatus: this.nativeStatus.showRunningStatus,
+    }
+  }
+
+  private rebuildMenu(state = this.effectiveState()): void {
+    const labels = labelsForLanguage(state.language)
     const actions = new Map<string, TrayAction>()
     const sections: TrayTaskSection[] = [
       {
         id: 'unread',
         label: labels.unread,
         emptyLabel: '',
-        items: this.state.unread,
-        moreItems: this.state.unreadMore,
+        items: state.unread,
+        moreItems: state.unreadMore,
         alwaysVisible: false,
       },
       {
         id: 'running',
         label: labels.running,
         emptyLabel: '',
-        items: this.state.running,
-        moreItems: this.state.runningMore,
+        items: state.running,
+        moreItems: state.runningMore,
         alwaysVisible: false,
       },
       {
         id: 'pinned',
         label: labels.pinned,
         emptyLabel: labels.noPinnedTasks,
-        items: this.state.pinned,
-        moreItems: this.state.pinnedMore,
+        items: state.pinned,
+        moreItems: state.pinnedMore,
         alwaysVisible: true,
       },
       {
         id: 'recent',
         label: labels.recent,
         emptyLabel: labels.noTasks,
-        items: this.state.recent,
-        moreItems: this.state.recentMore,
+        items: state.recent,
+        moreItems: state.recentMore,
         alwaysVisible: true,
       },
     ]
