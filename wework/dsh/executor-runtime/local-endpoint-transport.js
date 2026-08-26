@@ -71,6 +71,7 @@ export class LocalEndpointTransport extends EventEmitter {
             type: 'authenticate',
             protocol_version: 1,
             token: this.token,
+            receive_events: false,
           })}\n`
         )
       })

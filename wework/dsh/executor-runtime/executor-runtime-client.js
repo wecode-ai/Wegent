@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { LocalEndpointTransport } from './local-endpoint-transport.js'
 
-const DEFAULT_BUFFER_SIZE = 1024
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 export class ExecutorRuntimeError extends Error {
   constructor(code, message, retryable = false, details = {}) {
@@ -16,20 +15,16 @@ export class ExecutorRuntimeError extends Error {
 export class ExecutorRuntimeClient {
   constructor(options) {
     this.transport = options.transport
-    this.bufferSize = options.bufferSize ?? DEFAULT_BUFFER_SIZE
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
-    this.listeners = new Set()
-    this.events = []
     this.pending = new Map()
-    this.nextSequence = 1
     this.description = null
     this.negotiationPromise = null
     this.started = false
     this.transport.on('message', message => this.handleMessage(message))
     this.transport.on('close', () => this.handleDisconnect())
-    this.transport.on('transportError', error => this.publishTransportError(error))
+    this.transport.on('transportError', error => this.handleTransportError(error))
     this.transport.on('reconnected', () => {
-      void this.beginNegotiation().catch(error => this.publishTransportError(error))
+      void this.beginNegotiation().catch(error => this.handleTransportError(error))
     })
   }
 
@@ -112,29 +107,6 @@ export class ExecutorRuntimeClient {
     })
   }
 
-  subscribe(listener, afterSequence = 0) {
-    for (const event of this.replay(afterSequence)) listener(event)
-    return this.listen(listener)
-  }
-
-  listen(listener) {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
-  }
-
-  replay(afterSequence) {
-    const oldest = this.events[0]?.sequence ?? this.nextSequence
-    if (afterSequence > 0 && afterSequence < oldest - 1) {
-      throw new ExecutorRuntimeError(
-        'event_history_lost',
-        'Requested executor event history is no longer buffered',
-        true,
-        { requestedAfter: afterSequence, oldestAvailable: oldest }
-      )
-    }
-    return this.events.filter(event => event.sequence > afterSequence)
-  }
-
   async negotiate() {
     const description = await this.request('executor.protocol.describe', {})
     if (
@@ -183,7 +155,7 @@ export class ExecutorRuntimeClient {
       return
     }
     if (message?.type === 'event' && typeof message.event === 'string') {
-      this.publish(message)
+      return
     }
   }
 
@@ -197,10 +169,17 @@ export class ExecutorRuntimeClient {
         true
       )
     )
-    this.publish({
-      event: 'executor.transport_disconnected',
-      payload: {},
-    })
+  }
+
+  handleTransportError(error) {
+    this.description = null
+    this.failPending(
+      new ExecutorRuntimeError(
+        'transport_unavailable',
+        error instanceof Error ? error.message : String(error),
+        true
+      )
+    )
   }
 
   failPending(error) {
@@ -209,33 +188,6 @@ export class ExecutorRuntimeClient {
       pending.reject(error)
     }
     this.pending.clear()
-  }
-
-  publishTransportError(error) {
-    this.publish({
-      event: 'executor.transport_error',
-      payload: {
-        message: error instanceof Error ? error.message : String(error),
-      },
-    })
-  }
-
-  publish(value) {
-    const upstreamSequence = value.sequence ?? value.payload?.eventSeq ?? value.payload?.event_seq
-    const event = {
-      protocolVersion: 1,
-      sequence:
-        Number.isSafeInteger(upstreamSequence) && upstreamSequence > 0
-          ? upstreamSequence
-          : this.nextSequence,
-      emittedAt: new Date().toISOString(),
-      event: value.event,
-      payload: value.payload ?? {},
-    }
-    this.nextSequence = Math.max(this.nextSequence, event.sequence + 1)
-    this.events.push(event)
-    if (this.events.length > this.bufferSize) this.events.shift()
-    for (const listener of this.listeners) listener(event)
   }
 }
 

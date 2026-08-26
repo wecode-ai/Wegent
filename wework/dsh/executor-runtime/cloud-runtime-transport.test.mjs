@@ -5,7 +5,7 @@ import test from 'node:test'
 import { CloudRuntimeTransport } from './cloud-runtime-transport.js'
 import { ExecutorRuntimeClient } from './executor-runtime-client.js'
 
-test('uses the same executor client contract for a cloud relay', async () => {
+test('uses the same stateless RPC client contract for a cloud relay', async () => {
   const socket = new FakeRuntimeSocket()
   const client = new ExecutorRuntimeClient({
     transport: new CloudRuntimeTransport({
@@ -21,12 +21,7 @@ test('uses the same executor client contract for a cloud relay', async () => {
       healthy: true,
       transport: 'cloud',
     })
-    socket.emitRuntimeEvent({
-      type: 'event',
-      event: 'task.updated',
-      payload: { id: 'cloud-task', eventSeq: 7 },
-    })
-    assert.equal(client.replay(0).at(-1).sequence, 7)
+    assert.equal(client.replay, undefined)
   } finally {
     await client.stop()
   }

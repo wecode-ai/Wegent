@@ -102,46 +102,6 @@ export function subscribeDshExecutorEvents(
   let source: EventSource | null = null
   let closed = false
   let reconnectTimer: number | null = null
-  let pendingTextDelta: DshExecutorEventEnvelope | null = null
-  let pendingTextDeltaFrame: number | null = null
-
-  const cancelPendingTextDeltaFrame = () => {
-    if (pendingTextDeltaFrame === null) return
-    window.cancelAnimationFrame(pendingTextDeltaFrame)
-    pendingTextDeltaFrame = null
-  }
-
-  const flushPendingTextDelta = () => {
-    cancelPendingTextDeltaFrame()
-    const event = pendingTextDelta
-    pendingTextDelta = null
-    if (event) listener(event)
-  }
-
-  const schedulePendingTextDelta = () => {
-    if (pendingTextDeltaFrame !== null) return
-    pendingTextDeltaFrame = window.requestAnimationFrame(() => {
-      pendingTextDeltaFrame = null
-      const event = pendingTextDelta
-      pendingTextDelta = null
-      if (event) listener(event)
-    })
-  }
-
-  const deliver = (event: DshExecutorEventEnvelope) => {
-    if (event.event !== 'response.output_text.delta') {
-      flushPendingTextDelta()
-      listener(event)
-      return
-    }
-
-    if (pendingTextDelta && mergeTextDeltaEvents(pendingTextDelta, event)) {
-      return
-    }
-    flushPendingTextDelta()
-    pendingTextDelta = cloneTextDeltaEvent(event)
-    schedulePendingTextDelta()
-  }
 
   const connect = () => {
     if (closed) return
@@ -159,12 +119,12 @@ export function subscribeDshExecutorEvents(
       ) {
         return
       }
-      cursor = Math.max(cursor, event.sequence)
-      deliver(event)
+      if (event.sequence <= cursor) return
+      listener(event)
+      cursor = event.sequence
     }
     nextSource.onerror = () => {
       if (source !== nextSource) return
-      flushPendingTextDelta()
       nextSource.close()
       source = null
       if (!closed) {
@@ -179,7 +139,6 @@ export function subscribeDshExecutorEvents(
       window.clearTimeout(reconnectTimer)
       reconnectTimer = null
     }
-    flushPendingTextDelta()
     source?.close()
     source = null
     connect()
@@ -191,69 +150,9 @@ export function subscribeDshExecutorEvents(
     closed = true
     executorEventReconnectors.delete(reconnect)
     if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
-    cancelPendingTextDeltaFrame()
-    pendingTextDelta = null
     source?.close()
     source = null
   }
-}
-
-function cloneTextDeltaEvent(event: DshExecutorEventEnvelope): DshExecutorEventEnvelope {
-  return {
-    ...event,
-    payload: {
-      ...event.payload,
-      data: {
-        ...eventData(event),
-      },
-    },
-  }
-}
-
-function mergeTextDeltaEvents(
-  pending: DshExecutorEventEnvelope,
-  next: DshExecutorEventEnvelope
-): boolean {
-  const pendingData = eventData(pending)
-  const nextData = eventData(next)
-  const pendingDelta = pendingData.delta
-  const nextDelta = nextData.delta
-  if (typeof pendingDelta !== 'string' || typeof nextDelta !== 'string') return false
-  if (textDeltaIdentity(pending) !== textDeltaIdentity(next)) return false
-
-  const pendingOffset = pendingData.offset
-  const nextOffset = nextData.offset
-  if (
-    typeof pendingOffset === 'number' &&
-    typeof nextOffset === 'number' &&
-    nextOffset !== pendingOffset + pendingDelta.length
-  ) {
-    return false
-  }
-  if ((typeof pendingOffset === 'number') !== (typeof nextOffset === 'number')) {
-    return false
-  }
-
-  pending.sequence = next.sequence
-  pending.emittedAt = next.emittedAt
-  pendingData.delta = pendingDelta + nextDelta
-  return true
-}
-
-function textDeltaIdentity(event: DshExecutorEventEnvelope): string {
-  const payload = { ...event.payload }
-  delete payload.data
-  const data = { ...eventData(event) }
-  delete data.delta
-  delete data.offset
-  return JSON.stringify([payload, data])
-}
-
-function eventData(event: DshExecutorEventEnvelope): Record<string, unknown> {
-  const data = event.payload.data
-  return typeof data === 'object' && data !== null && !Array.isArray(data)
-    ? (data as Record<string, unknown>)
-    : {}
 }
 
 export function reconnectDshExecutorEvents(): void {
