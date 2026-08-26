@@ -251,7 +251,7 @@ export function completeRuntimeConversationHydration(
     turns = reduceRuntimeConversationTurns(turns, action)
   }
   hydrationByConversation.delete(key)
-  cacheBoundedEntry(turnsByConversation, key, turns)
+  cacheRuntimeConversationTurns(key, turns)
   notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
   return projectRuntimeConversationTurns(turns)
 }
@@ -269,7 +269,7 @@ export function abortRuntimeConversationHydration(
     turns = reduceRuntimeConversationTurns(turns, action)
   }
   hydrationByConversation.delete(key)
-  cacheBoundedEntry(turnsByConversation, key, turns)
+  cacheRuntimeConversationTurns(key, turns)
   notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
   return projectRuntimeConversationTurns(turns)
 }
@@ -281,7 +281,7 @@ export function reconcileRuntimeConversationSnapshot(
   const key = runtimeConversationKey(address)
   const localTurns = turnsByConversation.get(key) ?? []
   const turns = mergeRuntimeConversationTurns(localTurns, snapshotTurns)
-  cacheBoundedEntry(turnsByConversation, key, turns)
+  cacheRuntimeConversationTurns(key, turns)
   notifyRuntimeConversation(key)
   return projectRuntimeConversationTurns(turns)
 }
@@ -315,7 +315,7 @@ export function applyRuntimeConversationAction(
   }
   const currentTurns = turnsByConversation.get(key) ?? []
   const nextTurns = reduceRuntimeConversationTurns(currentTurns, action)
-  cacheBoundedEntry(turnsByConversation, key, nextTurns)
+  cacheRuntimeConversationTurns(key, nextTurns)
   publishRuntimeConversationAction(key, action)
   return projectRuntimeConversationTurns(nextTurns)
 }
@@ -397,7 +397,7 @@ function updateRuntimeConversationTurns(
   const key = runtimeConversationKey(address)
   const currentTurns = turnsByConversation.get(key) ?? []
   const nextTurns = update(currentTurns)
-  cacheBoundedEntry(turnsByConversation, key, nextTurns)
+  cacheRuntimeConversationTurns(key, nextTurns)
   notifyRuntimeConversation(key)
   return projectRuntimeConversationTurns(nextTurns)
 }
@@ -537,7 +537,7 @@ export function settleRuntimeConversationGuidance(
 
   const appliedGuidance = createAppliedRuntimeGuidanceMessage(guidanceMessage, payload)
   const nextTurns = appendRuntimeConversationGuidance(turns, payload.subtaskId, appliedGuidance)
-  cacheBoundedEntry(turnsByConversation, key, nextTurns)
+  cacheRuntimeConversationTurns(key, nextTurns)
   notifyRuntimeConversation(key)
   return guidanceMessage
 }
@@ -935,12 +935,22 @@ function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {
   return value
 }
 
-function cacheBoundedEntry<T>(entries: Map<string, T>, key: string, value: T) {
+function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]) {
+  cacheBoundedEntry(turnsByConversation, key, turns, cancelPendingStreamingNotification)
+}
+
+function cacheBoundedEntry<T>(
+  entries: Map<string, T>,
+  key: string,
+  value: T,
+  onEvict?: (key: string) => void
+) {
   entries.delete(key)
   entries.set(key, value)
   while (entries.size > MAX_CONVERSATION_CACHE_ENTRIES) {
     const oldestKey = entries.keys().next().value
     if (oldestKey === undefined) return
+    onEvict?.(oldestKey)
     entries.delete(oldestKey)
   }
 }

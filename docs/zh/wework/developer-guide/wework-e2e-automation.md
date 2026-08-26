@@ -435,9 +435,10 @@ GitHub Actions 将 plugins、core 和 cloud 三个 Linux 桌面场景作为矩�
 每个场景使用独立 runner、HOME、Executor Home、端口和诊断 artifact，保留原有
 真实 Electron、Executor 与 Codex 验证语义，同时避免三个场景在同一个 job 中串行等待。
 矩阵关闭 fail-fast，使一个场景失败时其他场景仍能完成并上传各自诊断。
-三类场景会注入不同的构建期 Vite 环境变量，因此 Electron 应用 artifact必须按
-E2E 命令隔离。plugins 场景不得恢复 core 或 cloud 场景生成的应用二进制，否则
-编译进应用的 Codex Home 初始化开关可能不匹配当前测试。
+三类场景复用同一个预构建 Electron artifact。Codex Home 初始化、云端地址和测试
+凭据等场景差异由 Electron 启动时注入的 desktop E2E runtime config 控制，不再
+编译进应用二进制；因此 plugins、core 和 cloud 可共享应用构建，同时仍保持各自
+独立的运行目录与进程状态。
 
 Linux 桌面场景会把 Electron 系统依赖下载得到的 `.deb` 文件缓存在 runner 用户目录，
 并按操作系统、CPU 架构和自然周轮换缓存。每次运行仍执行 `apt-get update`，旧缓存

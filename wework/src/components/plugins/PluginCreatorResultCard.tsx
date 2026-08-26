@@ -7,8 +7,10 @@ export interface PluginCreatorResultCardProps {
   description?: string | null
   logoUrl?: string | null
   validationSummary?: string | null
+  statusLabel?: string | null
   onViewPlugin?: () => void
-  onInstall?: () => void
+  onShare?: () => void
+  onPublish?: () => void
 }
 
 export function PluginCreatorResultCard({
@@ -16,8 +18,10 @@ export function PluginCreatorResultCard({
   description,
   logoUrl,
   validationSummary,
+  statusLabel,
   onViewPlugin,
-  onInstall,
+  onShare,
+  onPublish,
 }: PluginCreatorResultCardProps) {
   const { t } = useTranslation('common')
   const logo = resolvePluginAssetUrl(logoUrl || '')
@@ -38,7 +42,8 @@ export function PluginCreatorResultCard({
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-medium text-text-primary">{name}</h3>
           <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">
-            {t('workbench.plugins_creator_preview_status', '已创建预览，尚未安装')}
+            {statusLabel ||
+              t('workbench.plugins_creator_workspace_status', '已保存在当前对话工作区')}
           </p>
           {description ? (
             <p className="mt-1 line-clamp-2 text-xs leading-5 text-text-secondary">{description}</p>
@@ -61,14 +66,24 @@ export function PluginCreatorResultCard({
             {t('workbench.plugins_creator_view_plugin', '查看插件')}
           </button>
         )}
-        {onInstall && (
+        {onShare && (
           <button
             type="button"
-            data-testid="plugin-creator-install-plugin"
-            className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
-            onClick={onInstall}
+            data-testid="plugin-creator-share-plugin"
+            className="h-8 rounded-lg border border-border/30 px-3 text-sm font-medium text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+            onClick={onShare}
           >
-            {t('workbench.plugins_install_plugin', '安装插件')}
+            {t('workbench.plugins_share', '分享')}
+          </button>
+        )}
+        {onPublish && (
+          <button
+            type="button"
+            data-testid="plugin-creator-publish-plugin"
+            className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+            onClick={onPublish}
+          >
+            {t('workbench.plugins_publish', '发布')}
           </button>
         )}
       </div>

@@ -680,6 +680,7 @@ function updateFailedTurn(
   if (!turnId) return turns
   const existingIndex = turns.findIndex(turn => turn.id === turnId)
   if (existingIndex >= 0) {
+    if (turns[existingIndex].status === 'cancelled') return turns
     return replaceAt(turns, existingIndex, update(turns[existingIndex]))
   }
   const optimisticIndex = turns.findLastIndex(

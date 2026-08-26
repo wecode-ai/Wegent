@@ -14,9 +14,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from sqlalchemy.orm import Session
 
+from knowledge_runtime.models.knowledge_document import KnowledgeDocument
 from shared.db.capability_reference import resolve_model_kind
 from shared.models import (
     RuntimeEmbeddingModelConfig,

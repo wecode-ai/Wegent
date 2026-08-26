@@ -68,9 +68,11 @@ describe('SystemSleepController', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
 
     controller.handleExecutorEvent('response.created', { taskId: 'task-1' })
+    const logCallsAfterCreated = log.mock.calls.length
     for (let index = 0; index < 2_200; index += 1) {
       controller.handleExecutorEvent('response.block.updated', { taskId: 'task-1' })
     }
+    expect(log).toHaveBeenCalledTimes(logCallsAfterCreated)
     controller.setTaskActive('main', false)
 
     expect(mocks.start).toHaveBeenCalledOnce()
@@ -78,7 +80,6 @@ describe('SystemSleepController', () => {
 
     controller.handleExecutorEvent('response.completed', { taskId: 'task-1' })
     expect(mocks.stop).toHaveBeenCalledWith(42)
-    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('response.block.updated'))
   })
 
   test('ignores high-frequency response updates without logging or changing task activity', () => {

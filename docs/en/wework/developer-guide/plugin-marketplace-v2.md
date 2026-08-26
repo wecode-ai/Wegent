@@ -40,9 +40,11 @@ Normal uninstall removes the confirmed device installation record and materializ
 
 Publishing uses a unified scope picker: people (`visibility=personal`, auto-approved after scan as `purpose=restricted_share`), organization (`workspace`), or everyone (`public`). Organization and public scopes still require human review (`purpose=marketplace_publish`). Personal publish may include `targets` and `allowCopy`; the server validates recipients at submission init and applies `resource_members` after a successful scan.
 
-Create flows must target the managed `wework-personal` marketplace. If Plugin Creator still lands in the Codex default `personal` marketplace (`~/plugins` + `~/.agents`), list refresh and publish packaging atomically migrate the plugin into `wework-personal`, keep marketplace manifests in sync, and prefer that marketplace to avoid duplicates.
+Creation does not create a cloud Plugin, Release, or package. Local Plugin Creator flows target the managed `wework-personal` marketplace. If a local creation lands in the Codex default `personal` marketplace (`~/plugins` + `~/.agents`), list refresh and publish packaging atomically migrate it into `wework-personal`, keep marketplace manifests in sync, and prefer that marketplace to avoid duplicates.
 
-Publishing a local creation does not require a manually selected ZIP. Electron locates the plugin in the local marketplace, packages it natively, and validates the Codex manifest, symlinks, path containment, the 50 MB archive limit, and the 200 MB expanded-size limit. A single-Skill plugin is submitted with `listing_type=skill` automatically.
+Cloud Plugin Creator flows instead keep source under `$WEGENT_TASK_WORKSPACE/plugins/<plugin-name>`. A persisted result marker in the existing Task conversation renders View, Share, and Publish actions; no draft table or plugin-center draft row is created. A later action restores the same Task workspace and asks that Task's Executor to revalidate and package the current source. Permanently deleting the Task also removes access to an unpublished source.
+
+Publishing does not require a manually selected ZIP. Electron locates and packages local Marketplace source, while the current Task's Executor packages cloud workspace source. Both paths validate the Codex manifest, symlinks, path containment, and the 50 MB archive limit, then reuse the existing submission, object-storage, scanning, ACL, and review pipeline; the server scan also enforces the 200 MB expanded-size limit. A single-Skill plugin is submitted with `listing_type=skill` automatically.
 
 ## Restricted sharing and personal copies
 

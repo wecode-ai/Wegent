@@ -466,11 +466,12 @@ Home, ports, and diagnostic artifact. This preserves the existing real Electron,
 Executor, and Codex verification semantics while removing the serial wait
 between the three scenarios. Matrix fail-fast is disabled so the remaining
 scenarios can finish and upload diagnostics when one scenario fails.
-The three scenarios inject different build-time Vite environment variables, so
-their Electron application artifacts must be isolated by E2E command. The plugins
-scenario must not restore an application binary built by the core or cloud
-scenario, because that binary may contain a different Codex Home initialization
-setting.
+The three scenarios reuse one prebuilt Electron artifact. Scenario-specific
+values such as Codex Home initialization, cloud endpoints, and test credentials
+are injected through the desktop E2E runtime config when Electron starts rather
+than compiled into the application binary. Plugins, core, and cloud can therefore
+share the application build while retaining isolated runtime directories and
+process state.
 
 The Linux desktop scenarios cache the downloaded `.deb` files for Electron system
 dependencies in the runner user's home directory. Cache keys rotate weekly and

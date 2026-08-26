@@ -141,7 +141,7 @@ describe('DSH executor transport', () => {
       2,
       expect.objectContaining({ sequence: 2201, event: 'response.completed' })
     )
-    expect(animationFrames).toHaveLength(0)
+    expect(animationFrames.size).toBe(0)
 
     unsubscribe()
   })

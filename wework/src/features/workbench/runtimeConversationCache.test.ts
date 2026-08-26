@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   abortRuntimeConversationHydration,
   appendOptimisticRuntimeConversationGuidance,
@@ -46,7 +46,10 @@ const address = {
 }
 
 describe('runtimeConversationCache', () => {
-  afterEach(clearRuntimeConversationCacheForTests)
+  afterEach(() => {
+    clearRuntimeConversationCacheForTests()
+    vi.unstubAllGlobals()
+  })
 
   test('keeps transcript data independently from a mounted pane', () => {
     applyRuntimeConversationAction(address, {
@@ -195,6 +198,55 @@ describe('runtimeConversationCache', () => {
         status: 'done',
       },
     ])
+    unsubscribe()
+  })
+
+  test('cancels a pending streaming notification when bounded eviction removes its turn', () => {
+    const animationFrames = new Map<number, FrameRequestCallback>()
+    let nextFrameId = 1
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const frameId = nextFrameId++
+      animationFrames.set(frameId, callback)
+      return frameId
+    })
+    const cancelAnimationFrame = vi.fn((frameId: number) => {
+      animationFrames.delete(frameId)
+    })
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame)
+
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'subtask-1',
+    })
+    const listener = vi.fn()
+    const unsubscribe = subscribeRuntimeConversation(address, listener)
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'subtask-1',
+      itemId: 'assistant-item-1',
+      content: 'pending update',
+    })
+
+    expect(animationFrames.size).toBe(1)
+
+    for (let index = 0; index < 50; index += 1) {
+      const otherAddress = { ...address, taskId: `other-task-${index}` }
+      applyRuntimeConversationAction(otherAddress, {
+        type: 'user_added',
+        message: {
+          id: `other-user-${index}`,
+          role: 'user',
+          content: `other message ${index}`,
+          status: 'done',
+        },
+      })
+    }
+
+    expect(getRuntimeConversationMessages(address)).toEqual([])
+    expect(cancelAnimationFrame).toHaveBeenCalledOnce()
+    expect(animationFrames.size).toBe(0)
+    expect(listener).not.toHaveBeenCalled()
     unsubscribe()
   })
 
@@ -853,6 +905,33 @@ describe('runtimeConversationCache', () => {
         runtimeStatus: 'cancelled',
         stoppedNotice: true,
         content: '',
+      }),
+    ])
+  })
+
+  test('keeps a cancelled turn stopped when a late assistant error arrives', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-cancelled',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_cancelled',
+      subtaskId: 'turn-cancelled',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_error',
+      subtaskId: 'turn-cancelled',
+      error: 'late upstream failure',
+      errorType: 'runtime_error',
+    })
+
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        runtimeStatus: 'cancelled',
+        stoppedNotice: true,
+        error: undefined,
       }),
     ])
   })

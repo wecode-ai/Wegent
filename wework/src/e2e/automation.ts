@@ -1881,6 +1881,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       const form = element instanceof HTMLFormElement ? element : element.closest('form')
       if (!form) throw new Error(`Selector "${command.selector}" is not associated with a form`)
+      if (command.value !== undefined) {
+        fillDesktopControlElement(element, command.value)
+      }
       form.requestSubmit()
       return ''
     }

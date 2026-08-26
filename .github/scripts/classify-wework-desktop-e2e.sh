@@ -74,6 +74,7 @@ cloud_segments=(
   automation-lifecycle
   project-automation
   plugin-auto-update
+  plugin-workspace-publication
 )
 # Group checkpoints by observed Cloud CI duration so every serial shard stays
 # below the desktop suite's critical-path budget. Keep 15 Cloud shards so the
@@ -92,7 +93,7 @@ cloud_shards=(
   workspace-tabs,cloud-worktree-capability
   supervisor-lifecycle,conversation-state
   model-routing
-  plugin-auto-update
+  plugin-auto-update,plugin-workspace-publication
   cloud-worktree-queued-cancel
   workspace-attachments
 )
