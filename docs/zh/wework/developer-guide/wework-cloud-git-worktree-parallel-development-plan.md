@@ -51,7 +51,9 @@ flowchart LR
 ### 2.3 必要不变量
 
 1. Worktree 只能由持有源仓库的目标 Executor 创建、删除和恢复。
-2. `deviceId` 是 Worktree 身份的一部分，不能跨设备回退或迁移。
+2. `deviceId` 记录创建或最近准备 Worktree 的设备，并用于请求路由；它不是 Worktree
+   归属或操作权限，Executor 不得仅因持久化记录中的 `deviceId` 不同而阻止任务执行、
+   对账、归档、恢复或清理。
 3. Backend 不执行 Git 命令，不持有 Worktree 文件状态真值。
 4. 一个 Runtime Task 最多绑定一个托管 Worktree。
 5. Worktree ID 必须由稳定、唯一的任务 ID 派生。
@@ -685,7 +687,10 @@ cloud-worktree-device-restart
 
 ### 14.5 设备重建
 
-相同逻辑设备如果获得新的 `deviceId`，旧 Worktree 不能自动归属新设备。需要明确的设备恢复或数据丢失状态。
+设备重建或本地设备 ID 变化后，只要 Executor 仍访问同一持久化 Worktree 和 Git 仓库，
+旧记录中的 `deviceId` 不得阻止后续任务发送和 Worktree 生命周期操作。`deviceId` 继续
+作为诊断与路由元数据保留；存储是否连续仍由 Runtime Instance ID、稳定挂载路径和
+Git Worktree 身份校验决定。
 
 ### 14.6 Executor 崩溃窗口
 
