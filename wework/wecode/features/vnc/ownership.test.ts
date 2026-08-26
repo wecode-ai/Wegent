@@ -12,7 +12,6 @@ const publicIntegrationFiles = [
   'src/components/settings/ConnectionsSettingsPage.test.tsx',
   'src/extensions/cloud-desktop-contract.ts',
   'src/lib/external-links.ts',
-  'src-tauri/src/lib.rs',
 ]
 const vncImplementationToken = /vnc|\bRFB\b|prepare_vnc_session|get_vnc_session_config/i
 
