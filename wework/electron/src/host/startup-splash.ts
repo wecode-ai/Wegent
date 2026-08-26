@@ -81,6 +81,7 @@ export class StartupSplash {
   private readonly persistPng: (path: string, bytes: Buffer) => Promise<void>
   private state: StartupSplashSnapshot['state'] = 'idle'
   private showPromise: Promise<StartupSplashSnapshot> | null = null
+  private closePromise: Promise<StartupSplashSnapshot> | null = null
 
   constructor(private readonly options: StartupSplashOptions) {
     this.now = options.now ?? Date.now
@@ -98,9 +99,18 @@ export class StartupSplash {
     return this.showPromise
   }
 
-  async close(options: CloseStartupSplashOptions = {}): Promise<StartupSplashSnapshot> {
-    if (this.state === 'closed') return this.snapshot()
+  close(options: CloseStartupSplashOptions = {}): Promise<StartupSplashSnapshot> {
+    if (this.state === 'closed') return Promise.resolve(this.snapshot())
+    if (this.closePromise) return this.closePromise
 
+    const operation = this.closeOnce(options)
+    this.closePromise = operation.finally(() => {
+      this.closePromise = null
+    })
+    return this.closePromise
+  }
+
+  private async closeOnce(options: CloseStartupSplashOptions): Promise<StartupSplashSnapshot> {
     const target = this.options.window
     if (target.isDestroyed()) {
       this.markClosed()
