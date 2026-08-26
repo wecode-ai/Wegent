@@ -127,7 +127,7 @@ fn resolve_command(command: &str, plugin_dir: &Path) -> io::Result<String> {
             "relative hook command escapes plugin directory",
         ));
     }
-    Ok(format!("{}{}", shell_quote(&canonical), suffix))
+    Ok(format!("{}{}", shell_invoke(&canonical), suffix))
 }
 
 fn split_program(command: &str) -> Option<(&str, &str)> {
@@ -145,14 +145,24 @@ fn shell_quote(path: &Path) -> String {
 
 #[cfg(windows)]
 fn shell_quote(path: &Path) -> String {
-    format!("\"{}\"", path.to_string_lossy().replace('"', "\\\""))
+    format!("'{}'", path.to_string_lossy().replace('\'', "''"))
+}
+
+#[cfg(unix)]
+fn shell_invoke(path: &Path) -> String {
+    shell_quote(path)
+}
+
+#[cfg(windows)]
+fn shell_invoke(path: &Path) -> String {
+    format!("& {}", shell_quote(path))
 }
 
 fn shell_command(script: &str) -> Command {
     #[cfg(windows)]
     {
-        let mut command = Command::new("cmd");
-        command.args(["/S", "/C", script]);
+        let mut command = Command::new("powershell");
+        command.args(["-NoProfile", "-NonInteractive", "-Command", script]);
         crate::process::hide_windows_console(&mut command);
         command
     }
@@ -245,6 +255,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn writes_json_and_closes_stdin() {
         let directory = tempdir().unwrap();
@@ -268,6 +279,27 @@ mod tests {
         assert!(outcome.stdout.contains("\"ok\":true"));
     }
 
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn runs_bundled_relative_command_through_powershell() {
+        let directory = tempdir().unwrap();
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
+        let source = Path::new(&system_root).join("System32").join("whoami.exe");
+        if !source.is_file() {
+            return;
+        }
+        fs::create_dir_all(directory.path().join("bin")).unwrap();
+        fs::copy(&source, directory.path().join("bin/tool.exe")).unwrap();
+        let outcome = execute_command_hook(
+            &config("./bin/tool.exe".to_owned()),
+            directory.path(),
+            directory.path(),
+            &json!({}),
+        )
+        .await;
+        assert_eq!(outcome.exit_code, Some(0));
+    }
+
     #[tokio::test]
     async fn times_out() {
         let directory = tempdir().unwrap();
@@ -285,5 +317,48 @@ mod tests {
             .insert(platform_target(), "target-command".to_owned());
 
         assert_eq!(platform_command(&hook), "target-command");
+    }
+
+    #[test]
+    fn resolves_relative_plugin_binaries_through_the_platform_shell() {
+        let directory = tempdir().unwrap();
+        let tool = directory.path().join("bin/tool");
+        fs::create_dir_all(tool.parent().unwrap()).unwrap();
+        fs::write(&tool, "placeholder").unwrap();
+
+        let resolved = resolve_command("./bin/tool", directory.path()).unwrap();
+        #[cfg(windows)]
+        assert!(
+            resolved.starts_with("& '"),
+            "unexpected invocation: {resolved}"
+        );
+        #[cfg(not(windows))]
+        assert!(
+            resolved.starts_with('\''),
+            "unexpected invocation: {resolved}"
+        );
+        assert!(resolved.contains("bin/tool") || resolved.contains("bin\\tool"));
+        assert!(resolved.ends_with('\''));
+
+        let with_args = resolve_command("./bin/tool --flag value", directory.path()).unwrap();
+        assert!(with_args.ends_with(" --flag value"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn quotes_powershell_paths_with_single_quotes() {
+        assert_eq!(
+            shell_quote(Path::new(r"C:\dir with space\it's.exe")),
+            r"'C:\dir with space\it''s.exe'"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn quotes_sh_paths_with_single_quotes() {
+        assert_eq!(
+            shell_quote(Path::new("/dir with space/it's.sh")),
+            "'/dir with space/it'\\''s.sh'"
+        );
     }
 }
