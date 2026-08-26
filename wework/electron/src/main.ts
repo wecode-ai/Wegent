@@ -18,6 +18,7 @@ import {
 } from 'electron'
 import electronUpdater from 'electron-updater'
 import { existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { release } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -72,11 +73,15 @@ import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import { VncSessionManager } from './host/vnc-session-manager.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const packageMetadata = createRequire(import.meta.url)('../package.json') as {
+  weworkUpdateBaseUrl?: string
+}
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL?.trim() ||
+  packageMetadata.weworkUpdateBaseUrl?.trim() ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
 
 const userDataPath =

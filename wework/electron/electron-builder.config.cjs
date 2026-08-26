@@ -7,6 +7,9 @@ const updateBaseUrl =
 module.exports = {
   appId: 'io.wecode.wework',
   productName: 'WeWork',
+  extraMetadata: {
+    weworkUpdateBaseUrl: updateBaseUrl,
+  },
   directories: {
     buildResources: 'build',
     output: 'release-installer',

@@ -30,37 +30,71 @@ const assets = resolve(assetsDirectory)
 const output = resolve(outputDirectory)
 const notes = await readFile(resolve(notesPath), 'utf8')
 const releaseDate = new Date().toISOString()
-const releaseBaseUrl = `https://github.com/${repository}/releases/download/${releaseTag}`
+const releaseBaseUrl = (
+  process.env.WEWORK_RELEASE_BASE_URL?.trim() ||
+  `https://github.com/${repository}/releases/download/${releaseTag}`
+).replace(/\/+$/, '')
+const requestedTargets = new Set(
+  (process.env.WEWORK_RELEASE_TARGETS?.trim() || 'macos-arm64,macos-x64,windows-x64')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean)
+)
+const supportedTargets = new Set(['macos-arm64', 'macos-x64', 'windows-x64'])
+if (requestedTargets.size === 0) {
+  throw new Error('At least one desktop release target is required.')
+}
+if ([...requestedTargets].some(target => !supportedTargets.has(target))) {
+  throw new Error(`Unsupported desktop release targets: ${[...requestedTargets].join(', ')}`)
+}
 await mkdir(output, { recursive: true })
 
-const macArm = await asset(`WeWork_${version}_macos_arm64.zip`)
-const macX64 = await asset(`WeWork_${version}_macos_x64.zip`)
-const windows = await asset(`WeWork_${version}_windows_x64-setup.exe`)
+const macAssets = []
+if (requestedTargets.has('macos-arm64')) {
+  macAssets.push(await asset(`WeWork_${version}_macos_arm64.zip`))
+}
+if (requestedTargets.has('macos-x64')) {
+  macAssets.push(await asset(`WeWork_${version}_macos_x64.zip`))
+}
+const windows = requestedTargets.has('windows-x64')
+  ? await asset(`WeWork_${version}_windows_x64-setup.exe`)
+  : null
 const electronChannels = channel === 'stable' ? ['latest', 'beta'] : ['beta']
 
 for (const targetChannel of electronChannels) {
-  await writeFile(
-    resolve(output, `${targetChannel}-mac.yml`),
-    electronManifest(version, releaseDate, notes, [macArm, macX64]),
-    'utf8'
-  )
-  await writeFile(
-    resolve(output, `${targetChannel}.yml`),
-    electronManifest(version, releaseDate, notes, [windows]),
-    'utf8'
-  )
+  if (macAssets.length > 0) {
+    await writeFile(
+      resolve(output, `${targetChannel}-mac.yml`),
+      electronManifest(version, releaseDate, notes, macAssets),
+      'utf8'
+    )
+  }
+  if (windows) {
+    await writeFile(
+      resolve(output, `${targetChannel}.yml`),
+      electronManifest(version, releaseDate, notes, [windows]),
+      'utf8'
+    )
+  }
 }
 
+const tauriPlatforms = {}
+if (requestedTargets.has('macos-arm64')) {
+  tauriPlatforms['darwin-aarch64'] = await tauriEntry(`WeWork_${version}_macos_arm64.app.tar.gz`)
+}
+if (requestedTargets.has('macos-x64')) {
+  tauriPlatforms['darwin-x86_64'] = await tauriEntry(`WeWork_${version}_macos_x64.app.tar.gz`)
+}
+if (requestedTargets.has('windows-x64')) {
+  tauriPlatforms['windows-x86_64'] = await tauriEntry(`WeWork_${version}_windows_x64-setup.exe`)
+}
 const tauriSource = {
   version,
   notes,
   pub_date: releaseDate,
-  platforms: {
-    'darwin-aarch64': await tauriEntry(`WeWork_${version}_macos_arm64.app.tar.gz`),
-    'darwin-x86_64': await tauriEntry(`WeWork_${version}_macos_x64.app.tar.gz`),
-    'windows-x86_64': await tauriEntry(`WeWork_${version}_windows_x64-setup.exe`),
-  },
+  platforms: tauriPlatforms,
 }
+await writeFile(resolve(output, 'latest.json'), `${JSON.stringify(tauriSource, null, 2)}\n`, 'utf8')
 const tauriChannels = channel === 'stable' ? ['stable', 'beta'] : ['beta']
 for (const targetChannel of tauriChannels) {
   for (const [platform, entry] of Object.entries(tauriSource.platforms)) {
