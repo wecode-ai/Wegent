@@ -40,6 +40,28 @@ describe('resolveWorkspaceTarget', () => {
     expect(createLocalFileWorkspaceTarget('skills/gmail/SKILL.md', [])).toBeNull()
   })
 
+  test('creates a local file target for Windows drive-letter absolute paths', () => {
+    const devices = [
+      {
+        id: 1,
+        device_id: 'device-local-real',
+        name: 'Local Windows',
+        status: 'online' as const,
+        is_default: true,
+        device_type: 'local' as const,
+      },
+    ]
+
+    expect(
+      createLocalFileWorkspaceTarget('D:\\jiaqi62\\Projects\\Wegent-Internal\\wegent', devices)
+    ).toEqual({
+      deviceId: 'device-local-real',
+      path: 'D:/jiaqi62/Projects/Wegent-Internal',
+      source: 'runtime',
+      workspaceSource: 'local',
+    })
+  })
+
   test('creates a local target only for Wework attachment paths', () => {
     const devices = [
       {

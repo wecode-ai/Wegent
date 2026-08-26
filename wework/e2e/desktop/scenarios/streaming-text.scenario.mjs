@@ -31,6 +31,9 @@ const LONG_CODE_REASONING = Array.from(
 const VISUALIZATION_PROMPT = 'WEWORK_DESKTOP_E2E_ABSOLUTE_VISUALIZATION'
 const VISUALIZATION_TITLE = 'Absolute visualization E2E'
 const VISUALIZATION_MARKER = 'WEWORK_DESKTOP_E2E_VISUALIZATION_VISIBLE'
+const WINDOWS_LINK_PROMPT = 'WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK'
+const WINDOWS_LINK_LABEL = 'wegent'
+const WINDOWS_LINK_COMPLETION = '[wegent](D:/jiaqi62/Projects/Wegent-Internal/wegent)'
 const PHASE_FLIP_PROMPT = 'WEWORK_DESKTOP_E2E_PROCESS_TO_FALLBACK_FINAL'
 const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_FALLBACK_FINAL_FROM_PROCESS'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
@@ -56,6 +59,7 @@ const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-test
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
 const COMPOSER_CARD_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
 const ASSISTANT_CONTENT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+const ASSISTANT_MARKDOWN_LINK_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-markdown-link"]`
 const THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`
 const TOOL_THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-thinking-indicator"]`
 const USER_MESSAGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
@@ -358,6 +362,10 @@ function requestContainsLegacyConversationPrompt(body) {
 
 function requestContainsVisualizationPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(VISUALIZATION_PROMPT)
+}
+
+function requestContainsWindowsLinkPrompt(body) {
+  return JSON.stringify(body.input ?? []).includes(WINDOWS_LINK_PROMPT)
 }
 
 function requestContainsTimerPrompt(body) {
@@ -712,6 +720,23 @@ export function createDesktopScenario({
     await capture(control, 'streaming-text-00-long-code-terminal-burst.png')
   }
 
+  const verifyWindowsDriveLinkRendering = async control => {
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    await control.command('fill', COMPOSER_SELECTOR, { value: WINDOWS_LINK_PROMPT })
+    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+    await control.command('waitFor', ASSISTANT_MARKDOWN_LINK_SELECTOR, {
+      text: WINDOWS_LINK_LABEL,
+      timeoutMs: uiTimeoutMs,
+    })
+    const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+    assert.ok(
+      !snapshot.text.includes('[blocked]'),
+      'The Windows drive-letter markdown link was rendered as blocked text'
+    )
+    await capture(control, 'streaming-text-00-windows-drive-link.png')
+  }
+
   const verifyStoppedTurnOrder = async control => {
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -954,6 +979,18 @@ export function createDesktopScenario({
         return true
       }
 
+      if (requestContainsWindowsLinkPrompt(body)) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(WINDOWS_LINK_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+
       const historyTurn = findHistoryTurn(body)
       if (historyTurn) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -1047,6 +1084,7 @@ export function createDesktopScenario({
       }
 
       await verifyLongCodeTerminalBurst(control)
+      await verifyWindowsDriveLinkRendering(control)
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })

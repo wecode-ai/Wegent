@@ -18,6 +18,7 @@ import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
 import { cn } from '@/lib/utils'
+import { isAbsoluteWorkspacePath } from '@/lib/workspace-paths'
 import { track } from '@/telemetry/client'
 import {
   isLocalTerminalAvailable,
@@ -127,7 +128,7 @@ function mimeTypeForFileName(name: string): string {
 function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
   const normalizedPath = decodeMarkdownFilePath(path.trim()).replace(/\\/g, '/')
   if (!normalizedPath) return null
-  if (normalizedPath.startsWith('/')) return normalizedPath
+  if (isAbsoluteWorkspacePath(normalizedPath)) return normalizedPath
 
   const segments: string[] = []
   for (const segment of normalizedPath.split('/')) {
