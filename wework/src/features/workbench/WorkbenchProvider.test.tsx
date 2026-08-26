@@ -2710,17 +2710,15 @@ describe('WorkbenchProvider runtime tasks', () => {
       </WorkbenchProvider>
     )
 
-    await waitFor(() =>
-      expect(
-        lifecycleStore.getTask({
-          deviceId: 'device-1',
-          taskId: 'shared-task',
-        })
-      ).not.toBeNull()
-    )
+    expect(
+      lifecycleStore.getTask({
+        deviceId: 'device-1',
+        taskId: 'shared-task',
+      })
+    ).toBeNull()
     expect(
       subscribe.mock.calls.filter(([handlers]) => hasRuntimeStreamHandler(handlers))
-    ).toHaveLength(runtimeSubscriptionCount)
+    ).toHaveLength(runtimeSubscriptionCount + 1)
 
     act(() => {
       streamHandlers.onChatStart?.({

@@ -21,8 +21,9 @@ use super::{
         codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
     },
     notification_mapping::{
-        log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
-        map_tool_output_delta, notification_item_id, TextChunkMapping,
+        codex_stream_debug_enabled, log_dropped_notification, log_stream_text_mapping,
+        log_text_mapping, map_text_chunk, map_tool_output_delta, notification_item_id,
+        TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
@@ -734,6 +735,7 @@ impl CodexNotificationEventMapper {
     fn emit_process_text_delta(
         &mut self,
         emit_context: &EventEmitContext<'_>,
+        method: &str,
         block_type: &str,
         process_kind: &str,
         item_id: Option<String>,
@@ -751,7 +753,17 @@ impl CodexNotificationEventMapper {
                 return;
             }
             let pending_delta = process_text.content[process_text.emitted_content_len..].to_owned();
+            let content_offset = process_text.emitted_content_len;
             process_text.emitted_content_len = process_text.content.len();
+            log_process_text_delta(
+                emit_context.local_task_id,
+                method,
+                &process_text.id,
+                process_text.item_id.as_deref(),
+                &pending_delta,
+                content_offset,
+                process_text.content.len(),
+            );
             emit_response_event(
                 emit_context.event_tx,
                 emit_context.device_id,
@@ -786,6 +798,15 @@ impl CodexNotificationEventMapper {
             content: delta.clone(),
             emitted_content_len: delta.len(),
         });
+        log_process_text_delta(
+            emit_context.local_task_id,
+            method,
+            &id,
+            item_id.as_deref(),
+            &delta,
+            0,
+            delta.len(),
+        );
         emit_response_event(
             emit_context.event_tx,
             emit_context.device_id,
@@ -888,6 +909,7 @@ impl CodexNotificationEventMapper {
                 );
                 self.emit_process_text_delta(
                     emit_context,
+                    method,
                     block_type,
                     process_kind,
                     item_id,
@@ -1353,6 +1375,40 @@ fn terminal_content_updates(streamed_content: &str, completed_content: &str) -> 
         "content": completed_content,
         "status": "done",
     })
+}
+
+fn log_process_text_delta(
+    local_task_id: &str,
+    method: &str,
+    block_id: &str,
+    item_id: Option<&str>,
+    delta: &str,
+    content_offset: usize,
+    content_length: usize,
+) {
+    if !codex_stream_debug_enabled() {
+        return;
+    }
+    log_executor_event(
+        "codex runtime process text delta",
+        &[
+            ("local_task_id", local_task_id.to_owned()),
+            ("method", method.to_owned()),
+            ("block_id", block_id.to_owned()),
+            ("item_id", item_id.unwrap_or("<none>").to_owned()),
+            ("content_offset_bytes", content_offset.to_string()),
+            ("content_length_bytes", content_length.to_string()),
+            ("delta_length_bytes", delta.len().to_string()),
+            ("delta_fingerprint", text_fingerprint(delta)),
+        ],
+    );
+}
+
+fn text_fingerprint(value: &str) -> String {
+    let hash = value.as_bytes().iter().fold(0x811c_9dc5_u32, |hash, byte| {
+        (hash ^ u32::from(*byte)).wrapping_mul(0x0100_0193)
+    });
+    format!("{hash:08x}")
 }
 
 fn is_context_compaction_notification(params: &Value) -> bool {
