@@ -195,7 +195,7 @@ function Get-ExecutorBinaryPath {
 function Start-PrepareStep([string]$Name, [string]$Command) {
   $stdout = Join-Path $env:TEMP "wework-dev-$Name-$PID.out.log"
   $stderr = Join-Path $env:TEMP "wework-dev-$Name-$PID.err.log"
-  $process = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-Command', $Command) -WorkingDirectory $WEWORK_DIR -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
+  $process = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $Command) -WorkingDirectory $WEWORK_DIR -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
   return [pscustomobject]@{ Name = $Name; Process = $process; Stdout = $stdout; Stderr = $stderr }
 }
 
