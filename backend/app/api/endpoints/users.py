@@ -22,6 +22,7 @@ from app.schemas.admin import (
     QuickAccessTeam,
     WelcomeConfigResponse,
 )
+from app.schemas.git_credentials import GitAccountSyncSummary
 from app.schemas.quick_launch import (
     QuickLaunchFavoriteAgent,
     QuickLaunchFunctionConfig,
@@ -46,6 +47,10 @@ from app.services.auth import (
     verify_task_token,
 )
 from app.services.context import context_service
+from app.services.device.git_credentials import (
+    DeviceGitCredentialResolutionError,
+    build_git_account_sync_summary,
+)
 from app.services.kind import kind_service
 from app.services.subscription.notification_service import (
     subscription_notification_service,
@@ -631,6 +636,24 @@ async def reorder_git_tokens(
     return user_service.reorder_git_tokens(
         db=db, user=current_user, ordered_keys=order.ordered_keys
     )
+
+
+@router.get(
+    "/me/git-accounts/sync-summary",
+    response_model=GitAccountSyncSummary,
+)
+async def get_git_account_sync_summary(
+    current_user: User = Depends(security.get_current_user),
+) -> GitAccountSyncSummary:
+    """Return ordered Git account metadata without returning credentials."""
+
+    try:
+        return GitAccountSyncSummary(**build_git_account_sync_summary(current_user))
+    except DeviceGitCredentialResolutionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
 
 @router.post("", response_model=UserInDB, status_code=status.HTTP_201_CREATED)

@@ -206,8 +206,9 @@ async fn serve_local_sidecar(
         LocalSidecarTransport::Stdio => serve_local_app_sidecar(config).await,
         LocalSidecarTransport::LocalEndpoint => {
             let endpoint = required_environment("WEGENT_APP_IPC_ENDPOINT")?;
+            let owner_token = required_environment("WEGENT_APP_IPC_OWNER_TOKEN")?;
             let token = required_environment("WEGENT_APP_IPC_TOKEN")?;
-            serve_local_app_endpoint(config, &endpoint, &token).await
+            serve_local_app_endpoint(config, &endpoint, &token, &owner_token).await
         }
     }
 }

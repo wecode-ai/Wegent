@@ -18,9 +18,7 @@ const backendProxyTarget = normalizeBackendUrl(
   process.env.VITE_WEGENT_BACKEND_URL || 'http://localhost:8000'
 )
 const socketProxyTarget = process.env.VITE_WEGENT_SOCKET_URL || backendProxyTarget
-const dshAppOutput = process.env.WEWORK_DSH_APP_OUT_DIR?.trim()
-const configuredAppBasePath =
-  process.env.VITE_APP_BASE_PATH || (dshAppOutput ? '/wework/app/' : '/')
+const configuredAppBasePath = process.env.VITE_APP_BASE_PATH || '/'
 const appBasePath = configuredAppBasePath.endsWith('/')
   ? configuredAppBasePath
   : `${configuredAppBasePath}/`
@@ -43,7 +41,6 @@ function preserveDshUiEntryExports() {
     options(options: {
       preserveEntrySignatures?: false | 'strict' | 'allow-extension' | 'exports-only'
     }) {
-      if (!dshAppOutput) return null
       return {
         ...options,
         preserveEntrySignatures: 'strict' as const,
@@ -61,7 +58,6 @@ function preserveDshUiEntryExports() {
         }
       >
     ) {
-      if (!dshAppOutput) return
       for (const output of Object.values(bundle)) {
         if (
           output.type === 'chunk' &&
@@ -108,12 +104,6 @@ export default defineConfig({
     include: ['mermaid', 'plantuml-encoder'],
   },
   build: {
-    ...(dshAppOutput
-      ? {
-          outDir: path.resolve(dshAppOutput),
-          emptyOutDir: true,
-        }
-      : {}),
     // File-viewer renderers are split into dedicated chunks; the desktop shell
     // intentionally remains a single entry bundle.
     chunkSizeWarningLimit: 5_000,

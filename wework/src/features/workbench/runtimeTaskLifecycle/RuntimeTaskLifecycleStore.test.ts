@@ -557,6 +557,142 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.isBusy).toBe(false)
   })
 
+  test('ignores a stale streaming transcript after the current turn settles', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
+    store.executorSettled(address)
+    store.syncTranscript(
+      address,
+      transcript({
+        running: true,
+        turns: [{ id: 'turn-1', items: [], status: 'streaming' }],
+      })
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.turn.phase).toBe('idle')
+    expect(snapshot?.turn.outcome).toBe('succeeded')
+    expect(snapshot?.derived.isBusy).toBe(false)
+  })
+
+  test('does not revive authoritative completion from a stale streaming transcript', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'done',
+          completedAt: 1_787_200_000_000,
+          turnStatus: 'completed',
+          runtimeHandle: { lastTurnId: 'stale-turn' },
+        })
+      )
+    )
+    store.syncTranscript(
+      address,
+      transcript({
+        running: true,
+        turns: [{ id: 'stale-turn', items: [], status: 'streaming' }],
+      })
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.turn.phase).toBe('idle')
+    expect(snapshot?.derived.isBusy).toBe(false)
+  })
+
+  test('recovers a new streaming turn after the previous turn completed', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'done',
+          completedAt: 1_787_200_000_000,
+          turnStatus: 'completed',
+          runtimeHandle: { lastTurnId: 'turn-1' },
+        })
+      )
+    )
+    store.syncTranscript(
+      address,
+      transcript({
+        running: true,
+        turns: [{ id: 'turn-2', items: [], status: 'streaming' }],
+      })
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('running')
+    expect(snapshot?.turn.phase).toBe('streaming')
+    expect(snapshot?.turn.id).toBe('turn-2')
+  })
+
+  test('recovers a streaming transcript after an explicit send restarts a completed task', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'done',
+          completedAt: 1_787_200_000_000,
+          turnStatus: 'completed',
+        })
+      )
+    )
+    store.sendRequested(address)
+    store.sendAccepted(address)
+    store.syncTranscript(
+      address,
+      transcript({
+        running: true,
+        turns: [{ id: 'turn-2', items: [], status: 'streaming' }],
+      })
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('running')
+    expect(snapshot?.turn.phase).toBe('streaming')
+    expect(snapshot?.turn.id).toBe('turn-2')
+  })
+
+  test('recovers a streaming transcript while an active Goal continues', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: false,
+          status: 'done',
+          completedAt: 1_787_200_000_000,
+          turnStatus: 'completed',
+          goalStatus: 'active',
+        })
+      )
+    )
+    store.syncTranscript(
+      address,
+      transcript({
+        running: true,
+        turns: [{ id: 'goal-turn-2', items: [], status: 'streaming' }],
+      })
+    )
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('running')
+    expect(snapshot?.turn.phase).toBe('streaming')
+    expect(snapshot?.turn.id).toBe('goal-turn-2')
+  })
+
   test('ignores a stale running transcript snapshot after the current turn settles', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 

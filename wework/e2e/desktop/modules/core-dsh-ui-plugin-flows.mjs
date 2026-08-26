@@ -8,9 +8,10 @@ import {
   pathExists,
   withTimeout,
 } from './shared.mjs'
+import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 
 const ROOT_SELECTOR = '[data-testid="wework-dsh-root"]'
-const PLUGIN_API_PATH = '/wework/dsh/plugins'
+const DESKTOP_HOST_INVOKE_PATH = '/wework/electron-host/v1/invoke'
 const UI_PLUGINS = [
   {
     name: '@wegent/dsh-ui-core-apps',
@@ -94,6 +95,7 @@ const UI_PLUGINS = [
 export async function verifyCoreDshUiPluginComposition({
   control,
   initialRendererLocation,
+  restartDesktopApp,
   runtimeRoot,
 }) {
   const pluginSources = await resolveCoreUiPluginSources(runtimeRoot)
@@ -105,6 +107,7 @@ export async function verifyCoreDshUiPluginComposition({
       plugin.contributions.every(contribution => !slots[plugin.slot]?.includes(contribution))
     )
   )
+  await ensureExperimentalFeaturesEnabled(control)
   for (const plugin of UI_PLUGINS) {
     await assertFeatureAbsent(control, plugin)
   }
@@ -126,24 +129,23 @@ export async function verifyCoreDshUiPluginComposition({
       )
     }
 
-    const response = await mutateCoreDshPlugins(rendererOrigin, 'install', {
-      spec: `file:${pluginSources.get(plugin.name)}`,
-    })
-    const installed = response.result.plugins.find(item => item.name === plugin.name)
+    const plugins = await invokeCoreDshPluginCapability(
+      rendererOrigin,
+      'runtime.installCoreDshPlugin',
+      {
+        spec: `file:${pluginSources.get(plugin.name)}`,
+      }
+    )
+    const installed = plugins.find(item => item.name === plugin.name)
     assert.ok(
       installed,
       `${plugin.name} was absent from the Core DSH plugin inventory after install`
     )
-    assert.equal(installed.active, true, `${plugin.name} was not activated after install`)
+    assert.equal(installed.enabled, true, `${plugin.name} was not enabled after install`)
 
-    const readyCount = control.readyCount
-    await mutateCoreDshPlugins(rendererOrigin, 'restart', {})
-    const ready = await withTimeout(
-      control.awaitReadyAfter(readyCount),
-      WORKBENCH_READY_TIMEOUT_MS,
-      `Core DSH did not reconnect after installing ${plugin.name}`
-    )
-    rendererOrigin = new URL(ready.location).origin
+    await restartDesktopApp()
+    rendererOrigin = await control.command('getLocationOrigin', 'body')
+    await dismissCodexHomeInitializer(control)
     installedContributions.set(plugin.slot, [
       ...(installedContributions.get(plugin.slot) ?? []),
       ...plugin.contributions,
@@ -168,7 +170,13 @@ export async function verifyCoreDshUiPluginComposition({
       candidate.name === '@wegent/dsh-ui-applications' ||
       candidate.name === '@wegent/dsh-ui-cloud-work'
   )) {
-    rendererOrigin = await setPluginActiveAndRestart(control, rendererOrigin, plugin, false)
+    rendererOrigin = await setPluginEnabledAndRestart(
+      control,
+      rendererOrigin,
+      restartDesktopApp,
+      plugin,
+      false
+    )
     await waitForSlotState(
       control,
       slots =>
@@ -177,7 +185,13 @@ export async function verifyCoreDshUiPluginComposition({
     )
     await assertFeatureAbsent(control, plugin)
 
-    rendererOrigin = await setPluginActiveAndRestart(control, rendererOrigin, plugin, true)
+    rendererOrigin = await setPluginEnabledAndRestart(
+      control,
+      rendererOrigin,
+      restartDesktopApp,
+      plugin,
+      true
+    )
     await waitForSlotState(
       control,
       slots =>
@@ -189,9 +203,9 @@ export async function verifyCoreDshUiPluginComposition({
 
   const inventory = await readCoreDshPlugins(rendererOrigin)
   for (const plugin of UI_PLUGINS) {
-    const installed = inventory.plugins.find(item => item.name === plugin.name)
+    const installed = inventory.find(item => item.name === plugin.name)
     assert.ok(installed, `${plugin.name} was missing from the final Core DSH plugin inventory`)
-    assert.equal(installed.active, true, `${plugin.name} was inactive in the final inventory`)
+    assert.equal(installed.enabled, true, `${plugin.name} was disabled in the final inventory`)
   }
   await control.command('navigate', 'body', { value: '/' })
 }
@@ -222,38 +236,39 @@ async function assertInstalledFeatureVisible(control, plugin) {
     })
   }
   if (!plugin.route || !plugin.testId) return
-  if (plugin.name === '@wegent/dsh-ui-core-settings') {
-    await control.command('navigate', 'body', { value: '/' })
-    await control.command('click', '[data-testid="settings-button"]')
-    await control.command('click', '[data-testid="settings-menu-button"]')
-    await control.command('waitFor', '[data-testid="settings-nav-appearance"]', {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await control.command('click', '[data-testid="settings-nav-appearance"]')
-  } else {
-    await control.command('navigate', 'body', { value: plugin.route })
-  }
+  await control.command('navigate', 'body', { value: plugin.route })
   await control.command('waitFor', `[data-testid="${plugin.testId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 }
 
-async function setPluginActiveAndRestart(control, origin, plugin, active) {
-  const response = await mutateCoreDshPlugins(origin, active ? 'activate' : 'deactivate', {
+async function setPluginEnabledAndRestart(control, origin, restartDesktopApp, plugin, enabled) {
+  const plugins = await invokeCoreDshPluginCapability(origin, 'runtime.setCoreDshPluginEnabled', {
     name: plugin.name,
+    enabled,
   })
-  const updated = response.result.plugins.find(item => item.name === plugin.name)
-  assert.ok(updated, `${plugin.name} was absent after changing activation state`)
-  assert.equal(updated.active, active, `${plugin.name} activation state did not change`)
+  const updated = plugins.find(item => item.name === plugin.name)
+  assert.ok(updated, `${plugin.name} was absent after changing enabled state`)
+  assert.equal(updated.enabled, enabled, `${plugin.name} enabled state did not change`)
 
-  const readyCount = control.readyCount
-  await mutateCoreDshPlugins(origin, 'restart', {})
-  const ready = await withTimeout(
-    control.awaitReadyAfter(readyCount),
-    WORKBENCH_READY_TIMEOUT_MS,
-    `Core DSH did not reconnect after ${active ? 'activating' : 'deactivating'} ${plugin.name}`
+  await restartDesktopApp()
+  await dismissCodexHomeInitializer(control)
+  return control.command('getLocationOrigin', 'body')
+}
+
+async function dismissCodexHomeInitializer(control) {
+  const selector = '[data-testid="codex-home-initializer-dialog"]'
+  if (Number(await control.command('getElementCount', selector)) === 0) return
+  await control.command('click', '[data-testid="codex-home-initializer-create-button"]')
+  await withTimeout(
+    (async () => {
+      while (Number(await control.command('getElementCount', selector)) > 0) {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+      }
+    })(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Codex home initializer remained visible after choosing not to import'
   )
-  return new URL(ready.location).origin
 }
 
 async function readSlots(control) {
@@ -278,32 +293,28 @@ async function waitForSlotState(control, predicate) {
   assert.fail(`Core DSH slot state did not settle: ${JSON.stringify(lastSlots)}`)
 }
 
-async function mutateCoreDshPlugins(origin, action, body) {
-  const response = await fetch(`${origin}${PLUGIN_API_PATH}/${action}`, {
+async function invokeCoreDshPluginCapability(origin, capability, params = {}) {
+  const response = await fetch(`${origin}${DESKTOP_HOST_INVOKE_PATH}`, {
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ capability, params }),
   })
   const payload = await response.json()
   assert.equal(
     response.ok,
     true,
-    `Core DSH plugin ${action} failed: ${payload.error?.message ?? response.status}`
+    `Core DSH plugin capability ${capability} failed: ${payload.error?.message ?? response.status}`
   )
-  return payload
+  assert.equal(
+    payload.ok,
+    true,
+    `Core DSH plugin capability ${capability} returned an error: ${payload.error?.message}`
+  )
+  return payload.result
 }
 
 async function readCoreDshPlugins(origin) {
-  const response = await fetch(`${origin}${PLUGIN_API_PATH}`, {
-    headers: { accept: 'application/json' },
-  })
-  const payload = await response.json()
-  assert.equal(
-    response.ok,
-    true,
-    `Reading Core DSH plugins failed: ${payload.error?.message ?? response.status}`
-  )
-  return payload
+  return invokeCoreDshPluginCapability(origin, 'runtime.listCoreDshPlugins')
 }
 
 async function resolveCoreUiPluginSources(runtimeRoot) {

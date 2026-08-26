@@ -5,6 +5,7 @@ import {
 } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
 import { RotatingLog, type RotatingLogOptions } from './rotating-log.js'
+import { resolveSpawnCommand } from './spawn-command.js'
 
 export type RuntimeSupervisorState =
   | 'idle'
@@ -97,7 +98,8 @@ export class RuntimeSupervisor extends EventEmitter<RuntimeSupervisorEvents> {
     for (let index = 0; index < (this.options.extraPipeCount ?? 0); index += 1) {
       stdio.push('pipe')
     }
-    const child = spawn(this.options.command, this.options.args ?? [], {
+    const resolved = resolveSpawnCommand(this.options.command, this.options.args ?? [])
+    const child = spawn(resolved.command, resolved.args, {
       cwd: this.options.cwd,
       env: this.options.env,
       detached: process.platform !== 'win32',
@@ -278,15 +280,49 @@ export async function terminateProcessTree(
   timeoutMs: number
 ): Promise<void> {
   if (child.exitCode !== null) return
+  const processGroupId = process.platform === 'win32' ? null : child.pid
   const exited = once(child, 'exit').then(() => true)
   signalProcessTree(child, 'SIGTERM')
   const timer = new Promise<false>(resolve => {
     const timeout = setTimeout(() => resolve(false), timeoutMs)
     timeout.unref()
   })
-  if (await Promise.race([exited, timer])) return
+  const leaderExited = await Promise.race([exited, timer])
+  if (
+    leaderExited &&
+    (!processGroupId || (await waitForProcessGroupExit(processGroupId, Math.min(timeoutMs, 1_000))))
+  ) {
+    return
+  }
   signalProcessTree(child, 'SIGKILL')
-  await exited
+  if (!leaderExited) await exited
+  if (processGroupId && !(await waitForProcessGroupExit(processGroupId, timeoutMs))) {
+    throw new Error(`Timed out waiting for process group ${processGroupId} to exit`)
+  }
+}
+
+async function waitForProcessGroupExit(
+  processGroupId: number,
+  timeoutMs: number
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!processGroupExists(processGroupId)) return true
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  return !processGroupExists(processGroupId)
+}
+
+function processGroupExists(processGroupId: number): boolean {
+  try {
+    process.kill(-processGroupId, 0)
+    return true
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ESRCH') return false
+    if (code === 'EPERM') return true
+    throw error
+  }
 }
 
 function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {

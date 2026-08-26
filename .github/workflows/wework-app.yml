@@ -66,6 +66,7 @@ jobs:
       - name: Commit Wework version files
         id: version-files
         env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           PUBLISH_RELEASE: ${{ steps.version.outputs.publish_release }}
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
         run: |
@@ -88,10 +89,20 @@ jobs:
           fi
           echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve previous Wework release
+        id: previous-release
+        if: steps.version.outputs.publish_release == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
+        run: echo "tag=$(node wework/scripts/resolve-previous-release-tag.mjs)" >> "$GITHUB_OUTPUT"
+
       - name: Create or update draft release
         if: steps.version.outputs.publish_release == 'true'
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PREVIOUS_TAG: ${{ steps.previous-release.outputs.tag }}
           RELEASE_SHA: ${{ steps.version-files.outputs.release_sha }}
           RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
@@ -189,6 +200,46 @@ jobs:
 
       - name: Synchronize desktop build version
         run: node wework/scripts/sync-desktop-release-version.mjs "${{ needs.prepare-release.outputs.version }}"
+
+      - name: Prepare Apple signing keychain
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          certificate_path="$RUNNER_TEMP/wework-signing.p12"
+          keychain_path="$RUNNER_TEMP/wework-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "$MACOS_CERTIFICATE_BASE64" | base64 -D > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          existing_keychains=()
+          while IFS= read -r existing_keychain; do
+            existing_keychains+=("$existing_keychain")
+          done < <(security list-keychains -d user |
+            sed -E 's/^[[:space:]]*"([^"]+)"$/\1/')
+          security list-keychains -d user -s "$keychain_path" "${existing_keychains[@]}"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          identity="$(security find-identity -v -p codesigning "$keychain_path" |
+            awk '/Developer ID Application/ { print $2; exit }')"
+          [[ "$identity" =~ ^[[:xdigit:]]{40}$ ]] || {
+            echo "Developer ID Application identity not found" >&2
+            exit 1
+          }
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
 
       - name: Prepare Apple notarization key
         if: matrix.platform == 'macos'

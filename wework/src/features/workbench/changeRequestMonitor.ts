@@ -129,8 +129,11 @@ export class ChangeRequestMonitor {
     return this.snapshots.get(targetKey(target)) ?? null
   }
 
-  async refresh(): Promise<void> {
-    if (this.refreshPromise) return this.refreshPromise
+  async refresh(options: { shareInflight?: boolean } = {}): Promise<void> {
+    if (this.refreshPromise) {
+      if (options.shareInflight !== false) return this.refreshPromise
+      await this.refreshPromise
+    }
     const targets = [...this.targets.values()].map(entry => entry.target)
     if (targets.length === 0) return
     this.refreshPromise = loadTaskChangeRequests(this.api, targets)

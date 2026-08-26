@@ -21,6 +21,7 @@ import {
 import type { RendererHealthSnapshot } from './renderer-health.js'
 import type { SmartAppManager } from './smart-app-manager.js'
 import type { PreferencesStore } from './preferences-store.js'
+import type { RendererStorageStore } from './renderer-storage-store.js'
 import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
@@ -49,6 +50,15 @@ export interface ElectronDesktopServices {
   appUpdates?: AppUpdateService
   feedback: FeedbackBundleManager
   plugins: WorkbenchPluginManager
+  coreDshPlugins: () => CoreDshPluginService | null
+}
+
+export interface CoreDshPluginService {
+  listCoreDshPlugins(): Promise<unknown>
+  installCoreDshPlugin(spec: string): Promise<unknown>
+  updateCoreDshPlugin(name: string): Promise<unknown>
+  setCoreDshPluginEnabled(name: string, enabled: boolean): Promise<unknown>
+  uninstallCoreDshPlugin(name: string): Promise<unknown>
 }
 
 export interface ElectronE2EHost {
@@ -113,6 +123,7 @@ export function createElectronCapabilityRouter(
   rendererHealth: () => RendererHealthSnapshot,
   smartApps: () => SmartAppManager | null,
   preferences: PreferencesStore,
+  rendererStorage: RendererStorageStore,
   browser: EmbeddedBrowserManager,
   desktopServices: ElectronDesktopServices,
   e2eHost: ElectronE2EHost = {
@@ -464,7 +475,9 @@ export function createElectronCapabilityRouter(
     }
     return updated
   })
+  registerRendererStorageCapabilities(router, rendererStorage)
   router.register('rendererHealth.getState', () => rendererHealth())
+  registerCoreDshPluginCapabilities(router, desktopServices)
   router.register('runtime.restartCoreDsh', () => {
     e2eHost.scheduleCoreDshRestart()
     return { scheduled: true }
@@ -642,6 +655,22 @@ export function createElectronCapabilityRouter(
   return router
 }
 
+export function registerRendererStorageCapabilities(
+  router: HostCapabilityRouter,
+  rendererStorage: RendererStorageStore
+): void {
+  router.register('rendererStorage.initialize', params =>
+    rendererStorage.initialize(stringRecordParam(params, 'entries'))
+  )
+  router.register('rendererStorage.update', async params => {
+    await rendererStorage.update({
+      clear: requiredBooleanParam(params, 'clear'),
+      changes: nullableStringRecordParam(params, 'changes'),
+    })
+    return { persisted: true }
+  })
+}
+
 export function registerAppUpdateCapabilities(
   router: HostCapabilityRouter,
   appUpdates: AppUpdateService | undefined
@@ -695,6 +724,30 @@ export function registerDesktopServiceCapabilities(
       stringParam(params, 'method'),
       params.params ?? {}
     )
+  )
+}
+
+export function registerCoreDshPluginCapabilities(
+  router: HostCapabilityRouter,
+  services: ElectronDesktopServices
+): void {
+  router.register('runtime.listCoreDshPlugins', () =>
+    requiredCoreDshPluginService(services).listCoreDshPlugins()
+  )
+  router.register('runtime.installCoreDshPlugin', params =>
+    requiredCoreDshPluginService(services).installCoreDshPlugin(stringParam(params, 'spec'))
+  )
+  router.register('runtime.updateCoreDshPlugin', params =>
+    requiredCoreDshPluginService(services).updateCoreDshPlugin(stringParam(params, 'name'))
+  )
+  router.register('runtime.setCoreDshPluginEnabled', params =>
+    requiredCoreDshPluginService(services).setCoreDshPluginEnabled(
+      stringParam(params, 'name'),
+      requiredBooleanParam(params, 'enabled')
+    )
+  )
+  router.register('runtime.uninstallCoreDshPlugin', params =>
+    requiredCoreDshPluginService(services).uninstallCoreDshPlugin(stringParam(params, 'name'))
   )
 }
 
@@ -799,6 +852,17 @@ function requiredSmartApps(resolveSmartApps: () => SmartAppManager | null): Smar
     throw new HostCapabilityError('smart_apps_unavailable', 'Smart app manager is unavailable')
   }
   return smartApps
+}
+
+function requiredCoreDshPluginService(services: ElectronDesktopServices): CoreDshPluginService {
+  const service = services.coreDshPlugins()
+  if (!service) {
+    throw new HostCapabilityError(
+      'capability_unavailable',
+      'Core DSH plugin management requires the managed desktop runtime'
+    )
+  }
+  return service
 }
 
 function requiredWindow(resolveWindow: () => BrowserWindow | null): BrowserWindow {
@@ -913,6 +977,27 @@ function booleanParam(params: Record<string, unknown>, key: string): boolean | u
   if (value === undefined) return undefined
   if (typeof value !== 'boolean') invalidParam(key)
   return value
+}
+
+function stringRecordParam(params: Record<string, unknown>, key: string): Record<string, string> {
+  const value = params[key]
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidParam(key)
+  const record = value as Record<string, unknown>
+  if (Object.values(record).some(entry => typeof entry !== 'string')) invalidParam(key)
+  return { ...record } as Record<string, string>
+}
+
+function nullableStringRecordParam(
+  params: Record<string, unknown>,
+  key: string
+): Record<string, string | null> {
+  const value = params[key]
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidParam(key)
+  const record = value as Record<string, unknown>
+  if (Object.values(record).some(entry => entry !== null && typeof entry !== 'string')) {
+    invalidParam(key)
+  }
+  return { ...record } as Record<string, string | null>
 }
 
 function integerParam(params: Record<string, unknown>, key: string): number | undefined {

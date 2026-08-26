@@ -8,12 +8,17 @@ import { fileURLToPath } from 'node:url'
 import { constants as zlibConstants, createGzip } from 'node:zlib'
 import { spawn } from 'node:child_process'
 
-import { macosSigningFingerprint } from './lib/deepseek-harness-signing.mjs'
+import {
+  macosCodesignIdentityArguments,
+  macosSigningFingerprint,
+} from './lib/deepseek-harness-signing.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const resourceDirectory = path.join(root, 'resources', 'bundled-execution-runtimes')
 const descriptorPath = path.join(resourceDirectory, 'node.json')
-const cacheDirectory = path.join(root, 'node_modules', '.cache')
+const cacheDirectory =
+  process.env.WEWORK_EXECUTION_RUNTIME_CACHE_ROOT?.trim() ||
+  path.join(root, 'node_modules', '.cache')
 const assetDirectory = path.join(cacheDirectory, 'execution-runtime-assets')
 const materializedRoot = path.join(cacheDirectory, 'execution-runtime-node-dev')
 const staging = path.join(cacheDirectory, `wework-node-runtime-${process.pid}`)
@@ -52,17 +57,18 @@ async function sha256(pathname) {
 async function signAndValidateNode(nodePath) {
   if (process.platform === 'darwin') {
     const identity = process.env.APPLE_SIGNING_IDENTITY?.trim() || '-'
-    const args = [
-      '--force',
-      '--options',
-      'runtime',
-      '--entitlements',
-      nodeEntitlements,
-      '--sign',
-      identity,
-    ]
-    if (identity !== '-') args.splice(1, 0, '--timestamp')
-    await run('codesign', [...args, nodePath])
+    const args = ['--force', '--options', 'runtime', '--entitlements', nodeEntitlements]
+    if (identity !== '-') {
+      args.splice(1, 0, '--timestamp')
+    }
+    args.push(
+      ...macosCodesignIdentityArguments(
+        identity,
+        identity === '-' ? undefined : process.env.MACOS_KEYCHAIN_PATH
+      ),
+      nodePath
+    )
+    await run('codesign', args)
   }
   await run(nodePath, ['-e', 'process.stdout.write(process.versions.node)'])
 }

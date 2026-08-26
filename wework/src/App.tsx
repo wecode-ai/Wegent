@@ -52,6 +52,7 @@ import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitiali
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
+import { PluginAutoUpdateCoordinator } from '@/features/plugins/PluginAutoUpdateCoordinator'
 import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { cn } from '@/lib/utils'
 import { createLocalAppServices } from '@/api/local/localServices'
@@ -287,13 +288,16 @@ export function WorkspaceTabSurface({
     isElectronRuntime() && harnessAppInstallationId ? null : workspaceTabIframe(tab, cloudWebUrl)
   const auxiliaryRoute = resolveDshRoute(tabPath)
   const inferredNativeKind = inferWorkspaceTabKind(tabPath)
-  const dshApp = workspaceTabDshApp(tabPath, inferredNativeKind)
+  const retainedNativeKind = nativeWorkbenchKind ?? inferredNativeKind
+  const routedDshApp = workspaceTabDshApp(tabPath, inferredNativeKind)
+  const retainedNativeApp = workspaceTabDshApp('', retainedNativeKind)
+  const nativeDshApp = routedDshApp?.mode === 'native' ? routedDshApp : retainedNativeApp
+  const surfaceDshApp = routedDshApp?.mode === 'surface' ? routedDshApp : null
   const nativeWorkbenchRoute = Boolean(
     (inferredNativeKind === 'task' || inferredNativeKind === 'board') &&
-    dshApp?.workspaceKinds?.includes(inferredNativeKind)
+    nativeDshApp?.workspaceKinds?.includes(inferredNativeKind)
   )
-  const auxiliaryActive =
-    Boolean(auxiliaryRoute || (dshApp && !nativeWorkbenchRoute)) || dshWorkspaceTabActive
+  const auxiliaryActive = Boolean(auxiliaryRoute || surfaceDshApp) || dshWorkspaceTabActive
   const harnessAppLaunch = useHarnessAppLaunchState(harnessAppInstallationId)
   const harnessAppLaunchActive = Boolean(harnessAppLaunch)
   const nativeWorkbenchActive =
@@ -379,8 +383,8 @@ export function WorkspaceTabSurface({
           className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
           aria-hidden={!nativeWorkbenchActive}
         >
-          {dshApp ? (
-            <DshAppSurface active={active && nativeWorkbenchActive} app={dshApp} tab={tab} />
+          {nativeDshApp ? (
+            <DshAppSurface active={active && nativeWorkbenchActive} app={nativeDshApp} tab={tab} />
           ) : null}
         </div>
       ) : null}
@@ -389,9 +393,7 @@ export function WorkspaceTabSurface({
           <DshRouteSurface route={auxiliaryRoute} search={tabSearch} />
         </div>
       ) : null}
-      {dshApp && !nativeWorkbenchRoute ? (
-        <DshAppSurface active={active} app={dshApp} tab={tab} />
-      ) : null}
+      {surfaceDshApp ? <DshAppSurface active={active} app={surfaceDshApp} tab={tab} /> : null}
       {dshWorkspaceTabActive ? (
         <DshWorkspaceTabSurface active={active} path={tabPath} tab={tab} />
       ) : null}
@@ -1029,6 +1031,7 @@ function AppShell() {
             token={cloudConnection.token}
           />
         ) : null}
+        {isMainWindow && isElectron ? <PluginAutoUpdateCoordinator /> : null}
         <CloudModelCatalogSyncDialogHost />
         <div
           data-testid="app-route-host"

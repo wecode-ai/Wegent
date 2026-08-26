@@ -17,6 +17,16 @@ Cloud connection state is owned by the frontend `cloud-connection` layer and is 
 - Cloud login token, expiry, cloud user, and connection time.
 - Current status: disconnected, connecting, connected, expired, or error.
 
+The packaged Electron desktop mirrors the renderer's complete `localStorage` into
+`renderer-local-storage.json` under the app `userData` directory and restores it
+before other frontend services initialize. If a Core DSH restart changes the page
+origin by selecting a new random port, cloud connection state, local models,
+unsent drafts, layout state, and other UI preferences backed by `localStorage`
+therefore remain available. The main process serializes updates, writes through
+atomic file replacement, and uses mode `0600` on Unix. Explicitly disconnecting,
+deleting a configuration, or clearing its state also removes the durable copy.
+The web app, which has no Electron host, does not use this desktop mirror.
+
 Users may enter either the Backend root URL or an `/api` URL. The frontend normalizes that input into HTTP API and Socket.IO connection settings. Connecting first checks `/health`, then calls `/auth/wework/sessions` to create a short-lived authorization session. Backend returns a complete `authorize_url`; local Wework opens that cloud authorization page in the embedded authorization browser and polls the session result with the client-only `poll_token`.
 
 The desktop authorization window defaults to `1000 × 640` with a minimum size of `960 × 620`, which accommodates enterprise login pages that do not provide responsive layouts. It stays hidden until positioning completes, remains above ordinary windows after it is shown, and repositions when the Wework main window moves or its display scale changes. Placement is clamped to the usable area of Wework's current display. On macOS, positioning uses AppKit's unified logical desktop coordinates directly so moving between Retina and non-Retina displays cannot send the window off-screen through physical-to-logical pixel conversion.
@@ -148,6 +158,8 @@ Local Codex `auth.json` status is read through the executor's read-only `runtime
 It never returns plaintext contents. Wework also does not upload the local auth file by default. Auth contents enter encrypted server storage and device sync only after the user explicitly uploads the file or imports it from an online device on the cloud-connected "Models" page.
 
 Wework's Codex remaining-usage display follows the local Codex account. The Electron main process calls `runtime.codex.rate_limits.read` through the authenticated local executor IPC, reads the Codex app-server `account/rateLimits/read` snapshot, and displays the remaining percentages for the 5-hour and 7-day windows. The main process also counts running local tasks through `runtime.tasks.list` and reads cloud quota through `executor.backend.quota` with credentials retained by the executor; authentication tokens are not exposed to the main process. The system tray refreshes every 60 seconds and immediately after task start or completion events, so task counts and quota continue updating after the main window closes to the tray.
+
+The macOS tray must display the logo, running status, and up to two quota lines together. The Electron main process should compose these elements directly into an RGBA template bitmap before passing it to the native tray. Do not depend on `nativeImage` rasterizing SVG text or Data URLs, because that path can preserve the text width while dropping the actual glyph pixels.
 
 ## Disconnect
 

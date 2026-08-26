@@ -17,6 +17,7 @@ import { installDesktopExtensions } from '@extensions/desktop'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
 import { DshClientContextProvider } from '@/features/dsh-runtime/DshClientContextProvider'
+import { initializeDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -65,7 +66,7 @@ async function mountApp(container: HTMLElement, context: Context | null): Promis
 }
 
 function renderStartupFailure(container: HTMLElement, error: unknown): void {
-  console.error('[Wework] Failed to initialize the plugin runtime:', error)
+  console.error('[Wework] Failed to initialize the desktop frontend:', error)
   createRoot(container).render(
     <main
       className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground"
@@ -74,7 +75,7 @@ function renderStartupFailure(container: HTMLElement, error: unknown): void {
       <section className="max-w-md space-y-4 rounded-lg border border-border bg-card p-6">
         <h1 className="heading-section">Wework 启动失败</h1>
         <p className="text-chat text-muted-foreground">
-          智能工作台运行时初始化失败。请重试；如果问题持续，请打开调试面板查看日志。
+          Wework 桌面前端初始化失败。请重试；如果问题持续，请打开调试面板查看日志。
         </p>
         <button
           className="rounded-md bg-primary px-3 py-2 text-primary-foreground"
@@ -89,7 +90,17 @@ function renderStartupFailure(container: HTMLElement, error: unknown): void {
   )
 }
 
+const desktopStorageReady = initializeDesktopLocalStoragePersistence().then(
+  () => null,
+  error => error
+)
+
 async function mountWework(container: HTMLElement, context: Context | null): Promise<() => void> {
+  const storageError = await desktopStorageReady
+  if (storageError !== null) {
+    renderStartupFailure(container, storageError)
+    return () => {}
+  }
   if (!isSystemDragPanel) {
     try {
       await installWeworkAutomationBridge()

@@ -81,10 +81,12 @@ import {
 } from './path-attachment-flows.mjs'
 
 import {
+  createCoreDshPluginFixture,
   initializeBlankCodexHome,
   installOfficialPluginFixture,
   uninstallOfficialPlugin,
   verifyCloudWorkPage,
+  verifyCoreDshPluginManagement,
   verifyMarketplacePluginLifecycle,
   verifyPluginLifecycle,
   verifySkillMentionRendering,
@@ -879,6 +881,7 @@ async function main() {
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
   const marketplacePluginPath = join(resultDir, 'marketplace-plugin')
   const officialPluginRepositoryPath = join(resultDir, 'openai-plugins')
+  const electronUserDataDirectory = join(resultDir, 'electron-user-data')
   const appLogPath = join(resultDir, 'app.log')
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
@@ -916,6 +919,9 @@ async function main() {
       })
     }
     await createPluginMarketplaceFixture(marketplacePluginPath)
+    if (shouldRunPluginSegment('core-dsh-plugin-management')) {
+      await createCoreDshPluginFixture(resultDir)
+    }
     await mkdir(nativeCodexHome, { recursive: true })
     await writeFile(
       join(nativeCodexHome, 'config.toml'),
@@ -1069,11 +1075,14 @@ async function main() {
       )
     }
 
-    const harnessRuntimes =
-      SELECTED_DESKTOP_SEGMENT === 'harness-apps'
-        ? await prepareHarnessRuntimeRoots(appBinary)
-        : null
-    const electronCoreRuntimeRoot = process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || null
+    const needsPackagedHarnessRuntime =
+      SELECTED_DESKTOP_SEGMENT === 'harness-apps' ||
+      (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition'))
+    const harnessRuntimes = needsPackagedHarnessRuntime
+      ? await prepareHarnessRuntimeRoots(appBinary)
+      : null
+    const electronCoreRuntimeRoot =
+      harnessRuntimes?.harnessRuntimeRoot || process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || null
     if (electronCoreRuntimeRoot) {
       assert.equal(
         await pathExists(electronCoreRuntimeRoot),
@@ -1121,7 +1130,7 @@ async function main() {
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
       WEWORK_DESKTOP_RUNTIME: 'electron',
       WEWORK_EXECUTOR_PATH: executorBinary,
-      WEWORK_USER_DATA_DIR: join(resultDir, 'electron-user-data'),
+      WEWORK_USER_DATA_DIR: electronUserDataDirectory,
       ...(electronCoreRuntimeRoot ? { WEWORK_HARNESS_RUNTIME_ROOT: electronCoreRuntimeRoot } : {}),
       ...(RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition')
         ? { WEWORK_E2E_EMPTY_CORE_DSH_UI_PROFILE: '1' }
@@ -1217,7 +1226,7 @@ async function main() {
     } else {
       await declineInitialTelemetryConsent(control)
     }
-    if (RUNS_PLUGIN_E2E) {
+    if (RUNS_PLUGIN_E2E && !shouldRunPluginSegment('core-dsh-ui-plugin-composition')) {
       phase = 'blank-codex-home-initialization'
       await initializeBlankCodexHome({
         codexHome,
@@ -1229,6 +1238,7 @@ async function main() {
       await verifyCoreDshUiPluginComposition({
         control,
         initialRendererLocation: ready.location,
+        restartDesktopApp,
         runtimeRoot: electronCoreRuntimeRoot,
       })
       if (DESKTOP_SEGMENT === 'core-dsh-ui-plugin-composition') {
@@ -1673,6 +1683,15 @@ last_updated = "2026-07-30T00:00:00Z"`
         return officialPluginFixture
       }
 
+      if (shouldRunPluginSegment('core-dsh-plugin-management')) {
+        phase = 'core-dsh-plugin-management'
+        await verifyCoreDshPluginManagement({
+          control,
+          pluginRoot: join(resultDir, 'core-dsh-e2e-plugin'),
+          restartDesktopApp,
+          userDataDirectory: electronUserDataDirectory,
+        })
+      }
       if (shouldRunPluginSegment('plugin-marketplace-lifecycle')) {
         phase = 'plugin-marketplace-lifecycle'
         await verifyMarketplacePluginLifecycle({
@@ -2927,6 +2946,11 @@ last_updated = "2026-07-30T00:00:00Z"`
       await control.command('waitFor', '[data-testid="pause-response-button"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      const cancellationTaskSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      const cancelledTaskId = cancellationTaskSnapshot.workbench?.currentRuntimeTask?.taskId
+      assert.ok(cancelledTaskId, 'The running cancellation task did not expose its runtime task ID')
       const cancellationExecutorLogOffset = (
         await readFile(executorLogPath, 'utf8').catch(() => '')
       ).length
@@ -2936,11 +2960,14 @@ last_updated = "2026-07-30T00:00:00Z"`
         /app IPC request finished .* method=runtime\.tasks\.cancel .* ok=true/,
         { fromOffset: cancellationExecutorLogOffset }
       )
-      const cancelledTaskSnapshot = JSON.parse(
-        await control.command('getWorkbenchDebugSnapshot', 'body')
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
+          snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+          snapshot.pane?.status?.taskExecution?.status === 'cancelled',
+        'The current cancellation did not settle before releasing the upstream response'
       )
-      const cancelledTaskId = cancelledTaskSnapshot.workbench?.currentRuntimeTask?.taskId
-      assert.ok(cancelledTaskId, 'The cancelled task did not expose its runtime task ID')
       const cancelledTaskUnreadTestId = `runtime-local-task-unread-dot-${cancelledTaskId}`
       await waitForSnapshot(
         control,

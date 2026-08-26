@@ -89,6 +89,7 @@ const mergedDefaultPreferences = {
       permissionMode: 'default',
     },
   ],
+  cloudConnection: null,
 }
 
 describe('appPreferences', () => {
@@ -105,6 +106,27 @@ describe('appPreferences', () => {
     await expect(getAppPreferences()).resolves.toEqual({
       ...mergedDefaultPreferences,
       showMainWindowOnLaunch: false,
+    })
+  })
+
+  test('preserves the desktop cloud connection snapshot', async () => {
+    const cloudConnection = {
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://cloud.example.com',
+      socketPath: '/socket.io',
+      token: 'cloud-token',
+      tokenExpiresAt: null,
+      user: { id: 7, user_name: 'alice' },
+      connectedAt: '2026-08-26T00:00:00.000Z',
+    }
+    invokeMock.mockResolvedValue({ cloudConnection })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      cloudConnection,
     })
   })
 

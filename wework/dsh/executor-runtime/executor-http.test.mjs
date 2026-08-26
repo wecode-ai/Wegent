@@ -1,169 +1,113 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
-import { ExecutorRuntimeError } from './executor-runtime-client.js'
 import { handleExecutorEvents } from './index.js'
 
-test('returns event history overflow before opening the SSE stream', async () => {
-  const request = executorEventRequest()
+test('passes the browser cursor to the executor-owned event stream', async () => {
+  const request = executorEventRequest('?after=7')
   const response = responseFixture()
-  const client = {
-    replay() {
-      throw new ExecutorRuntimeError(
-        'event_history_lost',
-        'Requested executor event history is no longer buffered',
-        true
-      )
-    },
-  }
+  let receivedAfter = null
 
-  await handleExecutorEvents(request, response, client)
+  await handleExecutorEvents(request, response, options => {
+    receivedAfter = options.afterSequence
+    return eventStreamFixture(options, {
+      events: [executorEvent(8), executorEvent(9, 'response.completed')],
+    })
+  })
 
-  assert.equal(response.status, 409)
-  assert.equal(JSON.parse(response.body).error.code, 'event_history_lost')
+  assert.equal(receivedAfter, 7)
+  assert.match(response.body, /id: 8/)
+  assert.match(response.body, /id: 9/)
 })
 
-test('disconnects an SSE slow consumer instead of buffering indefinitely', async () => {
+test('disconnects an SSE slow consumer instead of opening an executor stream', async () => {
   const request = executorEventRequest()
   const response = responseFixture({ writable: false })
-  let listened = false
-  const replay = [1, 2, 3].map(sequence => ({
-    protocolVersion: 1,
-    sequence,
-    emittedAt: new Date().toISOString(),
-    event: 'task.updated',
-    payload: { id: `task-${sequence}` },
-  }))
-  const client = {
-    replay() {
-      return replay
-    },
-    listen() {
-      listened = true
-      return () => {}
-    },
-  }
+  let created = false
 
-  await handleExecutorEvents(request, response, client)
+  await handleExecutorEvents(request, response, options => {
+    created = true
+    return eventStreamFixture(options)
+  })
 
   assert.equal(response.status, 200)
   assert.equal(response.writableEnded, true)
-  assert.equal(listened, false)
+  assert.equal(created, false)
+})
+
+test('stops the executor stream when a live SSE consumer applies backpressure', async () => {
+  const request = executorEventRequest()
+  const response = responseFixture({ writableSequence: [true, true, false] })
+  let stopped = false
+
+  await handleExecutorEvents(request, response, options =>
+    eventStreamFixture(options, {
+      events: [executorEvent(1), executorEvent(2)],
+      onStop: () => {
+        stopped = true
+      },
+    })
+  )
+
+  assert.equal(response.writableEnded, true)
+  assert.equal(stopped, true)
   assert.match(response.body, /id: 1/)
-  assert.doesNotMatch(response.body, /id: 2/)
-  assert.doesNotMatch(response.body, /id: 3/)
+  assert.match(response.body, /id: 2/)
 })
 
-test('stops replaying events after disconnecting an SSE slow consumer', async () => {
-  const request = executorEventRequest()
-  const response = responseFixture({ writable: false, throwAfterEnd: true })
-  const client = {
-    replay() {
-      return [executorEvent(1), executorEvent(2)]
-    },
-    listen() {
-      assert.fail('slow replay consumers must not subscribe to live events')
-    },
-  }
-
-  await handleExecutorEvents(request, response, client)
-
-  assert.equal(response.writes, 1)
-  assert.equal(response.writableEnded, true)
-})
-
-test('ignores queued live events after disconnecting an SSE slow consumer', async () => {
-  const request = executorEventRequest()
-  const response = responseFixture({ writableSequence: [true, false], throwAfterEnd: true })
-  let listener
-  let disposeCalls = 0
-  const client = {
-    replay() {
-      return []
-    },
-    listen(nextListener) {
-      listener = nextListener
-      return () => {
-        disposeCalls += 1
-      }
-    },
-  }
-
-  await handleExecutorEvents(request, response, client)
-  listener(executorEvent(1))
-  listener(executorEvent(2))
-
-  assert.equal(response.writes, 2)
-  assert.equal(response.writableEnded, true)
-  assert.equal(disposeCalls, 1)
-})
-
-test('coalesces bursty content snapshots before a terminal event', async () => {
+test('forwards content snapshots without Electron-side coalescing', async () => {
   const request = executorEventRequest()
   const response = responseFixture()
-  let listener
-  const client = {
-    replay() {
-      return []
-    },
-    listen(nextListener) {
-      listener = nextListener
-      return () => {}
-    },
-  }
 
-  await handleExecutorEvents(request, response, client)
-  for (let index = 1; index <= 2200; index += 1) {
-    listener(blockUpdate(index, 'x'.repeat(index)))
-  }
-  listener(executorEvent(2201, 'response.completed', { data: { value: 'complete' } }))
+  await handleExecutorEvents(request, response, options =>
+    eventStreamFixture(options, {
+      events: [
+        blockUpdate(1, 'first'),
+        blockUpdate(2, 'second'),
+        executorEvent(3, 'response.completed'),
+      ],
+    })
+  )
 
   const events = response.body
     .split('\n')
     .filter(line => line.startsWith('data: '))
     .map(line => JSON.parse(line.slice('data: '.length)))
-  assert.equal(events.length, 2)
-  assert.equal(events[0].sequence, 2200)
-  assert.equal(events[0].payload.data.updates.content.length, 2200)
-  assert.equal(events[1].event, 'response.completed')
+  assert.deepEqual(
+    events.map(event => event.sequence),
+    [1, 2, 3]
+  )
+  assert.equal(events[0].payload.data.updates.content, 'first')
+  assert.equal(events[1].payload.data.updates.content, 'second')
 })
 
-test('does not coalesce additive block updates', async () => {
+test('closes SSE when the executor event stream closes', async () => {
   const request = executorEventRequest()
   const response = responseFixture()
-  const client = {
-    replay() {
-      return [
-        executorEvent(1, 'response.block.updated', {
-          data: {
-            block_id: 'tool-1',
-            updates: { tool_output_delta: 'first', status: 'streaming' },
-          },
-        }),
-        executorEvent(2, 'response.block.updated', {
-          data: {
-            block_id: 'tool-1',
-            updates: { tool_output_delta: 'second', status: 'streaming' },
-          },
-        }),
-      ]
-    },
-    listen() {
-      return () => {}
-    },
-  }
 
-  await handleExecutorEvents(request, response, client)
+  await handleExecutorEvents(request, response, options =>
+    eventStreamFixture(options, { closeAfterStart: true })
+  )
 
-  assert.equal(response.body.match(/^data: /gm)?.length, 2)
-  assert.match(response.body, /first/)
-  assert.match(response.body, /second/)
+  assert.equal(response.writableEnded, true)
 })
 
-function executorEventRequest() {
+function eventStreamFixture(options, config = {}) {
+  return {
+    async start() {
+      for (const event of config.events ?? []) options.onEvent(event)
+      if (config.closeAfterStart) options.onClose()
+    },
+    stop() {
+      config.onStop?.()
+    },
+  }
+}
+
+function executorEventRequest(query = '') {
   const request = new EventEmitter()
   request.method = 'GET'
-  request.url = '/wework/executor/v1/events'
+  request.url = `/wework/executor/v1/events${query}`
   request.headers = {}
   request.socket = { remoteAddress: '127.0.0.1' }
   return request
@@ -183,6 +127,7 @@ function blockUpdate(sequence, content) {
 
 function executorEvent(sequence, event = 'task.updated', payload = { id: `task-${sequence}` }) {
   return {
+    type: 'event',
     protocolVersion: 1,
     sequence,
     emittedAt: new Date().toISOString(),
@@ -206,9 +151,6 @@ function responseFixture(options = {}) {
     this.headersSent = true
   }
   response.write = function (body) {
-    if (options.throwAfterEnd && this.writableEnded) {
-      throw new Error('write after end')
-    }
     const writable = options.writableSequence?.[this.writes] ?? options.writable !== false
     this.writes += 1
     this.body += body

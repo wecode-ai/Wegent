@@ -31,6 +31,7 @@ import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
+import { RendererStorageStore } from './host/renderer-storage-store.js'
 import {
   EMBEDDED_BROWSER_PARTITION,
   EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR,
@@ -71,6 +72,7 @@ import { SystemResumeBridge } from './host/system-resume-bridge.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
+const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL?.trim() ||
@@ -765,7 +767,7 @@ function dispatchTrayAction(action: TrayAction): void {
 }
 
 function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
-  const resourcesRoot = app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'resources')
+  const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
   const iconPath = join(resourcesRoot, 'icons', '128x128.png')
   return new ElectronTrayManager({
     createTray: () => new Tray(createTrayIcon(nativeImage, iconPath)),
@@ -863,6 +865,7 @@ async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   const environment = await desktopEnvironment()
   if (!preferences) throw new Error('Desktop preferences are unavailable')
+  const rendererStorage = new RendererStorageStore(app.getPath('userData'))
   workbenchPlugins = new WorkbenchPluginManager()
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
@@ -908,8 +911,10 @@ async function configureDesktopRuntime(): Promise<void> {
         () => rendererHealth.snapshot(),
         () => smartApps,
         preferences,
+        rendererStorage,
         embeddedBrowser,
         {
+          coreDshPlugins: () => desktopRuntime,
           appUpdates,
           feedback,
           plugins: workbenchPlugins,
@@ -1105,7 +1110,7 @@ if (hasSingleInstanceLock) {
 }
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
-  const resourcesRoot = app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'resources')
+  const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
   const developmentRuntimeRoot = resolve(
     packageRoot,
     '..',

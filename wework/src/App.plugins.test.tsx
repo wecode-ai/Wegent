@@ -9,9 +9,121 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
 import { updateAppPreferences } from '@/desktop/appPreferences'
+import { importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
 import type { InstalledPlugin } from '@/types/api'
+import ApplicationsRoute from '../dsh/ui-applications/src/route'
+import CoreAppSurface from '../dsh/ui-core-apps/src/app-surface'
+import PluginCatalogRoute from '../dsh/ui-plugin-center/src/catalog-route'
+import PluginCreateRoute from '../dsh/ui-plugin-center/src/create-route'
+import PluginManagementRoute from '../dsh/ui-plugin-center/src/management-route'
 import './i18n'
 import App from './App'
+
+const TEST_DSH_ROUTES = [
+  {
+    id: 'plugin-center.catalog',
+    icon: 'plug',
+    module: 'plugins/wework-ui-plugin-center-catalog.js',
+    path: '/plugins',
+    restorePolicy: 'session',
+    telemetryFeature: 'plugins',
+    title: '插件',
+  },
+  {
+    id: 'plugin-center.create',
+    icon: 'plug',
+    module: 'plugins/wework-ui-plugin-center-create.js',
+    path: '/plugins/create',
+    restorePolicy: 'session',
+    telemetryFeature: 'plugin_create',
+    title: '插件',
+  },
+  {
+    id: 'plugin-center.management',
+    icon: 'plug',
+    module: 'plugins/wework-ui-plugin-center-management.js',
+    path: '/plugins/manage',
+    restorePolicy: 'session',
+    telemetryFeature: 'plugin_management',
+    title: '插件',
+  },
+  {
+    id: 'applications.sites',
+    icon: 'applications',
+    module: 'plugins/wework-ui-applications.js',
+    path: '/sites',
+    restorePolicy: 'session',
+    telemetryFeature: 'sites',
+    title: '应用',
+  },
+]
+
+const TEST_DSH_APPS = [
+  {
+    id: 'wework',
+    label: '任务',
+    mode: 'native',
+    module: 'plugins/wework-ui-core-apps.js',
+    path: '/',
+    requiresAuth: true,
+    workspaceKinds: ['task'],
+  },
+  {
+    id: 'todo',
+    hidden: true,
+    label: '项目空间',
+    mode: 'native',
+    module: 'plugins/wework-ui-core-apps.js',
+    path: '/todo',
+    requiresAuth: true,
+    workspaceKinds: ['board'],
+  },
+]
+
+const TEST_DSH_NAVIGATION = [
+  {
+    id: 'plugin-center.navigation',
+    activeItem: 'plugins',
+    icon: 'plug',
+    label: '插件',
+    order: 20,
+    path: '/plugins',
+    testId: 'plugins-button',
+  },
+  {
+    id: 'applications.navigation',
+    activeItem: 'sites',
+    experimental: true,
+    icon: 'applications',
+    label: '应用',
+    order: 30,
+    path: '/sites',
+    testId: 'sites-button',
+  },
+]
+
+function installTestDshUiPlugins() {
+  window.__WEWORK_DSH_UI__ = {
+    getEntries: slotName => {
+      if (slotName === 'wework.app') return TEST_DSH_APPS
+      if (slotName === 'wework.route') return TEST_DSH_ROUTES
+      if (slotName === 'wework.sidebar.navigation') return TEST_DSH_NAVIGATION
+      return []
+    },
+    subscribe: () => () => {},
+    attach: () => ({
+      dispose: () => {},
+      update: () => {},
+    }),
+  }
+  window.__WEWORK_DSH_UI_MODULES__ = {
+    'plugins/wework-ui-applications.js': { default: ApplicationsRoute },
+    'plugins/wework-ui-core-apps.js': { default: CoreAppSurface },
+    'plugins/wework-ui-plugin-center-catalog.js': { default: PluginCatalogRoute },
+    'plugins/wework-ui-plugin-center-create.js': { default: PluginCreateRoute },
+    'plugins/wework-ui-plugin-center-management.js': { default: PluginManagementRoute },
+  }
+}
 
 const desktopHostMocks = vi.hoisted(() => {
   const preferences: Record<string, unknown> = {}
@@ -28,6 +140,7 @@ const desktopHostMocks = vi.hoisted(() => {
         if (capability === 'plugins.list') return []
         if (capability === 'smartApps.list') return []
         if (capability === 'executor.plugins.personal.list') return { items: [] }
+        if (capability === 'runtime.listCoreDshPlugins') return []
         return {}
       }
     ),
@@ -885,7 +998,11 @@ function mockSystemSkillsFetch() {
 }
 
 describe('App plugins route', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    installTestDshUiPlugins()
+    await Promise.all(
+      Object.keys(window.__WEWORK_DSH_UI_MODULES__ ?? {}).map(module => importDshUiModule(module))
+    )
     for (const key of Object.keys(desktopHostMocks.preferences)) {
       delete desktopHostMocks.preferences[key]
     }
@@ -927,6 +1044,8 @@ describe('App plugins route', () => {
   })
 
   afterEach(() => {
+    delete window.__WEWORK_DSH_UI__
+    delete window.__WEWORK_DSH_UI_MODULES__
     vi.unstubAllEnvs()
     vi.unstubAllGlobals()
   })
@@ -1721,6 +1840,7 @@ describe('App plugins route', () => {
     fireEvent.input(composer, { target: { textContent: '保留这段草稿' } })
     await userEvent.click(screen.getByTestId('plugins-button'))
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-workbench-main')).not.toBeInTheDocument()
 
     window.history.pushState({}, '', '/')
     window.dispatchEvent(new PopStateEvent('popstate'))
@@ -1842,8 +1962,12 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理插件' })).toBeInTheDocument()
     expect(
-      within(screen.getByTestId('plugin-management-page-content')).queryByRole('tab')
-    ).not.toBeInTheDocument()
+      within(screen.getByTestId('plugin-management-page-content')).getAllByRole('tab')
+    ).toHaveLength(2)
+    expect(screen.getByTestId('plugin-management-surface-wework')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
     expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
     expect(screen.getByTestId('plugin-management-browse-marketplace-button')).toBeInTheDocument()
     expect(screen.queryByPlaceholderText('供应商 Token')).not.toBeInTheDocument()
@@ -1933,9 +2057,35 @@ describe('App plugins route', () => {
     expect(await screen.findByRole('heading', { name: '管理插件' })).toBeInTheDocument()
     expect(screen.queryByText('Custom Docs MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('wehot')).not.toBeInTheDocument()
-    expect(
-      within(screen.getByTestId('plugin-management-page-content')).queryByRole('tab')
-    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugin-management-codex-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-management-core-dsh-panel')).not.toBeInTheDocument()
+  })
+
+  test('switches between Codex and Core DSH plugin management tabs', async () => {
+    window.history.pushState({}, '', '/plugins/manage')
+
+    renderApp()
+
+    expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
+    expect(screen.queryByTestId('core-dsh-plugin-management')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugin-management-surface-core-dsh'))
+
+    expect(screen.getByTestId('plugin-management-surface-core-dsh')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('core-dsh-plugin-management')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-management-codex-panel')).not.toBeInTheDocument()
+
+    await userEvent.keyboard('{ArrowLeft}')
+
+    expect(screen.getByTestId('plugin-management-surface-wework')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('plugin-management-codex-panel')).toBeInTheDocument()
+    expect(screen.queryByTestId('core-dsh-plugin-management')).not.toBeInTheDocument()
   })
 
   test('refreshes composer plugin candidates after toggling an installed plugin', async () => {

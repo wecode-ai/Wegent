@@ -102,6 +102,9 @@ class ServerEvents:
     QUEUE_MESSAGE_PROCESSED = "queue:message_processed"  # Message processed
     QUEUE_REPLY_RECEIVED = "queue:reply_received"  # Received reply from processing
 
+    # Plugin lifecycle events (to Wework user room)
+    PLUGIN_RELEASE_AVAILABLE = "plugin:release_available"
+
 
 # ============================================================
 # Client -> Server Payloads
