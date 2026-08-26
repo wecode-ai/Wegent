@@ -151,6 +151,20 @@ function environmentDisplayLabel(option) {
   return option.label.replace(/\s*·\s*(在线|忙碌)$/, '') || option.deviceId
 }
 
+function clearExecutionEnvironment(onChange) {
+  onChange('executionDeviceId', null)
+  onChange('executionEnvironment', 'local')
+  onChange('environment', '')
+  onChange('runtimeProfileId', null)
+}
+
+function clearExecutionModel(onChange) {
+  onChange('model', '')
+  onChange('modelType', null)
+  onChange('modelOptions', {})
+  onChange('runtimeProfileId', null)
+}
+
 function ExecutionEnvironmentSelect({ testId, value, options, onChange }) {
   const selected = options.find(option => option.deviceId === value)
   const selectedLabel = environmentDisplayLabel(selected)
@@ -177,29 +191,44 @@ function ExecutionEnvironmentSelect({ testId, value, options, onChange }) {
         </span>
       }
     >
-      {close =>
-        options.map(option => {
-          const label = environmentDisplayLabel(option)
-          const OptionIcon = option.executionEnvironment === 'cloud' ? Cloud : Laptop
-          return (
-            <button
-              key={option.deviceId}
-              type="button"
-              data-testid={`${testId}-option-${option.deviceId}`}
-              aria-label={option.executionEnvironment === 'cloud' ? `云设备 ${label}` : '本机'}
-              onClick={() => {
-                onChange(option.deviceId)
-                close()
-              }}
-              className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium text-text-primary hover:bg-surface"
-            >
-              <OptionIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
-              <span className="min-w-0 flex-1 truncate">{label}</span>
-              {option.deviceId === value ? <Check className="h-4 w-4 shrink-0" /> : null}
-            </button>
-          )
-        })
-      }
+      {close => (
+        <>
+          <button
+            type="button"
+            data-testid={`${testId}-option-none`}
+            onClick={() => {
+              onChange(null)
+              close()
+            }}
+            className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium text-text-primary hover:bg-surface"
+          >
+            <X aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate">不指定执行环境</span>
+            {!value ? <Check className="h-4 w-4 shrink-0" /> : null}
+          </button>
+          {options.map(option => {
+            const label = environmentDisplayLabel(option)
+            const OptionIcon = option.executionEnvironment === 'cloud' ? Cloud : Laptop
+            return (
+              <button
+                key={option.deviceId}
+                type="button"
+                data-testid={`${testId}-option-${option.deviceId}`}
+                aria-label={option.executionEnvironment === 'cloud' ? `云设备 ${label}` : '本机'}
+                onClick={() => {
+                  onChange(option.deviceId)
+                  close()
+                }}
+                className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium text-text-primary hover:bg-surface"
+              >
+                <OptionIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+                <span className="min-w-0 flex-1 truncate">{label}</span>
+                {option.deviceId === value ? <Check className="h-4 w-4 shrink-0" /> : null}
+              </button>
+            )
+          })}
+        </>
+      )}
     </PopupMenu>
   )
 }
@@ -763,13 +792,6 @@ export function AutomationRulesView({
       )
     if (hasUnnamedNode(draft.steps)) {
       notify('请填写所有执行节点名称')
-      return null
-    }
-    const unconfiguredExecutionNode = draft.steps.find(
-      node => node.executionMode === 'automatic' && (!node.executionDeviceId || !node.model)
-    )
-    if (unconfiguredExecutionNode) {
-      notify(`请为“${unconfiguredExecutionNode.name}”选择执行环境和模型`)
       return null
     }
     setSaving(true)
@@ -2544,6 +2566,10 @@ function CoordinatorSettings({
   ]
 
   const selectEnvironment = deviceId => {
+    if (!deviceId) {
+      clearExecutionEnvironment(onChange)
+      return
+    }
     const option = environmentOptions.find(candidate => candidate.deviceId === deviceId)
     if (!option) return
     onChange('executionDeviceId', option.deviceId)
@@ -2553,6 +2579,10 @@ function CoordinatorSettings({
   }
 
   const selectModel = name => {
+    if (!name) {
+      clearExecutionModel(onChange)
+      return
+    }
     const option = modelOptions.find(candidate => candidate.name === name)
     if (!option) return
     onChange('model', option.name)
@@ -2610,9 +2640,7 @@ function CoordinatorSettings({
             value={coordinator.model}
             onChange={event => selectModel(event.target.value)}
           >
-            <option value="" disabled>
-              选择模型
-            </option>
+            <option value="">不指定模型</option>
             {modelOptions.map(option => (
               <option key={`${option.type}-${option.name}`} value={option.name}>
                 {option.label}
@@ -2790,6 +2818,10 @@ function StepSettings({
   ]
 
   const selectEnvironment = deviceId => {
+    if (!deviceId) {
+      clearExecutionEnvironment(onChange)
+      return
+    }
     const option = environmentOptions.find(candidate => candidate.deviceId === deviceId)
     if (!option) return
     onChange('executionDeviceId', option.deviceId)
@@ -2799,6 +2831,10 @@ function StepSettings({
   }
 
   const selectModel = name => {
+    if (!name) {
+      clearExecutionModel(onChange)
+      return
+    }
     const option = modelOptions.find(candidate => candidate.name === name)
     if (!option) return
     onChange('model', option.name)
@@ -3024,9 +3060,7 @@ function StepSettings({
                 value={step.model}
                 onChange={event => selectModel(event.target.value)}
               >
-                <option value="" disabled>
-                  选择模型
-                </option>
+                <option value="">不指定模型</option>
                 {modelOptions.map(option => (
                   <option key={`${option.type}-${option.name}`} value={option.name}>
                     {option.label}

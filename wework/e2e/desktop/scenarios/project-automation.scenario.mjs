@@ -3838,6 +3838,27 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('fill', '[data-testid^="execution-node-prompt-"]', {
         value: '完成代码实现和测试。',
       })
+      const executionEnvironment = '[data-testid^="execution-node-environment-"]'
+      await control.command('click', executionEnvironment, { visible: true })
+      await control.command(
+        'click',
+        '[data-testid^="execution-node-environment-"][data-testid$="-option-none"]',
+        { visible: true }
+      )
+      assert.equal(
+        await control.command('getAttribute', `${executionEnvironment} [data-value]`, {
+          name: 'data-value',
+        }),
+        '',
+        'Execution environment selection was not cleared'
+      )
+      const executionModel = '[data-testid^="execution-node-model-"]'
+      await control.command('select', executionModel, { value: '' })
+      assert.equal(
+        await control.command('getValue', executionModel),
+        '',
+        'Execution model selection was not cleared'
+      )
       const pluginMenuTrigger = '[data-testid^="execution-node-add-plugin-"]'
       const pluginMenu = '[data-testid^="execution-node-add-plugin-"][data-testid$="-menu"]'
       await control.command('click', pluginMenuTrigger, { visible: true })
@@ -3891,6 +3912,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       assert.equal(createdAutomation?.runtimeSource, 'runtime_user')
       const createdGraphNodes = createdAutomation?.eventConfig.wework_flow.graph.nodes
       assert.equal(createdGraphNodes?.length, 2)
+      assert.equal(createdGraphNodes?.[0].executionDeviceId, null)
+      assert.equal(createdGraphNodes?.[0].model, '')
+      assert.equal(
+        createdAutomation?.eventConfig.runtime_workflow_definition.nodes[0].execution_config
+          .execution_device_id,
+        null
+      )
+      assert.equal(
+        createdAutomation?.eventConfig.runtime_workflow_definition.nodes[0].execution_config.model,
+        null
+      )
       assert.equal(createdGraphNodes?.[1].kind, 'dynamic')
       assert.equal(createdGraphNodes?.[1].subgraph.nodes.length, 1)
 

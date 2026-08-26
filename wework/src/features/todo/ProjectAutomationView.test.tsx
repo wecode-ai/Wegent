@@ -516,6 +516,60 @@ describe('ProjectAutomationView', () => {
     expect(environmentSelect.querySelector('.lucide-cloud')).toBeInTheDocument()
   })
 
+  test('clears execution environment and model and persists the unconfigured node', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
+    await openRuleEditor()
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+
+    const environmentSelect = screen.getByTestId('execution-node-environment-step-1')
+    fireEvent.click(environmentSelect)
+    fireEvent.click(screen.getByTestId('execution-node-environment-step-1-option-none'))
+    expect(environmentSelect).toHaveTextContent('选择执行环境')
+    expect(environmentSelect.querySelector('[data-value]')).toHaveAttribute('data-value', '')
+
+    const modelSelect = screen.getByTestId('execution-node-model-step-1')
+    fireEvent.change(modelSelect, { target: { value: '' } })
+    expect(modelSelect).toHaveValue('')
+    expect(screen.getByRole('option', { name: '不指定模型' })).not.toBeDisabled()
+
+    fireEvent.click(screen.getByTestId('automation-save'))
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
+    const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
+    const storedNode = (
+      input.eventConfig?.wework_flow as {
+        graph: {
+          nodes: Array<{
+            environment: string
+            executionDeviceId: string | null
+            runtimeProfileId: string | null
+            model: string
+            modelType: string | null
+            modelOptions: Record<string, string>
+          }>
+        }
+      }
+    ).graph.nodes[0]
+    const runtimeNode = input.eventConfig?.runtime_workflow_definition?.nodes[0]
+
+    expect(storedNode).toMatchObject({
+      environment: '',
+      executionDeviceId: null,
+      runtimeProfileId: null,
+      model: '',
+      modelType: null,
+      modelOptions: {},
+    })
+    expect(runtimeNode?.execution_config).toMatchObject({
+      execution_device_id: null,
+      runtime_profile_id: null,
+      model: null,
+      model_type: null,
+      model_options: {},
+    })
+  })
+
   test('removes legacy executor names and trailing separators from workflow nodes', async () => {
     renderView({
       listedRules: [
