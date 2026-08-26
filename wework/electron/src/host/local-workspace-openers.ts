@@ -205,9 +205,9 @@ const WINDOWS_OPENERS: WindowsWorkspaceOpener[] = [
     label: 'PowerShell',
     category: 'winOnly',
     environmentVariables: ['WEGENT_POWERSHELL_PATH'],
-    commands: ['pwsh', 'powershell'],
-    commonDirectories: ['%WINDIR%/System32/WindowsPowerShell/v1.0'],
-    executableNames: ['powershell.exe', 'pwsh.exe'],
+    commands: ['pwsh'],
+    commonDirectories: ['%ProgramFiles%/PowerShell/7'],
+    executableNames: ['pwsh.exe'],
   },
   {
     id: 'custom',
@@ -277,7 +277,7 @@ export async function openLocalWorkspace(
     const detectedCommand = opener ? await resolveWindowsExecutable(opener, dataDirectory) : null
     const command =
       detectedCommand ??
-      (openerId === 'cmd' ? 'cmd.exe' : openerId === 'powershell' ? 'powershell.exe' : null)
+      (openerId === 'cmd' ? 'cmd.exe' : openerId === 'powershell' ? 'pwsh.exe' : null)
     if (!command) {
       throw new Error(`Workspace opener ${openerId} is not installed`)
     }
@@ -519,7 +519,7 @@ foreach ($dir in $folders) {
 }
 `
   try {
-    const { stdout } = await execFileAsync('powershell.exe', [
+    const { stdout } = await execFileAsync('pwsh.exe', [
       '-NoProfile',
       '-NonInteractive',
       '-Command',

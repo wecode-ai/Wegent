@@ -16,7 +16,9 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const resourceDirectory = path.join(root, 'resources', 'bundled-execution-runtimes')
 const descriptorPath = path.join(resourceDirectory, 'node.json')
-const cacheDirectory = path.join(root, 'node_modules', '.cache')
+const cacheDirectory =
+  process.env.WEWORK_EXECUTION_RUNTIME_CACHE_ROOT?.trim() ||
+  path.join(root, 'node_modules', '.cache')
 const assetDirectory = path.join(cacheDirectory, 'execution-runtime-assets')
 const materializedRoot = path.join(cacheDirectory, 'execution-runtime-node-dev')
 const staging = path.join(cacheDirectory, `wework-node-runtime-${process.pid}`)

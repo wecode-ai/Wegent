@@ -1,16 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import {
-  access,
-  cp,
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises'
+import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -54,7 +44,8 @@ const dshAppOutput = path.join(root, 'dsh', 'app-wework', 'web')
 const targetDirectory = path.join(root, 'resources', 'bundled-harness-runtime')
 const catalogPath = path.join(targetDirectory, 'runtimes.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
-const cacheDirectory = path.join(root, 'node_modules', '.cache')
+const cacheDirectory =
+  process.env.WEWORK_HARNESS_RUNTIME_CACHE_ROOT?.trim() || path.join(root, 'node_modules', '.cache')
 const assetDirectory = path.join(cacheDirectory, 'harness-runtime-assets')
 const materializedRoot = path.join(cacheDirectory, 'harness-runtime-dev')
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
@@ -364,6 +355,7 @@ async function buildRuntime(runtime) {
         '--virtual-store-dir=node_modules/.pnpm',
         '--package-import-method=copy',
         '--config.enable-global-virtual-store=false',
+        ...(process.platform === 'win32' ? ['--config.node-linker=hoisted'] : []),
       ],
       staging
     )
@@ -432,25 +424,26 @@ const runtimes = (await runtimeSources()).map(runtimeIdentity)
 if (runtimes.length === 0) {
   throw new Error('Harness runtime must declare at least one DSH version')
 }
-const descriptors = []
-for (const runtime of runtimes) {
-  let descriptor = null
-  try {
-    const cached = JSON.parse(
-      await readFile(path.join(assetDirectory, runtime.descriptorName), 'utf8')
-    )
-    await access(runtime.assetPath)
-    descriptor = validateDescriptor(cached, runtime)
-    await ensurePublishedAsset(descriptor, runtime)
-  } catch {
-    descriptor = await reusePublishedRuntime(runtime)
-  }
-  descriptor ??= await buildRuntime(runtime)
-  descriptors.push(descriptor)
-  if (materializeRequested) {
-    await materializeRuntime(runtime, descriptor)
-  }
-}
+const descriptors = await Promise.all(
+  runtimes.map(async runtime => {
+    let descriptor = null
+    try {
+      const cached = JSON.parse(
+        await readFile(path.join(assetDirectory, runtime.descriptorName), 'utf8')
+      )
+      await access(runtime.assetPath)
+      descriptor = validateDescriptor(cached, runtime)
+      await ensurePublishedAsset(descriptor, runtime)
+    } catch {
+      descriptor = await reusePublishedRuntime(runtime)
+    }
+    descriptor ??= await buildRuntime(runtime)
+    if (materializeRequested) {
+      await materializeRuntime(runtime, descriptor)
+    }
+    return descriptor
+  })
+)
 
 await resetTargetDirectory()
 await writeFile(catalogPath, `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`)
