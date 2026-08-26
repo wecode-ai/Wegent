@@ -29,6 +29,7 @@ core_segments=(
   context-compaction
   split-workbench
   release-package-startup
+  component-update
   native-window-startup
   native-window-chrome
   renderer-storage
@@ -120,7 +121,7 @@ core_shards=(
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter
   rendering-extensions
-  runtime-task-queue,release-package-startup,native-window-startup,renderer-storage
+  runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
   model-routing
