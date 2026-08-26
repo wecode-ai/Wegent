@@ -541,6 +541,14 @@ const MessageBubble = memo(
       () => msg.result?.blocks?.filter(block => block.type !== 'thinking') ?? [],
       [msg.result?.blocks]
     )
+    const finalPromptData = React.useMemo(() => {
+      if (isUserTypeMessage) return null
+
+      const blockContent = getCopyableContentFromBlocks(msg.result?.blocks ?? [])
+      const content = blockContent || msg.recoveredContent || msg.content || ''
+      const contentToParse = content.includes('${$$}$') ? content.split('${$$}$')[1] || '' : content
+      return parseMarkdownFinalPrompt(contentToParse)
+    }, [isUserTypeMessage, msg.content, msg.recoveredContent, msg.result?.blocks])
     const blockSaveableMarkdown = React.useMemo(
       () =>
         getSaveableMarkdown(
@@ -1035,34 +1043,21 @@ const MessageBubble = memo(
       // The old result.video and result.progress logic has been removed
       // in favor of the unified block-based rendering system
 
-      try {
-        let contentToParse = content
-
-        if (content.includes('${$$}$')) {
-          const [, result] = content.split('${$$}$')
-          if (result) {
-            contentToParse = result
-          }
-        }
-        const markdownFinalPrompt = parseMarkdownFinalPrompt(contentToParse)
-        if (markdownFinalPrompt) {
-          return (
-            <FinalPromptMessage
-              data={markdownFinalPrompt}
-              selectedTeam={selectedTeam}
-              selectedRepo={selectedRepo}
-              selectedBranch={selectedBranch}
-              taskId={selectedTaskDetail?.id}
-              subtaskId={msg.subtaskId}
-              isPendingConfirmation={isPendingConfirmation}
-              onStageConfirmed={onPipelineStageConfirmed}
-              onForwardClick={onForwardClick}
-              isMessageStreaming={isStreaming || message.status === 'streaming'}
-            />
-          )
-        }
-      } catch (error) {
-        console.error('Failed to parse message content:', error)
+      if (finalPromptData) {
+        return (
+          <FinalPromptMessage
+            data={finalPromptData}
+            selectedTeam={selectedTeam}
+            selectedRepo={selectedRepo}
+            selectedBranch={selectedBranch}
+            taskId={selectedTaskDetail?.id}
+            subtaskId={msg.subtaskId}
+            isPendingConfirmation={isPendingConfirmation}
+            onStageConfirmed={onPipelineStageConfirmed}
+            onForwardClick={onForwardClick}
+            isMessageStreaming={isStreaming || message.status === 'streaming'}
+          />
+        )
       }
 
       if (!content.includes('${$$}$')) {
@@ -1234,8 +1229,10 @@ const MessageBubble = memo(
                 />
               ) : (
                 <>
-                  {/* Structured blocks always use MixedContentView. */}
-                  {!isUserTypeMessage && msg.result?.blocks && mixedContentBlocks.length > 0 ? (
+                  {/* A strict final-prompt heading takes precedence over generic text blocks. */}
+                  {!isUserTypeMessage && finalPromptData ? (
+                    <>{renderMessageBody(msg)}</>
+                  ) : !isUserTypeMessage && msg.result?.blocks && mixedContentBlocks.length > 0 ? (
                     <>
                       <MixedContentView
                         thinking={msg.thinking ?? null}
