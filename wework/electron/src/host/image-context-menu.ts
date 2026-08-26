@@ -1,4 +1,17 @@
+import type { WebFrameMain } from 'electron'
+
 export interface NativeContextMenuParams {
+  editFlags?: {
+    canCopy: boolean
+    canCut: boolean
+    canDelete: boolean
+    canPaste: boolean
+    canRedo: boolean
+    canSelectAll: boolean
+    canUndo: boolean
+  }
+  frame?: WebFrameMain | null
+  isEditable?: boolean
   mediaType: string
   selectionText: string
   x: number
@@ -20,18 +33,19 @@ export interface NativeContextMenuContents {
 }
 
 export interface NativeContextMenu {
-  popup: () => void
+  popup: (options?: { frame?: WebFrameMain }) => void
 }
 
 export interface NativeContextMenuItem {
   click?: () => void
+  enabled?: boolean
   label?: string
+  role?: 'copy' | 'cut' | 'delete' | 'paste' | 'redo' | 'selectAll' | 'undo'
   type?: 'separator'
 }
 
 export interface NativeContextMenuActions {
   copyPath: (path: string) => void
-  copyText: (text: string) => void
   openImage: (image: ImageContext) => Promise<void>
   reportError: (action: string, error: unknown) => void
   resolveImageContext: (params: NativeContextMenuParams) => Promise<ImageContext | null>
@@ -39,7 +53,6 @@ export interface NativeContextMenuActions {
 }
 
 interface NativeContextMenuLabels {
-  copy: string
   copyImage: string
   copyPath: string
   openImage: string
@@ -47,7 +60,6 @@ interface NativeContextMenuLabels {
 }
 
 const ZH_CN_LABELS: NativeContextMenuLabels = {
-  copy: '复制',
   copyImage: '复制图片',
   copyPath: '复制文件路径',
   openImage: '在系统默认应用中打开',
@@ -55,7 +67,6 @@ const ZH_CN_LABELS: NativeContextMenuLabels = {
 }
 
 const EN_LABELS: NativeContextMenuLabels = {
-  copy: 'Copy',
   copyImage: 'Copy Image',
   copyPath: 'Copy File Path',
   openImage: 'Open in Default Application',
@@ -114,13 +125,25 @@ async function showContextMenu(
     return
   }
 
+  const frame = params.frame ?? undefined
+  if (params.isEditable) {
+    const editFlags = params.editFlags
+    buildMenu([
+      { role: 'undo', enabled: editFlags?.canUndo },
+      { role: 'redo', enabled: editFlags?.canRedo },
+      { type: 'separator' },
+      { role: 'cut', enabled: editFlags?.canCut },
+      { role: 'copy', enabled: editFlags?.canCopy },
+      { role: 'paste', enabled: editFlags?.canPaste },
+      { role: 'delete', enabled: editFlags?.canDelete },
+      { type: 'separator' },
+      { role: 'selectAll', enabled: editFlags?.canSelectAll },
+    ]).popup({ frame })
+    return
+  }
+
   if (!params.selectionText.trim()) return
-  buildMenu([
-    {
-      label: labels.copy,
-      click: () => actions.copyText(params.selectionText),
-    },
-  ]).popup()
+  buildMenu([{ role: 'copy' }]).popup({ frame })
 }
 
 export function installNativeContextMenu(
