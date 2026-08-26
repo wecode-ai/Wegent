@@ -9,7 +9,12 @@ from pathlib import Path
 from types import ModuleType
 from unittest.mock import Mock
 
+import pytest
+import sqlalchemy as sa
 from pytest import MonkeyPatch
+
+from alembic.operations import Operations
+from alembic.runtime.migration import MigrationContext
 
 
 def _load_migration() -> ModuleType:
@@ -31,6 +36,136 @@ def _migration_with_mock_op(monkeypatch: MonkeyPatch) -> tuple[ModuleType, Mock]
     op = Mock()
     monkeypatch.setattr(migration, "op", op)
     return migration, op
+
+
+def _legacy_engine() -> sa.engine.Engine:
+    """A pre-migration knowledge_documents table on an in-memory engine."""
+    engine = sa.create_engine("sqlite://")
+    metadata = sa.MetaData()
+    sa.Table(
+        "knowledge_documents",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("kind_id", sa.Integer, nullable=False),
+        sa.Column("name", sa.String(255), nullable=False),
+    )
+    metadata.create_all(engine)
+    return engine
+
+
+def _columns(connection) -> set[str]:
+    return {
+        column["name"]
+        for column in sa.inspect(connection).get_columns("knowledge_documents")
+    }
+
+
+def _index_names(connection) -> set[str]:
+    return {
+        index["name"]
+        for index in sa.inspect(connection).get_indexes("knowledge_documents")
+    }
+
+
+def _bind_migration_to_connection(
+    migration: ModuleType, monkeypatch: MonkeyPatch, connection
+) -> None:
+    """Point the migration's op proxy at a live engine connection."""
+    operations = Operations(MigrationContext.configure(connection))
+    monkeypatch.setattr(migration, "op", operations)
+
+
+def test_upgrade_downgrade_cycle_runs_against_real_engine(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    migration = _load_migration()
+    engine = _legacy_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO knowledge_documents (kind_id, name) VALUES (1, 'legacy')"
+            )
+        )
+        _bind_migration_to_connection(migration, monkeypatch, connection)
+
+        migration.upgrade()
+        assert {"external_provider", "external_resource_id"} <= _columns(connection)
+        assert "uq_knowledge_documents_external" in _index_names(connection)
+        # Legacy rows keep the regular-document identity: both columns NULL.
+        row = connection.execute(
+            sa.text(
+                "SELECT external_provider, external_resource_id FROM knowledge_documents"
+            )
+        ).one()
+        assert row == (None, None)
+
+        migration.downgrade()
+        assert "external_provider" not in _columns(connection)
+        assert "external_resource_id" not in _columns(connection)
+        assert "uq_knowledge_documents_external" not in _index_names(connection)
+
+
+def test_unique_index_rejects_duplicate_external_identity(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    migration = _load_migration()
+    engine = _legacy_engine()
+    with engine.begin() as connection:
+        _bind_migration_to_connection(migration, monkeypatch, connection)
+        migration.upgrade()
+
+        insert = sa.text(
+            "INSERT INTO knowledge_documents (kind_id, name, external_provider, "
+            "external_resource_id) VALUES (:kind_id, :name, :provider, :resource_id)"
+        )
+        connection.execute(
+            insert,
+            {
+                "kind_id": 1,
+                "name": "doc-a",
+                "provider": "dingtalk",
+                "resource_id": "doc-1",
+            },
+        )
+        # The same external resource may appear once per knowledge base only.
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                insert,
+                {
+                    "kind_id": 1,
+                    "name": "doc-a-duplicate",
+                    "provider": "dingtalk",
+                    "resource_id": "doc-1",
+                },
+            )
+        # A different knowledge base may hold the same resource.
+        connection.execute(
+            insert,
+            {
+                "kind_id": 2,
+                "name": "doc-b",
+                "provider": "dingtalk",
+                "resource_id": "doc-1",
+            },
+        )
+        # Regular documents (both columns NULL) never conflict.
+        connection.execute(
+            insert,
+            {"kind_id": 1, "name": "regular-1", "provider": None, "resource_id": None},
+        )
+        connection.execute(
+            insert,
+            {"kind_id": 1, "name": "regular-2", "provider": None, "resource_id": None},
+        )
+
+
+def test_no_external_snapshot_mapping_table_or_dual_write_path() -> None:
+    """The final implementation must not reintroduce the snapshot mapping design."""
+    backend_root = Path(__file__).parents[2]
+    for path in (backend_root / "alembic" / "versions").glob("*.py"):
+        assert "external_knowledge_snapshots" not in path.read_text(), path.name
+    for path in (backend_root / "app" / "models").glob("*.py"):
+        assert "ExternalKnowledgeSnapshot" not in path.read_text(), path.name
 
 
 def test_upgrade_adds_identity_columns_and_unique_index(

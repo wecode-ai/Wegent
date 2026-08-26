@@ -67,8 +67,6 @@ export interface KnowledgeSidebarProps {
   onSelectAll: () => void
   /** Select "Groups" to show all groups list */
   onSelectGroups: () => void
-  /** Select "DingTalk" docs */
-  onSelectDingtalk: () => void
   /** Select an external source view */
   onSelectSourceView: (sourceViewId: string) => void
   /** Registered external source views */
@@ -77,10 +75,6 @@ export interface KnowledgeSidebarProps {
   allKnowledgeBases?: KnowledgeBase[]
   /** Callback to collapse the sidebar */
   onCollapse?: () => void
-  /** DingTalk synced doc count */
-  dingtalkDocCount: number
-  /** Whether DingTalk MCP is configured */
-  isDingtalkConfigured: boolean
   /** Summary counts from backend */
   summary?: {
     total_count: number
@@ -108,13 +102,10 @@ export function KnowledgeSidebar({
   onSelectGroup,
   onSelectAll,
   onSelectGroups,
-  onSelectDingtalk,
   onSelectSourceView,
   sourceViews,
   allKnowledgeBases,
   onCollapse,
-  dingtalkDocCount,
-  isDingtalkConfigured,
   summary,
 }: KnowledgeSidebarProps) {
   const { t } = useTranslation('knowledge')
@@ -214,26 +205,22 @@ export function KnowledgeSidebar({
           onSelect={onSelectKb}
           onClear={onClearRecent}
         />
-        {/* Navigation section (Personal + Organization + DingTalk + Groups) */}
+        {/* Navigation section (Personal + Organization + Groups) */}
         <NavigationSection
           groups={groups}
           isLoading={isGroupsLoading}
           selectedGroupId={selectedGroupId}
           isAllSelected={viewMode === 'all'}
           isGroupsSelected={viewMode === 'groups'}
-          isDingtalkSelected={viewMode === 'dingtalk'}
           selectedSourceViewId={selectedSourceViewId}
           isExpanded={sectionStates.groups}
           onToggle={() => toggleSection('groups')}
           onSelectAll={onSelectAll}
           onSelectGroup={onSelectGroup}
           onSelectGroups={onSelectGroups}
-          onSelectDingtalk={onSelectDingtalk}
           onSelectSourceView={onSelectSourceView}
           sourceViews={sourceViews}
           totalKbCount={summary?.total_count ?? groups.reduce((sum, g) => sum + g.kbCount, 0)}
-          dingtalkDocCount={dingtalkDocCount}
-          isDingtalkConfigured={isDingtalkConfigured}
           summary={summary}
         />
       </div>

@@ -1063,6 +1063,7 @@ export function KnowledgeDocumentTreeGrid({
               : `bg-base hover:bg-surface group ${onViewDetail ? 'cursor-pointer' : ''}`
           }`}
           style={{ gridTemplateColumns }}
+          data-testid={node.kind === 'document' ? `document-row-${node.document.id}` : undefined}
           onClick={() => {
             if (canActivateFolder) {
               onActivateFolder?.(node.folderId)

@@ -1347,7 +1347,12 @@ export function DocumentList({
 
           {/* Upload button */}
           {canUploadDocuments && (
-            <Button variant="primary" size="sm" onClick={handleOpenUpload}>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleOpenUpload}
+              data-testid="upload-documents-button"
+            >
               <Upload className="w-4 h-4 mr-1" />
               {t('document.document.upload')}
             </Button>
