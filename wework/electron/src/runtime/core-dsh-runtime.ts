@@ -52,6 +52,7 @@ export interface CoreDshLaunch {
   args: string[]
   cwd: string
   dshHome: string
+  environment: NodeJS.ProcessEnv
   profile: string
   version: string
   sourceFingerprint: string
@@ -83,6 +84,11 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
     args: [runtime.entry, '--profile', PROFILE_NAME, '--no-open', '--port', String(options.port)],
     cwd: runtime.root,
     dshHome,
+    environment: {
+      ...options.environment,
+      DSH_HOME: dshHome,
+      WEWORK_HARNESS_API_KEY: 'wework-local-router',
+    },
     profile: PROFILE_NAME,
     version: runtime.version,
     sourceFingerprint: runtime.sourceFingerprint,

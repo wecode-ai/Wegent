@@ -6,6 +6,7 @@ import type { Readable, Writable } from 'node:stream'
 import {
   HOST_PROTOCOL_VERSION,
   HostCapabilityError,
+  type HostCapabilityCompletion,
   type HostCapabilityRouter,
 } from './capability-router.js'
 
@@ -107,13 +108,25 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
       return
     }
     try {
-      const result = await this.router.invoke(session.principal, message.capability, message.params)
-      this.write(session, {
-        type: 'response',
-        id: message.id,
-        ok: true,
-        result: result ?? null,
-      })
+      const completions: HostCapabilityCompletion[] = []
+      const result = await this.router.invoke(
+        session.principal,
+        message.capability,
+        message.params,
+        {
+          onResponseSent: completion => completions.push(completion),
+        }
+      )
+      this.write(
+        session,
+        {
+          type: 'response',
+          id: message.id,
+          ok: true,
+          result: result ?? null,
+        },
+        () => this.runCompletions(completions)
+      )
     } catch (error) {
       const normalized =
         error instanceof HostCapabilityError
@@ -156,8 +169,22 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
     this.emit('ready', principal)
   }
 
-  private write(session: HostPipeSession, message: unknown): void {
-    session.output.write(`${JSON.stringify(message)}\n`)
+  private write(session: HostPipeSession, message: unknown, onWritten?: () => void): void {
+    session.output.write(`${JSON.stringify(message)}\n`, error => {
+      if (error) {
+        this.protocolFailure(session, error)
+        return
+      }
+      onWritten?.()
+    })
+  }
+
+  private runCompletions(completions: HostCapabilityCompletion[]): void {
+    void (async () => {
+      for (const completion of completions) await completion()
+    })().catch(error => {
+      console.error('[host-pipe] post-response completion failed', error)
+    })
   }
 
   private protocolFailure(session: HostPipeSession, error: Error): void {

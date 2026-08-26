@@ -65,18 +65,17 @@ function resolveExecutorProfile() {
 }
 
 async function buildExecutor(profile) {
-  await run(
-    'cargo',
-    [
-      'build',
-      '--manifest-path',
-      join(executorRoot, 'Cargo.toml'),
-      ...(profile === 'release' ? ['--release'] : []),
-      '--bin',
-      'wegent-executor',
-    ],
-    repositoryRoot
-  )
+  const target = process.env.CARGO_BUILD_TARGET?.trim()
+  const buildArgs = [
+    'build',
+    '--manifest-path',
+    join(executorRoot, 'Cargo.toml'),
+    ...(profile === 'release' ? ['--release'] : []),
+    '--bin',
+    'wegent-executor',
+  ]
+  if (target) buildArgs.push('--target', target)
+  await run('cargo', buildArgs, repositoryRoot)
   const metadata = JSON.parse(
     await capture(
       'cargo',
@@ -93,6 +92,7 @@ async function buildExecutor(profile) {
   )
   return join(
     metadata.target_directory,
+    ...(target ? [target] : []),
     profile,
     process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
   )

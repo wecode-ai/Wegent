@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "Release channel"
+        description: "Release channel. Stable releases also advance the Beta channel."
         type: choice
         options:
           - stable
@@ -37,6 +37,7 @@ jobs:
       release_tag: ${{ steps.version.outputs.release_tag }}
       version: ${{ steps.version.outputs.value }}
       channel: ${{ steps.version.outputs.channel }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
       publish_release: ${{ steps.version.outputs.publish_release }}
 
     steps:
@@ -69,16 +70,7 @@ jobs:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -euo pipefail
-          node --input-type=module <<'NODE'
-          import { readFile, writeFile } from 'node:fs/promises'
-
-          const version = process.env.RELEASE_VERSION
-          for (const path of ['wework/package.json', 'wework/electron/package.json']) {
-            const manifest = JSON.parse(await readFile(path, 'utf8'))
-            manifest.version = version
-            await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`)
-          }
-          NODE
+          node wework/scripts/sync-desktop-release-version.mjs "$RELEASE_VERSION"
 
           if [[ "$PUBLISH_RELEASE" != "true" ]]; then
             git checkout -- wework/package.json wework/electron/package.json
@@ -86,20 +78,17 @@ jobs:
             exit 0
           fi
 
-          if git diff --quiet -- wework/package.json wework/electron/package.json; then
-            echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-            exit 0
+          if ! git diff --quiet -- wework/package.json wework/electron/package.json; then
+            app_user_id="$(gh api "/users/${{ steps.release-app-token.outputs.app-slug }}[bot]" --jq .id)"
+            git config user.name "${{ steps.release-app-token.outputs.app-slug }}[bot]"
+            git config user.email "${app_user_id}+${{ steps.release-app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+            git add wework/package.json wework/electron/package.json
+            git commit -m "chore(wework): bump app version to ${RELEASE_VERSION}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
-
-          app_user_id="$(gh api "/users/${{ steps.release-app-token.outputs.app-slug }}[bot]" --jq .id)"
-          git config user.name "${{ steps.release-app-token.outputs.app-slug }}[bot]"
-          git config user.email "${app_user_id}+${{ steps.release-app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
-          git add wework/package.json wework/electron/package.json
-          git commit -m "chore(wework): bump app version to ${RELEASE_VERSION}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
           echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Create or update GitHub Release
+      - name: Create or update draft release
         if: steps.version.outputs.publish_release == 'true'
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
@@ -114,7 +103,10 @@ jobs:
           notes="$(mktemp)"
           node wework/scripts/generate-release-notes.mjs > "$notes"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" --title "$title" --notes-file "$notes"
+            gh release edit "$RELEASE_TAG" \
+              --target "$RELEASE_SHA" \
+              --title "$title" \
+              --notes-file "$notes"
           else
             gh release create "$RELEASE_TAG" \
               --target "$RELEASE_SHA" \
@@ -127,20 +119,39 @@ jobs:
     name: Build ${{ matrix.name }}
     needs: prepare-release
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: macOS
+          - name: macOS arm64
             runner: macos-14
-            artifact: macos
-          - name: Windows
+            platform: macos
+            arch: arm64
+            node_arch: arm64
+            cargo_target: aarch64-apple-darwin
+            codex_target: aarch64-apple-darwin
+          - name: macOS x64
+            runner: macos-14
+            platform: macos
+            arch: x64
+            node_arch: x64
+            cargo_target: x86_64-apple-darwin
+            codex_target: x86_64-apple-darwin
+          - name: Windows x64
             runner: windows-latest
-            artifact: windows
-          - name: Linux
+            platform: windows
+            arch: x64
+            node_arch: x64
+            cargo_target: x86_64-pc-windows-msvc
+            codex_target: x86_64-pc-windows-msvc
+          - name: Linux x64
             runner: ubuntu-latest
-            artifact: linux
+            platform: linux
+            arch: x64
+            node_arch: x64
+            cargo_target: x86_64-unknown-linux-gnu
+            codex_target: x86_64-unknown-linux-gnu
 
     steps:
       - name: Checkout code
@@ -148,37 +159,98 @@ jobs:
         with:
           ref: ${{ needs.prepare-release.outputs.release_sha }}
 
-      - name: Set up Node workspace
-        uses: ./.github/actions/setup-node-workspace
+      - name: Install Rosetta 2
+        if: matrix.platform == 'macos' && matrix.arch == 'x64'
+        run: sudo softwareupdate --install-rosetta --agree-to-license || true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          targets: ${{ matrix.cargo_target }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+          architecture: ${{ matrix.node_arch }}
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            wework/electron/pnpm-lock.yaml
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Install Wework Electron dependencies
         run: pnpm --dir wework/electron install --frozen-lockfile
 
-      - name: Build Electron application
-        env:
-          VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
-          VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
-        run: pnpm --filter wework build:release
+      - name: Synchronize desktop build version
+        run: node wework/scripts/sync-desktop-release-version.mjs "${{ needs.prepare-release.outputs.version }}"
 
-      - name: Resolve packaged application
-        id: package
+      - name: Prepare Apple notarization key
+        if: matrix.platform == 'macos'
         shell: bash
         env:
-          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
-          ARTIFACT_PLATFORM: ${{ matrix.artifact }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
         run: |
           set -euo pipefail
-          package_dir="$(find wework/electron/release -mindepth 1 -maxdepth 1 -type d -name 'WeWork-*' -print -quit)"
-          if [[ -z "$package_dir" ]]; then
-            echo "Electron package directory was not produced" >&2
-            exit 1
-          fi
-          archive="$RUNNER_TEMP/WeWork_${RELEASE_VERSION}_${ARTIFACT_PLATFORM}.tar.gz"
-          tar -C "$(dirname "$package_dir")" -czf "$archive" "$(basename "$package_dir")"
-          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY_BASE64" | base64 -D > "$key_path"
+          chmod 0600 "$key_path"
+          echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
 
+      - name: Build signed Electron release
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CARGO_BUILD_TARGET: ${{ matrix.cargo_target }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          CSC_LINK: ${{ matrix.platform == 'macos' && secrets.MACOS_CERTIFICATE_BASE64 || '' }}
+          VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
+          VITE_WEWORK_RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+          VITE_WEWORK_RUNTIME_MODE: local-first
+          WEWORK_CODEX_TARGET: ${{ matrix.codex_target }}
+          WEWORK_DWS_TARGET: ${{ matrix.cargo_target }}
+          WEWORK_RELEASE_ARCH: ${{ matrix.arch }}
+          WEWORK_RELEASE_PLATFORM: ${{ matrix.platform }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+        run: pnpm --filter wework build:release
+
+      - name: Prepare installer and legacy bridge assets
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          node wework/scripts/prepare-desktop-release-assets.mjs \
+            "${{ matrix.platform }}" \
+            "${{ matrix.arch }}" \
+            "${{ needs.prepare-release.outputs.version }}" \
+            "$RUNNER_TEMP/wework-release-assets"
+
+      - name: Upload release build
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-${{ needs.prepare-release.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/wework-release-assets/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release and update channels
+    needs:
+      - prepare-release
+      - build
+    runs-on: ubuntu-latest
+    if: needs.prepare-release.outputs.publish_release == 'true'
+
+    steps:
       - name: Create release app token
-        if: needs.prepare-release.outputs.publish_release == 'true'
         id: release-app-token
         uses: actions/create-github-app-token@v3
         with:
@@ -186,17 +258,107 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
-      - name: Upload release asset
-        if: needs.prepare-release.outputs.publish_release == 'true'
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_sha }}
+
+      - name: Download release builds
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wework-${{ needs.prepare-release.outputs.version }}-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate Electron and legacy updater manifests
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="$(mktemp)"
+          gh release view "$RELEASE_TAG" --json body --jq .body > "$notes"
+          node wework/scripts/generate-desktop-update-manifests.mjs \
+            release-assets \
+            release-manifests \
+            "$RELEASE_VERSION" \
+            "$RELEASE_CHANNEL" \
+            "$GITHUB_REPOSITORY" \
+            "$RELEASE_TAG" \
+            "$notes"
+
+      - name: Upload formal release assets
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-        run: gh release upload "$RELEASE_TAG" "${{ steps.package.outputs.archive }}" --clobber
+        run: gh release upload "$RELEASE_TAG" release-assets/* release-manifests/* --clobber
 
-      - name: Upload test artifact
-        if: needs.prepare-release.outputs.publish_release != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: wework-${{ needs.prepare-release.outputs.version }}-${{ matrix.artifact }}
-          path: ${{ steps.package.outputs.archive }}
-          if-no-files-found: error
+      - name: Publish rolling update channels
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+          RELEASE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! gh release view wework-updater >/dev/null 2>&1; then
+            gh release create wework-updater \
+              --target "$RELEASE_SHA" \
+              --title "Wework updater manifests" \
+              --notes "Rolling Electron and legacy Tauri update-channel manifests." \
+              --prerelease
+          fi
+
+          publish_channel() {
+            local channel="$1"
+            local electron_channel="$channel"
+            local current_manifest="$RUNNER_TEMP/current-${channel}.json"
+            [[ "$channel" == "stable" ]] && electron_channel="latest"
+
+            if gh release download wework-updater \
+              --pattern "${channel}-darwin-aarch64.json" \
+              --output "$current_manifest" \
+              --clobber >/dev/null 2>&1; then
+              current_version="$(node -e \
+                "console.log(JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).version)" \
+                "$current_manifest")"
+              if ! node wework/scripts/update-channel-manifests.mjs \
+                is-newer "$RELEASE_VERSION" "$current_version"; then
+                echo "Keeping newer or equal ${channel} update manifests at ${current_version}."
+                return
+              fi
+            fi
+
+            gh release upload wework-updater \
+              "release-manifests/${electron_channel}.yml" \
+              "release-manifests/${electron_channel}-mac.yml" \
+              "release-manifests/${channel}-darwin-aarch64.json" \
+              "release-manifests/${channel}-darwin-x86_64.json" \
+              "release-manifests/${channel}-windows-x86_64.json" \
+              --clobber
+          }
+
+          publish_channel "$RELEASE_CHANNEL"
+          if [[ "$RELEASE_CHANNEL" == "stable" ]]; then
+            publish_channel beta
+          fi
+
+      - name: Publish formal release
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
+          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq .databaseId)"
+          make_latest=true
+          [[ "$RELEASE_CHANNEL" == "beta" ]] && make_latest=false
+          gh api \
+            --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            --field draft=false \
+            --field prerelease="$PRERELEASE" \
+            --raw-field make_latest="$make_latest" >/dev/null
