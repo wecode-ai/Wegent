@@ -16,6 +16,7 @@ from app.api.dependencies import get_db
 from app.api.endpoints.knowledge import router
 from app.core import security
 from app.models.dingtalk_doc import DingtalkSyncedNode
+from app.models.knowledge import KnowledgeDocument
 from app.models.user import User
 from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeFolderCreate
 from app.services.knowledge.folder_service import KnowledgeFolderService
@@ -95,6 +96,14 @@ def _import_payload(node_id: str, folder_id: int = 0) -> dict:
     return {
         "provider": "dingtalk",
         "external_resource_id": node_id,
+        "folder_id": folder_id,
+    }
+
+
+def _batch_import_payload(node_ids: list[str], folder_id: int = 0) -> dict:
+    return {
+        "provider": "dingtalk",
+        "external_resource_ids": node_ids,
         "folder_id": folder_id,
     }
 
@@ -258,3 +267,231 @@ class TestImportExternalDocument:
         )
 
         assert response.status_code == 403
+
+
+class TestImportExternalDocumentBatch:
+    def test_creates_one_placeholder_per_document(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        first = _create_synced_node(test_db, test_user.id, "aa" * 16, name="Batch One")
+        second = _create_synced_node(test_db, test_user.id, "bb" * 16, name="Batch Two")
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-batch",
+            json=_batch_import_payload(
+                [first.dingtalk_node_id, second.dingtalk_node_id]
+            ),
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["requested_count"] == 2
+        assert len(data["imported"]) == 2
+        assert data["skipped_existing"] == []
+        imported_ids = {item["id"] for item in data["imported"]}
+        assert imported_ids == set(dispatched)
+        names = {item["name"] for item in data["imported"]}
+        assert names == {"Batch One", "Batch Two"}
+        for item in data["imported"]:
+            assert item["source_type"] == "external"
+            assert item["external_provider"] == "dingtalk"
+            assert item["index_status"] == "queued"
+
+    def test_deduplicates_repeated_resource_ids(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        node = _create_synced_node(test_db, test_user.id, "cc" * 16, name="Dup Doc")
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-batch",
+            json=_batch_import_payload([node.dingtalk_node_id, node.dingtalk_node_id]),
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["requested_count"] == 1
+        assert len(data["imported"]) == 1
+        assert len(dispatched) == 1
+
+    def test_rejects_batch_over_fifty_documents(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        node_ids = []
+        for index in range(51):
+            node = _create_synced_node(
+                test_db, test_user.id, f"{index:03d}" + "n" * 29, name=f"Doc {index}"
+            )
+            node_ids.append(node.dingtalk_node_id)
+        test_db.commit()
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-batch",
+            json=_batch_import_payload(node_ids),
+        )
+
+        assert response.status_code == 400
+        assert "50" in response.json()["detail"]
+        assert dispatched == []
+        documents = test_db.query(KnowledgeDocument).count()
+        assert documents == 0
+
+    def test_skips_already_imported_documents(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        existing_node = _create_synced_node(
+            test_db, test_user.id, "dd" * 16, name="Existing Doc"
+        )
+        new_node = _create_synced_node(test_db, test_user.id, "ee" * 16, name="New Doc")
+        first = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import",
+            json=_import_payload(existing_node.dingtalk_node_id),
+        )
+        assert first.status_code == 201
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-batch",
+            json=_batch_import_payload(
+                [existing_node.dingtalk_node_id, new_node.dingtalk_node_id]
+            ),
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["requested_count"] == 2
+        assert len(data["imported"]) == 1
+        assert data["imported"][0]["name"] == "New Doc"
+        assert data["skipped_existing"] == [
+            {
+                "external_resource_id": existing_node.dingtalk_node_id,
+                "name": "Existing Doc",
+            }
+        ]
+        # Only the new placeholder was dispatched; the existing document keeps
+        # its original import task dispatch.
+        assert len(dispatched) == 2
+
+    def test_places_batch_in_target_folder(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            kb_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="Batch folder"),
+        )
+        node = _create_synced_node(test_db, test_user.id, "ff" * 16)
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-batch",
+            json=_batch_import_payload([node.dingtalk_node_id], folder_id=folder.id),
+        )
+
+        assert response.status_code == 201
+        assert response.json()["imported"][0]["folder_id"] == folder.id
+
+    def test_rejects_folder_of_other_knowledge_base(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id, "batch-kb-a")
+        other_kb_id = _create_kb(test_db, test_user.id, "batch-kb-b")
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            other_kb_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="Foreign batch folder"),
+        )
+        node = _create_synced_node(test_db, test_user.id, "gg" * 16)
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-batch",
+            json=_batch_import_payload([node.dingtalk_node_id], folder_id=folder.id),
+        )
+
+        assert response.status_code == 400
+        assert dispatched == []
+
+    def test_rejects_batch_importer_without_manage_permission(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        node = _create_synced_node(test_db, test_user.id, "hh" * 16)
+        monkeypatch.setattr(
+            KnowledgeService,
+            "can_manage_knowledge_base_documents",
+            staticmethod(lambda db, kb_id, user_id: False),
+        )
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-batch",
+            json=_batch_import_payload([node.dingtalk_node_id]),
+        )
+
+        assert response.status_code == 403
+
+    def test_rejects_non_document_node_without_partial_import(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        doc_node = _create_synced_node(
+            test_db, test_user.id, "ii" * 16, name="Good Doc"
+        )
+        file_node = _create_synced_node(
+            test_db, test_user.id, "jj" * 16, name="Bin File", node_type="file"
+        )
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-batch",
+            json=_batch_import_payload(
+                [doc_node.dingtalk_node_id, file_node.dingtalk_node_id]
+            ),
+        )
+
+        assert response.status_code == 400
+        assert dispatched == []
+        documents = test_db.query(KnowledgeDocument).count()
+        assert documents == 0

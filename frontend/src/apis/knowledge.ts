@@ -154,24 +154,31 @@ export async function createDocument(
   return apiClient.post<KnowledgeDocument>(`/knowledge-bases/${knowledgeBaseId}/documents`, data)
 }
 
-export interface ExternalDocumentImportRequest {
+export interface ExternalDocumentBatchImportRequest {
   provider: string
-  external_resource_id: string
+  external_resource_ids: string[]
   folder_id?: number
 }
 
+export interface ExternalDocumentBatchImportResult {
+  imported: KnowledgeDocument[]
+  skipped_existing: Array<{ external_resource_id: string; name: string }>
+  requested_count: number
+}
+
 /**
- * Import one external provider document into a knowledge base.
+ * Import several external provider documents into a knowledge base.
  *
- * Creates a placeholder document immediately; the backend fetches the
+ * Creates one placeholder document per distinct external resource (already
+ * imported resources are skipped and reported); the backend fetches each
  * external body and indexes it in the background.
  */
-export async function importExternalDocument(
+export async function importExternalDocumentBatch(
   knowledgeBaseId: number,
-  data: ExternalDocumentImportRequest
-): Promise<KnowledgeDocument> {
-  return apiClient.post<KnowledgeDocument>(
-    `/knowledge-bases/${knowledgeBaseId}/documents/external-import`,
+  data: ExternalDocumentBatchImportRequest
+): Promise<ExternalDocumentBatchImportResult> {
+  return apiClient.post<ExternalDocumentBatchImportResult>(
+    `/knowledge-bases/${knowledgeBaseId}/documents/external-import-batch`,
     data
   )
 }

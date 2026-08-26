@@ -29,13 +29,6 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
   Accordion,
   AccordionContent,
   AccordionItem,
@@ -54,7 +47,8 @@ import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { validateTableUrl } from '@/apis/knowledge'
 import { DingtalkDocumentImport } from './DingtalkDocumentImport'
-import type { DingtalkDocNode } from '@/types/dingtalk-doc'
+import type { DingtalkBatchImportSummary } from './DingtalkDocumentImport'
+import { FolderSelect } from './FolderSelect'
 import { DEFAULT_FLAT_CHUNK_CONFIG, DEFAULT_SPLITTER_CONFIG } from '@/types/knowledge'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 import {
@@ -104,8 +98,12 @@ interface DocumentUploadProps {
   onTableAdd?: (data: TableDocument) => Promise<void>
   /** Callback to add a web page document. Backend handles scraping and document creation. */
   onWebAdd?: (url: string, name?: string) => Promise<void>
-  /** Callback to import one DingTalk document. Backend creates the placeholder and indexes it. */
-  onDingtalkAdd?: (node: DingtalkDocNode) => Promise<void>
+  /** Callback to batch-import DingTalk documents. Backend creates one placeholder per document. */
+  onDingtalkImport?: (resourceIds: string[]) => Promise<DingtalkBatchImportSummary>
+  /** Whether the current knowledge base is shared with other members */
+  isSharedKnowledgeBase?: boolean
+  /** Whether the user may manage documents in the current knowledge base */
+  canManageDocuments?: boolean
   /** Deprecated compatibility prop. kb_type no longer limits uploads. */
   kbType?: string
   /** Deprecated compatibility prop. kb_type no longer limits uploads. */
@@ -139,7 +137,9 @@ export function DocumentUpload({
   onUploadComplete,
   onTableAdd,
   onWebAdd,
-  onDingtalkAdd,
+  onDingtalkImport,
+  isSharedKnowledgeBase = false,
+  canManageDocuments = true,
   folderId = 0,
   folderOptions = [],
   onFolderChange,
@@ -649,16 +649,12 @@ export function DocumentUpload({
   }
 
   // Handle DingTalk document import; the DingtalkDocumentImport child owns
-  // the import state and resets it by unmounting when the mode changes.
-  const handleDingtalkImport = useCallback(
-    async (node: DingtalkDocNode) => {
-      if (!onDingtalkAdd) return
-      await onDingtalkAdd(node)
-      setUploadMode('file')
-      handleClose()
-    },
-    [onDingtalkAdd, handleClose]
-  )
+  // the import state and resets it by unmounting when the mode changes. The
+  // child shows the batch result and calls back here once the user dismisses it.
+  const handleDingtalkDone = useCallback(() => {
+    setUploadMode('file')
+    handleClose()
+  }, [handleClose])
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`
@@ -769,25 +765,11 @@ export function DocumentUpload({
         )}
 
         {/* Folder selection */}
-        {folderOptions.length > 0 && (
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
-            <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
-              <SelectTrigger className="h-11 min-w-[44px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
-                {folderOptions.map(folder => (
-                  <SelectItem key={folder.id} value={String(folder.id)}>
-                    {'\u00A0'.repeat(folder.depth * 2)}
-                    {folder.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+        <FolderSelect
+          folderId={folderId}
+          folderOptions={folderOptions}
+          onFolderChange={onFolderChange}
+        />
       </div>
 
       <div className="flex justify-end gap-2">
@@ -846,7 +828,7 @@ export function DocumentUpload({
               <ClipboardPaste className="w-4 h-4 mr-2" />
               {t('document.upload.pasteText')}
             </Button>
-            {onDingtalkAdd && (
+            {onDingtalkImport && (
               <Button
                 variant="outline"
                 size="sm"
@@ -901,25 +883,12 @@ export function DocumentUpload({
         </div>
 
         {/* Folder selection - show when there are folders */}
-        {folderOptions.length > 0 && (
-          <div className="mt-4 space-y-1.5">
-            <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
-            <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
-              <SelectTrigger className="h-11 min-w-[44px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
-                {folderOptions.map(folder => (
-                  <SelectItem key={folder.id} value={String(folder.id)}>
-                    {'\u00A0'.repeat(folder.depth * 2)}
-                    {folder.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+        <FolderSelect
+          className="mt-4 space-y-1.5"
+          folderId={folderId}
+          folderOptions={folderOptions}
+          onFolderChange={onFolderChange}
+        />
 
         {/* Web URL Input Section - inline style like the reference image */}
         {onWebAdd && (
@@ -1312,25 +1281,11 @@ export function DocumentUpload({
         )}
 
         {/* Folder selection */}
-        {folderOptions.length > 0 && (
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
-            <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
-              <SelectTrigger className="h-11 min-w-[44px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
-                {folderOptions.map(folder => (
-                  <SelectItem key={folder.id} value={String(folder.id)}>
-                    {'\u00A0'.repeat(folder.depth * 2)}
-                    {folder.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+        <FolderSelect
+          folderId={folderId}
+          folderOptions={folderOptions}
+          onFolderChange={onFolderChange}
+        />
       </div>
 
       <div className="flex justify-end gap-2">
@@ -1430,25 +1385,11 @@ export function DocumentUpload({
         )}
 
         {/* Folder selection */}
-        {folderOptions.length > 0 && (
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
-            <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
-              <SelectTrigger className="h-11 min-w-[44px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
-                {folderOptions.map(folder => (
-                  <SelectItem key={folder.id} value={String(folder.id)}>
-                    {'\u00A0'.repeat(folder.depth * 2)}
-                    {folder.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+        <FolderSelect
+          folderId={folderId}
+          folderOptions={folderOptions}
+          onFolderChange={onFolderChange}
+        />
       </div>
 
       <div className="flex justify-end gap-2">
@@ -1478,14 +1419,23 @@ export function DocumentUpload({
     setUploadMode('file')
   }
 
-  // Render DingTalk import mode
+  // Render DingTalk import mode; the mode is only reachable through the source
+  // picker button, which is hidden unless onDingtalkImport is provided.
   const renderDingtalkMode = () => (
     <DingtalkDocumentImport
       onBack={handleBackFromDingtalkMode}
-      onImport={handleDingtalkImport}
+      onImport={
+        onDingtalkImport ??
+        (async () => {
+          throw new Error('DingTalk import handler is not configured')
+        })
+      }
+      onDone={handleDingtalkDone}
       folderId={folderId}
       folderOptions={folderOptions}
       onFolderChange={onFolderChange}
+      isSharedKnowledgeBase={isSharedKnowledgeBase}
+      canManageDocuments={canManageDocuments}
     />
   )
 

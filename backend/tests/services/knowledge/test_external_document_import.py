@@ -362,6 +362,154 @@ class TestImportDocument:
             )
 
 
+class TestImportDocuments:
+    def test_creates_one_placeholder_per_document(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        first = _create_synced_node(test_db, test_user.id, "k" * 32, name="Batch A")
+        second = _create_synced_node(test_db, test_user.id, "l" * 32, name="Batch B")
+
+        result = external_document_import_service.import_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_ids=[first.dingtalk_node_id, second.dingtalk_node_id],
+        )
+
+        assert result.requested_count == 2
+        assert [document.name for document in result.imported] == ["Batch A", "Batch B"]
+        assert result.skipped_existing == []
+        assert sorted(dispatched) == sorted(document.id for document in result.imported)
+        for document in result.imported:
+            assert document.source_type == DocumentSourceType.EXTERNAL
+            assert document.external_provider == "dingtalk"
+            assert document.index_status == DocumentIndexStatus.QUEUED
+            assert document.is_active is False
+
+    def test_deduplicates_by_external_identity(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        node = _create_synced_node(test_db, test_user.id, "m" * 32, name="Dup Doc")
+
+        result = external_document_import_service.import_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_ids=[
+                node.dingtalk_node_id,
+                node.dingtalk_node_id,
+            ],
+        )
+
+        assert result.requested_count == 1
+        assert len(result.imported) == 1
+        assert len(dispatched) == 1
+
+    def test_rejects_batch_over_the_fifty_document_cap(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        resource_ids = [f"cap-{index:03d}" for index in range(51)]
+        for resource_id in resource_ids:
+            _create_synced_node(test_db, test_user.id, resource_id)
+
+        with pytest.raises(ExternalDocumentImportError) as exc_info:
+            external_document_import_service.import_documents(
+                db=test_db,
+                user=test_user,
+                knowledge_base_id=kb_id,
+                provider_id="dingtalk",
+                external_resource_ids=resource_ids,
+            )
+
+        assert exc_info.value.status_code == 400
+        assert dispatched == []
+
+    def test_reports_already_imported_documents_as_skipped(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        existing_node = _create_synced_node(
+            test_db, test_user.id, "n" * 32, name="Old Doc"
+        )
+        existing = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=existing_node.dingtalk_node_id,
+        )
+        new_node = _create_synced_node(test_db, test_user.id, "o" * 32, name="New Doc")
+
+        result = external_document_import_service.import_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_ids=[
+                existing_node.dingtalk_node_id,
+                new_node.dingtalk_node_id,
+            ],
+        )
+
+        assert result.requested_count == 2
+        assert len(result.imported) == 1
+        assert [(item.resource_id, item.name) for item in result.skipped_existing] == [
+            (existing_node.dingtalk_node_id, "Old Doc")
+        ]
+        # The already-imported document is untouched: no new dispatch for it.
+        assert dispatched == [existing.id, result.imported[0].id]
+
+    def test_rejects_invalid_item_before_creating_any_placeholder(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        good_node = _create_synced_node(test_db, test_user.id, "p" * 32, name="Good")
+        _create_synced_node(
+            test_db, test_user.id, "q" * 32, name="Bin File", node_type="file"
+        )
+
+        with pytest.raises(ExternalDocumentImportError) as exc_info:
+            external_document_import_service.import_documents(
+                db=test_db,
+                user=test_user,
+                knowledge_base_id=kb_id,
+                provider_id="dingtalk",
+                external_resource_ids=[
+                    good_node.dingtalk_node_id,
+                    "q" * 32,
+                ],
+            )
+
+        assert exc_info.value.status_code == 400
+        assert dispatched == []
+        assert test_db.query(KnowledgeDocument).count() == 0
+
+
 class TestAttachExternalDocumentContent:
     def _create_placeholder(
         self, test_db: Session, test_user: User

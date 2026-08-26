@@ -1027,6 +1027,27 @@ class ExternalDocumentImportRequest(BaseModel):
     )
 
 
+class ExternalDocumentBatchImportRequest(BaseModel):
+    """Request schema for importing several external provider documents."""
+
+    provider: str = Field(
+        ...,
+        min_length=1,
+        max_length=32,
+        description="External provider ID (e.g. 'dingtalk')",
+    )
+    external_resource_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        description="Provider-scoped external document IDs to import",
+    )
+    folder_id: int = Field(
+        default=0,
+        ge=0,
+        description="Target folder ID in this knowledge base (0 = root level)",
+    )
+
+
 class KnowledgeDocumentUpdate(BaseModel):
     """Schema for updating a knowledge document."""
 
@@ -1131,6 +1152,23 @@ class KnowledgeDocumentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ExternalDocumentBatchImportSkipped(BaseModel):
+    """An external resource skipped because it is already imported."""
+
+    external_resource_id: str
+    name: str
+
+
+class ExternalDocumentBatchImportResponse(BaseModel):
+    """Response schema for a batch external document import."""
+
+    imported: list[KnowledgeDocumentResponse]
+    skipped_existing: list[ExternalDocumentBatchImportSkipped]
+    requested_count: int = Field(
+        description="Number of distinct external resources in the request"
+    )
 
 
 class KnowledgeDocumentListResponse(BaseModel):

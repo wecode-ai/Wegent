@@ -32,7 +32,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { DocumentDetailDialog } from './DocumentDetailDialog'
 import { DocumentUpload, type TableDocument } from './DocumentUpload'
-import type { DingtalkDocNode } from '@/types/dingtalk-doc'
+
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
@@ -736,21 +736,23 @@ export function DocumentList({
     onDocumentsChanged?.()
   }
 
-  const handleDingtalkAdd = async (node: DingtalkDocNode) => {
-    // Import the API function
-    const { importExternalDocument } = await import('@/apis/knowledge')
+  const handleDingtalkImport = async (resourceIds: string[]) => {
+    const { importExternalDocumentBatch } = await import('@/apis/knowledge')
 
-    await importExternalDocument(knowledgeBase.id, {
+    const result = await importExternalDocumentBatch(knowledgeBase.id, {
       provider: 'dingtalk',
-      external_resource_id: node.dingtalk_node_id,
+      external_resource_ids: resourceIds,
       folder_id: selectedUploadFolderId || 0,
     })
 
-    // Refresh so the placeholder shows up with its backend-driven state.
+    // Refresh so the placeholders show up with their backend-driven state.
     await refresh()
-
-    setShowUpload(false)
     onDocumentsChanged?.()
+
+    return {
+      importedCount: result.imported.length,
+      skippedCount: result.skipped_existing.length,
+    }
   }
 
   const handleDelete = async () => {
@@ -1640,7 +1642,9 @@ export function DocumentList({
         onUploadComplete={handleUploadComplete}
         onTableAdd={handleTableAdd}
         onWebAdd={handleWebAdd}
-        onDingtalkAdd={handleDingtalkAdd}
+        onDingtalkImport={handleDingtalkImport}
+        isSharedKnowledgeBase={Boolean(groupInfo) && groupInfo?.groupType !== 'personal'}
+        canManageDocuments={canUploadDocuments}
         kbType={documentViewOf(knowledgeBase.kb_type) ?? undefined}
         folderId={selectedUploadFolderId}
         folderOptions={folderOptions}

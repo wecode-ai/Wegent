@@ -47,6 +47,9 @@ from app.schemas.knowledge import (
     DocumentContentUpdate,
     DocumentDetailResponse,
     DocumentMoveRequest,
+    ExternalDocumentBatchImportRequest,
+    ExternalDocumentBatchImportResponse,
+    ExternalDocumentBatchImportSkipped,
     ExternalDocumentImportRequest,
     InitialMemberCreate,
     KnowledgeBaseCreate,
@@ -829,6 +832,71 @@ async def import_external_document(
     )
 
     return result
+
+
+@router.post(
+    "/{knowledge_base_id}/documents/external-import-batch",
+    response_model=ExternalDocumentBatchImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@trace_async("import_external_document_batch", "knowledge.api")
+async def import_external_document_batch(
+    knowledge_base_id: int,
+    data: ExternalDocumentBatchImportRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Import several external provider documents into this knowledge base.
+
+    Creates one placeholder document per distinct external resource (already
+    imported resources are skipped and reported); background tasks then fetch
+    each body and reuse the regular conversion and indexing pipeline.
+    """
+    try:
+        result = external_document_import_service.import_documents(
+            db=db,
+            user=current_user,
+            knowledge_base_id=knowledge_base_id,
+            provider_id=data.provider,
+            external_resource_ids=data.external_resource_ids,
+            folder_id=data.folder_id,
+        )
+    except ExternalDocumentImportError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=str(exc),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    add_span_event(
+        "knowledge.document.external_import_batched",
+        {
+            "knowledge_base_id": str(knowledge_base_id),
+            "provider": data.provider,
+            "imported_count": str(len(result.imported)),
+            "skipped_count": str(len(result.skipped_existing)),
+            "user_id": str(current_user.id),
+        },
+    )
+
+    return ExternalDocumentBatchImportResponse(
+        imported=[
+            KnowledgeDocumentResponse.model_validate(document)
+            for document in result.imported
+        ],
+        skipped_existing=[
+            ExternalDocumentBatchImportSkipped(
+                external_resource_id=item.resource_id, name=item.name
+            )
+            for item in result.skipped_existing
+        ],
+        requested_count=result.requested_count,
+    )
 
 
 # Document-specific endpoints (without knowledge_base_id in path)

@@ -12,36 +12,65 @@ const mockUseBatchAttachment = jest.fn()
 
 const mockGetSyncStatus = jest.fn()
 const mockGetDocs = jest.fn()
+const mockSyncDocs = jest.fn()
+const mockGetWikispaceSyncStatus = jest.fn()
+const mockGetWikispaceNodes = jest.fn()
+const mockSyncWikispaceNodes = jest.fn()
 
 jest.mock('@/apis/dingtalk-doc', () => ({
   dingtalkDocApi: {
     getSyncStatus: (...args: unknown[]) => mockGetSyncStatus(...args),
     getDocs: (...args: unknown[]) => mockGetDocs(...args),
+    syncDocs: (...args: unknown[]) => mockSyncDocs(...args),
+    getWikispaceSyncStatus: (...args: unknown[]) => mockGetWikispaceSyncStatus(...args),
+    getWikispaceNodes: (...args: unknown[]) => mockGetWikispaceNodes(...args),
+    syncWikispaceNodes: (...args: unknown[]) => mockSyncWikispaceNodes(...args),
   },
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) => {
+    t: (key: string, params?: Record<string, unknown>) => {
       const translations: Record<string, string> = {
         'document.document.upload': 'Upload documents',
         'document.document.dropzone': 'Drop files here',
         'document.upload.uploadFile': 'Upload file',
         'document.upload.pasteText': 'Paste text',
         'document.upload.dingtalk.entry': 'DingTalk document',
-        'document.upload.dingtalk.title': 'Import a DingTalk document',
-        'document.upload.dingtalk.hint': 'Pick one DingTalk document.',
+        'document.upload.dingtalk.title': 'Import DingTalk documents',
+        'document.upload.dingtalk.hint': 'Pick DingTalk documents to import.',
         'document.upload.dingtalk.loading': 'Loading DingTalk documents...',
         'document.upload.dingtalk.notConfigured': 'DingTalk Docs is not configured',
-        'document.upload.dingtalk.empty': 'No importable documents',
+        'document.upload.dingtalk.wikispaceNotConfigured':
+          'DingTalk wiki spaces are not configured',
+        'document.upload.dingtalk.empty': 'No documents',
         'document.upload.dingtalk.loadFailed': 'Failed to load',
+        'document.upload.dingtalk.refresh': 'Refresh',
+        'document.upload.dingtalk.refreshing': 'Refreshing...',
+        'document.upload.dingtalk.refreshFailed': 'Failed to refresh',
+        'document.upload.dingtalk.searchPlaceholder': 'Search documents',
+        'document.upload.dingtalk.myDocs': 'My documents',
+        'document.upload.dingtalk.wikispace': 'DingTalk wiki',
+        'document.upload.dingtalk.lastSynced': 'Last refreshed',
+        'document.upload.dingtalk.unsupported': 'Cannot be imported',
+        'document.upload.dingtalk.selectedCount': 'Selected: {{count}}',
+        'document.upload.dingtalk.limitError': 'At most 50 documents can be imported at once',
+        'document.upload.dingtalk.sharedHint':
+          'Imported content will be visible to knowledge base members',
+        'document.upload.dingtalk.noPermission': 'You do not have permission to add documents',
+        'document.upload.dingtalk.result': 'Imported {{count}}, skipped {{skipped}}',
+        'document.upload.dingtalk.done': 'Done',
         'document.upload.dingtalk.addFailed': 'Failed to import',
         'document.upload.dingtalk.submitButton': 'Import',
         'document.upload.adding': 'Adding...',
+        'document.folder.selectFolder': 'Select folder',
+        'document.folder.rootLevel': 'Root level',
         'common:actions.cancel': 'Cancel',
       }
 
-      return translations[key] ?? key
+      const template = translations[key] ?? key
+      if (!params) return template
+      return template.replace(/\{\{(\w+)\}\}/g, (_match, name) => String(params[name] ?? ''))
     },
   }),
 }))
@@ -83,6 +112,52 @@ function makeNode(overrides: Partial<DingtalkDocNode>): DingtalkDocNode {
   }
 }
 
+function docNode(id: string, name: string, extra: Partial<DingtalkDocNode> = {}) {
+  return makeNode({ dingtalk_node_id: id, name, node_type: 'doc', ...extra })
+}
+
+function folderNode(id: string, name: string, children: DingtalkDocNode[] = []): DingtalkDocNode {
+  return makeNode({
+    dingtalk_node_id: id,
+    name,
+    node_type: 'folder',
+    children,
+  })
+}
+
+const DOCS_TREE = [
+  folderNode('folder-1', 'Project', [
+    docNode('doc-1', 'Spec Doc'),
+    docNode('doc-2', 'API Doc'),
+    makeNode({
+      dingtalk_node_id: 'file-1',
+      name: 'Binary File',
+      node_type: 'file',
+    }),
+  ]),
+  docNode('doc-3', 'Standalone Doc'),
+]
+
+const WIKISPACE_TREE = [docNode('wiki-1', 'Wiki Doc', { source: 'wikispace' })]
+
+function setupDocsApi() {
+  mockGetSyncStatus.mockResolvedValue({
+    is_configured: true,
+    total_nodes: 5,
+    last_synced_at: '2026-08-26T02:00:00Z',
+  })
+  mockGetDocs.mockResolvedValue({ nodes: DOCS_TREE, total_count: 5 })
+}
+
+function setupWikispaceApi() {
+  mockGetWikispaceSyncStatus.mockResolvedValue({
+    is_configured: true,
+    total_nodes: 1,
+    last_synced_at: '2026-08-26T03:00:00Z',
+  })
+  mockGetWikispaceNodes.mockResolvedValue({ nodes: WIKISPACE_TREE, total_count: 1 })
+}
+
 function setupBatchAttachment() {
   mockUseBatchAttachment.mockReturnValue({
     state: { files: [], isUploading: false, summary: null },
@@ -97,10 +172,18 @@ function setupBatchAttachment() {
   })
 }
 
-function renderUpload(props: Partial<Parameters<typeof DocumentUpload>[0]> = {}) {
-  return render(
-    <DocumentUpload open={true} onOpenChange={jest.fn()} onUploadComplete={jest.fn()} {...props} />
+async function openDingtalkMode(props: Partial<Parameters<typeof DocumentUpload>[0]> = {}) {
+  render(
+    <DocumentUpload
+      open={true}
+      onOpenChange={jest.fn()}
+      onUploadComplete={jest.fn()}
+      onDingtalkImport={jest.fn().mockResolvedValue({ importedCount: 0, skippedCount: 0 })}
+      {...props}
+    />
   )
+  fireEvent.click(screen.getByTestId('dingtalk-source-button'))
+  await screen.findByTestId('dingtalk-document-list')
 }
 
 describe('DocumentUpload dingtalk source', () => {
@@ -108,111 +191,281 @@ describe('DocumentUpload dingtalk source', () => {
     mockUseBatchAttachment.mockReset()
     mockGetSyncStatus.mockReset()
     mockGetDocs.mockReset()
+    mockSyncDocs.mockReset()
+    mockGetWikispaceSyncStatus.mockReset()
+    mockGetWikispaceNodes.mockReset()
+    mockSyncWikispaceNodes.mockReset()
     setupBatchAttachment()
+    setupDocsApi()
+    setupWikispaceApi()
   })
 
   it('shows the dingtalk entry only when the handler is provided', () => {
-    renderUpload()
+    render(<DocumentUpload open={true} onOpenChange={jest.fn()} onUploadComplete={jest.fn()} />)
 
     expect(screen.queryByTestId('dingtalk-source-button')).not.toBeInTheDocument()
 
-    renderUpload({ onDingtalkAdd: jest.fn() })
+    render(
+      <DocumentUpload
+        open={true}
+        onOpenChange={jest.fn()}
+        onUploadComplete={jest.fn()}
+        onDingtalkImport={jest.fn()}
+      />
+    )
 
     expect(screen.getByTestId('dingtalk-source-button')).toBeInTheDocument()
   })
 
-  it('lists only importable doc nodes after loading', async () => {
-    mockGetSyncStatus.mockResolvedValue({ is_configured: true, total_nodes: 3 })
-    mockGetDocs.mockResolvedValue({
-      nodes: [
-        makeNode({ id: 1, dingtalk_node_id: 'folder-1', name: 'Folder', node_type: 'folder' }),
-        makeNode({
-          id: 2,
-          dingtalk_node_id: 'doc-nested',
-          name: 'Nested Doc',
-          node_type: 'doc',
-          children: [makeNode({ id: 3, dingtalk_node_id: 'doc-leaf', name: 'Leaf Doc' })],
-        }),
-      ],
-      total_count: 3,
+  it('shows the cached directory without syncing and displays last refresh time', async () => {
+    await openDingtalkMode()
+
+    expect(mockGetDocs).toHaveBeenCalled()
+    expect(mockSyncDocs).not.toHaveBeenCalled()
+    // Top level shows the folder and the standalone doc.
+    expect(screen.getByTestId('dingtalk-folder-option-folder-1')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-document-option-doc-3')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-import-last-synced')).toHaveTextContent('Last refreshed')
+  })
+
+  it('switches to the wikispace directory on tab click', async () => {
+    await openDingtalkMode()
+
+    expect(mockGetWikispaceNodes).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('dingtalk-import-tab-wikispace'))
+
+    await waitFor(() => expect(mockGetWikispaceNodes).toHaveBeenCalled())
+    expect(await screen.findByTestId('dingtalk-document-option-wiki-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-document-option-doc-3')).not.toBeInTheDocument()
+  })
+
+  it('refreshes only on click and reloads the refreshed directory', async () => {
+    mockSyncDocs.mockResolvedValue({ added: 1, updated: 0, deleted: 0, total: 6 })
+    mockGetDocs.mockResolvedValueOnce({ nodes: DOCS_TREE, total_count: 5 }).mockResolvedValueOnce({
+      nodes: [...DOCS_TREE, docNode('doc-4', 'Fresh Doc')],
+      total_count: 6,
+    })
+    mockGetSyncStatus
+      .mockResolvedValueOnce({
+        is_configured: true,
+        total_nodes: 5,
+        last_synced_at: '2026-08-26T02:00:00Z',
+      })
+      .mockResolvedValue({
+        is_configured: true,
+        total_nodes: 6,
+        last_synced_at: '2026-08-26T04:00:00Z',
+      })
+
+    await openDingtalkMode()
+
+    fireEvent.click(screen.getByTestId('dingtalk-import-refresh'))
+
+    await waitFor(() => expect(mockSyncDocs).toHaveBeenCalledTimes(1))
+    expect(await screen.findByTestId('dingtalk-document-option-doc-4')).toBeInTheDocument()
+  })
+
+  it('keeps the old directory and selection when refresh fails', async () => {
+    mockSyncDocs.mockRejectedValue(new Error('network down'))
+    await openDingtalkMode()
+
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
+    fireEvent.click(screen.getByTestId('dingtalk-import-refresh'))
+
+    await waitFor(() => expect(mockSyncDocs).toHaveBeenCalledTimes(1))
+    expect(await screen.findByTestId('dingtalk-import-error')).toHaveTextContent(
+      'Failed to refresh'
+    )
+    // The cached directory and the current selection survive the failure.
+    expect(screen.getByTestId('dingtalk-folder-option-folder-1')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 2')
+  })
+
+  it('searches documents by name across the whole tree', async () => {
+    await openDingtalkMode()
+
+    fireEvent.change(screen.getByTestId('dingtalk-import-search'), {
+      target: { value: 'spec' },
     })
 
-    renderUpload({ onDingtalkAdd: jest.fn() })
-    fireEvent.click(screen.getByTestId('dingtalk-source-button'))
+    expect(screen.getByTestId('dingtalk-document-option-doc-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-document-option-doc-2')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-document-option-doc-3')).not.toBeInTheDocument()
+  })
 
-    await waitFor(() => expect(mockGetDocs).toHaveBeenCalled())
-    expect(await screen.findByTestId('dingtalk-document-list')).toBeInTheDocument()
-    expect(screen.getByTestId('dingtalk-document-option-doc-nested')).toBeInTheDocument()
-    expect(screen.getByTestId('dingtalk-document-option-doc-leaf')).toBeInTheDocument()
-    expect(screen.queryByTestId('dingtalk-document-option-folder-1')).not.toBeInTheDocument()
+  it('shows unsupported resources as visible but not selectable', async () => {
+    await openDingtalkMode()
+
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+
+    expect(await screen.findByTestId('dingtalk-document-option-doc-1')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-node-unsupported-file-1')).toHaveTextContent(
+      'Cannot be imported'
+    )
+    expect(screen.queryByTestId('dingtalk-node-select-file-1')).not.toBeInTheDocument()
+  })
+
+  it('navigates into folders with a breadcrumb', async () => {
+    await openDingtalkMode()
+
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+
+    expect(await screen.findByTestId('dingtalk-document-option-doc-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-document-option-doc-3')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('dingtalk-import-breadcrumb-root'))
+    expect(screen.getByTestId('dingtalk-document-option-doc-3')).toBeInTheDocument()
+  })
+
+  it('deduplicates folder and document selections when counting', async () => {
+    await openDingtalkMode()
+
+    // Select the whole folder (docs 1 and 2) plus one doc inside it.
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 2')
+
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+    fireEvent.click(await screen.findByTestId('dingtalk-node-select-doc-1'))
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 2')
+  })
+
+  it('expands folder selections into document ids on submit', async () => {
+    const onDingtalkImport = jest.fn().mockResolvedValue({ importedCount: 2, skippedCount: 0 })
+    await openDingtalkMode({ onDingtalkImport })
+
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-3'))
+    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+
+    await waitFor(() => expect(onDingtalkImport).toHaveBeenCalledTimes(1))
+    expect(onDingtalkImport).toHaveBeenCalledWith(['doc-1', 'doc-2', 'doc-3'])
+  })
+
+  it('blocks submission above fifty documents', async () => {
+    const manyDocs = Array.from({ length: 51 }, (_, index) =>
+      docNode(`bulk-${index}`, `Bulk Doc ${index}`)
+    )
+    mockGetDocs.mockResolvedValue({ nodes: manyDocs, total_count: 51 })
+    await openDingtalkMode()
+
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-bulk-0'))
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 1')
+
+    const submit = screen.getByTestId('dingtalk-import-submit')
+    expect(submit).not.toBeDisabled()
+
+    for (let index = 1; index < 51; index += 1) {
+      fireEvent.click(screen.getByTestId(`dingtalk-node-select-bulk-${index}`))
+    }
+    expect(screen.getByTestId('dingtalk-import-limit-error')).toBeInTheDocument()
+    expect(submit).toBeDisabled()
+  })
+
+  it('defaults the target folder to the current folder selection', async () => {
+    await openDingtalkMode({
+      folderId: 7,
+      folderOptions: [{ id: 7, name: 'Target', depth: 0 }],
+    })
+
+    const trigger = screen.getByTestId('dingtalk-import-folder-select')
+    expect(trigger).toBeInTheDocument()
+    // Radix Select renders the chosen item's text inside the trigger.
+    expect(trigger).toHaveTextContent('Target')
+  })
+
+  it('warns that imported content is visible to members of a shared knowledge base', async () => {
+    await openDingtalkMode({ isSharedKnowledgeBase: true })
+
+    expect(screen.getByTestId('dingtalk-import-shared-hint')).toHaveTextContent(
+      'Imported content will be visible to knowledge base members'
+    )
+  })
+
+  it('disables submission without document management permission', async () => {
+    await openDingtalkMode({ canManageDocuments: false })
+
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-3'))
+    expect(screen.getByTestId('dingtalk-import-no-permission')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-import-submit')).toBeDisabled()
+  })
+
+  it('keeps selections from both directory sources in one submit', async () => {
+    const onDingtalkImport = jest.fn().mockResolvedValue({ importedCount: 2, skippedCount: 0 })
+    await openDingtalkMode({ onDingtalkImport })
+
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-3'))
+    fireEvent.click(screen.getByTestId('dingtalk-import-tab-wikispace'))
+    fireEvent.click(await screen.findByTestId('dingtalk-node-select-wiki-1'))
+
+    // The count spans both tabs; the docs selection is not dropped.
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 2')
+    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+
+    await waitFor(() => expect(onDingtalkImport).toHaveBeenCalledWith(['doc-3', 'wiki-1']))
+  })
+
+  it('shows the submit result with accurate counts', async () => {
+    const onOpenChange = jest.fn()
+    const onDingtalkImport = jest.fn().mockResolvedValue({ importedCount: 2, skippedCount: 1 })
+    render(
+      <DocumentUpload
+        open={true}
+        onOpenChange={onOpenChange}
+        onUploadComplete={jest.fn()}
+        onDingtalkImport={onDingtalkImport}
+      />
+    )
+    fireEvent.click(screen.getByTestId('dingtalk-source-button'))
+    await screen.findByTestId('dingtalk-document-list')
+
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
+    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+
+    expect(await screen.findByTestId('dingtalk-import-result')).toHaveTextContent(
+      'Imported 2, skipped 1'
+    )
+    // The dialog stays open until the user acknowledges the result.
+    expect(onOpenChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('dingtalk-import-done'))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('keeps the dialog open and shows the error when the import fails', async () => {
+    mockGetDocs.mockResolvedValue({ nodes: [docNode('doc-9', 'Failing Doc')], total_count: 1 })
+    const onDingtalkImport = jest.fn().mockRejectedValue('conflict')
+
+    render(
+      <DocumentUpload
+        open={true}
+        onOpenChange={jest.fn()}
+        onUploadComplete={jest.fn()}
+        onDingtalkImport={onDingtalkImport}
+      />
+    )
+    fireEvent.click(screen.getByTestId('dingtalk-source-button'))
+    fireEvent.click(await screen.findByTestId('dingtalk-node-select-doc-9'))
+    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+
+    await waitFor(() => expect(onDingtalkImport).toHaveBeenCalledTimes(1))
+    expect(await screen.findByTestId('dingtalk-import-error')).toHaveTextContent('Failed to import')
+    expect(screen.queryByTestId('dingtalk-import-result')).not.toBeInTheDocument()
   })
 
   it('shows the not-configured hint instead of the list', async () => {
     mockGetSyncStatus.mockResolvedValue({ is_configured: false, total_nodes: 0 })
 
-    renderUpload({ onDingtalkAdd: jest.fn() })
+    render(
+      <DocumentUpload
+        open={true}
+        onOpenChange={jest.fn()}
+        onUploadComplete={jest.fn()}
+        onDingtalkImport={jest.fn()}
+      />
+    )
     fireEvent.click(screen.getByTestId('dingtalk-source-button'))
 
     await waitFor(() => expect(mockGetSyncStatus).toHaveBeenCalled())
     expect(await screen.findByText('DingTalk Docs is not configured')).toBeInTheDocument()
     expect(screen.queryByTestId('dingtalk-document-list')).not.toBeInTheDocument()
     expect(mockGetDocs).not.toHaveBeenCalled()
-  })
-
-  it('submits the selected document through the callback', async () => {
-    mockGetSyncStatus.mockResolvedValue({ is_configured: true, total_nodes: 1 })
-    mockGetDocs.mockResolvedValue({
-      nodes: [makeNode({ id: 2, dingtalk_node_id: 'doc-1', name: 'Spec Doc' })],
-      total_count: 1,
-    })
-    const onDingtalkAdd = jest.fn().mockResolvedValue(undefined)
-    const onOpenChange = jest.fn()
-
-    render(
-      <DocumentUpload
-        open={true}
-        onOpenChange={onOpenChange}
-        onUploadComplete={jest.fn()}
-        onDingtalkAdd={onDingtalkAdd}
-      />
-    )
-    fireEvent.click(screen.getByTestId('dingtalk-source-button'))
-    fireEvent.click(await screen.findByTestId('dingtalk-document-option-doc-1'))
-
-    const submit = screen.getByTestId('dingtalk-import-submit')
-    expect(submit).not.toBeDisabled()
-    fireEvent.click(submit)
-
-    await waitFor(() => expect(onDingtalkAdd).toHaveBeenCalledTimes(1))
-    expect(onDingtalkAdd).toHaveBeenCalledWith(
-      expect.objectContaining({ dingtalk_node_id: 'doc-1', name: 'Spec Doc' })
-    )
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-  })
-
-  it('keeps the dialog open and shows the error when the import fails', async () => {
-    mockGetSyncStatus.mockResolvedValue({ is_configured: true, total_nodes: 1 })
-    mockGetDocs.mockResolvedValue({
-      nodes: [makeNode({ id: 2, dingtalk_node_id: 'doc-1', name: 'Spec Doc' })],
-      total_count: 1,
-    })
-    const onDingtalkAdd = jest.fn().mockRejectedValue('conflict')
-    const onOpenChange = jest.fn()
-
-    render(
-      <DocumentUpload
-        open={true}
-        onOpenChange={onOpenChange}
-        onUploadComplete={jest.fn()}
-        onDingtalkAdd={onDingtalkAdd}
-      />
-    )
-    fireEvent.click(screen.getByTestId('dingtalk-source-button'))
-    fireEvent.click(await screen.findByTestId('dingtalk-document-option-doc-1'))
-    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
-
-    await waitFor(() => expect(onDingtalkAdd).toHaveBeenCalledTimes(1))
-    expect(await screen.findByText('Failed to import')).toBeInTheDocument()
-    expect(onOpenChange).not.toHaveBeenCalled()
   })
 })
