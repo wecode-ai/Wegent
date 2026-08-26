@@ -2816,6 +2816,9 @@ last_updated = "2026-07-30T00:00:00Z"`
 
       phase = 'cancellation'
       control.setScenario('cancellation')
+      const stoppedNoticeCountBeforeCancellation = Number(
+        await control.command('getElementCount', '[data-testid="assistant-stopped-notice"]')
+      )
       await sendPrompt(control, composerSelector, CANCELLATION_PROMPT)
       await withTimeout(
         control.awaitScenarioRequest('cancellation'),
@@ -2826,9 +2829,19 @@ last_updated = "2026-07-30T00:00:00Z"`
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('click', '[data-testid="pause-response-button"]')
-      await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
+      await withTimeout(
+        (async () => {
+          while (
+            Number(
+              await control.command('getElementCount', '[data-testid="assistant-stopped-notice"]')
+            ) <= stoppedNoticeCountBeforeCancellation
+          ) {
+            await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+          }
+        })(),
+        DEFAULT_STEP_TIMEOUT_MS,
+        'The current cancellation did not render a new stopped notice'
+      )
       const cancelledTaskSnapshot = JSON.parse(
         await control.command('getWorkbenchDebugSnapshot', 'body')
       )
