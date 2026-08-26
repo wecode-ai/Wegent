@@ -50,7 +50,7 @@ def test_media_auth_rejects_missing_credentials():
 
 def test_upstream_url_maps_editor_api_to_aigc_namespace(monkeypatch):
     monkeypatch.setattr(
-        "wecode.video.api.router.settings.AIGC_VIDEO_AGENT_URL",
+        "wecode.video.api.router.video_media_settings.AIGC_VIDEO_AGENT_URL",
         "http://10.2.40.157:8200/2",
     )
 

@@ -246,14 +246,14 @@ describe('getAttachmentPlayback', () => {
       ok: true,
       status: 200,
       json: async () => ({
-        playback_url: 'https://video.weibocdn.com/material.mp4',
-        cover_url: 'https://video.weibocdn.com/material-cover.jpg',
+        playback_url: 'https://media.example.com/material.mp4',
+        cover_url: 'https://media.example.com/material-cover.jpg',
       }),
     }) as typeof fetch
 
     await expect(getAttachmentPlayback(42)).resolves.toEqual({
-      playback_url: 'https://video.weibocdn.com/material.mp4',
-      cover_url: 'https://video.weibocdn.com/material-cover.jpg',
+      playback_url: 'https://media.example.com/material.mp4',
+      cover_url: 'https://media.example.com/material-cover.jpg',
     })
     expect(global.fetch).toHaveBeenCalledWith('/api/attachments/42/playback', {
       method: 'GET',

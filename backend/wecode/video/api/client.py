@@ -12,6 +12,7 @@ import httpx
 
 from app.core.config import settings
 from wecode.video.card_payload import normalize_qia_card_data
+from wecode.video.config.media import video_media_settings
 
 IN_PROGRESS_STATUSES = {
     "created",
@@ -52,7 +53,7 @@ class AigcCardStatus:
 
 def validate_task_url(task_url: str) -> str:
     """Allow polling only below the configured AIGC service base URL."""
-    configured = urlsplit(settings.AIGC_VIDEO_AGENT_URL.rstrip("/"))
+    configured = urlsplit(video_media_settings.AIGC_VIDEO_AGENT_URL.rstrip("/"))
     candidate = urlsplit(task_url)
     if candidate.scheme not in {"http", "https"} or candidate.username:
         raise ValueError("Invalid AIGC task URL")
@@ -183,7 +184,9 @@ def fetch_card_status(task_url: str) -> AigcCardStatus:
 
 
 def fetch_health() -> dict[str, Any]:
-    url = f"{settings.AIGC_VIDEO_AGENT_URL.rstrip('/')}/aigc_video/health/"
+    url = (
+        f"{video_media_settings.AIGC_VIDEO_AGENT_URL.rstrip('/')}" "/aigc_video/health/"
+    )
     with httpx.Client(timeout=10.0, trust_env=False) as client:
         response = client.get(url)
         response.raise_for_status()

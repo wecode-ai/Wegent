@@ -14,7 +14,7 @@ from wecode.video.api.client import (
 
 def test_validate_task_url_accepts_configured_aigc_path(monkeypatch):
     monkeypatch.setattr(
-        "wecode.video.api.client.settings.AIGC_VIDEO_AGENT_URL",
+        "wecode.video.api.client.video_media_settings.AIGC_VIDEO_AGENT_URL",
         "http://10.2.40.157:8200/2",
     )
 
@@ -35,7 +35,7 @@ def test_validate_task_url_accepts_configured_aigc_path(monkeypatch):
 )
 def test_validate_task_url_rejects_urls_outside_configured_service(monkeypatch, url):
     monkeypatch.setattr(
-        "wecode.video.api.client.settings.AIGC_VIDEO_AGENT_URL",
+        "wecode.video.api.client.video_media_settings.AIGC_VIDEO_AGENT_URL",
         "http://10.2.40.157:8200/2",
     )
 

@@ -14,13 +14,14 @@ from app.services.execution.agents.video.async_card import (
     register_async_card_url_validator,
 )
 from wecode.video.card_payload import normalize_qia_card_data
+from wecode.video.config.media import video_media_settings
 
 QIA_WORKFLOW_PATH_PREFIX = "/aigc_video/"
 
 
 def is_configured_qia_query_url(value: str) -> bool:
     """Return whether a polling URL belongs to the configured QIA workflow."""
-    configured = settings.AIGC_VIDEO_AGENT_URL.strip().rstrip("/")
+    configured = video_media_settings.AIGC_VIDEO_AGENT_URL.strip().rstrip("/")
     if not configured:
         return False
 

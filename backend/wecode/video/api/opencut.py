@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from app.core import security
 from app.core.config import settings
 from app.models.user import User
+from wecode.video.config.media import video_media_settings
 
 from .opencut_support import (
     allowed_media_url,
@@ -131,7 +132,10 @@ def _callback_base_url() -> str:
 
 
 def _aigc_url(path: str) -> str:
-    return f"{settings.AIGC_VIDEO_AGENT_URL.rstrip('/')}/aigc_video/{path.lstrip('/')}"
+    return (
+        f"{video_media_settings.AIGC_VIDEO_AGENT_URL.rstrip('/')}"
+        f"/aigc_video/{path.lstrip('/')}"
+    )
 
 
 async def _fetch_timeline(

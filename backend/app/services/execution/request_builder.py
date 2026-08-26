@@ -27,6 +27,9 @@ from app.schemas.kind import Skill as SkillCRD
 from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
 from app.services.auth import create_skill_identity_token
+from app.services.execution.skill_generation import (
+    apply_skill_generation_to_skills,
+)
 from app.services.execution.skill_mcp import extract_skill_mcp_servers
 from app.services.mcp_provider_registry import (
     get_mcp_service_by_skill_name,
@@ -47,9 +50,6 @@ from app.stores.tasks import task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
 from shared.utils.url_util import domains_match
-from wecode.video.api.skill_context import (
-    inject_generation_into_public_skills,
-)
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
@@ -335,7 +335,7 @@ class TaskRequestBuilder:
                 user_available_skills=user_available_skills,
             )
         )
-        inject_generation_into_public_skills(
+        apply_skill_generation_to_skills(
             resolved_skills=resolved_skills,
             team_user_id=team.user_id,
             generation=user_generation,

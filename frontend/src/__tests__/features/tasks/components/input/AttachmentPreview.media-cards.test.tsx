@@ -94,15 +94,15 @@ describe('AttachmentPreview sent media cards', () => {
 
   it('uses the resolved first-frame cover when available', async () => {
     jest.mocked(getAttachmentPlayback).mockResolvedValueOnce({
-      playback_url: 'https://video.weibocdn.com/material.mp4',
-      cover_url: 'https://video.weibocdn.com/material-cover.jpg',
+      playback_url: 'https://media.example.com/material.mp4',
+      cover_url: 'https://media.example.com/material-cover.jpg',
     })
 
     render(<AttachmentPreview attachment={attachment({})} compact />)
 
     const video = await screen.findByTestId('sent-video-attachment-1')
-    expect(video).toHaveAttribute('src', 'https://video.weibocdn.com/material.mp4')
-    expect(video).toHaveAttribute('poster', 'https://video.weibocdn.com/material-cover.jpg')
+    expect(video).toHaveAttribute('src', 'https://media.example.com/material.mp4')
+    expect(video).toHaveAttribute('poster', 'https://media.example.com/material-cover.jpg')
   })
 
   it('replaces an unplayable compact video with the video fallback', async () => {

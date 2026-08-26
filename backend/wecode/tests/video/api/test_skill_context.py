@@ -4,6 +4,10 @@
 
 from types import SimpleNamespace
 
+from app.services.execution.skill_generation import (
+    apply_skill_generation_to_skills,
+    enrich_skill_generation_context,
+)
 from wecode.video.api.skill_context import (
     build_attachment_media_content,
     filter_prior_user_attachments,
@@ -25,7 +29,7 @@ def test_public_skill_receives_chat_generation_settings() -> None:
         {"name": "ordinary-public-skill", "skill_user_id": 0},
     ]
 
-    inject_generation_into_public_skills(
+    apply_skill_generation_to_skills(
         resolved_skills=skills,
         team_user_id=0,
         generation={
@@ -74,7 +78,7 @@ def test_public_skill_receives_chat_generation_settings() -> None:
 def test_private_team_does_not_mutate_skill_config() -> None:
     skills = [{"name": "prompts-to-movie-stepped", "skill_user_id": 0}]
 
-    inject_generation_into_public_skills(
+    apply_skill_generation_to_skills(
         resolved_skills=skills,
         team_user_id=9,
         generation={"model": "seedance-2-0-pro"},
@@ -209,3 +213,29 @@ def test_inherited_media_is_limited_to_prior_turns_from_current_user() -> None:
         current_subtask_id=13,
         user_id=7,
     ) == [attachments[0], attachments[2]]
+
+
+def test_registered_enricher_limits_inherited_media_to_prior_user_turns() -> None:
+    task_attachments = [
+        SimpleNamespace(
+            user_id=7,
+            subtask_id=10,
+            type_data={"mime_type": "image/png", "image_pid": "prior-image"},
+        ),
+        SimpleNamespace(
+            user_id=8,
+            subtask_id=11,
+            type_data={"mime_type": "image/png", "image_pid": "other-user"},
+        ),
+    ]
+
+    assert enrich_skill_generation_context(
+        generation={"ratio": "9:16"},
+        current_attachments=[],
+        task_attachments=task_attachments,
+        current_subtask_id=12,
+        user_id=7,
+    ) == {
+        "ratio": "9:16",
+        "content": [{"type": "input_image", "file_id": "prior-image"}],
+    }

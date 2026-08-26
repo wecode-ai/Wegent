@@ -6,7 +6,11 @@
 
 from typing import Any, Optional
 
-from app.services.execution.skill_generation import build_skill_generation_context
+from app.services.execution.skill_generation import (
+    build_skill_generation_context,
+    register_skill_generation_context_enricher,
+    register_skill_generation_injector,
+)
 
 SYSTEM_RESOURCE_USER_ID = 0
 AIGC_VIDEO_SKILL_NAMES = {
@@ -174,3 +178,27 @@ def inject_generation_into_public_skills(
         if prompt:
             skill_config["prompt"] = prompt
         skill_data["config"] = skill_config
+
+
+def enrich_generation_from_task_attachments(
+    generation: Optional[dict[str, Any]],
+    current_attachments: list[Any],
+    task_attachments: list[Any],
+    current_subtask_id: int,
+    user_id: int,
+) -> Optional[dict[str, Any]]:
+    """Add current or inherited Weibo-hosted media to Skill generation context."""
+    prior_attachments = filter_prior_user_attachments(
+        task_attachments,
+        current_subtask_id=current_subtask_id,
+        user_id=user_id,
+    )
+    return inherit_attachment_media_into_generation(
+        generation,
+        current_attachments,
+        prior_attachments,
+    )
+
+
+register_skill_generation_context_enricher(enrich_generation_from_task_attachments)
+register_skill_generation_injector(inject_generation_into_public_skills)

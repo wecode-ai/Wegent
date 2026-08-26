@@ -10,7 +10,7 @@ from wecode.service import qia_async_card_adapter
 
 def test_allows_only_configured_qia_workflow_origin(monkeypatch) -> None:
     monkeypatch.setattr(
-        qia_async_card_adapter.settings,
+        qia_async_card_adapter.video_media_settings,
         "AIGC_VIDEO_AGENT_URL",
         "https://qia.example.com",
     )
@@ -31,7 +31,7 @@ def test_allows_only_configured_qia_workflow_origin(monkeypatch) -> None:
 
 def test_allows_configured_qia_base_path(monkeypatch) -> None:
     monkeypatch.setattr(
-        qia_async_card_adapter.settings,
+        qia_async_card_adapter.video_media_settings,
         "AIGC_VIDEO_AGENT_URL",
         "http://qia.example.com:8200/2",
     )
@@ -49,7 +49,7 @@ def test_allows_configured_qia_base_path(monkeypatch) -> None:
 
 def test_rejects_qia_url_when_not_configured(monkeypatch) -> None:
     monkeypatch.setattr(
-        qia_async_card_adapter.settings,
+        qia_async_card_adapter.video_media_settings,
         "AIGC_VIDEO_AGENT_URL",
         "",
     )

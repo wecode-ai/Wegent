@@ -33,6 +33,10 @@ from app.services.chat.external_knowledge_refs import (
     validate_external_knowledge_refs,
 )
 from app.services.context import context_service
+from app.services.execution.skill_generation import (
+    enrich_skill_generation_context,
+    has_skill_generation_context_enrichers,
+)
 from app.services.runtime_codex_model import (
     CODEX_RUNTIME_MODEL_ID,
     CODEX_RUNTIME_MODEL_NAME,
@@ -45,10 +49,6 @@ from app.services.video_generation_params import apply_video_generation_params
 from shared.codex_model_catalog import (
     codex_catalog_model_id_for_upstream,
     codex_catalog_model_id_from_config,
-)
-from wecode.video.api.skill_context import (
-    filter_prior_user_attachments,
-    inherit_attachment_media_into_generation,
 )
 
 if TYPE_CHECKING:
@@ -936,16 +936,15 @@ async def build_execution_request(
             generate_params = getattr(payload, "generate_params", None)
             if generate_params:
                 user_generation = generate_params.model_dump(exclude_none=True)
-        if user_subtask_id:
-            task_attachments = filter_prior_user_attachments(
-                context_service.get_attachments_by_task(db, task.id),
+        if user_subtask_id and has_skill_generation_context_enrichers():
+            user_generation = enrich_skill_generation_context(
+                generation=user_generation,
+                current_attachments=context_service.get_attachments_by_subtask(
+                    db, user_subtask_id
+                ),
+                task_attachments=context_service.get_attachments_by_task(db, task.id),
                 current_subtask_id=user_subtask_id,
                 user_id=user.id,
-            )
-            user_generation = inherit_attachment_media_into_generation(
-                user_generation,
-                context_service.get_attachments_by_subtask(db, user_subtask_id),
-                task_attachments,
             )
 
         request = builder.build(

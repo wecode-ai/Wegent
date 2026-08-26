@@ -80,7 +80,7 @@ describe('VideoPlayer', () => {
     { label: 'landscape', videoWidth: 1280, videoHeight: 720, width: '359px', height: '202px' },
     { label: 'portrait', videoWidth: 720, videoHeight: 1280, width: '202px', height: '359px' },
     { label: 'square', videoWidth: 1024, videoHeight: 1024, width: '202px', height: '202px' },
-  ])('uses the compact weibo message size for $label video', dimensions => {
+  ])('uses the compact message size for $label video', dimensions => {
     const { container } = render(
       <VideoPlayer videoUrl="https://example.com/result.mp4" useMessageDisplaySize />
     )

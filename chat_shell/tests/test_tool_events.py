@@ -45,15 +45,15 @@ class _AgentBuilder:
 
 
 @pytest.mark.asyncio
-async def test_async_video_card_tool_stores_block_without_reemitting(monkeypatch):
+async def test_card_result_stores_block_without_tool_name_coupling(monkeypatch):
     emitter = AsyncMock()
     tool = SimpleNamespace(
-        name="create_async_video_card",
+        name="publish_result_card",
         _wegent_tool_protocol="mcp",
         _wegent_mcp_server_label="wegent-cards",
     )
     agent_builder = _AgentBuilder(tool)
-    agent_builder.tool_registry = {"create_async_video_card": tool}
+    agent_builder.tool_registry = {"publish_result_card": tool}
     state = _State()
     pending = []
 
@@ -67,7 +67,7 @@ async def test_async_video_card_tool_stores_block_without_reemitting(monkeypatch
         {
             "run_id": "card-run",
             "tool_use_id": "card-call",
-            "name": "create_async_video_card",
+            "name": "publish_result_card",
             "data": {
                 "input": {},
                 "output": {

@@ -10,6 +10,7 @@ from app.services.execution.agents.video.extensions import (
 )
 from wecode.video.services.generation_extension import (
     WeiboMediaAttachmentPlaybackResolver,
+    WeiboMediaAttachmentReferenceResolver,
     WeiboMediaAttachmentStorageAdapter,
     WeiboVideoGenerationExtension,
 )
@@ -42,6 +43,22 @@ def test_builds_seedance_media_id_content_blocks() -> None:
         "audio_media_id": "audio-456",
         "role": "reference_audio",
     }
+
+
+def test_resolves_model_facing_media_references() -> None:
+    resolver = WeiboMediaAttachmentReferenceResolver()
+
+    hosted = resolver.resolve_reference(
+        type_data={"weibo_video_upload": {"media_id": "media-123"}},
+    )
+    legacy = resolver.resolve_reference(type_data={"fid": 12345})
+
+    assert hosted is not None
+    assert hosted.name == "media_id"
+    assert hosted.value == "media-123"
+    assert legacy is not None
+    assert legacy.name == "fid"
+    assert legacy.value == 12345
 
 
 def test_wb_data_overrides_native_status_and_progress() -> None:
