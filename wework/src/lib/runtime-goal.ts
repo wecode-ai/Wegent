@@ -1,5 +1,19 @@
-import type { RuntimeGoal, RuntimeGoalContinuationPayload } from '@/types/api'
+import type {
+  RuntimeGoal,
+  RuntimeGoalContinuationPayload,
+  RuntimeGoalCreateInput,
+} from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
+
+export function runtimeGoalCreateInput(
+  goal: Pick<RuntimeGoal, 'objective' | 'status' | 'tokenBudget'>
+): RuntimeGoalCreateInput {
+  return {
+    objective: goal.objective,
+    status: goal.status,
+    tokenBudget: goal.tokenBudget,
+  }
+}
 
 export function isVisibleRuntimeGoal(goal: RuntimeGoal | null | undefined): goal is RuntimeGoal {
   return Boolean(goal && goal.status !== 'complete')

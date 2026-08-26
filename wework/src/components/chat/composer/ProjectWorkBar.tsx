@@ -857,7 +857,8 @@ export function ProjectWorkBar({
                                   >
                                     {localWorkspace
                                       ? workspaceFolderName(workspace.workspacePath)
-                                      : workspace.deviceName || workspace.deviceId}
+                                      : workspace.deviceName?.trim() ||
+                                        t('workbench.environment_device_unknown', '未知设备')}
                                   </span>
                                   {!localWorkspace && (
                                     <span className="min-w-0 max-w-[7rem] truncate text-xs text-text-muted">

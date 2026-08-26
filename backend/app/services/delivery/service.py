@@ -563,7 +563,7 @@ class DeliveryService:
         ):
             return
         node["status"] = "completed"
-        apply_workflow_nodes(item, workflow=workflow, nodes=nodes)
+        apply_workflow_nodes(db, item, workflow=workflow, nodes=nodes)
 
     @staticmethod
     def fulfillment_values(delivery: Delivery) -> list[dict[str, Any]]:

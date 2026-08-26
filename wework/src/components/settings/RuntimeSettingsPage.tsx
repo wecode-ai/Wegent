@@ -160,7 +160,11 @@ export function RuntimeSettingsPage({
               key={profile.id}
               data-testid={`runtime-profile-${profile.id}`}
               label={profile.name}
-              description={`${profile.model} · ${profile.executionDeviceId}`}
+              description={`${profile.model} · ${
+                devices
+                  .find(device => device.device_id === profile.executionDeviceId)
+                  ?.name?.trim() || t('workbench.environment_device_unknown', '未知设备')
+              }`}
               control={
                 <button
                   type="button"
@@ -261,7 +265,9 @@ export function RuntimeSettingsPage({
               onChange={setDeviceId}
               options={devices.map(device => ({
                 value: device.device_id,
-                label: `${device.name ?? device.device_id} · ${device.status ?? 'unknown'}`,
+                label: `${
+                  device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')
+                } · ${device.status ?? 'unknown'}`,
               }))}
             />
             <MenuSelect

@@ -603,7 +603,7 @@ async function verifyBackgroundCompletionRestore({
         taskId,
         messages: [],
         running: true,
-        turns: [{ id: 'my-work-stale-snapshot-turn', items: [], status: 'streaming' }],
+        turns: [],
       },
     }),
   })

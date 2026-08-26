@@ -63,7 +63,8 @@ use capability::{default_capability_sync_handler, DefaultCapabilityReporter};
 use extension::default_extension_handler;
 use runtime_rpc_encoding::encode_runtime_rpc_response;
 use session_events::{
-    default_session_handler, session_result_payload, session_start_request, value_string, value_u16,
+    app_sidecar_session_handler, default_session_handler, session_result_payload,
+    session_start_request, value_string, value_u16,
 };
 use upgrade::default_upgrade_handler;
 
@@ -90,6 +91,12 @@ const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
 const MAX_CONSECUTIVE_HEARTBEAT_FAILURES: u32 = 2;
+
+#[derive(Clone, Copy)]
+enum SessionGatewayProfile {
+    AppSidecar,
+    Standalone,
+}
 
 pub(super) type TransportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
@@ -158,6 +165,26 @@ where
     T: LocalBackendTransport,
 {
     pub fn new(config: LocalBackendConfig, transport: T) -> Self {
+        Self::new_with_default_runtime_work_handler(
+            config,
+            transport,
+            SessionGatewayProfile::Standalone,
+        )
+    }
+
+    pub fn new_for_app_sidecar(config: LocalBackendConfig, transport: T) -> Self {
+        Self::new_with_default_runtime_work_handler(
+            config,
+            transport,
+            SessionGatewayProfile::AppSidecar,
+        )
+    }
+
+    fn new_with_default_runtime_work_handler(
+        config: LocalBackendConfig,
+        transport: T,
+        session_gateway_profile: SessionGatewayProfile,
+    ) -> Self {
         let (runtime_event_tx, runtime_event_rx) =
             broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
         let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
@@ -175,16 +202,23 @@ where
             transport,
             runtime_work_handler,
             runtime_event_rx,
+            session_gateway_profile,
         )
     }
 
-    pub fn new_with_shared_runtime_work_handler(
+    pub fn new_for_app_sidecar_with_shared_runtime_work_handler(
         config: LocalBackendConfig,
         transport: T,
         runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
         runtime_events: broadcast::Receiver<Value>,
     ) -> Self {
-        Self::new_with_runtime_work_handler(config, transport, runtime_work_handler, runtime_events)
+        Self::new_with_runtime_work_handler(
+            config,
+            transport,
+            runtime_work_handler,
+            runtime_events,
+            SessionGatewayProfile::AppSidecar,
+        )
     }
 
     fn new_with_runtime_work_handler(
@@ -192,6 +226,7 @@ where
         transport: T,
         runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
         runtime_events: broadcast::Receiver<Value>,
+        session_gateway_profile: SessionGatewayProfile,
     ) -> Self {
         let running_tasks = LocalRunningTaskTracker::default();
         let client = LocalBackendClient::with_capability_reporter_and_tracker(
@@ -213,10 +248,16 @@ where
         backend.capability_sync_handler = Some(Arc::new(default_capability_sync_handler(
             backend.client.config.as_ref(),
         )));
-        backend.session_handler = Some(Arc::new(Mutex::new(default_session_handler(Some(
-            backend.client.config.local_workspace_root.clone(),
-        )))));
-        backend.start_session_gateway = true;
+        let session_handler = match session_gateway_profile {
+            SessionGatewayProfile::AppSidecar => app_sidecar_session_handler(Some(
+                backend.client.config.local_workspace_root.clone(),
+            )),
+            SessionGatewayProfile::Standalone => {
+                default_session_handler(Some(backend.client.config.local_workspace_root.clone()))
+            }
+        };
+        backend.start_session_gateway = session_handler.gateway_enabled;
+        backend.session_handler = Some(Arc::new(Mutex::new(session_handler)));
         backend.upgrade_handler = Some(Arc::new(default_upgrade_handler(
             backend.client.clone(),
             backend.task_controller.clone(),
@@ -1328,6 +1369,75 @@ mod tests {
 
         restore_env(APP_IPC_DEVICE_ID_ENV, previous);
         assert_eq!(device_id, "remote-device");
+    }
+
+    #[tokio::test]
+    async fn app_sidecar_runner_does_not_start_session_gateway() {
+        let _guard = env_lock();
+        let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
+        let previous_public_url = env::var_os("DEVICE_PUBLIC_BASE_URL");
+        env::remove_var("DEVICE_SESSION_GATEWAY_ENABLED");
+        env::remove_var("DEVICE_PUBLIC_BASE_URL");
+        let (event_tx, event_rx) = broadcast::channel(8);
+        let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
+            RuntimeWorkRpcHandler::with_event_sender("local-app-device", "/bin/false", event_tx),
+        );
+        let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
+            backend_config("local-device"),
+            SocketIoTransport::default(),
+            runtime_work_handler,
+            event_rx,
+        );
+
+        assert!(!runner.start_session_gateway);
+        let session_handler = runner.session_handler.as_ref().unwrap().lock().unwrap();
+        assert!(!session_handler.gateway_enabled);
+        assert_eq!(session_handler.public_base_url, "http://localhost:0");
+        drop(session_handler);
+        restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
+        restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
+    }
+
+    #[tokio::test]
+    async fn app_sidecar_gateway_uses_dynamic_port_when_explicitly_enabled() {
+        let _guard = env_lock();
+        let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
+        let previous_public_url = env::var_os("DEVICE_PUBLIC_BASE_URL");
+        env::set_var("DEVICE_SESSION_GATEWAY_ENABLED", "true");
+        env::remove_var("DEVICE_PUBLIC_BASE_URL");
+        let runner = LocalBackendRunner::new_for_app_sidecar(
+            backend_config("local-device"),
+            SocketIoTransport::default(),
+        );
+
+        assert!(runner.start_session_gateway);
+        let session_handler = runner.session_handler.as_ref().unwrap().lock().unwrap();
+        assert!(session_handler.gateway_enabled);
+        assert_eq!(session_handler.public_base_url, "http://localhost:0");
+        drop(session_handler);
+        restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
+        restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
+    }
+
+    #[tokio::test]
+    async fn remote_backend_runner_starts_session_gateway() {
+        let _guard = env_lock();
+        let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
+        let previous_public_url = env::var_os("DEVICE_PUBLIC_BASE_URL");
+        env::remove_var("DEVICE_SESSION_GATEWAY_ENABLED");
+        env::remove_var("DEVICE_PUBLIC_BASE_URL");
+        let runner = LocalBackendRunner::new(
+            backend_config("remote-device"),
+            SocketIoTransport::default(),
+        );
+
+        assert!(runner.start_session_gateway);
+        let session_handler = runner.session_handler.as_ref().unwrap().lock().unwrap();
+        assert!(session_handler.gateway_enabled);
+        assert_eq!(session_handler.public_base_url, "http://localhost:17888");
+        drop(session_handler);
+        restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
+        restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
     }
 
     #[test]

@@ -13,6 +13,7 @@ multi-worker cloud dispatchers never double-claim a run.
 
 import json
 import logging
+from collections.abc import Collection
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -1287,6 +1288,7 @@ class LoopItemExecutionService:
         db: Session,
         *,
         execution_device_id: str,
+        runtime_device_id: Optional[str] = None,
         environment: str,
         runtime_instance_id: str,
         device_capacity: int,
@@ -1295,12 +1297,7 @@ class LoopItemExecutionService:
         owner_user_id: int,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ) -> Optional[LoopItemExecution]:
-        """Claim one queued run for any robot bound to a device.
-
-        Used by the cloud dispatcher after acquiring the per-device Redis lock.
-        The caller loops until this returns None to drain the device up to its
-        capacity (each robot still runs one task at a time).
-        """
+        """Claim one queued run for a stable execution target."""
 
         running_count = _runtime_capacity_used(
             db,
@@ -1381,6 +1378,7 @@ class LoopItemExecutionService:
         if candidate is None:
             return None
         now = utcnow()
+        claimed_runtime_device_id = runtime_device_id or execution_device_id
         claimed = (
             db.query(LoopItemExecution)
             .filter(
@@ -1393,7 +1391,7 @@ class LoopItemExecutionService:
                     "claimed_at": now,
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
-                    "runtime_device_id": execution_device_id,
+                    "runtime_device_id": claimed_runtime_device_id,
                     "runtime_instance_id": runtime_instance_id,
                     "runtime_task_id": runtime_task_id_for(candidate.id),
                     "version": LoopItemExecution.version + 1,
@@ -1731,7 +1729,7 @@ class LoopItemExecutionService:
         from app.schemas.delivery import LoopItemTaskBind
         from app.services.loop_items.service import loop_item_service
 
-        loop_item_service.bind_execution_task(
+        binding = loop_item_service.bind_execution_task(
             db,
             item_id=item.id,
             values=LoopItemTaskBind(
@@ -1745,6 +1743,15 @@ class LoopItemExecutionService:
             stage_snapshot=stage_snapshot,
             commit=False,
         )
+        binding.metadata_json = {
+            **(
+                binding.metadata_json if isinstance(binding.metadata_json, dict) else {}
+            ),
+            "workspace_device_id": (
+                execution.execution_device_id or execution.runtime_device_id
+            ),
+        }
+        db.flush()
 
     def request_runtime_start(
         self,
@@ -2582,22 +2589,32 @@ class LoopItemExecutionService:
         self,
         db: Session,
         *,
+        run_ids: Collection[str] | None = None,
         limit: int = 100,
     ) -> int:
         """Repair active automation runs backed by terminal executions."""
 
         from app.models.delivery import ProjectAutomationRun
 
-        latest_executions = (
-            db.query(
-                LoopItemExecution.automation_run_id.label("automation_run_id"),
-                func.max(LoopItemExecution.id).label("execution_id"),
-            )
-            .filter(LoopItemExecution.automation_run_id != "")
-            .group_by(LoopItemExecution.automation_run_id)
-            .subquery()
+        normalized_run_ids = (
+            {str(run_id) for run_id in run_ids if str(run_id)}
+            if run_ids is not None
+            else None
         )
-        run_ids = [
+        if normalized_run_ids == set():
+            return 0
+        latest_query = db.query(
+            LoopItemExecution.automation_run_id.label("automation_run_id"),
+            func.max(LoopItemExecution.id).label("execution_id"),
+        ).filter(LoopItemExecution.automation_run_id != "")
+        if normalized_run_ids is not None:
+            latest_query = latest_query.filter(
+                LoopItemExecution.automation_run_id.in_(normalized_run_ids)
+            )
+        latest_executions = latest_query.group_by(
+            LoopItemExecution.automation_run_id
+        ).subquery()
+        candidate_run_ids = [
             str(run_id)
             for (run_id,) in (
                 db.query(ProjectAutomationRun.id)
@@ -2618,7 +2635,7 @@ class LoopItemExecutionService:
             )
         ]
         repaired = 0
-        for run_id in run_ids:
+        for run_id in candidate_run_ids:
             if self.reconcile_automation_run_projection(db, run_id=run_id):
                 repaired += 1
         return repaired
@@ -3281,7 +3298,40 @@ class LoopItemExecutionService:
         *,
         execution: LoopItemExecution,
     ) -> dict[str, Any]:
-        """Compile the persisted V2 intent for the selected transport."""
+        """Build the payload exposed to the selected legacy transport."""
+
+        return self._build_runtime_payload(
+            db,
+            execution=execution,
+            execution_target_id=None,
+        )
+
+    def build_executor_runtime_payload(
+        self,
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        execution_target_id: str,
+        executor_device_id: str,
+    ) -> dict[str, Any]:
+        """Materialize a complete payload for an Executor-owned pull."""
+
+        return self._build_runtime_payload(
+            db,
+            execution=execution,
+            execution_target_id=execution_target_id,
+            executor_device_id=executor_device_id,
+        )
+
+    def _build_runtime_payload(
+        self,
+        db: Session,
+        *,
+        execution: LoopItemExecution,
+        execution_target_id: Optional[str],
+        executor_device_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Build either an App intent or a materialized Executor payload."""
 
         try:
             request = (
@@ -3292,7 +3342,28 @@ class LoopItemExecutionService:
                     execution=execution,
                 )
             )
-            if execution.execution_environment == "local":
+            if execution_target_id:
+                if request.device_id != execution_target_id:
+                    raise WeworkExecutionProfileError(
+                        "Execution request target does not match the claimed queue"
+                    )
+                workspace_source_task = request.workspace_source_task
+                if (
+                    workspace_source_task is not None
+                    and workspace_source_task.device_id != execution_target_id
+                ):
+                    raise WeworkExecutionProfileError(
+                        "Inherited workflow workspace belongs to a different "
+                        "execution target"
+                    )
+                if not executor_device_id:
+                    raise WeworkExecutionProfileError(
+                        "Executor device identity is required"
+                    )
+                request = request.model_copy(
+                    update={"device_id": executor_device_id},
+                )
+            elif execution.execution_environment == "local":
                 return request.model_dump(by_alias=True, exclude_none=True)
             from app.services.runtime_work_service import compile_runtime_task_create
 

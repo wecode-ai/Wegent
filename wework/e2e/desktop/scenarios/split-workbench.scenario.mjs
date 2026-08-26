@@ -364,13 +364,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         })
         return true
       }
-      if (
-        request.method === 'POST' &&
-        url.pathname === '/api/v1/loop-item-executions/claim-my-next'
-      ) {
-        json(response, 200, null)
-        return true
-      }
       if (request.method === 'GET' && url.pathname === '/api/v1/cloud-projects') {
         json(response, 200, { items: [] })
         return true

@@ -2049,7 +2049,7 @@ function buildOptimisticRuntimeWorkspace({
     ...baseWorkspace,
     projectId: projectId ?? baseWorkspace?.projectId,
     deviceId,
-    deviceName: device?.name ?? baseWorkspace?.deviceName ?? deviceId,
+    deviceName: device?.name ?? baseWorkspace?.deviceName ?? null,
     deviceStatus: device?.status ?? baseWorkspace?.deviceStatus ?? null,
     workspacePath,
     workspaceKind:

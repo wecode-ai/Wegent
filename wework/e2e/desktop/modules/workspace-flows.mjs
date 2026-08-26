@@ -648,7 +648,30 @@ async function verifyWorkspaceIssueCreation(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const addContextButton = `${taskComposerSelector} [data-testid="add-context-button"]`
+  await control.command('click', addContextButton, { visible: true })
+  await control.command('waitFor', '[data-testid="set-goal-button"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="set-goal-button"]', { visible: true })
+  const goalDraftSnapshot = JSON.parse(await control.command('snapshot', taskComposerSelector))
+  assert.equal(
+    goalDraftSnapshot.testIds.includes('goal-draft-pill'),
+    true,
+    'Selecting Goal mode did not activate the Goal draft'
+  )
   await captureVerificationScreenshot(control, 'workspace-issue-03-new-task-sidebar.png')
+  await control.command('hover', '[data-testid="goal-draft-pill"]', {
+    visible: true,
+  })
+  await control.command('click', '[data-testid="cancel-goal-draft-button"]', { visible: true })
+  const cancelledGoalSnapshot = JSON.parse(await control.command('snapshot', taskComposerSelector))
+  assert.equal(
+    cancelledGoalSnapshot.testIds.includes('goal-draft-pill'),
+    false,
+    'Cancelling Goal mode left the Goal draft active'
+  )
   await control.command('click', `${taskPanelBackdrop} [data-testid="ai-chat-modal-close"]`)
 
   await control.command('click', boardTabSelector)

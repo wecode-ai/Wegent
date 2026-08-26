@@ -114,15 +114,21 @@ export function resolveWorkflowExecutionConfig(
   runtimeProfiles: RuntimeProfile[]
 ): WorkflowExecutionConfig {
   const agent = agents.find(candidate => candidate.id === config.agent_id)
-  if (!agent) return config
+  if (!agent) {
+    return config.workspace_binding
+      ? config
+      : { ...config, workspace_binding: { type: 'standalone' } }
+  }
   const runtimeProfileId = config.runtime_profile_id ?? agent.defaultRuntimeProfileId
   const runtimeProfile = runtimeProfiles.find(candidate => candidate.id === runtimeProfileId)
-  return (
+  const resolved =
     mergeWorkflowExecutionConfig(
       workflowExecutionConfigForAgent(agent, runtimeProfile, runtimeProfileId),
       config
     ) ?? config
-  )
+  return resolved.workspace_binding
+    ? resolved
+    : { ...resolved, workspace_binding: { type: 'standalone' } }
 }
 
 export function effectiveWorkflowNodeExecutionConfig(
@@ -155,11 +161,9 @@ export function workflowNeedsExecutionConfiguration(
 export function itemNeedsExecutionConfiguration(
   item: Pick<
     CloudLoopItem,
-    'assignee_agent_id' | 'execution_config' | 'execution_state' | 'status' | 'workflow'
-  >,
-  targetStatus: CloudLoopItem['status'] = item.status
+    'assignee_agent_id' | 'execution_config' | 'execution_state' | 'workflow'
+  >
 ): boolean {
-  if (!['pending', 'in_progress'].includes(targetStatus)) return false
   if (item.workflow) return workflowNeedsExecutionConfiguration(item.workflow)
   return Boolean(
     item.assignee_agent_id &&
