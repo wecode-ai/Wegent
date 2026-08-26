@@ -554,11 +554,72 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
             .first()
         )
         if previous is None:
-            return "", "", False
+            return self._task_executor_reference(db, task_id=task_id)
         return (
             previous.executor_namespace or "",
             previous.executor_name or "",
             bool(previous.executor_deleted_at),
+        )
+
+    def _task_executor_reference(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+    ) -> tuple[str, str, bool]:
+        """Return the task-level executor reference used to reuse a sandbox."""
+        if not is_new_task_id(task_id):
+            return super()._task_executor_reference(db, task_id=task_id)
+        task_model = task_model_for_task_id(task_id)
+        task = db.query(task_model).filter(task_model.id == task_id).first()
+        if task is None or not isinstance(task.json, dict):
+            return "", "", False
+        metadata = task.json.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            return "", "", False
+        labels = metadata.get("labels") or {}
+        if not isinstance(labels, dict):
+            return "", "", False
+        executor_name = labels.get("lastExecutorName") or ""
+        executor_namespace = labels.get("lastExecutorNamespace") or ""
+        return executor_namespace, executor_name, False
+
+    def get_latest_assistant_executor_from(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        from_message_id: int,
+        owner_user_id: int | None = None,
+    ):
+        """Return the newest assistant executor inside a deletion range."""
+        if not is_new_task_id(task_id):
+            return super().get_latest_assistant_executor_from(
+                db,
+                task_id=task_id,
+                from_message_id=from_message_id,
+                owner_user_id=owner_user_id,
+            )
+        if owner_user_id is not None and not self._owner_matches_task_id(
+            db, task_id, owner_user_id
+        ):
+            return None
+        model = subtask_model_for_task_id(task_id)
+        return (
+            db.query(
+                model.executor_namespace,
+                model.executor_name,
+                model.executor_deleted_at,
+            )
+            .filter(
+                model.task_id == task_id,
+                model.role == SubtaskRole.ASSISTANT,
+                model.message_id >= from_message_id,
+                model.executor_name != "",
+                model.executor_name.isnot(None),
+            )
+            .order_by(model.id.desc())
+            .first()
         )
 
     def _allocate_subtask_id(self, user_id: int) -> int:

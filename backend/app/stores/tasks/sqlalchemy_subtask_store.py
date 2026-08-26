@@ -125,6 +125,12 @@ class SqlAlchemySubtaskStore:
             executor_namespace = previous.executor_namespace or ""
             executor_name = previous.executor_name or ""
             executor_deleted_at = bool(previous.executor_deleted_at)
+        else:
+            # Fall back to the task-level executor reference persisted when a
+            # ChatGPT-style message edit deleted the original assistant subtask.
+            executor_namespace, executor_name, executor_deleted_at = (
+                self._task_executor_reference(db, task_id=task_id)
+            )
 
         subtask = Subtask(
             user_id=user_id,
@@ -149,6 +155,49 @@ class SqlAlchemySubtaskStore:
         )
         db.add(subtask)
         return subtask
+
+    def _task_executor_reference(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+    ) -> tuple[str, str, bool]:
+        """Return the task-level executor reference used to reuse a sandbox."""
+        task = db.query(TaskResource).filter(TaskResource.id == task_id).first()
+        if task is None or not isinstance(task.json, dict):
+            return "", "", False
+        metadata = task.json.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            return "", "", False
+        labels = metadata.get("labels") or {}
+        if not isinstance(labels, dict):
+            return "", "", False
+        executor_name = labels.get("lastExecutorName") or ""
+        executor_namespace = labels.get("lastExecutorNamespace") or ""
+        return executor_namespace, executor_name, False
+
+    def get_latest_assistant_executor_from(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        from_message_id: int,
+        owner_user_id: Optional[int] = None,
+    ):
+        """Return the newest assistant executor inside a deletion range."""
+        query = db.query(
+            Subtask.executor_namespace,
+            Subtask.executor_name,
+            Subtask.executor_deleted_at,
+        ).filter(
+            Subtask.task_id == task_id,
+            Subtask.role == SubtaskRole.ASSISTANT,
+            Subtask.message_id >= from_message_id,
+            Subtask.executor_name != "",
+            Subtask.executor_name.isnot(None),
+        )
+        query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
+        return query.order_by(Subtask.id.desc()).first()
 
     def create_user_and_assistant_subtasks(
         self,

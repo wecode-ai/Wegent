@@ -786,6 +786,15 @@ class SubtaskStore(Protocol):
         owner_user_id: Optional[int] = None,
     ) -> list[Subtask]: ...
 
+    def get_latest_assistant_executor_from(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        from_message_id: int,
+        owner_user_id: Optional[int] = None,
+    ): ...
+
     def get_latest_by_task(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
     ) -> Optional[Subtask]: ...

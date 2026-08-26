@@ -15,6 +15,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
 from app.services.subtask import subtask_service
+from app.stores.tasks import subtask_store
 from shared.models.db.enums import ContextType
 
 
@@ -45,6 +46,8 @@ def _subtask(
     role: SubtaskRole = SubtaskRole.USER,
     status: SubtaskStatus = SubtaskStatus.COMPLETED,
     sender_user_id: int = 0,
+    executor_namespace: str = "",
+    executor_name: str = "",
 ) -> Subtask:
     return Subtask(
         id=subtask_id,
@@ -54,8 +57,8 @@ def _subtask(
         title=f"message-{message_id}",
         bot_ids=[],
         role=role,
-        executor_namespace="",
-        executor_name="",
+        executor_namespace=executor_namespace,
+        executor_name=executor_name,
         prompt=f"prompt-{message_id}",
         status=status,
         progress=100,
@@ -242,6 +245,12 @@ def test_edit_user_message_deletes_edited_message_and_later_messages(
     )
     test_db.commit()
 
+    latest = subtask_store.get_latest_assistant_executor_from(
+        test_db,
+        task_id=109,
+        from_message_id=1,
+        owner_user_id=10,
+    )
     returned_subtask_id, message_id, deleted_count = subtask_service.edit_user_message(
         test_db,
         subtask_id=1072,
@@ -288,3 +297,80 @@ def test_edit_user_message_rejects_running_assistant(test_db: Session) -> None:
         assert exc.detail == "Cannot edit while AI is generating a response"
     else:
         raise AssertionError("Expected edit to fail while assistant is running")
+
+
+def test_edit_user_message_persists_executor_reference_for_reuse(
+    test_db: Session,
+) -> None:
+    test_db.add(_task(109, owner_id=10))
+    test_db.add_all(
+        [
+            _subtask(subtask_id=1091, task_id=109, user_id=10, message_id=1),
+            _subtask(
+                subtask_id=1092,
+                task_id=109,
+                user_id=10,
+                message_id=2,
+                role=SubtaskRole.ASSISTANT,
+                executor_namespace="wb-plat-ide",
+                executor_name="wegent-task-user-abc123",
+            ),
+        ]
+    )
+    test_db.commit()
+
+    returned_subtask_id, message_id, deleted_count = subtask_service.edit_user_message(
+        test_db,
+        subtask_id=1091,
+        new_content="edited",
+        user_id=10,
+    )
+
+    assert (returned_subtask_id, message_id, deleted_count) == (1091, 1, 2)
+    assert test_db.get(Subtask, 1091) is None
+    assert test_db.get(Subtask, 1092) is None
+
+    task = test_db.get(TaskResource, 109)
+    labels = task.json["metadata"]["labels"]
+    assert labels["lastExecutorName"] == "wegent-task-user-abc123"
+    assert labels["lastExecutorNamespace"] == "wb-plat-ide"
+
+    # The frontend resend creates a fresh assistant subtask that must reuse
+    # the executor captured before the edit instead of allocating a new sandbox.
+    assistant = subtask_store.create_assistant_subtask(
+        test_db,
+        user_id=10,
+        task_id=109,
+        team_id=1,
+        title="assistant",
+        bot_ids=[],
+        message_id=3,
+        parent_id=1,
+    )
+    assert assistant.executor_name == "wegent-task-user-abc123"
+    assert assistant.executor_namespace == "wb-plat-ide"
+
+
+def test_create_assistant_subtask_falls_back_to_task_executor_reference(
+    test_db: Session,
+) -> None:
+    task = _task(110, owner_id=10)
+    task.json["metadata"]["labels"] = {
+        "lastExecutorName": "wegent-task-user-xyz789",
+        "lastExecutorNamespace": "wb-plat-ide",
+    }
+    test_db.add(task)
+    test_db.commit()
+
+    assistant = subtask_store.create_assistant_subtask(
+        test_db,
+        user_id=10,
+        task_id=110,
+        team_id=1,
+        title="assistant",
+        bot_ids=[],
+        message_id=1,
+        parent_id=0,
+    )
+    assert assistant.executor_name == "wegent-task-user-xyz789"
+    assert assistant.executor_namespace == "wb-plat-ide"
