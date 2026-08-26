@@ -607,16 +607,19 @@ async function verifyBackgroundCompletionRestore({
       },
     }),
   })
-  await control.command('waitFor', `[data-testid="${runningTaskTestId}"]`, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes(taskRowTestId) && !snapshot.testIds.includes(runningTaskTestId),
+    'A stale running transcript revived the completed task'
+  )
 
   await control.command('navigate', 'body', { value: '/todo' })
   await control.command('waitFor', '[data-testid="cloud-my-work"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="cloud-my-work"]')
-  await control.command('waitFor', `[data-testid="my-work-group-running-${taskId}"]`, {
+  await control.command('waitFor', `[data-testid="my-work-group-done-${taskId}"]`, {
     text: 'WEWORK_DESKTOP_E2E_BACKGROUND_COMPLETION_RESTORE',
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -625,31 +628,9 @@ async function verifyBackgroundCompletionRestore({
     await control.command('snapshot', '[data-testid="cloud-my-work-view"]')
   )
   assert.equal(
-    myWorkSnapshot.testIds.includes(`my-work-group-done-${taskId}`),
+    myWorkSnapshot.testIds.includes(`my-work-group-running-${taskId}`),
     false,
-    'My Work used the stale completed Runtime snapshot instead of the shared running lifecycle'
-  )
-
-  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
-    value: JSON.stringify({
-      address: completedTaskAddress,
-      type: 'transcript_received',
-      transcript: {
-        taskId,
-        messages: [],
-        running: false,
-        turns: [],
-      },
-    }),
-  })
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes(`my-work-group-done-${taskId}`) &&
-      !snapshot.testIds.includes(`my-work-group-running-${taskId}`),
-    'My Work did not move the settled local task from running to done',
-    DEFAULT_STEP_TIMEOUT_MS,
-    '[data-testid="cloud-my-work-view"]'
+    'My Work revived a completed task from the stale running transcript'
   )
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
