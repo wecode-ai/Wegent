@@ -80,6 +80,16 @@ const applications = await packager({
   prune: false,
 })
 
+if (process.platform === 'darwin') {
+  for (const application of applications) {
+    await run(
+      'codesign',
+      ['--force', '--deep', '--sign', '-', join(application, 'WeWork.app')],
+      electronRoot
+    )
+  }
+}
+
 await rm(staging, { recursive: true, force: true })
 console.log(JSON.stringify({ applications }, null, 2))
 

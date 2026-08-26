@@ -16,6 +16,7 @@ import {
   type MenuItemConstructorOptions,
   type WebContents,
 } from 'electron'
+import electronUpdater from 'electron-updater'
 import { existsSync } from 'node:fs'
 import { release } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -58,6 +59,7 @@ import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon } from './host/tray-icon.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
+import { AppUpdateService } from './host/app-update-service.js'
 import { installNativeContextMenu } from './host/image-context-menu.js'
 import {
   cleanupStaleTemporaryImages,
@@ -69,6 +71,10 @@ import { SystemResumeBridge } from './host/system-resume-bridge.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
+const { autoUpdater } = electronUpdater
+const updateBaseUrl =
+  process.env.WEWORK_UPDATE_BASE_URL?.trim() ||
+  'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
 
 const userDataPath =
   process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), 'io.wecode.wework')
@@ -115,6 +121,13 @@ const pendingEmbeddedBrowserAttachments = new Map<
 >()
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
+const appUpdates = new AppUpdateService({
+  updater: autoUpdater,
+  currentVersion: () => app.getVersion(),
+  isPackaged: () => app.isPackaged,
+  prepareInstall: prepareApplicationShutdown,
+  updateBaseUrl,
+})
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -824,9 +837,14 @@ async function shutdown(): Promise<void> {
 }
 
 function requestApplicationShutdown(exit: () => void): void {
-  if (shutdownPromise) return
+  void prepareApplicationShutdown().finally(exit)
+}
+
+function prepareApplicationShutdown(): Promise<void> {
+  if (shutdownPromise) return shutdownPromise
   quitting = true
-  shutdownPromise = shutdown().finally(exit)
+  shutdownPromise = shutdown()
+  return shutdownPromise
 }
 
 function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
@@ -892,6 +910,7 @@ async function configureDesktopRuntime(): Promise<void> {
         preferences,
         embeddedBrowser,
         {
+          appUpdates,
           feedback,
           plugins: workbenchPlugins,
         },

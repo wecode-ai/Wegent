@@ -29,15 +29,20 @@ TCP 端口。
 ## 构建
 
 ```powershell
-cd wework
-pnpm run prepare:codex --materialize
-pnpm run prepare:dws
-pnpm run build:windows
+pnpm --dir wework/electron build:release
 ```
 
-产物写入 `wework/electron/release/WeWork-win32-<arch>/`。图标、插件、运行时描述和
-sidecar 统一来自 `wework/resources/`，由
+NSIS 安装器写入
+`wework/electron/release-installer/WeWork_<version>_windows_x64-setup.exe`。图标、
+插件、运行时描述和 sidecar 统一来自 `wework/resources/`，由
 `wework/electron/scripts/prepare-package-assets.mjs` 复制到应用资源目录。
+
+该安装器同时承担旧 Tauri 版本到 Electron 的迁移：它兼容 Tauri updater 传入的
+`/P` 参数，读取旧版 `Software\you\WeWork` 注册表项，并沿用
+`%LOCALAPPDATA%\WeWork` 安装目录。旧版点击“升级”后会先安装 Electron，再按同一
+`WeWork.exe` 路径重启，因此不会产生第二套安装目录，且不会删除用户数据。
+Electron 启动的 Executor 继续直接使用用户目录下原有的 `.wework`，不执行目录
+复制或数据迁移。
 
 ## 验证
 
@@ -45,10 +50,11 @@ sidecar 统一来自 `wework/resources/`，由
 pnpm --filter wework typecheck
 pnpm --dir wework/electron typecheck
 pnpm --dir wework/electron test
-pnpm --filter wework build:windows
+pnpm --dir wework/electron build:release
 ```
 
-正式跨平台归档由 `.github/workflows/wework-app.yml` 在 `windows-latest` 上生成。
+正式安装器、代码签名、Electron YAML 更新清单和旧 Tauri JSON/签名桥接清单由
+`.github/workflows/wework-app.yml` 在 `windows-latest` 上生成。
 
 ## 常见问题
 
