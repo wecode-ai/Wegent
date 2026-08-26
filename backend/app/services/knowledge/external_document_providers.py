@@ -47,6 +47,16 @@ class ExternalDocumentFetchError(RuntimeError):
     """Background fetch of external document content failed."""
 
 
+class ExternalSourceUnavailableError(ExternalDocumentFetchError):
+    """The external source no longer exists or the user lost access to it.
+
+    Raised by ``fetch_content`` when the provider can positively tell the
+    resource is gone (or permission was revoked). The import marks the
+    document's source as inaccessible while keeping the last successful
+    snapshot; it is distinct from a transient fetch failure.
+    """
+
+
 class ExternalImportLostWriteError(RuntimeError):
     """The import attempt lost its write right before attaching content.
 
@@ -97,7 +107,12 @@ class ExternalDocumentProvider(ABC):
         user: User,
         external_resource_id: str,
     ) -> ExternalDocumentContent:
-        """Fetch the document body as attachment-ready content."""
+        """Fetch the document body as attachment-ready content.
+
+        Raises ExternalSourceUnavailableError when the provider can tell the
+        resource is gone or access was revoked, ExternalDocumentFetchError
+        for transient failures.
+        """
 
 
 class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
@@ -155,7 +170,14 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
     ) -> ExternalDocumentContent:
         from app.services.dingtalk_doc_service import DingTalkDocService
 
-        metadata = self.resolve_importable(db, user, external_resource_id)
+        try:
+            metadata = self.resolve_importable(db, user, external_resource_id)
+        except ExternalDocumentImportError as exc:
+            if exc.status_code == 404:
+                # The synced node is gone or inactive: the source itself is
+                # no longer accessible, not a transient fetch failure.
+                raise ExternalSourceUnavailableError(str(exc)) from exc
+            raise ExternalDocumentFetchError(str(exc)) from exc
         mcp_url = DingTalkDocService.get_user_dingtalk_mcp_url(user)
         if not mcp_url:
             raise ExternalDocumentFetchError(

@@ -30,10 +30,10 @@ from app.services.knowledge.external_document_import import (
     run_external_document_import,
 )
 from app.services.knowledge.external_document_providers import (
-    ExternalDocumentAlreadyImportedError,
     ExternalDocumentContent,
     ExternalDocumentFetchError,
     ExternalDocumentImportError,
+    ExternalSourceUnavailableError,
     get_external_document_provider,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
@@ -92,6 +92,18 @@ def dispatched(monkeypatch: pytest.MonkeyPatch) -> list[int]:
         ),
     )
     return document_ids
+
+
+@pytest.fixture
+def dispatch_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """Capture full background import task dispatch kwargs (incl. update)."""
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        knowledge_tasks_module,
+        "import_external_document_task",
+        SimpleNamespace(delay=lambda **kwargs: calls.append(kwargs)),
+    )
+    return calls
 
 
 class TestProviderRegistry:
@@ -306,17 +318,39 @@ class TestImportDocument:
                 folder_id=folder.id,
             )
 
-    def test_rejects_duplicate_external_identity(
+    def test_reimport_updates_existing_document(
         self,
         test_db: Session,
         test_user: User,
         configured_dingtalk: None,
-        dispatched: list[int],
+        dispatch_calls: list[dict],
     ) -> None:
+        from app.schemas.knowledge import KnowledgeFolderCreate
+        from app.services.knowledge.folder_service import KnowledgeFolderService
+
         kb_id = _create_kb(test_db, test_user.id)
         node = _create_synced_node(test_db, test_user.id, "g" * 32, name="Once Doc")
 
-        external_document_import_service.import_document(
+        first = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+        )
+        # Simulate a successful import, then user-owned changes.
+        first.index_status = DocumentIndexStatus.SUCCESS
+        first.is_active = True
+        first.attachment_id = 777
+        first.name = "My Renamed Doc"
+        test_db.commit()
+        folder = KnowledgeFolderService.create_folder(
+            test_db, kb_id, test_user.id, KnowledgeFolderCreate(name="Keep")
+        )
+        first.folder_id = folder.id
+        test_db.commit()
+
+        second = external_document_import_service.import_document(
             db=test_db,
             user=test_user,
             knowledge_base_id=kb_id,
@@ -324,7 +358,39 @@ class TestImportDocument:
             external_resource_id=node.dingtalk_node_id,
         )
 
-        with pytest.raises(ExternalDocumentAlreadyImportedError) as exc_info:
+        # The same record is reused and re-queued for an update; the user's
+        # name and folder survive the re-import.
+        assert second.id == first.id
+        assert test_db.query(KnowledgeDocument).count() == 1
+        assert second.name == "My Renamed Doc"
+        assert second.folder_id == folder.id
+        assert second.is_active is True
+        assert second.index_status == DocumentIndexStatus.QUEUED
+        assert dispatch_calls == [
+            {"document_id": first.id, "update": False},
+            {"document_id": first.id, "update": True},
+        ]
+
+    def test_reimport_while_in_progress_is_rejected(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatch_calls: list[dict],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        node = _create_synced_node(test_db, test_user.id, "w" * 32, name="Busy Doc")
+
+        document = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+        )
+        assert document.index_status == DocumentIndexStatus.QUEUED
+
+        with pytest.raises(ExternalDocumentImportError) as exc_info:
             external_document_import_service.import_document(
                 db=test_db,
                 user=test_user,
@@ -334,6 +400,53 @@ class TestImportDocument:
             )
 
         assert exc_info.value.status_code == 409
+        # Only the initial dispatch happened; no second task was queued.
+        assert dispatch_calls == [{"document_id": document.id, "update": False}]
+
+    def test_reimport_after_delete_creates_new_document(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatch_calls: list[dict],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import app.services.knowledge.knowledge_service as knowledge_service_module
+
+        kb_id = _create_kb(test_db, test_user.id)
+        node = _create_synced_node(test_db, test_user.id, "x" * 32, name="Gone Doc")
+
+        document = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+        )
+        monkeypatch.setattr(
+            knowledge_service_module, "_get_delete_gateway", MagicMock()
+        )
+        monkeypatch.setattr(
+            "app.services.context.context_service.delete_context",
+            MagicMock(return_value=True),
+        )
+        KnowledgeService.delete_document(
+            db=test_db, document_id=document.id, user_id=test_user.id
+        )
+
+        recreated = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+        )
+
+        # Deleting the document released the external identity: re-import
+        # creates a fresh record instead of reviving the old one.
+        assert recreated.id != document.id
+        assert test_db.query(KnowledgeDocument).count() == 1
+        assert recreated.name == "Gone Doc"
 
     def test_placeholder_cannot_be_enabled_before_content_ready(
         self,
@@ -441,12 +554,12 @@ class TestImportDocuments:
         assert exc_info.value.status_code == 400
         assert dispatched == []
 
-    def test_reports_already_imported_documents_as_skipped(
+    def test_updates_settled_documents_and_imports_new_ones(
         self,
         test_db: Session,
         test_user: User,
         configured_dingtalk: None,
-        dispatched: list[int],
+        dispatch_calls: list[dict],
     ) -> None:
         kb_id = _create_kb(test_db, test_user.id)
         existing_node = _create_synced_node(
@@ -459,6 +572,9 @@ class TestImportDocuments:
             provider_id="dingtalk",
             external_resource_id=existing_node.dingtalk_node_id,
         )
+        # A settled (successful) document is queued for an update, not skipped.
+        existing.index_status = DocumentIndexStatus.SUCCESS
+        test_db.commit()
         new_node = _create_synced_node(test_db, test_user.id, "o" * 32, name="New Doc")
 
         result = external_document_import_service.import_documents(
@@ -474,11 +590,49 @@ class TestImportDocuments:
 
         assert result.requested_count == 2
         assert len(result.imported) == 1
-        assert [(item.resource_id, item.name) for item in result.skipped_existing] == [
-            (existing_node.dingtalk_node_id, "Old Doc")
+        assert [item.name for item in result.updated_existing] == ["Old Doc"]
+        assert result.skipped_existing == []
+        # Placeholders are created first, then updates are queued.
+        assert dispatch_calls == [
+            {"document_id": existing.id, "update": False},
+            {"document_id": result.imported[0].id, "update": False},
+            {"document_id": existing.id, "update": True},
         ]
-        # The already-imported document is untouched: no new dispatch for it.
-        assert dispatched == [existing.id, result.imported[0].id]
+
+    def test_skips_documents_still_being_processed(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatch_calls: list[dict],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        busy_node = _create_synced_node(
+            test_db, test_user.id, "y" * 32, name="Busy Doc"
+        )
+        busy = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=busy_node.dingtalk_node_id,
+        )
+        assert busy.index_status == DocumentIndexStatus.QUEUED
+
+        result = external_document_import_service.import_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_ids=[busy_node.dingtalk_node_id],
+        )
+
+        assert result.imported == []
+        assert result.updated_existing == []
+        assert [(item.resource_id, item.name) for item in result.skipped_existing] == [
+            (busy_node.dingtalk_node_id, "Busy Doc")
+        ]
+        assert dispatch_calls == [{"document_id": busy.id, "update": False}]
 
     def test_rejects_invalid_item_before_creating_any_placeholder(
         self,
@@ -1309,3 +1463,494 @@ class TestExternalDocumentPreviewAndEnableGuards:
 
         assert updated is not None
         assert updated.status == DocumentStatus.ENABLED
+
+
+class TestExternalUpdateSnapshotReplacement:
+    """Re-import of a live document stages the new version before swapping."""
+
+    def _create_live_document(
+        self,
+        test_db: Session,
+        test_user: User,
+        *,
+        index_status: DocumentIndexStatus = DocumentIndexStatus.SUCCESS,
+        is_active: bool = True,
+        attachment_id: int = 1111,
+    ) -> KnowledgeDocument:
+        kb_id = _create_kb(test_db, test_user.id, "external-update-kb")
+        document = KnowledgeDocument(
+            kind_id=kb_id,
+            attachment_id=attachment_id,
+            name="Live Doc",
+            file_extension="md",
+            file_size=100,
+            user_id=test_user.id,
+            source_type=DocumentSourceType.EXTERNAL.value,
+            source_config={
+                "external": {
+                    "provider": "dingtalk",
+                    "resource_id": "z" * 32,
+                    "title": "Live Doc",
+                    "url": "https://alidocs.dingtalk.com/i/nodes/live",
+                }
+            },
+            external_provider="dingtalk",
+            external_resource_id="z" * 32,
+            index_status=index_status,
+            index_generation=3,
+            is_active=is_active,
+            status="enabled" if is_active else "disabled",
+        )
+        test_db.add(document)
+        test_db.commit()
+        test_db.refresh(document)
+        return document
+
+    def test_update_stages_attachment_and_keeps_old_snapshot(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+        document = self._create_live_document(test_db, test_user)
+        attachment = SimpleNamespace(id=2222)
+        scheduled: dict = {}
+        deleted_ids: list[int] = []
+        monkeypatch.setattr(
+            "app.services.context.context_service.upload_attachment",
+            MagicMock(return_value=(attachment, None)),
+        )
+        monkeypatch.setattr(
+            "app.services.context.context_service.delete_context",
+            MagicMock(side_effect=lambda **kwargs: deleted_ids.append(kwargs)),
+        )
+        monkeypatch.setattr(
+            knowledge_orchestrator,
+            "_schedule_indexing_celery",
+            lambda **kwargs: scheduled.update(kwargs) or {"scheduled": True},
+        )
+
+        knowledge_orchestrator.attach_external_document_content(
+            db=test_db,
+            document=document,
+            user=test_user,
+            content=ExternalDocumentContent(
+                name="Live Doc v2",
+                file_extension="md",
+                content=b"# Live Doc v2",
+                metadata={
+                    "provider": "dingtalk",
+                    "resource_id": "z" * 32,
+                    "title": "Live Doc v2",
+                    "url": "https://alidocs.dingtalk.com/i/nodes/live-v2",
+                },
+            ),
+            generation=3,
+        )
+
+        test_db.refresh(document)
+        # The old snapshot keeps serving reads; the new body is staged.
+        assert document.attachment_id == 1111
+        assert document.file_size == 100
+        assert document.is_active is True
+        external = document.source_config["external"]
+        assert external["pending_attachment_id"] == 2222
+        assert external["pending_file_size"] == len(b"# Live Doc v2")
+        assert external["title"] == "Live Doc v2"
+        assert external["url"] == "https://alidocs.dingtalk.com/i/nodes/live-v2"
+        # Nothing was deleted: the old snapshot is still referenced.
+        assert deleted_ids == []
+        # Indexing is dispatched against the staged attachment.
+        assert scheduled["attachment_id_override"] == 2222
+        assert scheduled["replace_active"] is True
+
+    def test_update_replaces_stale_staged_attachment(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+        document = self._create_live_document(test_db, test_user)
+        document.external_pending_attachment_id = 999
+        document.update_external_source_config(pending_file_size=50)
+        test_db.commit()
+
+        attachment = SimpleNamespace(id=2222)
+        deleted_ids: list[int] = []
+        monkeypatch.setattr(
+            "app.services.context.context_service.upload_attachment",
+            MagicMock(return_value=(attachment, None)),
+        )
+        monkeypatch.setattr(
+            "app.services.context.context_service.delete_context",
+            MagicMock(side_effect=lambda **kwargs: deleted_ids.append(kwargs)),
+        )
+        monkeypatch.setattr(
+            knowledge_orchestrator,
+            "_schedule_indexing_celery",
+            lambda **kwargs: {"scheduled": True},
+        )
+
+        knowledge_orchestrator.attach_external_document_content(
+            db=test_db,
+            document=document,
+            user=test_user,
+            content=ExternalDocumentContent(
+                name="Live Doc v2",
+                file_extension="md",
+                content=b"# fresh",
+                metadata={},
+            ),
+            generation=3,
+        )
+
+        test_db.refresh(document)
+        # The superseded attempt's staged attachment is cleaned up.
+        assert deleted_ids == [
+            {"db": test_db, "context_id": 999, "user_id": test_user.id}
+        ]
+        assert document.external_pending_attachment_id == 2222
+        assert document.attachment_id == 1111
+
+    def test_lost_write_still_stands_down_for_updates(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from app.services.knowledge.external_document_providers import (
+            ExternalImportLostWriteError,
+        )
+        from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+        document = self._create_live_document(test_db, test_user)
+        attachment = SimpleNamespace(id=2222)
+        deleted_ids: list[int] = []
+        monkeypatch.setattr(
+            "app.services.context.context_service.upload_attachment",
+            MagicMock(return_value=(attachment, None)),
+        )
+        monkeypatch.setattr(
+            "app.services.context.context_service.delete_context",
+            MagicMock(side_effect=lambda **kwargs: deleted_ids.append(kwargs)),
+        )
+
+        # A newer attempt superseded this run's generation.
+        document.index_generation = 4
+        test_db.commit()
+
+        with pytest.raises(ExternalImportLostWriteError):
+            knowledge_orchestrator.attach_external_document_content(
+                db=test_db,
+                document=document,
+                user=test_user,
+                content=ExternalDocumentContent(
+                    name="Live Doc v2",
+                    file_extension="md",
+                    content=b"# stale",
+                    metadata={},
+                ),
+                generation=3,
+            )
+
+        test_db.refresh(document)
+        assert document.attachment_id == 1111
+        assert document.external_pending_attachment_id is None
+        assert deleted_ids == [
+            {"db": test_db, "context_id": 2222, "user_id": test_user.id}
+        ]
+
+
+class TestExternalSourceUnavailable:
+    def _create_live_document(
+        self, test_db: Session, test_user: User
+    ) -> KnowledgeDocument:
+        kb_id = _create_kb(test_db, test_user.id, "source-unavailable-kb")
+        document = KnowledgeDocument(
+            kind_id=kb_id,
+            attachment_id=555,
+            name="Snapshot Doc",
+            file_extension="md",
+            file_size=100,
+            user_id=test_user.id,
+            source_type=DocumentSourceType.EXTERNAL.value,
+            source_config={"external": {"provider": "dingtalk", "title": "Old"}},
+            external_provider="dingtalk",
+            external_resource_id="v" * 32,
+            index_status=DocumentIndexStatus.QUEUED,
+            index_generation=1,
+            is_active=True,
+            status="enabled",
+        )
+        test_db.add(document)
+        test_db.commit()
+        test_db.refresh(document)
+        return document
+
+    def test_unavailable_source_keeps_snapshot_and_marks_inaccessible(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_live_document(test_db, test_user)
+        provider = SimpleNamespace(
+            fetch_content=AsyncMock(
+                side_effect=ExternalSourceUnavailableError("node not found")
+            ),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=1)
+
+        test_db.refresh(document)
+        # The document and its snapshot survive; the source is marked.
+        assert document.index_status == DocumentIndexStatus.FAILED
+        assert document.attachment_id == 555
+        assert document.is_active is True
+        external = document.source_config["external"]
+        assert external["status"] == "inaccessible"
+        assert external["last_error"] == "node not found"
+        error = document.processing_error_payload
+        assert error is not None
+        assert error["code"] == "external_source_unavailable"
+
+    def test_transient_fetch_failure_does_not_mark_inaccessible(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_live_document(test_db, test_user)
+        provider = SimpleNamespace(
+            fetch_content=AsyncMock(side_effect=ExternalDocumentFetchError("boom")),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=1)
+
+        test_db.refresh(document)
+        assert document.index_status == DocumentIndexStatus.FAILED
+        assert document.processing_error_payload["code"] == "external_import_failed"
+        assert document.source_config["external"].get("status") is None
+
+    def test_stale_generation_does_not_mark_inaccessible(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_live_document(test_db, test_user)
+        # A newer attempt already superseded this run's generation.
+        document.index_generation = 2
+        document.index_status = DocumentIndexStatus.INDEXING
+        test_db.commit()
+        provider = SimpleNamespace(
+            fetch_content=AsyncMock(
+                side_effect=ExternalSourceUnavailableError("node not found")
+            ),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import"
+            ".get_external_document_provider",
+            lambda provider_id: provider,
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=1)
+
+        test_db.refresh(document)
+        # The stale attempt must not overwrite the newer attempt's outcome.
+        assert document.index_status == DocumentIndexStatus.INDEXING
+        assert document.source_config["external"].get("status") is None
+
+
+class TestExternalDocumentBodyReadOnly:
+    def _create_external_document(
+        self, test_db: Session, test_user: User
+    ) -> KnowledgeDocument:
+        kb_id = _create_kb(test_db, test_user.id, "readonly-external-kb")
+        document = KnowledgeDocument(
+            kind_id=kb_id,
+            attachment_id=888,
+            name="Readonly Doc",
+            file_extension="md",
+            file_size=100,
+            user_id=test_user.id,
+            source_type=DocumentSourceType.EXTERNAL.value,
+            source_config={"external": {"provider": "dingtalk"}},
+            external_provider="dingtalk",
+            external_resource_id="q" * 32,
+            index_status=DocumentIndexStatus.SUCCESS,
+            is_active=True,
+            status="enabled",
+        )
+        test_db.add(document)
+        test_db.commit()
+        test_db.refresh(document)
+        return document
+
+    def test_body_edit_is_rejected(self, test_db: Session, test_user: User) -> None:
+        document = self._create_external_document(test_db, test_user)
+
+        with pytest.raises(ValueError, match="read-only"):
+            KnowledgeService.update_document_content(
+                db=test_db,
+                document_id=document.id,
+                content="# edited",
+                user_id=test_user.id,
+            )
+
+    def test_rename_still_allowed(self, test_db: Session, test_user: User) -> None:
+        document = self._create_external_document(test_db, test_user)
+
+        updated = KnowledgeService.update_document(
+            db=test_db,
+            document_id=document.id,
+            user_id=test_user.id,
+            data=KnowledgeDocumentUpdate(name="Renamed Doc"),
+        )
+
+        assert updated is not None
+        assert updated.name == "Renamed Doc"
+
+
+class TestConcurrentDuplicateIdentity:
+    def test_unique_index_rejects_second_row(
+        self, test_db: Session, test_user: User
+    ) -> None:
+        from sqlalchemy.exc import IntegrityError
+
+        kb_id = _create_kb(test_db, test_user.id, "concurrent-external-kb")
+
+        def _add(resource_suffix: str) -> None:
+            test_db.add(
+                KnowledgeDocument(
+                    kind_id=kb_id,
+                    attachment_id=0,
+                    name=f"Concurrent {resource_suffix}",
+                    file_extension="md",
+                    file_size=0,
+                    user_id=test_user.id,
+                    source_type=DocumentSourceType.EXTERNAL.value,
+                    source_config={"external": {"provider": "dingtalk"}},
+                    external_provider="dingtalk",
+                    external_resource_id="cc" * 16,
+                    index_status=DocumentIndexStatus.QUEUED,
+                )
+            )
+            test_db.commit()
+
+        _add("first")
+        with pytest.raises(IntegrityError):
+            _add("second")
+        test_db.rollback()
+        assert test_db.query(KnowledgeDocument).count() == 1
+
+    def test_import_recovers_from_concurrent_placeholder_creation(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatch_calls: list[dict],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from sqlalchemy.exc import IntegrityError
+
+        kb_id = _create_kb(test_db, test_user.id, "concurrent-external-kb-2")
+        node = _create_synced_node(test_db, test_user.id, "dd" * 16, name="Race Doc")
+        loser = KnowledgeDocument(
+            kind_id=kb_id,
+            attachment_id=0,
+            name="Race Doc",
+            file_extension="md",
+            file_size=0,
+            user_id=test_user.id,
+            source_type=DocumentSourceType.EXTERNAL.value,
+            source_config={"external": {"provider": "dingtalk"}},
+            external_provider="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+            index_status=DocumentIndexStatus.SUCCESS,
+            is_active=True,
+        )
+        test_db.add(loser)
+        test_db.commit()
+
+        def raise_integrity_error(**kwargs):
+            raise IntegrityError("dup", None, Exception())
+
+        monkeypatch.setattr(
+            KnowledgeService,
+            "create_external_document",
+            staticmethod(raise_integrity_error),
+        )
+
+        # The concurrent winner created the row; this request updates it
+        # instead of failing or creating a duplicate.
+        result = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+        )
+
+        assert result.id == loser.id
+        assert dispatch_calls == [{"document_id": loser.id, "update": True}]
+
+    def test_concurrent_settle_is_reported_as_skipped(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatch_calls: list[dict],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A document settled by a concurrent request is counted, not lost."""
+        kb_id = _create_kb(test_db, test_user.id)
+        settled_node = _create_synced_node(
+            test_db, test_user.id, "ee" * 16, name="Settled Doc"
+        )
+        settled = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=settled_node.dingtalk_node_id,
+        )
+        settled.index_status = DocumentIndexStatus.SUCCESS
+        test_db.commit()
+
+        def reject_update(db, user, document):
+            raise ExternalDocumentImportError("still processing", status_code=409)
+
+        monkeypatch.setattr(
+            external_document_import_service,
+            "_redispatch_existing_import",
+            reject_update,
+        )
+
+        result = external_document_import_service.import_documents(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_ids=[settled_node.dingtalk_node_id],
+        )
+
+        assert result.imported == []
+        assert result.updated_existing == []
+        assert [(item.resource_id, item.name) for item in result.skipped_existing] == [
+            (settled_node.dingtalk_node_id, "Settled Doc")
+        ]

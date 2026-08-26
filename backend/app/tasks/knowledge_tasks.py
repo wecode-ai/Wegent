@@ -95,7 +95,7 @@ def _enqueue_document_summary_task(
     bind=True,
     name="app.tasks.knowledge_tasks.import_external_document",
 )
-def import_external_document_task(self, document_id: int):
+def import_external_document_task(self, document_id: int, update: bool = False):
     """
     Celery task for importing one external provider document.
 
@@ -108,6 +108,9 @@ def import_external_document_task(self, document_id: int):
 
     Args:
         document_id: Placeholder KnowledgeDocument ID with external identity
+        update: True when this run updates an already-imported document
+            (re-import); the claim may then start from a successful state and
+            the previous snapshot is preserved until the new index succeeds.
     """
     from app.models.knowledge import KnowledgeDocument
     from app.models.user import User
@@ -119,7 +122,7 @@ def import_external_document_task(self, document_id: int):
     )
 
     with SessionLocal() as db:
-        attempt = begin_external_import_attempt(db, document_id)
+        attempt = begin_external_import_attempt(db, document_id, allow_success=update)
         if not attempt.should_execute:
             logger.info(
                 "[Celery External Import] Skipping document %s: %s",

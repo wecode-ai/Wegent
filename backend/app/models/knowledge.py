@@ -176,6 +176,40 @@ class KnowledgeDocument(Base):
         return bool(self.external_provider and self.external_resource_id)
 
     @property
+    def external_source_config(self) -> dict:
+        """Return the external source metadata stored in source_config.
+
+        Holds the provider identity, source title / URL, import health
+        (``status``, ``last_success_at``, ``last_error``) and the transient
+        ``pending_attachment_id`` / ``pending_file_size`` of an in-flight
+        update. Always returns a dict; missing metadata reads as empty.
+        """
+        value = (self.source_config or {}).get("external")
+        return dict(value) if isinstance(value, dict) else {}
+
+    def update_external_source_config(self, **updates: object) -> None:
+        """Merge keys into source_config["external"], preserving the rest."""
+        source_config = dict(self.source_config or {})
+        external = dict(source_config.get("external") or {})
+        for key, value in updates.items():
+            if value is None:
+                external.pop(key, None)
+            else:
+                external[key] = value
+        source_config["external"] = external
+        self.source_config = source_config
+
+    @property
+    def external_pending_attachment_id(self) -> int | None:
+        """Attachment ID staged by an in-flight external update, if any."""
+        value = self.external_source_config.get("pending_attachment_id")
+        return int(value) if value is not None else None
+
+    @external_pending_attachment_id.setter
+    def external_pending_attachment_id(self, value: int | None) -> None:
+        self.update_external_source_config(pending_attachment_id=value)
+
+    @property
     def converted_attachment_id(self) -> int | None:
         """Get the converted attachment ID from source_config.
 

@@ -197,6 +197,81 @@ describe('DocumentDetailDialog permissions', () => {
   })
 })
 
+describe('DocumentDetailDialog external source info', () => {
+  const externalMeta = {
+    provider: 'dingtalk',
+    resource_id: 'node-1',
+    title: 'Spec Doc',
+    url: 'https://alidocs.dingtalk.com/i/nodes/node-1',
+    status: 'accessible',
+    last_success_at: '2026-08-26T10:00:00Z',
+  }
+  const externalDocument: KnowledgeDocument = {
+    ...baseDocument,
+    source_type: 'external',
+    external_provider: 'dingtalk',
+    source_config: { external: externalMeta },
+  }
+
+  it('shows provider, source link, last import time and accessibility', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={externalDocument}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    const info = screen.getByTestId('external-source-info')
+    expect(info).toHaveTextContent('dingtalk')
+    expect(info).toHaveTextContent('Spec Doc')
+    expect(info).toHaveTextContent('document.document.externalSource.lastImportedAt')
+    const link = screen.getByTestId('external-source-link')
+    expect(link).toHaveAttribute('href', 'https://alidocs.dingtalk.com/i/nodes/node-1')
+    // An accessible source never renders the inaccessible badge.
+    expect(screen.queryByTestId('external-source-inaccessible')).not.toBeInTheDocument()
+  })
+
+  it('marks an inaccessible source while keeping the snapshot metadata', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...externalDocument,
+          source_config: {
+            external: {
+              ...externalMeta,
+              status: 'inaccessible',
+              last_error: 'node not found',
+            },
+          },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.getByTestId('external-source-inaccessible')).toBeInTheDocument()
+  })
+
+  it('hides the source info for regular documents', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={baseDocument}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.queryByTestId('external-source-info')).not.toBeInTheDocument()
+  })
+})
+
 describe('DocumentDetailDialog processing errors', () => {
   it('renders the localized message for a known public error code', () => {
     const failedDocument: KnowledgeDocument = {

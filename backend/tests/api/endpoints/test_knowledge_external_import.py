@@ -16,7 +16,7 @@ from app.api.dependencies import get_db
 from app.api.endpoints.knowledge import document_router, router
 from app.core import security
 from app.models.dingtalk_doc import DingtalkSyncedNode
-from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.user import User
 from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeFolderCreate
 from app.services.knowledge.folder_service import KnowledgeFolderService
@@ -223,7 +223,7 @@ class TestImportExternalDocument:
 
         assert response.status_code == 404
 
-    def test_rejects_duplicate_import(
+    def test_reimport_updates_existing_document(
         self,
         import_client: TestClient,
         test_db: Session,
@@ -238,12 +238,52 @@ class TestImportExternalDocument:
             f"/knowledge-bases/{kb_id}/documents/external-import",
             json=_import_payload(node.dingtalk_node_id),
         )
+        assert first.status_code == 201
+        document_id = first.json()["id"]
+
+        # Simulate the background import completing successfully.
+        document = (
+            test_db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .first()
+        )
+        document.index_status = DocumentIndexStatus.SUCCESS
+        document.is_active = True
+        test_db.commit()
+
         second = import_client.post(
             f"/knowledge-bases/{kb_id}/documents/external-import",
             json=_import_payload(node.dingtalk_node_id),
         )
 
+        # Re-import reuses the same record and queues an update.
+        assert second.status_code == 201
+        assert second.json()["id"] == document_id
+        assert test_db.query(KnowledgeDocument).count() == 1
+        assert dispatched == [document_id, document_id]
+
+    def test_rejects_reimport_while_import_in_progress(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        node = _create_synced_node(test_db, test_user.id, "hh" * 16, name="Busy Doc")
+
+        first = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import",
+            json=_import_payload(node.dingtalk_node_id),
+        )
         assert first.status_code == 201
+
+        second = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import",
+            json=_import_payload(node.dingtalk_node_id),
+        )
+
         assert second.status_code == 409
 
     def test_rejects_importer_without_manage_permission(
@@ -354,7 +394,7 @@ class TestImportExternalDocumentBatch:
         documents = test_db.query(KnowledgeDocument).count()
         assert documents == 0
 
-    def test_skips_already_imported_documents(
+    def test_skips_documents_still_being_processed(
         self,
         import_client: TestClient,
         test_db: Session,
@@ -372,6 +412,9 @@ class TestImportExternalDocumentBatch:
             json=_import_payload(existing_node.dingtalk_node_id),
         )
         assert first.status_code == 201
+        # The placeholder is still QUEUED: the batch reports it as skipped
+        # instead of queueing a second concurrent import.
+        assert len(dispatched) == 1
 
         response = import_client.post(
             f"/knowledge-bases/{kb_id}/documents/external-import-batch",
@@ -391,9 +434,58 @@ class TestImportExternalDocumentBatch:
                 "name": "Existing Doc",
             }
         ]
-        # Only the new placeholder was dispatched; the existing document keeps
-        # its original import task dispatch.
+        assert data["updated_existing"] == []
+        # Only the new placeholder was dispatched beyond the original import.
         assert len(dispatched) == 2
+
+    def test_updates_settled_documents_in_batch(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        existing_node = _create_synced_node(
+            test_db, test_user.id, "ii" * 16, name="Settled Doc"
+        )
+        new_node = _create_synced_node(test_db, test_user.id, "jj" * 16, name="New Doc")
+        first = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import",
+            json=_import_payload(existing_node.dingtalk_node_id),
+        )
+        assert first.status_code == 201
+        document_id = first.json()["id"]
+        # Simulate the background import completing successfully.
+        document = (
+            test_db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .first()
+        )
+        document.index_status = DocumentIndexStatus.SUCCESS
+        document.is_active = True
+        test_db.commit()
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-batch",
+            json=_batch_import_payload(
+                [existing_node.dingtalk_node_id, new_node.dingtalk_node_id]
+            ),
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert len(data["imported"]) == 1
+        assert data["skipped_existing"] == []
+        assert data["updated_existing"] == [
+            {
+                "external_resource_id": existing_node.dingtalk_node_id,
+                "name": "Settled Doc",
+            }
+        ]
+        # The settled document was re-dispatched for an update.
+        assert dispatched.count(document_id) == 2
 
     def test_places_batch_in_target_folder(
         self,

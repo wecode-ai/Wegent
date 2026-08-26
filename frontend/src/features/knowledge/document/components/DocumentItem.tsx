@@ -32,6 +32,7 @@ import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDate } from '@/utils/dateTime'
 import { getProcessingErrorMessage } from '../utils/processing-error'
+import { getExternalSourceInfo } from '../utils/documentUtils'
 import { toast } from '@/hooks/use-toast'
 import { useMultimodalDocActions } from '@/features/knowledge/multimodal/hooks/useMultimodalDocActions'
 import {
@@ -173,8 +174,8 @@ export function DocumentItem({
 
   const handleOpenLink = (e: React.MouseEvent) => {
     e.stopPropagation()
-    const url = document.source_config?.url
-    if (url && typeof url === 'string') {
+    const url = sourceUrl
+    if (url) {
       window.open(url, '_blank', 'noopener,noreferrer')
     }
   }
@@ -252,13 +253,19 @@ export function DocumentItem({
   const EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024 // 2MB
   const isExcel = ['xls', 'xlsx'].includes(document.file_extension?.toLowerCase() || '')
   const isExcelExceedingSizeLimit = isExcel && document.file_size > EXCEL_FILE_SIZE_LIMIT
-  // URL for table or web documents
+  // URL for table, web and imported external documents
+  const externalSource = getExternalSourceInfo(document)
   const sourceUrl =
-    (isTable || isWeb) &&
-    document.source_config?.url &&
-    typeof document.source_config.url === 'string'
-      ? document.source_config.url
-      : null
+    isTable || isWeb
+      ? document.source_config?.url && typeof document.source_config.url === 'string'
+        ? document.source_config.url
+        : null
+      : isExternal && typeof externalSource?.url === 'string'
+        ? externalSource.url
+        : null
+  // The external source can no longer be reached (deleted or permission
+  // revoked); the last imported snapshot stays usable.
+  const isExternalSourceInaccessible = isExternal && externalSource?.status === 'inaccessible'
 
   // Get display name - for web documents, remove .md extension
   const displayName =
@@ -383,6 +390,14 @@ export function DocumentItem({
                   className="bg-green-500/10 text-green-600 border-green-500/20 text-[9px] px-1 py-0"
                 >
                   {t('knowledge:document.document.type.web')}
+                </Badge>
+              ) : isExternal ? (
+                <Badge
+                  variant="default"
+                  size="sm"
+                  className="bg-amber-500/10 text-amber-600 border-amber-500/20 text-[9px] px-1 py-0"
+                >
+                  {t('knowledge:document.document.type.external')}
                 </Badge>
               ) : (
                 <span className="text-[9px] text-text-muted uppercase">
@@ -642,8 +657,38 @@ export function DocumentItem({
           >
             {t('knowledge:document.document.type.web')}
           </Badge>
+        ) : isExternal ? (
+          <Badge
+            variant="default"
+            size="sm"
+            className="bg-amber-500/10 text-amber-600 border-amber-500/20"
+          >
+            {t('knowledge:document.document.type.external')}
+          </Badge>
         ) : (
           <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
+        )}
+        {isExternalSourceInaccessible && (
+          <TooltipProvider>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="default"
+                  size="sm"
+                  className="ml-1 cursor-help whitespace-nowrap bg-red-500/10 text-red-600 border-red-500/20"
+                  data-testid="external-source-inaccessible"
+                >
+                  {t('knowledge:document.document.sourceInaccessible')}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p className="text-xs">
+                  {externalSource?.last_error ||
+                    t('knowledge:document.document.sourceInaccessibleHint')}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         )}
       </div>
 

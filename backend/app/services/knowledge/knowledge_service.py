@@ -2002,6 +2002,9 @@ class KnowledgeService:
         logger = logging.getLogger(__name__)
 
         from app.services.context import context_service
+        from app.services.knowledge.attachment_cleanup import (
+            delete_attachment_best_effort,
+        )
         from app.services.knowledge.index_runtime import get_kb_index_info_by_record
 
         rag_gateway = _get_delete_gateway()
@@ -2030,6 +2033,11 @@ class KnowledgeService:
         attachment_id = doc.attachment_id
         # Capture converted attachment ID before deleting the document row
         converted_attachment_id = getattr(doc, "converted_attachment_id", None)
+        # An in-flight external update may have staged a new attachment that
+        # no other row references; deleting the document must clean it up too.
+        pending_external_attachment_id = getattr(
+            doc, "external_pending_attachment_id", None
+        )
         # Use document owner's user_id for context deletion, since delete_context
         # enforces ownership filtering. A non-owner requester (e.g., admin/group
         # manager) would cause the deletion to silently fail and leave orphaned records.
@@ -2148,6 +2156,12 @@ class KnowledgeService:
                     exc_info=True,
                 )
 
+        # Delete a staged external update attachment if exists
+        if pending_external_attachment_id:
+            delete_attachment_best_effort(
+                db, context_owner_user_id, pending_external_attachment_id
+            )
+
         return DocumentDeleteResult(success=True, kb_id=kind_id)
 
     @staticmethod
@@ -2184,6 +2198,15 @@ class KnowledgeService:
             return None
 
         assert_user_content_is_mutable(getattr(doc, "origin", ContentOrigin.USER.value))
+
+        # Externally imported bodies are read-only: the provider owns the
+        # content, and a re-import would overwrite any local edit anyway.
+        # Renaming, moving and deleting stay available through their own flows.
+        if doc.source_type == DocumentSourceType.EXTERNAL.value:
+            raise ValueError(
+                "Externally imported document content is read-only; "
+                "re-import to refresh it"
+            )
 
         # Verify document is editable (TEXT type or plain text files)
         editable_extensions = [

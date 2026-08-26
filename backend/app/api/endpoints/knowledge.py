@@ -50,6 +50,7 @@ from app.schemas.knowledge import (
     ExternalDocumentBatchImportRequest,
     ExternalDocumentBatchImportResponse,
     ExternalDocumentBatchImportSkipped,
+    ExternalDocumentBatchImportUpdated,
     ExternalDocumentImportRequest,
     InitialMemberCreate,
     KnowledgeBaseCreate,
@@ -800,6 +801,9 @@ async def import_external_document(
 
     Creates a placeholder document immediately, then a background task fetches
     the external body and reuses the regular conversion and indexing pipeline.
+    Re-importing a resource that already has a document reuses that record: it
+    is queued for an update that refreshes the source metadata, body and index
+    while keeping the user's own name and folder.
     """
     try:
         result = external_document_import_service.import_document(
@@ -849,9 +853,11 @@ async def import_external_document_batch(
     """
     Import several external provider documents into this knowledge base.
 
-    Creates one placeholder document per distinct external resource (already
-    imported resources are skipped and reported); background tasks then fetch
-    each body and reuse the regular conversion and indexing pipeline.
+    Creates one placeholder document per distinct external resource; background
+    tasks then fetch each body and reuse the regular conversion and indexing
+    pipeline. Already-imported resources whose document has settled are queued
+    for a re-import update on their existing record; resources mid import or
+    update are skipped and reported.
     """
     try:
         result = external_document_import_service.import_documents(
@@ -879,6 +885,7 @@ async def import_external_document_batch(
             "knowledge_base_id": str(knowledge_base_id),
             "provider": data.provider,
             "imported_count": str(len(result.imported)),
+            "updated_count": str(len(result.updated_existing)),
             "skipped_count": str(len(result.skipped_existing)),
             "user_id": str(current_user.id),
         },
@@ -894,6 +901,12 @@ async def import_external_document_batch(
                 external_resource_id=item.resource_id, name=item.name
             )
             for item in result.skipped_existing
+        ],
+        updated_existing=[
+            ExternalDocumentBatchImportUpdated(
+                external_resource_id=item.resource_id, name=item.name
+            )
+            for item in result.updated_existing
         ],
         requested_count=result.requested_count,
     )

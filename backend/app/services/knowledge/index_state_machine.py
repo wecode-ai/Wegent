@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.knowledge import DocumentIndexStatus, DocumentStatus, KnowledgeDocument
 from app.schemas.knowledge import DocumentProcessingError, DocumentProcessingStage
+from app.services.knowledge.attachment_cleanup import delete_attachment_best_effort
 from app.services.knowledge.processing_errors import generic_processing_error
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
@@ -405,6 +406,38 @@ _INDEX_SUCCEEDED_ALLOWED_STATUSES = {
 }
 
 
+def _finalize_external_source_on_success(
+    document: KnowledgeDocument,
+) -> Optional[int]:
+    """Record an external import success; swap in a staged snapshot if any.
+
+    Every successful (re-)import marks the source accessible and stamps
+    ``last_success_at`` — including a first success and a recovery after an
+    inaccessible period, which both land here without a staged attachment.
+    A staged update additionally replaces the previous snapshot atomically.
+
+    Returns the replaced attachment ID to clean up, if any.
+    """
+    if not document.has_external_identity:
+        return None
+
+    replaced_attachment_id: Optional[int] = None
+    external = document.external_source_config
+    updates: dict = {
+        "status": "accessible",
+        "last_success_at": datetime.now(timezone.utc).isoformat(),
+        "last_error": None,
+    }
+    pending_attachment_id = document.external_pending_attachment_id
+    if pending_attachment_id:
+        replaced_attachment_id = document.attachment_id
+        document.attachment_id = pending_attachment_id
+        document.file_size = int(external.get("pending_file_size") or 0)
+        updates.update({"pending_attachment_id": None, "pending_file_size": None})
+    document.update_external_source_config(**updates)
+    return replaced_attachment_id
+
+
 @trace_sync(
     span_name="knowledge.mark_document_index_succeeded",
     tracer_name="knowledge.state_machine",
@@ -422,39 +455,62 @@ def mark_document_index_succeeded(
     chunks: Optional[dict] = None,
     chunk_storage_enabled: bool = False,
 ) -> bool:
-    """Persist a successful indexing result for the active generation."""
-    update_payload = {
-        KnowledgeDocument.index_status: DocumentIndexStatus.SUCCESS,
-        KnowledgeDocument.is_active: True,
-        KnowledgeDocument.status: DocumentStatus.ENABLED,
-    }
+    """Persist a successful indexing result for the active generation.
 
-    if chunk_storage_enabled:
-        update_payload[KnowledgeDocument.chunks] = chunks
-
-    updated = (
+    For an external document, the success is recorded on its source metadata
+    (accessibility + last import time) and a staged update's new attachment
+    replaces the old snapshot in the SAME transaction, so the visible body
+    flips to the new version exactly when its index becomes active.
+    """
+    document = (
         db.query(KnowledgeDocument)
-        .filter(
-            KnowledgeDocument.id == document_id,
-            KnowledgeDocument.index_generation == generation,
-            KnowledgeDocument.index_status.in_(_INDEX_SUCCEEDED_ALLOWED_STATUSES),
-        )
-        .update(
-            {
-                **update_payload,
-                KnowledgeDocument.updated_at: _utcnow(),
-            },
-            synchronize_session=False,
-        )
+        .filter(KnowledgeDocument.id == document_id)
+        .with_for_update()
+        .first()
     )
+    if document is None:
+        db.rollback()
+        _record_transition(
+            "knowledge.index.finalize.success",
+            document_id=document_id,
+            generation=generation,
+            reason="stale_or_already_finalized",
+        )
+        return False
+
+    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
+    if (
+        document.index_generation != generation
+        or current_status not in _INDEX_SUCCEEDED_ALLOWED_STATUSES
+    ):
+        db.rollback()
+        _record_transition(
+            "knowledge.index.finalize.success",
+            document_id=document_id,
+            generation=generation,
+            reason="stale_or_already_finalized",
+        )
+        return False
+
+    document.index_status = DocumentIndexStatus.SUCCESS
+    document.is_active = True
+    document.status = DocumentStatus.ENABLED
+    if chunk_storage_enabled:
+        document.chunks = chunks
+    document.updated_at = _utcnow()
+
+    replaced_attachment_id = _finalize_external_source_on_success(document)
+
     db.commit()
+    if replaced_attachment_id:
+        delete_attachment_best_effort(db, document.user_id, replaced_attachment_id)
     _record_transition(
         "knowledge.index.finalize.success",
         document_id=document_id,
         generation=generation,
-        reason="finalized" if updated > 0 else "stale_or_already_finalized",
+        reason="finalized",
     )
-    return updated > 0
+    return True
 
 
 @trace_sync(
@@ -472,7 +528,12 @@ def mark_document_index_failed(
     *,
     error: Optional[DocumentProcessingError] = None,
 ) -> bool:
-    """Persist a failed indexing result for the active generation."""
+    """Persist a failed indexing result for the active generation.
+
+    For an external document with a staged update, the staged attachment is
+    dropped (best effort) so the last successful snapshot stays the visible
+    body; the document itself is never deleted by a failure.
+    """
     document = (
         db.query(KnowledgeDocument)
         .filter(KnowledgeDocument.id == document_id)
@@ -512,7 +573,17 @@ def mark_document_index_failed(
     document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
     document.index_status = DocumentIndexStatus.FAILED
     document.updated_at = _utcnow()
+
+    # A failed update attempt discards its staged attachment; the previous
+    # snapshot (document.attachment_id) is untouched and stays usable.
+    staged_attachment_id = document.external_pending_attachment_id
+    if staged_attachment_id:
+        document.external_pending_attachment_id = None
+        document.update_external_source_config(pending_file_size=None)
+
     db.commit()
+    if staged_attachment_id:
+        delete_attachment_best_effort(db, document.user_id, staged_attachment_id)
     _record_transition(
         "knowledge.index.finalize.failed",
         document_id=document_id,
@@ -549,6 +620,8 @@ def _skip_import_attempt(
 def begin_external_import_attempt(
     db: Session,
     document_id: int,
+    *,
+    allow_success: bool = False,
 ) -> ExternalImportAttemptDecision:
     """
     Claim the next processing generation for an external document import.
@@ -556,7 +629,9 @@ def begin_external_import_attempt(
     Every background import run advances ``index_generation`` so a concurrent
     or redelivered older task immediately loses its write right (its guarded
     writes match on the generation it claimed). Skips documents that are
-    missing, have no external identity, or are already successfully imported.
+    missing, have no external identity, or are already successfully imported
+    (unless ``allow_success`` — the explicit re-import update path, which
+    keeps the previous snapshot active while a new version is fetched).
     """
     document = (
         db.query(KnowledgeDocument)
@@ -575,7 +650,7 @@ def begin_external_import_attempt(
         )
 
     current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
-    if current_status == DocumentIndexStatus.SUCCESS:
+    if current_status == DocumentIndexStatus.SUCCESS and not allow_success:
         db.rollback()
         return _skip_import_attempt(
             document_id,

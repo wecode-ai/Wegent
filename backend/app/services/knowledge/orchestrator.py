@@ -1719,7 +1719,7 @@ class KnowledgeOrchestrator:
         generation: int,
     ) -> Dict[str, Any]:
         """
-        Attach fetched external content to a placeholder document and index it.
+        Attach fetched external content to an external document and index it.
 
         Creates the attachment from the provider-fetched body, then lands it on
         the document through a guarded write that requires the document to
@@ -1727,12 +1727,19 @@ class KnowledgeOrchestrator:
         ``generation``. Losing that race (user deleted the document, or a newer
         attempt superseded this one) raises ExternalImportLostWriteError after
         deleting the just-created attachment, so a deleted document is never
-        revived and no orphan is left behind. A previous attempt's attachment
-        is replaced (and deleted) only after the guarded write succeeds.
+        revived and no orphan is left behind.
+
+        A document that already holds a live snapshot (a previously successful
+        import) keeps serving that snapshot while the new version indexes: the
+        new attachment is staged in source_config["external"] and only swaps
+        in atomically when indexing succeeds. A document without a usable
+        snapshot (placeholder or failed import) takes the attachment
+        immediately. Provider metadata is refreshed in both paths; the user's
+        own name and folder are never overwritten.
 
         Args:
             db: Database session
-            document: Placeholder KnowledgeDocument with external identity
+            document: External KnowledgeDocument with external identity
             user: Document owner (used for indexing dispatch metadata)
             content: Fetched external document content
             generation: The import attempt's claimed index generation
@@ -1744,6 +1751,9 @@ class KnowledgeOrchestrator:
             ExternalImportLostWriteError: The attempt lost its write right.
         """
         from app.services.context import context_service
+        from app.services.knowledge.attachment_cleanup import (
+            delete_attachment_best_effort,
+        )
         from app.services.knowledge.external_document_providers import (
             ExternalImportLostWriteError,
         )
@@ -1773,7 +1783,47 @@ class KnowledgeOrchestrator:
         # expire_on_commit=True the ORM reloads the new value after commit.
         from datetime import datetime, timezone
 
+        # Refresh the provider-owned source metadata; never touch the user's
+        # own document name or folder.
+        merged_external = {
+            **document.external_source_config,
+            **dict(content.metadata or {}),
+        }
+        merged_source_config = dict(document.source_config or {})
+        merged_source_config["external"] = merged_external
+
+        keeps_live_snapshot = bool(document.is_active and document.attachment_id)
         previous_attachment_id = document.attachment_id
+        previous_pending_id = document.external_pending_attachment_id
+        staged_attachment_id: Optional[int] = None
+
+        if keeps_live_snapshot:
+            # Defer the swap: stage the new attachment and let the index
+            # success finalize (mark_document_index_succeeded) replace the
+            # snapshot atomically.
+            staged_attachment_id = attachment.id
+            merged_external["pending_attachment_id"] = attachment.id
+            merged_external["pending_file_size"] = len(content.content)
+            update_fields = {
+                KnowledgeDocument.source_config: merged_source_config,
+                KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
+                    tzinfo=None
+                ),
+            }
+        else:
+            # No live snapshot to preserve: land the attachment directly and
+            # drop any stale staging keys a superseded attempt left behind.
+            merged_external.pop("pending_attachment_id", None)
+            merged_external.pop("pending_file_size", None)
+            update_fields = {
+                KnowledgeDocument.attachment_id: attachment.id,
+                KnowledgeDocument.file_size: len(content.content),
+                KnowledgeDocument.source_config: merged_source_config,
+                KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
+                    tzinfo=None
+                ),
+            }
+
         updated = (
             db.query(KnowledgeDocument)
             .filter(
@@ -1782,16 +1832,7 @@ class KnowledgeOrchestrator:
                 KnowledgeDocument.external_resource_id == document.external_resource_id,
                 KnowledgeDocument.index_generation == generation,
             )
-            .update(
-                {
-                    KnowledgeDocument.attachment_id: attachment.id,
-                    KnowledgeDocument.file_size: len(content.content),
-                    KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
-                        tzinfo=None
-                    ),
-                },
-                synchronize_session=False,
-            )
+            .update(update_fields, synchronize_session=False)
         )
         db.commit()
 
@@ -1800,7 +1841,7 @@ class KnowledgeOrchestrator:
             # attempt must not revive or overwrite it. Drop the attachment it
             # just created; older attachments still referenced elsewhere (or
             # already removed by the deleter) are not touched.
-            self._delete_external_import_attachment(db, document.user_id, attachment.id)
+            delete_attachment_best_effort(db, document.user_id, attachment.id)
             raise ExternalImportLostWriteError(
                 f"Document {document.id} was deleted or superseded while "
                 f"importing at generation {generation}"
@@ -1808,12 +1849,18 @@ class KnowledgeOrchestrator:
 
         db.refresh(document)
 
-        # A retry replaces the previous attempt's attachment; delete it now
-        # that the new one is referenced, so it does not linger as an orphan.
-        if previous_attachment_id and previous_attachment_id != attachment.id:
-            self._delete_external_import_attachment(
-                db, document.user_id, previous_attachment_id
+        # A superseded earlier attempt may have staged an attachment that this
+        # attempt now replaces; drop it so it does not linger as an orphan.
+        superseded_ids = [
+            attachment_id
+            for attachment_id in (
+                previous_pending_id,
+                None if keeps_live_snapshot else previous_attachment_id,
             )
+            if attachment_id and attachment_id != attachment.id
+        ]
+        for superseded_id in superseded_ids:
+            delete_attachment_best_effort(db, document.user_id, superseded_id)
 
         return self._schedule_indexing_celery(
             db=db,
@@ -1822,39 +1869,8 @@ class KnowledgeOrchestrator:
             user=user,
             trigger_summary=True,
             replace_active=True,
+            attachment_id_override=staged_attachment_id,
         )
-
-    @staticmethod
-    def _delete_external_import_attachment(
-        db: Session, owner_user_id: int, attachment_id: int
-    ) -> None:
-        """Best-effort delete of an attachment owned by an import attempt."""
-        from app.services.context.context_service import context_service as _ctx_svc
-
-        try:
-            deleted = _ctx_svc.delete_context(
-                db=db,
-                context_id=attachment_id,
-                user_id=owner_user_id,
-            )
-            if deleted:
-                logger.info(
-                    "[Orchestrator] Cleaned up external import attachment %s",
-                    attachment_id,
-                )
-            else:
-                logger.warning(
-                    "[Orchestrator] External import attachment %s could not be "
-                    "deleted; left for orphan cleanup",
-                    attachment_id,
-                )
-        except Exception as exc:
-            logger.warning(
-                "[Orchestrator] Failed to delete external import attachment "
-                "%s: %s; left for orphan cleanup",
-                attachment_id,
-                exc,
-            )
 
     def _create_and_index_document(
         self,
@@ -2109,6 +2125,7 @@ class KnowledgeOrchestrator:
         replace_active: bool = False,
         multimodal_dispatch_ctx: Optional[Any] = None,
         force_reconvert: bool = False,
+        attachment_id_override: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Schedule RAG indexing for a document via Celery.
@@ -2134,6 +2151,10 @@ class KnowledgeOrchestrator:
                 Markdown. Used by the "modify prompt & re-analyze" flow so a
                 changed prompt actually takes effect. The conversion callback
                 swaps in the new Markdown attachment and deletes the old one.
+            attachment_id_override: Index this attachment instead of the
+                document's current one. Used by the external import update
+                path, which stages the new version while the previous snapshot
+                keeps serving reads.
         """
         from app.services.knowledge.index_runtime import get_kb_index_info_by_record
         from app.services.knowledge.index_state_machine import (
@@ -2227,12 +2248,22 @@ class KnowledgeOrchestrator:
             normalized_extension = _normalize_file_extension(document.file_extension)
             converted_id = document.converted_attachment_id
             # Actual attachment dispatched to the index/conversion task. Defaults
-            # to the source attachment; the converted branch overrides it so the
-            # enqueue log reflects what really enters the RAG pipeline.
-            dispatched_attachment_id = document.attachment_id
+            # to the source attachment; the converted branch and the external
+            # update override replace it so the enqueue log reflects what
+            # really enters the RAG pipeline.
+            source_attachment_id = (
+                attachment_id_override
+                if attachment_id_override is not None
+                else document.attachment_id
+            )
+            dispatched_attachment_id = source_attachment_id
             pipeline = conversion_pipeline(normalized_extension, settings)
 
-            if converted_id and not (force_reconvert and pipeline == "multimodal"):
+            if (
+                converted_id
+                and attachment_id_override is None
+                and not (force_reconvert and pipeline == "multimodal")
+            ):
                 # Already converted — index directly using the converted attachment,
                 # skip re-conversion even if the file type normally requires it.
                 # Exception: a multimodal doc being force-reconverted (e.g. the
@@ -2311,7 +2342,7 @@ class KnowledgeOrchestrator:
                 attachment = (
                     db.query(SubtaskContext)
                     .filter(
-                        SubtaskContext.id == document.attachment_id,
+                        SubtaskContext.id == source_attachment_id,
                         SubtaskContext.context_type == ContextType.ATTACHMENT.value,
                     )
                     .first()
@@ -2324,19 +2355,19 @@ class KnowledgeOrchestrator:
                     "knowledge_doc_converter.convert_document",
                     kwargs={
                         "document_id": document.id,
-                        "attachment_id": document.attachment_id,
+                        "attachment_id": source_attachment_id,
                         "file_extension": normalized_extension,
                         "original_filename": original_filename,
                         "knowledge_base_name": knowledge_base.name,
                         "index_generation": generation,
                         "content_download_path": (
-                            f"/api/internal/attachments/{document.attachment_id}/download"
+                            f"/api/internal/attachments/{source_attachment_id}/download"
                         ),
                         "callback_status_path": "/api/internal/conversion/callback/status",
                         "callback_completed_path": "/api/internal/conversion/callback/completed",
                         "index_dispatch_payload": {
                             "knowledge_base_id": str(knowledge_base.id),
-                            "attachment_id": document.attachment_id,
+                            "attachment_id": source_attachment_id,
                             "retriever_name": retriever_name,
                             "retriever_namespace": retriever_namespace,
                             "embedding_model_name": embedding_model_name,
@@ -2361,7 +2392,7 @@ class KnowledgeOrchestrator:
                 # Direct indexing (no conversion)
                 async_result = index_document_task.delay(
                     knowledge_base_id=str(knowledge_base.id),
-                    attachment_id=document.attachment_id,
+                    attachment_id=source_attachment_id,
                     retriever_name=retriever_name,
                     retriever_namespace=retriever_namespace,
                     embedding_model_name=embedding_model_name,

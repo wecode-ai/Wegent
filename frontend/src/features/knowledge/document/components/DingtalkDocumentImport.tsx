@@ -34,6 +34,8 @@ type DingtalkSourceKey = 'docs' | 'wikispace'
 export interface DingtalkBatchImportSummary {
   importedCount: number
   skippedCount: number
+  /** Already-imported documents queued for a re-import update. */
+  updatedCount: number
 }
 
 interface SourceState {
@@ -410,6 +412,7 @@ export function DingtalkDocumentImport({
               {t('document.upload.dingtalk.result', {
                 count: result.importedCount,
                 skipped: result.skippedCount,
+                updated: result.updatedCount,
               })}
             </span>
           </div>

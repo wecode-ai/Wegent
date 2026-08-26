@@ -58,7 +58,8 @@ jest.mock('@/hooks/useTranslation', () => ({
         'document.upload.dingtalk.sharedHint':
           'Imported content will be visible to knowledge base members',
         'document.upload.dingtalk.noPermission': 'You do not have permission to add documents',
-        'document.upload.dingtalk.result': 'Imported {{count}}, skipped {{skipped}}',
+        'document.upload.dingtalk.result':
+          'Imported {{count}}, updated {{updated}} already-imported documents, skipped {{skipped}}',
         'document.upload.dingtalk.done': 'Done',
         'document.upload.dingtalk.addFailed': 'Failed to import',
         'document.upload.dingtalk.submitButton': 'Import',
@@ -178,7 +179,9 @@ async function openDingtalkMode(props: Partial<Parameters<typeof DocumentUpload>
       open={true}
       onOpenChange={jest.fn()}
       onUploadComplete={jest.fn()}
-      onDingtalkImport={jest.fn().mockResolvedValue({ importedCount: 0, skippedCount: 0 })}
+      onDingtalkImport={jest
+        .fn()
+        .mockResolvedValue({ importedCount: 0, skippedCount: 0, updatedCount: 0 })}
       {...props}
     />
   )
@@ -329,7 +332,9 @@ describe('DocumentUpload dingtalk source', () => {
   })
 
   it('expands folder selections into document ids on submit', async () => {
-    const onDingtalkImport = jest.fn().mockResolvedValue({ importedCount: 2, skippedCount: 0 })
+    const onDingtalkImport = jest
+      .fn()
+      .mockResolvedValue({ importedCount: 2, skippedCount: 0, updatedCount: 0 })
     await openDingtalkMode({ onDingtalkImport })
 
     fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
@@ -389,7 +394,9 @@ describe('DocumentUpload dingtalk source', () => {
   })
 
   it('keeps selections from both directory sources in one submit', async () => {
-    const onDingtalkImport = jest.fn().mockResolvedValue({ importedCount: 2, skippedCount: 0 })
+    const onDingtalkImport = jest
+      .fn()
+      .mockResolvedValue({ importedCount: 2, skippedCount: 0, updatedCount: 0 })
     await openDingtalkMode({ onDingtalkImport })
 
     fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-3'))
@@ -405,7 +412,9 @@ describe('DocumentUpload dingtalk source', () => {
 
   it('shows the submit result with accurate counts', async () => {
     const onOpenChange = jest.fn()
-    const onDingtalkImport = jest.fn().mockResolvedValue({ importedCount: 2, skippedCount: 1 })
+    const onDingtalkImport = jest
+      .fn()
+      .mockResolvedValue({ importedCount: 2, skippedCount: 1, updatedCount: 3 })
     render(
       <DocumentUpload
         open={true}
@@ -421,7 +430,7 @@ describe('DocumentUpload dingtalk source', () => {
     fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
 
     expect(await screen.findByTestId('dingtalk-import-result')).toHaveTextContent(
-      'Imported 2, skipped 1'
+      'Imported 2, updated 3 already-imported documents, skipped 1'
     )
     // The dialog stays open until the user acknowledges the result.
     expect(onOpenChange).not.toHaveBeenCalled()

@@ -1155,7 +1155,14 @@ class KnowledgeDocumentResponse(BaseModel):
 
 
 class ExternalDocumentBatchImportSkipped(BaseModel):
-    """An external resource skipped because it is already imported."""
+    """An external resource skipped because its document is being processed."""
+
+    external_resource_id: str
+    name: str
+
+
+class ExternalDocumentBatchImportUpdated(BaseModel):
+    """An external resource whose existing document was queued for update."""
 
     external_resource_id: str
     name: str
@@ -1166,6 +1173,13 @@ class ExternalDocumentBatchImportResponse(BaseModel):
 
     imported: list[KnowledgeDocumentResponse]
     skipped_existing: list[ExternalDocumentBatchImportSkipped]
+    updated_existing: list[ExternalDocumentBatchImportUpdated] = Field(
+        default_factory=list,
+        description=(
+            "Already-imported resources whose existing document was queued "
+            "for a re-import update"
+        ),
+    )
     requested_count: int = Field(
         description="Number of distinct external resources in the request"
     )
