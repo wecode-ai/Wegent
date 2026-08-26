@@ -1930,6 +1930,45 @@ def test_ensure_pending_for_device_creates_and_resets_failed(test_db, test_user)
     assert row.desired_release_id == release.id
 
 
+def test_ensure_pending_for_device_recovers_from_concurrent_insert(
+    test_db, test_user, monkeypatch
+):
+    installed, release = _device_install(test_db, test_user.id)
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="concurrent-device",
+            desired_release_id=release.id,
+            state="pending",
+        )
+    )
+    test_db.commit()
+    service = PluginDeviceInstallationService()
+    device_row = service._device_row
+    stale_read = True
+
+    def read_after_concurrent_insert(db, installed_kind_id, device_id):
+        nonlocal stale_read
+        if stale_read:
+            stale_read = False
+            return None
+        return device_row(db, installed_kind_id, device_id)
+
+    monkeypatch.setattr(service, "_device_row", read_after_concurrent_insert)
+
+    changed = service.ensure_pending_for_device(
+        test_db,
+        user_id=test_user.id,
+        device_id="concurrent-device",
+    )
+
+    assert changed == 0
+    rows = test_db.query(PluginDeviceInstallation).all()
+    assert len(rows) == 1
+    assert rows[0].state == "pending"
+
+
 def test_auto_update_stops_after_three_failures_until_manual_retry(test_db, test_user):
     installed, old_release = _device_install(test_db, test_user.id)
     new_release = PluginRelease(
