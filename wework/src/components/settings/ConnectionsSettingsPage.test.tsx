@@ -184,6 +184,8 @@ function remoteDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
 describe('ConnectionsSettingsPage', () => {
   const api = {
     getAllDevices: vi.fn(),
+    getGitAccountSyncSummary: vi.fn(),
+    syncGitAccounts: vi.fn(),
     startTerminal: vi.fn(),
     startCodeServer: vi.fn(),
     createCloudDevice: vi.fn(),
@@ -261,6 +263,31 @@ describe('ConnectionsSettingsPage', () => {
       })
     )
     createDeviceApiMock.mockReturnValue(api)
+    api.getGitAccountSyncSummary.mockResolvedValue({
+      accounts: [
+        {
+          id: 'git-1',
+          domain: 'git.example.com',
+          provider: 'gitlab',
+          login: 'alice',
+          email: 'alice@example.com',
+          effective: true,
+          duplicate_of: null,
+        },
+      ],
+      effective_count: 1,
+      duplicate_count: 0,
+    })
+    api.syncGitAccounts.mockResolvedValue({
+      device_id: 'remote-device',
+      status: 'synced',
+      synced_domains: ['git.example.com'],
+      removed_domains: [],
+      duplicate_domains: [],
+      identity_warning_domains: [],
+      cli: [],
+      warning_codes: [],
+    })
     userApi.getRuntimeConfig.mockResolvedValue({
       runtime: 'codex',
       display_name: 'Codex',
@@ -1617,6 +1644,23 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
     expect(screen.getByText('远程设备')).toBeInTheDocument()
     expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
+  })
+
+  test('shows device Git configuration after the cloud and remote device list', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({ device_id: 'cloud-claude', name: 'Cloud Claude Device' }),
+      remoteDevice({ device_id: 'remote-docker', name: 'Remote Alias' }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const deviceList = await screen.findByText('Cloud Claude Device')
+    const gitSyncSection = await screen.findByTestId('git-device-sync-section')
+    expect(
+      deviceList.compareDocumentPosition(gitSyncSection) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(gitSyncSection).toHaveTextContent('gitlab · git.example.com')
+    expect(screen.getByRole('option', { name: 'Remote Alias · remote' })).toBeInTheDocument()
   })
 
   test('does not show the current app backend registration in cloud connections', async () => {

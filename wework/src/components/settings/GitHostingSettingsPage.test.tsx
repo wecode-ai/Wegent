@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ApiError } from '@/api/http'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import './../../../src/i18n'
+import { DeviceGitSyncSection } from './DeviceGitSyncSection'
 import { GitHostingSettingsPage } from './GitHostingSettingsPage'
 
 const getGitHostingCliStatus = vi.hoisted(() => vi.fn())
@@ -174,6 +175,7 @@ describe('GitHostingSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('change-request-status-switch'))
     expect(updateAppPreferences).toHaveBeenCalledWith({ changeRequestStatusEnabled: false })
+    expect(screen.queryByTestId('git-device-sync-section')).not.toBeInTheDocument()
   })
 
   test('offers login and installation configuration actions', async () => {
@@ -222,7 +224,7 @@ describe('GitHostingSettingsPage', () => {
   })
 
   test('syncs cloud Git accounts only to an explicitly selected eligible device', async () => {
-    render(<GitHostingSettingsPage />)
+    render(<DeviceGitSyncSection />)
 
     expect(await screen.findAllByText('gitlab · git.example.com')).toHaveLength(2)
     expect(screen.getByTestId('git-device-sync-duplicate-warning')).toBeInTheDocument()
@@ -256,7 +258,7 @@ describe('GitHostingSettingsPage', () => {
       cli: [],
       warning_codes: [],
     })
-    render(<GitHostingSettingsPage />)
+    render(<DeviceGitSyncSection />)
 
     await screen.findByText('云端尚未配置 Git 账户。')
     await userEvent.selectOptions(screen.getByTestId('git-device-sync-select'), 'remote-1')
@@ -286,7 +288,7 @@ describe('GitHostingSettingsPage', () => {
       ],
       warning_codes: ['stale_cleanup_failed'],
     })
-    render(<GitHostingSettingsPage />)
+    render(<DeviceGitSyncSection />)
 
     await screen.findAllByText('gitlab · git.example.com')
     await userEvent.selectOptions(screen.getByTestId('git-device-sync-select'), 'remote-1')
@@ -298,7 +300,7 @@ describe('GitHostingSettingsPage', () => {
 
   test('shows disconnected and load failure states without selecting a device', async () => {
     cloudConnection.isConnected = false
-    const { unmount } = render(<GitHostingSettingsPage />)
+    const { unmount } = render(<DeviceGitSyncSection />)
 
     expect(await screen.findByTestId('git-device-sync-disconnected')).toBeInTheDocument()
     expect(getGitAccountSyncSummary).not.toHaveBeenCalled()
@@ -306,7 +308,7 @@ describe('GitHostingSettingsPage', () => {
 
     cloudConnection.isConnected = true
     getGitAccountSyncSummary.mockRejectedValue(new Error('summary unavailable'))
-    render(<GitHostingSettingsPage />)
+    render(<DeviceGitSyncSection />)
 
     expect(await screen.findByTestId('git-device-sync-error')).toHaveTextContent(
       'summary unavailable'
@@ -318,7 +320,7 @@ describe('GitHostingSettingsPage', () => {
   test('marks an expired cloud session without rendering missing accounts', async () => {
     getGitAccountSyncSummary.mockRejectedValue(new ApiError('Could not validate credentials', 401))
 
-    render(<GitHostingSettingsPage />)
+    render(<DeviceGitSyncSection />)
 
     expect(await screen.findByTestId('git-device-sync-error')).toHaveTextContent(
       'Wegent 云端登录已失效'
@@ -330,7 +332,7 @@ describe('GitHostingSettingsPage', () => {
   test('explains when the connected Backend does not support Git sync', async () => {
     getGitAccountSyncSummary.mockRejectedValue(new ApiError('Not Found', 404))
 
-    render(<GitHostingSettingsPage />)
+    render(<DeviceGitSyncSection />)
 
     expect(await screen.findByTestId('git-device-sync-error')).toHaveTextContent(
       '当前 Wegent Backend 不支持设备 Git 配置同步'

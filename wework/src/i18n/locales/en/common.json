@@ -2312,7 +2312,7 @@
     "execution_environment_check_update": "Check for updates",
     "execution_environment_remove": "Remove",
     "git_hosting_settings_title": "Git hosting",
-    "git_hosting_settings_description": "Check GitHub CLI or GitLab CLI on this device and securely sync cloud Git accounts to a device you explicitly select.",
+    "git_hosting_settings_description": "Check GitHub CLI or GitLab CLI on this device and configure PR / MR status display.",
     "git_hosting_status_switch": "Show PR / MR status",
     "git_hosting_status_switch_description": "When enabled, Wework queries the current branch through gh or glab on the active device. No query is executed when this is disabled.",
     "git_hosting_cli_refresh": "Check again",

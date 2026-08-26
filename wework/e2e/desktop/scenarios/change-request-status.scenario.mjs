@@ -340,6 +340,15 @@ export async function createDesktopScenario({
         'true',
         'PR/MR status lookup should be enabled by default'
       )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="git-device-sync-section"]')),
+        0,
+        'Device Git configuration should not remain under Git hosting settings'
+      )
+      await control.command('click', '[data-testid="settings-nav-connections"]')
+      await control.command('waitFor', '[data-testid="cloud-connection-status-card"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', '[data-testid="git-device-sync-accounts"]', {
         text: 'gitlab · git.example.test',
         timeoutMs: uiTimeoutMs,
@@ -385,6 +394,10 @@ export async function createDesktopScenario({
       )
       await capture(control, 'change-request-status-05-settings-enabled.png', 'body')
 
+      await control.command('click', '[data-testid="settings-nav-git-hosting"]')
+      await control.command('waitFor', '[data-testid="git-hosting-settings-page"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="change-request-status-switch"]')
       await waitForAttribute(
         control,
