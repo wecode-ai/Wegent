@@ -151,7 +151,6 @@ fn worktree_error_code(error: &str) -> &'static str {
         "worktree_git_common_dir_unwritable",
         "worktree_ref_not_found",
         "worktree_target_conflict",
-        "worktree_device_mismatch",
         "worktree_persistent_storage_unverified",
     ]
     .into_iter()
