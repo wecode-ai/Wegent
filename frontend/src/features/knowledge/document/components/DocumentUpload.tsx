@@ -811,7 +811,7 @@ export function DocumentUpload({
             <Button
               variant="outline"
               size="sm"
-              className="h-9 px-4"
+              className="h-11 px-4"
               onClick={() => !state.isUploading && fileInputRef.current?.click()}
               disabled={state.isUploading}
             >
@@ -821,7 +821,7 @@ export function DocumentUpload({
             <Button
               variant="outline"
               size="sm"
-              className="h-9 px-4"
+              className="h-11 px-4"
               onClick={() => setUploadMode('text')}
               disabled={state.isUploading}
             >
@@ -832,7 +832,7 @@ export function DocumentUpload({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 px-4"
+                className="h-11 px-4"
                 onClick={() => setUploadMode('dingtalk')}
                 disabled={state.isUploading}
                 data-testid="dingtalk-source-button"

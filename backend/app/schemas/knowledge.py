@@ -64,8 +64,8 @@ class DocumentSourceType(str, Enum):
     EXTERNAL = "external"
 
 
-def reject_code_source_type(value: "DocumentSourceType") -> "DocumentSourceType":
-    """Refuse ``code`` on a public document create.
+def reject_internal_source_type(value: "DocumentSourceType") -> "DocumentSourceType":
+    """Refuse source types owned by dedicated ingestion paths.
 
     A code target is an indexed source file rather than a browsable page, so every
     reader-facing scope filters it out -- but the document count does not, which makes
@@ -77,6 +77,10 @@ def reject_code_source_type(value: "DocumentSourceType") -> "DocumentSourceType"
     if value == DocumentSourceType.CODE:
         raise ValueError(
             "'code' documents are written by the indexer, not through this API"
+        )
+    if value == DocumentSourceType.EXTERNAL:
+        raise ValueError(
+            "'external' documents are written through the external import API"
         )
     return value
 
@@ -998,7 +1002,7 @@ class KnowledgeDocumentCreate(MultimodalDocumentPromptMixin):
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = Field(default=DocumentSourceType.FILE)
 
-    _no_code_source = field_validator("source_type")(reject_code_source_type)
+    _no_internal_source = field_validator("source_type")(reject_internal_source_type)
     source_config: dict = Field(
         default_factory=dict,
         description="Source configuration (e.g., {'url': '...'} for table)",
@@ -1155,14 +1159,7 @@ class KnowledgeDocumentResponse(BaseModel):
 
 
 class ExternalDocumentBatchImportSkipped(BaseModel):
-    """An external resource skipped because its document is being processed."""
-
-    external_resource_id: str
-    name: str
-
-
-class ExternalDocumentBatchImportUpdated(BaseModel):
-    """An external resource whose existing document was queued for update."""
+    """An external resource skipped because it was already imported."""
 
     external_resource_id: str
     name: str
@@ -1173,13 +1170,6 @@ class ExternalDocumentBatchImportResponse(BaseModel):
 
     imported: list[KnowledgeDocumentResponse]
     skipped_existing: list[ExternalDocumentBatchImportSkipped]
-    updated_existing: list[ExternalDocumentBatchImportUpdated] = Field(
-        default_factory=list,
-        description=(
-            "Already-imported resources whose existing document was queued "
-            "for a re-import update"
-        ),
-    )
     requested_count: int = Field(
         description="Number of distinct external resources in the request"
     )
@@ -1782,7 +1772,7 @@ class KnowledgeDocumentCreateV1(BaseModel):
         ),
     )
 
-    _no_code_source = field_validator("source_type")(reject_code_source_type)
+    _no_internal_source = field_validator("source_type")(reject_internal_source_type)
     # source_type=text
     content: Optional[str] = Field(
         None,

@@ -752,7 +752,6 @@ export function DocumentList({
     return {
       importedCount: result.imported.length,
       skippedCount: result.skipped_existing.length,
-      updatedCount: result.updated_existing.length,
     }
   }
 

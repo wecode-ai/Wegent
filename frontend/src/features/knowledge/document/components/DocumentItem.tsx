@@ -263,8 +263,8 @@ export function DocumentItem({
       : isExternal && typeof externalSource?.url === 'string'
         ? externalSource.url
         : null
-  // The external source can no longer be reached (deleted or permission
-  // revoked); the last imported snapshot stays usable.
+  // The provider rejected the initial import because the source disappeared
+  // or access was revoked. The failed placeholder remains retryable.
   const isExternalSourceInaccessible = isExternal && externalSource?.status === 'inaccessible'
 
   // Get display name - for web documents, remove .md extension

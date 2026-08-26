@@ -367,7 +367,7 @@
         "external": "外部"
       },
       "sourceInaccessible": "来源不可访问",
-      "sourceInaccessibleHint": "外部来源已被删除或失去访问权限，已保留最后一次成功导入的内容",
+      "sourceInaccessibleHint": "外部来源已被删除或失去访问权限；恢复访问后可重试导入",
       "externalSource": {
         "lastImportedAt": "最近导入 {{time}}",
         "accessible": "来源正常"
@@ -604,7 +604,7 @@
         "limitError": "一次最多导入 50 篇文档，请减少选择后重试",
         "sharedHint": "导入的内容将对知识库成员可见",
         "noPermission": "你没有在当前知识库添加文档的权限",
-        "result": "已导入 {{count}} 篇，更新 {{updated}} 篇已导入文档，跳过 {{skipped}} 篇处理中文档",
+        "result": "已导入 {{count}} 篇，跳过 {{skipped}} 篇已导入文档",
         "done": "完成"
       },
       "videoModelNotSupported": "当前多模态分析模型不支持视频，请先在知识库设置中切换为支持视频的模型后再上传视频文件。"

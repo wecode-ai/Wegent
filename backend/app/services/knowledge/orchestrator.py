@@ -103,7 +103,8 @@ def _normalize_file_extension(file_extension: Optional[str]) -> str:
 def _build_filename(name: str, file_extension: str) -> str:
     """Build a safe filename for attachment upload."""
     ext = _normalize_file_extension(file_extension)
-    return f"{name}.{ext}"
+    suffix = f".{ext}"
+    return f"{name[: 255 - len(suffix)]}{suffix}"
 
 
 def _validate_document_read_paging(offset: int, limit: int) -> None:
@@ -1728,10 +1729,7 @@ class KnowledgeOrchestrator:
 
         Creates the attachment from the provider-fetched body, then lands it on
         the document through a guarded write (see ``_land_external_content``).
-        A document that already holds a live snapshot keeps serving that
-        snapshot while the new version indexes; a document without one takes
-        the attachment immediately. Provider metadata is refreshed in both
-        paths; the user's own name and folder are never overwritten.
+        The user's own name and folder are never overwritten.
 
         Args:
             db: Database session
@@ -1767,42 +1765,52 @@ class KnowledgeOrchestrator:
             subtask_id=0,
         )
 
-        # Capture the replaced attachment BEFORE the guarded write: with
-        # expire_on_commit=True the ORM reloads the new value after commit.
-        keeps_live_snapshot = bool(document.is_active and document.attachment_id)
+        # A failed initial attempt may already hold an attachment. Replace it
+        # on retry and clean it up after the guarded write succeeds.
         previous_attachment_id = document.attachment_id
-        previous_pending_id = document.external_pending_attachment_id
 
-        staged_attachment_id = self._land_external_content(
+        self._land_external_content(
             db,
             document,
             content,
             attachment,
             generation,
-            keeps_live_snapshot=keeps_live_snapshot,
         )
 
         db.refresh(document)
 
-        # A superseded earlier attempt may have staged an attachment that this
-        # attempt now replaces; drop it so it does not linger as an orphan.
-        superseded_ids = (
-            previous_pending_id,
-            None if keeps_live_snapshot else previous_attachment_id,
-        )
-        for superseded_id in superseded_ids:
-            if superseded_id and superseded_id != attachment.id:
-                delete_attachment_best_effort(db, document.user_id, superseded_id)
+        if previous_attachment_id and previous_attachment_id != attachment.id:
+            delete_attachment_best_effort(db, document.user_id, previous_attachment_id)
 
-        return self._schedule_indexing_celery(
+        result = self._schedule_indexing_celery(
             db=db,
             knowledge_base=kb,
             document=document,
             user=user,
             trigger_summary=True,
             replace_active=True,
-            attachment_id_override=staged_attachment_id,
         )
+        if not result["scheduled"]:
+            from app.schemas.knowledge import DocumentProcessingStage
+            from app.services.knowledge.index_state_machine import (
+                mark_document_index_enqueue_failed,
+            )
+            from app.services.knowledge.processing_errors import build_processing_error
+
+            mark_document_index_enqueue_failed(
+                db=db,
+                document_id=document.id,
+                generation=generation,
+                error=build_processing_error(
+                    stage=DocumentProcessingStage.DISPATCH,
+                    code="external_import_index_not_scheduled",
+                    message="External document indexing could not be started. Please retry.",
+                    retryable=True,
+                    generation=generation,
+                ),
+            )
+            db.refresh(document)
+        return result
 
     def _land_external_content(
         self,
@@ -1811,9 +1819,7 @@ class KnowledgeOrchestrator:
         content: ExternalDocumentContent,
         attachment: Any,
         generation: int,
-        *,
-        keeps_live_snapshot: bool,
-    ) -> Optional[int]:
+    ) -> None:
         """
         Land fetched content on the document through a guarded write.
 
@@ -1824,9 +1830,6 @@ class KnowledgeOrchestrator:
         ExternalImportLostWriteError, so a deleted document is never revived
         and no orphan is left behind.
 
-        Returns:
-            The staged attachment ID when the swap is deferred until index
-            success, else None (the attachment landed directly).
         """
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -1839,29 +1842,12 @@ class KnowledgeOrchestrator:
         merged_source_config = dict(document.source_config or {})
         merged_source_config["external"] = merged_external
 
-        staged_attachment_id: Optional[int] = None
-        if keeps_live_snapshot:
-            # Defer the swap: stage the new attachment and let the index
-            # success finalize (mark_document_index_succeeded) replace the
-            # snapshot atomically.
-            staged_attachment_id = attachment.id
-            merged_external["pending_attachment_id"] = attachment.id
-            merged_external["pending_file_size"] = len(content.content)
-            update_fields = {
-                KnowledgeDocument.source_config: merged_source_config,
-                KnowledgeDocument.updated_at: now,
-            }
-        else:
-            # No live snapshot to preserve: land the attachment directly and
-            # drop any stale staging keys a superseded attempt left behind.
-            merged_external.pop("pending_attachment_id", None)
-            merged_external.pop("pending_file_size", None)
-            update_fields = {
-                KnowledgeDocument.attachment_id: attachment.id,
-                KnowledgeDocument.file_size: len(content.content),
-                KnowledgeDocument.source_config: merged_source_config,
-                KnowledgeDocument.updated_at: now,
-            }
+        update_fields = {
+            KnowledgeDocument.attachment_id: attachment.id,
+            KnowledgeDocument.file_size: len(content.content),
+            KnowledgeDocument.source_config: merged_source_config,
+            KnowledgeDocument.updated_at: now,
+        }
 
         updated = (
             db.query(KnowledgeDocument)
@@ -1885,8 +1871,6 @@ class KnowledgeOrchestrator:
                 f"Document {document.id} was deleted or superseded while "
                 f"importing at generation {generation}"
             )
-
-        return staged_attachment_id
 
     def _create_and_index_document(
         self,
@@ -2141,7 +2125,6 @@ class KnowledgeOrchestrator:
         replace_active: bool = False,
         multimodal_dispatch_ctx: Optional[Any] = None,
         force_reconvert: bool = False,
-        attachment_id_override: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Schedule RAG indexing for a document via Celery.
@@ -2167,10 +2150,6 @@ class KnowledgeOrchestrator:
                 Markdown. Used by the "modify prompt & re-analyze" flow so a
                 changed prompt actually takes effect. The conversion callback
                 swaps in the new Markdown attachment and deletes the old one.
-            attachment_id_override: Index this attachment instead of the
-                document's current one. Used by the external import update
-                path, which stages the new version while the previous snapshot
-                keeps serving reads.
         """
         from app.services.knowledge.index_runtime import get_kb_index_info_by_record
         from app.services.knowledge.index_state_machine import (
@@ -2264,22 +2243,13 @@ class KnowledgeOrchestrator:
             normalized_extension = _normalize_file_extension(document.file_extension)
             converted_id = document.converted_attachment_id
             # Actual attachment dispatched to the index/conversion task. Defaults
-            # to the source attachment; the converted branch and the external
-            # update override replace it so the enqueue log reflects what
-            # really enters the RAG pipeline.
-            source_attachment_id = (
-                attachment_id_override
-                if attachment_id_override is not None
-                else document.attachment_id
-            )
+            # to the source attachment; the converted branch may replace it so
+            # the enqueue log reflects what really enters the RAG pipeline.
+            source_attachment_id = document.attachment_id
             dispatched_attachment_id = source_attachment_id
             pipeline = conversion_pipeline(normalized_extension, settings)
 
-            if (
-                converted_id
-                and attachment_id_override is None
-                and not (force_reconvert and pipeline == "multimodal")
-            ):
+            if converted_id and not (force_reconvert and pipeline == "multimodal"):
                 # Already converted — index directly using the converted attachment,
                 # skip re-conversion even if the file type normally requires it.
                 # Exception: a multimodal doc being force-reconverted (e.g. the

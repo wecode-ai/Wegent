@@ -36,6 +36,12 @@ def upgrade() -> None:
         "knowledge_documents",
         sa.Column("external_resource_id", sa.String(255), nullable=True),
     )
+    with op.batch_alter_table("knowledge_documents") as batch_op:
+        batch_op.create_check_constraint(
+            "ck_knowledge_documents_external_identity_pair",
+            "(external_provider IS NULL AND external_resource_id IS NULL) OR "
+            "(external_provider IS NOT NULL AND external_resource_id IS NOT NULL)",
+        )
     op.create_index(
         "uq_knowledge_documents_external",
         "knowledge_documents",
@@ -46,5 +52,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("uq_knowledge_documents_external", table_name="knowledge_documents")
+    with op.batch_alter_table("knowledge_documents") as batch_op:
+        batch_op.drop_constraint(
+            "ck_knowledge_documents_external_identity_pair", type_="check"
+        )
     op.drop_column("knowledge_documents", "external_resource_id")
     op.drop_column("knowledge_documents", "external_provider")

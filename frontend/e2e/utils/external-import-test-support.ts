@@ -72,7 +72,7 @@ export async function createExternalImportScenario(
       description: 'External document import E2E scenario',
       namespace: 'default',
       kb_type: 'classic',
-      rag_config_mode: 'disabled',
+      rag_config_mode: 'auto',
       summary_enabled: false,
     },
   })
@@ -143,7 +143,6 @@ export async function importViaApi(
   folderId = 0
 ): Promise<{
   imported: Array<{ id: number; name: string }>
-  updated_existing: Array<{ external_resource_id: string; name: string }>
   skipped_existing: Array<{ external_resource_id: string; name: string }>
 }> {
   const response = await request.post(

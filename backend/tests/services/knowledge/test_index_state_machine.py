@@ -533,165 +533,7 @@ class TestBeginExternalImportAttempt:
         assert document.index_status == DocumentIndexStatus.SUCCESS
         assert document.index_generation == 2
 
-
-class TestExternalUpdateFinalize:
-    """Success/failure handling for staged external document updates."""
-
-    def _create_external_document(
-        self,
-        test_db: Session,
-        test_user: User,
-        knowledge_base: Kind,
-        *,
-        attachment_id: int = 1111,
-        pending_attachment_id: int | None = 2222,
-        pending_file_size: int | None = 42,
-        index_status: DocumentIndexStatus = DocumentIndexStatus.INDEXING,
-        index_generation: int = 4,
-        is_active: bool = True,
-    ) -> KnowledgeDocument:
-        document = KnowledgeDocument(
-            kind_id=knowledge_base.id,
-            attachment_id=attachment_id,
-            name="Update Doc",
-            file_extension="md",
-            file_size=100,
-            user_id=test_user.id,
-            source_type="external",
-            source_config={
-                "external": {
-                    "provider": "dingtalk",
-                    "title": "Update Doc",
-                    "url": "https://alidocs.dingtalk.com/i/nodes/update",
-                    "status": "accessible",
-                }
-            },
-            external_provider="dingtalk",
-            external_resource_id="e" * 32,
-            index_status=index_status,
-            index_generation=index_generation,
-            is_active=is_active,
-            status="enabled" if is_active else "disabled",
-        )
-        if pending_attachment_id is not None:
-            document.external_pending_attachment_id = pending_attachment_id
-            document.update_external_source_config(pending_file_size=pending_file_size)
-        test_db.add(document)
-        test_db.commit()
-        test_db.refresh(document)
-        return document
-
-    def test_success_swaps_staged_attachment_atomically(
-        self,
-        test_db: Session,
-        test_user: User,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        from app.services.knowledge.index_state_machine import (
-            mark_document_index_succeeded,
-        )
-
-        knowledge_base = _create_knowledge_base(test_db, test_user)
-        document = self._create_external_document(test_db, test_user, knowledge_base)
-        deleted_ids: list[int] = []
-        monkeypatch.setattr(
-            "app.services.context.context_service.delete_context",
-            MagicMock(side_effect=lambda **kwargs: deleted_ids.append(kwargs)),
-        )
-
-        finalized = mark_document_index_succeeded(
-            db=test_db, document_id=document.id, generation=4
-        )
-
-        assert finalized is True
-        test_db.refresh(document)
-        # The staged version replaces the old snapshot in one transaction.
-        assert document.attachment_id == 2222
-        assert document.file_size == 42
-        assert document.index_status == DocumentIndexStatus.SUCCESS
-        external = document.source_config["external"]
-        assert "pending_attachment_id" not in external
-        assert "pending_file_size" not in external
-        assert external["status"] == "accessible"
-        assert external["last_success_at"]
-        # The replaced snapshot attachment is cleaned up afterwards.
-        assert deleted_ids == [
-            {"db": test_db, "context_id": 1111, "user_id": test_user.id}
-        ]
-
-    def test_failure_keeps_previous_snapshot(
-        self,
-        test_db: Session,
-        test_user: User,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        from app.services.knowledge.index_state_machine import (
-            mark_document_index_failed,
-        )
-
-        knowledge_base = _create_knowledge_base(test_db, test_user)
-        document = self._create_external_document(
-            test_db,
-            test_user,
-            knowledge_base,
-            index_status=DocumentIndexStatus.QUEUED,
-        )
-        deleted_ids: list[int] = []
-        monkeypatch.setattr(
-            "app.services.context.context_service.delete_context",
-            MagicMock(side_effect=lambda **kwargs: deleted_ids.append(kwargs)),
-        )
-
-        finalized = mark_document_index_failed(
-            db=test_db, document_id=document.id, generation=4
-        )
-
-        assert finalized is True
-        test_db.refresh(document)
-        # The old snapshot stays visible and usable; the staged copy is gone.
-        assert document.index_status == DocumentIndexStatus.FAILED
-        assert document.attachment_id == 1111
-        assert document.is_active is True
-        assert document.external_pending_attachment_id is None
-        assert document.processing_error_payload is not None
-        assert deleted_ids == [
-            {"db": test_db, "context_id": 2222, "user_id": test_user.id}
-        ]
-
-    def test_claim_can_update_a_successful_document(
-        self, test_db: Session, test_user: User
-    ) -> None:
-        from app.services.knowledge.index_state_machine import (
-            begin_external_import_attempt,
-        )
-
-        knowledge_base = _create_knowledge_base(test_db, test_user)
-        document = self._create_external_document(
-            test_db,
-            test_user,
-            knowledge_base,
-            pending_attachment_id=None,
-            index_status=DocumentIndexStatus.SUCCESS,
-        )
-
-        # Without the update flag a redelivered task still stands down.
-        skip = begin_external_import_attempt(test_db, document.id)
-        assert skip.should_execute is False
-        assert skip.reason == "already_imported"
-
-        decision = begin_external_import_attempt(
-            test_db, document.id, allow_success=True
-        )
-
-        assert decision.should_execute is True
-        assert decision.generation == 5
-        test_db.refresh(document)
-        assert document.index_status == DocumentIndexStatus.QUEUED
-        # The live snapshot keeps serving reads during the update.
-        assert document.is_active is True
-        assert document.attachment_id == 1111
-
-    def test_first_success_records_source_status_without_staging(
+    def test_first_success_records_external_source_health(
         self, test_db: Session, test_user: User
     ) -> None:
         from app.services.knowledge.index_state_machine import (
@@ -703,49 +545,21 @@ class TestExternalUpdateFinalize:
             test_db,
             test_user,
             knowledge_base,
-            pending_attachment_id=None,
             index_status=DocumentIndexStatus.INDEXING,
+            with_error=False,
         )
-
-        finalized = mark_document_index_succeeded(
-            db=test_db, document_id=document.id, generation=4
-        )
-
-        assert finalized is True
-        test_db.refresh(document)
-        external = document.source_config["external"]
-        assert external["status"] == "accessible"
-        assert external["last_success_at"]
-        assert document.attachment_id == 1111
-
-    def test_recovery_success_clears_inaccessible_state(
-        self, test_db: Session, test_user: User
-    ) -> None:
-        from app.services.knowledge.index_state_machine import (
-            mark_document_index_succeeded,
-        )
-
-        knowledge_base = _create_knowledge_base(test_db, test_user)
-        document = self._create_external_document(
-            test_db,
-            test_user,
-            knowledge_base,
-            pending_attachment_id=None,
-            index_status=DocumentIndexStatus.INDEXING,
-        )
-        # The source was previously reported inaccessible.
         document.update_external_source_config(
-            status="inaccessible", last_error="node not found"
+            status="inaccessible", last_error="old failure"
         )
         test_db.commit()
 
         finalized = mark_document_index_succeeded(
-            db=test_db, document_id=document.id, generation=4
+            test_db, document.id, document.index_generation
         )
 
         assert finalized is True
         test_db.refresh(document)
-        external = document.source_config["external"]
+        external = document.external_source_config
         assert external["status"] == "accessible"
-        assert "last_error" not in external
         assert external["last_success_at"]
+        assert "last_error" not in external

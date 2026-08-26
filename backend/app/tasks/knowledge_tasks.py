@@ -26,8 +26,45 @@ from app.services.knowledge.processing_errors import (
     build_processing_error,
     map_indexing_exception,
 )
+from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
+
+
+def _delete_late_index_if_document_was_deleted(
+    *,
+    db,
+    document_id: int,
+    knowledge_base_id: str,
+    user_id: int,
+) -> bool:
+    """Compensate a RAG write that completed after its document was deleted."""
+    from app.models.knowledge import KnowledgeDocument
+    from app.services.knowledge.indexing import get_kb_index_info
+    from app.services.rag.gateway_factory import get_delete_gateway
+    from app.services.rag.runtime_resolver import RagRuntimeResolver
+
+    exists = (
+        db.query(KnowledgeDocument.id)
+        .filter(KnowledgeDocument.id == document_id)
+        .first()
+    )
+    if exists is not None:
+        return False
+
+    kb_info = get_kb_index_info(
+        db=db,
+        knowledge_base_id=int(knowledge_base_id),
+        current_user_id=user_id,
+    )
+    delete_spec = RagRuntimeResolver().build_delete_runtime_spec(
+        db=db,
+        knowledge_base_id=int(knowledge_base_id),
+        document_ref=str(document_id),
+        index_owner_user_id=kb_info.index_owner_user_id,
+    )
+    asyncio.run(get_delete_gateway().delete_document_index(delete_spec, db=db))
+    return True
 
 
 def _build_stale_processing_error(
@@ -95,7 +132,14 @@ def _enqueue_document_summary_task(
     bind=True,
     name="app.tasks.knowledge_tasks.import_external_document",
 )
-def import_external_document_task(self, document_id: int, update: bool = False):
+@trace_sync(
+    span_name="knowledge.import_external_document",
+    tracer_name="knowledge.tasks",
+    extract_attributes=lambda self, document_id: {
+        "knowledge.document_id": document_id,
+    },
+)
+def import_external_document_task(self, document_id: int):
     """
     Celery task for importing one external provider document.
 
@@ -108,9 +152,6 @@ def import_external_document_task(self, document_id: int, update: bool = False):
 
     Args:
         document_id: Placeholder KnowledgeDocument ID with external identity
-        update: True when this run updates an already-imported document
-            (re-import); the claim may then start from a successful state and
-            the previous snapshot is preserved until the new index succeeds.
     """
     from app.models.knowledge import KnowledgeDocument
     from app.models.user import User
@@ -122,7 +163,7 @@ def import_external_document_task(self, document_id: int, update: bool = False):
     )
 
     with SessionLocal() as db:
-        attempt = begin_external_import_attempt(db, document_id, allow_success=update)
+        attempt = begin_external_import_attempt(db, document_id)
         if not attempt.should_execute:
             logger.info(
                 "[Celery External Import] Skipping document %s: %s",
@@ -363,10 +404,18 @@ def index_document_task(
                 )
 
             if not finalized:
+                with SessionLocal() as cleanup_db:
+                    deleted = _delete_late_index_if_document_was_deleted(
+                        db=cleanup_db,
+                        document_id=document_id,
+                        knowledge_base_id=knowledge_base_id,
+                        user_id=user_id,
+                    )
                 logger.info(
                     f"[Celery RAG Indexing] Task completed but finalization was skipped: "
                     f"task_id={task_id}, document_id={document_id}, "
-                    f"index_generation={index_generation}, reason=stale_or_already_finalized"
+                    f"index_generation={index_generation}, "
+                    f"reason=stale_or_already_finalized, deleted_late_index={deleted}"
                 )
                 return {
                     "status": "skipped",

@@ -60,6 +60,12 @@ class TestFileExtensionHelpers:
         assert _build_filename("document", "txt") == "document.txt"
         assert _build_filename("my-file", ".md") == "my-file.md"
 
+    def test_build_filename_fits_attachment_column(self):
+        filename = _build_filename("长" * 500, "md")
+
+        assert len(filename) == 255
+        assert filename.endswith(".md")
+
 
 class TestKnowledgeOrchestrator:
     """Tests for KnowledgeOrchestrator class."""

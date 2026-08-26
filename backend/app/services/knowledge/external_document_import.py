@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
+from app.models.knowledge import KnowledgeDocument
 from app.models.user import User
 from app.schemas.knowledge import ContentOrigin, DocumentProcessingStage
 from app.services.knowledge.external_document_providers import (
@@ -32,8 +32,7 @@ from app.services.knowledge.external_document_providers import (
 )
 from app.services.knowledge.folder_policy import assert_document_can_be_placed_in_folder
 from app.services.knowledge.index_state_machine import (
-    ACTIVE_INDEX_STATUSES,
-    begin_external_import_attempt,
+    mark_document_index_enqueue_failed,
     mark_document_index_failed,
     prepare_document_index_enqueue,
 )
@@ -44,19 +43,17 @@ logger = logging.getLogger(__name__)
 
 # Maximum external documents a single batch import may create.
 MAX_EXTERNAL_BATCH_IMPORT = 50
+MAX_DOCUMENT_NAME_LENGTH = 255
+
+
+def _external_document_name(external_meta: dict) -> str:
+    """Fit the display name to the document column without losing source metadata."""
+    return str(external_meta["title"])[:MAX_DOCUMENT_NAME_LENGTH]
 
 
 @dataclass
 class SkippedExternalDocument:
-    """An external resource skipped because its document is in progress."""
-
-    resource_id: str
-    name: str
-
-
-@dataclass
-class UpdatedExternalDocument:
-    """An external resource whose existing document was queued for update."""
+    """An external resource skipped because it is already imported."""
 
     resource_id: str
     name: str
@@ -68,7 +65,6 @@ class ExternalDocumentBatchImportResult:
 
     imported: list[KnowledgeDocument]
     skipped_existing: list[SkippedExternalDocument]
-    updated_existing: list[UpdatedExternalDocument]
     requested_count: int
 
 
@@ -84,16 +80,15 @@ class ExternalDocumentImportService:
         external_resource_id: str,
         folder_id: int = 0,
     ) -> KnowledgeDocument:
-        """Validate the request and create or update the document record.
+        """Validate the request and create the document record.
 
         A new external resource gets a placeholder document whose body is
-        fetched by a background task. Re-importing a resource that already
-        has a document in this knowledge base reuses that record: it is
-        queued for an update (re-fetch body + re-index) while the user's own
-        name and folder are preserved.
+        fetched by a background task. An existing external identity is rejected;
+        the MVP refresh flow is delete then import, while failed first imports
+        use the dedicated retry interface.
 
         Returns:
-            The placeholder (new import) or existing document (update).
+            The new placeholder document.
 
         Raises:
             ExternalDocumentImportError: With the HTTP status to surface.
@@ -102,28 +97,31 @@ class ExternalDocumentImportService:
             db, user, knowledge_base_id, provider_id
         )
 
-        external_meta = provider.resolve_importable(db, user, external_resource_id)
-
         existing = self._find_existing_document(
             db, knowledge_base_id, provider.provider_id, external_resource_id
         )
         if existing is not None:
-            return self._redispatch_existing_import(db, user, existing)
+            raise ExternalDocumentImportError(
+                f"'{existing.name}' is already imported; delete it before importing "
+                "a fresh copy",
+                status_code=409,
+            )
+
+        external_meta = provider.resolve_importable(db, user, external_resource_id)
 
         try:
             document = KnowledgeService.create_external_document(
                 db=db,
                 knowledge_base_id=knowledge_base_id,
                 user_id=user.id,
-                name=external_meta["title"],
+                name=_external_document_name(external_meta),
                 external_provider=provider.provider_id,
                 external_resource_id=external_resource_id,
                 folder_id=folder_id,
                 external_meta=external_meta,
             )
         except IntegrityError:
-            # Concurrent duplicate submit hit the unique external identity:
-            # the winner's record exists now, update it instead.
+            # Concurrent duplicate submit hit the unique external identity.
             db.rollback()
             concurrent = self._find_existing_document(
                 db, knowledge_base_id, provider.provider_id, external_resource_id
@@ -132,9 +130,13 @@ class ExternalDocumentImportService:
                 raise ExternalDocumentImportError(
                     "This external document could not be imported; please retry"
                 ) from None
-            return self._redispatch_existing_import(db, user, concurrent)
+            raise ExternalDocumentImportError(
+                f"'{concurrent.name}' is already imported; delete it before "
+                "importing a fresh copy",
+                status_code=409,
+            ) from None
 
-        self._dispatch_import_task(document)
+        self._dispatch_import_task(db, document)
         logger.info(
             "[External Import] Created placeholder document %s for %s resource %s "
             "in KB %s",
@@ -142,49 +144,6 @@ class ExternalDocumentImportService:
             provider.provider_id,
             external_resource_id,
             knowledge_base_id,
-        )
-        return document
-
-    def _redispatch_existing_import(
-        self,
-        db: Session,
-        user: User,
-        document: KnowledgeDocument,
-    ) -> KnowledgeDocument:
-        """Queue an update for an already-imported external document.
-
-        Reuses the same KnowledgeDocument row: claims a fresh generation so
-        the document visibly enters the update flow, then re-dispatches the
-        background import. The previous snapshot keeps serving reads until
-        the new version's index succeeds; the user's name and folder are
-        never touched.
-
-        Raises:
-            ExternalDocumentImportError: With the HTTP status to surface.
-        """
-        current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
-        if current_status in ACTIVE_INDEX_STATUSES:
-            raise ExternalDocumentImportError(
-                f"'{document.name}' is still being imported or updated; "
-                "try again later",
-                status_code=409,
-            )
-
-        decision = begin_external_import_attempt(db, document.id, allow_success=True)
-        if not decision.should_execute:
-            raise ExternalDocumentImportError(
-                f"'{document.name}' cannot be updated right now "
-                f"({decision.reason})",
-                status_code=409,
-            )
-
-        db.refresh(document)
-        self._dispatch_import_task(document, update=True)
-        logger.info(
-            "[External Import] Update dispatched for existing document %s at "
-            "generation %s",
-            document.id,
-            decision.generation,
         )
         return document
 
@@ -200,9 +159,8 @@ class ExternalDocumentImportService:
         """Validate a batch import and create one placeholder per document.
 
         External identities are deduplicated up front. Already-imported
-        resources are queued for a re-import update on their existing record
-        (reported in ``updated_existing``); resources whose document is mid
-        import/update are skipped and reported instead of failing the batch.
+        resources are skipped and reported without changing or requeueing their
+        existing records.
         Raises ExternalDocumentImportError when the request itself is invalid.
         """
         provider = self._validate_import_context(
@@ -221,28 +179,22 @@ class ExternalDocumentImportService:
                 "in one batch"
             )
 
-        resolved, updates, skipped_existing = self._resolve_batch_items(
+        resolved, skipped_existing = self._resolve_batch_items(
             db, user, provider, knowledge_base_id, resource_ids
         )
         imported = self._create_batch_documents(
             db, user, provider, knowledge_base_id, folder_id, resolved, skipped_existing
         )
-        updated_existing = self._redispatch_batch_updates(
-            db, user, updates, skipped_existing
-        )
-
         logger.info(
             "[External Import] Batch import into KB %s created %s placeholder "
-            "documents, queued %s updates and skipped %s in-progress resources",
+            "documents and skipped %s existing resources",
             knowledge_base_id,
             len(imported),
-            len(updated_existing),
             len(skipped_existing),
         )
         return ExternalDocumentBatchImportResult(
             imported=imported,
             skipped_existing=skipped_existing,
-            updated_existing=updated_existing,
             requested_count=len(resource_ids),
         )
 
@@ -309,7 +261,7 @@ class ExternalDocumentImportService:
             raise ExternalDocumentImportError(message, status_code=status_code)
 
         db.refresh(document)
-        self._dispatch_import_task(document)
+        self._dispatch_import_task(db, document)
         logger.info(
             "[External Import] Retry dispatched for document %s at generation %s",
             document.id,
@@ -324,17 +276,12 @@ class ExternalDocumentImportService:
         provider: ExternalDocumentProvider,
         knowledge_base_id: int,
         resource_ids: list[str],
-    ) -> tuple[
-        list[tuple[str, dict]],
-        list[KnowledgeDocument],
-        list[SkippedExternalDocument],
-    ]:
-        """Classify the requested resources into new, updateable and skipped.
+    ) -> tuple[list[tuple[str, dict]], list[SkippedExternalDocument]]:
+        """Classify the requested resources into new and already imported.
 
         Every remaining resource is resolved before any placeholder is
         created so an invalid item rejects the whole batch without partial
-        placeholders. Documents mid import/update are skipped; settled ones
-        (successful or failed) are returned for a re-import update.
+        placeholders.
         """
         existing = {
             document.external_resource_id: document
@@ -345,61 +292,18 @@ class ExternalDocumentImportService:
             )
         }
         resolved: list[tuple[str, dict]] = []
-        updates: list[KnowledgeDocument] = []
         skipped: list[SkippedExternalDocument] = []
         for resource_id in resource_ids:
             existing_document = existing.get(resource_id)
             if existing_document is not None:
-                status = (
-                    existing_document.index_status or DocumentIndexStatus.NOT_INDEXED
+                skipped.append(
+                    SkippedExternalDocument(resource_id, existing_document.name)
                 )
-                if status in ACTIVE_INDEX_STATUSES:
-                    skipped.append(
-                        SkippedExternalDocument(resource_id, existing_document.name)
-                    )
-                else:
-                    updates.append(existing_document)
                 continue
             resolved.append(
                 (resource_id, provider.resolve_importable(db, user, resource_id))
             )
-        return resolved, updates, skipped
-
-    def _redispatch_batch_updates(
-        self,
-        db: Session,
-        user: User,
-        updates: list[KnowledgeDocument],
-        skipped_existing: list[SkippedExternalDocument],
-    ) -> list[UpdatedExternalDocument]:
-        """Queue re-import updates for already-imported batch documents.
-
-        A document another request settled between the classification and
-        the claim is reported as skipped, so the batch summary never loses
-        an item silently.
-        """
-        updated: list[UpdatedExternalDocument] = []
-        for document in updates:
-            try:
-                self._redispatch_existing_import(db, user, document)
-            except ExternalDocumentImportError as exc:
-                logger.info(
-                    "[External Import] Batch update of document %s skipped: %s",
-                    document.id,
-                    exc,
-                )
-                skipped_existing.append(
-                    SkippedExternalDocument(
-                        document.external_resource_id or "", document.name
-                    )
-                )
-                continue
-            updated.append(
-                UpdatedExternalDocument(
-                    document.external_resource_id or "", document.name
-                )
-            )
-        return updated
+        return resolved, skipped
 
     def _create_batch_documents(
         self,
@@ -419,7 +323,7 @@ class ExternalDocumentImportService:
                     db=db,
                     knowledge_base_id=knowledge_base_id,
                     user_id=user.id,
-                    name=external_meta["title"],
+                    name=_external_document_name(external_meta),
                     external_provider=provider.provider_id,
                     external_resource_id=resource_id,
                     folder_id=folder_id,
@@ -432,13 +336,15 @@ class ExternalDocumentImportService:
                 concurrent = self._find_existing_document(
                     db, knowledge_base_id, provider.provider_id, resource_id
                 )
+                if concurrent is None:
+                    raise ExternalDocumentImportError(
+                        "This external document could not be imported; please retry"
+                    ) from None
                 skipped_existing.append(
-                    SkippedExternalDocument(
-                        resource_id, concurrent.name if concurrent else ""
-                    )
+                    SkippedExternalDocument(resource_id, concurrent.name)
                 )
                 continue
-            self._dispatch_import_task(document)
+            self._dispatch_import_task(db, document)
             imported.append(document)
         return imported
 
@@ -493,13 +399,32 @@ class ExternalDocumentImportService:
         )
 
     @staticmethod
-    def _dispatch_import_task(
-        document: KnowledgeDocument, update: bool = False
-    ) -> None:
+    def _dispatch_import_task(db: Session, document: KnowledgeDocument) -> None:
         """Start the background body fetch for an external document."""
         from app.tasks.knowledge_tasks import import_external_document_task
 
-        import_external_document_task.delay(document_id=document.id, update=update)
+        try:
+            import_external_document_task.delay(document_id=document.id)
+        except Exception as exc:
+            generation = document.index_generation
+            mark_document_index_enqueue_failed(
+                db=db,
+                document_id=document.id,
+                generation=generation,
+                error=build_processing_error(
+                    stage=DocumentProcessingStage.DISPATCH,
+                    code="external_import_dispatch_failed",
+                    message="External import could not be started. Please retry.",
+                    retryable=True,
+                    generation=generation,
+                ),
+            )
+            db.refresh(document)
+            logger.exception(
+                "[External Import] Failed to dispatch document %s: %s",
+                document.id,
+                exc,
+            )
 
 
 def run_external_document_import(
@@ -517,8 +442,8 @@ def run_external_document_import(
     generations are ignored by the state machine); the placeholder itself is
     kept. A lost write right (document deleted or superseded mid-run) is not a
     failure: this attempt simply stands down. When the provider reports the
-    source is gone or access was revoked, the document's source metadata is
-    marked inaccessible while the last successful snapshot stays in place.
+    source is gone or access was revoked during the initial import, the
+    placeholder is marked inaccessible and remains available for retry.
     """
     from app.services.knowledge.orchestrator import knowledge_orchestrator
 
@@ -572,14 +497,11 @@ def _mark_external_source_unavailable(
     generation: int,
     message: str,
 ) -> None:
-    """Mark the source inaccessible and record the update failure.
+    """Mark the source inaccessible and record the initial import failure.
 
-    The document and its last successful snapshot are kept: the external
-    source being gone never deletes a Wegent document. Only a document with
-    a live snapshot keeps serving content; a placeholder that never imported
-    successfully simply records the failure reason. The source is only marked
-    when this attempt's failure actually landed (a stale generation must not
-    overwrite the outcome of a newer attempt).
+    The placeholder is kept for an explicit retry. The source is only marked
+    when this attempt's failure actually landed; a stale generation must not
+    overwrite the outcome of a newer attempt.
     """
     finalized = mark_document_index_failed(
         db=db,
@@ -589,9 +511,8 @@ def _mark_external_source_unavailable(
             stage=DocumentProcessingStage.SYSTEM,
             code="external_source_unavailable",
             message=(
-                "The external source is no longer accessible. The last "
-                "successful snapshot is kept; re-import after access is "
-                "restored."
+                "The external source is no longer accessible. Restore access "
+                "and retry the import."
             ),
             retryable=True,
             generation=generation,

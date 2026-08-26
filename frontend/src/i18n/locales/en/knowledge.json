@@ -367,7 +367,7 @@
         "external": "External"
       },
       "sourceInaccessible": "Source unavailable",
-      "sourceInaccessibleHint": "The external source was deleted or access was revoked; the last successful snapshot is kept",
+      "sourceInaccessibleHint": "The external source was deleted or access was revoked; restore access, then retry the import",
       "externalSource": {
         "lastImportedAt": "Last imported {{time}}",
         "accessible": "Source available"
@@ -604,7 +604,7 @@
         "limitError": "At most 50 documents can be imported at once. Reduce the selection and retry",
         "sharedHint": "Imported content will be visible to knowledge base members",
         "noPermission": "You do not have permission to add documents to this knowledge base",
-        "result": "Imported {{count}}, updated {{updated}} already-imported documents, skipped {{skipped}} documents in progress",
+        "result": "Imported {{count}}, skipped {{skipped}} already-imported documents",
         "done": "Done"
       },
       "videoModelNotSupported": "The current multimodal analysis model does not support video. Switch to a video-capable model in the knowledge base settings before uploading video files."

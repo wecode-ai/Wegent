@@ -45,8 +45,8 @@ class ExternalSourceUnavailableError(ExternalDocumentFetchError):
 
     Raised by ``fetch_content`` when the provider can positively tell the
     resource is gone (or permission was revoked). The import marks the
-    document's source as inaccessible while keeping the last successful
-    snapshot; it is distinct from a transient fetch failure.
+    document's source as inaccessible; it is distinct from a transient fetch
+    failure and the failed initial import may be retried.
     """
 
 

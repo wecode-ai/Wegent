@@ -59,7 +59,7 @@ jest.mock('@/hooks/useTranslation', () => ({
           'Imported content will be visible to knowledge base members',
         'document.upload.dingtalk.noPermission': 'You do not have permission to add documents',
         'document.upload.dingtalk.result':
-          'Imported {{count}}, updated {{updated}} already-imported documents, skipped {{skipped}}',
+          'Imported {{count}}, skipped {{skipped}} already-imported documents',
         'document.upload.dingtalk.done': 'Done',
         'document.upload.dingtalk.addFailed': 'Failed to import',
         'document.upload.dingtalk.submitButton': 'Import',
@@ -179,9 +179,7 @@ async function openDingtalkMode(props: Partial<Parameters<typeof DocumentUpload>
       open={true}
       onOpenChange={jest.fn()}
       onUploadComplete={jest.fn()}
-      onDingtalkImport={jest
-        .fn()
-        .mockResolvedValue({ importedCount: 0, skippedCount: 0, updatedCount: 0 })}
+      onDingtalkImport={jest.fn().mockResolvedValue({ importedCount: 0, skippedCount: 0 })}
       {...props}
     />
   )
@@ -217,7 +215,7 @@ describe('DocumentUpload dingtalk source', () => {
       />
     )
 
-    expect(screen.getByTestId('dingtalk-source-button')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-source-button')).toHaveClass('h-11')
   })
 
   it('shows the cached directory without syncing and displays last refresh time', async () => {
@@ -315,6 +313,8 @@ describe('DocumentUpload dingtalk source', () => {
 
     expect(await screen.findByTestId('dingtalk-document-option-doc-1')).toBeInTheDocument()
     expect(screen.queryByTestId('dingtalk-document-option-doc-3')).not.toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-import-breadcrumb-root')).toHaveClass('min-h-11')
+    expect(screen.getByTestId('dingtalk-import-cancel')).toHaveClass('min-h-11')
     fireEvent.click(screen.getByTestId('dingtalk-import-breadcrumb-root'))
     expect(screen.getByTestId('dingtalk-document-option-doc-3')).toBeInTheDocument()
   })
@@ -332,9 +332,7 @@ describe('DocumentUpload dingtalk source', () => {
   })
 
   it('expands folder selections into document ids on submit', async () => {
-    const onDingtalkImport = jest
-      .fn()
-      .mockResolvedValue({ importedCount: 2, skippedCount: 0, updatedCount: 0 })
+    const onDingtalkImport = jest.fn().mockResolvedValue({ importedCount: 2, skippedCount: 0 })
     await openDingtalkMode({ onDingtalkImport })
 
     fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
@@ -394,9 +392,7 @@ describe('DocumentUpload dingtalk source', () => {
   })
 
   it('keeps selections from both directory sources in one submit', async () => {
-    const onDingtalkImport = jest
-      .fn()
-      .mockResolvedValue({ importedCount: 2, skippedCount: 0, updatedCount: 0 })
+    const onDingtalkImport = jest.fn().mockResolvedValue({ importedCount: 2, skippedCount: 0 })
     await openDingtalkMode({ onDingtalkImport })
 
     fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-3'))
@@ -412,9 +408,7 @@ describe('DocumentUpload dingtalk source', () => {
 
   it('shows the submit result with accurate counts', async () => {
     const onOpenChange = jest.fn()
-    const onDingtalkImport = jest
-      .fn()
-      .mockResolvedValue({ importedCount: 2, skippedCount: 1, updatedCount: 3 })
+    const onDingtalkImport = jest.fn().mockResolvedValue({ importedCount: 2, skippedCount: 1 })
     render(
       <DocumentUpload
         open={true}
@@ -424,13 +418,14 @@ describe('DocumentUpload dingtalk source', () => {
       />
     )
     fireEvent.click(screen.getByTestId('dingtalk-source-button'))
+    expect(await screen.findByTestId('dingtalk-import-search')).toHaveClass('h-11')
     await screen.findByTestId('dingtalk-document-list')
 
     fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
     fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
 
     expect(await screen.findByTestId('dingtalk-import-result')).toHaveTextContent(
-      'Imported 2, updated 3 already-imported documents, skipped 1'
+      'Imported 2, skipped 1 already-imported documents'
     )
     // The dialog stays open until the user acknowledges the result.
     expect(onOpenChange).not.toHaveBeenCalled()

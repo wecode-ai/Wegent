@@ -15,6 +15,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
 )
@@ -158,7 +159,7 @@ class KnowledgeDocument(Base):
     )
     # External identity of an imported provider document. Both columns are NULL
     # together (regular documents) or set together (external documents); the
-    # application layer enforces the pairing, and (kind_id, external_provider,
+    # a database check constraint enforces the pairing, and (kind_id, external_provider,
     # external_resource_id) is the unique identity of an external document
     # within one knowledge base.
     external_provider = Column(String(32), nullable=True)
@@ -180,9 +181,8 @@ class KnowledgeDocument(Base):
         """Return the external source metadata stored in source_config.
 
         Holds the provider identity, source title / URL, import health
-        (``status``, ``last_success_at``, ``last_error``) and the transient
-        ``pending_attachment_id`` / ``pending_file_size`` of an in-flight
-        update. Always returns a dict; missing metadata reads as empty.
+        (``status``, ``last_success_at``, ``last_error``). Always returns a
+        dict; missing metadata reads as empty.
         """
         value = (self.source_config or {}).get("external")
         return dict(value) if isinstance(value, dict) else {}
@@ -198,16 +198,6 @@ class KnowledgeDocument(Base):
                 external[key] = value
         source_config["external"] = external
         self.source_config = source_config
-
-    @property
-    def external_pending_attachment_id(self) -> int | None:
-        """Attachment ID staged by an in-flight external update, if any."""
-        value = self.external_source_config.get("pending_attachment_id")
-        return int(value) if value is not None else None
-
-    @external_pending_attachment_id.setter
-    def external_pending_attachment_id(self, value: int | None) -> None:
-        self.update_external_source_config(pending_attachment_id=value)
 
     @property
     def converted_attachment_id(self) -> int | None:
@@ -268,6 +258,11 @@ class KnowledgeDocument(Base):
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "(external_provider IS NULL AND external_resource_id IS NULL) OR "
+            "(external_provider IS NOT NULL AND external_resource_id IS NOT NULL)",
+            name="ck_knowledge_documents_external_identity_pair",
+        ),
         # Index for listing documents in a knowledge base
         Index(
             "ix_knowledge_documents_kind_active_created",

@@ -9,15 +9,11 @@ import {
   createExternalImportScenario,
   createFolder,
   deleteDocument,
-  getDocument,
   getDocumentChunks,
   importThroughDialog,
   importViaApi,
   listDocuments,
-  moveDocument,
   openKnowledgeBase,
-  renameDocument,
-  syncDingtalkDocs,
   waitForDocument,
   ExternalImportScenarioContext,
 } from '../../utils/external-import-test-support'
@@ -147,29 +143,18 @@ test.describe('External DingTalk document import', () => {
     })
   })
 
-  test('re-importing updates the existing document and keeps user edits', async ({
+  test('duplicate import is skipped; delete then import creates a fresh copy', async ({
     page,
     request,
   }) => {
     test.setTimeout(180_000)
     await runScenario(request, 'duplicate', async context => {
-      const folderId = await createFolder(
-        request,
-        context.token,
-        context.knowledgeBaseId,
-        'E2E_整理文件夹'
-      )
       const imported = await importViaApi(request, context.token, context.knowledgeBaseId, [
         EXTERNAL_IMPORT_NODES.product,
       ])
       expect(imported.imported).toHaveLength(1)
       const documentId = imported.imported[0].id
       await waitForDocument(request, context.token, context.knowledgeBaseId, 'E2E_产品说明')
-
-      // User-side edits must survive the re-import update.
-      const renamed = 'E2E_产品说明_本地整理'
-      await renameDocument(request, context.token, documentId, renamed)
-      await moveDocument(request, context.token, documentId, folderId)
 
       await configureMockImport(request, {
         documentContents: {
@@ -179,28 +164,27 @@ test.describe('External DingTalk document import', () => {
 
       await openKnowledgeBase(page, context.knowledgeBaseId)
       await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product])
+      await expect(page.getByTestId('dingtalk-import-result')).toContainText('skipped 1')
       await page.getByTestId('dingtalk-import-done').click()
 
-      const updated = await waitForDocument(
-        request,
-        context.token,
-        context.knowledgeBaseId,
-        renamed
-      )
-      expect(updated.id).toBe(documentId)
-      expect(updated.index_status).toBe('success')
+      const unchangedChunks = await getDocumentChunks(request, context.token, documentId)
+      expect(unchangedChunks).toContain(EXTERNAL_IMPORT_MARKERS.productV1)
+      expect(unchangedChunks).not.toContain(EXTERNAL_IMPORT_MARKERS.productV2)
 
-      // Name and folder survive; the content snapshot is replaced.
-      const inFolder = await listDocuments(
+      await deleteDocument(request, context.token, documentId)
+      const fresh = await importViaApi(request, context.token, context.knowledgeBaseId, [
+        EXTERNAL_IMPORT_NODES.product,
+      ])
+      expect(fresh.imported).toHaveLength(1)
+      const freshDocument = await waitForDocument(
         request,
         context.token,
         context.knowledgeBaseId,
-        folderId
+        'E2E_产品说明'
       )
-      expect(inFolder.map(document => document.id)).toContain(documentId)
-      const chunks = await getDocumentChunks(request, context.token, documentId)
-      expect(chunks).toContain(EXTERNAL_IMPORT_MARKERS.productV2)
-      expect(chunks).not.toContain(EXTERNAL_IMPORT_MARKERS.productV1)
+      expect(freshDocument.id).not.toBe(documentId)
+      const freshChunks = await getDocumentChunks(request, context.token, freshDocument.id)
+      expect(freshChunks).toContain(EXTERNAL_IMPORT_MARKERS.productV2)
     })
   })
 
@@ -354,60 +338,6 @@ test.describe('External DingTalk document import', () => {
 
       const documents = await listDocuments(request, context.token, context.knowledgeBaseId)
       expect(documents).toHaveLength(0)
-    })
-  })
-
-  test('a stale source keeps the last snapshot and is marked inaccessible', async ({
-    page,
-    request,
-  }) => {
-    test.setTimeout(180_000)
-    await runScenario(request, 'stale-source', async context => {
-      const imported = await importViaApi(request, context.token, context.knowledgeBaseId, [
-        EXTERNAL_IMPORT_NODES.product,
-      ])
-      expect(imported.imported).toHaveLength(1)
-      const documentId = imported.imported[0].id
-      await waitForDocument(request, context.token, context.knowledgeBaseId, 'E2E_产品说明')
-
-      // The source disappears from the provider directory.
-      await configureMockImport(request, {
-        hiddenNodeIds: [EXTERNAL_IMPORT_NODES.product],
-      })
-      await syncDingtalkDocs(request, context.token)
-
-      // Re-importing the stale resource keeps the record and its snapshot.
-      const updated = await importViaApi(request, context.token, context.knowledgeBaseId, [
-        EXTERNAL_IMPORT_NODES.product,
-      ])
-      expect(updated.imported).toHaveLength(0)
-      expect(updated.updated_existing).toHaveLength(1)
-
-      await expect
-        .poll(
-          async () => {
-            const document = await getDocument(request, context.token, documentId)
-            const external = (document.source_config?.external ?? {}) as { status?: string }
-            return external.status ?? ''
-          },
-          {
-            timeout: 60_000,
-            message: 'Document source should be marked inaccessible',
-          }
-        )
-        .toBe('inaccessible')
-
-      const document = await getDocument(request, context.token, documentId)
-      expect(document.index_status).toBe('success')
-      expect(document.is_active).toBe(true)
-      const chunks = await getDocumentChunks(request, context.token, documentId)
-      expect(chunks).toContain(EXTERNAL_IMPORT_MARKERS.productV1)
-
-      // The list surfaces the inaccessible-source state.
-      await openKnowledgeBase(page, context.knowledgeBaseId)
-      await expect(page.getByTestId('external-source-inaccessible')).toBeVisible({
-        timeout: 30_000,
-      })
     })
   })
 })

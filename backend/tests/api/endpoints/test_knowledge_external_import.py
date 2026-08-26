@@ -223,7 +223,7 @@ class TestImportExternalDocument:
 
         assert response.status_code == 404
 
-    def test_reimport_updates_existing_document(
+    def test_reimport_of_successful_document_is_rejected(
         self,
         import_client: TestClient,
         test_db: Session,
@@ -256,11 +256,10 @@ class TestImportExternalDocument:
             json=_import_payload(node.dingtalk_node_id),
         )
 
-        # Re-import reuses the same record and queues an update.
-        assert second.status_code == 201
-        assert second.json()["id"] == document_id
+        assert second.status_code == 409
+        assert "already imported" in second.json()["detail"]
         assert test_db.query(KnowledgeDocument).count() == 1
-        assert dispatched == [document_id, document_id]
+        assert dispatched == [document_id]
 
     def test_rejects_reimport_while_import_in_progress(
         self,
@@ -434,11 +433,10 @@ class TestImportExternalDocumentBatch:
                 "name": "Existing Doc",
             }
         ]
-        assert data["updated_existing"] == []
         # Only the new placeholder was dispatched beyond the original import.
         assert len(dispatched) == 2
 
-    def test_updates_settled_documents_in_batch(
+    def test_skips_settled_documents_in_batch(
         self,
         import_client: TestClient,
         test_db: Session,
@@ -477,15 +475,14 @@ class TestImportExternalDocumentBatch:
         assert response.status_code == 201
         data = response.json()
         assert len(data["imported"]) == 1
-        assert data["skipped_existing"] == []
-        assert data["updated_existing"] == [
+        assert data["skipped_existing"] == [
             {
                 "external_resource_id": existing_node.dingtalk_node_id,
                 "name": "Settled Doc",
             }
         ]
-        # The settled document was re-dispatched for an update.
-        assert dispatched.count(document_id) == 2
+        # Only the new document was dispatched; the settled one is unchanged.
+        assert dispatched.count(document_id) == 1
 
     def test_places_batch_in_target_folder(
         self,

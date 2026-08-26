@@ -34,8 +34,6 @@ type DingtalkSourceKey = 'docs' | 'wikispace'
 export interface DingtalkBatchImportSummary {
   importedCount: number
   skippedCount: number
-  /** Already-imported documents queued for a re-import update. */
-  updatedCount: number
 }
 
 interface SourceState {
@@ -380,9 +378,10 @@ export function DingtalkDocumentImport({
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8 shrink-0"
+          className="h-11 w-11 shrink-0"
           onClick={onBack}
           disabled={submitting}
+          data-testid="dingtalk-import-back"
         >
           <ArrowLeft className="w-4 h-4" />
         </Button>
@@ -412,7 +411,6 @@ export function DingtalkDocumentImport({
               {t('document.upload.dingtalk.result', {
                 count: result.importedCount,
                 skipped: result.skippedCount,
-                updated: result.updatedCount,
               })}
             </span>
           </div>
@@ -475,7 +473,7 @@ export function DingtalkDocumentImport({
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
                 <Input
-                  className="pl-9"
+                  className="h-11 pl-9"
                   placeholder={t('document.upload.dingtalk.searchPlaceholder')}
                   value={searchQuery}
                   onChange={event => setSearchQuery(event.target.value)}
@@ -518,7 +516,7 @@ export function DingtalkDocumentImport({
                   >
                     <button
                       type="button"
-                      className="text-text-secondary hover:text-text-primary"
+                      className="inline-flex min-h-11 items-center text-text-secondary hover:text-text-primary"
                       onClick={() => setPath([])}
                       data-testid="dingtalk-import-breadcrumb-root"
                     >
@@ -604,16 +602,28 @@ export function DingtalkDocumentImport({
 
       <div className="flex justify-end gap-2">
         {result !== null ? (
-          <Button variant="primary" onClick={handleDone} data-testid="dingtalk-import-done">
+          <Button
+            variant="primary"
+            className="min-h-11"
+            onClick={handleDone}
+            data-testid="dingtalk-import-done"
+          >
             {t('document.upload.dingtalk.done')}
           </Button>
         ) : (
           <>
-            <Button variant="outline" onClick={onBack} disabled={submitting}>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              onClick={onBack}
+              disabled={submitting}
+              data-testid="dingtalk-import-cancel"
+            >
               {t('common:actions.cancel')}
             </Button>
             <Button
               variant="primary"
+              className="min-h-11"
               onClick={handleSubmit}
               disabled={!canSubmit}
               data-testid="dingtalk-import-submit"
