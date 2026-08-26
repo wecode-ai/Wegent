@@ -170,13 +170,12 @@ async fn large_runtime_rpc_does_not_pause_device_heartbeats() {
     config.reconnect_delay_max = Duration::from_millis(1);
     let handler = Arc::new(BlockingTranscriptHandler::default());
     let (event_tx, event_rx) = broadcast::channel(8);
-    let runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         config,
         transport.clone(),
         handler.clone(),
         event_rx,
-    )
-    .without_session_gateway();
+    );
     drop(event_tx);
 
     let runner_task = tokio::spawn(runner.run_forever());

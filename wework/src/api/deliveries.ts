@@ -324,6 +324,7 @@ export interface CloudProject {
   }
   board_config?: {
     group_by: 'status' | 'priority' | 'assignee' | 'tag'
+    processing_start_status_id: string | null
     statuses: Array<{
       id: string
       name: string
@@ -340,6 +341,7 @@ export interface CloudProject {
     prompt: string
   }
   workflow_definition?: ProjectWorkflowDefinition
+  workflow_automation_id?: string | null
   created_by_user_id: number
   current_user_id?: number
   current_user_name?: string
@@ -946,6 +948,7 @@ export function createDeliveryApi(client: HttpClient) {
         local_project_name?: string | null
         workflow?: IssueWorkflowInstance | null
         execution_config?: WorkflowExecutionConfig | null
+        automation_rule_id?: string | null
       }
     ): Promise<CloudLoopItem> {
       return client.post(`/v1/cloud-projects/${projectId}/loop-items`, data)
@@ -970,6 +973,7 @@ export function createDeliveryApi(client: HttpClient) {
         >
       > & {
         version: number
+        automation_rule_id?: string | null
       }
     ): Promise<CloudLoopItem> {
       return client.patch(`/v1/loop-items/${encodeURIComponent(itemId)}`, data)
@@ -1330,7 +1334,7 @@ export function createDeliveryApi(client: HttpClient) {
     getWorkflowStageContext(
       itemId: string,
       workflowNodeId: string
-    ): Promise<Record<string, unknown>> {
+    ): Promise<Record<string, unknown> & { compiled_task_instruction: string }> {
       return client.get(
         `/v1/loop-items/${encodeURIComponent(itemId)}/workflow-nodes/${encodeURIComponent(
           workflowNodeId

@@ -912,6 +912,7 @@ export function createLocalDeliveryApi(
         local_project_name?: string | null
         workflow?: CloudLoopItem['workflow']
         execution_config?: CloudLoopItem['execution_config']
+        automation_rule_id?: string | null
       }
     ) {
       const localProjectLabel =

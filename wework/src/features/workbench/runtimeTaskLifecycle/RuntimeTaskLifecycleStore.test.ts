@@ -608,7 +608,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.isBusy).toBe(false)
   })
 
-  test('recovers a new streaming turn after the previous turn completed', () => {
+  test('waits for executor confirmation before recovering a new transcript turn', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
     store.syncRuntimeWork(
@@ -630,10 +630,31 @@ describe('RuntimeTaskLifecycleStore', () => {
       })
     )
 
-    const snapshot = store.getTask(address)
-    expect(snapshot?.execution.phase).toBe('running')
-    expect(snapshot?.turn.phase).toBe('streaming')
-    expect(snapshot?.turn.id).toBe('turn-2')
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+
+    store.syncRuntimeWork(
+      runtimeWork(
+        task({
+          running: true,
+          status: 'active',
+          threadStatus: 'active',
+          turnStatus: 'inProgress',
+          runtimeHandle: { lastTurnId: 'turn-2' },
+        })
+      )
+    )
+    store.syncTranscript(
+      address,
+      transcript({
+        running: true,
+        turns: [{ id: 'turn-2', items: [], status: 'streaming' }],
+      })
+    )
+
+    expect(store.getTask(address)?.execution.phase).toBe('running')
+    expect(store.getTask(address)?.turn.phase).toBe('streaming')
+    expect(store.getTask(address)?.turn.id).toBe('turn-2')
   })
 
   test('recovers a streaming transcript after an explicit send restarts a completed task', () => {

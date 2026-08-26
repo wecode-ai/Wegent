@@ -48,12 +48,28 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
     onSubmit,
     disabled,
     error,
+    goalDraftActive,
+    onSetGoal,
+    onCancelGoalDraft,
   }: {
     onSubmit: (valueOverride?: string) => Promise<boolean>
     disabled?: boolean
     error?: string | null
+    goalDraftActive?: boolean
+    onSetGoal?: () => void
+    onCancelGoalDraft?: () => void
   }) => (
     <>
+      {onSetGoal ? (
+        <button type="button" data-testid="set-goal-button" onClick={onSetGoal}>
+          设置目标
+        </button>
+      ) : null}
+      {goalDraftActive ? (
+        <button type="button" data-testid="goal-draft-pill" onClick={onCancelGoalDraft}>
+          目标
+        </button>
+      ) : null}
       <button
         type="button"
         data-testid="mock-send"
@@ -207,6 +223,60 @@ describe('TemporaryChatPanel', () => {
         }),
       })
     )
+  })
+
+  it('creates a new formal task with the submitted text as its initial goal', async () => {
+    mocks.createTask.mockImplementation(async (_message, options) => {
+      options.onRuntimeTaskOptimisticOpen(address)
+      return address
+    })
+
+    render(
+      <TemporaryChatPanel
+        allowInitialGoal
+        currentProject={null}
+        source={null}
+        instanceId="goal-task"
+        createTask={mocks.createTask}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('set-goal-button'))
+    expect(screen.getByTestId('goal-draft-pill')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('mock-send'))
+
+    await waitFor(() => expect(mocks.createTask).toHaveBeenCalledTimes(1))
+    expect(mocks.createTask).toHaveBeenCalledWith(
+      '发送附件',
+      expect.objectContaining({
+        initialGoal: {
+          objective: '发送附件',
+          status: 'active',
+          tokenBudget: null,
+        },
+      })
+    )
+    expect(screen.queryByTestId('goal-draft-pill')).not.toBeInTheDocument()
+  })
+
+  it('does not offer initial Goal mode when continuing an existing task', () => {
+    mocks.activeModelSelection = {
+      modelName: 'moonshot-kimi-k2.7-code-highspeed',
+      modelType: 'public',
+      options: {},
+    }
+
+    render(
+      <TemporaryChatPanel
+        allowInitialGoal
+        currentProject={null}
+        source={address}
+        instanceId="existing-goal-task"
+        initialAddress={address}
+      />
+    )
+
+    expect(screen.queryByTestId('set-goal-button')).not.toBeInTheDocument()
   })
 
   it('continues an existing task with its immutable model instead of the global default', async () => {

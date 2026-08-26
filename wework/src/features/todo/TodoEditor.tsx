@@ -2163,8 +2163,11 @@ export function TodoEditor(props: TodoEditorProps) {
                       ) : null}
                       {workflowManager ||
                       ['planning', 'failed', 'paused'].includes(workflowPlanStatus) ? (
-                        <div
-                          className="mt-2 rounded-lg border border-border bg-background px-3 py-2"
+                        <button
+                          type="button"
+                          disabled={!openWorkflowManagerExecution}
+                          onClick={openWorkflowManagerExecution ?? undefined}
+                          className="mt-2 block w-full rounded-lg border border-border bg-background px-3 py-2 text-left transition-colors enabled:cursor-pointer enabled:hover:bg-muted/40 disabled:cursor-default"
                           data-testid="cloud-todo-workflow-manager-run"
                         >
                           <div className="flex items-center gap-2 text-xs">
@@ -2179,15 +2182,13 @@ export function TodoEditor(props: TodoEditorProps) {
                                   : workflowPlanStatusLabel)}
                             </span>
                             {openWorkflowManagerExecution ? (
-                              <button
-                                type="button"
+                              <span
                                 data-testid="cloud-todo-workflow-manager-open-execution"
-                                onClick={openWorkflowManagerExecution}
                                 className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
                               >
                                 <ExternalLink className="h-3.5 w-3.5" />
                                 {t('workbench.task_activity_view_execution')}
-                              </button>
+                              </span>
                             ) : null}
                           </div>
                           <p className="mt-1 truncate text-xs text-text-muted">
@@ -2195,7 +2196,7 @@ export function TodoEditor(props: TodoEditorProps) {
                               .filter(Boolean)
                               .join(' · ')}
                           </p>
-                        </div>
+                        </button>
                       ) : null}
                       {planItems.length > 0 ? (
                         <div className="mt-2 divide-y divide-border rounded-lg border border-border bg-background">

@@ -397,6 +397,7 @@ export interface RuntimeTaskSummary {
   queuePosition?: number | null
   goalStatus?: RuntimeGoalStatus | null
   optimistic?: boolean
+  cachedProjection?: boolean
   error?: string | null
   runtimeHandle?: Record<string, unknown> | null
   modelSelection?: ModelSelectionConfig | null

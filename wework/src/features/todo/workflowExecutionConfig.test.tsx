@@ -96,6 +96,28 @@ describe('workflow execution configuration', () => {
     })
   })
 
+  it('normalizes a missing workspace binding to the standalone form default', () => {
+    expect(
+      resolveWorkflowExecutionConfig(
+        {
+          agent_id: null,
+          runtime_profile_id: null,
+          execution_device_id: 'device-1',
+          model: 'model-1',
+          workspace_binding: null,
+        },
+        [],
+        []
+      )
+    ).toEqual({
+      agent_id: null,
+      runtime_profile_id: null,
+      execution_device_id: 'device-1',
+      model: 'model-1',
+      workspace_binding: { type: 'standalone' },
+    })
+  })
+
   it('preserves every explicit V2 execution capability when merging an Issue override', () => {
     const override = {
       agent_id: 'agent-1',
@@ -275,27 +297,24 @@ describe('workflow execution configuration', () => {
 
   it('checks the destination status when moving an inbox Issue into execution', () => {
     expect(
-      itemNeedsExecutionConfiguration(
-        {
-          status: 'inbox',
-          assignee_agent_id: null,
+      itemNeedsExecutionConfiguration({
+        status: 'inbox',
+        assignee_agent_id: null,
+        execution_config: null,
+        execution_state: null,
+        workflow: {
+          ...workflow(),
           execution_config: null,
-          execution_state: null,
-          workflow: {
-            ...workflow(),
-            execution_config: null,
-            nodes: [
-              {
-                ...workflow().nodes[0],
-                execution_mode: 'robot',
-                automation_rule_id: null,
-                execution_config: null,
-              },
-            ],
-          },
+          nodes: [
+            {
+              ...workflow().nodes[0],
+              execution_mode: 'robot',
+              automation_rule_id: null,
+              execution_config: null,
+            },
+          ],
         },
-        'in_progress'
-      )
+      })
     ).toBe(true)
   })
 
@@ -313,6 +332,7 @@ describe('workflow execution configuration', () => {
     render(
       <CloudTodoCardContent
         item={item}
+        processingStatus
         display={{ showAssignee: false, showPriority: false, showTags: false, showDate: false }}
       />
     )

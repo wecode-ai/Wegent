@@ -33,6 +33,8 @@ WeWork_<version>_linux_x64.AppImage
 
 Electron 版本通过 `electron-updater` 检查 `wework-updater` Release 中的
 `latest*.yml` 或 `beta*.yml`，下载完成后先关闭本地运行时，再安装并重启。
+如果所选通道尚未发布 Electron 版本，对应 YAML 清单可以不存在；客户端将其视为
+“暂无可用更新”，而不是网络错误。其他检查失败仍需原样报告。
 
 为让已安装的 Tauri 版本直接使用设置页的“升级”迁移到 Electron，同一次发布还会
 生成旧 updater 协议的 JSON 和签名产物：
@@ -97,3 +99,7 @@ pnpm --filter wework ai:verify start
 安装 `wework/electron` 自己的依赖，准备 bundled sidecars，再调用统一的 Electron
 构建命令。桌面资源变化应修改 `wework/resources/` 或 Electron 打包脚本，不要在
 workflow 中复制另一份资源列表。
+
+滚动通道只有在 Electron YAML 和三平台旧 Tauri JSON 清单全部存在时，才可因版本
+未变而跳过上传。相同版本但资产不完整时必须补齐；如果远端是不完整的更高版本，
+工作流必须失败，避免用旧版本覆盖。

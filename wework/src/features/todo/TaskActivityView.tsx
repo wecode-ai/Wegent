@@ -254,8 +254,8 @@ export function TaskActivityView({
   const workflowManagerRuntimeAddress = useMemo(() => {
     const address = workflowManagerMessage?.runtimeAddress
     if (!address?.deviceId || !address.taskId) return null
-    return findRuntimeTask(state.runtimeWork, address) ? address : null
-  }, [state.runtimeWork, workflowManagerMessage])
+    return address
+  }, [workflowManagerMessage])
   const workflowManagerBackendExecution = useMemo(
     () => (workflowManagerMessage ? backendTaskExecution(workflowManagerMessage) : null),
     [workflowManagerMessage]
@@ -280,7 +280,12 @@ export function TaskActivityView({
     }
     if (workflowManagerBackendExecution) {
       void openExternalUrl(workflowManagerBackendExecution.executionUrl)
+      return
     }
+    const card = listRef.current?.querySelector<HTMLElement>(
+      `[data-testid="cloud-task-activity-card-${workflowManagerMessage.messageId}"]`
+    )
+    card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [
     task.ai_state,
     workflowManagerBackendExecution,
@@ -290,18 +295,9 @@ export function TaskActivityView({
 
   useEffect(() => {
     if (!onWorkflowManagerExecutionChange) return
-    const available = Boolean(
-      workflowManagerMessage && (workflowManagerRuntimeAddress || workflowManagerBackendExecution)
-    )
-    onWorkflowManagerExecutionChange(available ? openWorkflowManagerExecution : null)
+    onWorkflowManagerExecutionChange(workflowManagerMessage ? openWorkflowManagerExecution : null)
     return () => onWorkflowManagerExecutionChange(null)
-  }, [
-    onWorkflowManagerExecutionChange,
-    openWorkflowManagerExecution,
-    workflowManagerBackendExecution,
-    workflowManagerMessage,
-    workflowManagerRuntimeAddress,
-  ])
+  }, [onWorkflowManagerExecutionChange, openWorkflowManagerExecution, workflowManagerMessage])
 
   useEffect(() => {
     if (!workflowManagerMessage || !onWorkflowManagerFinished) return

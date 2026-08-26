@@ -65,6 +65,7 @@ from app.services.loop_item_executions.service import (
 from app.services.loop_item_executions.wake import wake_robot_creator
 from app.services.loop_item_status_history import (
     STATUS_HISTORY_KEY,
+    is_processing_status,
     project_board_statuses,
     write_status_change,
 )
@@ -454,6 +455,7 @@ class LoopItemService:
         explicit_execution_config = values.execution_config
         payload.pop("workflow", None)
         payload.pop("execution_config", None)
+        payload.pop("automation_rule_id", None)
         agent_id = payload.get("assignee_agent_id")
         team_id = payload.get("assignee_team_id")
         payload["assignee_agent_id"] = agent_id or ""
@@ -596,7 +598,7 @@ class LoopItemService:
             item.completed_at = self._now()
         db.add(item)
         if agent_id and (
-            item.status in {"pending", "in_progress"} or automation_context is not None
+            is_processing_status(project, item.status) or automation_context is not None
         ):
             db.flush()
             agent = db.get(ProjectChatAgent, agent_id)
@@ -914,7 +916,10 @@ class LoopItemService:
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, edit=True)
-        updates = values.model_dump(exclude={"version"}, exclude_unset=True)
+        updates = values.model_dump(
+            exclude={"version", "automation_rule_id"},
+            exclude_unset=True,
+        )
         meaningful_change = any(
             field in values.model_fields_set
             and (
@@ -2244,11 +2249,14 @@ class LoopItemService:
                 and cancelled.runtime_task_id
             ) or (cancelled.team_id and cancelled.backend_task_id):
                 cancelled_runs.append(cancelled)
+        project = db.get(CloudProject, item.cloud_project_id)
+        if project is None:
+            raise RuntimeError("Assigned Issue project is unavailable")
         if (
             target_type == "agent"
             and agent is not None
             and (
-                item.status in {"pending", "in_progress"}
+                is_processing_status(project, item.status)
                 or automation_context is not None
             )
         ):

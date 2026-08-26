@@ -22,6 +22,14 @@ export interface DeviceInfo {
   runtime_instance_id?: string | null
   app_device_id?: string | null
   socket_device_id?: string | null
+  runtime_routes?: Array<{
+    kind: 'local-ipc' | 'cloud-relay' | 'remote-relay' | 'app-ipc'
+    device_id: string
+    runtime_device_id: string
+    device_type?: string | null
+    name?: string | null
+    status: DeviceInfo['status']
+  }>
   cloud_config?: {
     sandboxId?: string
     imageId?: string

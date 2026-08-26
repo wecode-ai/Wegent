@@ -39,49 +39,56 @@ export function isNewerWeworkVersion(candidate, current) {
   return compareWeworkVersions(candidate, current) > 0
 }
 
-export async function generatePlatformChannelManifest({
-  sourcePath,
-  outputDirectory,
-  channel,
-  platform,
-}) {
+export function expectedChannelAssetNames(channel) {
+  if (channel !== 'stable' && channel !== 'beta') {
+    throw new Error(`Unsupported Wework update channel: ${channel}`)
+  }
+
+  const electronChannel = channel === 'stable' ? 'latest' : 'beta'
+  return [
+    `${electronChannel}.yml`,
+    `${electronChannel}-mac.yml`,
+    `${channel}-darwin-aarch64.json`,
+    `${channel}-darwin-x86_64.json`,
+    `${channel}-windows-x86_64.json`,
+  ]
+}
+
+export function hasCompleteChannelAssets(assetNames, channel) {
+  const availableAssets = new Set(assetNames)
+  return expectedChannelAssetNames(channel).every(name => availableAssets.has(name))
+}
+
+export async function generateChannelManifests({ sourcePath, outputDirectory, channel }) {
   if (channel !== 'stable' && channel !== 'beta') {
     throw new Error(`Unsupported Wework update channel: ${channel}`)
   }
 
   const source = JSON.parse(await readFile(sourcePath, 'utf8'))
-  const [operatingSystem, ...architectureParts] = platform.split('-')
-  const architecture = architectureParts.join('-')
-  const target = `${channel}-${operatingSystem}`
-  const entry = source.platforms?.[platform]
-  if (!entry) {
-    throw new Error(`Missing platform '${platform}' in ${sourcePath}`)
-  }
-
-  await mkdir(outputDirectory, { recursive: true })
-  const outputPath = resolve(outputDirectory, `${target}-${architecture}.json`)
-  const data = {
-    version: source.version,
-    notes: source.notes,
-    pub_date: source.pub_date,
-    platforms: {
-      [target]: entry,
-    },
-  }
-  await writeFile(outputPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8')
-  return outputPath
-}
-
-export async function generateChannelManifests({ sourcePath, outputDirectory, channel }) {
   const platforms = ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64']
+  await mkdir(outputDirectory, { recursive: true })
 
   for (const platform of platforms) {
-    await generatePlatformChannelManifest({
-      sourcePath,
-      outputDirectory,
-      channel,
-      platform,
-    })
+    const [operatingSystem, ...architectureParts] = platform.split('-')
+    const architecture = architectureParts.join('-')
+    const target = `${channel}-${operatingSystem}`
+    const entry = source.platforms?.[platform]
+    if (!entry) {
+      throw new Error(`Missing platform '${platform}' in ${sourcePath}`)
+    }
+    const data = {
+      version: source.version,
+      notes: source.notes,
+      pub_date: source.pub_date,
+      platforms: {
+        [target]: entry,
+      },
+    }
+    await writeFile(
+      resolve(outputDirectory, `${target}-${architecture}.json`),
+      `${JSON.stringify(data, null, 2)}\n`,
+      'utf8'
+    )
   }
 }
 
@@ -96,6 +103,23 @@ async function main() {
     return
   }
 
+  if (command === 'has-complete-channel-assets') {
+    const [assetsPath, channel] = args
+    if (!assetsPath || !channel) {
+      throw new Error(
+        'Usage: update-channel-manifests.mjs has-complete-channel-assets <assets-json> <stable|beta>'
+      )
+    }
+    const payload = JSON.parse(await readFile(assetsPath, 'utf8'))
+    const assets = Array.isArray(payload) ? payload : payload.assets
+    if (!Array.isArray(assets)) {
+      throw new Error(`Expected an asset list in ${assetsPath}`)
+    }
+    const assetNames = assets.map(asset => (typeof asset === 'string' ? asset : asset.name))
+    process.exitCode = hasCompleteChannelAssets(assetNames, channel) ? 0 : 1
+    return
+  }
+
   if (command === 'generate') {
     const [sourcePath, outputDirectory, channel] = args
     if (!sourcePath || !outputDirectory || !channel) {
@@ -107,23 +131,7 @@ async function main() {
     return
   }
 
-  if (command === 'generate-platform') {
-    const [sourcePath, outputDirectory, channel, platform] = args
-    if (!sourcePath || !outputDirectory || !channel || !platform) {
-      throw new Error(
-        'Usage: update-channel-manifests.mjs generate-platform <source> <output-directory> <channel> <platform>'
-      )
-    }
-    await generatePlatformChannelManifest({
-      sourcePath,
-      outputDirectory,
-      channel,
-      platform,
-    })
-    return
-  }
-
-  throw new Error('Expected command: is-newer, generate, or generate-platform')
+  throw new Error('Expected command: is-newer, has-complete-channel-assets, or generate')
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Device-initiated cloud execution delivery.
+"""Executor-initiated execution delivery.
 
 The connected Executor owns the transport, so it pulls work through its current
 Socket.IO connection. MySQL remains the durable queue and the existing
@@ -34,18 +34,20 @@ def _runtime_prompt(payload: dict[str, Any]) -> str | None:
     return prompt if isinstance(prompt, str) else None
 
 
-def _claim_cloud_execution(
+def _claim_execution(
     *,
     owner_user_id: int,
-    device_id: str,
+    execution_target_id: str,
+    runtime_device_id: str,
     runtime_instance_id: str,
+    environment: str,
     runtime_capacity: dict[str, Any] | None,
 ) -> dict[str, Any]:
     with get_db_session() as db:
         capacity = validate_runtime_capacity_observation_sync(
             db,
             owner_user_id=owner_user_id,
-            device_id=device_id,
+            device_id=runtime_device_id,
             runtime_instance_id=runtime_instance_id,
             runtime_capacity=runtime_capacity,
         )
@@ -54,8 +56,9 @@ def _claim_cloud_execution(
 
         row = loop_item_execution_service.claim_next_for_device(
             db,
-            execution_device_id=device_id,
-            environment="cloud",
+            execution_device_id=execution_target_id,
+            runtime_device_id=runtime_device_id,
+            environment=environment,
             runtime_instance_id=runtime_instance_id,
             device_capacity=capacity.limit,
             runtime_active=capacity.active,
@@ -66,9 +69,11 @@ def _claim_cloud_execution(
             return {"success": True, "task": None}
 
         try:
-            payload = loop_item_execution_service.build_runtime_payload(
+            payload = loop_item_execution_service.build_executor_runtime_payload(
                 db,
                 execution=row,
+                execution_target_id=execution_target_id,
+                executor_device_id=runtime_device_id,
             )
         except WeworkRuntimeConfigurationError as exc:
             loop_item_execution_service.fail_runtime_preflight(
@@ -116,14 +121,16 @@ def _claim_cloud_execution(
         }
 
 
-def pull_cloud_execution(
+def pull_execution(
     *,
     owner_user_id: int,
-    device_id: str,
+    execution_target_id: str,
+    runtime_device_id: str,
     runtime_instance_id: str,
+    environment: str,
     runtime_capacity: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Atomically claim and materialize one cloud execution for a device."""
+    """Atomically claim and materialize one execution for this Runtime."""
 
     runtime_lock = f"robot_exec:{owner_user_id}:runtime:{runtime_instance_id}"
     with distributed_lock.acquire_context(
@@ -132,18 +139,20 @@ def pull_cloud_execution(
     ) as runtime_acquired:
         if not runtime_acquired:
             return {"success": True, "task": None}
-        return _claim_cloud_execution(
+        return _claim_execution(
             owner_user_id=owner_user_id,
-            device_id=device_id,
+            execution_target_id=execution_target_id,
+            runtime_device_id=runtime_device_id,
             runtime_instance_id=runtime_instance_id,
+            environment=environment,
             runtime_capacity=runtime_capacity,
         )
 
 
-def acknowledge_cloud_execution(
+def acknowledge_execution(
     *,
     owner_user_id: int,
-    device_id: str,
+    runtime_device_id: str,
     runtime_instance_id: str,
     execution_id: int,
     runtime_task_id: str,
@@ -158,7 +167,7 @@ def acknowledge_cloud_execution(
         if (
             row is None
             or row.executor_owner_user_id != owner_user_id
-            or row.runtime_device_id != device_id
+            or row.runtime_device_id != runtime_device_id
             or row.runtime_instance_id != runtime_instance_id
             or row.runtime_task_id != runtime_task_id
         ):
@@ -179,7 +188,7 @@ def acknowledge_cloud_execution(
             accepted_row = loop_item_execution_service.accept_runtime_and_open_activity(
                 db,
                 execution_id=execution_id,
-                runtime_device_id=device_id,
+                runtime_device_id=runtime_device_id,
                 runtime_task_id=runtime_task_id,
                 prompt=prompt,
             )
@@ -198,7 +207,7 @@ def acknowledge_cloud_execution(
         logger.warning(
             "[RobotQueue] Executor rejected pulled execution=%s device=%s error=%s",
             execution_id,
-            device_id,
+            runtime_device_id,
             error,
         )
         return {"success": failed is not None}

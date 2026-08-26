@@ -1,3 +1,5 @@
+import '@xyflow/react/dist/style.css'
+
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   CloudLoopItem,
@@ -5,51 +7,32 @@ import type {
   CloudProjectMember,
   ProjectWorkflowDefinition,
 } from '@/api/deliveries'
-import type { ProjectAutomationInput, ProjectAutomationRule } from '@/api/projectAutomations'
-import type { ProjectChatAgent } from '@/api/projectChatAgents'
-import type { RuntimeProfile } from '@/api/runtimeProfiles'
+import type { ProjectAutomationRule } from '@/api/projectAutomations'
+import type { ExecutionListApi } from '@/features/todo/ProjectQueueView'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CloneGitRepositoryInput,
   CreatedRuntimeProject,
   ProjectWithTasks,
   RuntimeWorkListResponse,
 } from '@/types/api'
-import { ProjectChatAgentsSection } from './ProjectChatAgentsSection'
-import { ProjectQueueView, type ExecutionListApi } from './ProjectQueueView'
-import { ProjectAutomationRulesSection } from './ProjectAutomationRulesSection'
-import { ProjectWorkflowEditor } from './ProjectWorkflowEditor'
-import { PullRequestAutomationSettings } from './PullRequestAutomationSettings'
-import { workflowExecutionConfigForAgent } from './workflowExecutionConfig'
+import { getLocalExecutorStatus } from '@/desktop/localExecutor'
+import { isCurrentAppDevice } from '@/lib/app-device-registration'
+import { useTranslation } from '@/hooks/useTranslation'
+import { AutomationRulesView } from './AutomationRulesView.jsx'
+import {
+  automationInputFromUi,
+  automationRuleFromLegacyWorkflow,
+  automationRuleFromBackend,
+  automationRunFromBackend,
+  legacyWorkflowFromAutomationRule,
+  type AutomationExecutionCatalog,
+  type AutomationUiRule,
+  type AutomationUiRun,
+} from './automationRuleBackend'
 
-type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
-
-export function ProjectAutomationView({
-  api,
-  project,
-  projectChatAgentApi,
-  projectAutomationApi,
-  runtimeProfileApi,
-  executionApi,
-  deviceApi,
-  modelApi,
-  teamApi,
-  pluginApi,
-  localProjects = [],
-  runtimeWork,
-  onCreateLocalCodeProject,
-  onGetDeviceHomeDirectory,
-  onListDeviceDirectories,
-  onCreateDeviceDirectory,
-  onCloneGitRepository,
-  currentUserId,
-  projectMembers = [],
-  canManageAgents,
-  onOpenTask,
-  onProjectUpdated,
-}: {
-  api: DeliveryApi
+interface ProjectAutomationViewProps {
+  api: NonNullable<WorkbenchServices['deliveryApi']>
   project: CloudProject
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
   projectAutomationApi?: WorkbenchServices['projectAutomationApi']
@@ -75,347 +58,618 @@ export function ProjectAutomationView({
   canManageAgents: boolean
   onOpenTask?: (item: CloudLoopItem) => void
   onProjectUpdated?: (project: CloudProject) => void
-}) {
-  const { t } = useTranslation('common')
-  const [workflowDefinition, setWorkflowDefinition] = useState<ProjectWorkflowDefinition>(
-    project.workflow_definition ?? { version: 1, nodes: [] }
+}
+
+interface ProjectAutomationRuleSnapshot {
+  rules: AutomationUiRule[]
+  runSources: AutomationRunSource[]
+}
+
+interface AutomationRunSource {
+  automationId: string
+  ruleId: string
+}
+
+interface ProjectAutomationRuleCacheEntry extends ProjectAutomationRuleSnapshot {
+  source: object
+  updatedAt: number
+}
+
+interface ProjectAutomationRuleLoadRequest {
+  source: object
+  promise: Promise<ProjectAutomationRuleSnapshot>
+}
+
+interface ExecutionCatalogCacheEntry {
+  deviceSource: object | undefined
+  modelSource: object | undefined
+  catalog: AutomationExecutionCatalog
+  updatedAt: number
+}
+
+interface ExecutionCatalogLoadRequest {
+  deviceSource: object | undefined
+  modelSource: object | undefined
+  promise: Promise<AutomationExecutionCatalog>
+}
+
+interface ExecutionPluginCacheEntry {
+  pluginSource: object | undefined
+  deviceIds: string
+  plugins: AutomationExecutionCatalog['plugins']
+  updatedAt: number
+}
+
+interface ExecutionPluginLoadRequest {
+  pluginSource: object | undefined
+  deviceIds: string
+  promise: Promise<AutomationExecutionCatalog['plugins']>
+}
+
+const AUTOMATION_CACHE_FRESH_MS = 30_000
+const AUTOMATION_RUN_REFRESH_MS = 15_000
+const projectAutomationRuleCache = new Map<string, ProjectAutomationRuleCacheEntry>()
+const projectAutomationRuleLoads = new Map<string, ProjectAutomationRuleLoadRequest>()
+const executionCatalogCache = new Map<string, ExecutionCatalogCacheEntry>()
+const executionCatalogLoads = new Map<string, ExecutionCatalogLoadRequest>()
+const executionPluginCache = new Map<string, ExecutionPluginCacheEntry>()
+const executionPluginLoads = new Map<string, ExecutionPluginLoadRequest>()
+
+function readProjectAutomationRuleCache(
+  cacheKey: string,
+  source: object | undefined
+): ProjectAutomationRuleCacheEntry | null {
+  if (!source) return null
+  const cached = projectAutomationRuleCache.get(cacheKey)
+  return cached?.source === source ? cached : null
+}
+
+function executionCatalogSourcesMatch(
+  entry: {
+    deviceSource: object | undefined
+    modelSource: object | undefined
+  },
+  deviceSource: object | undefined,
+  modelSource: object | undefined
+): boolean {
+  return entry.deviceSource === deviceSource && entry.modelSource === modelSource
+}
+
+function buildAutomationRuleSnapshot(
+  project: CloudProject,
+  backendRules: ProjectAutomationRule[]
+): ProjectAutomationRuleSnapshot {
+  const canonicalRule = project.workflow_automation_id
+    ? backendRules.find(rule => rule.id === project.workflow_automation_id)
+    : null
+  const legacyRule = canonicalRule ? null : automationRuleFromLegacyWorkflow(project, backendRules)
+  const legacyDefinition = project.workflow_definition
+  const runtimeDefinition = canonicalRule?.eventConfig.runtime_workflow_definition
+  const internalDefinition =
+    runtimeDefinition && typeof runtimeDefinition === 'object' && !Array.isArray(runtimeDefinition)
+      ? (runtimeDefinition as ProjectWorkflowDefinition)
+      : legacyDefinition
+  const internalRuleIds = new Set(
+    [
+      internalDefinition?.ai_automation_rule_id,
+      ...(internalDefinition?.nodes ?? []).map(node => node.automation_rule_id),
+    ].filter((ruleId): ruleId is string => Boolean(ruleId) && ruleId !== canonicalRule?.id)
   )
-  const [workflowBusy, setWorkflowBusy] = useState(false)
-  const [workflowError, setWorkflowError] = useState<string | null>(null)
-  const [pullRequestAutomationBusy, setPullRequestAutomationBusy] = useState(false)
-  const [pullRequestAutomationError, setPullRequestAutomationError] = useState<string | null>(null)
-  const projectVersionRef = useRef({ projectId: String(project.id), version: project.version })
-  const workflowEditRevisionRef = useRef(0)
-  const [automationRules, setAutomationRules] = useState<ProjectAutomationRule[]>([])
-  const [projectAgents, setProjectAgents] = useState<ProjectChatAgent[]>([])
-  const [runtimeProfiles, setRuntimeProfiles] = useState<RuntimeProfile[]>([])
-  const [robotCreateRequestKey, setRobotCreateRequestKey] = useState(0)
-  const robotCreateResolverRef = useRef<((agent: ProjectChatAgent | null) => void) | null>(null)
-  const [coordinatorCreateRequestKey, setCoordinatorCreateRequestKey] = useState(0)
-
-  useEffect(() => {
-    const projectId = String(project.id)
-    const versionRef = projectVersionRef.current
-    if (versionRef.projectId === projectId && versionRef.version === project.version) return
-    projectVersionRef.current = { projectId, version: project.version }
-    setWorkflowDefinition(project.workflow_definition ?? { version: 1, nodes: [] })
-  }, [project.id, project.version, project.workflow_definition])
-
-  useEffect(() => {
-    if (!runtimeProfileApi) return
-    let active = true
-    void runtimeProfileApi
-      .list()
-      .then(profiles => {
-        if (active) setRuntimeProfiles(profiles)
-      })
-      .catch(cause => {
-        if (active) {
-          setWorkflowError(cause instanceof Error ? cause.message : String(cause))
-        }
-      })
-    return () => {
-      active = false
+  const visibleBackendRules = backendRules.filter(rule => !internalRuleIds.has(rule.id))
+  const rules = [
+    ...(legacyRule ? [legacyRule] : []),
+    ...visibleBackendRules.map(automationRuleFromBackend),
+  ]
+  const runSources = rules.flatMap(rule => {
+    if (rule.origin === 'automation') {
+      return [{ automationId: rule.id, ruleId: rule.id }]
     }
-  }, [runtimeProfileApi])
+    return backendRules
+      .filter(backendRule => internalRuleIds.has(backendRule.id))
+      .map(backendRule => ({
+        automationId: backendRule.id,
+        ruleId: rule.id,
+      }))
+  })
+  return { rules, runSources }
+}
 
-  const handleRulesChange = useCallback((rules: ProjectAutomationRule[]) => {
-    setAutomationRules(current => {
-      const next = new Map(rules.map(rule => [rule.id, rule]))
-      for (const rule of current) {
-        if (rule.triggerType === 'workflow' && !next.has(rule.id)) next.set(rule.id, rule)
-      }
-      return [...next.values()]
+function clearedLegacyWorkflow(definition: ProjectWorkflowDefinition): ProjectWorkflowDefinition {
+  return {
+    version: definition.version,
+    stage_mode: 'none',
+    advancement_policy: 'manual',
+    coordinator_prompt: '',
+    approval_policy: 'required',
+    ai_automation_rule_id: null,
+    execution_config: null,
+    nodes: [],
+  }
+}
+
+async function loadAutomationRuns(
+  projectAutomationApi: NonNullable<WorkbenchServices['projectAutomationApi']>,
+  projectId: string,
+  runSources: AutomationRunSource[],
+  rules: AutomationUiRule[]
+): Promise<AutomationUiRun[]> {
+  const rulesById = new Map(rules.map(rule => [rule.id, rule]))
+  const runGroups = await Promise.all(
+    runSources.map(async source => {
+      const rule = rulesById.get(source.ruleId)
+      if (!rule) return []
+      const backendRuns = await projectAutomationApi.listRuns(projectId, source.automationId)
+      return backendRuns.map(run => automationRunFromBackend(run, rule))
     })
-  }, [])
-  const handleAgentsChange = useCallback((agents: ProjectChatAgent[]) => {
-    setProjectAgents(agents.filter(agent => agent.status === 'active'))
-  }, [])
-  const requestCreateRobot = useCallback(
-    () =>
-      new Promise<ProjectChatAgent | null>(resolve => {
-        robotCreateResolverRef.current?.(null)
-        robotCreateResolverRef.current = resolve
-        setRobotCreateRequestKey(current => current + 1)
-      }),
-    []
   )
-  const settleCreateRobot = useCallback((agent: ProjectChatAgent | null) => {
-    const resolve = robotCreateResolverRef.current
-    robotCreateResolverRef.current = null
-    resolve?.(agent)
-  }, [])
-  useEffect(
-    () => () => {
-      robotCreateResolverRef.current?.(null)
-      robotCreateResolverRef.current = null
-    },
-    []
-  )
-  const handleWorkflowChange = useCallback((definition: ProjectWorkflowDefinition) => {
-    workflowEditRevisionRef.current += 1
-    setWorkflowDefinition(definition)
-  }, [])
+  return runGroups
+    .flat()
+    .sort((left, right) => Date.parse(right.triggeredAt) - Date.parse(left.triggeredAt))
+}
 
-  const ensureStageRobotRule = useCallback(
-    async (config: {
-      roleSource: 'generic' | 'agent'
-      agentId: string | null
-      runtimeSource: 'issue_creator' | 'agent_default' | 'fixed_profile' | 'runtime_user'
-      runtimeProfileId: string | null
-      runtimeUserId: number | null
-    }): Promise<string | null> => {
-      const existing = automationRules.find(
-        rule =>
-          rule.triggerType === 'workflow' &&
-          rule.assignmentMode === 'manual' &&
-          rule.roleSource === config.roleSource &&
-          rule.agentId === config.agentId &&
-          rule.runtimeSource === config.runtimeSource &&
-          rule.runtimeProfileId === config.runtimeProfileId &&
-          rule.runtimeUserId === config.runtimeUserId
-      )
-      if (existing) return existing.id
-      const agent = config.agentId
-        ? projectAgents.find(candidate => candidate.id === config.agentId)
-        : null
-      if ((config.roleSource === 'agent' && !config.agentId) || !projectAutomationApi) return null
-      const input: ProjectAutomationInput = {
-        name: `Workflow · ${agent?.name ?? config.agentId ?? 'Generic AI'}`,
-        prompt: 'Use the workflow stage prompt as the concrete task instruction.',
-        triggerType: 'workflow',
-        eventType: null,
-        eventConfig: { workflowStageProfile: true },
-        cronExpression: null,
-        timezone: 'Asia/Shanghai',
-        enabled: true,
-        assignmentMode: 'manual',
-        managerType: null,
-        agentId: agent?.id ?? null,
-        wegentTeamId: null,
-        model: null,
-        executionEnvironment: null,
-        executionDeviceId: null,
-        roleSource: config.roleSource,
-        runtimeSource: config.runtimeSource,
-        runtimeProfileId: config.runtimeProfileId,
-        runtimeUserId: config.runtimeUserId,
+async function fetchExecutionCatalog(
+  deviceApi: WorkbenchServices['deviceApi'] | undefined,
+  modelApi: WorkbenchServices['modelApi'] | undefined,
+  unknownDeviceLabel: string
+): Promise<AutomationExecutionCatalog> {
+  const [devices, modelResponse, localStatus] = await Promise.all([
+    deviceApi?.listDevices() ?? Promise.resolve([]),
+    modelApi?.listModels() ?? Promise.resolve({ data: [] }),
+    getLocalExecutorStatus().catch(() => null),
+  ])
+  const localDeviceIds = localStatus?.deviceId?.trim() ? [localStatus.deviceId.trim()] : []
+  const availableDevices = devices.filter(device => device.status !== 'offline')
+  return {
+    environments: availableDevices.map(device => {
+      const local = isCurrentAppDevice(device, localDeviceIds)
+      return {
+        deviceId: device.device_id,
+        label: local ? '本机' : device.name?.trim() || unknownDeviceLabel,
+        executionEnvironment: local ? 'local' : 'cloud',
       }
-      const created = await projectAutomationApi.create(String(project.id), input)
-      setAutomationRules(current =>
-        current.some(rule => rule.id === created.id) ? current : [...current, created]
-      )
-      return created.id
-    },
-    [automationRules, project.id, projectAgents, projectAutomationApi]
-  )
+    }),
+    models: modelResponse.data
+      .filter(model => model.isActive !== false && !model.compatibilityDisabled)
+      .map(model => ({
+        name: model.name,
+        label: model.displayName || model.name,
+        type: model.type,
+        options: Object.fromEntries(
+          Object.entries(model.config ?? {}).flatMap(([key, value]) =>
+            typeof value === 'string' ? [[key, value]] : []
+          )
+        ),
+      })),
+    plugins: [],
+  }
+}
 
-  async function saveWorkflow(definition: ProjectWorkflowDefinition) {
-    if (workflowBusy) return
-    const savedEditRevision = workflowEditRevisionRef.current
-    setWorkflowBusy(true)
-    setWorkflowError(null)
-    try {
-      const snapshotDefinition: ProjectWorkflowDefinition = {
-        ...definition,
-        execution_config: null,
-        nodes: definition.nodes.map(node => {
-          if (!node.automation_rule_id) {
-            return {
-              ...node,
-              execution_config: null,
-              execution_config_override: false,
+async function fetchExecutionPlugins(
+  pluginApi: WorkbenchServices['pluginApi'] | undefined,
+  deviceIds: string[]
+): Promise<AutomationExecutionCatalog['plugins']> {
+  if (!pluginApi || deviceIds.length === 0) return []
+  const pluginGroups = await Promise.all(deviceIds.map(deviceId => pluginApi.listPlugins(deviceId)))
+  return Array.from(
+    new Map(
+      pluginGroups.flat().map(plugin => [
+        plugin.id,
+        {
+          id: plugin.id,
+          label: plugin.displayName || plugin.pluginName,
+          reference: { ...plugin },
+        },
+      ])
+    ).values()
+  )
+}
+
+export function ProjectAutomationView(props: ProjectAutomationViewProps) {
+  const { t } = useTranslation('common')
+  const {
+    api,
+    project,
+    projectAutomationApi,
+    deviceApi,
+    modelApi,
+    pluginApi,
+    currentUserId = project.current_user_id,
+    canManageAgents,
+    onProjectUpdated,
+  } = props
+  const projectId = String(project.id)
+  const cacheKey = `${projectId}:${String(currentUserId ?? '')}`
+  const projectRef = useRef(project)
+  const initialCache = readProjectAutomationRuleCache(cacheKey, projectAutomationApi)
+  const [rules, setRules] = useState<AutomationUiRule[]>(() => initialCache?.rules ?? [])
+  const [runs, setRuns] = useState<AutomationUiRun[]>([])
+  const [runSources, setRunSources] = useState<AutomationRunSource[]>(
+    () => initialCache?.runSources ?? []
+  )
+  const [runsLoaded, setRunsLoaded] = useState(false)
+  const runsRequestRef = useRef<Promise<AutomationUiRun[]> | null>(null)
+  const [loading, setLoading] = useState(() => !initialCache)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    projectRef.current = project
+  }, [project])
+
+  const load = useCallback(
+    async ({ force = false }: { force?: boolean } = {}) => {
+      if (!projectAutomationApi) {
+        setRules([])
+        setRunSources([])
+        setError('当前项目没有可用的自动化服务')
+        setLoading(false)
+        return
+      }
+      const cached = readProjectAutomationRuleCache(cacheKey, projectAutomationApi)
+      if (cached && !force && Date.now() - cached.updatedAt < AUTOMATION_CACHE_FRESH_MS) {
+        setLoading(false)
+        return
+      }
+      if (!cached) setLoading(true)
+      try {
+        let request = projectAutomationRuleLoads.get(cacheKey)
+        if (!request || request.source !== projectAutomationApi) {
+          const loadProject = projectRef.current
+          const promise = projectAutomationApi.list(projectId).then(async backendRules => {
+            const legacyRule = loadProject.workflow_automation_id
+              ? null
+              : automationRuleFromLegacyWorkflow(loadProject, backendRules)
+            if (!legacyRule) {
+              return buildAutomationRuleSnapshot(loadProject, backendRules)
+            }
+            if (!canManageAgents || currentUserId == null) {
+              throw new Error(
+                t(
+                  'cloud_project.legacy_workflow_upgrade_required',
+                  '旧版 Issue 编排需要由项目管理员完成自动升级'
+                )
+              )
+            }
+            const workflowDefinition = legacyWorkflowFromAutomationRule(legacyRule)
+            const result = await projectAutomationApi.migrateWorkflow(projectId, {
+              projectVersion: loadProject.version,
+              automation: automationInputFromUi(legacyRule, currentUserId),
+              workflowDefinition,
+            })
+            const updatedProject: CloudProject = {
+              ...loadProject,
+              workflow_automation_id: result.workflowAutomationId,
+              workflow_definition: clearedLegacyWorkflow(workflowDefinition),
+              version: result.projectVersion,
+            }
+            projectRef.current = updatedProject
+            onProjectUpdated?.(updatedProject)
+            return buildAutomationRuleSnapshot(updatedProject, [result.automation, ...backendRules])
+          })
+          request = { source: projectAutomationApi, promise }
+          projectAutomationRuleLoads.set(cacheKey, request)
+          const clearRequest = () => {
+            if (projectAutomationRuleLoads.get(cacheKey)?.promise === promise) {
+              projectAutomationRuleLoads.delete(cacheKey)
             }
           }
-          const rule = automationRules.find(candidate => candidate.id === node.automation_rule_id)
-          const agent = projectAgents.find(candidate => candidate.id === rule?.agentId)
-          const runtimeProfileId =
-            rule?.runtimeSource === 'fixed_profile'
-              ? rule.runtimeProfileId
-              : (agent?.defaultRuntimeProfileId ?? null)
-          const runtimeProfile = runtimeProfiles.find(
-            candidate => candidate.id === runtimeProfileId
-          )
-          return {
-            ...node,
-            execution_config: agent
-              ? workflowExecutionConfigForAgent(agent, runtimeProfile, runtimeProfileId)
-              : null,
-            execution_config_override: false,
-          }
-        }),
+          void promise.then(clearRequest, clearRequest)
+        }
+        const snapshot = await request.promise
+        projectAutomationRuleCache.set(cacheKey, {
+          ...snapshot,
+          source: projectAutomationApi,
+          updatedAt: Date.now(),
+        })
+        setRules(snapshot.rules)
+        setRunSources(snapshot.runSources)
+        setError('')
+      } catch (loadError) {
+        if (!cached) {
+          setError(loadError instanceof Error ? loadError.message : String(loadError))
+        }
+      } finally {
+        setLoading(false)
       }
-      const projectVersion =
-        projectVersionRef.current.projectId === String(project.id)
-          ? projectVersionRef.current.version
-          : project.version
-      const updated = await api.updateCloudProject(project.id, {
-        workflow_definition: {
-          ...snapshotDefinition,
-          version: definition.version + 1,
-        },
-        version: projectVersion,
-      })
-      projectVersionRef.current = {
-        projectId: String(project.id),
-        version: updated.version,
-      }
-      const savedDefinition = updated.workflow_definition ?? {
-        version: definition.version + 1,
-        nodes: [],
-      }
-      setWorkflowDefinition(current =>
-        workflowEditRevisionRef.current === savedEditRevision
-          ? savedDefinition
-          : { ...current, version: savedDefinition.version }
-      )
-      onProjectUpdated?.(updated)
-    } catch (cause) {
-      setWorkflowError(cause instanceof Error ? cause.message : t('todo.workflow_save_failed'))
-    } finally {
-      setWorkflowBusy(false)
-    }
-  }
+    },
+    [cacheKey, canManageAgents, currentUserId, onProjectUpdated, projectAutomationApi, projectId, t]
+  )
 
-  async function savePullRequestAutomation(
-    value: NonNullable<CloudProject['pull_request_automation']>
-  ) {
-    if (pullRequestAutomationBusy) return
-    setPullRequestAutomationBusy(true)
-    setPullRequestAutomationError(null)
-    try {
-      const projectVersion =
-        projectVersionRef.current.projectId === String(project.id)
-          ? projectVersionRef.current.version
-          : project.version
-      const updated = await api.updateCloudProject(project.id, {
-        pull_request_automation: value,
-        version: projectVersion,
+  useEffect(() => {
+    void Promise.resolve().then(() => load())
+  }, [load])
+
+  const refreshRuns = useCallback(async (): Promise<AutomationUiRun[]> => {
+    if (!projectAutomationApi) throw new Error('当前项目没有可用的自动化服务')
+    if (runsRequestRef.current) return runsRequestRef.current
+    const request = loadAutomationRuns(projectAutomationApi, projectId, runSources, rules)
+      .then(refreshedRuns => {
+        setRuns(refreshedRuns)
+        setRunsLoaded(true)
+        return refreshedRuns
       })
-      projectVersionRef.current = {
-        projectId: String(project.id),
-        version: updated.version,
+      .finally(() => {
+        if (runsRequestRef.current === request) runsRequestRef.current = null
+      })
+    runsRequestRef.current = request
+    return request
+  }, [projectAutomationApi, projectId, rules, runSources])
+
+  useEffect(() => {
+    if (!projectAutomationApi || !runsLoaded) return
+    let disposed = false
+    let refreshing = false
+    const refresh = async () => {
+      if (disposed || refreshing || document.visibilityState !== 'visible') return
+      refreshing = true
+      try {
+        await refreshRuns()
+      } catch (refreshError) {
+        console.error('[Wework project automation] run history refresh failed', {
+          projectId,
+          error: refreshError,
+        })
+      } finally {
+        refreshing = false
       }
-      onProjectUpdated?.(updated)
-    } catch (cause) {
-      setPullRequestAutomationError(
-        cause instanceof Error
-          ? cause.message
-          : t('workbench.pull_request_automation_save_failed', '保存 PR 自动修复设置失败')
-      )
-    } finally {
-      setPullRequestAutomationBusy(false)
     }
-  }
+    const interval = window.setInterval(() => void refresh(), AUTOMATION_RUN_REFRESH_MS)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      disposed = true
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [projectAutomationApi, projectId, refreshRuns, runsLoaded])
+
+  useEffect(() => {
+    if (!projectAutomationApi || loading || error) return
+    const cached = readProjectAutomationRuleCache(cacheKey, projectAutomationApi)
+    projectAutomationRuleCache.set(cacheKey, {
+      source: projectAutomationApi,
+      rules,
+      runSources,
+      updatedAt: cached?.updatedAt ?? Date.now(),
+    })
+  }, [cacheKey, error, loading, projectAutomationApi, rules, runSources])
+
+  const loadExecutionCatalog = useCallback(async (): Promise<AutomationExecutionCatalog> => {
+    const cached = executionCatalogCache.get(cacheKey)
+    if (
+      cached &&
+      executionCatalogSourcesMatch(cached, deviceApi, modelApi) &&
+      Date.now() - cached.updatedAt < AUTOMATION_CACHE_FRESH_MS
+    ) {
+      return cached.catalog
+    }
+    let request = executionCatalogLoads.get(cacheKey)
+    if (!request || !executionCatalogSourcesMatch(request, deviceApi, modelApi)) {
+      const promise = fetchExecutionCatalog(
+        deviceApi,
+        modelApi,
+        t('workbench.environment_device_unknown', '未知设备')
+      )
+      request = {
+        deviceSource: deviceApi,
+        modelSource: modelApi,
+        promise,
+      }
+      executionCatalogLoads.set(cacheKey, request)
+      const clearRequest = () => {
+        if (executionCatalogLoads.get(cacheKey)?.promise === promise) {
+          executionCatalogLoads.delete(cacheKey)
+        }
+      }
+      void promise.then(clearRequest, clearRequest)
+    }
+    const catalog = await request.promise
+    executionCatalogCache.set(cacheKey, {
+      deviceSource: deviceApi,
+      modelSource: modelApi,
+      catalog,
+      updatedAt: Date.now(),
+    })
+    return catalog
+  }, [cacheKey, deviceApi, modelApi, t])
+
+  const loadExecutionPlugins = useCallback(async (): Promise<
+    AutomationExecutionCatalog['plugins']
+  > => {
+    const catalog = await loadExecutionCatalog()
+    const deviceIds = catalog.environments.map(environment => environment.deviceId)
+    const deviceKey = deviceIds.join('\n')
+    const cached = executionPluginCache.get(cacheKey)
+    if (
+      cached &&
+      cached.pluginSource === pluginApi &&
+      cached.deviceIds === deviceKey &&
+      Date.now() - cached.updatedAt < AUTOMATION_CACHE_FRESH_MS
+    ) {
+      return cached.plugins
+    }
+    let request = executionPluginLoads.get(cacheKey)
+    if (!request || request.pluginSource !== pluginApi || request.deviceIds !== deviceKey) {
+      const promise = fetchExecutionPlugins(pluginApi, deviceIds)
+      request = {
+        pluginSource: pluginApi,
+        deviceIds: deviceKey,
+        promise,
+      }
+      executionPluginLoads.set(cacheKey, request)
+      const clearRequest = () => {
+        if (executionPluginLoads.get(cacheKey)?.promise === promise) {
+          executionPluginLoads.delete(cacheKey)
+        }
+      }
+      void promise.then(clearRequest, clearRequest)
+    }
+    const plugins = await request.promise
+    executionPluginCache.set(cacheKey, {
+      pluginSource: pluginApi,
+      deviceIds: deviceKey,
+      plugins,
+      updatedAt: Date.now(),
+    })
+    return plugins
+  }, [cacheKey, loadExecutionCatalog, pluginApi])
+
+  const reload = useCallback(async () => {
+    await load({ force: true })
+  }, [load])
+
+  const persistRule = useCallback(
+    async (rule: AutomationUiRule) => {
+      if (!projectAutomationApi) throw new Error('当前项目没有可用的自动化服务')
+      if (!canManageAgents) throw new Error('当前账号没有管理自动化的权限')
+      if (currentUserId == null) throw new Error('当前项目缺少可用的 Runtime 用户')
+      if (rule.origin === 'legacy_workflow') {
+        const workflowDefinition = legacyWorkflowFromAutomationRule(rule)
+        const result = await projectAutomationApi.migrateWorkflow(projectId, {
+          projectVersion: project.version,
+          automation: automationInputFromUi(rule, currentUserId),
+          workflowDefinition,
+        })
+        const updatedProject: CloudProject = {
+          ...project,
+          workflow_automation_id: result.workflowAutomationId,
+          workflow_definition: clearedLegacyWorkflow(workflowDefinition),
+          version: result.projectVersion,
+        }
+        onProjectUpdated?.(updatedProject)
+        const mapped = automationRuleFromBackend(result.automation)
+        setRules(current =>
+          current.map(candidate => (candidate.id === rule.id ? mapped : candidate))
+        )
+        setRunSources(current => {
+          return [
+            { automationId: mapped.id, ruleId: mapped.id },
+            ...current.filter(
+              source => source.ruleId !== rule.id && source.automationId !== mapped.id
+            ),
+          ]
+        })
+        setError('')
+        return mapped
+      }
+      const input = automationInputFromUi(rule, currentUserId)
+      const saved: ProjectAutomationRule = rule.persisted
+        ? await projectAutomationApi.update(projectId, rule.id, {
+            ...input,
+            version: rule.version,
+          })
+        : await projectAutomationApi.create(projectId, input)
+      const mapped = automationRuleFromBackend(saved)
+      setRules(current => {
+        const exists = current.some(candidate => candidate.id === mapped.id)
+        return exists
+          ? current.map(candidate => (candidate.id === mapped.id ? mapped : candidate))
+          : [mapped, ...current]
+      })
+      setRunSources(current =>
+        current.some(source => source.automationId === mapped.id)
+          ? current
+          : [{ automationId: mapped.id, ruleId: mapped.id }, ...current]
+      )
+      setError('')
+      return mapped
+    },
+    [canManageAgents, currentUserId, onProjectUpdated, project, projectAutomationApi, projectId]
+  )
+
+  const toggleRule = useCallback(
+    async (rule: AutomationUiRule, enabled: boolean) => {
+      if (!projectAutomationApi) throw new Error('当前项目没有可用的自动化服务')
+      if (!canManageAgents) throw new Error('当前账号没有管理自动化的权限')
+      if (rule.origin === 'legacy_workflow') {
+        return persistRule({ ...rule, enabled })
+      }
+      const saved = await projectAutomationApi.update(projectId, rule.id, {
+        version: rule.version,
+        enabled,
+      })
+      const mapped = automationRuleFromBackend(saved)
+      setRules(current =>
+        current.map(candidate => (candidate.id === mapped.id ? mapped : candidate))
+      )
+      return mapped
+    },
+    [canManageAgents, persistRule, projectAutomationApi, projectId]
+  )
+
+  const deleteRule = useCallback(
+    async (rule: AutomationUiRule) => {
+      if (!projectAutomationApi) throw new Error('当前项目没有可用的自动化服务')
+      if (!canManageAgents) throw new Error('当前账号没有管理自动化的权限')
+      if (rule.origin === 'legacy_workflow') {
+        const updatedProject = await api.updateCloudProject(project.id, {
+          version: project.version,
+          workflow_definition: {
+            version: Math.max(1, project.workflow_definition?.version ?? 1),
+            stage_mode: 'none',
+            advancement_policy: 'manual',
+            coordinator_prompt: '',
+            approval_policy: 'required',
+            ai_automation_rule_id: null,
+            execution_config: null,
+            nodes: [],
+          },
+        })
+        onProjectUpdated?.(updatedProject)
+        setRules(current => current.filter(candidate => candidate.id !== rule.id))
+        setRuns(current => current.filter(run => run.ruleId !== rule.id))
+        setRunSources(current => current.filter(source => source.ruleId !== rule.id))
+        return
+      }
+      const result = await projectAutomationApi.delete(projectId, rule.id)
+      if (project.workflow_automation_id === rule.id) {
+        onProjectUpdated?.({
+          ...project,
+          workflow_automation_id: result.workflowAutomationId,
+          version: result.projectVersion,
+        })
+      }
+      setRules(current => current.filter(candidate => candidate.id !== rule.id))
+      setRuns(current => current.filter(run => run.ruleId !== rule.id))
+      setRunSources(current => current.filter(source => source.ruleId !== rule.id))
+    },
+    [api, canManageAgents, onProjectUpdated, project, projectAutomationApi, projectId]
+  )
+
+  const duplicateRule = useCallback(
+    async (rule: AutomationUiRule) => {
+      const copy: AutomationUiRule = {
+        ...rule,
+        id: `draft-${crypto.randomUUID()}`,
+        persisted: false,
+        origin: 'automation',
+        legacyDefinition: null,
+        version: 1,
+        name: `${rule.name} 副本`,
+        enabled: false,
+      }
+      return persistRule(copy)
+    },
+    [persistRule]
+  )
 
   return (
-    <div
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto"
-      data-testid="project-automation-view"
-    >
-      <div className="px-6 pb-8 pt-4">
-        <header>
-          <h2 className="text-heading-md font-semibold">{t('workbench.automation_title')}</h2>
-          <p className="mt-1 text-sm text-text-muted">{t('workbench.automation_description')}</p>
-        </header>
-        <PullRequestAutomationSettings
-          key={String(project.id)}
-          value={
-            project.pull_request_automation ?? {
-              enabled: false,
-              statuses: [
-                'checks_failed',
-                'merge_conflict',
-                'merge_queue_failed',
-                'merge_queue_timed_out',
-                'merge_queue_conflicting',
-              ],
-              prompt: '',
-            }
-          }
-          canManage={canManageAgents}
-          busy={pullRequestAutomationBusy}
-          onSave={savePullRequestAutomation}
-        />
-        {pullRequestAutomationError ? (
-          <p className="mt-2 text-sm text-red-500">{pullRequestAutomationError}</p>
-        ) : null}
-        <ProjectWorkflowEditor
-          value={workflowDefinition}
-          busy={workflowBusy}
-          onChange={handleWorkflowChange}
-          onSave={saveWorkflow}
-          automationRules={automationRules}
-          projectAgents={projectAgents}
-          onEnsureStageRobotRule={ensureStageRobotRule}
-          onRequestCreateRobot={requestCreateRobot}
-          onRequestConfigureAiCoordinator={
-            canManageAgents
-              ? () => setCoordinatorCreateRequestKey(current => current + 1)
-              : undefined
-          }
-        />
-        {workflowError ? <p className="mt-3 text-xs text-destructive">{workflowError}</p> : null}
-        <ProjectChatAgentsSection
-          project={project}
-          projectChatAgentApi={projectChatAgentApi}
-          deviceApi={deviceApi}
-          modelApi={modelApi}
-          teamApi={teamApi}
-          pluginApi={pluginApi}
-          localProjects={localProjects}
-          runtimeWork={runtimeWork}
-          runtimeProfiles={runtimeProfiles}
-          onCreateLocalCodeProject={onCreateLocalCodeProject}
-          onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
-          onListDeviceDirectories={onListDeviceDirectories}
-          onCreateDeviceDirectory={onCreateDeviceDirectory}
-          onCloneGitRepository={onCloneGitRepository}
-          canManage={canManageAgents}
-          createRequestKey={robotCreateRequestKey}
-          onAgentsChange={handleAgentsChange}
-          onAgentCreated={agent => settleCreateRobot(agent)}
-          onCreateCancelled={() => settleCreateRobot(null)}
-        />
-        <ProjectAutomationRulesSection
-          projectId={project.id}
-          api={project.task_provider === 'local' ? projectAutomationApi : undefined}
-          agentApi={projectChatAgentApi}
-          canManage={canManageAgents}
-          deviceApi={deviceApi}
-          modelApi={modelApi}
-          teamApi={teamApi}
-          projectTags={project.tags ?? []}
-          createAiCoordinatorRequestKey={coordinatorCreateRequestKey}
-          runtimeProfiles={runtimeProfiles}
-          projectMembers={projectMembers}
-          onOpenTask={taskId => {
-            void api.getLoopItem(taskId).then(item => onOpenTask?.(item))
-          }}
-          onRulesChange={handleRulesChange}
-        />
-        <section className="mt-8 border-t border-border pt-8">
-          <div>
-            <h3 className="text-heading-md font-semibold">
-              {t('workbench.automation_queue_title')}
-            </h3>
-            <p className="mt-1 text-sm text-text-muted">{t('workbench.queue_description')}</p>
-          </div>
-          <div className="mt-5">
-            <ProjectQueueView
-              api={api}
-              project={project}
-              projectChatAgentApi={projectChatAgentApi}
-              executionApi={executionApi}
-              runtimeProfileApi={runtimeProfileApi}
-              runtimeProfiles={runtimeProfiles}
-              currentUserId={currentUserId}
-              onOpenTask={onOpenTask}
-              embedded
-            />
-          </div>
-        </section>
-      </div>
-    </div>
+    <AutomationRulesView
+      rules={rules}
+      runs={runs}
+      loading={loading}
+      error={error}
+      canManage={canManageAgents}
+      projectTags={project.tags}
+      onReload={reload}
+      onLoadExecutionCatalog={loadExecutionCatalog}
+      onLoadExecutionPlugins={loadExecutionPlugins}
+      onLoadRuns={refreshRuns}
+      onSaveRule={persistRule}
+      onToggleRule={toggleRule}
+      onDuplicateRule={duplicateRule}
+      onDeleteRule={deleteRule}
+    />
   )
 }

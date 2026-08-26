@@ -432,7 +432,6 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     store.syncRuntimeWork(runtimeWork(true))
     store.turnStarted(address, 'turn-1')
     store.turnSettled(address, 'turn-1', 'succeeded')
-    store.turnStarted(address, 'turn-2')
     let streamHandlers: ChatStreamHandlers = {}
     const getRuntimeTranscript = vi.fn().mockResolvedValue({
       ...runtimeTranscript(true),
@@ -466,6 +465,16 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     } as unknown as WorkbenchServices
 
     render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        subtaskId: 'turn-2',
+      })
+    })
+    expect(store.getTask(address)?.turn.id).toBe('turn-2')
+    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
+
     await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: address.taskId,

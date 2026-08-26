@@ -37,6 +37,7 @@ import type { RequestUserInputPayload } from '@/components/chat/RequestUserInput
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
 import {
   projectRuntimeGoalContinuing,
+  runtimeGoalCreateInput,
   shouldReconcileActiveRuntimeGoalTranscript,
   visibleRuntimeGoal,
 } from '@/lib/runtime-goal'
@@ -3207,14 +3208,6 @@ function createPendingRuntimeGoal(objective: string): RuntimeGoal {
     timeUsedSeconds: 0,
     createdAt: now,
     updatedAt: now,
-  }
-}
-
-function runtimeGoalCreateInput(goal: RuntimeGoal): RuntimeGoalCreateInput {
-  return {
-    objective: goal.objective,
-    status: goal.status,
-    tokenBudget: goal.tokenBudget,
   }
 }
 
