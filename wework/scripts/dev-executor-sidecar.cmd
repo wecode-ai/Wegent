@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 rem Windows executor sidecar mirroring scripts/dev-executor-sidecar.sh.
 set "SCRIPT_DIR=%~dp0"
 set "EXECUTOR_DIR=%SCRIPT_DIR%..\..\executor"
@@ -18,25 +18,25 @@ if not defined WEGENT_CARGO_TARGET_ROOT (
 :configured
 if defined WEGENT_EXECUTOR_BINARY (
   "%WEGENT_EXECUTOR_BINARY%" %*
-  exit /b %errorlevel%
+  exit /b !errorlevel!
 )
 
 if "%WEGENT_EXECUTOR_DEV_RELOAD%"=="0" goto :direct
 if not defined WEGENT_EXECUTOR_DEV_RELOAD set "WEGENT_EXECUTOR_DEV_RELOAD=1"
 if "%WEGENT_EXECUTOR_DEV_RELOAD%"=="1" (
   node "%SCRIPT_DIR%dev-executor-reload.mjs" %*
-  exit /b %errorlevel%
+  exit /b !errorlevel!
 )
 
 :direct
 if exist "%EXECUTOR_DIR%\dist\wegent-executor.exe" (
   "%EXECUTOR_DIR%\dist\wegent-executor.exe" %*
-  exit /b %errorlevel%
+  exit /b !errorlevel!
 )
 if not defined CARGO_TARGET_DIR set "CARGO_TARGET_DIR=%EXECUTOR_DIR%\target"
 if exist "%CARGO_TARGET_DIR%\release\wegent-executor.exe" (
   "%CARGO_TARGET_DIR%\release\wegent-executor.exe" %*
-  exit /b %errorlevel%
+  exit /b !errorlevel!
 )
 cargo build --manifest-path "%EXECUTOR_DIR%\Cargo.toml" --bin wegent-executor
 "%CARGO_TARGET_DIR%\debug\wegent-executor.exe" %*
