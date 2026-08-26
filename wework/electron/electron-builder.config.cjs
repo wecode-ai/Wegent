@@ -51,6 +51,7 @@ module.exports = {
   linux: {
     artifactName: 'WeWork_${version}_linux_${arch}.${ext}',
     category: 'Development',
+    executableName: 'wework',
     target: ['AppImage'],
   },
 }
