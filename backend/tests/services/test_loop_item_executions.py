@@ -1983,7 +1983,7 @@ def test_inline_workflow_execution_uses_standalone_conversation_workspace(
         runtime_profile=None,
         owner_user_id=test_user.id,
         display_name="Direct execution",
-        execution_prompt="",
+        execution_prompt="Build it",
         model_override="test-model",
         workspace_binding_override={"type": "standalone"},
     )
@@ -2019,6 +2019,13 @@ def test_inline_workflow_execution_uses_standalone_conversation_workspace(
     assert payload["standaloneChatWorkspace"] is True
     assert "projectId" not in payload
     assert "runtimeProjectKey" not in payload
+    assert payload["message"].count("Build it") == 1
+    assert payload["origin"]["executionId"] == 92
+    assert payload["origin"]["taskUrl"] == (
+        f"cloud://projects/{project.id}/todos/item-standalone"
+    )
+    assert payload["origin"]["workflowStageId"] == "build"
+    assert payload["origin"]["workflowStageName"] == "build"
 
 
 def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
@@ -2710,7 +2717,50 @@ def test_automation_robot_uses_the_same_visible_input_and_board_origin(
 def test_workflow_stage_instruction_contains_prompt_and_delivery_contract() -> None:
     instruction = workflow_stage_task_instruction(
         {
+            "issue": {
+                "id": "PRJ-26",
+                "title": "发布工作流",
+                "description": "完成发布并保留完整上下文。",
+            },
+            "dependencies": [
+                {
+                    "stage_id": "build",
+                    "stage_name": "实现",
+                    "final_results": [
+                        {
+                            "task_id": "runtime-build",
+                            "content": "实现完成",
+                            "completed_at": "2026-08-26T10:00:00Z",
+                        }
+                    ],
+                    "deliveries": [
+                        {
+                            "id": "delivery-build",
+                            "markdown": "代码已提交。",
+                            "content_available": True,
+                            "fulfillments": [
+                                {
+                                    "requirement_id": "source",
+                                    "kind": "git_branch",
+                                    "branch": "feature/build",
+                                    "commit_sha": "abcdef1",
+                                }
+                            ],
+                            "assets": [],
+                        }
+                    ],
+                    "activity": [
+                        {
+                            "message_id": "message-1",
+                            "status": "completed",
+                            "content": "已完成实现与自测",
+                        }
+                    ],
+                }
+            ],
             "target_stage": {
+                "id": "deploy",
+                "name": "部署",
                 "prompt": "部署并测试，之后交付",
                 "required_deliverables": [
                     {
@@ -2718,6 +2768,11 @@ def test_workflow_stage_instruction_contains_prompt_and_delivery_contract() -> N
                         "name": "测试报告",
                         "value_type": "file",
                         "description": "",
+                        "file_constraints": {
+                            "accepted_types": ["text/markdown"],
+                            "min_files": 1,
+                            "max_files": 2,
+                        },
                     },
                     {
                         "id": "deliverable-2",
@@ -2726,13 +2781,29 @@ def test_workflow_stage_instruction_contains_prompt_and_delivery_contract() -> N
                         "description": "必须可访问",
                     },
                 ],
-            }
+            },
         }
     )
 
-    assert instruction.startswith("部署并测试，之后交付")
+    assert instruction.startswith("## 任务定位")
+    assert "Issue：发布工作流 (`PRJ-26`)" in instruction
+    assert "当前节点：部署 (`deploy`)" in instruction
+    assert "完成发布并保留完整上下文。" in instruction
+    assert "## 当前节点任务\n\n部署并测试，之后交付" in instruction
+    assert "## 上游最终结果" in instruction
+    assert '"content": "实现完成"' in instruction
+    assert "## 上游已交付内容" in instruction
+    assert '"id": "delivery-build"' in instruction
+    assert '"branch": "feature/build"' in instruction
+    assert "## 上游执行过程" in instruction
+    assert '"content": "已完成实现与自测"' in instruction
+    assert "## 当前节点交付要求" in instruction
     assert "- [deliverable-1] 测试报告 (file)" in instruction
-    assert "- [deliverable-2] 访问地址 (text)：必须可访问" in instruction
+    assert "允许类型：text/markdown" in instruction
+    assert "文件数量：1–2" in instruction
+    assert "- [deliverable-2] 访问地址 (text)" in instruction
+    assert "要求：必须可访问" in instruction
+    assert "## 提交约束" in instruction
     assert "finalize_delivery" in instruction
     assert "requirement_id" in instruction
 
@@ -2771,7 +2842,7 @@ def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
                         "stage_id": "develop",
                         "runtime_tasks": [
                             {
-                                "device_id": "cloud-device-1",
+                                "device_id": "electron-app-device",
                                 "task_id": "previous-runtime-task",
                             }
                         ],
@@ -2779,17 +2850,83 @@ def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
                 ],
             }
         },
-        execution_device_id="cloud-device-1",
+        execution_device_id="electron-app-device",
     )
     payload = request.model_dump(by_alias=True, exclude_none=True)
 
     assert f"task_id: {item.id}" in payload["message"]
     assert "task_id: previous-runtime-task" not in payload["message"]
     assert payload["workspaceSourceTask"] == {
-        "deviceId": "cloud-device-1",
+        "deviceId": "electron-app-device",
         "taskId": "previous-runtime-task",
     }
     assert payload["standaloneChatWorkspace"] is False
+
+
+def test_inherited_stage_requires_the_executor_that_owns_the_workspace(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user, title="Deploy")
+    execution = _make_execution(test_db, item, bot, test_user)
+    request = WeworkExecutionProfile.for_project_robot(bot).build_runtime_request(
+        test_db,
+        execution_id=execution.id,
+        runtime_task_id=execution.runtime_task_id,
+        task=TaskContext(
+            id=item.id,
+            cloud_project_id=str(project.id),
+            title=item.title,
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={
+            "workflow_stage_input": {
+                "target_stage": {
+                    "id": "deploy",
+                    "prompt": "Deploy",
+                    "workspace_policy": "inherit",
+                    "required_deliverables": [],
+                },
+                "dependencies": [
+                    {
+                        "stage_id": "develop",
+                        "runtime_tasks": [
+                            {
+                                "device_id": "other-app-device",
+                                "task_id": "previous-runtime-task",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+        execution_device_id="electron-app-device",
+    )
+    execution.execution_environment = "local"
+    execution.execution_device_id = "electron-app-device"
+    execution.execution_payload = (
+        loop_item_execution_service._serialize_execution_intent(
+            runtime_selection=dict(execution.runtime_selection),
+            origin_context={},
+            runtime_request=request.model_dump(by_alias=True, exclude_none=True),
+        )
+    )
+    test_db.commit()
+
+    with pytest.raises(
+        WeworkRuntimeConfigurationError,
+        match="belongs to a different execution target",
+    ):
+        loop_item_execution_service.build_executor_runtime_payload(
+            test_db,
+            execution=execution,
+            execution_target_id="electron-app-device",
+            executor_device_id="executor-runtime-device",
+        )
 
 
 def test_claim_batch_moves_queued_to_claimed_within_capacity(
@@ -3244,6 +3381,7 @@ def test_mark_start_requested_binds_issue_runtime_task_without_workflow_stage(
     assert binding.device_id == "cloud-device-1"
     assert binding.task_title == item.title
     assert binding.workflow_node_id is None
+    assert binding.metadata_json["workspace_device_id"] == "cloud-device-1"
 
 
 @pytest.mark.parametrize("executor_type", ["project_robot", "generic_robot"])
@@ -3364,6 +3502,7 @@ def test_mark_start_requested_binds_workflow_stage_runtime_task(
     assert binding.device_id == "cloud-device-1"
     assert binding.workflow_node_id == "deploy"
     assert binding.metadata_json["workflow_stage_input_sha256"] == "stage-snapshot"
+    assert binding.metadata_json["workspace_device_id"] == "cloud-device-1"
 
 
 def test_runtime_start_fence_requires_exact_claim_identity(
@@ -3930,14 +4069,37 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
 
 
 @pytest.mark.parametrize("executor_type", ["project_robot", "automation_manager"])
-def test_local_runtime_payload_leaves_model_materialization_to_app(
+def test_local_runtime_payload_materializes_only_for_executor_pull(
     test_db: Session, test_user: User, executor_type: str
 ) -> None:
-    """Every local Wework executor crosses claim with a model reference only."""
+    """App intent stays transient while Executor pull receives a runnable payload."""
 
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
     _ensure_device(test_db, test_user, "local-device", "local")
+    _ensure_device(test_db, test_user, "executor-runtime-device", "local")
+    test_db.add(
+        Kind(
+            kind="Model",
+            name="backend-visible-model",
+            namespace="default",
+            user_id=0,
+            is_active=True,
+            json={
+                "spec": {
+                    "modelConfig": {
+                        "env": {
+                            "model": "codex",
+                            "model_id": "gpt-5.5",
+                            "api_key": "test-runtime-key",
+                            "base_url": "https://runtime.example.com",
+                        }
+                    }
+                }
+            },
+        )
+    )
+    test_db.flush()
     if executor_type == "project_robot":
         bot = _make_bot(test_db, project, test_user)
         profile = RuntimeProfile(
@@ -4075,6 +4237,17 @@ def test_local_runtime_payload_leaves_model_materialization_to_app(
     assert "executionRequest" not in payload
     assert "model_config" not in str(payload)
     assert "api_key" not in str(payload)
+
+    executor_payload = loop_item_execution_service.build_executor_runtime_payload(
+        test_db,
+        execution=claimed,
+        execution_target_id="local-device",
+        executor_device_id="executor-runtime-device",
+    )
+    executor_model_config = executor_payload["executionRequest"]["model_config"]
+    assert executor_model_config["model_id"] == "backend-visible-model"
+    assert executor_model_config["api_key"]
+    assert executor_model_config["base_url"]
     if executor_type == "automation_manager":
         assert f"project_id: {project.id}" in payload["message"]
         assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in payload["message"]

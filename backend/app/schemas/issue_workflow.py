@@ -295,6 +295,17 @@ class ProjectWorkflowDefinition(BaseModel):
     def validate_dag(self) -> "ProjectWorkflowDefinition":
         if self.advancement_policy == "ai" and not self.ai_automation_rule_id:
             raise ValueError("AI advancement requires an AI automation rule")
+        if self.advancement_policy == "ai":
+            configured_nodes = [
+                node.id
+                for node in self.nodes
+                if node.execution_config is not None or node.execution_config_override
+            ]
+            if configured_nodes:
+                raise ValueError(
+                    "AI stage constraints cannot define execution configuration: "
+                    + ", ".join(configured_nodes)
+                )
         node_ids = [node.id for node in self.nodes]
         if len(node_ids) != len(set(node_ids)):
             raise ValueError("workflow node ids must be unique")

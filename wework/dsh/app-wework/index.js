@@ -11,7 +11,10 @@ export const inject = ['webServer']
 export const APP_BASE_PATH = '/wework/app'
 const API_PROXY_PATH = '/wework/api'
 const SOCKET_PROXY_PATH = '/wework/socket.io'
-const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), 'web')
+const configuredWebRoot = process.env.WEWORK_APP_WEB_ROOT?.trim()
+const webRoot = configuredWebRoot
+  ? resolve(configuredWebRoot)
+  : resolve(dirname(fileURLToPath(import.meta.url)), 'web')
 const indexPath = join(webRoot, 'index.html')
 
 const MIME_TYPES = {
@@ -89,15 +92,23 @@ export async function serveWeworkApp(req, res) {
   }
 
   if (asset === indexPath) {
-    const body = injectRuntimeConfig(
-      await readFile(indexPath, 'utf8'),
+    const hotReload = process.env.WEWORK_APP_HOT_RELOAD === '1'
+    const metadata = hotReload ? await stat(indexPath, { bigint: true }) : null
+    const buildId = metadata ? `${metadata.mtimeNs}:${metadata.size}` : ''
+    const body = injectDevelopmentReload(
+      injectRuntimeConfig(
+        await readFile(indexPath, 'utf8'),
+        process.env,
+        desktopWindowLabel(req.headers['x-wework-window-label'])
+      ),
       process.env,
-      desktopWindowLabel(req.headers['x-wework-window-label'])
+      buildId
     )
     res.writeHead(200, {
       'content-type': MIME_TYPES['.html'],
       'cache-control': 'no-store',
       'content-length': Buffer.byteLength(body),
+      ...(hotReload ? { 'x-wework-app-build-id': buildId } : {}),
     })
     res.end(req.method === 'HEAD' ? undefined : body)
     return
@@ -114,6 +125,14 @@ export async function serveWeworkApp(req, res) {
     return
   }
   createReadStream(asset).pipe(res)
+}
+
+export function injectDevelopmentReload(html, environment, buildId) {
+  if (environment.WEWORK_APP_HOT_RELOAD !== '1') return html
+  const script = `<script>(()=>{const current=${escapeJsonForHtml(
+    buildId
+  )};let checking=false;setInterval(async()=>{if(checking)return;checking=true;try{const response=await fetch(window.location.href,{method:'HEAD',cache:'no-store'});const next=response.headers.get('x-wework-app-build-id');if(next&&next!==current)window.location.reload()}catch{}finally{checking=false}},500)})()</script>`
+  return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
 }
 
 export function injectRuntimeConfig(html, environment = process.env, windowLabel = 'main') {

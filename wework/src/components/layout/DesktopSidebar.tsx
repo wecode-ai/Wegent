@@ -425,7 +425,7 @@ const PROJECT_APPEARANCE_COLOR_VALUES: Record<string, string> = {
   yellow: '#eab308',
 }
 function getStandaloneDeviceLabel(device: DeviceInfo): string {
-  return device.name || device.device_id
+  return device.name?.trim() || ''
 }
 
 function normalizeSidebarWorkspacePath(path: string): string {
@@ -492,7 +492,7 @@ function standaloneRuntimeProjectWork(
         id: null,
         projectId: null,
         deviceId: resolvedDeviceId,
-        deviceName: device ? getStandaloneDeviceLabel(device) : resolvedDeviceId,
+        deviceName: device ? getStandaloneDeviceLabel(device) || null : null,
         deviceStatus,
         available: deviceStatus === 'online' || deviceStatus === 'busy',
         workspacePath: normalizedWorkspacePath,
@@ -690,7 +690,14 @@ function getSidebarDeviceState(
   if (!deviceId) return null
 
   const device =
-    devices.find(item => item.device_id === deviceId) ??
+    devices.find(item =>
+      [
+        item.device_id,
+        item.app_device_id,
+        item.socket_device_id,
+        ...(item.runtime_routes ?? []).map(route => route.device_id),
+      ].includes(deviceId)
+    ) ??
     (deviceId === 'local-device'
       ? (devices.find(item => item.device_type === 'local' && item.status === 'online') ??
         devices.find(item => item.device_type === 'local') ??
@@ -708,13 +715,7 @@ function isSidebarDeviceOnline(deviceState: SidebarDeviceState | null): boolean 
 }
 
 function getSidebarDeviceName(deviceState: SidebarDeviceState): string {
-  return deviceState.device?.name || deviceState.deviceId
-}
-
-function getDeviceNetworkLabel(device?: DeviceInfo): string | null {
-  const runtimeTransferHost = getDisplayableNetworkHost(device?.runtime_transfer_host)
-  if (runtimeTransferHost) return runtimeTransferHost
-  return getDisplayableNetworkHost(device?.client_ip)
+  return deviceState.device?.name.trim() || ''
 }
 
 function hasCloudRuntimeRoute(device?: DeviceInfo): boolean {
@@ -728,28 +729,13 @@ function hasCloudRuntimeRoute(device?: DeviceInfo): boolean {
 function getDeviceRouteLabel(deviceState: SidebarDeviceState): string {
   const deviceName = deviceState.device?.name?.trim()
   if (deviceName) return deviceName
-  return getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
+  return ''
 }
 
 function getDeviceRouteTitle(deviceState: SidebarDeviceState): string {
   const routes = deviceState.device?.runtime_routes
   if (!routes?.length) return getDeviceRouteLabel(deviceState)
   return routes.map(route => `${route.kind}: ${route.device_id}`).join('\n')
-}
-
-function getDisplayableNetworkHost(value?: string | null): string | null {
-  if (!value) return null
-  return extractNetworkHost(value.trim()) || null
-}
-
-function extractNetworkHost(value: string): string {
-  const bracketMatch = value.match(/^\[([^\]]+)\](?::\d+)?$/)
-  if (bracketMatch?.[1]) return bracketMatch[1]
-  const colonParts = value.split(':')
-  if (colonParts.length === 2 && /^\d+$/.test(colonParts[1])) {
-    return colonParts[0]
-  }
-  return value
 }
 
 function getRuntimeProjectDeviceState(
@@ -761,7 +747,7 @@ function getRuntimeProjectDeviceState(
   const resolvedDevice = getSidebarDeviceState(workspace.deviceId, devices)
   if (resolvedDevice?.device) return resolvedDevice
   return {
-    deviceId: workspace.deviceName || workspace.remoteHostId || workspace.deviceId,
+    deviceId: workspace.deviceId,
     status: (workspace.deviceStatus ??
       resolvedDevice?.status ??
       'unavailable') as SidebarDeviceStatus,
@@ -891,6 +877,8 @@ function getRuntimePriorityTaskKey(
 
 function getProjectHoverSources(
   runtimeProjectWork: RuntimeProjectWork | undefined,
+  devices: DeviceInfo[],
+  localDeviceLabel: string,
   finderWorkspacePath: string | null,
   openFinder: (path: string) => void,
   openFinderLabel: (path: string) => string
@@ -899,16 +887,27 @@ function getProjectHoverSources(
   const sources: ProjectHoverSource[] = []
   const seen = new Set<string>()
   const add = (source: ProjectHoverSource) => {
-    const key = `${source.kind}\0${source.value}`
+    const key = `${source.kind}\0${source.value}\0${source.detail ?? ''}`
     if (!source.value || seen.has(key)) return
     seen.add(key)
     sources.push(source)
   }
 
   for (const workspace of workspaces) {
-    if (workspace.workspaceSource === 'remote' || workspace.remoteHostId) {
-      const host = workspace.remoteHostId || workspace.deviceName || workspace.deviceId
-      add({ id: `host:${host}`, kind: 'host', value: host })
+    const device = getSidebarDeviceState(workspace.deviceId, devices)?.device
+    const deviceName =
+      device?.device_type === 'local'
+        ? localDeviceLabel
+        : device?.name?.trim() || workspace.deviceName?.trim()
+    const deviceId =
+      workspace.remoteHostId?.trim() || device?.device_id?.trim() || workspace.deviceId.trim()
+    if (deviceName && deviceName !== workspace.deviceId) {
+      add({
+        id: `host:${workspace.deviceId}`,
+        kind: 'host',
+        value: deviceName,
+        detail: deviceId && deviceId !== deviceName ? deviceId : undefined,
+      })
     }
   }
 
@@ -1394,6 +1393,7 @@ function getDeviceUnavailableActionTitle(
 
 function RuntimeTaskRow({
   workspace,
+  devices,
   task,
   projectName,
   selected,
@@ -1415,6 +1415,7 @@ function RuntimeTaskRow({
   splitGroup,
 }: {
   workspace: RuntimeDeviceWorkspace
+  devices: DeviceInfo[]
   task: RuntimeTaskSummary
   projectName?: string | null
   selected: boolean
@@ -1467,9 +1468,13 @@ function RuntimeTaskRow({
   const repositoryLabel = getRuntimeTaskRepositoryLabel(workspace, task)
   const branchLabel = getRuntimeTaskBranch(task)
   const taskWorkspacePath = task.workspacePath || workspace.workspacePath
+  const taskDevice = getSidebarDeviceState(workspace.deviceId, devices)?.device
   const hostLabel =
-    workspace.remoteHostId ||
-    (workspace.workspaceSource === 'remote' ? workspace.deviceName || workspace.deviceId : null)
+    taskDevice?.device_type === 'local'
+      ? t('todo.workflow_execution_local_device', '本机')
+      : taskDevice?.name?.trim() || workspace.deviceName?.trim() || null
+  const hostId =
+    workspace.remoteHostId?.trim() || taskDevice?.device_id?.trim() || workspace.deviceId.trim()
   const deviceColor = getRuntimeWorkspaceDeviceColor(workspace)
   const disabled = !workspace.available || !onOpenRuntimeTask
   const splitGroupLabel = splitGroup
@@ -1692,6 +1697,7 @@ function RuntimeTaskRow({
             branchLabel={branchLabel}
             workspacePath={taskWorkspacePath ? shortenSidebarHomePath(taskWorkspacePath) : null}
             hostLabel={hostLabel}
+            hostId={hostId && hostId !== hostLabel ? hostId : null}
             updatedLabel={task.updatedAt ? formatRelativeSidebarTime(task.updatedAt) : null}
             branchWarning={hasRuntimeTaskBranchWarning(task)}
           />
@@ -2482,6 +2488,8 @@ function ProjectItem({
     : undefined
   const projectHoverSources = getProjectHoverSources(
     runtimeProjectWork,
+    devices,
+    t('todo.workflow_execution_local_device', '本机'),
     finderWorkspacePath,
     path => {
       void openLocalWorkspace({ opener: 'file-manager', path })
@@ -2872,6 +2880,7 @@ function ProjectItem({
                   renderItem={({ workspace, task }) => (
                     <RuntimeTaskRow
                       workspace={workspace}
+                      devices={devices}
                       task={task}
                       projectName={runtimeProjectWork?.project.name ?? project.name}
                       selected={
@@ -4080,6 +4089,7 @@ export function DesktopSidebar({
                 renderTaskItem={item => (
                   <RuntimeTaskRow
                     workspace={item.workspace}
+                    devices={devices}
                     task={item.task}
                     projectName={item.projectName}
                     selected={
@@ -4168,6 +4178,7 @@ export function DesktopSidebar({
                         renderItem={({ workspace, task, projectWork }) => (
                           <RuntimeTaskRow
                             workspace={workspace}
+                            devices={devices}
                             task={task}
                             projectName={projectWork?.project.name}
                             selected={
@@ -4652,6 +4663,7 @@ export function DesktopSidebar({
                           renderItem={({ workspace, task }) => (
                             <RuntimeTaskRow
                               workspace={workspace}
+                              devices={devices}
                               task={task}
                               projectName={null}
                               selected={

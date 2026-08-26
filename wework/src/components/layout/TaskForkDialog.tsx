@@ -90,7 +90,7 @@ function findSourceProjectWork(
 }
 
 function getDeviceLabel(device: DeviceInfo) {
-  return device.name || device.device_id
+  return device.name?.trim() || ''
 }
 
 export function TaskForkDialog({
@@ -147,7 +147,8 @@ export function TaskForkDialog({
       nextOptions.push({
         key,
         target,
-        label: workspace.deviceName || workspace.deviceId,
+        label:
+          workspace.deviceName?.trim() || t('workbench.environment_device_unknown', '未知设备'),
         meta: sameWorkspace
           ? t('workbench.task_fork_current_target', '当前执行目标')
           : [workspace.workspacePath, workspace.workspaceKind === 'worktree' ? 'Worktree' : null]

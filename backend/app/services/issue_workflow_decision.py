@@ -93,6 +93,7 @@ class IssueWorkflowDecisionService:
         )
         node["decision_history"] = history
         apply_workflow_nodes(
+            db,
             item,
             workflow=workflow,
             nodes=nodes,

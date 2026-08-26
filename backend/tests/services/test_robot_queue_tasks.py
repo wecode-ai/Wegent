@@ -87,7 +87,7 @@ def test_device_pull_claims_and_fences_cloud_execution(
     test_db: Session,
     test_user: User,
 ) -> None:
-    from app.services.loop_item_executions.device_pull import _claim_cloud_execution
+    from app.services.loop_item_executions.device_pull import _claim_execution
 
     execution = _make_execution(test_db, test_user)
 
@@ -113,7 +113,7 @@ def test_device_pull_claims_and_fences_cloud_execution(
         ),
         patch(
             "app.services.loop_item_executions.device_pull."
-            "loop_item_execution_service.build_runtime_payload",
+            "loop_item_execution_service.build_executor_runtime_payload",
             return_value={
                 "executionRequest": {
                     "prompt": "Build the calculator.",
@@ -121,10 +121,12 @@ def test_device_pull_claims_and_fences_cloud_execution(
             },
         ),
     ):
-        result = _claim_cloud_execution(
+        result = _claim_execution(
             owner_user_id=test_user.id,
-            device_id="cloud-device",
+            execution_target_id="cloud-device",
+            runtime_device_id="cloud-device",
             runtime_instance_id="runtime-1",
+            environment="cloud",
             runtime_capacity={
                 "limit": 1,
                 "active": 0,
@@ -198,10 +200,6 @@ async def test_queue_wakeup_only_emits_availability(
     sio = AsyncMock()
     with (
         patch("app.db.session.get_db_session", _test_session),
-        patch(
-            "app.tasks.robot_queue_tasks.device_service.get_device_online_info",
-            AsyncMock(return_value={"socket_id": "socket-1"}),
-        ),
         patch("app.core.socketio.get_sio", return_value=sio),
     ):
         await consume_queues_background()
@@ -209,7 +207,7 @@ async def test_queue_wakeup_only_emits_availability(
     sio.emit.assert_awaited_once_with(
         "runtime.tasks.available",
         {},
-        to="socket-1",
+        room=f"execution-target:{test_user.id}:cloud-device",
         namespace="/local-executor",
     )
 

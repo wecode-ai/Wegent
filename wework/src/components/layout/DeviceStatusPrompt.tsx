@@ -79,8 +79,8 @@ function writeSidebarDeviceCache(devices: DeviceInfo[], updatedAt: number) {
   }
 }
 
-function getDeviceName(device: DeviceInfo): string {
-  return device.name || device.device_id
+function getDeviceName(device: DeviceInfo, t: ReturnType<typeof useTranslation>['t']): string {
+  return device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')
 }
 
 function getBlockedReason(device: DeviceInfo, t: ReturnType<typeof useTranslation>['t']): string {
@@ -308,7 +308,7 @@ export function DeviceStatusPrompt({
   if (activeUpgradeDevice) {
     const upgradeState = upgradingDevices[activeUpgradeDevice.device_id]
     const message = t('workbench.device_status_upgrading', {
-      device: getDeviceName(activeUpgradeDevice),
+      device: getDeviceName(activeUpgradeDevice, t),
       message: upgradeState?.message ?? t('workbench.device_status_checking'),
     })
     if (presentation === 'sidebar-action') {
@@ -346,11 +346,11 @@ export function DeviceStatusPrompt({
     const upgradeDeviceIds = canUpgrade ? [activeDevice.device_id] : []
     const message = canUpgrade
       ? t('workbench.device_status_active_upgrade_required', {
-          device: getDeviceName(activeDevice),
+          device: getDeviceName(activeDevice, t),
           version: WEWORK_MIN_EXECUTOR_VERSION,
         })
       : t('workbench.device_status_active_upgrade_waiting', {
-          device: getDeviceName(activeDevice),
+          device: getDeviceName(activeDevice, t),
           reason: getBlockedReason(activeDevice, t),
           version: WEWORK_MIN_EXECUTOR_VERSION,
         })
@@ -423,7 +423,7 @@ export function DeviceStatusPrompt({
               activeDevice.status === 'offline'
                 ? getWorkbenchDeviceUnavailableDisplayName(activeDevice) ||
                   t('workbench.current_device', '当前设备')
-                : getDeviceName(activeDevice),
+                : getDeviceName(activeDevice, t),
           })}
         </span>
       </div>
@@ -438,13 +438,13 @@ export function DeviceStatusPrompt({
     const message =
       blockedDevice && upgradeDeviceIds.length === 0
         ? t('workbench.device_status_upgrade_waiting', {
-            device: getDeviceName(blockedDevice),
+            device: getDeviceName(blockedDevice, t),
             reason: getBlockedReason(blockedDevice, t),
             version: WEWORK_MIN_EXECUTOR_VERSION,
           })
         : upgradeDevices.length === 1 && upgradeDevice
           ? t('workbench.device_status_upgrade_required_device', {
-              device: getDeviceName(upgradeDevice),
+              device: getDeviceName(upgradeDevice, t),
               version: WEWORK_MIN_EXECUTOR_VERSION,
             })
           : t('workbench.device_status_upgrade_required_devices', {
