@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     env, fs,
     fs::OpenOptions,
     io::Write,
@@ -926,27 +926,6 @@ impl WorktreeManager {
                 .to_string();
         let root = PathBuf::from(&state.settings.resolved_worktree_root);
         remember_root(&mut state.known_roots, &root);
-        // Re-key persisted records by their normalized path so records written
-        // with platform-native separators (legacy Windows backslash keys or
-        // trailing separators) resolve under the canonical lookup key. Two
-        // records can normalize to the same key when legacy state mixes key
-        // spellings; keep the most recently updated record rather than
-        // silently dropping one with an arbitrary collect order.
-        let mut records = HashMap::new();
-        for record in state.records.into_values() {
-            let key = normalized_path_key(Path::new(&record.path));
-            match records.entry(key) {
-                Entry::Vacant(entry) => {
-                    entry.insert(record);
-                }
-                Entry::Occupied(mut entry) => {
-                    if record.updated_at > entry.get().updated_at {
-                        entry.insert(record);
-                    }
-                }
-            }
-        }
-        state.records = records;
         state
     }
 
@@ -2153,92 +2132,6 @@ mod tests {
             normalized_path_key(Path::new("/tmp/wegent-worktrees/task-1/repository/")),
             "/tmp/wegent-worktrees/task-1/repository"
         );
-    }
-
-    #[test]
-    fn load_rekeys_persisted_records_by_normalized_path() {
-        let root = test_directory("wegent-worktree-load-rekey-test");
-        let managed_root = root.join("managed");
-        let record_path = managed_root.join("task-1/source");
-        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
-        let record = ManagedWorktree {
-            worktree_id: "task-1".to_owned(),
-            path: record_path.display().to_string(),
-            repository_name: "source".to_owned(),
-            ..ManagedWorktree::default()
-        };
-        // Simulate a legacy persisted record keyed without normalization (a
-        // trailing separator on any platform, or backslash separators on
-        // Windows) so the canonical lookup key must be derived on load.
-        let legacy_key = format!("{}/", record.path);
-        manager
-            .save(&WorktreeState {
-                version: STATE_VERSION,
-                settings: WorktreeSettings {
-                    worktree_root: managed_root.display().to_string(),
-                    resolved_worktree_root: managed_root.display().to_string(),
-                    ..WorktreeSettings::default()
-                },
-                known_roots: vec![managed_root.display().to_string()],
-                records: HashMap::from([(legacy_key, record)]),
-            })
-            .unwrap();
-
-        let loaded = manager.load();
-        let migrated = loaded
-            .records
-            .get(&normalized_path_key(&record_path))
-            .expect("persisted record should be re-keyed on load");
-        assert_eq!(migrated.worktree_id, "task-1");
-        assert_eq!(loaded.records.len(), 1, "legacy key must not survive");
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn load_rekey_keeps_the_newer_record_on_key_collision() {
-        let root = test_directory("wegent-worktree-load-rekey-collision-test");
-        let managed_root = root.join("managed");
-        let record_path = managed_root.join("task-1/source");
-        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
-        // Two distinct persisted records whose paths normalize to the same
-        // canonical key (trailing separator on any platform, or backslash
-        // versus forward-slash spelling on Windows). The collision policy must
-        // keep the most recently updated record deterministically.
-        let stale = ManagedWorktree {
-            worktree_id: "task-1".to_owned(),
-            path: record_path.display().to_string(),
-            repository_name: "stale".to_owned(),
-            updated_at: 1000,
-            ..ManagedWorktree::default()
-        };
-        let fresh = ManagedWorktree {
-            worktree_id: "task-1".to_owned(),
-            path: format!("{}/", record_path.display()),
-            repository_name: "fresh".to_owned(),
-            updated_at: 2000,
-            ..ManagedWorktree::default()
-        };
-        manager
-            .save(&WorktreeState {
-                version: STATE_VERSION,
-                settings: WorktreeSettings {
-                    worktree_root: managed_root.display().to_string(),
-                    resolved_worktree_root: managed_root.display().to_string(),
-                    ..WorktreeSettings::default()
-                },
-                known_roots: vec![managed_root.display().to_string()],
-                records: HashMap::from([(stale.path.clone(), stale), (fresh.path.clone(), fresh)]),
-            })
-            .unwrap();
-
-        let loaded = manager.load();
-        let record = loaded
-            .records
-            .get(&normalized_path_key(&record_path))
-            .expect("collision should keep a single canonical record");
-        assert_eq!(record.repository_name, "fresh");
-        assert_eq!(loaded.records.len(), 1);
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
