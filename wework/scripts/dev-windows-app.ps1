@@ -26,6 +26,12 @@ Environment:
   WEWORK_EXECUTOR_PATH      Executor command. Defaults to the source sidecar.
   WEWORK_DEV_CODEX_BINARY   Codex binary. Defaults to the repository-locked binary.
   WEWORK_DEV_DWS_BINARY     DWS binary. Defaults to the repository-prepared binary.
+  WEWORK_DEV_CACHE_ROOT     Root for the materialized dev runtimes. Defaults to
+                            %LOCALAPPDATA%\wegent\wework-dev.
+  WEWORK_HARNESS_RUNTIME_CACHE_ROOT
+                            Harness runtime asset and dev materialization root.
+  WEWORK_EXECUTION_RUNTIME_CACHE_ROOT
+                            Node runtime asset and dev materialization root.
   CARGO_TARGET_DIR          Explicit Cargo target directory. Overrides auto cache.
   WEGENT_CARGO_TARGET_ROOT  Root containing shared Cargo targets.
   WEGENT_DISABLE_SHARED_CARGO_TARGET
@@ -274,15 +280,34 @@ if (-not $env:WEWORK_EXECUTOR_PATH) {
   $env:WEGENT_EXECUTOR_BINARY = Get-ExecutorBinaryPath
 }
 
+$DEV_CACHE_ROOT = if ($env:WEWORK_DEV_CACHE_ROOT) {
+  $env:WEWORK_DEV_CACHE_ROOT.TrimEnd('\')
+} elseif ($env:LOCALAPPDATA) {
+  Join-Path $env:LOCALAPPDATA 'wegent\wework-dev'
+} elseif ($env:USERPROFILE) {
+  Join-Path $env:USERPROFILE '.cache\wegent\wework-dev'
+} else {
+  Join-Path $WEWORK_DIR 'node_modules\.cache\wework-dev'
+}
+$env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT = if ($env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT) {
+  $env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT.TrimEnd('\')
+} else {
+  Join-Path $DEV_CACHE_ROOT 'harness-runtime'
+}
+$env:WEWORK_EXECUTION_RUNTIME_CACHE_ROOT = if ($env:WEWORK_EXECUTION_RUNTIME_CACHE_ROOT) {
+  $env:WEWORK_EXECUTION_RUNTIME_CACHE_ROOT.TrimEnd('\')
+} else {
+  Join-Path $DEV_CACHE_ROOT 'execution-runtime'
+}
 $env:WEWORK_HARNESS_RUNTIME_ROOT = if ($env:WEWORK_HARNESS_RUNTIME_ROOT) {
   $env:WEWORK_HARNESS_RUNTIME_ROOT
 } else {
-  Join-Path $WEWORK_DIR 'node_modules\.cache\harness-runtime-dev'
+  Join-Path $env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT 'harness-runtime-dev'
 }
 $env:WEWORK_NODE_PATH = if ($env:WEWORK_NODE_PATH) {
   $env:WEWORK_NODE_PATH
 } else {
-  Join-Path $WEWORK_DIR 'node_modules\.cache\execution-runtime-node-dev\bin\node.exe'
+  Join-Path $env:WEWORK_EXECUTION_RUNTIME_CACHE_ROOT 'execution-runtime-node-dev\bin\node.exe'
 }
 
 if ($env:WEWORK_DEV_CODEX_BINARY) {
@@ -313,6 +338,7 @@ function Print-Configuration {
   Write-Host "  CARGO_TARGET_DIR=$env:CARGO_TARGET_DIR"
   Write-Host "  RUSTC_WRAPPER=$env:RUSTC_WRAPPER"
   Write-Host "  WEGENT_EXECUTOR_HOME=$env:WEGENT_EXECUTOR_HOME"
+  Write-Host "  WEWORK_HARNESS_RUNTIME_ROOT=$env:WEWORK_HARNESS_RUNTIME_ROOT"
   Write-Host "  WEWORK_NODE_PATH=$env:WEWORK_NODE_PATH"
   Write-Host "  CODEX_BINARY_PATH=$env:CODEX_BINARY_PATH"
   Write-Host "  DWS_BINARY_PATH=$env:DWS_BINARY_PATH"
