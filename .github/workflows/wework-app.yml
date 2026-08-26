@@ -93,6 +93,7 @@ jobs:
         if: steps.version.outputs.publish_release == 'true'
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_SHA: ${{ steps.version-files.outputs.release_sha }}
           RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
           RELEASE_VERSION: ${{ steps.version.outputs.value }}

@@ -163,6 +163,9 @@ describe('bundled plugin resources', () => {
     expect(workflow).toMatch(
       /- name: Commit Wework version files[\s\S]*?GH_TOKEN: \$\{\{ steps\.release-app-token\.outputs\.token \}\}/
     )
+    expect(workflow).toMatch(
+      /- name: Create or update draft release[\s\S]*?GH_REPO: \$\{\{ github\.repository \}\}/
+    )
     expect(workflow).toMatch(/gh release edit "\$RELEASE_TAG"[\s\S]*--target "\$RELEASE_SHA"/)
     expect(installerHooks).toContain('Software\\you\\WeWork')
     expect(installerHooks).toContain('InstallLocation')
