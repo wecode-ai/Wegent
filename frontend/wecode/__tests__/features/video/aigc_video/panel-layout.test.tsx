@@ -72,6 +72,8 @@ describe('AigcVideoPanel layout', () => {
   })
 
   it('loads the complete script instead of rendering the truncated card preview', async () => {
+    const onClose = jest.fn()
+    const onChatButtonClick = jest.fn().mockResolvedValue(undefined)
     jest.mocked(scriptApi.getScript).mockResolvedValue({
       script_id: 12,
       task_id: 3,
@@ -83,11 +85,19 @@ describe('AigcVideoPanel layout', () => {
     render(
       <AigcVideoPanel
         embedded
-        onClose={jest.fn()}
+        onClose={onClose}
         panelProps={{
           title: '晨光里的温柔时刻',
           link: '/chat?taskId=3&openPanel=script&scriptId=12',
           previewText: '# 晨光里的温柔时刻\n\n**旁...',
+          buttons: [
+            {
+              button_id: 'generate-entities',
+              button_name: '开始生成主体',
+              button_type: 'chat',
+            },
+          ],
+          onChatButtonClick,
         }}
       />
     )
@@ -96,5 +106,12 @@ describe('AigcVideoPanel layout', () => {
     expect(scriptApi.getScript).toHaveBeenCalledWith(12)
     expect(screen.getByText(/完整的第二幕与结尾内容/)).toBeInTheDocument()
     expect(screen.queryByText(/旁\.\.\./)).not.toBeInTheDocument()
+    expect(screen.getByTestId('script-full-content')).toHaveClass('sm:pl-[60px]')
+
+    const action = screen.getByTestId('aigc-video-panel-action-generate-entities')
+    expect(action).toHaveClass('w-full')
+    fireEvent.click(action)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onChatButtonClick).toHaveBeenCalledWith('开始生成主体')
   })
 })

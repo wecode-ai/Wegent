@@ -3,14 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  buildSubtitlesFromSrt,
   buildSrt,
   loadBgmTasks,
-  loadSubtitleTasks,
-  parseSrt,
+  loadSubTasks,
   removeBgmTask,
-  removeSubtitleTask,
+  removeSubTask,
   saveBgmTask,
-  saveSubtitleTask,
+  saveSubTask,
 } from '@wecode/features/video/composition/utils'
 
 describe('video composition utilities', () => {
@@ -19,7 +19,7 @@ describe('video composition utilities', () => {
   })
 
   test('parses and rebuilds clip-local SRT timestamps', () => {
-    const subtitles = parseSrt('1\n00:00:01,250 --> 00:00:03,500\nAutumn light', 12, 8)
+    const subtitles = buildSubtitlesFromSrt('1\n00:00:01,250 --> 00:00:03,500\nAutumn light', 12, 8)
 
     expect(subtitles).toEqual([
       expect.objectContaining({
@@ -35,25 +35,13 @@ describe('video composition utilities', () => {
   })
 
   test('persists pending BGM tasks per script and removes completed tasks', () => {
-    saveBgmTask(31, {
-      task_uuid: 'bgm-task',
-      idx: 2,
-      prompt: 'Warm acoustic music',
-      duration: 60,
-    })
-    saveBgmTask(32, {
-      task_uuid: 'other-task',
-      idx: 0,
-      prompt: 'Other script',
-      duration: 10,
-    })
+    saveBgmTask(31, 2, 'bgm-task')
+    saveBgmTask(32, 0, 'other-task')
 
     expect(loadBgmTasks(31)).toEqual([
       {
         task_uuid: 'bgm-task',
         idx: 2,
-        prompt: 'Warm acoustic music',
-        duration: 60,
       },
     ])
 
@@ -63,13 +51,9 @@ describe('video composition utilities', () => {
   })
 
   test('persists pending subtitle tasks per storyboard', () => {
-    saveSubtitleTask(31, {
-      task_uuid: 'subtitle-task',
-      storyboard_id: 7,
-      clip_id: 19,
-    })
+    saveSubTask(31, 7, 19, 'subtitle-task')
 
-    expect(loadSubtitleTasks(31)).toEqual([
+    expect(loadSubTasks(31)).toEqual([
       {
         task_uuid: 'subtitle-task',
         storyboard_id: 7,
@@ -77,8 +61,8 @@ describe('video composition utilities', () => {
       },
     ])
 
-    removeSubtitleTask(31, 7)
-    expect(loadSubtitleTasks(31)).toEqual([])
+    removeSubTask(31, 7)
+    expect(loadSubTasks(31)).toEqual([])
   })
 
   test('discards malformed task cache entries', () => {
@@ -86,7 +70,7 @@ describe('video composition utilities', () => {
     window.localStorage.setItem('wegent_sub_task_31_7', JSON.stringify({ task_uuid: '' }))
 
     expect(loadBgmTasks(31)).toEqual([])
-    expect(loadSubtitleTasks(31)).toEqual([])
+    expect(loadSubTasks(31)).toEqual([])
     expect(window.localStorage.length).toBe(0)
   })
 })

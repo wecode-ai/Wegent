@@ -141,6 +141,7 @@ export function resolveVideoPanelSessionId(
 export function AigcVideoPanel({
   panelProps,
   onClose,
+  embedded,
 }: TaskRightPanelComponentProps<AigcVideoPanelPayload>) {
   const { t } = useTranslation('video')
   const { theme } = useTheme()
@@ -204,24 +205,23 @@ export function AigcVideoPanel({
           taskId={taskId!}
           initialIndex={target.index}
           onClose={onClose}
+          embedded={embedded}
           onGenerateFinalVideo={onChatButtonClick ? () => handleContinue() : undefined}
         />
       ) : isScript ? (
         <ScriptPanel scriptId={target.scriptId!} onClose={onClose}>
-          {buttons.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {buttons.map(button => {
+          {chatButtons.length > 0 ? (
+            <div className="w-full">
+              {chatButtons.map(button => {
                 const buttonId = button.button_id || button.button_name
                 return (
                   <Button
                     key={buttonId}
-                    disabled={submitting === buttonId}
-                    onClick={() => void handleAction(button)}
+                    variant="primary"
+                    className="w-full"
+                    onClick={() => handleContinue(button.button_name)}
                     data-testid={`aigc-video-panel-action-${buttonId}`}
                   >
-                    {submitting === buttonId ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : null}
                     {button.button_name}
                   </Button>
                 )

@@ -16,6 +16,48 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { scriptApi } from './api'
 import type { ScriptDetail } from './types'
 
+interface MarkdownChildrenProps {
+  children?: ReactNode
+}
+
+const scriptMarkdownComponents = {
+  h1: ({ children }: MarkdownChildrenProps) => (
+    <h1 className="!mb-[34px] !mt-0 !text-[30px] !font-medium !leading-[34px] !text-[#333333]">
+      {children}
+    </h1>
+  ),
+  h2: ({ children }: MarkdownChildrenProps) => (
+    <h2 className="!mb-7 !mt-7 !text-2xl !font-medium !leading-7 !text-[#333333]">{children}</h2>
+  ),
+  h3: ({ children }: MarkdownChildrenProps) => (
+    <h3 className="!mb-4 !mt-6 !text-base !font-medium !leading-6 !text-[#333333]">{children}</h3>
+  ),
+  h4: ({ children }: MarkdownChildrenProps) => (
+    <h4 className="!mb-3 !mt-5 !text-sm !font-medium !leading-5 !text-[#333333]">{children}</h4>
+  ),
+  p: ({ children }: MarkdownChildrenProps) => (
+    <p className="!mb-3 !text-[15px] !leading-7 !text-[#333333]">{children}</p>
+  ),
+  ul: ({ children }: MarkdownChildrenProps) => (
+    <ul className="!mb-3 !list-disc !pl-6 !text-[15px] !leading-7 !text-[#333333]">{children}</ul>
+  ),
+  ol: ({ children }: MarkdownChildrenProps) => (
+    <ol className="!mb-3 !list-decimal !pl-6 !text-[15px] !leading-7 !text-[#333333]">
+      {children}
+    </ol>
+  ),
+  li: ({ children }: MarkdownChildrenProps) => <li className="!mb-1">{children}</li>,
+  strong: ({ children }: MarkdownChildrenProps) => (
+    <strong className="!font-medium !text-[#333333]">{children}</strong>
+  ),
+  hr: () => <hr className="!my-7 !border-0 !border-t !border-[#eeeeee]" />,
+  blockquote: ({ children }: MarkdownChildrenProps) => (
+    <blockquote className="!my-4 !border-l-2 !border-[#ff8200] !pl-4 !text-[15px] !leading-7 !text-[#666666]">
+      {children}
+    </blockquote>
+  ),
+}
+
 interface ScriptPanelProps {
   scriptId: number
   onClose: () => void
@@ -180,10 +222,10 @@ export function ScriptPanel({ scriptId, onClose, children }: ScriptPanelProps) {
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {loading ? (
           <div
-            className="flex h-full items-center justify-center gap-2 text-sm text-text-secondary"
+            className="flex h-full items-center justify-center gap-2 px-5 py-4 text-sm text-text-secondary"
             data-testid="video-script-panel-loading"
           >
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
@@ -191,7 +233,7 @@ export function ScriptPanel({ scriptId, onClose, children }: ScriptPanelProps) {
           </div>
         ) : loadFailed ? (
           <div
-            className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center"
+            className="flex h-full flex-col items-center justify-center gap-4 px-6 py-4 text-center"
             data-testid="video-script-panel-error"
           >
             <FileText className="h-9 w-9 text-text-muted" />
@@ -205,16 +247,23 @@ export function ScriptPanel({ scriptId, onClose, children }: ScriptPanelProps) {
           <Textarea
             value={content}
             onChange={event => setContent(event.target.value)}
-            className="min-h-full resize-none font-mono leading-6"
+            className="m-5 min-h-[calc(100%_-_2.5rem)] w-[calc(100%_-_2.5rem)] resize-none font-mono leading-6"
             aria-label={t('script.editorLabel')}
             data-testid="script-editor"
           />
         ) : content ? (
           <div
-            className="text-sm leading-6 text-text-primary [&_h1]:mb-4 [&_h1]:mt-0 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-3 [&_h2]:mt-6 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-base [&_h3]:font-semibold [&_li]:my-1 [&_ol]:mb-3 [&_p]:mb-3 [&_ul]:mb-3"
+            className="w-full overflow-x-hidden pb-10 pt-4 sm:pl-[60px] sm:pr-8"
+            style={{ fontFamily: "'PingFang SC', sans-serif" }}
             data-testid="script-full-content"
           >
-            <EnhancedMarkdown source={content} theme={theme} />
+            <div className="w-full max-w-full sm:max-w-[600px]">
+              <EnhancedMarkdown
+                source={content}
+                theme={theme}
+                components={scriptMarkdownComponents}
+              />
+            </div>
           </div>
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-text-secondary">

@@ -1,833 +1,1428 @@
-// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
 'use client'
 
+/**
+ * StoryboardPanel – 720px right-side panel for storyboard management.
+ *
+ * Layout: Fixed right panel (same as EntityPanel), chat area remains visible.
+ * Uses carousel view with video preview, thumbnail strip, and inline description editing.
+ */
+
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { Loader2 } from 'lucide-react'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { CarouselView } from '@wecode/features/video/components/CarouselView'
 import {
-  ChevronLeft,
-  ChevronRight,
-  Clapperboard,
-  ImageUp,
-  Loader2,
-  Pencil,
-  Play,
-  RefreshCw,
-  Save,
-  Upload,
-  WandSparkles,
-  X,
-} from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Progress } from '@/components/ui/progress'
-import { Textarea } from '@/components/ui/textarea'
-import { useToast } from '@/hooks/use-toast'
+  storyboardApis,
+  type Storyboard,
+  type StoryboardListResponse,
+  type StoryboardVideoVersion,
+  type VideoClip,
+} from './api'
+import { toast } from '@/hooks/use-toast'
+import { scriptApi } from '@wecode/features/video/script/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getAigcVideoImageUrl, getAigcVideoPlaybackUrl } from '../aigc_video/mediaUrls'
-import { CompositionEditor } from '../composition/CompositionEditor'
-import type { CompositionBgm } from '../composition/types'
-import { scriptApi } from '../script/api'
-import type { FinalVideoCover } from '../script/types'
-import { storyboardApis } from './api'
-import type {
-  GenerateAllVideosParams,
-  GenerateSingleVideoParams,
-  Storyboard,
-  StoryboardUpdateData,
-  StoryboardVideoVersion,
-  TaskStatusResponse,
-  VideoClip,
-  VideoGenerateResponse,
-} from './types'
+import type { ThumbnailItem } from '@wecode/features/video/entity/EntityThumbnailStrip'
+import { StoryboardVideoPreview } from './StoryboardVideoPreview'
+import { StoryboardVersionSelector } from './StoryboardVersionSelector'
+import { getRatioDimensions } from '@wecode/features/video/components/ratioDimensions'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { PanelCloseButton } from '@wecode/features/video/components/PanelCloseButton'
+import { CompositionEditor } from '@wecode/features/video/composition'
+import { ApiError } from '@/apis/client'
+import {
+  hasGeneratingStoryboardClip,
+  hasPendingStoryboardGeneration,
+  hasSuccessfulSelectedStoryboardVersion,
+} from './generationAvailability'
+import { getAigcVideoImageUrl } from '../aigc_video/mediaUrls'
 
 interface StoryboardPanelProps {
   scriptId: number
   taskId: number
   initialIndex?: number
+  scriptTitle?: string
   onClose: () => void
-  onGenerateFinalVideo?: () => void
+  embedded?: boolean // Embedded mode: no fixed positioning, used in split view
+  readOnly?: boolean // Read-only mode: disable editing
+  shareToken?: string // Share token for public shared task access
+  onGenerateFinalVideo?: () => Promise<void> | void
+  isGeneratingFinalVideo?: boolean
 }
 
-interface ScriptState {
+// Script detail state
+type ScriptDetailState = {
   title: string
-  bgm: CompositionBgm[]
+  bgm: import('@wecode/features/video/composition/types').CompositionBgm[]
   bgmEnabled: boolean
   subtitleEnabled: boolean
-  finalVideoCover: FinalVideoCover | null
+  finalVideoCover: import('@wecode/features/video/script/types').FinalVideoCover | null
+  loading: boolean
 }
 
-type GenerationType = 'single' | 'all'
-
-const wait = (milliseconds: number) =>
-  new Promise<void>(resolve => window.setTimeout(resolve, milliseconds))
-
-function selectedVersion(storyboard: Storyboard, clipId?: number): StoryboardVideoVersion | null {
+function getEffectiveVersion(storyboard: Storyboard, selectedClipId?: number | null) {
   const versions = storyboard.video_versions ?? []
-  return (
-    versions.find(version => version.id === clipId) ??
-    versions.find(version => version.id === storyboard.selected_video_clip_id) ??
-    versions.find(version => version.is_selected) ??
-    versions[0] ??
-    null
+  if (versions.length === 0) return null
+
+  const targetId = selectedClipId ?? storyboard.selected_video_clip_id
+  if (targetId != null) {
+    const matched = versions.find(version => version.id === targetId)
+    if (matched) return matched
+  }
+
+  return versions.find(version => version.is_selected) ?? versions[0] ?? null
+}
+
+function versionToVideoClip(version: StoryboardVideoVersion | null, fallback: VideoClip | null) {
+  if (!version) return fallback
+  return {
+    id: version.id,
+    generation_status: version.generation_status,
+    progress: version.progress,
+    model_video_url: version.model_video_url,
+    video_cover_url: version.video_cover_url,
+    media_id: version.media_id,
+    duration: version.duration,
+    error_message: version.error_message,
+    task_uuid: version.task_uuid ?? null,
+  }
+}
+
+function getGeneratingVersion(storyboard: Storyboard) {
+  return (storyboard.video_versions ?? []).find(
+    version =>
+      (version.generation_status === 1 || version.generation_status === 2) &&
+      Boolean(version.task_uuid)
   )
 }
 
-function effectiveVideo(
-  storyboard: Storyboard,
-  clipId?: number
-): StoryboardVideoVersion | VideoClip | null {
-  return selectedVersion(storyboard, clipId) ?? storyboard.video_clip
-}
-
-function isGenerating(video: StoryboardVideoVersion | VideoClip | null) {
-  return video?.generation_status === 1 || video?.generation_status === 2
+function applySelectedClipToStoryboard(storyboard: Storyboard, clipId: number): Storyboard {
+  return {
+    ...storyboard,
+    selected_video_clip_id: clipId,
+    video_versions: (storyboard.video_versions ?? []).map(version => ({
+      ...version,
+      is_selected: version.id === clipId,
+    })),
+  }
 }
 
 export function StoryboardPanel({
   scriptId,
   taskId,
   initialIndex = 0,
+  scriptTitle,
   onClose,
+  embedded = true,
+  readOnly = false,
+  shareToken,
   onGenerateFinalVideo,
+  isGeneratingFinalVideo = false,
 }: StoryboardPanelProps) {
-  const { t } = useTranslation('video')
-  const { toast } = useToast()
   const [storyboards, setStoryboards] = useState<Storyboard[]>([])
-  const [scriptState, setScriptState] = useState<ScriptState>({
-    title: '',
+  const [loading, setLoading] = useState(true)
+
+  // Mobile detection for responsive sizing
+  const isMobile = useIsMobile()
+
+  // Script detail state
+  const [scriptState, setScriptState] = useState<ScriptDetailState>({
+    title: scriptTitle || '',
     bgm: [],
     bgmEnabled: true,
     subtitleEnabled: true,
     finalVideoCover: null,
+    loading: !scriptTitle,
   })
-  const [ratio, setRatio] = useState<string>()
+
+  // ... existing code ...
+
+  // Video generation state
+  const [videoGeneratingIds, setVideoGeneratingIds] = useState<number[]>([])
+  const videoGeneratingIdsRef = useRef<number[]>([])
+  const [_videoProgressMap, setVideoProgressMap] = useState<Record<number, number>>({})
+  const pollTimersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
+  const [selectedVersionMap, setSelectedVersionMap] = useState<Record<number, number>>({})
+
+  // Billing confirmation state
+  const [pendingCharge, setPendingCharge] = useState<
+    | {
+        mode: 'single'
+        storyboardId: number
+        billingToken: string
+        message: string
+        creditCost?: number
+        shotsPrompt?: string
+      }
+    | {
+        mode: 'bulk'
+        storyboardIds: number[]
+        billingToken: string
+        message: string
+        creditCost?: number
+      }
+    | null
+  >(null)
+  // Keep ref in sync with state for fetchData access
+  useEffect(() => {
+    videoGeneratingIdsRef.current = videoGeneratingIds
+  }, [videoGeneratingIds])
+
+  // Editing state
+  const [isEditing, setIsEditing] = useState(false)
+  const [editDescription, setEditDescription] = useState('')
+
+  // Composition editor state
+  const [isCompositionEditorOpen, setIsCompositionEditorOpen] = useState(false)
+  const beforeCloseRef = useRef<(() => boolean) | null>(null)
+
+  // Refs to avoid circular dependencies
+  const fetchDataRef = useRef<(silent?: boolean) => Promise<StoryboardListResponse | null>>(
+    async () => null
+  )
+
+  // i18n
+  const { t } = useTranslation('video')
+
+  // Build request options based on shareToken
+  const requestOptions = useMemo(() => ({ shareToken }), [shareToken])
+
+  // Carousel state
   const [currentIndex, setCurrentIndex] = useState(Math.max(initialIndex, 0))
-  const [selectedVersions, setSelectedVersions] = useState<Record<number, number>>({})
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState<StoryboardUpdateData>({})
-  const [saving, setSaving] = useState(false)
-  const [busyIds, setBusyIds] = useState<Set<number>>(() => new Set())
-  const [progress, setProgress] = useState(0)
-  const [compositionOpen, setCompositionOpen] = useState(false)
-  const [replacingImage, setReplacingImage] = useState(false)
-  const [replacingVideo, setReplacingVideo] = useState(false)
-  const imageInputRef = useRef<HTMLInputElement>(null)
-  const videoInputRef = useRef<HTMLInputElement>(null)
-  const activePollsRef = useRef(new Set<string>())
-  const mountedRef = useRef(true)
 
-  const current = storyboards[currentIndex]
-  const currentVersion = current ? selectedVersion(current, selectedVersions[current.id]) : null
-  const currentVideo = current ? effectiveVideo(current, selectedVersions[current.id]) : null
-  const currentBusy = Boolean(current && (busyIds.has(current.id) || isGenerating(currentVideo)))
-  const hasReadyVideos = storyboards.some(storyboard => {
-    const video = effectiveVideo(storyboard, selectedVersions[storyboard.id])
-    return video?.generation_status === 3 && Boolean(video.model_video_url)
-  })
-
-  const loadData = useCallback(
-    async (silent = false) => {
-      if (silent) setRefreshing(true)
-      else setLoading(true)
-      try {
-        const [storyboardResponse, scriptResponse] = await Promise.all([
-          storyboardApis.getStoryboards(scriptId),
-          scriptApi.getScript(scriptId),
-        ])
-        if (!mountedRef.current) return
-        setStoryboards(storyboardResponse.storyboards)
-        setRatio(storyboardResponse.ratio)
-        setSelectedVersions(currentSelections => {
-          const next = { ...currentSelections }
-          for (const storyboard of storyboardResponse.storyboards) {
-            const version = selectedVersion(storyboard, next[storyboard.id])
-            if (version) next[storyboard.id] = version.id
-          }
-          return next
-        })
-        setScriptState({
-          title: scriptResponse.title,
-          bgm: (scriptResponse.bgm ?? []).map(item => ({
-            ...item,
-            volume: item.volume ?? 0.15,
-          })),
-          bgmEnabled: scriptResponse.global_style?.bgm_enabled ?? true,
-          subtitleEnabled: scriptResponse.global_style?.subtitle_enabled ?? true,
-          finalVideoCover: scriptResponse.final_video_cover ?? null,
-        })
-        setCurrentIndex(index =>
-          Math.min(index, Math.max(storyboardResponse.storyboards.length - 1, 0))
+  const flattenedItems = useMemo<ThumbnailItem[]>(
+    () =>
+      storyboards.map(sb => {
+        const currentStoryboardVideoClip = versionToVideoClip(
+          getEffectiveVersion(sb, selectedVersionMap[sb.id]),
+          sb.video_clip
         )
-      } catch (error) {
-        toast({
-          variant: 'destructive',
-          description: error instanceof Error ? error.message : t('storyboard.loadFailed'),
-        })
-      } finally {
-        if (mountedRef.current) {
-          setLoading(false)
-          setRefreshing(false)
+        const isGenerating =
+          videoGeneratingIds.includes(sb.id) ||
+          sb.generation_status === 1 ||
+          currentStoryboardVideoClip?.generation_status === 1 ||
+          currentStoryboardVideoClip?.generation_status === 2
+
+        return {
+          id: sb.id,
+          // 优先使用视频封面，其次是首帧图片
+          image_url:
+            getAigcVideoImageUrl(currentStoryboardVideoClip?.video_cover_url || sb.image_urls[0]) ||
+            '',
+          entity_name: `${t('video')}${(sb.sequence_number ?? 0) + 1}`,
+          // 视频生成中或首帧生成中显示 loading
+          isGenerating,
+          hasPendingGeneration: Boolean(
+            sb.has_pending_video_generation &&
+            !isGenerating &&
+            !currentStoryboardVideoClip?.model_video_url
+          ),
         }
-      }
-    },
-    [scriptId, t, toast]
+      }),
+    [selectedVersionMap, storyboards, t, videoGeneratingIds]
   )
 
-  const pollVideo = useCallback(
-    async (taskUuid: string, storyboardId?: number, shotId?: string) => {
-      const pollKey = `video:${taskUuid}`
-      if (activePollsRef.current.has(pollKey)) return
-      activePollsRef.current.add(pollKey)
-      if (storyboardId) setBusyIds(currentIds => new Set(currentIds).add(storyboardId))
-      try {
-        for (;;) {
-          if (!mountedRef.current) return
-          let status: TaskStatusResponse
-          try {
-            status = await storyboardApis.getVideoTaskStatus(taskUuid, shotId)
-          } catch {
-            await wait(5000)
-            continue
-          }
-          if (!mountedRef.current) return
-          setProgress(status.progress?.percentage ?? 0)
-          if (status.status === 'completed') {
-            toast({ description: t('storyboard.generateSuccess') })
-            break
-          }
-          if (status.status === 'failed') throw new Error(status.error || '')
-          await wait(2500)
-        }
-      } catch (error) {
-        if (mountedRef.current) {
-          toast({
-            variant: 'destructive',
-            description:
-              error instanceof Error && error.message
-                ? error.message
-                : t('storyboard.generateFailed'),
-          })
-        }
-      } finally {
-        activePollsRef.current.delete(pollKey)
-        if (mountedRef.current) {
-          if (storyboardId) {
-            setBusyIds(currentIds => {
-              const next = new Set(currentIds)
-              next.delete(storyboardId)
-              return next
-            })
-          }
-          setProgress(0)
-          await loadData(true)
-        }
+  // Clamp index when storyboards change
+  useEffect(() => {
+    if (flattenedItems.length > 0 && currentIndex >= flattenedItems.length) {
+      setCurrentIndex(flattenedItems.length - 1)
+    }
+  }, [flattenedItems.length, currentIndex])
+
+  const prev = useCallback(() => setCurrentIndex(i => (i > 0 ? i - 1 : i)), [])
+  const next = useCallback(
+    () => setCurrentIndex(i => (i < flattenedItems.length - 1 ? i + 1 : i)),
+    [flattenedItems.length]
+  )
+  const goTo = useCallback(
+    (index: number) => {
+      if (index >= 0 && index < flattenedItems.length) {
+        setCurrentIndex(index)
       }
     },
-    [loadData, t, toast]
+    [flattenedItems.length]
   )
 
-  const pollImage = useCallback(
-    async (taskUuid: string, storyboardId: number) => {
-      const pollKey = `image:${taskUuid}`
-      if (activePollsRef.current.has(pollKey)) return
-      activePollsRef.current.add(pollKey)
-      setBusyIds(currentIds => new Set(currentIds).add(storyboardId))
+  // Cleanup poll timers
+  useEffect(() => {
+    const timers = pollTimersRef.current
+    return () => {
+      Object.values(timers).forEach(clearTimeout)
+    }
+  }, [])
+
+  // Store ratio from API response
+  const [ratio, setRatio] = useState<string | undefined>(undefined)
+
+  // Fetch script title from aigc-video API
+  const fetchScriptTitle = useCallback(async () => {
+    try {
+      const script = await scriptApi.getScript(scriptId, requestOptions)
+      setScriptState({
+        title: script.title,
+        bgm: (script.bgm ?? []).map(b => ({ ...b, volume: b.volume ?? 0.5 })),
+        bgmEnabled: script.global_style?.bgm_enabled ?? true,
+        subtitleEnabled: script.global_style?.subtitle_enabled ?? true,
+        finalVideoCover: script.final_video_cover ?? null,
+        loading: false,
+      })
+    } catch (err) {
+      console.error('Failed to fetch script title:', err)
+      setScriptState(prev => ({ ...prev, loading: false }))
+    }
+  }, [scriptId, requestOptions])
+
+  // Poll video status - extracted for reuse in fetchData
+  const pollVideoStatus = useCallback(
+    async (storyboardId: number, taskUuid: string, shotId?: string) => {
       try {
-        for (;;) {
-          if (!mountedRef.current) return
-          let status: TaskStatusResponse
-          try {
-            status = await storyboardApis.getImageTaskStatus(taskUuid)
-          } catch {
-            await wait(5000)
-            continue
-          }
-          if (!mountedRef.current) return
-          setProgress(status.progress?.percentage ?? 0)
-          if (status.status === 'completed') {
-            toast({ description: t('storyboard.imageSuccess') })
-            break
-          }
-          if (status.status === 'failed') throw new Error(status.error || '')
-          await wait(2500)
-        }
-      } catch (error) {
-        if (mountedRef.current) {
-          toast({
-            variant: 'destructive',
-            description:
-              error instanceof Error && error.message ? error.message : t('storyboard.imageFailed'),
-          })
-        }
-      } finally {
-        activePollsRef.current.delete(pollKey)
-        if (mountedRef.current) {
-          setBusyIds(currentIds => {
-            const next = new Set(currentIds)
-            next.delete(storyboardId)
+        const status = await storyboardApis.getVideoTaskStatus(taskUuid, shotId)
+        if (status.status === 'completed') {
+          setVideoGeneratingIds(prev => prev.filter(id => id !== storyboardId))
+          setVideoProgressMap(prev => {
+            const next = { ...prev }
+            delete next[storyboardId]
             return next
           })
-          setProgress(0)
-          await loadData(true)
+          delete pollTimersRef.current[storyboardId]
+          await fetchDataRef.current?.(true)
+          const successMsg =
+            status.task_type === 'batch'
+              ? t('video_generate_success')
+              : t('video_regenerate_success')
+          toast({ description: successMsg })
+        } else if (status.status === 'failed') {
+          setVideoGeneratingIds(prev => prev.filter(id => id !== storyboardId))
+          setVideoProgressMap(prev => {
+            const next = { ...prev }
+            delete next[storyboardId]
+            return next
+          })
+          delete pollTimersRef.current[storyboardId]
+          console.error('Video regeneration failed:', status.error)
+          const failedMsg =
+            status.task_type === 'batch' ? t('video_generate_failed') : t('video_regenerate_failed')
+          toast({ description: failedMsg, variant: 'destructive' })
+          await fetchDataRef.current?.(true)
+        } else {
+          const percentage = status.progress?.percentage ?? 0
+          setVideoProgressMap(prev => ({ ...prev, [storyboardId]: percentage }))
+          pollTimersRef.current[storyboardId] = setTimeout(
+            () => pollVideoStatus(storyboardId, taskUuid, shotId),
+            3000
+          )
         }
+      } catch (err) {
+        console.error('Failed to poll video status:', err)
+        if (err instanceof ApiError && err.status === 404) {
+          setVideoGeneratingIds(prev => prev.filter(id => id !== storyboardId))
+          setVideoProgressMap(prev => {
+            const next = { ...prev }
+            delete next[storyboardId]
+            return next
+          })
+          delete pollTimersRef.current[storyboardId]
+          await fetchDataRef.current?.(true)
+          return
+        }
+        pollTimersRef.current[storyboardId] = setTimeout(
+          () => pollVideoStatus(storyboardId, taskUuid, shotId),
+          5000
+        )
       }
     },
-    [loadData, t, toast]
+    [t]
   )
 
-  useEffect(() => {
-    mountedRef.current = true
-    void loadData()
-    return () => {
-      mountedRef.current = false
-    }
-  }, [loadData])
+  // Fetch storyboard data and restore polling for pending tasks
+  const fetchData = useCallback(
+    async (silent = false): Promise<StoryboardListResponse | null> => {
+      try {
+        if (!silent) setLoading(true)
+        const res = await storyboardApis.getStoryboards(scriptId, requestOptions)
+        setStoryboards(res.storyboards)
+        setSelectedVersionMap(
+          Object.fromEntries(
+            res.storyboards
+              .map(sb => {
+                const version = getEffectiveVersion(sb)
+                return version ? [sb.id, version.id] : null
+              })
+              .filter((item): item is [number, number] => item !== null)
+          )
+        )
+        setRatio(res.ratio)
 
-  useEffect(() => {
-    for (const storyboard of storyboards) {
-      if (
-        (storyboard.generation_status === 1 || storyboard.generation_status === 2) &&
-        storyboard.task_uuid
-      ) {
-        void pollImage(storyboard.task_uuid, storyboard.id)
+        // Restore polling for storyboards with pending video generation (status 1=提交中, 2=生成中)
+        for (const sb of res.storyboards) {
+          const currentVideoClip = versionToVideoClip(getEffectiveVersion(sb), sb.video_clip)
+          const generatingVersion = getGeneratingVersion(sb)
+          const pollTaskUuid = generatingVersion?.task_uuid || currentVideoClip?.task_uuid
+          if (
+            pollTaskUuid &&
+            (Boolean(generatingVersion) ||
+              currentVideoClip?.generation_status === 1 ||
+              currentVideoClip?.generation_status === 2)
+          ) {
+            // Skip if already polling for this storyboard (in generating list or has active timer)
+            if (videoGeneratingIdsRef.current.includes(sb.id) || pollTimersRef.current[sb.id]) {
+              continue
+            }
+            setVideoGeneratingIds(prev => [...prev, sb.id])
+            setVideoProgressMap(prev => ({
+              ...prev,
+              [sb.id]: generatingVersion?.progress || currentVideoClip?.progress || 0,
+            }))
+            // Start polling with shot_id
+            pollVideoStatus(sb.id, pollTaskUuid, sb.shot_id)
+          }
+        }
+        return res
+      } catch (err) {
+        console.error('Failed to fetch storyboards:', err)
+        return null
+      } finally {
+        if (!silent) setLoading(false)
       }
-      const versions = storyboard.video_versions ?? []
-      const generatingVersion = versions.find(version => isGenerating(version) && version.task_uuid)
-      const fallback = storyboard.video_clip
-      const taskUuid =
-        generatingVersion?.task_uuid || (isGenerating(fallback) ? fallback?.task_uuid : null)
-      if (taskUuid) void pollVideo(taskUuid, storyboard.id, storyboard.shot_id)
+    },
+    [scriptId, pollVideoStatus, requestOptions]
+  )
+
+  // Update ref for use in pollVideoStatus
+  useEffect(() => {
+    fetchDataRef.current = fetchData
+  }, [fetchData])
+
+  useEffect(() => {
+    // Fetch script title if not provided
+    if (!scriptTitle) {
+      fetchScriptTitle()
     }
-  }, [pollImage, pollVideo, storyboards])
+  }, [scriptTitle, fetchScriptTitle])
 
-  const beginEdit = () => {
-    if (!current) return
-    setDraft({
-      visual: current.visual,
-      shots_prompt: current.shots_prompt || '',
-      duration_seconds: current.duration_seconds,
-      mood: current.mood,
-      camera_notes: current.camera_notes,
-      dialogue: current.dialogue || '',
-      audio_sfx: current.audio_sfx || '',
-    })
-    setEditing(true)
-  }
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
 
-  const saveStoryboard = async () => {
-    if (!current) return
-    setSaving(true)
-    try {
-      const response = await storyboardApis.updateStoryboard(current.id, draft, false)
-      toast({ description: response.message || t('storyboard.saveSuccess') })
-      setEditing(false)
-      await loadData(true)
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        description: error instanceof Error ? error.message : t('storyboard.saveFailed'),
+  // ESC key handler (no body scroll lock — side panel doesn't need it)
+  const isCompositionEditorOpenRef = useRef(isCompositionEditorOpen)
+  isCompositionEditorOpenRef.current = isCompositionEditorOpen
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        // Do nothing if the composition editor is open — let the Dialog handle ESC.
+        // Use ref to avoid stale closure issues with Radix Dialog capture-phase handling.
+        if (isCompositionEditorOpenRef.current) return
+        if (isEditing) {
+          setIsEditing(false)
+        } else {
+          onClose()
+        }
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [isEditing, onClose])
+
+  // Cancel editing when switching storyboards
+  useEffect(() => {
+    setIsEditing(false)
+  }, [currentIndex])
+
+  // Current storyboard
+  const currentStoryboard = storyboards[currentIndex]
+  const currentVersion = currentStoryboard
+    ? getEffectiveVersion(currentStoryboard, selectedVersionMap[currentStoryboard.id])
+    : null
+  const currentVideoClip = currentStoryboard
+    ? versionToVideoClip(currentVersion, currentStoryboard.video_clip)
+    : null
+  const hasAnyGeneratingVersion = hasGeneratingStoryboardClip(currentStoryboard ?? null)
+  const currentDescription =
+    currentVersion?.shots_prompt ||
+    currentVersion?.visual ||
+    currentStoryboard?.shots_prompt ||
+    currentStoryboard?.visual ||
+    ''
+  const previewStoryboard = currentStoryboard
+    ? {
+        ...currentStoryboard,
+        shots_prompt: currentDescription,
+        video_clip: currentVideoClip,
+      }
+    : null
+  const isVideoGenerating = Boolean(
+    currentVideoClip &&
+    (currentVideoClip.generation_status === 1 || currentVideoClip.generation_status === 2)
+  )
+  const isPendingVideoGeneration = Boolean(
+    currentStoryboard?.has_pending_video_generation &&
+    !isVideoGenerating &&
+    !currentVideoClip?.model_video_url
+  )
+  const generateAllCandidateStoryboards = useMemo(
+    () => storyboards.filter(sb => Boolean(sb.has_pending_video_generation)),
+    [storyboards]
+  )
+  const canGenerateAllStoryboards = hasPendingStoryboardGeneration(storyboards)
+  const isGenerateAllDisabled = !canGenerateAllStoryboards
+  const canComposeStoryboardVideo = hasSuccessfulSelectedStoryboardVersion(
+    storyboards,
+    selectedVersionMap
+  )
+
+  const canShowGenerateFinalVideoButton = Boolean(onGenerateFinalVideo) && !readOnly
+  const isGenerateFinalVideoDisabled = isGeneratingFinalVideo || !canComposeStoryboardVideo
+
+  const handleVersionChange = useCallback(
+    async (storyboardId: number, clipId: number) => {
+      const previousStoryboards = storyboards
+      const previousSelectedMap = selectedVersionMap
+
+      setSelectedVersionMap(prev => ({ ...prev, [storyboardId]: clipId }))
+      setStoryboards(prev =>
+        prev.map(sb => (sb.id === storyboardId ? applySelectedClipToStoryboard(sb, clipId) : sb))
+      )
+
+      try {
+        await storyboardApis.updateStoryboardVideoSelection(scriptId, storyboardId, clipId)
+      } catch (err) {
+        setSelectedVersionMap(previousSelectedMap)
+        setStoryboards(previousStoryboards)
+        const errorMessage = err instanceof Error ? err.message : t('save_failed')
+        toast({ description: errorMessage, variant: 'destructive' })
+      }
+    },
+    [scriptId, selectedVersionMap, storyboards, t]
+  )
+
+  const autoSelectGeneratedVersion = useCallback(
+    async (storyboardId: number, taskUuid: string, fetchedStoryboards?: Storyboard[]) => {
+      const latestStoryboard = (fetchedStoryboards ?? storyboards).find(
+        sb => sb.id === storyboardId
+      )
+      const matchedVersion = latestStoryboard?.video_versions?.find(
+        version => version.task_uuid === taskUuid
+      )
+      if (!matchedVersion) return
+
+      setSelectedVersionMap(prev => ({ ...prev, [storyboardId]: matchedVersion.id }))
+      setStoryboards(prev =>
+        prev.map(sb =>
+          sb.id === storyboardId ? applySelectedClipToStoryboard(sb, matchedVersion.id) : sb
+        )
+      )
+
+      try {
+        await storyboardApis.updateStoryboardVideoSelection(
+          scriptId,
+          storyboardId,
+          matchedVersion.id
+        )
+      } catch (err) {
+        console.error('Failed to persist auto-selected storyboard video version:', err)
+      }
+    },
+    [scriptId, storyboards]
+  )
+
+  const pollGenerateAllStatus = useCallback(
+    async (taskUuid: string, storyboardIds: number[]) => {
+      const clearBulkGeneratingState = (ids: number[] = storyboardIds) => {
+        setVideoGeneratingIds(prev => prev.filter(id => !ids.includes(id)))
+        setVideoProgressMap(prev => {
+          const next = { ...prev }
+          ids.forEach(id => {
+            delete next[id]
+            delete pollTimersRef.current[id]
+          })
+          return next
+        })
+      }
+
+      try {
+        const status = await storyboardApis.getVideoTaskStatus(taskUuid)
+        const shotIdByStoryboardId = new Map(
+          storyboards
+            .filter(sb => storyboardIds.includes(sb.id))
+            .map(sb => [sb.id, sb.shot_id] as const)
+        )
+        const finishedIds: number[] = []
+        const progressEntries: Array<[number, number]> = []
+
+        for (const storyboardId of storyboardIds) {
+          const shotId = shotIdByStoryboardId.get(storyboardId)
+          const shotStatus = shotId ? status.shot_statuses?.[shotId] : undefined
+          if (!shotStatus) continue
+          if (shotStatus.status === 'completed' || shotStatus.status === 'failed') {
+            finishedIds.push(storyboardId)
+            continue
+          }
+          progressEntries.push([
+            storyboardId,
+            shotStatus.progress ?? status.progress?.percentage ?? 0,
+          ])
+        }
+
+        if (finishedIds.length > 0) {
+          clearBulkGeneratingState(finishedIds)
+          await fetchDataRef.current?.(true)
+        }
+        const activeStoryboardIds = storyboardIds.filter(id => !finishedIds.includes(id))
+
+        if (status.status === 'completed') {
+          clearBulkGeneratingState()
+          await fetchDataRef.current?.(true)
+          toast({ description: t('video_generate_success') })
+        } else if (status.status === 'failed') {
+          clearBulkGeneratingState()
+          toast({ description: status.error || t('video_generate_failed'), variant: 'destructive' })
+          await fetchDataRef.current?.(true)
+        } else {
+          const percentage = status.progress?.percentage ?? 0
+          setVideoProgressMap(prev => ({
+            ...prev,
+            ...Object.fromEntries(
+              progressEntries.length > 0
+                ? progressEntries
+                : activeStoryboardIds.map(id => [id, percentage])
+            ),
+          }))
+          const timerIds = activeStoryboardIds.length > 0 ? activeStoryboardIds : storyboardIds
+          const timer = setTimeout(() => pollGenerateAllStatus(taskUuid, timerIds), 3000)
+          timerIds.forEach(id => {
+            pollTimersRef.current[id] = timer
+          })
+        }
+      } catch (err) {
+        console.error('Failed to poll bulk video status:', err)
+        const timer = setTimeout(() => pollGenerateAllStatus(taskUuid, storyboardIds), 5000)
+        storyboardIds.forEach(id => {
+          pollTimersRef.current[id] = timer
+        })
+      }
+    },
+    [storyboards, t]
+  )
+
+  const handleInsufficientCredits = useCallback(
+    async (..._details: unknown[]) => {
+      toast({ description: t('video_generate_failed'), variant: 'destructive' })
+    },
+    [t]
+  )
+
+  const handleKnownCreditShortfall = useCallback(async (..._details: unknown[]) => false, [])
+
+  const handleBillingError = useCallback(
+    async (_message: string | undefined, fallbackMessage: string, ..._details: unknown[]) => {
+      toast({ description: fallbackMessage, variant: 'destructive' })
+    },
+    []
+  )
+
+  const handleRequestError = useCallback(async (_error: unknown, fallbackMessage: string) => {
+    toast({ description: fallbackMessage, variant: 'destructive' })
+  }, [])
+
+  // Handle billing confirmation - second request with confirm_charge=true
+  const handleConfirmCharge = useCallback(async () => {
+    if (!pendingCharge) return
+
+    if (pendingCharge.mode === 'bulk') {
+      const storyboardIds = pendingCharge.storyboardIds
+      const clearBulkGeneratingState = () => {
+        setVideoGeneratingIds(prev => prev.filter(id => !storyboardIds.includes(id)))
+        setVideoProgressMap(prev => {
+          const next = { ...prev }
+          storyboardIds.forEach(id => {
+            delete next[id]
+            delete pollTimersRef.current[id]
+          })
+          return next
+        })
+      }
+
+      try {
+        setVideoGeneratingIds(prev => [...new Set([...prev, ...storyboardIds])])
+        setVideoProgressMap(prev => ({
+          ...prev,
+          ...Object.fromEntries(storyboardIds.map(id => [id, 0])),
+        }))
+
+        const res = await storyboardApis.generateAllVideos({
+          task_id: taskId,
+          script_id: scriptId,
+          confirm_charge: true,
+          billing_token: pendingCharge.billingToken,
+        })
+
+        if (res.action === 'insufficient_credits') {
+          setPendingCharge(null)
+          clearBulkGeneratingState()
+          await handleInsufficientCredits(res.message, res.credit_cost, res.balance)
+          return
+        }
+
+        if (res.action === 'billing_error') {
+          clearBulkGeneratingState()
+          await handleBillingError(
+            res.message,
+            t('video_generate_failed'),
+            res.credit_cost,
+            res.balance
+          )
+          return
+        }
+
+        if (res.action !== 'charged_generate' && res.action !== 'free_generate') {
+          clearBulkGeneratingState()
+          toast({ description: t('video_generate_failed'), variant: 'destructive' })
+          return
+        }
+
+        setPendingCharge(null)
+        await fetchDataRef.current?.(true)
+        const timer = setTimeout(() => pollGenerateAllStatus(res.task_uuid, storyboardIds), 3000)
+        storyboardIds.forEach(id => {
+          pollTimersRef.current[id] = timer
+        })
+        return
+      } catch (err) {
+        console.error('Failed to confirm bulk charge:', err)
+        clearBulkGeneratingState()
+        await handleRequestError(err, t('video_generate_failed'))
+        return
+      }
+    }
+
+    const storyboardId = pendingCharge.storyboardId
+    const storyboard = storyboards.find(item => item.id === storyboardId)
+    if (!storyboard) {
+      setPendingCharge(null)
+      return
+    }
+
+    const clearVideoGeneratingState = () => {
+      setVideoGeneratingIds(prev => prev.filter(id => id !== storyboardId))
+      setVideoProgressMap(prev => {
+        const next = { ...prev }
+        delete next[storyboardId]
+        return next
       })
-    } finally {
-      setSaving(false)
     }
-  }
 
-  const regenerateImage = async () => {
-    if (!current) return
     try {
-      const response = await storyboardApis.regenerateStoryboardImage(current.id, true)
-      void pollImage(response.task_uuid, current.id)
-    } catch (error) {
+      setVideoGeneratingIds(prev => [...prev, storyboardId])
+      setVideoProgressMap(prev => ({ ...prev, [storyboardId]: 0 }))
+
+      const res = await storyboardApis.generateSingleVideo({
+        storyboard_id: storyboardId,
+        task_id: taskId,
+        script_id: scriptId,
+        confirm_charge: true,
+        billing_token: pendingCharge.billingToken,
+        shots_prompt: pendingCharge.shotsPrompt,
+      })
+
+      if (res.action === 'insufficient_credits') {
+        setPendingCharge(null)
+        clearVideoGeneratingState()
+        await handleInsufficientCredits(res.message, res.credit_cost, res.balance)
+        return
+      }
+
+      if (res.action === 'billing_error') {
+        clearVideoGeneratingState()
+        await handleBillingError(
+          res.message,
+          t('video_regenerate_failed'),
+          res.credit_cost,
+          res.balance
+        )
+        return
+      }
+
+      if (res.action !== 'charged_generate' && res.action !== 'free_generate') {
+        clearVideoGeneratingState()
+        toast({ description: t('video_regenerate_failed'), variant: 'destructive' })
+        return
+      }
+
+      setPendingCharge(null)
+      if (pendingCharge.shotsPrompt != null) {
+        setIsEditing(false)
+      }
+
+      const refreshed = await fetchDataRef.current?.(true)
+      await autoSelectGeneratedVersion(storyboardId, res.task_uuid, refreshed?.storyboards)
+      if (!pollTimersRef.current[storyboardId]) {
+        pollTimersRef.current[storyboardId] = setTimeout(
+          () => pollVideoStatus(storyboardId, res.task_uuid, storyboard.shot_id),
+          3000
+        )
+      }
+    } catch (err) {
+      console.error('Failed to confirm charge:', err)
+      clearVideoGeneratingState()
+      await handleRequestError(err, t('video_regenerate_failed'))
+    }
+  }, [
+    autoSelectGeneratedVersion,
+    handleBillingError,
+    handleInsufficientCredits,
+    handleRequestError,
+    pendingCharge,
+    pollGenerateAllStatus,
+    pollVideoStatus,
+    scriptId,
+    storyboards,
+    t,
+    taskId,
+  ])
+
+  useEffect(() => {
+    if (pendingCharge) void handleConfirmCharge()
+  }, [handleConfirmCharge, pendingCharge])
+
+  // Regenerate storyboard video with polling and billing confirmation
+  const handleRegenerate = useCallback(async () => {
+    if (!currentStoryboard) return
+    if (hasGeneratingStoryboardClip(currentStoryboard)) {
       toast({
+        description: '当前分镜视频正在生成中，请等待完成后再重新生成',
         variant: 'destructive',
-        description:
-          error instanceof Error && error.message ? error.message : t('storyboard.imageFailed'),
+      })
+      return
+    }
+    const storyboardId = currentStoryboard.id
+    const clearVideoGeneratingState = () => {
+      setVideoGeneratingIds(prev => prev.filter(id => id !== storyboardId))
+      setVideoProgressMap(prev => {
+        const next = { ...prev }
+        delete next[storyboardId]
+        return next
       })
     }
-  }
 
-  const handleGenerationResponse = async (
-    response: VideoGenerateResponse,
-    type: GenerationType
-  ) => {
-    if (!('task_uuid' in response)) {
-      throw new Error(response.message)
-    }
-    if (type === 'single' && current) {
-      void pollVideo(response.task_uuid, current.id, current.shot_id)
-    } else {
-      void pollVideo(response.task_uuid)
-    }
-  }
-
-  const generateCurrentVideo = async () => {
-    if (!current) return
-    const params: GenerateSingleVideoParams = {
-      storyboard_id: current.id,
-      task_id: taskId,
-      script_id: scriptId,
-      shots_prompt: current.shots_prompt,
-    }
     try {
-      const response = await storyboardApis.generateSingleVideo(params)
-      await handleGenerationResponse(response, 'single')
-    } catch (error) {
+      setVideoGeneratingIds(prev => [...prev, storyboardId])
+      setVideoProgressMap(prev => ({ ...prev, [storyboardId]: 0 }))
+
+      const res = await storyboardApis.generateSingleVideo({
+        storyboard_id: storyboardId,
+        task_id: taskId,
+        script_id: scriptId,
+      })
+
+      // Handle different response types based on billing
+      if (res.action === 'confirm_charge') {
+        clearVideoGeneratingState()
+        if (await handleKnownCreditShortfall(res.message, res.credit_cost)) {
+          return
+        }
+        setPendingCharge({
+          mode: 'single',
+          storyboardId,
+          billingToken: res.billing_token,
+          message: res.message,
+          creditCost: res.credit_cost,
+        })
+        return
+      }
+
+      if (res.action === 'insufficient_credits') {
+        clearVideoGeneratingState()
+        await handleInsufficientCredits(res.message, res.credit_cost, res.balance)
+        return
+      }
+
+      if (res.action === 'billing_error') {
+        clearVideoGeneratingState()
+        await handleBillingError(
+          res.message,
+          t('video_regenerate_failed'),
+          res.credit_cost,
+          res.balance
+        )
+        return
+      }
+
+      if (res.action !== 'charged_generate' && res.action !== 'free_generate') {
+        clearVideoGeneratingState()
+        toast({ description: t('video_regenerate_failed'), variant: 'destructive' })
+        return
+      }
+
+      const refreshed = await fetchDataRef.current?.(true)
+      await autoSelectGeneratedVersion(storyboardId, res.task_uuid, refreshed?.storyboards)
+      if (!pollTimersRef.current[storyboardId]) {
+        pollTimersRef.current[storyboardId] = setTimeout(
+          () => pollVideoStatus(storyboardId, res.task_uuid, currentStoryboard.shot_id),
+          3000
+        )
+      }
+    } catch (err) {
+      console.error('Failed to regenerate video:', err)
+      clearVideoGeneratingState()
+      await handleRequestError(err, t('video_regenerate_failed'))
+    }
+  }, [
+    autoSelectGeneratedVersion,
+    currentStoryboard,
+    handleBillingError,
+    handleInsufficientCredits,
+    handleKnownCreditShortfall,
+    handleRequestError,
+    pollVideoStatus,
+    scriptId,
+    t,
+    taskId,
+  ])
+
+  // Handle "重新编辑" — enter edit mode for visual description
+  // Priority: shots_prompt > visual
+  const handleEditStart = useCallback(() => {
+    if (!currentStoryboard) return
+    const description = currentDescription
+    setEditDescription(description)
+    setIsEditing(true)
+  }, [currentDescription, currentStoryboard])
+
+  const handleEditCancel = useCallback(() => {
+    setIsEditing(false)
+  }, [])
+
+  // Save edited visual description and auto-trigger video regeneration
+  // Save to shots_prompt field, fallback to visual for display
+  const handleEditSave = useCallback(async () => {
+    if (!currentStoryboard) return
+    if (hasAnyGeneratingVersion) {
       toast({
+        description: '当前分镜视频正在生成中，请等待完成后再编辑',
         variant: 'destructive',
-        description: error instanceof Error ? error.message : t('storyboard.generateFailed'),
+      })
+      return
+    }
+    const storyboardId = currentStoryboard.id
+    const clearVideoGeneratingState = () => {
+      setVideoGeneratingIds(prev => prev.filter(id => id !== storyboardId))
+      setVideoProgressMap(prev => {
+        const next = { ...prev }
+        delete next[storyboardId]
+        return next
       })
     }
-  }
 
-  const generateAllVideos = async () => {
-    const params: GenerateAllVideosParams = { task_id: taskId, script_id: scriptId }
     try {
-      const response = await storyboardApis.generateAllVideos(params)
-      await handleGenerationResponse(response, 'all')
-    } catch (error) {
+      setVideoGeneratingIds(prev => [...prev, storyboardId])
+      setVideoProgressMap(prev => ({ ...prev, [storyboardId]: 0 }))
+
+      const res = await storyboardApis.generateSingleVideo({
+        storyboard_id: storyboardId,
+        task_id: taskId,
+        script_id: scriptId,
+        shots_prompt: editDescription,
+      })
+
+      if (res.action === 'confirm_charge') {
+        clearVideoGeneratingState()
+        if (await handleKnownCreditShortfall(res.message, res.credit_cost)) {
+          return
+        }
+        setPendingCharge({
+          mode: 'single',
+          storyboardId,
+          billingToken: res.billing_token,
+          message: res.message,
+          shotsPrompt: editDescription,
+          creditCost: res.credit_cost,
+        })
+        return
+      }
+
+      if (res.action === 'insufficient_credits') {
+        clearVideoGeneratingState()
+        await handleInsufficientCredits(res.message, res.credit_cost, res.balance)
+        return
+      }
+
+      if (res.action === 'billing_error') {
+        clearVideoGeneratingState()
+        await handleBillingError(res.message, t('save_failed'), res.credit_cost, res.balance)
+        return
+      }
+
+      if (res.action !== 'charged_generate' && res.action !== 'free_generate') {
+        clearVideoGeneratingState()
+        toast({ description: t('save_failed'), variant: 'destructive' })
+        return
+      }
+
+      setIsEditing(false)
+      const refreshed = await fetchDataRef.current?.(true)
+      await autoSelectGeneratedVersion(storyboardId, res.task_uuid, refreshed?.storyboards)
+      if (!pollTimersRef.current[storyboardId]) {
+        pollTimersRef.current[storyboardId] = setTimeout(
+          () => pollVideoStatus(storyboardId, res.task_uuid, currentStoryboard.shot_id),
+          3000
+        )
+      }
+    } catch (err) {
+      console.error('Failed to save storyboard:', err)
+      clearVideoGeneratingState()
+      await handleRequestError(err, t('save_failed'))
+    }
+  }, [
+    autoSelectGeneratedVersion,
+    currentStoryboard,
+    editDescription,
+    handleBillingError,
+    hasAnyGeneratingVersion,
+    handleInsufficientCredits,
+    handleKnownCreditShortfall,
+    handleRequestError,
+    pollVideoStatus,
+    scriptId,
+    t,
+    taskId,
+  ])
+
+  // Generate a pending video. Its displayed credit cost serves as confirmation.
+  const handleGenerateVideo = useCallback(async () => {
+    if (!currentStoryboard) return
+    if (currentStoryboard.generation_status !== 2) return
+    if (hasGeneratingStoryboardClip(currentStoryboard)) {
       toast({
+        description: '当前分镜视频正在生成中，请等待完成后再操作',
         variant: 'destructive',
-        description: error instanceof Error ? error.message : t('storyboard.generateFailed'),
+      })
+      return
+    }
+
+    const storyboardId = currentStoryboard.id
+    const clearVideoGeneratingState = () => {
+      setVideoGeneratingIds(prev => prev.filter(id => id !== storyboardId))
+      setVideoProgressMap(prev => {
+        const next = { ...prev }
+        delete next[storyboardId]
+        return next
       })
     }
-  }
 
-  const changeVersion = async (clipId: number) => {
-    if (!current) return
-    const previous = selectedVersions[current.id]
-    setSelectedVersions(values => ({ ...values, [current.id]: clipId }))
     try {
-      await storyboardApis.updateVideoSelection(scriptId, current.id, clipId)
-    } catch (error) {
-      setSelectedVersions(values => ({ ...values, [current.id]: previous }))
-      toast({
-        variant: 'destructive',
-        description: error instanceof Error ? error.message : t('storyboard.versionFailed'),
-      })
-    }
-  }
+      setVideoGeneratingIds(prev => [...prev, storyboardId])
+      setVideoProgressMap(prev => ({ ...prev, [storyboardId]: 0 }))
 
-  const replaceImage = async (file: File) => {
-    if (!current) return
-    setReplacingImage(true)
+      let res = await storyboardApis.generateSingleVideo({
+        storyboard_id: storyboardId,
+        task_id: taskId,
+        script_id: scriptId,
+      })
+
+      // Handle different response types based on billing
+      if (res.action === 'confirm_charge') {
+        if (await handleKnownCreditShortfall(res.message, res.credit_cost)) {
+          clearVideoGeneratingState()
+          return
+        }
+        res = await storyboardApis.generateSingleVideo({
+          storyboard_id: storyboardId,
+          task_id: taskId,
+          script_id: scriptId,
+          confirm_charge: true,
+          billing_token: res.billing_token,
+        })
+      }
+
+      if (res.action === 'insufficient_credits') {
+        clearVideoGeneratingState()
+        await handleInsufficientCredits(res.message, res.credit_cost, res.balance)
+        return
+      }
+
+      if (res.action === 'billing_error') {
+        clearVideoGeneratingState()
+        await handleBillingError(
+          res.message,
+          t('video_regenerate_failed'),
+          res.credit_cost,
+          res.balance
+        )
+        return
+      }
+
+      if (res.action !== 'charged_generate' && res.action !== 'free_generate') {
+        clearVideoGeneratingState()
+        toast({ description: t('video_regenerate_failed'), variant: 'destructive' })
+        return
+      }
+
+      const refreshed = await fetchDataRef.current?.(true)
+      await autoSelectGeneratedVersion(storyboardId, res.task_uuid, refreshed?.storyboards)
+      if (!pollTimersRef.current[storyboardId]) {
+        pollTimersRef.current[storyboardId] = setTimeout(
+          () => pollVideoStatus(storyboardId, res.task_uuid, currentStoryboard.shot_id),
+          3000
+        )
+      }
+    } catch (err) {
+      console.error('Failed to generate video:', err)
+      clearVideoGeneratingState()
+      await handleRequestError(err, t('video_regenerate_failed'))
+    }
+  }, [
+    autoSelectGeneratedVersion,
+    currentStoryboard,
+    handleBillingError,
+    handleInsufficientCredits,
+    handleKnownCreditShortfall,
+    handleRequestError,
+    pollVideoStatus,
+    scriptId,
+    t,
+    taskId,
+  ])
+
+  const handleGenerateAll = useCallback(async () => {
+    if (!canGenerateAllStoryboards) return
+
     try {
-      const response = await storyboardApis.replaceImage(current.id, file)
-      toast({ description: response.message })
-      await loadData(true)
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        description: error instanceof Error ? error.message : t('storyboard.replaceFailed'),
+      const res = await storyboardApis.generateAllVideos({
+        task_id: taskId,
+        script_id: scriptId,
       })
-    } finally {
-      setReplacingImage(false)
-    }
-  }
 
-  const replaceVideo = async (file: File) => {
-    if (!current) return
-    setReplacingVideo(true)
-    try {
-      const response = await storyboardApis.replaceVideo(current.id, file)
-      toast({ description: response.message })
-      await loadData(true)
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        description: error instanceof Error ? error.message : t('storyboard.replaceFailed'),
+      if (res.action === 'confirm_charge') {
+        if (await handleKnownCreditShortfall(res.message, res.credit_cost)) {
+          return
+        }
+        setPendingCharge({
+          mode: 'bulk',
+          storyboardIds: generateAllCandidateStoryboards.map(sb => sb.id),
+          billingToken: res.billing_token,
+          message: res.message,
+          creditCost: res.credit_cost,
+        })
+        return
+      }
+
+      if (res.action === 'insufficient_credits') {
+        await handleInsufficientCredits(res.message, res.credit_cost, res.balance)
+        return
+      }
+
+      if (res.action === 'billing_error') {
+        await handleBillingError(
+          res.message,
+          t('video_generate_failed'),
+          res.credit_cost,
+          res.balance
+        )
+        return
+      }
+
+      if (res.action !== 'charged_generate' && res.action !== 'free_generate') {
+        toast({ description: t('video_generate_failed'), variant: 'destructive' })
+        return
+      }
+
+      const storyboardIds = generateAllCandidateStoryboards.map(sb => sb.id)
+      setVideoGeneratingIds(prev => [...new Set([...prev, ...storyboardIds])])
+      setVideoProgressMap(prev => ({
+        ...prev,
+        ...Object.fromEntries(storyboardIds.map(id => [id, 0])),
+      }))
+      await fetchDataRef.current?.(true)
+      const timer = setTimeout(() => pollGenerateAllStatus(res.task_uuid, storyboardIds), 3000)
+      storyboardIds.forEach(id => {
+        pollTimersRef.current[id] = timer
       })
-    } finally {
-      setReplacingVideo(false)
+    } catch (err) {
+      console.error('Failed to generate all storyboard videos:', err)
+      await handleRequestError(err, t('video_generate_failed'))
     }
-  }
+  }, [
+    canGenerateAllStoryboards,
+    generateAllCandidateStoryboards,
+    handleBillingError,
+    handleInsufficientCredits,
+    handleKnownCreditShortfall,
+    handleRequestError,
+    pollGenerateAllStatus,
+    scriptId,
+    t,
+    taskId,
+  ])
 
-  const mediaUrl = currentVideo?.model_video_url
-  const imageUrl = current?.image_urls?.[0]
-  const versions = current?.video_versions ?? []
+  // Handle play click — trigger video generation if no video, else handled by preview component
+  const handlePlayClick = useCallback(() => {
+    handleGenerateVideo()
+  }, [handleGenerateVideo])
+
+  // Format subtitle with last update time
+  const subtitle = currentStoryboard?.update_time
+    ? `修改于  ${new Date(currentStoryboard.update_time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
+    : undefined
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-surface" data-testid="video-storyboard-panel">
-      <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2">
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-medium">
-            {scriptState.title || t('storyboard.title')}
+    <div
+      data-wegent-panel
+      data-testid="video-storyboard-panel"
+      className={
+        embedded
+          ? `flex flex-col h-full w-full max-w-full bg-white pb-[10px] overflow-hidden rounded-t-[10px] ${readOnly ? 'rounded-[24px]' : ''}`
+          : 'fixed right-0 top-[56px] bottom-[10px] w-[720px] z-50 flex flex-col bg-white pb-[10px]'
+      }
+      style={
+        embedded
+          ? undefined
+          : {
+              borderRadius: '0 4px 4px 0',
+              boxShadow: '0 4px 8.75px 0 rgba(182, 182, 182, 0.25)',
+            }
+      }
+    >
+      {/* Header — 56px, same style as EntityPanel */}
+      <div className="flex-shrink-0 h-[56px] flex items-center px-3.5 sm:px-5 bg-white">
+        {/* Title area */}
+        <div className="flex-1 min-w-0">
+          <h2
+            className="text-sm text-[#333333] truncate"
+            style={{ fontFamily: "'PingFang SC', sans-serif" }}
+          >
+            {scriptState.loading ? (
+              <span className="text-[#939393]">{t('loading')}</span>
+            ) : (
+              scriptState.title || t('storyboard_management')
+            )}
           </h2>
-          <p className="text-xs text-text-secondary">
-            {t('storyboard.count', { count: storyboards.length })}
-          </p>
+          {subtitle && (
+            <p
+              className="text-[10px] text-[#939393] leading-[1.8]"
+              style={{ fontFamily: "'PingFang SC', sans-serif" }}
+            >
+              {subtitle}
+            </p>
+          )}
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={refreshing}
-          onClick={() => void loadData(true)}
-          data-testid="video-storyboard-refresh"
-        >
-          <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-          {t('storyboard.refresh')}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={storyboards.length === 0}
-          onClick={() => void generateAllVideos()}
-          data-testid="video-storyboard-generate-all"
-        >
-          <WandSparkles className="mr-2 h-4 w-4" />
-          {t('storyboard.generateAll')}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={!hasReadyVideos}
-          onClick={() => setCompositionOpen(true)}
-          data-testid="video-storyboard-open-composition"
-        >
-          <Clapperboard className="mr-2 h-4 w-4" />
-          {t('storyboard.editVideo')}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          data-testid="video-storyboard-close"
-          aria-label={t('close')}
-        >
-          <X className="h-5 w-5" />
-        </Button>
-      </header>
 
-      {loading ? (
-        <div className="flex flex-1 items-center justify-center gap-2 text-sm text-text-secondary">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          {t('storyboard.loading')}
-        </div>
-      ) : current ? (
-        <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_320px] lg:overflow-hidden">
-          <section className="flex min-h-[480px] min-w-0 flex-col lg:min-h-0">
-            <div className="flex items-center justify-between gap-3 px-4 py-3">
-              <Button
-                variant="outline"
-                size="icon"
-                disabled={currentIndex === 0}
-                onClick={() => setCurrentIndex(index => Math.max(0, index - 1))}
-                data-testid="video-storyboard-previous"
-                aria-label={t('storyboard.previous')}
+        {/* Right side: Action buttons + Close */}
+        <div className="flex items-center gap-4">
+          {!readOnly && (
+            <div className="flex h-8 items-center gap-3">
+              <button
+                className="inline-flex h-8 w-[108px] items-center justify-center gap-1 whitespace-nowrap rounded-md px-3 py-1.5 text-[14px] font-normal leading-5 text-[#333333] transition-opacity"
+                disabled={isGenerateAllDisabled}
+                style={{
+                  fontFamily: "'PingFang SC', sans-serif",
+                  backgroundColor: '#F5F5F5',
+                  opacity: isGenerateAllDisabled ? 0.5 : 1,
+                  cursor: isGenerateAllDisabled ? 'default' : 'pointer',
+                }}
+                onClick={() => void handleGenerateAll()}
+                data-testid="video-storyboard-generate-all"
               >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <div className="text-center">
-                <div className="font-medium">
-                  {t('storyboard.shot', { index: current.sequence_number + 1 })}
-                </div>
-                <div className="text-xs text-text-secondary">
-                  {current.duration_seconds}s · {ratio || '16:9'}
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                size="icon"
-                disabled={currentIndex >= storyboards.length - 1}
-                onClick={() =>
-                  setCurrentIndex(index => Math.min(storyboards.length - 1, index + 1))
-                }
-                data-testid="video-storyboard-next"
-                aria-label={t('storyboard.next')}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-
-            <div className="relative flex min-h-[300px] flex-1 items-center justify-center bg-black p-4">
-              {mediaUrl && currentVideo?.generation_status === 3 ? (
-                <video
-                  controls
-                  className="max-h-full max-w-full rounded-lg"
-                  src={getAigcVideoPlaybackUrl(mediaUrl)}
-                  poster={getAigcVideoImageUrl(currentVideo.video_cover_url || imageUrl)}
-                  data-testid="video-storyboard-preview-video"
-                />
-              ) : imageUrl ? (
-                <img
-                  src={getAigcVideoImageUrl(imageUrl)}
-                  alt={current.visual}
-                  referrerPolicy="no-referrer"
-                  className="max-h-full max-w-full rounded-lg object-contain"
-                  data-testid="video-storyboard-preview-image"
-                />
-              ) : (
-                <div className="text-sm text-white/60">{t('storyboard.noPreview')}</div>
-              )}
-              {currentBusy ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/55 text-white">
-                  <Loader2 className="h-7 w-7 animate-spin" />
-                  <span>{t('storyboard.generating')}</span>
-                  {progress > 0 ? <Progress value={progress} className="h-1.5 w-48" /> : null}
-                </div>
+                生成全部分镜
+              </button>
+              {!isMobile ? (
+                <>
+                  <button
+                    className="inline-flex h-8 w-[88px] items-center justify-center gap-1 whitespace-nowrap rounded-md px-3 py-1.5 text-[14px] font-normal leading-5 text-[#333333] transition-opacity"
+                    disabled={!canComposeStoryboardVideo}
+                    style={{
+                      fontFamily: "'PingFang SC', sans-serif",
+                      backgroundColor: '#F5F5F5',
+                      opacity: canComposeStoryboardVideo ? 1 : 0.5,
+                      cursor: canComposeStoryboardVideo ? 'pointer' : 'default',
+                    }}
+                    onClick={() => {
+                      fetchData()
+                      fetchScriptTitle()
+                      setIsCompositionEditorOpen(true)
+                    }}
+                    data-testid="video-storyboard-open-composition"
+                  >
+                    分镜剪辑
+                  </button>
+                  {canShowGenerateFinalVideoButton && (
+                    <button
+                      className="inline-flex h-8 w-[108px] items-center justify-center gap-1 whitespace-nowrap rounded-md px-3 py-1.5 text-[14px] font-medium leading-5 text-[#FF8200] transition-opacity"
+                      disabled={isGenerateFinalVideoDisabled}
+                      style={{
+                        fontFamily: "'PingFang SC', sans-serif",
+                        backgroundColor: 'rgba(255, 130, 0, 0.1)',
+                        opacity: isGenerateFinalVideoDisabled ? 0.5 : 1,
+                        cursor: isGenerateFinalVideoDisabled ? 'default' : 'pointer',
+                      }}
+                      onClick={() => void onGenerateFinalVideo?.()}
+                    >
+                      {isGeneratingFinalVideo ? '发送中...' : '生成最终视频'}
+                    </button>
+                  )}
+                </>
               ) : null}
             </div>
+          )}
+          {/* Close button */}
+          <PanelCloseButton onClose={onClose} testId="video-storyboard-close" />
+        </div>
+      </div>
 
-            <div className="flex shrink-0 gap-2 overflow-x-auto border-t border-border p-3">
-              {storyboards.map((storyboard, index) => {
-                const video = effectiveVideo(storyboard, selectedVersions[storyboard.id])
-                const thumbnail = video?.video_cover_url || storyboard.image_urls?.[0]
-                return (
-                  <button
-                    key={storyboard.id}
-                    type="button"
-                    onClick={() => setCurrentIndex(index)}
-                    className={`relative h-20 w-28 shrink-0 overflow-hidden rounded-lg border-2 ${
-                      index === currentIndex ? 'border-primary' : 'border-transparent'
-                    }`}
-                    data-testid={`video-storyboard-thumbnail-${storyboard.id}`}
+      {/* Content */}
+      <div className="flex-1 overflow-y-scroll">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center h-64 gap-4">
+            <Loader2 className="w-6 h-6 animate-spin text-[#939393]" />
+            <p className="text-sm text-[#939393]">{t('loading_storyboards')}</p>
+          </div>
+        ) : storyboards.length > 0 ? (
+          <>
+            {currentStoryboard && (
+              <div
+                className="relative mb-3 flex w-full items-center justify-center"
+                style={{
+                  marginTop: '16px',
+                }}
+              >
+                <div
+                  className="relative flex min-h-[24px] items-center justify-center"
+                  style={{ width: '100%' }}
+                >
+                  <h3
+                    className="text-[15px] text-[#333333] leading-[1.53] text-center"
+                    style={{ fontFamily: "'PingFang TC', sans-serif" }}
                   >
-                    {thumbnail ? (
-                      <img
-                        src={getAigcVideoImageUrl(thumbnail)}
-                        alt=""
-                        referrerPolicy="no-referrer"
-                        className="h-full w-full object-cover"
+                    {`${t('video')}${(currentStoryboard.sequence_number ?? 0) + 1}`}
+                  </h3>
+                  <div
+                    className="absolute top-1/2 flex -translate-y-1/2 items-center"
+                    style={{ right: isMobile ? '14px' : '24px' }}
+                  >
+                    {(currentStoryboard.video_versions?.length ?? 0) > 0 ? (
+                      <StoryboardVersionSelector
+                        currentVersion={currentVersion}
+                        versions={currentStoryboard.video_versions ?? []}
+                        onChange={clipId => handleVersionChange(currentStoryboard.id, clipId)}
                       />
-                    ) : (
-                      <div className="h-full w-full bg-muted" />
-                    )}
-                    <span className="absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5 text-xs text-white">
-                      #{storyboard.sequence_number + 1}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          </section>
-
-          <aside className="min-h-0 space-y-5 overflow-y-auto border-l border-border p-4">
-            {versions.length > 0 ? (
-              <div className="space-y-2">
-                <Label htmlFor="storyboard-video-version">{t('storyboard.version')}</Label>
-                <select
-                  id="storyboard-video-version"
-                  value={currentVersion?.id ?? ''}
-                  onChange={event => void changeVersion(Number(event.target.value))}
-                  className="h-11 w-full rounded-md border border-input bg-bg-base px-3 text-sm"
-                  data-testid="video-storyboard-version"
-                >
-                  {versions
-                    .slice()
-                    .sort((a, b) => b.version_no - a.version_no)
-                    .map(version => (
-                      <option key={version.id} value={version.id}>
-                        V{version.version_no}
-                      </option>
-                    ))}
-                </select>
-              </div>
-            ) : null}
-
-            {editing ? (
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="storyboard-visual">{t('storyboard.visual')}</Label>
-                  <Textarea
-                    id="storyboard-visual"
-                    value={draft.visual || ''}
-                    onChange={event =>
-                      setDraft(value => ({ ...value, visual: event.target.value }))
-                    }
-                    rows={5}
-                    data-testid="video-storyboard-edit-visual"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="storyboard-prompt">{t('storyboard.prompt')}</Label>
-                  <Textarea
-                    id="storyboard-prompt"
-                    value={draft.shots_prompt || ''}
-                    onChange={event =>
-                      setDraft(value => ({ ...value, shots_prompt: event.target.value }))
-                    }
-                    rows={4}
-                    data-testid="video-storyboard-edit-prompt"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="storyboard-duration">{t('storyboard.duration')}</Label>
-                    <Input
-                      id="storyboard-duration"
-                      type="number"
-                      min={1}
-                      value={draft.duration_seconds || 1}
-                      onChange={event =>
-                        setDraft(value => ({
-                          ...value,
-                          duration_seconds: Number(event.target.value),
-                        }))
-                      }
-                      data-testid="video-storyboard-edit-duration"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="storyboard-mood">{t('storyboard.mood')}</Label>
-                    <Input
-                      id="storyboard-mood"
-                      value={draft.mood || ''}
-                      onChange={event =>
-                        setDraft(value => ({ ...value, mood: event.target.value }))
-                      }
-                      data-testid="video-storyboard-edit-mood"
-                    />
+                    ) : null}
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button
-                    onClick={() => void saveStoryboard()}
-                    disabled={saving}
-                    data-testid="video-storyboard-save"
-                  >
-                    {saving ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Save className="mr-2 h-4 w-4" />
-                    )}
-                    {t('storyboard.save')}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setEditing(false)}
-                    data-testid="video-storyboard-cancel-edit"
-                  >
-                    {t('cancel')}
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div>
-                  <div className="mb-1 text-xs text-text-secondary">{t('storyboard.visual')}</div>
-                  <p className="whitespace-pre-wrap text-sm leading-6">{current.visual || '-'}</p>
-                </div>
-                {current.shots_prompt ? (
-                  <div>
-                    <div className="mb-1 text-xs text-text-secondary">{t('storyboard.prompt')}</div>
-                    <p className="whitespace-pre-wrap text-sm leading-6">{current.shots_prompt}</p>
-                  </div>
-                ) : null}
-                <Button
-                  variant="outline"
-                  onClick={beginEdit}
-                  data-testid="video-storyboard-start-edit"
-                >
-                  <Pencil className="mr-2 h-4 w-4" />
-                  {t('storyboard.edit')}
-                </Button>
               </div>
             )}
+            <CarouselView
+              title={`${t('video')}${(currentStoryboard?.sequence_number ?? 0) + 1}`}
+              hideTitleBar={true}
+              currentIndex={currentIndex}
+              totalCount={storyboards.length}
+              isLoading={false}
+              mediaType="video"
+              ratio={ratio}
+              isRegenerating={isVideoGenerating}
+              isRegenerateDisabled={hasAnyGeneratingVersion}
+              isEditing={isEditing}
+              editDescription={editDescription}
+              thumbnailItems={flattenedItems}
+              description={currentDescription}
+              showMaxLength={true}
+              onPrev={prev}
+              onNext={next}
+              onGoTo={goTo}
+              onEditStart={handleEditStart}
+              onEditCancel={handleEditCancel}
+              onEditSave={handleEditSave}
+              onEditDescriptionChange={setEditDescription}
+              onEditVoiceProfileChange={() => {}}
+              onRegenerate={handleRegenerate}
+              readOnly={readOnly || isPendingVideoGeneration}
+              renderMedia={() => {
+                const ratioDimensions = getRatioDimensions(ratio)
+                // Responsive image sizing: use smaller dimensions on mobile
+                const imageWidth = isMobile
+                  ? Math.min(ratioDimensions.imageWidth, 280)
+                  : ratioDimensions.imageWidth
+                const imageHeight = isMobile
+                  ? Math.round((280 / ratioDimensions.imageWidth) * ratioDimensions.imageHeight)
+                  : ratioDimensions.imageHeight
+                return (
+                  <StoryboardVideoPreview
+                    storyboard={previewStoryboard!}
+                    isVideoGenerating={isVideoGenerating}
+                    isPendingVideoGeneration={isPendingVideoGeneration}
+                    onPlayClick={handlePlayClick}
+                    imageWidth={imageWidth}
+                    imageHeight={imageHeight}
+                    trimStart={currentVersion?.trim_start}
+                    trimEnd={currentVersion?.trim_end}
+                  />
+                )
+              }}
+            />
+          </>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-64 gap-4">
+            <p className="text-sm text-[#939393]">{t('no_storyboards')}</p>
+          </div>
+        )}
+      </div>
 
-            <div className="grid grid-cols-2 gap-2 border-t border-border pt-4">
-              <Button
-                variant="outline"
-                disabled={currentBusy}
-                onClick={() => void regenerateImage()}
-                data-testid="video-storyboard-regenerate-image"
-              >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                {t('storyboard.regenerateImage')}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={replacingImage}
-                onClick={() => imageInputRef.current?.click()}
-                data-testid="video-storyboard-replace-image"
-              >
-                {replacingImage ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <ImageUp className="mr-2 h-4 w-4" />
-                )}
-                {t('storyboard.replaceImage')}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={currentBusy}
-                onClick={() => void generateCurrentVideo()}
-                data-testid="video-storyboard-generate-video"
-              >
-                <Play className="mr-2 h-4 w-4" />
-                {t('storyboard.generateVideo')}
-              </Button>
-              <Button
-                variant="outline"
-                disabled={replacingVideo}
-                onClick={() => videoInputRef.current?.click()}
-                data-testid="video-storyboard-replace-video"
-              >
-                {replacingVideo ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Upload className="mr-2 h-4 w-4" />
-                )}
-                {t('storyboard.replaceVideo')}
-              </Button>
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/gif"
-                className="hidden"
-                onChange={event => {
-                  const file = event.target.files?.[0]
-                  if (file) void replaceImage(file)
-                  event.currentTarget.value = ''
-                }}
-                data-testid="video-storyboard-image-input"
-              />
-              <input
-                ref={videoInputRef}
-                type="file"
-                accept="video/*"
-                className="hidden"
-                onChange={event => {
-                  const file = event.target.files?.[0]
-                  if (file) void replaceVideo(file)
-                  event.currentTarget.value = ''
-                }}
-                data-testid="video-storyboard-video-input"
-              />
-            </div>
-          </aside>
-        </div>
-      ) : (
-        <div className="flex flex-1 items-center justify-center text-sm text-text-secondary">
-          {t('storyboard.empty')}
-        </div>
-      )}
-
-      <Dialog open={compositionOpen} onOpenChange={setCompositionOpen}>
+      {/* Composition Editor Dialog */}
+      <Dialog
+        open={isCompositionEditorOpen}
+        onOpenChange={open => {
+          if (!open && beforeCloseRef.current?.()) return
+          setIsCompositionEditorOpen(open)
+        }}
+      >
         <DialogContent
-          className="z-[2147483640] h-dvh w-screen max-w-none gap-0 rounded-none border-0 p-0"
+          className="z-[2147483640] h-screen w-screen max-w-none gap-0 border-0 p-0 top-1/2 rounded-none sm:rounded-none"
           hideCloseButton
+          onEscapeKeyDown={e => {
+            e.stopPropagation()
+          }}
         >
-          <DialogTitle className="sr-only">{t('composition.title')}</DialogTitle>
-          {compositionOpen ? (
+          {isCompositionEditorOpen && (
             <CompositionEditor
               scriptId={scriptId}
               taskId={taskId}
-              storyboards={storyboards}
-              selectedVersionMap={selectedVersions}
+              storyboards={storyboards.filter(sb => {
+                const version = getEffectiveVersion(sb, selectedVersionMap[sb.id])
+                return version?.generation_status === 3
+              })}
+              selectedVersionMap={selectedVersionMap}
               bgm={scriptState.bgm}
               bgmEnabled={scriptState.bgmEnabled}
               subtitleEnabled={scriptState.subtitleEnabled}
               finalVideoCover={scriptState.finalVideoCover}
-              onClose={() => setCompositionOpen(false)}
-              onGenerateFinalVideo={onGenerateFinalVideo}
-              onSaved={() => void loadData(true)}
+              onFinalVideoCoverChange={cover => {
+                setScriptState(prev => ({ ...prev, finalVideoCover: cover }))
+              }}
+              shareToken={shareToken}
+              ratio={ratio}
+              onClose={() => {
+                setIsCompositionEditorOpen(false)
+                fetchData()
+                fetchScriptTitle()
+              }}
+              onRenderFinalVideo={
+                onGenerateFinalVideo
+                  ? async () => {
+                      setIsCompositionEditorOpen(false)
+                      await onGenerateFinalVideo()
+                    }
+                  : undefined
+              }
+              onSaveSuccess={res => {
+                toast({ description: res.message })
+              }}
+              readOnly={readOnly}
+              beforeCloseRef={beforeCloseRef}
             />
-          ) : null}
+          )}
         </DialogContent>
       </Dialog>
     </div>
