@@ -1,6 +1,6 @@
 :root {
-  color: #f4f4f5;
-  background: #101316;
+  color: #171717;
+  background: #fafafa;
   font-family:
     Inter,
     ui-sans-serif,
@@ -11,8 +11,17 @@
     sans-serif;
 }
 
+:root[data-theme='dark'] {
+  color: #f4f4f5;
+  background: #101316;
+}
+
 * {
   box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 body {
@@ -26,7 +35,7 @@ body {
   min-height: 100vh;
   place-items: center;
   padding: 38px 24px 24px;
-  background: #101316;
+  background: inherit;
 }
 
 .runtime-card {
@@ -38,24 +47,15 @@ body {
   text-align: center;
 }
 
-.runtime-spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid rgb(255 255 255 / 14%);
-  border-top-color: #f4f4f5;
-  border-radius: 999px;
-  animation: spin 0.8s linear infinite;
-}
-
-h1 {
+.runtime-card h1 {
   margin: 4px 0 0;
   font-size: 18px;
   font-weight: 500;
 }
 
-#status {
+#runtime-status {
   margin: 0;
-  color: #a1a1aa;
+  color: rgb(23 23 23 / 62%);
   font-size: 13px;
 }
 
@@ -65,10 +65,10 @@ h1 {
   margin: 4px 0 0;
   overflow: auto;
   padding: 12px;
-  border: 1px solid rgb(255 255 255 / 8%);
+  border: 1px solid rgb(23 23 23 / 8%);
   border-radius: 8px;
-  background: #181b1f;
-  color: #d4d4d8;
+  background: #fff;
+  color: #303030;
   font-size: 12px;
   text-align: left;
   white-space: pre-wrap;
@@ -77,10 +77,10 @@ h1 {
 button {
   height: 30px;
   padding: 0 12px;
-  border: 1px solid rgb(255 255 255 / 12%);
+  border: 1px solid rgb(23 23 23 / 12%);
   border-radius: 8px;
-  background: #24272c;
-  color: #f4f4f5;
+  background: #171717;
+  color: #fafafa;
   cursor: pointer;
 }
 
@@ -89,13 +89,18 @@ button:disabled {
   opacity: 0.5;
 }
 
-#runtime-overlay[data-phase='failed'] .runtime-spinner {
-  border-color: #ef4444;
-  animation: none;
+:root[data-theme='dark'] #runtime-status {
+  color: #a1a1aa;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+:root[data-theme='dark'] #details {
+  border-color: rgb(255 255 255 / 8%);
+  background: #181b1f;
+  color: #d4d4d8;
+}
+
+:root[data-theme='dark'] button {
+  border-color: rgb(255 255 255 / 12%);
+  background: #f4f4f5;
+  color: #171717;
 }

@@ -49,7 +49,11 @@ import { createSingleFlight, presentWindow } from './host/window-presentation.js
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
-import { resolveStartupSplashTheme, StartupSplash } from './host/startup-splash.js'
+import {
+  resolveStartupSplashTheme,
+  StartupSplash,
+  type StartupSplashTheme,
+} from './host/startup-splash.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon } from './host/tray-icon.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
@@ -387,11 +391,6 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     runtimeError = null
     rendererHealth.ready()
     mainWindow?.show()
-    void startupSplash
-      ?.close({ capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim() })
-      .catch(error => {
-        console.error('[startup-splash] failed to close startup window', error)
-      })
   })
   contents.on('unresponsive', () => rendererHealth.unresponsive())
   contents.on('responsive', () => rendererHealth.responsive())
@@ -409,6 +408,9 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     })
   })
   try {
+    await startupSplash?.close({
+      capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
+    })
     await contents.loadURL(dshUrl, {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
@@ -610,13 +612,13 @@ async function showPopoutWindow(): Promise<void> {
   presentWindow(target)
 }
 
-async function createWindow(): Promise<void> {
+async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   mainWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     width: 1440,
     height: 960,
     title: 'Wework',
-    backgroundColor: '#101316',
+    backgroundColor: startupTheme === 'dark' ? '#101316' : '#fafafa',
     show: false,
     webPreferences: {
       backgroundThrottling: false,
@@ -627,6 +629,30 @@ async function createWindow(): Promise<void> {
       webviewTag: true,
     },
   })
+  startupSplash = new StartupSplash({
+    window: {
+      isDestroyed: () => mainWindow?.isDestroyed() ?? true,
+      isVisible: () => mainWindow?.isVisible() ?? false,
+      once: (event, listener) => {
+        if (event === 'closed') mainWindow?.once('closed', listener)
+        else mainWindow?.once('ready-to-show', listener)
+      },
+      show: () => mainWindow?.show(),
+      webContents: {
+        capturePage: async () => {
+          if (!mainWindow) throw new Error('Main window is unavailable')
+          return mainWindow.webContents.capturePage()
+        },
+        executeJavaScript: async code => {
+          if (!mainWindow) throw new Error('Main window is unavailable')
+          return mainWindow.webContents.executeJavaScript(code)
+        },
+        isDestroyed: () => mainWindow?.webContents.isDestroyed() ?? true,
+      },
+    },
+    theme: startupTheme,
+  })
+  const startupShown = startupSplash.show()
   mainWindow.on('resize', layoutPrimaryView)
   mainWindow.on('close', event => {
     if (quitting) return
@@ -639,7 +665,10 @@ async function createWindow(): Promise<void> {
     primaryDshSecurityInstalled = false
     mainWindow = null
   })
-  await mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'))
+  await mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'), {
+    query: { theme: startupTheme },
+  })
+  await startupShown
 }
 
 async function setDockVisible(visible: boolean): Promise<void> {
@@ -1050,33 +1079,9 @@ if (hasSingleInstanceLock) {
     createdTrayManager.create()
     trayManager = createdTrayManager
     const startupPreferences = await preferences.read()
-    startupSplash = new StartupSplash({
-      createWindow: options => {
-        const target = new BrowserWindow(options)
-        return {
-          close: () => target.close(),
-          isDestroyed: () => target.isDestroyed(),
-          isVisible: () => target.isVisible(),
-          loadFile: (path, options) => target.loadFile(path, options),
-          once: (event, listener) => {
-            if (event === 'closed') target.once('closed', listener)
-            else target.once('ready-to-show', listener)
-          },
-          show: () => target.show(),
-          webContents: {
-            capturePage: () => target.webContents.capturePage(),
-            executeJavaScript: code => target.webContents.executeJavaScript(code),
-            isDestroyed: () => target.webContents.isDestroyed(),
-          },
-        }
-      },
-      htmlPath: resolve(packageRoot, 'dist/shell/startup-splash/index.html'),
-      theme: resolveStartupSplashTheme(
-        startupPreferences.appearanceMode,
-        nativeTheme.shouldUseDarkColors
-      ),
-    })
-    await Promise.all([startupSplash.show(), createWindow()])
+    await createWindow(
+      resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
+    )
     void startDesktopRuntime()
   })
 }

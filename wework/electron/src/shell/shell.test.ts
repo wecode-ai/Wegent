@@ -6,7 +6,14 @@ import { describe, expect, test, vi } from 'vitest'
 describe('Electron startup shell', () => {
   test('renders initialization and failure states and retries the runtime', async () => {
     const elements = new Map(
-      ['#status', '#details', '#reload-dsh', '#runtime-overlay'].map(selector => [
+      [
+        '#runtime-status',
+        '#details',
+        '#reload-dsh',
+        '#runtime-overlay',
+        '.runtime-card',
+        '#splash-root',
+      ].map(selector => [
         selector,
         {
           dataset: {} as Record<string, string>,
@@ -40,20 +47,26 @@ describe('Electron startup shell', () => {
 
     vm.runInContext(source, context)
     await vi.waitFor(() => {
-      expect(elements.get('#status')?.textContent).toBe('正在初始化 Core DSH…')
+      expect(elements.get('#runtime-status')?.textContent).toBe('正在初始化 Core DSH…')
       expect(elements.get('#runtime-overlay')?.dataset.phase).toBe('initializing')
       expect(elements.get('#reload-dsh')?.hidden).toBe(true)
+      expect(elements.get('.runtime-card')?.hidden).toBe(true)
+      expect(elements.get('#splash-root')?.hidden).toBe(false)
     })
 
     state.phase = 'failed'
     state.error = 'profile install failed'
     listeners[0]?.()
     await vi.waitFor(() => {
-      expect(elements.get('#status')?.textContent).toBe('运行时启动失败：profile install failed')
+      expect(elements.get('#runtime-status')?.textContent).toBe(
+        '运行时启动失败：profile install failed'
+      )
       expect(elements.get('#reload-dsh')?.textContent).toBe('重试启动')
       expect(elements.get('#runtime-overlay')?.dataset.phase).toBe('failed')
       expect(elements.get('#details')?.hidden).toBe(false)
       expect(elements.get('#reload-dsh')?.hidden).toBe(false)
+      expect(elements.get('.runtime-card')?.hidden).toBe(false)
+      expect(elements.get('#splash-root')?.hidden).toBe(true)
     })
 
     const clickHandler = vi.mocked(elements.get('#reload-dsh')?.addEventListener).mock
