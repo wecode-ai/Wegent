@@ -58,6 +58,7 @@ import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { pluginNameInitial } from '@/components/plugins/plugin-assets'
+import { stripPluginWorkspaceResultMarkers } from '@/components/plugins/pluginWorkspaceResult'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
@@ -822,7 +823,9 @@ function shouldRenderMessage(message: WorkbenchMessage): boolean {
     return true
   }
 
-  const visibleContent = shouldHideFailedAssistantContent(message) ? '' : message.content
+  const visibleContent = shouldHideFailedAssistantContent(message)
+    ? ''
+    : stripPluginWorkspaceResultMarkers(message.content)
   if (visibleContent.trim()) return true
 
   return getDisplayProcessingBlocks(message.blocks).length > 0
@@ -2000,7 +2003,7 @@ export function AssistantMessage({
   const shouldHideContent =
     shouldHideFailedAssistantContent(message) ||
     (isCancelled && isCancelledPlaceholderContent(message.content))
-  const visibleContent = shouldHideContent ? '' : message.content
+  const visibleContent = shouldHideContent ? '' : stripPluginWorkspaceResultMarkers(message.content)
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
   const displayBlocks = useMemo(

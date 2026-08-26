@@ -140,11 +140,14 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
     projectChat.setSelectedSkills([pluginCreatorSkill])
     const message = [
       editPluginName
-        ? `Use the Codex plugin-creator workflow to continue editing the existing local plugin "${editPluginName}" in Wegent.`
-        : 'Use the Codex plugin-creator workflow to create a local Codex-compatible plugin for Wegent.',
-      `Create and install it in the registered managed local marketplace named "${WEWORK_PERSONAL_MARKETPLACE_ID}". Resolve that marketplace's existing local path before creating any files.`,
-      'Do not use the Plugin Creator defaults under ~/plugins or ~/.agents. Keep the managed marketplace manifests in sync and verify the plugin is discoverable from that marketplace before reporting success.',
+        ? `Use the Codex plugin-creator workflow to continue editing the plugin "${editPluginName}" in Wegent.`
+        : 'Use the Codex plugin-creator workflow to create a Codex-compatible plugin for Wegent.',
+      'Choose the storage flow from the Executor environment:',
+      '- When DEVICE_TYPE=cloud, the Task workspace is the draft. Create or edit the source only under "$WEGENT_TASK_WORKSPACE/plugins/<plugin-name>". Do not install it into a personal marketplace and do not write the source under $HOME.',
+      `- Otherwise, use the existing desktop flow: create and install it in the registered managed local marketplace named "${WEWORK_PERSONAL_MARKETPLACE_ID}". Resolve that marketplace's existing local path first, do not use the defaults under ~/plugins or ~/.agents, and keep both managed marketplace manifests in sync.`,
       'Do not upload it or publish it.',
+      'For DEVICE_TYPE=cloud, after validation run: "$WEGENT_EXECUTOR_BINARY" plugin-workspace describe --plugin-root "<absolute-plugin-source-path>" --listing-type <plugin-or-skill>. Your final response must include the command\'s complete [WEGENT_PLUGIN_RESULT] line verbatim on its own line. This lets the conversation show publishing actions without copying the draft out of the Task workspace.',
+      'If the user later asks in this conversation to share or publish the result, use plugin-workspace publish against the same source path. Never rebuild it in another directory.',
       createType === 'skill'
         ? 'Create a single-Skill plugin: .codex-plugin/plugin.json plus exactly one skills/<slug>/SKILL.md.'
         : 'The plugin must use .codex-plugin/plugin.json.',

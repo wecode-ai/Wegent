@@ -1533,6 +1533,20 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       assert.ok(deleteApproval.approval?.approvalId)
       await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
+      const approvalResolutionStartedAt = Date.now()
+      let approvalButtonCount = 1
+      while (Date.now() - approvalResolutionStartedAt < uiTimeoutMs) {
+        approvalButtonCount = Number(
+          await control.command('getElementCount', BROWSER_AGENT_APPROVE_SELECTOR)
+        )
+        if (approvalButtonCount === 0) break
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      }
+      assert.equal(
+        approvalButtonCount,
+        0,
+        'Browser approval remained pending after the user approved it'
+      )
 
       const approvedDeleteResult = await bridgeCall({
         action: 'click',
@@ -1737,15 +1751,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       zipBytes.set([0x50, 0x4b, 0x03, 0x04])
       await writeFile(localZipPath, zipBytes)
       const localZipUrl = pathToFileURL(localZipPath).href
-      await control.command('fill', BROWSER_INPUT_SELECTOR, { value: localZipUrl })
-      await waitForControlValue(
-        control,
-        BROWSER_INPUT_SELECTOR,
-        localZipUrl,
-        uiTimeoutMs,
-        'Browser URL input did not receive local zip URL before submit'
-      )
-      await control.command('submit', BROWSER_INPUT_SELECTOR)
+      await control.command('submit', BROWSER_INPUT_SELECTOR, { value: localZipUrl })
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: LOCAL_TOAST_TEXT,
         timeoutMs: uiTimeoutMs,

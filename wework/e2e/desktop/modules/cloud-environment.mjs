@@ -13,6 +13,7 @@ import {
   CLOUD_VISION_SIDECAR_CASE,
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_API_KEY,
+  PLUGIN_CREATOR_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   appendFile,
   appendProcessOutput,
@@ -40,6 +41,11 @@ import {
 const REDIS_START_ATTEMPTS = 5
 const REDIS_READY_PATTERN = /Ready to accept connections/
 const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
+const CLOUD_PUBLIC_MODEL_OPTIONS = {
+  weworkCloudModelNamespace: 'default',
+  weworkCloudModelResourceUserId: '0',
+  weworkCloudModelUpstreamApiFormat: 'openai-responses',
+}
 
 async function waitForRedisReady(redis, logPath, fromOffset) {
   let spawnError = null
@@ -524,6 +530,149 @@ class RealCloudEnvironment {
     ])
   }
 
+  async describePluginWorkspace(pluginRoot, taskWorkspace, taskId) {
+    assert.ok(this.executorBinary, 'Cloud Executor binary is not ready')
+    assert.ok(this.remoteExecutorEnv, 'Cloud Executor environment is not initialized')
+    const output = commandOutput(
+      this.executorBinary,
+      ['plugin-workspace', 'describe', '--plugin-root', pluginRoot, '--listing-type', 'plugin'],
+      {
+        cwd: pluginRoot,
+        env: {
+          ...this.remoteExecutorEnv,
+          AUTH_TOKEN: this.authToken,
+          WEGENT_TASK_ID: String(taskId),
+          WEGENT_TASK_WORKSPACE: taskWorkspace,
+        },
+      }
+    )
+    const marker = output.split(/\r?\n/).find(line => line.startsWith('[WEGENT_PLUGIN_RESULT]'))
+    assert.ok(marker, 'Cloud Plugin Creator did not emit a Task workspace result')
+    return JSON.parse(marker.slice('[WEGENT_PLUGIN_RESULT]'.length))
+  }
+
+  async publishPluginWorkspace(pluginRoot, taskWorkspace, taskId, request) {
+    assert.ok(this.executorBinary, 'Cloud Executor binary is not ready')
+    assert.ok(this.remoteExecutorEnv, 'Cloud Executor environment is not initialized')
+    const output = commandOutput(
+      this.executorBinary,
+      [
+        'plugin-workspace',
+        'publish',
+        '--plugin-root',
+        pluginRoot,
+        '--listing-type',
+        'plugin',
+        '--request-base64',
+        Buffer.from(JSON.stringify(request), 'utf8').toString('base64'),
+      ],
+      {
+        cwd: pluginRoot,
+        env: {
+          ...this.remoteExecutorEnv,
+          AUTH_TOKEN: this.authToken,
+          WEGENT_TASK_ID: String(taskId),
+          WEGENT_TASK_WORKSPACE: taskWorkspace,
+        },
+      }
+    )
+    const marker = output.split(/\r?\n/).find(line => line.startsWith('[WEGENT_PLUGIN_RESULT]'))
+    assert.ok(marker, 'Cloud Plugin Creator publication did not emit a result')
+    return JSON.parse(marker.slice('[WEGENT_PLUGIN_RESULT]'.length))
+  }
+
+  async createPluginWorkspaceTask() {
+    const teams = await fetchJson(`${this.backendUrl}/api/teams?page=1&limit=100`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    const team = teams.items?.[0]
+    assert.ok(team?.id, 'Cloud Plugin Creator E2E requires a Team fixture')
+    assert.ok(this.remoteCodexHome, 'Cloud Executor Codex home is not initialized')
+    const workspacePath = join(
+      dirname(this.remoteCodexHome),
+      'Documents',
+      'Codex',
+      'plugin-workspace-publication',
+      `${process.pid}-${Date.now()}`
+    )
+    await mkdir(workspacePath, { recursive: true })
+    const task = await fetchJson(`${this.backendUrl}/api/runtime-work/create`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        deviceId: CLOUD_DEVICE_ID,
+        workspacePath,
+        teamId: team.id,
+        runtime: 'codex',
+        message: PLUGIN_CREATOR_PROMPT,
+        title: 'Cloud Plugin Creator E2E',
+        modelId: CLOUD_PUBLIC_MODEL_NAME,
+        modelType: 'public',
+        modelOptions: CLOUD_PUBLIC_MODEL_OPTIONS,
+        modelSelection: {
+          modelName: CLOUD_PUBLIC_MODEL_NAME,
+          modelType: 'public',
+          options: CLOUD_PUBLIC_MODEL_OPTIONS,
+        },
+      }),
+    })
+    assert.equal(task.accepted, true, `Cloud Plugin Creator task was rejected: ${task.error}`)
+    assert.ok(task.taskId, 'Cloud Plugin Creator task did not return a runtime task ID')
+    assert.equal(task.workspacePath, workspacePath)
+    const address = {
+      deviceId: task.deviceId,
+      taskId: task.taskId,
+      workspacePath: task.workspacePath,
+    }
+    await this.waitForRuntimeTask(address)
+    return address
+  }
+
+  async waitForRuntimeTask(address) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      const task = await this.runtimeTask(address.taskId)
+      if (
+        task?.workspacePath === address.workspacePath &&
+        ['failed', 'cancelled'].includes(task.status)
+      ) {
+        throw new Error(`Cloud runtime task ${address.taskId} settled as ${task.status}`)
+      }
+      const active =
+        task?.running === true || ['creating', 'queued', 'active', 'running'].includes(task?.status)
+      if (task?.workspacePath === address.workspacePath && !active) return task
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+    const device = await this.device(CLOUD_DEVICE_ID).catch(() => null)
+    throw new Error(
+      `Cloud runtime task ${address.taskId} did not expose its workspace ` +
+        `(device_status=${device?.status ?? 'unknown'})`
+    )
+  }
+
+  async sendPluginWorkspaceResult(address, marker) {
+    const result = await fetchJson(`${this.backendUrl}/api/runtime-work/send`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        address,
+        message: marker,
+        modelSelection: {
+          modelName: CLOUD_PUBLIC_MODEL_NAME,
+          modelType: 'public',
+          options: CLOUD_PUBLIC_MODEL_OPTIONS,
+        },
+      }),
+    })
+    assert.equal(result.accepted, true, `Cloud Plugin Creator result was rejected: ${result.error}`)
+  }
+
   async spawnExecutor(env, logPath) {
     const executor = spawn(this.executorBinary, [], {
       cwd: weworkDir,
@@ -641,30 +790,26 @@ class RealCloudEnvironment {
     const previousInstanceId = previousDevice?.runtime_instance_id
     const previousLog = await readFile(this.remoteExecutorLogPath, 'utf8').catch(() => '')
     await stopProcessGroup(this.remoteExecutor)
+    await this.waitForDeviceStatus(CLOUD_DEVICE_ID, 'offline', this.remoteExecutorLogPath)
     this.remoteExecutor = await this.spawnExecutor(
       this.remoteExecutorEnv,
       this.remoteExecutorLogPath
     )
-
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
-      const device = await this.device(CLOUD_DEVICE_ID)
-      const currentLog = await readFile(this.remoteExecutorLogPath, 'utf8').catch(() => '')
-      if (device?.status === 'online' && currentLog.length > previousLog.length) {
-        assert.equal(
-          device.runtime_instance_id,
-          previousInstanceId,
-          'Restarting the same cloud Executor home changed its stable runtime identity'
-        )
-        return {
-          previousInstanceId,
-          runtimeInstanceId: device.runtime_instance_id,
-          logOffset: previousLog.length,
-        }
-      }
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    const device = await this.waitForDeviceStatus(
+      CLOUD_DEVICE_ID,
+      'online',
+      this.remoteExecutorLogPath
+    )
+    assert.equal(
+      device.runtime_instance_id,
+      previousInstanceId,
+      'Restarting the same cloud Executor home changed its stable runtime identity'
+    )
+    return {
+      previousInstanceId,
+      runtimeInstanceId: device.runtime_instance_id,
+      logOffset: previousLog.length,
     }
-    throw new Error('The restarted cloud Executor did not reconnect with its stable identity')
   }
 
   async startGeneratedRemoteDevice({ deviceId, deviceName, authToken }) {
