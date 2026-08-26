@@ -109,6 +109,37 @@ describe('HoverCard', () => {
     expect(screen.queryByTestId('interactive-anchor-hover-card')).not.toBeInTheDocument()
   })
 
+  test('closes a hovered card when its focused anchor hands off to another anchor', async () => {
+    vi.useFakeTimers()
+    render(
+      <>
+        <HoverCard testId="first-hover-card" interactive content={<div>First task details</div>}>
+          <button type="button">First task</button>
+        </HoverCard>
+        <HoverCard testId="second-hover-card" interactive content={<div>Second task details</div>}>
+          <button type="button">Second task</button>
+        </HoverCard>
+      </>
+    )
+
+    const firstAnchor = screen.getByRole('button', { name: 'First task' })
+    const secondAnchor = screen.getByRole('button', { name: 'Second task' })
+    fireEvent.focus(firstAnchor)
+    fireEvent.mouseEnter(firstAnchor)
+    await act(async () => vi.advanceTimersByTime(450))
+    expect(screen.getByTestId('first-hover-card')).toBeInTheDocument()
+
+    fireEvent.mouseLeave(firstAnchor)
+    fireEvent.mouseEnter(secondAnchor)
+    fireEvent.pointerMove(secondAnchor)
+    await act(async () => vi.advanceTimersByTime(120))
+    expect(screen.queryByTestId('first-hover-card')).not.toBeInTheDocument()
+
+    await act(async () => vi.advanceTimersByTime(330))
+    expect(screen.getByTestId('second-hover-card')).toBeInTheDocument()
+    expect(screen.queryAllByRole('dialog')).toHaveLength(1)
+  })
+
   test('keeps an interactive card open while using a nested portal menu', async () => {
     vi.useFakeTimers()
     const onClick = vi.fn()

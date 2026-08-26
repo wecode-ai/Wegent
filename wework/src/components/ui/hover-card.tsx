@@ -164,13 +164,16 @@ export function HoverCard({
 
   const handleFocusCapture = useCallback(
     (event: FocusEvent<HTMLDivElement>) => {
+      const focusIsInsideAnchor =
+        event.target instanceof Node && Boolean(anchorRef.current?.contains(event.target))
       if (
         shouldPinInteraction(event.target) &&
         event.target instanceof Node &&
-        !anchorRef.current?.contains(event.target)
+        !focusIsInsideAnchor
       ) {
         pin()
       }
+      if (focusIsInsideAnchor && !openOnFocus) return
       focusWithinRef.current = true
       if (openOnFocus) {
         open()
