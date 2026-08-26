@@ -424,25 +424,26 @@ const runtimes = (await runtimeSources()).map(runtimeIdentity)
 if (runtimes.length === 0) {
   throw new Error('Harness runtime must declare at least one DSH version')
 }
-const descriptors = []
-for (const runtime of runtimes) {
-  let descriptor = null
-  try {
-    const cached = JSON.parse(
-      await readFile(path.join(assetDirectory, runtime.descriptorName), 'utf8')
-    )
-    await access(runtime.assetPath)
-    descriptor = validateDescriptor(cached, runtime)
-    await ensurePublishedAsset(descriptor, runtime)
-  } catch {
-    descriptor = await reusePublishedRuntime(runtime)
-  }
-  descriptor ??= await buildRuntime(runtime)
-  descriptors.push(descriptor)
-  if (materializeRequested) {
-    await materializeRuntime(runtime, descriptor)
-  }
-}
+const descriptors = await Promise.all(
+  runtimes.map(async runtime => {
+    let descriptor = null
+    try {
+      const cached = JSON.parse(
+        await readFile(path.join(assetDirectory, runtime.descriptorName), 'utf8')
+      )
+      await access(runtime.assetPath)
+      descriptor = validateDescriptor(cached, runtime)
+      await ensurePublishedAsset(descriptor, runtime)
+    } catch {
+      descriptor = await reusePublishedRuntime(runtime)
+    }
+    descriptor ??= await buildRuntime(runtime)
+    if (materializeRequested) {
+      await materializeRuntime(runtime, descriptor)
+    }
+    return descriptor
+  })
+)
 
 await resetTargetDirectory()
 await writeFile(catalogPath, `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`)

@@ -192,6 +192,26 @@ function Get-ExecutorBinaryPath {
   return Join-Path $PROJECT_DIR 'executor\target\debug\wegent-executor.exe'
 }
 
+function Start-PrepareStep([string]$Name, [string]$Command) {
+  $stdout = Join-Path $env:TEMP "wework-dev-$Name-$PID.out.log"
+  $stderr = Join-Path $env:TEMP "wework-dev-$Name-$PID.err.log"
+  $process = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-Command', $Command) -WorkingDirectory $WEWORK_DIR -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
+  return [pscustomobject]@{ Name = $Name; Process = $process; Stdout = $stdout; Stderr = $stderr }
+}
+
+function Wait-PrepareStep($Job) {
+  if (-not $Job) {
+    return
+  }
+  $Job.Process.WaitForExit()
+  if ($Job.Process.ExitCode -ne 0) {
+    Write-Host "  prepare $($Job.Name) failed; last output:"
+    Get-Content -LiteralPath $Job.Stderr -Tail 30 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
+    Get-Content -LiteralPath $Job.Stdout -Tail 10 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
+    Fail "Error: failed to prepare $($Job.Name)."
+  }
+}
+
 $index = 0
 while ($index -lt $args.Count) {
   switch ($args[$index]) {
@@ -371,25 +391,18 @@ try {
     if (-not (Test-Path 'electron\resources\bundled-plugins\wework-personal\.agents\plugins\marketplace.json')) {
       Fail 'Error: Electron bundled plugins are unavailable.'
     }
+    $prepareJobs = @()
     if (-not $env:WEWORK_DEV_CODEX_BINARY) {
       $env:WEWORK_CODEX_TARGET = $WINDOWS_TARGET
-      pnpm run prepare:codex
-      if ($LASTEXITCODE -ne 0) {
-        Fail 'Error: failed to prepare the Codex binary.'
-      }
+      $prepareJobs += Start-PrepareStep 'codex' 'pnpm run prepare:codex'
     }
     $env:WEWORK_DWS_TARGET = $WINDOWS_TARGET
-    pnpm run prepare:dws
-    if ($LASTEXITCODE -ne 0) {
-      Fail 'Error: failed to prepare the DWS binary.'
-    }
-    pnpm run prepare:execution-runtime -- --materialize
-    if ($LASTEXITCODE -ne 0) {
-      Fail 'Error: failed to prepare the execution runtime.'
-    }
-    pnpm run prepare:harness-runtime -- --materialize
-    if ($LASTEXITCODE -ne 0) {
-      Fail 'Error: failed to prepare the harness runtime.'
+    $prepareJobs += Start-PrepareStep 'dws' 'pnpm run prepare:dws'
+    $prepareJobs += Start-PrepareStep 'execution-runtime' 'pnpm run prepare:execution-runtime -- --materialize'
+    $prepareJobs += Start-PrepareStep 'harness-runtime' 'pnpm run prepare:harness-runtime -- --materialize'
+    foreach ($job in $prepareJobs) {
+      Wait-PrepareStep $job
+      Write-Host "Prepared $($job.Name)"
     }
     if ($MANAGED_SOURCE_EXECUTOR) {
       cargo build --manifest-path (Join-Path $PROJECT_DIR 'executor\Cargo.toml') --bin wegent-executor
