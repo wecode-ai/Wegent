@@ -19,6 +19,8 @@ export interface BlockRenderContext {
   subtaskId?: number
   /** Current message index */
   currentMessageIndex?: number
+  /** Send a follow-up chat message from an interactive block action. */
+  onSendMessage?: (content: string) => void
 }
 
 /**

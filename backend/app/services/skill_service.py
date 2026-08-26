@@ -144,6 +144,9 @@ class SkillValidator:
                     "provider": metadata.get(
                         "provider"
                     ),  # Provider config for dynamic loading
+                    "runtime": metadata.get(
+                        "runtime"
+                    ),  # Optional Chat runtime policies
                     "mcpServers": metadata.get(
                         "mcpServers"
                     ),  # MCP servers for skill-level tools

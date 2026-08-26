@@ -6,6 +6,11 @@ import type { AdminPublicTeam, AdminPublicTeamUpdate } from '@/apis/admin'
 import type { PipelineContextPassing, TaskType, TeamInputPlaceholder } from '@/types/api'
 import type { TeamMode } from '@/features/settings/components/team-modes'
 
+export type PublicTeamModeSpec = Record<string, unknown> & {
+  allowedModelCategories: string[]
+  hiddenVideoParams?: string[]
+}
+
 export const buildPublicTeamJson = (data: {
   baseJson?: Record<string, unknown>
   name: string
@@ -16,6 +21,7 @@ export const buildPublicTeamJson = (data: {
   requiresWorkspace: boolean | null
   inputPlaceholder?: TeamInputPlaceholder | null
   mode: TeamMode
+  modeSpec?: PublicTeamModeSpec | null
   members: {
     botName: string
     botPrompt: string
@@ -56,6 +62,7 @@ export const buildPublicTeamJson = (data: {
       icon: data.icon || undefined,
       requiresWorkspace: data.requiresWorkspace ?? true,
       inputPlaceholder: data.inputPlaceholder || undefined,
+      ...(data.modeSpec !== undefined ? { modeSpec: data.modeSpec || undefined } : {}),
       ...(baseCapability && {
         capability: {
           ...baseCapability,
@@ -77,6 +84,41 @@ export const buildPublicTeamJson = (data: {
       })),
     },
   }
+}
+
+export function syncPublicTeamVideoModeSpec(
+  modeSpec: PublicTeamModeSpec | null,
+  enabled: boolean
+): PublicTeamModeSpec | null {
+  if (enabled) {
+    const { defaultModelRefs: _defaultModelRefs, ...baseModeSpec } = modeSpec ?? {
+      allowedModelCategories: [],
+    }
+
+    return {
+      ...baseModeSpec,
+      allowedModelCategories: ['video'],
+      hiddenVideoParams: Array.from(new Set([...(modeSpec?.hiddenVideoParams ?? []), 'duration'])),
+    }
+  }
+
+  if (!modeSpec?.allowedModelCategories?.includes('video')) {
+    return modeSpec
+  }
+
+  const {
+    allowedModelCategories: _allowedModelCategories,
+    hiddenVideoParams: _hiddenVideoParams,
+    defaultModelRefs: _defaultModelRefs,
+    ...rest
+  } = modeSpec
+
+  return Object.keys(rest).length > 0
+    ? {
+        ...rest,
+        allowedModelCategories: [],
+      }
+    : null
 }
 
 const getMetadataName = (teamJson: Record<string, unknown>): string | undefined => {

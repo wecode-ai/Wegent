@@ -343,8 +343,7 @@ export default function AskUserForm({
 
     setFieldErrors({})
 
-    // Build structured answer message — same format as ClarificationForm so
-    // MessageBubble can parse it and render ClarificationAnswerSummary
+    // Build the user-facing answer summary consumed by MessageBubble.
     let formattedMessage = '## 📝 我的回答 (My Answers)\n\n'
 
     const answers: Record<string, string | string[]> = {}

@@ -312,6 +312,7 @@ class SkillKindsService:
                 "config": metadata.get("config"),
                 "tools": metadata.get("tools"),
                 "provider": metadata.get("provider"),
+                "runtime": metadata.get("runtime"),
                 "mcpServers": metadata.get("mcpServers"),
                 "preload": metadata.get("preload", False),
                 "source": source,
@@ -735,6 +736,7 @@ class SkillKindsService:
                 "config": metadata.get("config"),
                 "tools": metadata.get("tools"),
                 "provider": metadata.get("provider"),
+                "runtime": metadata.get("runtime"),
                 "mcpServers": metadata.get("mcpServers"),
                 "preload": metadata.get("preload", False),
             }

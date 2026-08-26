@@ -21,7 +21,7 @@ import oss2
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from wecode.config.video_image_staging_config import (  # noqa: E402
+from wecode.video.config.image_staging import (  # noqa: E402
     VideoImageStagingSettings,
 )
 

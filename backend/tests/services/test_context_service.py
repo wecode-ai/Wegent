@@ -2404,73 +2404,17 @@ class TestVideoAttachmentProcessing:
         self, monkeypatch, test_db
     ) -> None:
         """Video payload resolves URL and keeps fid metadata."""
-        import json
         from importlib import import_module
+        from types import SimpleNamespace
 
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
             SubtaskContext,
         )
-        from app.models.user import User
         from app.services.context import context_service
 
         context_service_module = import_module("app.services.context.context_service")
-
-        user = User(
-            user_name="video-owner",
-            password_hash="test",
-            email="video-owner@example.com",
-            is_active=True,
-            git_info=None,
-            preferences=json.dumps({"weibo_binding": {"uid": "1234567890"}}),
-        )
-        test_db.add(user)
-        test_db.commit()
-        test_db.refresh(user)
-
-        class FakeMediaService:
-            def get_download_url(self, fid: int, user: User | None = None) -> str:
-                assert fid == 12345
-                assert user is not None
-                assert user.user_name == "video-owner"
-                return "https://example.com/video.mp4"
-
-        context = SubtaskContext(
-            subtask_id=100,
-            user_id=user.id,
-            context_type=ContextType.ATTACHMENT.value,
-            name="video.mp4",
-            status=ContextStatus.READY.value,
-            type_data={
-                "file_extension": ".mp4",
-                "original_filename": "video.mp4",
-                "file_size": 1024000,
-                "mime_type": "video/mp4",
-                "fid": 12345,
-            },
-        )
-        context.id = 999
-
-        monkeypatch.setattr(
-            context_service_module,
-            "weibo_media_service",
-            FakeMediaService(),
-        )
-        payload = context_service.build_video_content_from_attachment(test_db, context)
-
-        assert payload is not None
-        assert payload.video_url == "https://example.com/video.mp4"
-        assert "12345" in payload.metadata_text
-
-    def test_build_video_metadata_text_does_not_resolve_url(self, test_db) -> None:
-        """Metadata-only video path exposes fid without resolving a download URL."""
-        from app.models.subtask_context import (
-            ContextStatus,
-            ContextType,
-            SubtaskContext,
-        )
-        from app.services.context import context_service
 
         context = SubtaskContext(
             subtask_id=100,
@@ -2488,6 +2432,61 @@ class TestVideoAttachmentProcessing:
         )
         context.id = 999
 
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_reference",
+            lambda **_kwargs: SimpleNamespace(name="fid", value=12345),
+        )
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_playback",
+            lambda **_kwargs: SimpleNamespace(
+                url="https://example.com/video.mp4",
+                media_type="video/mp4",
+            ),
+        )
+        payload = context_service.build_video_content_from_attachment(test_db, context)
+
+        assert payload is not None
+        assert payload.video_url == "https://example.com/video.mp4"
+        assert "12345" in payload.metadata_text
+
+    def test_build_video_metadata_text_does_not_resolve_url(
+        self, monkeypatch, test_db
+    ) -> None:
+        """Metadata-only video path exposes fid without resolving a download URL."""
+        from importlib import import_module
+        from types import SimpleNamespace
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context_service_module = import_module("app.services.context.context_service")
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="video.mp4",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".mp4",
+                "original_filename": "video.mp4",
+                "file_size": 1024000,
+                "mime_type": "video/mp4",
+                "fid": 12345,
+            },
+        )
+        context.id = 999
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_reference",
+            lambda **_kwargs: SimpleNamespace(name="fid", value=12345),
+        )
+
         metadata_header, metadata_text, fid = context_service.build_video_metadata_text(
             context
         )
@@ -2496,6 +2495,101 @@ class TestVideoAttachmentProcessing:
         assert metadata_text.startswith(metadata_header)
         assert '"fid": 12345' in metadata_text
         assert fid == 12345
+
+    def test_build_video_metadata_text_supports_hosted_media_id(
+        self, monkeypatch
+    ) -> None:
+        """Metadata-only chat keeps the media id used by AIGC tools."""
+        from importlib import import_module
+        from types import SimpleNamespace
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context_service_module = import_module("app.services.context.context_service")
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="video.mp4",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".mp4",
+                "original_filename": "video.mp4",
+                "file_size": 1024000,
+                "mime_type": "video/mp4",
+                "weibo_video_upload": {"media_id": "media-123"},
+            },
+        )
+        context.id = 999
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_reference",
+            lambda **_kwargs: SimpleNamespace(name="media_id", value="media-123"),
+        )
+
+        _header, metadata_text, media_id = context_service.build_video_metadata_text(
+            context
+        )
+
+        assert '"media_id": "media-123"' in metadata_text
+        assert media_id == "media-123"
+
+    def test_build_video_content_resolves_hosted_media_id(
+        self, monkeypatch, test_db
+    ) -> None:
+        """Video-capable models resolve externally hosted reference videos."""
+        from importlib import import_module
+        from types import SimpleNamespace
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context_service_module = import_module("app.services.context.context_service")
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="video.mp4",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".mp4",
+                "original_filename": "video.mp4",
+                "file_size": 1024000,
+                "mime_type": "video/mp4",
+                "weibo_video_upload": {"media_id": "media-123"},
+            },
+        )
+        context.id = 999
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_reference",
+            lambda **_kwargs: SimpleNamespace(
+                name="media_id",
+                value="media-123",
+            ),
+        )
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_playback",
+            lambda **kwargs: SimpleNamespace(
+                url="https://example.com/video.mp4", media_type="video/mp4"
+            ),
+        )
+
+        payload = context_service.build_video_content_from_attachment(test_db, context)
+
+        assert payload is not None
+        assert payload.video_url == "https://example.com/video.mp4"
+        assert '"media_id": "media-123"' in payload.metadata_text
 
     def test_build_video_history_metadata_text_allows_missing_fid(
         self, test_db
@@ -2534,6 +2628,7 @@ class TestVideoAttachmentProcessing:
     ) -> None:
         """Video URL resolution failure raises instead of falling back to metadata."""
         from importlib import import_module
+        from types import SimpleNamespace
 
         import pytest
 
@@ -2546,11 +2641,6 @@ class TestVideoAttachmentProcessing:
         from app.services.context.context_service import VideoAttachmentResolutionError
 
         context_service_module = import_module("app.services.context.context_service")
-
-        class EmptyMediaService:
-            def get_download_url(self, fid: int, **_kwargs) -> None:
-                assert fid == 12345
-                return None
 
         context = SubtaskContext(
             subtask_id=100,
@@ -2570,17 +2660,24 @@ class TestVideoAttachmentProcessing:
 
         monkeypatch.setattr(
             context_service_module,
-            "weibo_media_service",
-            EmptyMediaService(),
+            "resolve_external_attachment_reference",
+            lambda **_kwargs: SimpleNamespace(name="fid", value=12345),
+        )
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_playback",
+            lambda **_kwargs: None,
         )
 
         with pytest.raises(VideoAttachmentResolutionError):
             context_service.build_video_content_from_attachment(test_db, context)
 
     def test_build_video_content_from_attachment_raises_without_fid_when_resolving(
-        self, test_db
+        self, monkeypatch, test_db
     ) -> None:
         """Video URL resolution requires fid."""
+        from importlib import import_module
+
         import pytest
 
         from app.models.subtask_context import (
@@ -2591,6 +2688,7 @@ class TestVideoAttachmentProcessing:
         from app.services.context import context_service
         from app.services.context.context_service import VideoAttachmentResolutionError
 
+        context_service_module = import_module("app.services.context.context_service")
         context = SubtaskContext(
             subtask_id=100,
             user_id=1,
@@ -2605,6 +2703,11 @@ class TestVideoAttachmentProcessing:
             },
         )
         context.id = 999
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_reference",
+            lambda **_kwargs: None,
+        )
 
         with pytest.raises(VideoAttachmentResolutionError):
             context_service.build_video_content_from_attachment(test_db, context)

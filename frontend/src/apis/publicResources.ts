@@ -38,6 +38,8 @@ export function transformPublicBotToBot(publicBot: AdminPublicBot): Bot {
     skill_refs: publicBot.skill_refs || {},
     preload_skills: publicBot.preload_skills || [],
     preload_skill_refs: publicBot.preload_skill_refs || {},
+    secondary_model_name: publicBot.secondary_model_name,
+    secondary_model_namespace: publicBot.secondary_model_namespace,
     is_active: publicBot.is_active,
     created_at: publicBot.created_at,
     updated_at: publicBot.updated_at,
@@ -84,7 +86,7 @@ export function transformPublicModelToUnifiedModel(publicModel: AdminPublicModel
     modelId: (env?.model_id as string) || null,
     namespace: publicModel.namespace,
     isActive: publicModel.is_active,
-    modelCategoryType: (spec?.modelType as 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank') || 'llm',
+    modelCategoryType: (spec?.modelType as ModelCategoryType) || 'llm',
     isAdvanced: publicModel.is_advanced ?? false,
     modelGroup: (spec?.modelGroup as string) || null,
     modelSubGroup: (spec?.modelSubGroup as string) || null,
@@ -108,6 +110,8 @@ export interface PublicBotFormData {
   preload_skills?: string[] // Skills to preload into the system prompt
   preload_skill_refs?: Record<string, SkillRefMeta> // Precise refs for preloaded skills
   agent_config?: Record<string, unknown> // Agent config for Model
+  secondary_model_name?: string | null
+  secondary_model_namespace?: string
   default_knowledge_base_refs?: { id: number; name: string }[] // Default knowledge base refs for Ghost
 }
 /**
@@ -140,6 +144,8 @@ export const publicResourceApis = {
       preload_skills: formData.preload_skills,
       preload_skill_refs: formData.preload_skill_refs,
       agent_config: formData.agent_config,
+      secondary_model_name: formData.secondary_model_name,
+      secondary_model_namespace: formData.secondary_model_namespace,
       default_knowledge_base_refs: formData.default_knowledge_base_refs,
     })
     return transformPublicBotToBot(created)
@@ -161,6 +167,8 @@ export const publicResourceApis = {
       preload_skills: formData.preload_skills,
       preload_skill_refs: formData.preload_skill_refs,
       agent_config: formData.agent_config,
+      secondary_model_name: formData.secondary_model_name,
+      secondary_model_namespace: formData.secondary_model_namespace,
       default_knowledge_base_refs: formData.default_knowledge_base_refs,
     })
     return transformPublicBotToBot(updated)

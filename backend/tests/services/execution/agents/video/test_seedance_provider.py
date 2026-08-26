@@ -4,7 +4,6 @@
 
 import pytest
 
-import wecode.service.video_generation_extension  # noqa: F401
 from app.services.execution.agents.video.providers import get_video_provider
 from app.services.execution.agents.video.providers.seedance import (
     SeedanceProvider,
@@ -425,42 +424,6 @@ async def test_seedance_passes_through_external_content_blocks(monkeypatch) -> N
         {
             "type": "external_audio_reference",
             "external_audio_reference": "audio-456",
-            "role": "reference_audio",
-        },
-    ]
-
-
-@pytest.mark.asyncio
-async def test_seedance_uses_external_media_id_blocks(monkeypatch) -> None:
-    client = _Client()
-    monkeypatch.setattr(
-        "app.services.execution.agents.video.providers.seedance.httpx.AsyncClient",
-        lambda **kwargs: client,
-    )
-    provider = SeedanceProvider(
-        base_url="https://example.com",
-        api_key="test-key",
-    )
-
-    await provider.create_job(
-        prompt="Generate a video",
-        reference_videos=[
-            {"external_reference": {"id": "video-123"}},
-        ],
-        reference_audios=[
-            {"external_reference": {"id": "audio-456"}},
-        ],
-    )
-
-    assert client.post_kwargs["json"]["content"][1:] == [
-        {
-            "type": "video_media_id",
-            "video_media_id": "video-123",
-            "role": "reference_video",
-        },
-        {
-            "type": "audio_media_id",
-            "audio_media_id": "audio-456",
             "role": "reference_audio",
         },
     ]

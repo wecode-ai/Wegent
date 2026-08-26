@@ -20,6 +20,222 @@ function createRuntimeActions(overrides: Partial<TaskStateMachineDeps> = {}): Ta
 }
 
 describe('TaskStateMachine', () => {
+  it('applies card progress updates after the text stream is done', () => {
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+    machine.handleChatStart(7, 'Chat', 1)
+    machine.handleChatChunk(7, '', {
+      blocks: [
+        {
+          id: 'card-1',
+          type: 'card',
+          status: 'pending',
+          card_id: 'card-1',
+          card_type: 'video_director_generation',
+          card_status: 'pending',
+          card_data: {},
+          card_preview_data: { progress: 10 },
+          card_error: null,
+        },
+      ],
+    })
+    machine.handleChatDone(7, '')
+
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      status: 'streaming',
+      card_status: 'partial_ready',
+      card_preview_data: { progress: 65 },
+    })
+
+    const message = machine.getState().messages.get('ai-7')
+    const card = message?.result?.blocks?.[0]
+    expect(message?.status).toBe('completed')
+    expect(card).toMatchObject({
+      id: 'card-1',
+      type: 'card',
+      card_status: 'partial_ready',
+      card_preview_data: { progress: 65 },
+    })
+  })
+
+  it('creates a missing card from a self-describing block update', () => {
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      status: 'pending',
+      card_id: 'card-1',
+      card_type: 'video_director_generation',
+      card_status: 'pending',
+      card_data: {},
+      card_preview_data: { progress: 85 },
+    })
+
+    expect(machine.getState().messages.get('ai-7')?.result?.blocks).toEqual([
+      {
+        id: 'card-1',
+        type: 'card',
+        status: 'pending',
+        card_id: 'card-1',
+        card_type: 'video_director_generation',
+        card_status: 'pending',
+        card_data: {},
+        card_preview_data: { progress: 85 },
+      },
+    ])
+    expect(machine.getState().messages.get('ai-7')?.status).toBe('streaming')
+  })
+
+  it('creates a completed message from a terminal card update without chat start', () => {
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      status: 'done',
+      card_id: 'card-1',
+      card_type: 'video_director_generation',
+      card_status: 'populated',
+      card_data: { video_url: 'https://example.com/video.mp4' },
+      card_preview_data: { progress: 100 },
+    })
+
+    expect(machine.getState().messages.get('ai-7')).toMatchObject({
+      status: 'completed',
+      result: {
+        blocks: [
+          {
+            id: 'card-1',
+            type: 'card',
+            status: 'done',
+            card_status: 'populated',
+          },
+        ],
+      },
+    })
+  })
+
+  it('preserves an interactive form update that arrives before block creation', () => {
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+    const renderPayload = {
+      type: 'interactive_form_question',
+      task_id: 42,
+      subtask_id: 7,
+      questions: [
+        {
+          id: 'audience',
+          question: 'Who is the target audience?',
+          input_type: 'text',
+        },
+      ],
+    }
+
+    machine.handleChatBlockUpdated(7, {
+      id: 'tool-1',
+      status: 'pending',
+      render_payload: renderPayload,
+    })
+    machine.handleChatStart(7, 'Chat', 1)
+    machine.handleChatBlockUpdated(7, {
+      id: 'tool-1',
+      type: 'tool',
+      status: 'pending',
+      tool_name: 'interactive_form_question',
+      tool_use_id: 'tool-1',
+      tool_input: {},
+    })
+
+    expect(machine.getState().messages.get('ai-7')).toMatchObject({
+      status: 'streaming',
+      result: {
+        blocks: [
+          {
+            id: 'tool-1',
+            type: 'tool',
+            tool_name: 'interactive_form_question',
+            tool_use_id: 'tool-1',
+            render_payload: renderPayload,
+          },
+        ],
+      },
+    })
+    expect(machine.getState().messages.get('ai-7')?.result?.blocks).toHaveLength(1)
+
+    consoleInfoSpy.mockRestore()
+  })
+
+  it('does not regress a populated card when a delayed pending update arrives', () => {
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+    machine.handleChatStart(7, 'Chat', 1)
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      type: 'card',
+      status: 'done',
+      card_id: 'card-1',
+      card_type: 'video_director_generation',
+      card_status: 'populated',
+      card_data: { video_url: 'https://example.com/video.mp4' },
+      card_preview_data: { progress: 100 },
+    })
+
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      status: 'pending',
+      card_status: 'pending',
+      card_data: {},
+      card_preview_data: { progress: 0 },
+    })
+
+    expect(machine.getState().messages.get('ai-7')?.result?.blocks?.[0]).toMatchObject({
+      status: 'done',
+      card_status: 'populated',
+      card_data: { video_url: 'https://example.com/video.mp4' },
+      card_preview_data: { progress: 100 },
+    })
+  })
+
+  it('does not regress a populated card when chat done contains a stale snapshot', () => {
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+    machine.handleChatStart(7, 'Chat', 1)
+    machine.handleChatBlockUpdated(7, {
+      id: 'card-1',
+      type: 'card',
+      status: 'done',
+      card_id: 'card-1',
+      card_type: 'video_director_generation',
+      card_status: 'populated',
+      card_data: { video_url: 'https://example.com/video.mp4' },
+      card_preview_data: { progress: 100 },
+    })
+
+    machine.handleChatDone(
+      7,
+      '',
+      {
+        blocks: [
+          {
+            id: 'card-1',
+            type: 'card',
+            status: 'pending',
+            card_id: 'card-1',
+            card_type: 'video_director_generation',
+            card_status: 'pending',
+            card_data: {},
+            card_preview_data: { progress: 0 },
+          },
+        ],
+      },
+      1
+    )
+
+    expect(machine.getState().messages.get('ai-7')?.result?.blocks?.[0]).toMatchObject({
+      status: 'done',
+      card_status: 'populated',
+      card_data: { video_url: 'https://example.com/video.mp4' },
+      card_preview_data: { progress: 100 },
+    })
+  })
+
   it('stores reasoning chunks as chronological thinking blocks', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: vi.fn(),
@@ -415,6 +631,96 @@ describe('TaskStateMachine', () => {
       forceRefresh: true,
       afterMessageId: undefined,
     })
+  })
+
+  it('fully resyncs terminal task cards after a websocket reconnect', async () => {
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const joinTask = vi.fn().mockResolvedValue({
+      subtasks: [
+        {
+          id: 42,
+          task_id: 100,
+          team_id: 1,
+          title: 'video card',
+          bot_ids: [],
+          role: 'ASSISTANT',
+          message_id: 7,
+          parent_id: 1,
+          prompt: '',
+          executor_namespace: '',
+          executor_name: '',
+          status: 'COMPLETED',
+          progress: 100,
+          batch: 0,
+          result: {
+            value: 'Working',
+            blocks: [
+              {
+                id: 'card-1',
+                type: 'card',
+                card_id: '1',
+                card_type: 'video_director_generation',
+                card_status: 'populated',
+                card_data: { title: 'Ready' },
+                card_preview_data: { progress: 100 },
+                status: 'done',
+              },
+            ],
+          },
+          error_message: '',
+          user_id: 1,
+          created_at: '2026-06-01T10:00:00.000Z',
+          updated_at: '2026-06-01T10:00:10.000Z',
+          completed_at: '2026-06-01T10:00:01.000Z',
+          bots: [],
+        },
+      ],
+    })
+    const pullRuntime = vi.fn().mockResolvedValue({
+      task_id: 100,
+      task_status: 'COMPLETED',
+      status_updated_at: '2026-06-01T10:00:01.000Z',
+      active_stream: null,
+    })
+    const machine = new TaskStateMachine(100, {
+      joinTask,
+      pullRuntime,
+      isConnected: () => true,
+    })
+
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, '', {
+      blocks: [
+        {
+          id: 'card-1',
+          type: 'card',
+          card_id: '1',
+          card_type: 'video_director_generation',
+          card_status: 'pending',
+          card_data: {},
+          card_preview_data: { progress: 30 },
+          status: 'done',
+        },
+      ],
+    })
+    machine.handleChatDone(42, 'Working', undefined, 7)
+
+    await machine.requestRuntimeCheck('websocket-reconnect')
+
+    expect(joinTask).toHaveBeenCalledWith(100, {
+      forceRefresh: true,
+      afterMessageId: undefined,
+    })
+    expect(machine.getState().messages.get('ai-42')?.result?.blocks).toContainEqual(
+      expect.objectContaining({
+        id: 'card-1',
+        card_status: 'populated',
+        card_data: { title: 'Ready' },
+        card_preview_data: { progress: 100 },
+      })
+    )
+
+    consoleInfoSpy.mockRestore()
   })
 
   it('checks runtime before resolving pending socket recovery on reconnect', async () => {
@@ -1804,7 +2110,7 @@ describe('TaskStateMachine', () => {
       }),
       joinTask: vi.fn().mockImplementation((_taskId, options) =>
         Promise.resolve({
-          subtasks: options.afterMessageId === 1 ? [finalAssistantSubtask] : [],
+          subtasks: options.afterMessageId === undefined ? [finalAssistantSubtask] : [],
         })
       ),
     })
@@ -1848,7 +2154,7 @@ describe('TaskStateMachine', () => {
 
     expect(actions.joinTask).toHaveBeenCalledWith(42, {
       forceRefresh: true,
-      afterMessageId: 1,
+      afterMessageId: undefined,
     })
     expect(machine.getState().messages.get('ai-77')?.result?.blocks?.[0]).toMatchObject({
       video_url: 'https://example.com/final.mp4',
