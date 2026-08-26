@@ -46,6 +46,15 @@ class IndexExecutionDecision:
     reason: str
 
 
+@dataclass(frozen=True)
+class ExternalImportAttemptDecision:
+    """Decision returned when an external import task claims its attempt."""
+
+    should_execute: bool
+    reason: str
+    generation: Optional[int] = None
+
+
 ACTIVE_INDEX_STATUSES = {
     DocumentIndexStatus.QUEUED,
     DocumentIndexStatus.PENDING_CONVERSION,
@@ -511,6 +520,85 @@ def mark_document_index_failed(
         reason="finalized",
     )
     return True
+
+
+def _skip_import_attempt(
+    document_id: int,
+    generation: Optional[int],
+    reason: str,
+    previous_status: Optional[DocumentIndexStatus] = None,
+) -> ExternalImportAttemptDecision:
+    """Record a skip transition and build the matching decision."""
+    _record_transition(
+        "knowledge.external_import.attempt.skipped",
+        document_id=document_id,
+        generation=generation,
+        reason=reason,
+        previous_status=previous_status,
+    )
+    return ExternalImportAttemptDecision(should_execute=False, reason=reason)
+
+
+@trace_sync(
+    span_name="knowledge.begin_external_import_attempt",
+    tracer_name="knowledge.state_machine",
+    extract_attributes=lambda db, document_id: {
+        "knowledge.document_id": document_id,
+    },
+)
+def begin_external_import_attempt(
+    db: Session,
+    document_id: int,
+) -> ExternalImportAttemptDecision:
+    """
+    Claim the next processing generation for an external document import.
+
+    Every background import run advances ``index_generation`` so a concurrent
+    or redelivered older task immediately loses its write right (its guarded
+    writes match on the generation it claimed). Skips documents that are
+    missing, have no external identity, or are already successfully imported.
+    """
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == document_id)
+        .with_for_update()
+        .first()
+    )
+    if document is None:
+        db.rollback()
+        return _skip_import_attempt(document_id, None, "document_not_found")
+
+    if not document.has_external_identity:
+        db.rollback()
+        return _skip_import_attempt(
+            document_id, document.index_generation, "no_external_identity"
+        )
+
+    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
+    if current_status == DocumentIndexStatus.SUCCESS:
+        db.rollback()
+        return _skip_import_attempt(
+            document_id,
+            document.index_generation,
+            "already_imported",
+            previous_status=current_status,
+        )
+
+    next_generation = (document.index_generation or 0) + 1
+    document.index_generation = next_generation
+    document.index_status = DocumentIndexStatus.QUEUED
+    document.clear_processing_error_payload()
+    db.commit()
+    _record_transition(
+        "knowledge.external_import.attempt.claimed",
+        document_id=document_id,
+        generation=next_generation,
+        reason="claimed",
+        previous_status=current_status,
+    )
+    return ExternalImportAttemptDecision(
+        should_execute=True, reason="claimed", generation=next_generation
+    )
 
 
 @trace_sync(

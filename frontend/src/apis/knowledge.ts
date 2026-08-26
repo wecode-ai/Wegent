@@ -312,6 +312,19 @@ export async function reindexDocument(
   )
 }
 
+/**
+ * Retry the background import of one external document record.
+ *
+ * Dedicated entry for external imports: a failed import has no valid
+ * attachment, so the ordinary reindex flow does not apply. The backend
+ * reuses the same document row and re-dispatches the import task.
+ */
+export async function retryExternalDocumentImport(documentId: number): Promise<KnowledgeDocument> {
+  return apiClient.post<KnowledgeDocument>(
+    `/knowledge-documents/${documentId}/external-import/retry`
+  )
+}
+
 // ============== Batch Document Operations ==============
 
 /**

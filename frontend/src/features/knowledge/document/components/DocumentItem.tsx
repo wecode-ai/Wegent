@@ -227,12 +227,19 @@ export function DocumentItem({
     isConverting ||
     isPendingConversion
   const showIndexingState = isReindexing || isBackendIndexing
+  const isExternal = document.source_type === 'external'
+  // External documents retry through the dedicated import-retry entry — only
+  // from a failed import, since a failed import has no valid attachment to
+  // reindex. Regular documents reindex from failed or not-indexed states.
   const canReindex =
-    ragConfigured &&
-    !isTable &&
     !!onReindex &&
-    (isIndexFailed || isNotIndexed) &&
-    !showIndexingState
+    !showIndexingState &&
+    (isExternal ? isIndexFailed : ragConfigured && !isTable && (isIndexFailed || isNotIndexed))
+  // The same control serves as "retry import" for external documents; the
+  // DocumentList handler routes external documents to the retry entry.
+  const reindexActionLabel = isExternal
+    ? t('knowledge:document.document.retryImport')
+    : t('knowledge:document.document.reindex')
 
   // Multimodal (video/image) document actions — re-analyze gate + handler.
   const { canReanalyze, handleReanalyze } = useMultimodalDocActions(
@@ -510,7 +517,7 @@ export function DocumentItem({
                         ? t('knowledge:document.document.reindexing')
                         : isNotIndexed
                           ? t('knowledge:document.document.index')
-                          : t('knowledge:document.document.reindex')}
+                          : reindexActionLabel}
                     </DropdownMenuItem>
                   )}
                   <ReanalyzeDropdownItem
@@ -798,9 +805,13 @@ export function DocumentItem({
                   title={
                     showIndexingState
                       ? t('knowledge:document.document.reindexing')
-                      : t('knowledge:document.document.reindex')
+                      : reindexActionLabel
                   }
-                  data-testid={`reindex-document-${document.id}`}
+                  data-testid={
+                    isExternal
+                      ? `retry-import-document-${document.id}`
+                      : `reindex-document-${document.id}`
+                  }
                 >
                   <RotateCcw className={`w-4 h-4 ${showIndexingState ? 'animate-spin' : ''}`} />
                 </button>

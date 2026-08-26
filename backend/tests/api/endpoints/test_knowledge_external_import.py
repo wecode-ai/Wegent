@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.api.endpoints.knowledge import router
+from app.api.endpoints.knowledge import document_router, router
 from app.core import security
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.knowledge import KnowledgeDocument
@@ -29,6 +29,7 @@ def import_client(test_db: Session, test_user: User) -> TestClient:
 
     app = FastAPI()
     app.include_router(router, prefix="/knowledge-bases")
+    app.include_router(document_router, prefix="/knowledge-documents")
 
     def override_get_db():
         yield test_db
@@ -495,3 +496,178 @@ class TestImportExternalDocumentBatch:
         assert dispatched == []
         documents = test_db.query(KnowledgeDocument).count()
         assert documents == 0
+
+
+def _create_failed_external_document(
+    test_db: Session,
+    user_id: int,
+    knowledge_base_id: int,
+    *,
+    index_status: str = "failed",
+    external: bool = True,
+) -> KnowledgeDocument:
+    from datetime import datetime, timezone
+
+    document = KnowledgeDocument(
+        kind_id=knowledge_base_id,
+        attachment_id=0,
+        name="Failed Import",
+        file_extension="md",
+        file_size=0,
+        user_id=user_id,
+        source_type="external" if external else "file",
+        external_provider="dingtalk" if external else None,
+        external_resource_id="z" * 32 if external else None,
+        index_status=index_status,
+        index_generation=0,
+    )
+    document.set_processing_error_payload(
+        {
+            "stage": "system",
+            "code": "external_import_failed",
+            "message": "The external document could not be imported. Please retry later.",
+            "retryable": True,
+            "generation": 0,
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    test_db.add(document)
+    test_db.commit()
+    test_db.refresh(document)
+    return document
+
+
+class TestRetryExternalDocumentImport:
+    def test_requeues_failed_document(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(test_db, test_user.id, kb_id)
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-import/retry"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == document.id
+        assert data["index_status"] == "queued"
+        assert data["processing_error"] is None
+        assert dispatched == [document.id]
+        # Retry reuses the same record; no copy is created.
+        assert test_db.query(KnowledgeDocument).count() == 1
+
+    def test_returns_404_for_missing_document(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+    ) -> None:
+        response = import_client.post(
+            "/knowledge-documents/999999/external-import/retry"
+        )
+
+        assert response.status_code == 404
+
+    def test_returns_409_while_import_in_progress(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(
+            test_db, test_user.id, kb_id, index_status="queued"
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-import/retry"
+        )
+
+        assert response.status_code == 409
+        assert dispatched == []
+
+    def test_returns_409_for_already_imported_document(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(
+            test_db, test_user.id, kb_id, index_status="success"
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-import/retry"
+        )
+
+        assert response.status_code == 409
+        assert dispatched == []
+
+    def test_returns_400_for_non_external_document(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(
+            test_db, test_user.id, kb_id, external=False
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-import/retry"
+        )
+
+        assert response.status_code == 400
+
+    def test_returns_403_without_manage_permission(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(test_db, test_user.id, kb_id)
+        monkeypatch.setattr(
+            KnowledgeService,
+            "can_manage_knowledge_base_documents",
+            staticmethod(lambda db, kb_id, user_id: False),
+        )
+
+        response = import_client.post(
+            f"/knowledge-documents/{document.id}/external-import/retry"
+        )
+
+        assert response.status_code == 403
+
+
+class TestExternalImportFailureVisibility:
+    def test_list_exposes_structured_failure_reason(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(test_db, test_user.id, kb_id)
+
+        response = import_client.get(f"/knowledge-bases/{kb_id}/documents")
+
+        assert response.status_code == 200
+        items = response.json()["items"]
+        matching = [item for item in items if item["id"] == document.id]
+        assert len(matching) == 1
+        error = matching[0]["processing_error"]
+        assert error is not None
+        assert error["code"] == "external_import_failed"
+        assert error["retryable"] is True
+        assert error["stage"] == "system"

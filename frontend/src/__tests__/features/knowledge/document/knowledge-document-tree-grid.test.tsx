@@ -321,6 +321,52 @@ describe('KnowledgeDocumentTreeGrid', () => {
     openSpy.mockRestore()
   })
 
+  it('offers the dedicated retry entry for failed external imports', () => {
+    const onReindex = jest.fn()
+    const folders: KnowledgeFolder[] = []
+    const failedExternal = createDocument({
+      id: 21,
+      name: 'external-doc.md',
+      source_type: 'external',
+      index_status: 'failed',
+      is_active: false,
+    })
+    const failedRegular = createDocument({
+      id: 22,
+      name: 'regular-doc.txt',
+      index_status: 'failed',
+      is_active: false,
+    })
+    const { nodes, index } = buildKnowledgeResourceTree(folders, [failedExternal, failedRegular])
+
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={folders}
+        documents={[failedExternal, failedRegular]}
+        {...requiredTreeGridProps}
+        showSelectionColumn={true}
+        showActionsColumn={true}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+        onReindex={onReindex}
+        canManage={() => true}
+        ragConfigured={false}
+      />
+    )
+
+    // External retry does not depend on RAG configuration, and never reuses
+    // the ordinary reindex control.
+    fireEvent.click(screen.getByTestId('retry-import-document-21'))
+    expect(onReindex).toHaveBeenCalledWith(failedExternal)
+    expect(screen.queryByTestId('reindex-document-21')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('document.document.retryImport')).toBeInTheDocument()
+
+    // Without RAG configuration the regular reindex control stays hidden.
+    expect(screen.queryByTestId('reindex-document-22')).not.toBeInTheDocument()
+  })
+
   it('activates document rows from the keyboard', () => {
     const onViewDetail = jest.fn()
     const folders: KnowledgeFolder[] = []

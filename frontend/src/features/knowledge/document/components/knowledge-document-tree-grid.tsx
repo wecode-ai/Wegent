@@ -761,6 +761,7 @@ export function KnowledgeDocumentTreeGrid({
           if (!(canManage?.(document) ?? true)) return null
           const isWeb = document.source_type === 'web'
           const isTable = document.source_type === 'table'
+          const isExternal = document.source_type === 'external'
           const isNotIndexed = document.index_status === 'not_indexed'
           const isIndexFailed = document.index_status === 'failed'
           const isPendingConversion = document.index_status === 'pending_conversion'
@@ -771,12 +772,25 @@ export function KnowledgeDocumentTreeGrid({
             document.index_status === 'indexing' ||
             isConverting ||
             isPendingConversion
-          const canReindex =
-            ragConfigured &&
-            !isTable &&
-            !!onReindex &&
-            (isIndexFailed || isNotIndexed) &&
-            !showIndexingState
+          // One retry control whose identity depends on the document: external
+          // documents use the dedicated import-retry entry (a failed import
+          // has no valid attachment to reindex), regular documents reindex.
+          let retryAction: { testId: string; label: string } | null = null
+          if (onReindex && !showIndexingState) {
+            if (isExternal) {
+              if (isIndexFailed) {
+                retryAction = {
+                  testId: `retry-import-document-${document.id}`,
+                  label: t('document.document.retryImport'),
+                }
+              }
+            } else if (ragConfigured && !isTable && (isIndexFailed || isNotIndexed)) {
+              retryAction = {
+                testId: `reindex-document-${document.id}`,
+                label: t('document.document.reindex'),
+              }
+            }
+          }
           const normalizedExt = `.${(document.file_extension || '').replace(/^\.+/, '')}`
           const isMultimodalDoc = isVideoFileName(document.name) || isImageExtension(normalizedExt)
           // Gate on source_type=file + attachment_id like showDownload: a table
@@ -795,7 +809,6 @@ export function KnowledgeDocumentTreeGrid({
             refreshingDocId === document.id
               ? t('document.upload.web.refetching')
               : t('document.upload.web.refetch')
-          const reindexLabel = t('document.document.reindex')
           const downloadLabel = t('document.document.download')
           const deleteLabel = t('common:actions.delete')
 
@@ -836,16 +849,16 @@ export function KnowledgeDocumentTreeGrid({
                   />
                 </button>
               )}
-              {canReindex && (
+              {retryAction && (
                 <button
                   className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
                   onClick={event => {
                     event.stopPropagation()
                     onReindex?.(document)
                   }}
-                  title={reindexLabel}
-                  aria-label={reindexLabel}
-                  data-testid={`reindex-document-${document.id}`}
+                  title={retryAction.label}
+                  aria-label={retryAction.label}
+                  data-testid={retryAction.testId}
                 >
                   <RotateCcw className="w-4 h-4" />
                 </button>

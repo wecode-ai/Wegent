@@ -47,6 +47,16 @@ class ExternalDocumentFetchError(RuntimeError):
     """Background fetch of external document content failed."""
 
 
+class ExternalImportLostWriteError(RuntimeError):
+    """The import attempt lost its write right before attaching content.
+
+    Raised when the guarded attachment write finds the document deleted,
+    superseded by a newer generation, or no longer carrying the external
+    identity this attempt was dispatched for. The caller must clean up the
+    attachment created by this attempt and leave the document untouched.
+    """
+
+
 @dataclass(frozen=True)
 class ExternalDocumentContent:
     """Fetched content of one external document, ready for the RAG pipeline."""

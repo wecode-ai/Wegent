@@ -99,9 +99,12 @@ def import_external_document_task(self, document_id: int):
     """
     Celery task for importing one external provider document.
 
-    Fetches the external document body, creates the attachment, and reuses
-    the regular indexing pipeline. Failures are recorded on the document as
-    a structured processing error instead of deleting the placeholder.
+    Claims a fresh processing generation, fetches the external document body,
+    creates the attachment, and reuses the regular indexing pipeline. The
+    generation claim makes redelivered or concurrent older tasks lose their
+    write right, so a deleted or superseded document is never revived.
+    Failures are recorded on the document as a structured processing error
+    instead of deleting the placeholder.
 
     Args:
         document_id: Placeholder KnowledgeDocument ID with external identity
@@ -111,28 +114,33 @@ def import_external_document_task(self, document_id: int):
     from app.services.knowledge.external_document_import import (
         run_external_document_import,
     )
+    from app.services.knowledge.index_state_machine import (
+        begin_external_import_attempt,
+    )
 
     with SessionLocal() as db:
+        attempt = begin_external_import_attempt(db, document_id)
+        if not attempt.should_execute:
+            logger.info(
+                "[Celery External Import] Skipping document %s: %s",
+                document_id,
+                attempt.reason,
+            )
+            return
         document = (
             db.query(KnowledgeDocument)
             .filter(KnowledgeDocument.id == document_id)
             .first()
         )
         if document is None:
+            # Deleted between the claim and this read; nothing to revive.
             logger.info(
                 "[Celery External Import] Document %s no longer exists; skipping",
                 document_id,
             )
             return
-        if not document.external_provider or not document.external_resource_id:
-            logger.info(
-                "[Celery External Import] Document %s has no external identity; "
-                "skipping",
-                document_id,
-            )
-            return
         user = db.query(User).filter(User.id == document.user_id).first()
-        run_external_document_import(db, document, user)
+        run_external_document_import(db, document, user, generation=attempt.generation)
 
 
 @celery_app.task(

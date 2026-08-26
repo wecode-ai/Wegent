@@ -167,6 +167,15 @@ class KnowledgeDocument(Base):
     # --- Helper properties for converted attachment reference ---
 
     @property
+    def has_external_identity(self) -> bool:
+        """Whether this document is an imported external provider document.
+
+        Both identity columns are always set together (see the column comment
+        above), so one truthy check covers the pairing.
+        """
+        return bool(self.external_provider and self.external_resource_id)
+
+    @property
     def converted_attachment_id(self) -> int | None:
         """Get the converted attachment ID from source_config.
 

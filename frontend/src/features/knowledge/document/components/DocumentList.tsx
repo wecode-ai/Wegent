@@ -848,19 +848,28 @@ export function DocumentList({
     }
   }
 
-  // Handle document reindex
+  // Handle document reindex. External documents route to the dedicated
+  // import-retry entry instead: a failed import has no valid attachment, so
+  // the ordinary reindex flow cannot re-fetch the external body.
   const handleReindexDocument = async (doc: KnowledgeDocument) => {
     setReindexingDocId(doc.id)
     try {
-      const { reindexDocument } = await import('@/apis/knowledge')
-      const result = await reindexDocument(doc.id)
+      let successMessage = t('document.document.reindexSuccess')
+      if (doc.source_type === 'external') {
+        const { retryExternalDocumentImport } = await import('@/apis/knowledge')
+        await retryExternalDocumentImport(doc.id)
+        successMessage = t('document.document.retryImportSuccess')
+      } else {
+        const { reindexDocument } = await import('@/apis/knowledge')
+        const result = await reindexDocument(doc.id)
 
-      if (!result.success) {
-        throw new Error(t('document.document.reindexFailed'))
+        if (!result.success) {
+          throw new Error(t('document.document.reindexFailed'))
+        }
       }
 
       toast({
-        description: t('document.document.reindexSuccess'),
+        description: successMessage,
       })
 
       // Immediately refresh so the doc's new PENDING_CONVERSION/QUEUED status
@@ -873,7 +882,11 @@ export function DocumentList({
       onDocumentsChanged?.()
     } catch (err) {
       // Use ApiError.errorCode for structured error handling
-      let errorMessage = t('document.document.reindexFailed')
+      const fallbackMessage =
+        doc.source_type === 'external'
+          ? t('document.document.retryImportFailed')
+          : t('document.document.reindexFailed')
+      let errorMessage = fallbackMessage
       if (err instanceof Error) {
         // Check if it's an ApiError with errorCode for structured error handling
         const apiError = err as { errorCode?: string; message: string }

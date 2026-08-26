@@ -871,6 +871,26 @@ class KnowledgeOrchestrator:
 
         return document
 
+    @staticmethod
+    def _assert_external_document_previewable(document: KnowledgeDocument) -> None:
+        """Reject preview of external documents whose content is not usable.
+
+        Placeholders (no attachment yet) and records whose import failed — and
+        which therefore never reached usable content — cannot be previewed. A
+        previously successful document whose later re-index failed keeps its
+        valid content and stays previewable.
+        """
+        from app.models.knowledge import DocumentIndexStatus, DocumentSourceType
+
+        if document.source_type != DocumentSourceType.EXTERNAL.value:
+            return
+        import_never_succeeded = not document.attachment_id or (
+            document.index_status == DocumentIndexStatus.FAILED
+            and not document.is_active
+        )
+        if import_never_succeeded:
+            raise ValueError("Document content is not ready for preview")
+
     def read_document_content(
         self,
         db: Session,
@@ -902,6 +922,7 @@ class KnowledgeOrchestrator:
             user=user,
             document_id=document_id,
         )
+        self._assert_external_document_previewable(document)
 
         results = document_read_service.read_documents(
             db=db,
@@ -1695,24 +1716,37 @@ class KnowledgeOrchestrator:
         document: KnowledgeDocument,
         user: User,
         content: ExternalDocumentContent,
+        generation: int,
     ) -> Dict[str, Any]:
         """
         Attach fetched external content to a placeholder document and index it.
 
-        Creates the attachment from the provider-fetched body, points the
-        document at it, then reuses the regular indexing dispatch so external
-        documents go through the same conversion/split/index state machine.
+        Creates the attachment from the provider-fetched body, then lands it on
+        the document through a guarded write that requires the document to
+        still exist, carry the same external identity, and sit at the claimed
+        ``generation``. Losing that race (user deleted the document, or a newer
+        attempt superseded this one) raises ExternalImportLostWriteError after
+        deleting the just-created attachment, so a deleted document is never
+        revived and no orphan is left behind. A previous attempt's attachment
+        is replaced (and deleted) only after the guarded write succeeds.
 
         Args:
             db: Database session
             document: Placeholder KnowledgeDocument with external identity
             user: Document owner (used for indexing dispatch metadata)
             content: Fetched external document content
+            generation: The import attempt's claimed index generation
 
         Returns:
             Dispatch result dict from the indexing scheduler
+
+        Raises:
+            ExternalImportLostWriteError: The attempt lost its write right.
         """
         from app.services.context import context_service
+        from app.services.knowledge.external_document_providers import (
+            ExternalImportLostWriteError,
+        )
 
         kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
@@ -1733,9 +1767,53 @@ class KnowledgeOrchestrator:
             subtask_id=0,
         )
 
-        document.attachment_id = attachment.id
-        document.file_size = len(content.content)
+        # Guarded write: only this attempt's generation may land the content,
+        # and only while the document still exists with its external identity.
+        # Capture the replaced attachment BEFORE the write: with
+        # expire_on_commit=True the ORM reloads the new value after commit.
+        from datetime import datetime, timezone
+
+        previous_attachment_id = document.attachment_id
+        updated = (
+            db.query(KnowledgeDocument)
+            .filter(
+                KnowledgeDocument.id == document.id,
+                KnowledgeDocument.external_provider == document.external_provider,
+                KnowledgeDocument.external_resource_id == document.external_resource_id,
+                KnowledgeDocument.index_generation == generation,
+            )
+            .update(
+                {
+                    KnowledgeDocument.attachment_id: attachment.id,
+                    KnowledgeDocument.file_size: len(content.content),
+                    KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
+                        tzinfo=None
+                    ),
+                },
+                synchronize_session=False,
+            )
+        )
         db.commit()
+
+        if not updated:
+            # The document was deleted or superseded while fetching: this
+            # attempt must not revive or overwrite it. Drop the attachment it
+            # just created; older attachments still referenced elsewhere (or
+            # already removed by the deleter) are not touched.
+            self._delete_external_import_attachment(db, document.user_id, attachment.id)
+            raise ExternalImportLostWriteError(
+                f"Document {document.id} was deleted or superseded while "
+                f"importing at generation {generation}"
+            )
+
+        db.refresh(document)
+
+        # A retry replaces the previous attempt's attachment; delete it now
+        # that the new one is referenced, so it does not linger as an orphan.
+        if previous_attachment_id and previous_attachment_id != attachment.id:
+            self._delete_external_import_attachment(
+                db, document.user_id, previous_attachment_id
+            )
 
         return self._schedule_indexing_celery(
             db=db,
@@ -1745,6 +1823,38 @@ class KnowledgeOrchestrator:
             trigger_summary=True,
             replace_active=True,
         )
+
+    @staticmethod
+    def _delete_external_import_attachment(
+        db: Session, owner_user_id: int, attachment_id: int
+    ) -> None:
+        """Best-effort delete of an attachment owned by an import attempt."""
+        from app.services.context.context_service import context_service as _ctx_svc
+
+        try:
+            deleted = _ctx_svc.delete_context(
+                db=db,
+                context_id=attachment_id,
+                user_id=owner_user_id,
+            )
+            if deleted:
+                logger.info(
+                    "[Orchestrator] Cleaned up external import attachment %s",
+                    attachment_id,
+                )
+            else:
+                logger.warning(
+                    "[Orchestrator] External import attachment %s could not be "
+                    "deleted; left for orphan cleanup",
+                    attachment_id,
+                )
+        except Exception as exc:
+            logger.warning(
+                "[Orchestrator] Failed to delete external import attachment "
+                "%s: %s; left for orphan cleanup",
+                attachment_id,
+                exc,
+            )
 
     def _create_and_index_document(
         self,

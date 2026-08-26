@@ -27,6 +27,7 @@ from app.services.knowledge.external_document_providers import (
     ExternalDocumentFetchError,
     ExternalDocumentImportError,
     ExternalDocumentProvider,
+    ExternalImportLostWriteError,
     get_external_document_provider,
 )
 from app.services.knowledge.folder_policy import assert_document_can_be_placed_in_folder
@@ -168,6 +169,81 @@ class ExternalDocumentImportService:
             requested_count=len(resource_ids),
         )
 
+    def retry_document_import(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+    ) -> KnowledgeDocument:
+        """
+        Re-dispatch the background import for an existing failed record.
+
+        Reuses the same KnowledgeDocument (no copy is created): the retry
+        claim advances the index generation and requeues the document, then
+        the regular import task re-fetches the external body. This is the
+        dedicated entry for external imports — the ordinary reindex flow
+        cannot work here because a failed import has no valid attachment.
+
+        Raises:
+            ExternalDocumentImportError: With the HTTP status to surface.
+        """
+        document = (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .first()
+        )
+        if document is None:
+            raise ExternalDocumentImportError("Document not found", status_code=404)
+
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=document.kind_id,
+            user_id=user.id,
+        )
+        if not kb or not has_access:
+            raise ExternalDocumentImportError("Document not found", status_code=404)
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, document.kind_id, user.id
+        ):
+            raise ExternalDocumentImportError(
+                "You do not have permission to manage documents in this "
+                "knowledge base",
+                status_code=403,
+            )
+
+        if not document.has_external_identity:
+            raise ExternalDocumentImportError(
+                "Only imported external documents can be retried"
+            )
+
+        from app.services.knowledge.index_state_machine import (
+            prepare_document_index_enqueue,
+        )
+
+        decision = prepare_document_index_enqueue(db=db, document_id=document.id)
+        if not decision.should_enqueue:
+            reason_messages = {
+                "already_in_progress": (
+                    "This document is still being processed; retry later"
+                ),
+                "already_indexed": "This document is already imported",
+                "document_not_found": "Document not found",
+            }
+            message = reason_messages.get(
+                decision.reason, f"Retry skipped: {decision.reason}"
+            )
+            status_code = 404 if decision.reason == "document_not_found" else 409
+            raise ExternalDocumentImportError(message, status_code=status_code)
+
+        db.refresh(document)
+        self._dispatch_import_task(document)
+        logger.info(
+            "[External Import] Retry dispatched for document %s at generation %s",
+            document.id,
+            decision.generation,
+        )
+        return document
+
     def _resolve_batch_items(
         self,
         db: Session,
@@ -307,11 +383,17 @@ def run_external_document_import(
     db: Session,
     document: KnowledgeDocument,
     user: User,
+    *,
+    generation: int,
 ) -> None:
-    """Fetch the external body, attach it, and start indexing.
+    """
+    Fetch the external body, attach it, and start indexing.
 
-    Runs inside the Celery worker. Any failure marks the document failed with
-    a structured processing error; the placeholder itself is kept.
+    Runs inside the Celery worker for one claimed ``generation``. Any failure
+    marks the document failed with a structured processing error (stale
+    generations are ignored by the state machine); the placeholder itself is
+    kept. A lost write right (document deleted or superseded mid-run) is not a
+    failure: this attempt simply stands down.
     """
     from app.services.knowledge.orchestrator import knowledge_orchestrator
 
@@ -333,9 +415,17 @@ def run_external_document_import(
             document=document,
             user=user,
             content=content,
+            generation=generation,
+        )
+    except ExternalImportLostWriteError:
+        logger.info(
+            "[External Import] Attempt for document %s lost its write right at "
+            "generation %s; standing down without touching the document",
+            document.id,
+            generation,
         )
     except Exception as exc:
-        _mark_external_import_failed(db, document, exc)
+        _mark_external_import_failed(db, document, generation, exc)
         logger.error(
             "[External Import] Failed to import document %s: %s",
             document.id,
@@ -347,12 +437,12 @@ def run_external_document_import(
 def _mark_external_import_failed(
     db: Session,
     document: KnowledgeDocument,
+    generation: int,
     exc: Exception,
 ) -> None:
     """Record the fetch failure on the document without deleting it."""
     from app.services.knowledge.index_state_machine import mark_document_index_failed
 
-    generation = document.index_generation or 0
     mark_document_index_failed(
         db=db,
         document_id=document.id,
@@ -365,6 +455,7 @@ def _mark_external_import_failed(
             ),
             retryable=True,
             generation=generation,
+            provider=document.external_provider,
         ),
     )
 

@@ -1957,10 +1957,18 @@ class KnowledgeService:
             if (
                 data.status == DocumentStatus.ENABLED
                 and doc.source_type == DocumentSourceType.EXTERNAL.value
-                and doc.attachment_id == 0
+                and (
+                    doc.attachment_id == 0
+                    or (
+                        doc.index_status == DocumentIndexStatus.FAILED
+                        and not doc.is_active
+                    )
+                )
             ):
-                # External import placeholders have no attachment until the
-                # background fetch succeeds; they cannot be enabled before that.
+                # External import placeholders and failed imports have no
+                # usable content; they cannot be enabled until a background
+                # import completes successfully. A previously successful
+                # document whose later re-index failed keeps valid content.
                 raise ValueError("Document content is not ready and cannot be enabled")
             doc.status = DocumentStatus(data.status.value)
 

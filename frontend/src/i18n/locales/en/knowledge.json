@@ -364,15 +364,19 @@
           "indexingFailed": "Document indexing failed. Please retry.",
           "indexLockTimeout": "The document indexing task waited too long. Please retry.",
           "indexDispatchFailed": "The document indexing task could not be submitted. Please retry later.",
-          "processingFailed": "Document processing failed. Please retry."
+          "processingFailed": "Document processing failed. Please retry.",
+          "externalImportFailed": "The external document could not be imported. Please retry later."
         },
         "model": "Model"
       },
       "reindex": "Reindex",
+      "retryImport": "Retry Import",
       "index": "Start Indexing",
       "reindexing": "Reindexing...",
       "reindexSuccess": "Reindex started",
       "reindexFailed": "Failed to start reindex",
+      "retryImportSuccess": "Import retry started",
+      "retryImportFailed": "Failed to start import retry",
       "excelFileSizeExceeded": "File size exceeds the limit: Excel files ({{extension}}) must be {{limit}}MB or smaller for indexing. Current file size: {{size}}MB. Please reduce the file size or split into smaller files.",
       "openLink": "Open Link",
       "download": "Download",

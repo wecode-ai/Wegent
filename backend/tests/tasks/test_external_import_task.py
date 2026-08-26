@@ -145,3 +145,64 @@ def test_task_skips_missing_document(
     _run_task(999999)
 
     provider.fetch_content.assert_not_awaited()
+
+
+def test_task_claims_generation_before_running(
+    task_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _create_placeholder(task_db, test_user.id)
+    content = ExternalDocumentContent(
+        name="Task Doc",
+        file_extension="md",
+        content=b"# Task Doc",
+        metadata={"provider": "dingtalk"},
+    )
+    provider = SimpleNamespace(fetch_content=AsyncMock(return_value=content))
+    attached: dict = {}
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_import"
+        ".get_external_document_provider",
+        lambda provider_id: provider,
+    )
+
+    def fake_attach(**kwargs):
+        attached.update(kwargs)
+        return {"scheduled": True}
+
+    monkeypatch.setattr(
+        "app.services.knowledge.orchestrator.knowledge_orchestrator"
+        ".attach_external_document_content",
+        fake_attach,
+    )
+
+    _run_task(document.id)
+
+    task_db.refresh(document)
+    assert document.index_generation == 1
+    assert attached["generation"] == 1
+
+
+def test_task_skips_already_imported_document(
+    task_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = _create_placeholder(task_db, test_user.id)
+    document.index_status = DocumentIndexStatus.SUCCESS
+    document.index_generation = 3
+    task_db.commit()
+    provider = SimpleNamespace(fetch_content=AsyncMock())
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_import"
+        ".get_external_document_provider",
+        lambda provider_id: provider,
+    )
+
+    _run_task(document.id)
+
+    provider.fetch_content.assert_not_awaited()
+    task_db.refresh(document)
+    assert document.index_status == DocumentIndexStatus.SUCCESS
+    assert document.index_generation == 3

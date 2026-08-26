@@ -1020,6 +1020,46 @@ async def reindex_document(
             )
 
 
+@document_router.post(
+    "/{document_id}/external-import/retry",
+    response_model=KnowledgeDocumentResponse,
+)
+@trace_sync("retry_external_document_import", "knowledge.api")
+def retry_external_document_import(
+    document_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeDocumentResponse:
+    """
+    Retry the background import of one external document record.
+
+    Reuses the same document row: the retry claim advances its index
+    generation, clears the recorded failure, and re-dispatches the import
+    task. This is the dedicated entry for external imports — a failed import
+    has no valid attachment, so the ordinary reindex flow does not apply.
+    """
+    try:
+        result = external_document_import_service.retry_document_import(
+            db=db,
+            user=current_user,
+            document_id=document_id,
+        )
+    except ExternalDocumentImportError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=str(exc),
+        ) from exc
+
+    add_span_event(
+        "knowledge.document.external_import_retried",
+        {
+            "document_id": str(document_id),
+            "user_id": str(current_user.id),
+        },
+    )
+    return KnowledgeDocumentResponse.model_validate(result)
+
+
 @document_router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 @trace_sync("delete_document", "knowledge.api")
 def delete_document(
