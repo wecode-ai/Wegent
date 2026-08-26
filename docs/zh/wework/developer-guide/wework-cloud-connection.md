@@ -147,7 +147,7 @@ Codex Responses 兼容模型可能通过 executor 内置的 `codex responses pro
 
 它不会返回明文内容。Wework 也不会默认上传本机认证文件。只有用户在已连接云端的“模型”页面显式上传或从在线设备导入后，认证内容才进入服务端加密存储和设备同步流程。
 
-Wework 的剩余额度展示也以本机 Codex 账号为准。前端先读取本机 `auth.json` 状态；如果没有 Codex 账号，则菜单和托盘显示“无”。如果本机已有账号，前端通过本地 executor 的 `runtime.codex.rate_limits.read` 命令读取 Codex app-server 的 `account/rateLimits/read` 快照，并展示 5 小时和 7 天窗口的剩余百分比。桌面系统托盘每 60 秒刷新一次这两个数值，只显示额度百分比，不上传认证内容，也不使用 Backend 的 Claude 额度作为替代。
+Wework 的 Codex 剩余额度展示以本机 Codex 账号为准。Electron 主进程通过受认证的本地 executor IPC 调用 `runtime.codex.rate_limits.read`，读取 Codex app-server 的 `account/rateLimits/read` 快照，并展示 5 小时和 7 天窗口的剩余百分比。主进程还通过 `runtime.tasks.list` 统计运行中的本地任务，并通过 `executor.backend.quota` 使用 executor 已持有的云端连接读取云端额度；认证令牌不会暴露给主进程。系统托盘每 60 秒刷新一次，并在任务开始或结束时立即刷新，因此主窗口关闭到托盘后仍能持续更新任务数和额度。
 
 ## 断开连接
 
