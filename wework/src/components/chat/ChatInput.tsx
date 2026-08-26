@@ -56,7 +56,7 @@ import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginT
 import type { ComposerTextareaHandle } from './composer/ComposerTextarea'
 import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
-import type { QuickPhrase } from '@/tauri/appPreferences'
+import type { QuickPhrase } from '@/desktop/appPreferences'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -155,6 +155,7 @@ export interface ChatInputProps {
   disabledReason?: string
   placeholder?: string
   inputTestId?: string
+  nativeEmptyCaret?: boolean
   submitButtonTestId?: string
   variant?: 'compact' | 'desktop'
   collapseWhenIdle?: boolean
@@ -565,6 +566,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     disabledReason,
     placeholder,
     inputTestId,
+    nativeEmptyCaret = false,
     submitButtonTestId,
     variant = 'compact',
     collapseWhenIdle = false,
@@ -808,6 +810,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
     inputTestId,
+    nativeEmptyCaret,
     submitButtonTestId,
     onOpenSkillFile,
     workspaceTarget,

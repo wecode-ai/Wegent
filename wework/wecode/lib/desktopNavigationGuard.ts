@@ -1,4 +1,4 @@
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false
@@ -9,7 +9,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export function installDesktopNavigationGuard(target: Document = document): () => void {
-  if (!isTauriRuntime()) return () => undefined
+  if (!isDesktopRuntime()) return () => undefined
 
   const preventBackspaceNavigation = (event: KeyboardEvent) => {
     if (event.key !== 'Backspace' || isEditableTarget(event.target)) return

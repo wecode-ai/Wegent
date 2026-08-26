@@ -1,50 +1,23 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { SystemDragPanel } from './SystemDragPanel'
 
 const mocks = vi.hoisted(() => ({
-  eventHandlers: new Map<string, (event: { payload: unknown }) => void>(),
   invoke: vi.fn(),
-  emit: vi.fn(),
-  dragDropHandler: null as ((event: { payload: unknown }) => void) | null,
 }))
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
-vi.mock('@tauri-apps/api/event', () => ({
-  emit: mocks.emit,
-  listen: vi.fn((name: string, handler: (event: { payload: unknown }) => void) => {
-    mocks.eventHandlers.set(name, handler)
-    return Promise.resolve(() => undefined)
-  }),
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: mocks.invoke,
 }))
-vi.mock('@tauri-apps/api/webview', () => ({
-  getCurrentWebview: () => ({
-    onDragDropEvent: (handler: (event: { payload: unknown }) => void) => {
-      mocks.dragDropHandler = handler
-      return Promise.resolve(() => undefined)
-    },
-  }),
-}))
-
-function dropNativeFileAt(x: number, path: string) {
-  act(() => {
-    mocks.dragDropHandler?.({
-      payload: {
-        type: 'drop',
-        paths: [path],
-        position: { x, y: 20 },
-      },
-    })
-  })
-}
 
 describe('SystemDragPanel', () => {
   beforeEach(() => {
-    mocks.eventHandlers.clear()
     mocks.invoke.mockReset()
-    mocks.emit.mockReset()
-    mocks.dragDropHandler = null
-    mocks.invoke.mockResolvedValue(undefined)
+    mocks.invoke.mockImplementation((capability: string) =>
+      Promise.resolve(
+        capability === 'systemDrag.getContext' ? { conversationTitle: null } : undefined
+      )
+    )
   })
 
   test('identifies the panel as part of Wework', () => {
@@ -60,8 +33,8 @@ describe('SystemDragPanel', () => {
 
     fireEvent.click(screen.getByTestId('system-drag-close-button'))
 
-    expect(mocks.invoke).toHaveBeenCalledWith('dismiss_system_drag_panel')
-    expect(mocks.invoke).not.toHaveBeenCalledWith('complete_system_drag_drop', expect.anything())
+    expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.dismissPanel')
+    expect(mocks.invoke).not.toHaveBeenCalledWith('systemDrag.complete', expect.anything())
   })
 
   test('closes on Escape without completing a drop', () => {
@@ -69,50 +42,22 @@ describe('SystemDragPanel', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' })
 
-    expect(mocks.invoke).toHaveBeenCalledWith('dismiss_system_drag_panel')
-    expect(mocks.invoke).not.toHaveBeenCalledWith('complete_system_drag_drop', expect.anything())
+    expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.dismissPanel')
+    expect(mocks.invoke).not.toHaveBeenCalledWith('systemDrag.complete', expect.anything())
   })
 
   test('only shows follow-up when a conversation is selected', async () => {
+    mocks.invoke.mockImplementation((capability: string) =>
+      Promise.resolve(
+        capability === 'systemDrag.getContext' ? { conversationTitle: '修复登录问题' } : undefined
+      )
+    )
     render(<SystemDragPanel />)
-
-    expect(screen.queryByTestId('system-drag-follow-up-zone')).not.toBeInTheDocument()
-    await vi.waitFor(() => expect(mocks.eventHandlers.has('wework-system-drag-context')).toBe(true))
-    act(() => {
-      mocks.eventHandlers.get('wework-system-drag-context')?.({
-        payload: { conversationTitle: '修复登录问题' },
-      })
-    })
 
     expect(await screen.findByTestId('system-drag-follow-up-zone')).toHaveTextContent(
       '修复登录问题'
     )
-  })
-
-  test('shows success feedback after a Tauri file drop completes', async () => {
-    render(<SystemDragPanel />)
-    await vi.waitFor(() => expect(mocks.dragDropHandler).not.toBeNull())
-
-    act(() => {
-      mocks.dragDropHandler?.({
-        payload: {
-          type: 'drop',
-          paths: ['/tmp/notes.txt', '/tmp/notes.txt'],
-          position: { x: 80, y: 20 },
-        },
-      })
-      mocks.dragDropHandler?.({
-        payload: { type: 'drop', paths: ['/tmp/notes.txt'], position: { x: 84, y: 22 } },
-      })
-    })
-
-    expect(await screen.findByTestId('system-drag-success-feedback')).toHaveTextContent('已添加')
-    expect(mocks.invoke).toHaveBeenCalledWith('complete_system_drag_drop', {
-      payload: { action: 'new-chat', text: null, paths: ['/tmp/notes.txt'] },
-    })
-    expect(
-      mocks.invoke.mock.calls.filter(([command]) => command === 'complete_system_drag_drop')
-    ).toHaveLength(1)
+    expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.getContext')
   })
 
   test('visually highlights a drop zone while dragging over it', () => {
@@ -134,104 +79,9 @@ describe('SystemDragPanel', () => {
     })
 
     await vi.waitFor(() => {
-      expect(mocks.invoke).toHaveBeenCalledWith('complete_system_drag_drop', {
+      expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.complete', {
         payload: { action: 'new-chat', text: '拖入的文字', paths: [] },
       })
     })
-  })
-
-  test('accepts browser text forwarded by the native drag pasteboard', async () => {
-    render(<SystemDragPanel />)
-    await vi.waitFor(() =>
-      expect(mocks.eventHandlers.has('wework-system-drag-native-text-drop')).toBe(true)
-    )
-
-    act(() => {
-      mocks.eventHandlers.get('wework-system-drag-native-text-drop')?.({
-        payload: { text: '网页里的文字', x: 80 },
-      })
-      mocks.eventHandlers.get('wework-system-drag-native-text-drop')?.({
-        payload: { text: '网页里的文字', x: 80 },
-      })
-    })
-
-    await vi.waitFor(() => {
-      expect(mocks.invoke).toHaveBeenCalledWith('complete_system_drag_drop', {
-        payload: { action: 'new-chat', text: '网页里的文字', paths: [] },
-      })
-    })
-    expect(
-      mocks.invoke.mock.calls.filter(([command]) => command === 'complete_system_drag_drop')
-    ).toHaveLength(1)
-  })
-
-  test('uses Tauri macOS coordinates without applying Retina scaling twice', async () => {
-    render(<SystemDragPanel />)
-    await vi.waitFor(() => expect(mocks.dragDropHandler).not.toBeNull())
-
-    act(() => {
-      mocks.dragDropHandler?.({ payload: { type: 'over', position: { x: 390, y: 107 } } })
-    })
-
-    expect(screen.getByTestId('system-drag-stash-zone')).toHaveClass(
-      'border-text-primary/15',
-      'bg-muted'
-    )
-  })
-
-  test('keeps the brand-to-action boundary aligned with the rendered panel inset', async () => {
-    render(<SystemDragPanel />)
-    await vi.waitFor(() => expect(mocks.dragDropHandler).not.toBeNull())
-
-    dropNativeFileAt(68, '/tmp/brand-edge.txt')
-
-    expect(mocks.invoke).toHaveBeenCalledWith('dismiss_system_drag_panel')
-    expect(mocks.invoke).not.toHaveBeenCalledWith('complete_system_drag_drop', expect.anything())
-
-    mocks.invoke.mockClear()
-    dropNativeFileAt(69, '/tmp/action-edge.txt')
-
-    await vi.waitFor(() => {
-      expect(mocks.invoke).toHaveBeenCalledWith('complete_system_drag_drop', {
-        payload: { action: 'new-chat', text: null, paths: ['/tmp/action-edge.txt'] },
-      })
-    })
-  })
-
-  test('keeps the action-to-close boundary aligned with the rendered panel inset', async () => {
-    render(<SystemDragPanel />)
-    await vi.waitFor(() => expect(mocks.dragDropHandler).not.toBeNull())
-
-    dropNativeFileAt(402, '/tmp/action-edge.txt')
-
-    await vi.waitFor(() => {
-      expect(mocks.invoke).toHaveBeenCalledWith('complete_system_drag_drop', {
-        payload: { action: 'stash', text: null, paths: ['/tmp/action-edge.txt'] },
-      })
-    })
-
-    mocks.invoke.mockClear()
-    dropNativeFileAt(403, '/tmp/close-edge.txt')
-
-    expect(mocks.invoke).toHaveBeenCalledWith('dismiss_system_drag_panel')
-    expect(mocks.invoke).not.toHaveBeenCalledWith('complete_system_drag_drop', expect.anything())
-  })
-
-  test('dismisses instead of completing when a native drop lands on the close area', async () => {
-    render(<SystemDragPanel />)
-    await vi.waitFor(() => expect(mocks.dragDropHandler).not.toBeNull())
-
-    act(() => {
-      mocks.dragDropHandler?.({
-        payload: {
-          type: 'drop',
-          paths: ['/tmp/notes.txt'],
-          position: { x: 424, y: 20 },
-        },
-      })
-    })
-
-    expect(mocks.invoke).toHaveBeenCalledWith('dismiss_system_drag_panel')
-    expect(mocks.invoke).not.toHaveBeenCalledWith('complete_system_drag_drop', expect.anything())
   })
 })

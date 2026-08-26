@@ -1,7 +1,7 @@
 import {
   connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend,
-} from '@/tauri/localExecutor'
+} from '@/desktop/localExecutor'
 import { createHttpClient } from '@/api/http'
 import { isCloudConnectionUiAvailable } from './cloudConnectionAvailability'
 

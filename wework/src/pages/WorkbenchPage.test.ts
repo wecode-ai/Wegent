@@ -2,11 +2,11 @@ import { describe, expect, test } from 'vitest'
 import { shouldUseMobileWorkbenchLayout } from '@/lib/workbench-layout-mode'
 
 describe('shouldUseMobileWorkbenchLayout', () => {
-  test('keeps the desktop workbench in a narrow Tauri window', () => {
+  test('keeps the desktop workbench in a narrow Electron window', () => {
     expect(
       shouldUseMobileWorkbenchLayout({
         isMobileViewport: true,
-        isTauri: true,
+        isDesktop: true,
       })
     ).toBe(false)
   })
@@ -15,7 +15,7 @@ describe('shouldUseMobileWorkbenchLayout', () => {
     expect(
       shouldUseMobileWorkbenchLayout({
         isMobileViewport: true,
-        isTauri: false,
+        isDesktop: false,
       })
     ).toBe(true)
   })
@@ -24,7 +24,7 @@ describe('shouldUseMobileWorkbenchLayout', () => {
     expect(
       shouldUseMobileWorkbenchLayout({
         isMobileViewport: true,
-        isTauri: false,
+        isDesktop: false,
         surfaceKind: 'board',
       })
     ).toBe(false)

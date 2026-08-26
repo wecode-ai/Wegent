@@ -12,12 +12,15 @@ const mockToast = jest.fn()
 const mockSendChatGuidance = jest.fn().mockResolvedValue({ success: true })
 const mockRefreshSelectedTaskDetail = jest.fn()
 const mockCheckHealth = jest.fn().mockResolvedValue(undefined)
+const mockRefreshProjects = jest.fn()
+const mockRouterPush = jest.fn()
 
 let isMachineStreamingMock = true
 let derivedIsStreamingMock: boolean | undefined
 let activeStreamSubtaskIdMock: number | undefined = 77
 let taskInputMessageMock = 'next question'
 let currentTaskIdMock: number | null = 42
+let searchParamsMock = new URLSearchParams()
 let selectedTaskDetailMock: TaskDetail | null = {
   id: 42,
   status: 'RUNNING',
@@ -28,8 +31,8 @@ let selectedTaskDetailMock: TaskDetail | null = {
 const getTaskStatusMock = () => selectedTaskDetailMock?.status ?? 'COMPLETED'
 
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: jest.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: mockRouterPush }),
+  useSearchParams: () => searchParamsMock,
   usePathname: () => '/chat',
 }))
 
@@ -74,7 +77,7 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
   useProjectContext: () => ({
     projects: [],
     projectTaskIds: new Set(),
-    refreshProjects: jest.fn(),
+    refreshProjects: mockRefreshProjects,
     isWorkspaceEnabled: false,
   }),
 }))
@@ -157,6 +160,7 @@ describe('useChatStreamHandlers queue integration', () => {
     activeStreamSubtaskIdMock = 77
     taskInputMessageMock = 'next question'
     currentTaskIdMock = 42
+    searchParamsMock = new URLSearchParams()
     selectedTaskDetailMock = {
       id: 42,
       status: 'RUNNING',
@@ -164,6 +168,37 @@ describe('useChatStreamHandlers queue integration', () => {
       subtasks: [],
     } as unknown as TaskDetail
     mockSendChatGuidance.mockResolvedValue({ success: true })
+  })
+
+  it('associates a new chat with its conversation group without entering device mode', async () => {
+    isMachineStreamingMock = false
+    activeStreamSubtaskIdMock = undefined
+    currentTaskIdMock = null
+    selectedTaskDetailMock = null
+    searchParamsMock = new URLSearchParams({ conversationGroupId: '31' })
+    mockContextSendMessage.mockResolvedValueOnce(-1)
+
+    const { result } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(mockContextSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: 31,
+        device_id: undefined,
+      }),
+      expect.any(Object)
+    )
+
+    const sendOptions = mockContextSendMessage.mock.calls[0][1]
+    act(() => {
+      sendOptions.onMessageSent('local-user-1', 501)
+    })
+
+    expect(mockRouterPush).toHaveBeenCalledWith('?taskId=501')
+    expect(mockRefreshProjects).toHaveBeenCalledTimes(1)
   })
 
   it('queues a follow-up outside the chat message stream while the active task is streaming', async () => {

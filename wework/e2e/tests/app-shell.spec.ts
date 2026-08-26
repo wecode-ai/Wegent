@@ -1,9 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { WeworkApp } from '../fixtures/wework-app'
 
-test('exposes a CI automation bridge and renders the login route without Tauri', async ({
-  page,
-}) => {
+test('exposes a CI automation bridge and renders the login route', async ({ page }) => {
   const app = new WeworkApp(page)
 
   await app.goto('/')

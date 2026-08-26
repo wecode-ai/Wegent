@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { access } from 'node:fs/promises'
 
+import { ensureProjectExpandedInActiveSidebar } from '../modules/project-sidebar.mjs'
 import { createSingleRootLocalProject } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -74,8 +75,17 @@ async function pathExists(path) {
   }
 }
 
-async function sendNewTask(control, knownRows, prompt, timeoutMs, executionMode = 'local_path') {
-  await control.command('click', '[data-testid="project-new-conversation-button"]')
+async function sendNewTask(
+  control,
+  newConversationSelector,
+  knownRows,
+  prompt,
+  timeoutMs,
+  executionMode = 'local_path'
+) {
+  await control.command('clickWhenEnabled', newConversationSelector, {
+    timeoutMs,
+  })
   await control.command('waitFor', COMPOSER_SELECTOR)
   await control.command('waitFor', '[data-testid="execution-mode-button"]')
   await control.command('click', '[data-testid="execution-mode-button"]')
@@ -119,63 +129,6 @@ async function prepareScreenshot(control, hoverSelector = '[data-testid="new-cha
     await control.command('hover', hoverSelector)
   }
   await new Promise(resolve => setTimeout(resolve, 500))
-}
-
-async function ensureRuntimeProjectExpanded(control, timeoutMs) {
-  let sidebarSelector = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar"]`
-  const visibleSidebarCount = Number(
-    await control.command('getElementCount', sidebarSelector, { visible: true })
-  )
-  let requireVisible = visibleSidebarCount > 0
-  if (visibleSidebarCount === 0) {
-    const hoverEdgeSelector = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar-hover-edge"]`
-    const hoverEdgeCount = Number(await control.command('getElementCount', hoverEdgeSelector))
-    if (hoverEdgeCount > 0) {
-      await control.command('hover', hoverEdgeSelector)
-      sidebarSelector = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar-preview-panel"]`
-      requireVisible = true
-      await control.command('waitFor', sidebarSelector, {
-        timeoutMs,
-        visible: true,
-      })
-    }
-  }
-  const visibleProjectsToggleSelector = `${sidebarSelector} [data-testid="projects-section-toggle"]`
-  const projectButtonSelector = `${sidebarSelector} [data-testid="project-item-button"]`
-  await control.command('waitFor', visibleProjectsToggleSelector, {
-    timeoutMs,
-    visible: requireVisible,
-  })
-  await control.command('scrollIntoView', visibleProjectsToggleSelector)
-  const projectsSectionExpanded = await control.command(
-    'getAttribute',
-    visibleProjectsToggleSelector,
-    {
-      value: 'aria-expanded',
-      visible: requireVisible,
-    }
-  )
-  if (projectsSectionExpanded !== 'true') {
-    await control.command('click', visibleProjectsToggleSelector, { visible: requireVisible })
-  }
-  await control.command('waitFor', projectButtonSelector, {
-    timeoutMs,
-    visible: requireVisible,
-  })
-  await control.command('scrollIntoView', projectButtonSelector)
-  const projectExpanded = await control.command('getAttribute', projectButtonSelector, {
-    value: 'aria-expanded',
-    visible: requireVisible,
-  })
-  if (projectExpanded !== 'true') {
-    await control.command('click', projectButtonSelector, { visible: requireVisible })
-  }
-  await control.command('waitFor', `${projectButtonSelector}[aria-expanded="true"]`, {
-    timeoutMs,
-    visible: requireVisible,
-  })
-  await new Promise(resolve => setTimeout(resolve, 350))
-  return { requireVisible, sidebarSelector }
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
@@ -255,12 +208,29 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('click', '[data-testid="settings-back-button"]')
       await createSingleRootLocalProject(control, workspacePath, 'runtime-task-queue')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const createdProjectSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      const createdProjectId = createdProjectSnapshot.workbench?.currentProject?.id
+      assert.ok(createdProjectId, 'The created queue project did not become the active project')
+      const newConversationSelector =
+        `[data-testid="project-row-${createdProjectId}"] ` +
+        '[data-testid="project-new-conversation-button"]'
+      await control.command('waitFor', newConversationSelector, {
+        timeoutMs: uiTimeoutMs,
+      })
 
       const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       const knownRows = new Set(
         initialSnapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
       )
-      const first = await sendNewTask(control, knownRows, PROMPTS.first, uiTimeoutMs)
+      const first = await sendNewTask(
+        control,
+        newConversationSelector,
+        knownRows,
+        PROMPTS.first,
+        uiTimeoutMs
+      )
       await waitForRequestCount(requests, 1, uiTimeoutMs)
       await control.command(
         'waitFor',
@@ -272,6 +242,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
 
       const second = await sendNewTask(
         control,
+        newConversationSelector,
         knownRows,
         PROMPTS.second,
         uiTimeoutMs,
@@ -285,7 +256,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }
       )
       const { requireVisible: sidebarVisible, sidebarSelector } =
-        await ensureRuntimeProjectExpanded(control, uiTimeoutMs)
+        await ensureProjectExpandedInActiveSidebar(control, { timeoutMs: uiTimeoutMs })
       await control.command(
         'scrollIntoView',
         `${sidebarSelector} [data-testid="runtime-local-task-queued-${second.taskId}"]`
@@ -313,7 +284,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         false,
         'The queued task created its worktree before a concurrency slot was available'
       )
-      const third = await sendNewTask(control, knownRows, PROMPTS.third, uiTimeoutMs)
+      const third = await sendNewTask(
+        control,
+        newConversationSelector,
+        knownRows,
+        PROMPTS.third,
+        uiTimeoutMs
+      )
       await control.command(
         'waitFor',
         `${sidebarSelector} [data-testid="runtime-local-task-queued-${third.taskId}"]`,
@@ -448,7 +425,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await prepareScreenshot(control)
       await captureScreenshot(control, 'runtime-queue-05-drained-in-order.png', 'body')
 
-      const fourth = await sendNewTask(control, knownRows, PROMPTS.fourth, uiTimeoutMs)
+      const fourth = await sendNewTask(
+        control,
+        newConversationSelector,
+        knownRows,
+        PROMPTS.fourth,
+        uiTimeoutMs
+      )
       await waitForRequestCount(requests, 4, uiTimeoutMs)
       await control.command(
         'waitFor',
@@ -458,7 +441,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           visible: sidebarVisible,
         }
       )
-      const fifth = await sendNewTask(control, knownRows, PROMPTS.fifth, uiTimeoutMs)
+      const fifth = await sendNewTask(
+        control,
+        newConversationSelector,
+        knownRows,
+        PROMPTS.fifth,
+        uiTimeoutMs
+      )
       await control.command(
         'waitFor',
         `${sidebarSelector} [data-testid="runtime-local-task-queued-${fifth.taskId}"]`,
@@ -480,7 +469,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await waitForRequestCount(requests, 5, uiTimeoutMs)
       await control.command('click', '[data-testid="settings-back-button"]')
       const { requireVisible: refreshedSidebarVisible, sidebarSelector: refreshedSidebarSelector } =
-        await ensureRuntimeProjectExpanded(control, uiTimeoutMs)
+        await ensureProjectExpandedInActiveSidebar(control, { timeoutMs: uiTimeoutMs })
       await control.command(
         'waitFor',
         `${refreshedSidebarSelector} [data-testid="runtime-local-task-running-${fifth.taskId}"]`,

@@ -69,6 +69,91 @@ function services(): WorkbenchServices {
 }
 
 describe('ProjectQueueView', () => {
+  it('keeps a generic AI execution and Runtime selection in one queue card', async () => {
+    const mock = services()
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          id: 303,
+          loop_item_id: 'T-runtime',
+          cloud_project_id: '11',
+          task_title: 'Choose my Runtime',
+          task_status: 'inbox',
+          task_priority: 'high',
+          executor_type: 'generic_robot',
+          agent_id: null,
+          executor_owner_user_id: 1,
+          assigner_user_id: 1,
+          status: 'waiting_runtime',
+          display_state: 'waiting_runtime',
+          runtime_profile_id: null,
+          runtime_source: 'issue_creator',
+          can_select_runtime: true,
+          waiting_runtime_reason: 'Runtime is required',
+          execution_note: 'Runtime is required',
+          queued_at: null,
+          started_at: null,
+          completed_at: null,
+          version: 2,
+          created_at: '2026-08-20T00:00:00Z',
+          updated_at: '2026-08-20T00:00:00Z',
+        },
+      ])
+      .mockResolvedValue([])
+    const selectExecution = vi.fn(async () => ({}))
+    render(
+      <ProjectQueueView
+        api={mock.deliveryApi!}
+        project={project}
+        projectChatAgentApi={mock.projectChatAgentApi}
+        executionApi={{ list }}
+        runtimeProfileApi={{ selectExecution } as never}
+        runtimeProfiles={[
+          {
+            id: 'runtime-incomplete',
+            name: 'Incomplete Runtime',
+            executionEnvironment: 'local',
+            executionDeviceId: 'device-1',
+            model: '',
+            modelType: null,
+            modelOptions: {},
+            workspacePolicy: 'project',
+            status: 'active',
+            version: 1,
+            createdAt: '',
+            updatedAt: '',
+          },
+          {
+            id: 'runtime-1',
+            name: 'My Runtime',
+            executionEnvironment: 'local',
+            executionDeviceId: 'device-1',
+            model: 'model-1',
+            modelType: 'runtime',
+            modelOptions: {},
+            workspacePolicy: 'project',
+            status: 'active',
+            version: 1,
+            createdAt: '',
+            updatedAt: '',
+          },
+        ]}
+        currentUserId={1}
+      />
+    )
+
+    expect(await screen.findByTestId('project-queue-column-generic-runtime')).toHaveTextContent(
+      'Choose my Runtime'
+    )
+    await userEvent.click(screen.getByTestId('project-queue-runtime-303'))
+    expect(
+      screen.queryByTestId('project-queue-runtime-303-option-runtime-incomplete')
+    ).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-queue-runtime-303-option-runtime-1'))
+    await waitFor(() => expect(selectExecution).toHaveBeenCalledWith('11', 303, 'runtime-1', 2))
+  })
+
   it('loads all robot executions in one batch and groups them by robot', async () => {
     const mock = services()
     const list = vi.fn(async () => [

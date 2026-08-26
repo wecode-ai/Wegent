@@ -21,7 +21,7 @@ export default defineConfig({
   reporter: process.env.CI
     ? [['list'], ['html', { open: 'never' }]]
     : [['list'], ['html', { open: 'never' }]],
-  outputDir: 'test-results',
+  outputDir: 'test-results/playwright',
   use: {
     baseURL,
     testIdAttribute: 'data-testid',

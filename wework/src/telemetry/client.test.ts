@@ -391,9 +391,11 @@ describe('telemetry client', () => {
     await installTelemetry(true)
 
     const debugId = '12345678-1234-4234-8234-123456789abc'
-    const productionResource = 'tauri://localhost/assets/index-public.js?workspace=private#fragment'
+    const productionResource = 'http://localhost/assets/index-public.js?workspace=private#fragment'
     const developmentResource =
-      'http://localhost:1420/node_modules/.vite/deps/tauri-event.js?v=private'
+      'http://localhost:1420/node_modules/.vite/deps/legacy-desktop-event.js?v=private'
+    const unsupportedPrivateResource = 'internal-app://localhost/Users/private/repository/secret.js'
+    const legacyDesktopEventModule = 'legacy-desktop/api/event'
     const sentryConfig = sentryMocks.init.mock.calls[0]?.[0]
     const sanitized = sentryConfig?.beforeSend?.(
       {
@@ -407,7 +409,7 @@ describe('telemetry client', () => {
             },
             {
               type: 'sourcemap',
-              code_file: 'tauri://localhost/Users/private/repository/secret.js',
+              code_file: unsupportedPrivateResource,
               debug_id: debugId,
             },
             {
@@ -426,7 +428,7 @@ describe('telemetry client', () => {
                     abs_path: productionResource,
                     filename: productionResource,
                     function: '__unlisten',
-                    module: '@tauri-apps/api/event',
+                    module: legacyDesktopEventModule,
                     lineno: 42,
                     colno: 7,
                     in_app: true,
@@ -441,7 +443,7 @@ describe('telemetry client', () => {
                     colno: 3,
                   },
                   {
-                    filename: 'tauri://localhost/Users/private/repository/secret.js',
+                    filename: unsupportedPrivateResource,
                     function: 'runUserFile',
                     lineno: 9,
                     colno: 1,
@@ -457,17 +459,17 @@ describe('telemetry client', () => {
 
     const frames = sanitized?.exception?.values?.[0]?.stacktrace?.frames
     expect(frames?.[0]).toEqual({
-      abs_path: 'tauri://localhost/assets/index-public.js',
+      abs_path: 'http://localhost/assets/index-public.js',
       colno: 7,
       debug_id: debugId,
-      filename: 'tauri://localhost/assets/index-public.js',
+      filename: 'http://localhost/assets/index-public.js',
       function: '__unlisten',
       in_app: true,
       lineno: 42,
-      module: '@tauri-apps/api/event',
+      module: legacyDesktopEventModule,
     })
     expect(frames?.[1]).toMatchObject({
-      filename: 'http://localhost:1420/node_modules/.vite/deps/tauri-event.js',
+      filename: 'http://localhost:1420/node_modules/.vite/deps/legacy-desktop-event.js',
       function: 'listen',
       lineno: 21,
       colno: 3,
@@ -482,7 +484,7 @@ describe('telemetry client', () => {
       images: [
         {
           type: 'sourcemap',
-          code_file: 'tauri://localhost/assets/index-public.js',
+          code_file: 'http://localhost/assets/index-public.js',
           debug_id: debugId,
         },
       ],

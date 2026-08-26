@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 
 interface PrepareVncSessionOptions {
   deviceId: string
@@ -39,7 +39,7 @@ export async function prepareVncSession({
   const sessionId = crypto.randomUUID()
   const wsUrl = `${buildVncWebSocketBaseUrl(socketBaseUrl)}/vnc-proxy/${encodeURIComponent(deviceId)}`
 
-  await invoke('prepare_vnc_session', {
+  await invokeDesktopHost('vnc.prepareSession', {
     sessionId,
     wsUrl,
     token,
@@ -51,7 +51,7 @@ export async function buildVncPageUrl({
   sandboxId,
   sessionId,
 }: BuildVncPageUrlOptions): Promise<string> {
-  const bridgeUrl = new URL(await invoke<string>('get_vnc_external_bridge_url'))
+  const bridgeUrl = new URL(await invokeDesktopHost<string>('vnc.externalBridgeUrl'))
   if (
     bridgeUrl.protocol !== 'http:' ||
     bridgeUrl.hostname !== '127.0.0.1' ||

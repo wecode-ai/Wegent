@@ -1,18 +1,8 @@
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import { removeToken } from './auth'
 import { redirectToLogin } from '@/features/auth/redirect'
-import { isTauriRuntime } from '@/lib/runtime-environment'
 
 const SLOW_HTTP_REQUEST_MS = 5000
 let requestSequence = 0
-
-// In a packaged Tauri app the WebView calls the API cross-origin, which
-// triggers CORS preflight. Routing through the Tauri (Rust) HTTP client
-// bypasses the WebView same-origin policy entirely. Outside Tauri (browser
-// dev server via Vite proxy, vitest) fall back to the global fetch.
-export function shouldUseTauriFetch(): boolean {
-  return import.meta.env.MODE !== 'test' && isTauriRuntime()
-}
 
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now()
@@ -23,8 +13,8 @@ function createRequestId(): string {
   return `wework-${Date.now().toString(36)}-${requestSequence.toString(36)}`
 }
 
-function transportName(): 'tauri-http-ipc' | 'fetch' {
-  return shouldUseTauriFetch() ? 'tauri-http-ipc' : 'fetch'
+function transportName(): 'fetch' {
+  return 'fetch'
 }
 
 function errorDetails(error: unknown): Record<string, unknown> {
@@ -75,15 +65,11 @@ function requestLogFields(
 
 function requestUrl(baseUrl: string, endpoint: string): string {
   const rawUrl = `${baseUrl}${endpoint}`
-  if (!shouldUseTauriFetch() || /^[a-z][a-z\d+\-.]*:\/\//i.test(rawUrl)) {
-    return rawUrl
-  }
-
-  return new URL(rawUrl, window.location.origin).toString()
+  return rawUrl
 }
 
 function httpFetch(): typeof fetch {
-  return shouldUseTauriFetch() ? tauriFetch : globalThis.fetch.bind(globalThis)
+  return globalThis.fetch.bind(globalThis)
 }
 
 export class ApiError extends Error {
@@ -208,7 +194,6 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
               ? { 'Content-Type': fetchOptions.contentType }
               : {}),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...(shouldUseTauriFetch() ? { 'X-Request-ID': requestId } : {}),
           ...init.headers,
         },
       })

@@ -86,6 +86,7 @@ async def emit_runtime_rpc(payload: Dict[str, Any]) -> Dict[str, Any]:
             return {
                 "emitted": True,
                 "accepted": False,
+                "outcome_unknown": True,
                 "error": f"runtime RPC ACK timed out after {ack_timeout}s",
             }
         accepted = bool(

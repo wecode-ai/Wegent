@@ -17,11 +17,19 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 - 云端登录 token、过期时间、云端用户和连接时间。
 - 当前状态：未连接、连接中、已连接、过期或错误。
 
+打包的 Electron 桌面端会把 renderer 的完整 `localStorage` 镜像到应用
+`userData` 目录中的 `renderer-local-storage.json`，并在前端初始化其他服务之前恢复。
+因此 Core DSH 重启后即使随机端口变化导致页面 origin 改变，云端连接、本地模型、
+未发送草稿、布局和其他使用 `localStorage` 的界面偏好仍会保留。主进程串行处理变更，
+通过原子替换写入文件，并在 Unix 系统上使用 `0600` 权限。用户主动断开连接、删除配置
+或清空对应状态时，同样会同步删除持久化副本；不使用 Electron host 的网页版不经过
+这层桌面镜像。
+
 用户可以输入 Backend 根地址，也可以直接输入 `/api` 地址。前端会把地址归一化为 HTTP API 地址和 Socket.IO 连接信息。连接时先请求 `/health`，再调用 `/auth/wework/sessions` 创建短生命周期授权会话。Backend 返回完整 `authorize_url`，本地 Wework 在内置授权窗打开该云端授权页，并携带 `poll_token` 轮询会话结果。
 
 桌面端授权窗默认尺寸为 `1000 × 640`，最小尺寸为 `960 × 620`，以完整容纳没有响应式布局的企业登录页。窗口完成定位前保持隐藏，显示后置顶于普通窗口，并在 Wework 主窗口移动或显示器缩放比例变化时重新定位。位置以 Wework 当前显示器的可用区域为边界；macOS 直接使用 AppKit 的统一逻辑桌面坐标，因此在 Retina 与非 Retina 显示器之间移动时不会因物理像素和逻辑像素换算而漂移到屏幕外。
 
-Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的地址、与当前 Backend 匹配的打包 Socket 地址、Backend `/auth/wework/config` 返回的 `socket_url`、Backend 同源默认地址。Backend 通过 `WEGENT_SOCKET_URL` 声明公开 Socket.IO origin；HTTPS 部署应配置 `wss://` 地址。启动时也会按同一优先级刷新并迁移已保存连接。Wework 会把最终解析出的地址通过 Tauri IPC 传给本机 executor；executor 使用该地址建立 Backend Socket.IO 连接，而 HTTP API 仍使用 Backend 地址，因此分离部署不需要用户再次手工配置 WSS 地址。
+Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的地址、与当前 Backend 匹配的打包 Socket 地址、Backend `/auth/wework/config` 返回的 `socket_url`、Backend 同源默认地址。Backend 通过 `WEGENT_SOCKET_URL` 声明公开 Socket.IO origin；HTTPS 部署应配置 `wss://` 地址。启动时也会按同一优先级刷新并迁移已保存连接。Wework 会把最终解析出的地址通过 Electron IPC 传给本机 executor；executor 使用该地址建立 Backend Socket.IO 连接，而 HTTP API 仍使用 Backend 地址，因此分离部署不需要用户再次手工配置 WSS 地址。
 
 本地 Wework 不渲染云端账号密码表单，也不调用 `/auth/login` 或 `/auth/admin-password/setup`。云端登录、OIDC 和管理员初始化都发生在云端 Wegent Web 授权页中。用户登录后必须明确点击“授权 Wework”，Backend 才会把一次性可领取的云端 JWT 写入授权会话；本地 Wework 领取成功后继续读取 `/users/me` 校验用户并保存云端连接状态。
 
@@ -147,7 +155,9 @@ Codex Responses 兼容模型可能通过 executor 内置的 `codex responses pro
 
 它不会返回明文内容。Wework 也不会默认上传本机认证文件。只有用户在已连接云端的“模型”页面显式上传或从在线设备导入后，认证内容才进入服务端加密存储和设备同步流程。
 
-Wework 的剩余额度展示也以本机 Codex 账号为准。前端先读取本机 `auth.json` 状态；如果没有 Codex 账号，则菜单和托盘显示“无”。如果本机已有账号，前端通过本地 executor 的 `runtime.codex.rate_limits.read` 命令读取 Codex app-server 的 `account/rateLimits/read` 快照，并展示 5 小时和 7 天窗口的剩余百分比。桌面系统托盘每 60 秒刷新一次这两个数值，只显示额度百分比，不上传认证内容，也不使用 Backend 的 Claude 额度作为替代。
+Wework 的 Codex 剩余额度展示以本机 Codex 账号为准。Electron 主进程通过受认证的本地 executor IPC 调用 `runtime.codex.rate_limits.read`，读取 Codex app-server 的 `account/rateLimits/read` 快照，并展示 5 小时和 7 天窗口的剩余百分比。主进程还通过 `runtime.tasks.list` 统计运行中的本地任务，并通过 `executor.backend.quota` 使用 executor 已持有的云端连接读取云端额度；认证令牌不会暴露给主进程。系统托盘每 60 秒刷新一次，并在任务开始或结束时立即刷新，因此主窗口关闭到托盘后仍能持续更新任务数和额度。
+
+macOS 托盘需要同时显示 Logo、运行状态和最多两行额度文字。Electron 主进程应直接合成 RGBA template 位图，再交给原生托盘显示；不要依赖 `nativeImage` 对 SVG 文本或 Data URL 的栅格化，因为该路径可能只保留文字宽度而丢失实际字形像素。
 
 ## 断开连接
 

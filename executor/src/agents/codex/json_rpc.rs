@@ -15,10 +15,10 @@ use crate::runner::ExecutionOutcome;
 
 use super::{
     codex_error_message, codex_notification_has_initial_progress,
-    codex_turn_startup_timeout_seconds, json_rpc_request_id, log_codex_raw_turn_message,
-    message_params, receive_mcp_server_elicitation_response, request_user_input_result,
-    response_id, response_result, CodexNotificationSender, CodexRequestUserInputReceiver,
-    CodexRunState,
+    codex_turn_startup_timeout_seconds, is_mcp_tool_call_approval, json_rpc_request_id,
+    log_codex_raw_turn_message, message_params, receive_mcp_server_elicitation_response,
+    request_user_input_result, response_id, response_result, CodexNotificationSender,
+    CodexRequestUserInputReceiver, CodexRunState,
 };
 
 pub(super) struct JsonRpcConnection {
@@ -111,6 +111,7 @@ impl JsonRpcConnection {
         state: &mut CodexRunState,
         notifications: Option<CodexNotificationSender>,
         mut request_user_input_answers: Option<CodexRequestUserInputReceiver>,
+        auto_approve_mcp_tool_calls: bool,
     ) -> Result<ExecutionOutcome, String> {
         let mut saw_turn_response = false;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
@@ -140,8 +141,16 @@ impl JsonRpcConnection {
             {
                 waiting_for_initial_progress = false;
             }
-            if let Some(sender) = &notifications {
-                let _ = sender.send(message.clone());
+            let auto_approve_mcp_tool_call = auto_approve_mcp_tool_calls
+                && message
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .is_some_and(|method| method == "mcpServer/elicitation/request")
+                && is_mcp_tool_call_approval(message_params(&message));
+            if !auto_approve_mcp_tool_call {
+                if let Some(sender) = &notifications {
+                    let _ = sender.send(message.clone());
+                }
             }
             if message
                 .get("method")
@@ -157,8 +166,12 @@ impl JsonRpcConnection {
                 .and_then(Value::as_str)
                 .is_some_and(|method| method == "mcpServer/elicitation/request")
             {
-                self.answer_mcp_server_elicitation(&message, &mut request_user_input_answers)
-                    .await?;
+                self.answer_mcp_server_elicitation(
+                    &message,
+                    &mut request_user_input_answers,
+                    auto_approve_mcp_tool_calls,
+                )
+                .await?;
                 continue;
             }
             if let Some(outcome) = state.handle_message(&message) {
@@ -195,12 +208,16 @@ impl JsonRpcConnection {
         &mut self,
         message: &Value,
         request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
+        auto_approve_mcp_tool_calls: bool,
     ) -> Result<(), String> {
         let request_id = json_rpc_request_id(message)
             .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
-        let result =
-            receive_mcp_server_elicitation_response(message, request_user_input_answers.as_mut())
-                .await?;
+        let result = receive_mcp_server_elicitation_response(
+            message,
+            request_user_input_answers.as_mut(),
+            auto_approve_mcp_tool_calls,
+        )
+        .await?;
         self.write_message(json!({
             "id": request_id,
             "result": result,

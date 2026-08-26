@@ -146,7 +146,7 @@ class ArchiveService:
         executor_name: str,
         executor_namespace: str,
         runtime_type: str = "executor",
-    ) -> bool:
+    ) -> Optional[Dict[str, Any]]:
         """Restore workspace files after Pod recreation.
 
         Args:
@@ -156,7 +156,7 @@ class ArchiveService:
             executor_namespace: New executor namespace
 
         Returns:
-            True if restoration successful, False otherwise
+            Restore details if successful, None otherwise
         """
         task_id = task.id
         logger.info(
@@ -174,7 +174,7 @@ class ArchiveService:
                     f"[ArchiveService] No archive found for task {task_id}, "
                     "will use git clone instead"
                 )
-                return False
+                return None
 
             # Check if archive is expired
             if (
@@ -186,7 +186,7 @@ class ArchiveService:
                     f"[ArchiveService] Archive expired for task {task_id}, "
                     f"expired at {archive_info.expiresAt}"
                 )
-                return False
+                return None
 
             # Check if archive file exists
             if not archive_storage_service.archive_exists(archive_info.storageKey):
@@ -194,7 +194,7 @@ class ArchiveService:
                     f"[ArchiveService] Archive file not found for task {task_id}, "
                     f"key={archive_info.storageKey}"
                 )
-                return False
+                return None
 
             # Generate presigned download URL
             download_url = archive_storage_service.generate_download_url(
@@ -210,9 +210,9 @@ class ArchiveService:
                 runtime_type=runtime_type,
             )
 
-            if not restore_result:
+            if not restore_result or not restore_result.get("success", False):
                 logger.warning(f"[ArchiveService] Restore failed for task {task_id}")
-                return False
+                return None
 
             logger.info(
                 f"[ArchiveService] Successfully restored task {task_id}, "
@@ -220,14 +220,14 @@ class ArchiveService:
                 f"git_restored={restore_result.get('git_restored', False)}"
             )
 
-            return True
+            return restore_result
 
         except Exception as e:
             logger.error(
                 f"[ArchiveService] Error restoring workspace for task {task_id}: {e}",
                 exc_info=True,
             )
-            return False
+            return None
 
     def check_archive_available(
         self, task: TaskResource

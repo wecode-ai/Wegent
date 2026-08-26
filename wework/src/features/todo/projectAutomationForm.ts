@@ -25,6 +25,10 @@ export interface ProjectAutomationDraft {
   model: string | null
   executionEnvironment: 'local' | 'cloud' | null
   executionDeviceId: string | null
+  roleSource: 'generic' | 'agent'
+  runtimeSource: 'agent_default' | 'fixed_profile' | 'issue_creator' | 'runtime_user'
+  runtimeProfileId: string | null
+  runtimeUserId: number | null
   enabled: boolean
 }
 
@@ -215,6 +219,10 @@ export const defaultInput = (defaultPrompt: string): ProjectAutomationDraft => (
   model: null,
   executionEnvironment: null,
   executionDeviceId: null,
+  roleSource: 'agent',
+  runtimeSource: 'agent_default',
+  runtimeProfileId: null,
+  runtimeUserId: null,
   enabled: true,
 })
 
@@ -255,13 +263,21 @@ export const buildAutomationInput = (
     cronExpression: draft.triggerType === 'schedule' ? scheduleToCron(schedule) : null,
     timezone: draft.timezone,
     enabled: draft.enabled,
+    roleSource: draft.roleSource,
+    runtimeSource: draft.runtimeSource,
+    runtimeProfileId: draft.runtimeSource === 'fixed_profile' ? draft.runtimeProfileId : null,
+    runtimeUserId: draft.runtimeSource === 'runtime_user' ? draft.runtimeUserId : null,
   }
-  if (draft.assignmentMode === 'manual' && draft.agentId) {
+  if (
+    draft.assignmentMode === 'manual' &&
+    (draft.roleSource === 'generic' || draft.agentId) &&
+    (draft.runtimeSource !== 'fixed_profile' || draft.runtimeProfileId)
+  ) {
     return {
       ...common,
       assignmentMode: 'manual',
       managerType: null,
-      agentId: draft.agentId,
+      agentId: draft.roleSource === 'agent' ? draft.agentId : null,
       wegentTeamId: null,
       model: null,
       executionEnvironment: null,
@@ -271,9 +287,8 @@ export const buildAutomationInput = (
   if (
     draft.assignmentMode === 'ai_managed' &&
     draft.managerType === 'custom' &&
-    draft.model &&
-    draft.executionEnvironment &&
-    draft.executionDeviceId
+    draft.runtimeSource === 'fixed_profile' &&
+    draft.runtimeProfileId
   ) {
     return {
       ...common,
@@ -281,9 +296,9 @@ export const buildAutomationInput = (
       managerType: 'custom',
       agentId: null,
       wegentTeamId: null,
-      model: draft.model,
-      executionEnvironment: draft.executionEnvironment,
-      executionDeviceId: draft.executionDeviceId,
+      model: null,
+      executionEnvironment: null,
+      executionDeviceId: null,
     }
   }
   if (

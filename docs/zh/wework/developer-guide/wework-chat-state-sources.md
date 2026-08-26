@@ -329,7 +329,7 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 
 维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中为临时线程伪造 rollout。临时聊天的主路径是 `ephemeral + sideSource + direct_thread_id`。
 
-修改该链路后运行 `pnpm --filter wework e2e:desktop --segment temporary-chat`。独立真实 Tauri 场景会保持 assistant response 运行，断言普通 follow-up 位于“正在思考”之前，并在切换主会话后确认临时聊天的首条消息和 follow-up 都能恢复；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
+修改该链路后运行 `pnpm --filter wework e2e:desktop --segment temporary-chat`。独立真实 Electron 场景会保持 assistant response 运行，断言普通 follow-up 位于“正在思考”之前，并在切换主会话后确认临时聊天的首条消息和 follow-up 都能恢复；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
 
 ## 顶层页面切换
 

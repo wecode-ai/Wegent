@@ -10,6 +10,7 @@ import { createImSessionApi } from '@/api/imSessions'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { createRuntimeProfileApi } from '@/api/runtimeProfiles'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
@@ -23,6 +24,8 @@ import { createProjectChatClient } from '@/api/backend/projectChatSocket'
 import { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import { createProjectAutomationApi } from '@/api/projectAutomations'
 import { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
+import { createPluginApi } from '@/api/plugins'
+import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
 
 export const WEWORK_CLIENT_ORIGIN = 'wework'
 
@@ -74,7 +77,15 @@ export function createBackendWorkbenchServices(
   const modelApi = createModelApi(client)
   const projectChatAgentApi = createProjectChatAgentApi(client)
   const projectAutomationApi = createProjectAutomationApi(client)
+  const runtimeProfileApi = createRuntimeProfileApi(client)
   const projectIncomingHookApi = createProjectIncomingHookApi(client)
+  const cloudPluginApi = createPluginApi(client)
+  const pluginApi = {
+    async listPlugins(deviceId: string) {
+      const response = await cloudPluginApi.listInstalledPlugins(deviceId)
+      return buildProjectPluginCatalog(response.items)
+    },
+  }
 
   return {
     teamApi,
@@ -96,14 +107,17 @@ export function createBackendWorkbenchServices(
         projectChatClient,
         projectChatAgentApi,
         projectAutomationApi,
+        runtimeProfileApi,
         projectIncomingHookApi,
         deviceApi,
         modelApi,
         teamApi,
+        pluginApi,
       },
     },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
+    pluginApi,
     attachmentApi: createAttachmentApi({
       apiBaseUrl,
       getToken: resolveToken,
@@ -118,9 +132,14 @@ export function createBackendWorkbenchServices(
     }),
     userApi: createUserApi(client),
     socketClient,
+    async recoverRuntimeConnections() {
+      socketClient.disconnect()
+      await socketClient.connect(undefined, true)
+    },
     projectChatClient,
     projectChatAgentApi,
     projectAutomationApi,
+    runtimeProfileApi,
     projectIncomingHookApi,
     workspaceSessionApi: {
       startProjectTerminal: projectApi.startTerminalSession,

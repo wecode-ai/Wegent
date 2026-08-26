@@ -43,7 +43,7 @@ import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
-import type { QuickPhrase } from '@/tauri/appPreferences'
+import type { QuickPhrase } from '@/desktop/appPreferences'
 import type { CloudProject } from '@/api/deliveries'
 import { resolveStoredWorkspacePaths } from '@/lib/workspace-path-transfer'
 import type {

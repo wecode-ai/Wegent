@@ -1,6 +1,6 @@
-import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
+import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 import type { DeviceCommandResponse } from '@/types/api'
-import { isTauriRuntime } from './runtime-environment'
+import { isElectronRuntime } from './runtime-environment'
 
 const BROWSER_TOOL_TIMEOUT_SECONDS = 30
 const BROWSER_TOOL_MAX_OUTPUT_BYTES = 1024 * 1024
@@ -35,7 +35,7 @@ type BrowserToolPayload = Record<string, unknown> & {
 let relayStartPromise: Promise<void> | null = null
 
 export function canUseCdpBrowserSession(): boolean {
-  return isTauriRuntime()
+  return isElectronRuntime()
 }
 
 function deviceCommandError(response: DeviceCommandResponse, fallback: string): Error | null {

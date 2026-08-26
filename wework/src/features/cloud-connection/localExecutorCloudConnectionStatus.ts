@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { requestLocalExecutor } from '@/tauri/localExecutor'
+import { requestLocalExecutor } from '@/desktop/localExecutor'
 
 export interface LocalExecutorCloudConnectionStatus {
   apiBaseUrl: string

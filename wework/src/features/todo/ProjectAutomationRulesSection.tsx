@@ -12,12 +12,14 @@ import {
   RotateCcw,
   Trash2,
 } from 'lucide-react'
+import type { CloudProjectMember } from '@/api/deliveries'
 import type {
   ProjectAutomationInput,
   ProjectAutomationRule,
   ProjectAutomationRun,
   createProjectAutomationApi,
 } from '@/api/projectAutomations'
+import type { RuntimeProfile } from '@/api/runtimeProfiles'
 import type { ProjectChatAgent, createProjectChatAgentApi } from '@/api/projectChatAgents'
 import { MenuSelect } from '@/components/common/MenuSelect'
 import { SectionTitle, SettingsGroup, SettingsRow } from '@/components/common/SettingsGroup'
@@ -40,14 +42,10 @@ import {
   DEFAULT_AI_MANAGED_PROMPT_KEY,
   buildAutomationInput,
   cronToSchedule,
-  customConfigurationIsSelectable,
-  defaultCustomConfiguration,
   defaultSchedule,
   draftFromTemplate,
-  executionEnvironmentForDevice,
   formatSchedule,
   formatTimestamp,
-  modelSupportsEnvironment,
   projectRobotIsSelectable,
   timezoneLabel,
   timezoneOptions,
@@ -75,6 +73,8 @@ export function ProjectAutomationRulesSection({
   onRulesChange,
   projectTags = [],
   createAiCoordinatorRequestKey = 0,
+  runtimeProfiles = [],
+  projectMembers = [],
 }: {
   projectId: string
   api?: AutomationApi
@@ -87,6 +87,8 @@ export function ProjectAutomationRulesSection({
   onRulesChange?: (rules: ProjectAutomationRule[]) => void
   projectTags?: string[]
   createAiCoordinatorRequestKey?: number
+  runtimeProfiles?: RuntimeProfile[]
+  projectMembers?: CloudProjectMember[]
 }) {
   const { t } = useTranslation('common')
   const backendUrl = getRuntimeConfig().wegentBackendUrl || window.location.origin
@@ -194,8 +196,15 @@ export function ProjectAutomationRulesSection({
       agentId: rule.assignmentMode === 'manual' ? rule.agentId : null,
       wegentTeamId: rule.managerType === 'wegent' ? rule.wegentTeamId : null,
       model: rule.managerType === 'custom' ? rule.model : null,
-      executionEnvironment: rule.managerType === 'custom' ? rule.executionEnvironment : null,
+      executionEnvironment:
+        rule.managerType === 'custom' && rule.executionEnvironment !== 'managed'
+          ? rule.executionEnvironment
+          : null,
       executionDeviceId: rule.managerType === 'custom' ? rule.executionDeviceId : null,
+      roleSource: rule.roleSource ?? 'agent',
+      runtimeSource: rule.runtimeSource ?? 'agent_default',
+      runtimeProfileId: rule.runtimeProfileId ?? null,
+      runtimeUserId: rule.runtimeUserId ?? null,
       enabled: rule.enabled,
     })
     setSchedule(cronToSchedule(rule.cronExpression ?? '0 3 * * *'))
@@ -211,13 +220,17 @@ export function ProjectAutomationRulesSection({
   const createRule = useCallback(
     (template?: ProjectAutomationTemplate) => {
       const next = draftFromTemplate(template, agents, models, devices)
+      if (next.draft.assignmentMode === 'ai_managed' && next.draft.managerType === 'custom') {
+        next.draft.runtimeSource = 'fixed_profile'
+        next.draft.runtimeProfileId = runtimeProfiles[0]?.id ?? null
+      }
       setSelected(null)
       setRuns([])
       setCreatedWebhook(null)
       setDraft(next.draft)
       setSchedule(next.schedule)
     },
-    [agents, devices, models]
+    [agents, devices, models, runtimeProfiles]
   )
 
   useEffect(() => {
@@ -243,10 +256,15 @@ export function ProjectAutomationRulesSection({
     if (
       !draft.name.trim() ||
       !draft.prompt.trim() ||
-      (draft.assignmentMode === 'manual' && !projectRobotIsSelectable(draft, agents)) ||
-      (draft.assignmentMode === 'ai_managed' &&
-        draft.managerType === 'custom' &&
-        !customConfigurationIsSelectable(draft, models, devices)) ||
+      (draft.assignmentMode === 'manual' &&
+        draft.roleSource === 'agent' &&
+        !projectRobotIsSelectable(draft, agents)) ||
+      (draft.managerType !== 'wegent' &&
+        draft.runtimeSource === 'fixed_profile' &&
+        !draft.runtimeProfileId) ||
+      (draft.managerType !== 'wegent' &&
+        draft.runtimeSource === 'runtime_user' &&
+        !draft.runtimeUserId) ||
       (draft.assignmentMode === 'ai_managed' &&
         draft.managerType === 'wegent' &&
         !wegentManagerIsSelectable(draft, wegentTeams))
@@ -725,21 +743,6 @@ export function ProjectAutomationRulesSection({
                       pill
                       onChange={value => {
                         const assignmentMode = value as ProjectAutomationInput['assignmentMode']
-                        const customConfiguration = customConfigurationIsSelectable(
-                          {
-                            ...draft,
-                            assignmentMode: 'ai_managed',
-                            managerType: 'custom',
-                          },
-                          models,
-                          devices
-                        )
-                          ? {
-                              model: draft.model,
-                              executionEnvironment: draft.executionEnvironment,
-                              executionDeviceId: draft.executionDeviceId,
-                            }
-                          : defaultCustomConfiguration(models, devices)
                         setDraft({
                           ...draft,
                           assignmentMode,
@@ -755,7 +758,13 @@ export function ProjectAutomationRulesSection({
                             assignmentMode === 'manual'
                               ? (draft.agentId ?? agents[0]?.id ?? null)
                               : draft.agentId,
-                          ...(assignmentMode === 'ai_managed' ? customConfiguration : {}),
+                          ...(assignmentMode === 'ai_managed'
+                            ? {
+                                runtimeSource: 'fixed_profile' as const,
+                                runtimeProfileId:
+                                  draft.runtimeProfileId ?? runtimeProfiles[0]?.id ?? null,
+                              }
+                            : {}),
                         })
                       }}
                       options={[
@@ -771,18 +780,51 @@ export function ProjectAutomationRulesSection({
                     />
                   </SettingsRow>
                   {draft.assignmentMode === 'manual' ? (
-                    <SettingsRow label={t('workbench.project_automation_robot')}>
-                      <MenuSelect
-                        testId="project-automation-agent"
-                        value={draft.agentId ?? ''}
-                        pill
-                        onChange={value => setDraft({ ...draft, agentId: value || null })}
-                        options={[
-                          { value: '', label: t('workbench.project_automation_select_robot') },
-                          ...agents.map(agent => ({ value: agent.id, label: agent.name })),
-                        ]}
-                      />
-                    </SettingsRow>
+                    <>
+                      <SettingsRow label={t('workbench.project_automation_role')}>
+                        <MenuSelect
+                          testId="project-automation-role-source"
+                          value={draft.roleSource}
+                          pill
+                          onChange={value =>
+                            setDraft({
+                              ...draft,
+                              roleSource: value as 'generic' | 'agent',
+                              runtimeSource:
+                                value === 'generic' && draft.runtimeSource === 'agent_default'
+                                  ? draft.triggerType === 'event'
+                                    ? 'issue_creator'
+                                    : 'fixed_profile'
+                                  : draft.runtimeSource,
+                            })
+                          }
+                          options={[
+                            {
+                              value: 'generic',
+                              label: t('workbench.project_automation_role_generic'),
+                            },
+                            {
+                              value: 'agent',
+                              label: t('workbench.project_automation_role_agent'),
+                            },
+                          ]}
+                        />
+                      </SettingsRow>
+                      {draft.roleSource === 'agent' ? (
+                        <SettingsRow label={t('workbench.project_automation_robot')}>
+                          <MenuSelect
+                            testId="project-automation-agent"
+                            value={draft.agentId ?? ''}
+                            pill
+                            onChange={value => setDraft({ ...draft, agentId: value || null })}
+                            options={[
+                              { value: '', label: t('workbench.project_automation_select_robot') },
+                              ...agents.map(agent => ({ value: agent.id, label: agent.name })),
+                            ]}
+                          />
+                        </SettingsRow>
+                      ) : null}
+                    </>
                   ) : null}
                   {draft.assignmentMode === 'ai_managed' ? (
                     <SettingsRow label={t('workbench.project_automation_manager_source')}>
@@ -809,74 +851,94 @@ export function ProjectAutomationRulesSection({
                       />
                     </SettingsRow>
                   ) : null}
-                  {draft.assignmentMode === 'ai_managed' && draft.managerType === 'custom' ? (
+                  {draft.assignmentMode !== 'ai_managed' || draft.managerType !== 'wegent' ? (
                     <>
-                      <SettingsRow label={t('workbench.project_automation_model')}>
+                      <SettingsRow label={t('workbench.project_automation_runtime_source')}>
                         <MenuSelect
-                          testId="project-automation-model"
-                          value={draft.model ?? ''}
+                          testId="project-automation-runtime-source"
+                          value={draft.runtimeSource}
                           pill
-                          onChange={value => setDraft({ ...draft, model: value || null })}
-                          options={[
-                            { value: '', label: t('workbench.project_automation_select_model') },
-                            ...models
-                              .filter(
-                                model =>
-                                  model.isActive !== false &&
-                                  !model.compatibilityDisabled &&
-                                  (!draft.executionEnvironment ||
-                                    modelSupportsEnvironment(model, draft.executionEnvironment))
-                              )
-                              .map(model => ({
-                                value: model.name,
-                                label: model.displayName || model.name,
-                              })),
-                          ]}
-                        />
-                      </SettingsRow>
-                      <SettingsRow label={t('workbench.project_automation_device')}>
-                        <MenuSelect
-                          testId="project-automation-device"
-                          value={draft.executionDeviceId ?? ''}
-                          pill
-                          onChange={value => {
-                            const device = devices.find(candidate => candidate.device_id === value)
-                            const environment = executionEnvironmentForDevice(device)
-                            const currentModel = environment
-                              ? models.find(
-                                  candidate =>
-                                    candidate.name === draft.model &&
-                                    modelSupportsEnvironment(candidate, environment)
-                                )
-                              : null
+                          onChange={value =>
                             setDraft({
                               ...draft,
-                              executionDeviceId: value || null,
-                              executionEnvironment: environment,
-                              model: environment
-                                ? (currentModel?.name ??
-                                  models.find(candidate =>
-                                    modelSupportsEnvironment(candidate, environment)
-                                  )?.name ??
-                                  null)
-                                : null,
+                              runtimeSource: value as ProjectAutomationDraft['runtimeSource'],
                             })
-                          }}
+                          }
                           options={[
-                            { value: '', label: t('workbench.project_automation_select_device') },
-                            ...devices.flatMap(device =>
-                              executionEnvironmentForDevice(device)
-                                ? [
-                                    {
-                                      value: device.device_id,
-                                      label: device.name || device.device_id,
-                                    },
-                                  ]
-                                : []
-                            ),
+                            ...(draft.triggerType === 'event'
+                              ? [
+                                  {
+                                    value: 'issue_creator',
+                                    label: t('workbench.project_automation_runtime_issue_creator'),
+                                  },
+                                ]
+                              : []),
+                            ...(draft.assignmentMode === 'manual' && draft.roleSource === 'agent'
+                              ? [
+                                  {
+                                    value: 'agent_default',
+                                    label: t('workbench.project_automation_runtime_agent_default'),
+                                  },
+                                ]
+                              : []),
+                            {
+                              value: 'fixed_profile',
+                              label: t('workbench.project_automation_runtime_fixed'),
+                            },
+                            {
+                              value: 'runtime_user',
+                              label: t('workbench.project_automation_runtime_user'),
+                            },
                           ]}
                         />
                       </SettingsRow>
+                      {draft.runtimeSource === 'fixed_profile' ? (
+                        <SettingsRow label={t('workbench.project_automation_runtime_profile')}>
+                          <MenuSelect
+                            testId="project-automation-runtime-profile"
+                            value={draft.runtimeProfileId ?? ''}
+                            pill
+                            onChange={value =>
+                              setDraft({ ...draft, runtimeProfileId: value || null })
+                            }
+                            options={[
+                              {
+                                value: '',
+                                label: t('workbench.project_automation_runtime_select'),
+                              },
+                              ...runtimeProfiles.map(profile => ({
+                                value: profile.id,
+                                label: `${profile.name} · ${profile.model}`,
+                              })),
+                            ]}
+                          />
+                        </SettingsRow>
+                      ) : null}
+                      {draft.runtimeSource === 'runtime_user' ? (
+                        <SettingsRow label={t('workbench.project_automation_runtime_member')}>
+                          <MenuSelect
+                            testId="project-automation-runtime-user"
+                            value={draft.runtimeUserId == null ? '' : String(draft.runtimeUserId)}
+                            pill
+                            onChange={value =>
+                              setDraft({
+                                ...draft,
+                                runtimeUserId: value ? Number(value) : null,
+                              })
+                            }
+                            options={[
+                              {
+                                value: '',
+                                label: t('workbench.project_automation_runtime_member_select'),
+                              },
+                              ...projectMembers.map(member => ({
+                                value: String(member.user_id),
+                                label: member.user_name,
+                              })),
+                            ]}
+                          />
+                        </SettingsRow>
+                      ) : null}
                     </>
                   ) : null}
                   {draft.assignmentMode === 'ai_managed' && draft.managerType === 'wegent' ? (
@@ -1052,7 +1114,8 @@ export function ProjectAutomationRulesSection({
                 (draft.assignmentMode === 'manual' && !projectRobotIsSelectable(draft, agents)) ||
                 (draft.assignmentMode === 'ai_managed' &&
                   draft.managerType === 'custom' &&
-                  !customConfigurationIsSelectable(draft, models, devices)) ||
+                  (draft.runtimeSource !== 'fixed_profile' ||
+                    !runtimeProfiles.some(profile => profile.id === draft.runtimeProfileId))) ||
                 (draft.assignmentMode === 'ai_managed' &&
                   draft.managerType === 'wegent' &&
                   !wegentManagerIsSelectable(draft, wegentTeams))

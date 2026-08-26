@@ -1,5 +1,5 @@
-import { isHttpUrl } from '@/lib/external-links'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isHttpUrl, openExternalUrl } from '@/lib/external-links'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 
 export async function openSystemBrowserIfCurrent(
   value: string,
@@ -7,11 +7,9 @@ export async function openSystemBrowserIfCurrent(
 ): Promise<boolean> {
   if (!isHttpUrl(value)) return false
 
-  if (isTauriRuntime()) {
-    const { openUrl } = await import('@tauri-apps/plugin-opener')
+  if (isDesktopRuntime()) {
     if (!isCurrent()) return false
-    await openUrl(value)
-    return true
+    return openExternalUrl(value, { target: 'system' })
   }
 
   if (!isCurrent()) return false

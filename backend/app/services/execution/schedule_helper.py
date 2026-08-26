@@ -18,6 +18,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.utils.prompt_utils import extract_display_prompt
+from shared.telemetry.decorators import add_span_event, trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +259,51 @@ async def _dispatch_task_async(task_id: int) -> None:
                         db.commit()
                         continue
 
+                # Soft-verify pod existence when DB still thinks it's alive.
+                # A pod can disappear outside the cleanup path (OOM, eviction,
+                # manual delete); without this check dispatch would fail and
+                # the workspace archive would never be restored.
+                elif (
+                    subtask.executor_name
+                    and not _extract_device_id_from_executor_name(subtask.executor_name)
+                    and await _executor_pod_missing(
+                        subtask.executor_name,
+                        subtask.executor_namespace,
+                    )
+                ):
+                    logger.info(
+                        "[schedule_dispatch] Executor pod missing, marking deleted "
+                        "task_id=%s subtask_id=%s executor=%s/%s",
+                        task_id,
+                        subtask.id,
+                        subtask.executor_namespace,
+                        subtask.executor_name,
+                    )
+                    subtask_store.update_fields(
+                        db,
+                        subtask=subtask,
+                        executor_deleted_at=True,
+                    )
+                    db.commit()
+                    recovery_success = await _recover_executor(
+                        db=db,
+                        subtask=subtask,
+                        task=task,
+                        request=request,
+                    )
+                    if not recovery_success:
+                        logger.error(
+                            f"[schedule_dispatch] Failed to recover executor for subtask {subtask.id}"
+                        )
+                        subtask_store.update_fields(
+                            db,
+                            subtask=subtask,
+                            status=SubtaskStatus.FAILED,
+                            error_message="Failed to recover executor after Pod deletion",
+                        )
+                        db.commit()
+                        continue
+
                 # Update subtask status to RUNNING
                 subtask_store.update_status(
                     db,
@@ -305,6 +351,45 @@ async def _dispatch_task_async(task_id: int) -> None:
         )
     finally:
         db.close()
+
+
+@trace_async("execution.executor_pod_missing", "execution.schedule")
+async def _executor_pod_missing(
+    executor_name: str,
+    executor_namespace: str | None,
+) -> bool:
+    """Return True only when executor_manager confirms the pod is gone.
+
+    Wraps ``remote_workspace_service.executor_alive`` in a thread because the
+    underlying httpx call is synchronous. Any transport/decoding failure is
+    treated as "pod still alive" so dispatch surfaces the real error instead
+    of triggering a spurious recovery.
+    """
+    from app.services.remote_workspace_service import remote_workspace_service
+
+    try:
+        alive = await asyncio.to_thread(
+            remote_workspace_service.executor_alive,
+            executor_name,
+            executor_namespace,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[schedule_dispatch] executor_alive check failed executor=%s/%s error=%s",
+            executor_namespace,
+            executor_name,
+            exc,
+        )
+        add_span_event(
+            "execution.executor_pod_missing.check_failed",
+            {
+                "executor_name": executor_name,
+                "executor_namespace": executor_namespace or "",
+                "error": str(exc),
+            },
+        )
+        return False
+    return not alive
 
 
 async def _recover_executor(

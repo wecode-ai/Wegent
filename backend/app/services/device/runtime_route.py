@@ -82,6 +82,12 @@ def _runtime_instance_id(device: Kind) -> str | None:
     return value or None
 
 
+def _app_device_id(device: Kind) -> str | None:
+    spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
+    value = str(spec.get("appDeviceId") or "").strip()
+    return value or None
+
+
 def resolve_runtime_route_identity(
     db: Session,
     *,
@@ -113,6 +119,23 @@ def resolve_runtime_route_identity(
         )
 
     devices = db.query(Kind).filter(base_filter).all()
+    app_matches = [
+        device for device in devices if _app_device_id(device) == submitted_device_id
+    ]
+    if len(app_matches) == 1:
+        app_match = app_matches[0]
+        runtime_device_id = _runtime_device_id(app_match)
+        if not runtime_device_id:
+            return None
+        return RuntimeRouteIdentity(
+            logical_device_id=submitted_device_id,
+            runtime_device_id=runtime_device_id,
+            runtime_instance_id=_runtime_instance_id(app_match),
+            device_type=_device_type(app_match),
+        )
+    if len(app_matches) > 1:
+        return None
+
     runtime_matches = [
         device
         for device in devices

@@ -103,6 +103,29 @@ describe('ProjectCreateDialog', () => {
     devicesMock = []
   })
 
+  test('creates a conversation group without workspace configuration', async () => {
+    createProjectMock.mockResolvedValue({ id: 20, name: 'My Group' })
+
+    render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="group" />)
+
+    fireEvent.change(screen.getByLabelText('create.nameLabel'), {
+      target: { value: ' My Group ' },
+    })
+    fireEvent.change(screen.getByLabelText('create.descriptionLabel'), {
+      target: { value: ' Related conversations ' },
+    })
+    fireEvent.click(screen.getByTitle('colors.red'))
+    fireEvent.click(screen.getByRole('button', { name: 'create.submit' }))
+
+    await waitFor(() => {
+      expect(createProjectMock).toHaveBeenCalledWith({
+        name: 'My Group',
+        description: 'Related conversations',
+        color: '#EF4444',
+      })
+    })
+  })
+
   test('blocks workspace project creation before the directory command RPC was released', async () => {
     devicesMock = [
       {

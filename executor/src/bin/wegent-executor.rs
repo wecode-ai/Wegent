@@ -80,6 +80,13 @@ fn raise_open_files_soft_limit() {}
 fn main() {
     raise_open_files_soft_limit();
     install_termination_signal_diagnostics();
+    if wegent_executor::plugin_workspace_cli::is_plugin_workspace_command() {
+        if let Err(error) = runtime().block_on(wegent_executor::plugin_workspace_cli::run()) {
+            eprintln!("plugin workspace command failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if wegent_executor::connector_mcp::is_connector_mcp_command() {
         if let Err(error) = runtime().block_on(wegent_executor::connector_mcp::run()) {
             eprintln!("connector MCP server failed: {error}");

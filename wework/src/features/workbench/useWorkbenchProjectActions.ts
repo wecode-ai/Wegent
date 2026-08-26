@@ -144,6 +144,43 @@ export function useWorkbenchProjectActions({
     [dispatch, refreshWorkLists, services.projectApi, user.id]
   )
 
+  const createLocalRuntimeProject = useCallback(
+    async (data: { deviceId: string; name: string; roots: string[] }) => {
+      const response = await executorClient.runtime.upsertLocalRuntimeProject({
+        ...data,
+        projectKey: crypto.randomUUID(),
+        runtime: 'codex',
+      })
+      if (!response.accepted) {
+        throw new Error(response.error || 'Failed to create local project')
+      }
+      response.roots.forEach(clearRemoteProjectSyncRemoval)
+      await refreshWorkLists()
+      return {
+        id: runtimeProjectUiId({
+          key: response.projectKey,
+          stateDeviceId: response.deviceId,
+          name: response.name,
+        }),
+        name: response.name,
+        runtimeProjectKey: response.projectKey,
+        config: {
+          mode: 'workspace' as const,
+          execution: {
+            targetType: 'local' as const,
+            deviceId: response.deviceId,
+          },
+          workspace: {
+            source: 'local_path' as const,
+            localPath: response.roots[0],
+          },
+        },
+        tasks: [],
+      }
+    },
+    [clearRemoteProjectSyncRemoval, executorClient, refreshWorkLists]
+  )
+
   const createGitWorkspaceProject = useCallback(
     async (data: CreateGitWorkspaceProjectRequest) => {
       if (!services.projectApi.createGitWorkspaceProject) {
@@ -735,6 +772,7 @@ export function useWorkbenchProjectActions({
 
   return {
     createProject,
+    createLocalRuntimeProject,
     createGitWorkspaceProject,
     prepareDeviceWorkspace,
     deleteDeviceWorkspace,

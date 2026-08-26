@@ -234,25 +234,47 @@ function workspaceTabsReducer(
     case 'syncFixed': {
       const fixedIds = new Set(action.tabs.map(tab => tab.id))
       const currentById = new Map(state.tabs.map(tab => [tab.id, tab]))
+      const bootstrapReplacementById = new Map<string, string>()
+      const bootstrapByFixedId = new Map<string, WorkspaceTab>()
+      if (!state.tabs.some(tab => tab.fixed)) {
+        const availableBootstrapTabs = state.tabs.filter(tab => !tab.fixed && !fixedIds.has(tab.id))
+        for (const fixedTab of action.tabs) {
+          if (currentById.has(fixedTab.id)) continue
+          const bootstrapTab = availableBootstrapTabs.find(
+            tab =>
+              !bootstrapReplacementById.has(tab.id) &&
+              tab.kind === fixedTab.kind &&
+              (fixedTab.kind !== 'auxiliary' || tab.contentRoute === fixedTab.contentRoute)
+          )
+          if (bootstrapTab) {
+            bootstrapReplacementById.set(bootstrapTab.id, fixedTab.id)
+            bootstrapByFixedId.set(fixedTab.id, bootstrapTab)
+          }
+        }
+      }
       const syncedFixedTabs = action.tabs.map(tab => {
         const current = currentById.get(tab.id)
-        if (!current || tab.contentRoute.startsWith('/app/harness-')) return tab
-        return {
-          ...tab,
-          kind: current.kind,
-          title: current.title,
-          contentRoute: current.contentRoute,
+        if (current && !tab.contentRoute.startsWith('/app/harness-')) {
+          return {
+            ...tab,
+            kind: current.kind,
+            title: current.title,
+            contentRoute: current.contentRoute,
+          }
         }
+        const bootstrap = bootstrapByFixedId.get(tab.id)
+        return bootstrap ? { ...tab, contentRoute: bootstrap.contentRoute } : tab
       })
       const ordinaryTabs = state.tabs
-        .filter(tab => !fixedIds.has(tab.id))
+        .filter(tab => !fixedIds.has(tab.id) && !bootstrapReplacementById.has(tab.id))
         .map(tab => (tab.fixed ? { ...tab, fixed: false } : tab))
       const tabs = [...syncedFixedTabs, ...ordinaryTabs]
+      const replacedActiveTabId = bootstrapReplacementById.get(state.activeTabId)
       return {
         ...state,
         tabs,
-        activeTabId: tabs.some(tab => tab.id === state.activeTabId)
-          ? state.activeTabId
+        activeTabId: tabs.some(tab => tab.id === (replacedActiveTabId ?? state.activeTabId))
+          ? (replacedActiveTabId ?? state.activeTabId)
           : (tabs[0]?.id ?? state.activeTabId),
       }
     }

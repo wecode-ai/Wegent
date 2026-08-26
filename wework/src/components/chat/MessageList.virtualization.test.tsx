@@ -18,7 +18,8 @@ const { measureElementMock, resizeItemMock, useVirtualizerMock, virtualizerInsta
 )
 
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: () => true,
+  isDesktopRuntime: () => true,
+  isElectronRuntime: () => true,
 }))
 
 vi.mock('@tanstack/react-virtual', () => ({
@@ -66,7 +67,7 @@ vi.mock('@tanstack/react-virtual', () => ({
   },
 }))
 
-describe('MessageList Tauri virtualization', () => {
+describe('MessageList desktop virtualization', () => {
   afterEach(() => {
     clearRuntimeConversationCacheForTests()
     measureElementMock.mockClear()

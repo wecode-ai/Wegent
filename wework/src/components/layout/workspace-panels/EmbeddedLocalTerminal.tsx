@@ -141,11 +141,12 @@ export function EmbeddedLocalTerminal({
     const terminalAppearance = appearanceRef.current
     const terminal = new Terminal({
       allowTransparency: showWorkbenchBackground,
-      cursorBlink: true,
+      cursorBlink: import.meta.env.VITE_WEWORK_E2E !== 'true',
       convertEol: true,
       fontFamily: terminalAppearance.codeFont,
       fontSize: terminalAppearance.codeFontSize,
       lineHeight: 1.2,
+      screenReaderMode: import.meta.env.VITE_WEWORK_E2E === 'true',
       scrollback: 2000,
       theme: getTerminalTheme(showWorkbenchBackground),
     })
@@ -339,6 +340,7 @@ export function EmbeddedLocalTerminal({
   return (
     <div
       data-testid={testIdsEnabled ? 'embedded-local-terminal' : undefined}
+      data-session-id={testIdsEnabled ? sessionId : undefined}
       className={`h-full min-h-0 w-full overflow-hidden px-2 pb-4 pt-2 ${
         showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
       }`}

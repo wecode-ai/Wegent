@@ -34,6 +34,7 @@ pub struct ResponsesEventBuilder {
     message_id: Option<i64>,
     executor_name: Option<String>,
     executor_namespace: Option<String>,
+    executor_session: Option<Value>,
     validation_id: Option<String>,
 }
 
@@ -55,6 +56,7 @@ impl ResponsesEventBuilder {
             message_id: None,
             executor_name: None,
             executor_namespace: None,
+            executor_session: None,
             validation_id: None,
         }
     }
@@ -76,6 +78,11 @@ impl ResponsesEventBuilder {
     ) -> Self {
         self.executor_name = executor_name.map(ToOwned::to_owned);
         self.executor_namespace = executor_namespace.map(ToOwned::to_owned);
+        self
+    }
+
+    pub fn with_executor_session(mut self, executor_session: Option<Value>) -> Self {
+        self.executor_session = executor_session;
         self
     }
 
@@ -414,14 +421,18 @@ impl ResponsesEventBuilder {
     }
 
     fn response_payload(&self, status: &str, output: Value) -> Value {
-        json!({
+        let mut response = json!({
             "id": self.response_id,
             "object": "response",
             "created_at": self.created_at,
             "model": self.model,
             "status": status,
             "output": output
-        })
+        });
+        if let Some(executor_session) = &self.executor_session {
+            response["executor_session"] = executor_session.clone();
+        }
+        response
     }
 }
 
