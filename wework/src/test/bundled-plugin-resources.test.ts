@@ -162,6 +162,9 @@ describe('bundled plugin resources', () => {
     expect(workflow).toContain('pnpm --filter wework build:release')
     expect(packageManifest.scripts['build:release']).toContain('pnpm --dir electron build:release')
     expect(builderConfig).toContain("executableName: 'wework'")
+    expect(workflow).toMatch(
+      /- name: Prepare Apple signing keychain[\s\S]*?security import[\s\S]*?APPLE_SIGNING_IDENTITY=[\s\S]*?MACOS_KEYCHAIN_PATH=/
+    )
     expect(workflow).toContain('generate-desktop-update-manifests.mjs')
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY')
     expect(workflow).toContain('release-manifests/*')
