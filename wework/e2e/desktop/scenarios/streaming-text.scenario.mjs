@@ -678,7 +678,7 @@ async function retainSecondTaskWorkspace(control, timeoutMs) {
     Number(
       await control.command(
         'getElementCount',
-        '[data-workspace-tab-content] [data-testid="desktop-workbench-main"]'
+        '[data-workspace-tab-content] [data-testid="desktop-workbench-surface"]'
       )
     ) >= 2,
     'The inactive task workspace provider was not retained for the streaming regression'
