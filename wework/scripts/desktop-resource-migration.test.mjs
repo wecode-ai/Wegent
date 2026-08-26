@@ -78,7 +78,7 @@ describe('desktop resource migration', () => {
   test('signs the packaged Node runtime with the configured macOS keychain', async () => {
     const source = await readFile(join(weworkRoot, 'scripts/prepare-execution-runtime.mjs'), 'utf8')
 
-    expect(source).toContain('macosCodesignKeychainArguments(process.env.MACOS_KEYCHAIN_PATH)')
+    expect(source).toContain("identity === '-' ? undefined : process.env.MACOS_KEYCHAIN_PATH")
   })
 
   test('collects the electron-builder Linux x64 artifact name', async () => {

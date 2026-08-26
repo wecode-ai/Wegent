@@ -9,7 +9,7 @@ import { constants as zlibConstants, createGzip } from 'node:zlib'
 import { spawn } from 'node:child_process'
 
 import {
-  macosCodesignKeychainArguments,
+  macosCodesignIdentityArguments,
   macosSigningFingerprint,
 } from './lib/deepseek-harness-signing.mjs'
 
@@ -55,20 +55,18 @@ async function sha256(pathname) {
 async function signAndValidateNode(nodePath) {
   if (process.platform === 'darwin') {
     const identity = process.env.APPLE_SIGNING_IDENTITY?.trim() || '-'
-    const args = [
-      '--force',
-      '--options',
-      'runtime',
-      '--entitlements',
-      nodeEntitlements,
-      '--sign',
-      identity,
-    ]
+    const args = ['--force', '--options', 'runtime', '--entitlements', nodeEntitlements]
     if (identity !== '-') {
       args.splice(1, 0, '--timestamp')
-      args.push(...macosCodesignKeychainArguments(process.env.MACOS_KEYCHAIN_PATH))
     }
-    await run('codesign', [...args, nodePath])
+    args.push(
+      ...macosCodesignIdentityArguments(
+        identity,
+        identity === '-' ? undefined : process.env.MACOS_KEYCHAIN_PATH
+      ),
+      nodePath
+    )
+    await run('codesign', args)
   }
   await run(nodePath, ['-e', 'process.stdout.write(process.versions.node)'])
 }
