@@ -49,6 +49,15 @@ export interface ElectronDesktopServices {
   appUpdates?: AppUpdateService
   feedback: FeedbackBundleManager
   plugins: WorkbenchPluginManager
+  coreDshPlugins: () => CoreDshPluginService | null
+}
+
+export interface CoreDshPluginService {
+  listCoreDshPlugins(): Promise<unknown>
+  installCoreDshPlugin(spec: string): Promise<unknown>
+  updateCoreDshPlugin(name: string): Promise<unknown>
+  setCoreDshPluginEnabled(name: string, enabled: boolean): Promise<unknown>
+  uninstallCoreDshPlugin(name: string): Promise<unknown>
 }
 
 export interface ElectronE2EHost {
@@ -465,6 +474,7 @@ export function createElectronCapabilityRouter(
     return updated
   })
   router.register('rendererHealth.getState', () => rendererHealth())
+  registerCoreDshPluginCapabilities(router, desktopServices)
   router.register('runtime.restartCoreDsh', () => {
     e2eHost.scheduleCoreDshRestart()
     return { scheduled: true }
@@ -698,6 +708,30 @@ export function registerDesktopServiceCapabilities(
   )
 }
 
+export function registerCoreDshPluginCapabilities(
+  router: HostCapabilityRouter,
+  services: ElectronDesktopServices
+): void {
+  router.register('runtime.listCoreDshPlugins', () =>
+    requiredCoreDshPluginService(services).listCoreDshPlugins()
+  )
+  router.register('runtime.installCoreDshPlugin', params =>
+    requiredCoreDshPluginService(services).installCoreDshPlugin(stringParam(params, 'spec'))
+  )
+  router.register('runtime.updateCoreDshPlugin', params =>
+    requiredCoreDshPluginService(services).updateCoreDshPlugin(stringParam(params, 'name'))
+  )
+  router.register('runtime.setCoreDshPluginEnabled', params =>
+    requiredCoreDshPluginService(services).setCoreDshPluginEnabled(
+      stringParam(params, 'name'),
+      requiredBooleanParam(params, 'enabled')
+    )
+  )
+  router.register('runtime.uninstallCoreDshPlugin', params =>
+    requiredCoreDshPluginService(services).uninstallCoreDshPlugin(stringParam(params, 'name'))
+  )
+}
+
 async function mkdirDirectory(path: string): Promise<void> {
   const { mkdir } = await import('node:fs/promises')
   await mkdir(path, { recursive: true })
@@ -799,6 +833,17 @@ function requiredSmartApps(resolveSmartApps: () => SmartAppManager | null): Smar
     throw new HostCapabilityError('smart_apps_unavailable', 'Smart app manager is unavailable')
   }
   return smartApps
+}
+
+function requiredCoreDshPluginService(services: ElectronDesktopServices): CoreDshPluginService {
+  const service = services.coreDshPlugins()
+  if (!service) {
+    throw new HostCapabilityError(
+      'capability_unavailable',
+      'Core DSH plugin management requires the managed desktop runtime'
+    )
+  }
+  return service
 }
 
 function requiredWindow(resolveWindow: () => BrowserWindow | null): BrowserWindow {

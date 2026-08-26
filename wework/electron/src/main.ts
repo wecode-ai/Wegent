@@ -911,6 +911,7 @@ async function configureDesktopRuntime(): Promise<void> {
         preferences,
         embeddedBrowser,
         {
+          coreDshPlugins: () => desktopRuntime,
           appUpdates,
           feedback,
           plugins: workbenchPlugins,

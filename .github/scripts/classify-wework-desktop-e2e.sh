@@ -11,6 +11,7 @@ core_segments=(
   project-automation
   project-assignment-notification
   offline-local-project-space
+  core-dsh-plugin-management
   project-ai-settings
   model-routing
   permission-modes
@@ -117,7 +118,7 @@ core_shards=(
   rendering-extensions
   runtime-task-queue,native-window-startup
   local-harness,running-conversation-history,native-window-chrome
-  codex-notification-isolation
+  codex-notification-isolation,core-dsh-plugin-management
   model-routing
 )
 
@@ -276,6 +277,20 @@ classify_wework_path() {
       ;;
     wework/e2e/utils/mcp-elicitation-server.mjs)
       select_target "core:permission-modes"
+      return
+      ;;
+
+    # Core DSH plugin management owns an Electron-backed desktop checkpoint.
+    wework/src/components/plugins/CoreDshPluginManagementSection* | \
+      wework/src/features/dsh-plugins/* | \
+      wework/electron/src/runtime/core-dsh-plugin-manager*)
+      select_target "core:core-dsh-plugin-management"
+      return
+      ;;
+    wework/src/components/plugins/PluginManagementWorkspace*)
+      select_target "core:core-dsh-plugin-management"
+      select_target "core:project-ai-settings"
+      select_target "plugins:plugin-lifecycle"
       return
       ;;
 

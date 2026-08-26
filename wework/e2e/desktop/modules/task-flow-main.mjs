@@ -79,10 +79,12 @@ import {
 } from './path-attachment-flows.mjs'
 
 import {
+  createCoreDshPluginFixture,
   initializeBlankCodexHome,
   installOfficialPluginFixture,
   uninstallOfficialPlugin,
   verifyCloudWorkPage,
+  verifyCoreDshPluginManagement,
   verifyMarketplacePluginLifecycle,
   verifyPluginLifecycle,
   verifySkillMentionRendering,
@@ -877,6 +879,7 @@ async function main() {
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
   const marketplacePluginPath = join(resultDir, 'marketplace-plugin')
   const officialPluginRepositoryPath = join(resultDir, 'openai-plugins')
+  const electronUserDataDirectory = join(resultDir, 'electron-user-data')
   const appLogPath = join(resultDir, 'app.log')
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
@@ -914,6 +917,9 @@ async function main() {
       })
     }
     await createPluginMarketplaceFixture(marketplacePluginPath)
+    if (shouldRunPluginSegment('core-dsh-plugin-management')) {
+      await createCoreDshPluginFixture(resultDir)
+    }
     await mkdir(nativeCodexHome, { recursive: true })
     await writeFile(
       join(nativeCodexHome, 'config.toml'),
@@ -1119,7 +1125,7 @@ async function main() {
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
       WEWORK_DESKTOP_RUNTIME: 'electron',
       WEWORK_EXECUTOR_PATH: executorBinary,
-      WEWORK_USER_DATA_DIR: join(resultDir, 'electron-user-data'),
+      WEWORK_USER_DATA_DIR: electronUserDataDirectory,
       ...(electronCoreRuntimeRoot ? { WEWORK_HARNESS_RUNTIME_ROOT: electronCoreRuntimeRoot } : {}),
       ...(harnessRuntimes
         ? {
@@ -1652,6 +1658,15 @@ last_updated = "2026-07-30T00:00:00Z"`
         return officialPluginFixture
       }
 
+      if (shouldRunPluginSegment('core-dsh-plugin-management')) {
+        phase = 'core-dsh-plugin-management'
+        await verifyCoreDshPluginManagement({
+          control,
+          pluginRoot: join(resultDir, 'core-dsh-e2e-plugin'),
+          restartDesktopApp,
+          userDataDirectory: electronUserDataDirectory,
+        })
+      }
       if (shouldRunPluginSegment('plugin-marketplace-lifecycle')) {
         phase = 'plugin-marketplace-lifecycle'
         await verifyMarketplacePluginLifecycle({

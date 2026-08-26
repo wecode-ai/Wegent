@@ -2,6 +2,7 @@ import { createServer } from 'node:net'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import { prepareCoreDshLaunch } from './core-dsh-runtime.js'
 import { resolveDesktopDeviceId } from './desktop-device-id.js'
+import { CoreDshPluginManager, type CoreDshPlugin } from './core-dsh-plugin-manager.js'
 import { DshRuntime } from './dsh-runtime.js'
 import { ManagedExecutorRuntime, managedExecutorHome } from './managed-executor-runtime.js'
 import {
@@ -36,6 +37,7 @@ export interface DesktopRuntimeDiagnostics {
 export class DesktopRuntime {
   private executor: ManagedExecutorRuntime | null = null
   private coreDsh: DshRuntime | null = null
+  private coreDshPlugins: CoreDshPluginManager | null = null
   private readonly workbench = new WorkbenchRuntimeManager()
   private started = false
 
@@ -94,6 +96,26 @@ export class DesktopRuntime {
     return this.workbench.open(launch)
   }
 
+  listCoreDshPlugins(): Promise<CoreDshPlugin[]> {
+    return this.requiredCoreDshPlugins().list()
+  }
+
+  installCoreDshPlugin(spec: string): Promise<CoreDshPlugin[]> {
+    return this.requiredCoreDshPlugins().install(spec)
+  }
+
+  updateCoreDshPlugin(name: string): Promise<CoreDshPlugin[]> {
+    return this.requiredCoreDshPlugins().update(name)
+  }
+
+  setCoreDshPluginEnabled(name: string, enabled: boolean): Promise<CoreDshPlugin[]> {
+    return this.requiredCoreDshPlugins().setEnabled(name, enabled)
+  }
+
+  uninstallCoreDshPlugin(name: string): Promise<CoreDshPlugin[]> {
+    return this.requiredCoreDshPlugins().uninstall(name)
+  }
+
   closeWorkbenchRuntime(tabId: string): Promise<void> {
     return this.workbench.close(tabId)
   }
@@ -102,6 +124,7 @@ export class DesktopRuntime {
     if (!this.started) throw new Error('Core desktop runtime is not ready')
     const previous = this.coreDsh
     this.coreDsh = null
+    this.coreDshPlugins = null
     await previous?.stop()
     try {
       await this.startCoreDsh()
@@ -116,6 +139,7 @@ export class DesktopRuntime {
     const coreDsh = this.coreDsh
     const executor = this.executor
     this.coreDsh = null
+    this.coreDshPlugins = null
     this.executor = null
     await Promise.allSettled([this.workbench.stop(), coreDsh?.stop(), executor?.stop()])
   }
@@ -168,6 +192,13 @@ export class DesktopRuntime {
       cwd = launch.cwd
       dshHome = launch.dshHome
       runtimeEnvironment = launch.environment
+      this.coreDshPlugins = new CoreDshPluginManager({
+        dshHome: launch.dshHome,
+        runtimeRoot: launch.cwd,
+        dshEntry: launch.args[0],
+        nodeCommand: launch.command,
+        environment: launch.environment,
+      })
     }
     const runtime = new DshRuntime({
       name: 'dsh-core',
@@ -196,9 +227,17 @@ export class DesktopRuntime {
       await runtime.start()
     } catch (error) {
       if (this.coreDsh === runtime) this.coreDsh = null
+      this.coreDshPlugins = null
       await runtime.stop().catch(() => {})
       throw error
     }
+  }
+
+  private requiredCoreDshPlugins(): CoreDshPluginManager {
+    if (!this.coreDshPlugins) {
+      throw new Error('Core DSH plugin management requires the managed desktop runtime')
+    }
+    return this.coreDshPlugins
   }
 }
 
