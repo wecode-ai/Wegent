@@ -870,29 +870,21 @@
   padding: 4px;
 }
 
-.task-detail-attachment-footer {
-  display: flex;
-  min-height: 40px;
+.task-detail-workspace-attachments {
   flex-shrink: 0;
-  align-items: center;
-  gap: 8px;
   margin: 0 16px 14px;
-  padding: 9px 13px;
+  padding: 0 13px;
   border-radius: 10px;
-  color: rgb(var(--color-text-muted));
   background: rgb(var(--color-muted));
-  font-size: var(--text-xs);
+  border-top: 0;
 }
 
-.task-detail-attachment-upload {
-  cursor: pointer;
-  border-radius: 6px;
-  padding: 4px 6px;
+.task-detail-workspace-attachments .task-detail-rail-section {
+  border-top: 0;
 }
 
-.task-detail-attachment-upload:hover {
-  color: rgb(var(--color-text-primary));
-  background: rgb(var(--color-bg-base));
+.task-detail-workspace-attachments .task-detail-section-label {
+  margin: 0 0 6px;
 }
 
 .task-detail-id-row {

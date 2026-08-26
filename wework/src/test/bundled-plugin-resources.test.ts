@@ -165,6 +165,7 @@ describe('bundled plugin resources', () => {
     expect(workflow).toMatch(
       /- name: Prepare Apple signing keychain[\s\S]*?security import[\s\S]*?APPLE_SIGNING_IDENTITY=[\s\S]*?MACOS_KEYCHAIN_PATH=/
     )
+    expect(workflow).toContain('security list-keychains -d user -s')
     expect(workflow).toContain('generate-desktop-update-manifests.mjs')
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY')
     expect(workflow).toContain('release-manifests/*')

@@ -216,6 +216,12 @@ jobs:
           security create-keychain -p "$keychain_password" "$keychain_path"
           security set-keychain-settings -lut 21600 "$keychain_path"
           security unlock-keychain -p "$keychain_password" "$keychain_path"
+          existing_keychains=()
+          while IFS= read -r existing_keychain; do
+            existing_keychains+=("$existing_keychain")
+          done < <(security list-keychains -d user |
+            sed -E 's/^[[:space:]]*"([^"]+)"$/\1/')
+          security list-keychains -d user -s "$keychain_path" "${existing_keychains[@]}"
           security import "$certificate_path" \
             -k "$keychain_path" \
             -P "$MACOS_CERTIFICATE_PASSWORD" \
