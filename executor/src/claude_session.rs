@@ -4,7 +4,7 @@
 
 use std::{env, fs, path::PathBuf};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::protocol::ExecutionRequest;
 
@@ -33,6 +33,18 @@ pub(crate) fn save_session_id(request: &ExecutionRequest, session_id: &str) {
     }
 }
 
+pub(crate) fn saved_executor_session(request: &ExecutionRequest) -> Option<Value> {
+    let session_id = read_session_file(request)?;
+    let mut session = json!({
+        "agent": "ClaudeCode",
+        "sessionId": session_id,
+    });
+    if let Some(bot_id) = bot_id(&request.bot) {
+        session["botId"] = Value::String(bot_id);
+    }
+    Some(session)
+}
+
 pub(crate) fn preferred_task_dir(request: &ExecutionRequest) -> Option<PathBuf> {
     let task_id = task_session_identifier(&request.task_id)?;
 
@@ -45,6 +57,9 @@ pub(crate) fn preferred_task_dir(request: &ExecutionRequest) -> Option<PathBuf> 
 fn read_session_file(request: &ExecutionRequest) -> Option<String> {
     for path in readable_session_file_candidates(request) {
         let Some(value) = read_trimmed_file(path) else {
+            continue;
+        };
+        let Some(value) = safe_session_identifier(&value) else {
             continue;
         };
         return Some(value);
