@@ -54,6 +54,8 @@ import {
   writeCodexConfig,
 } from './desktop-build-flows.mjs'
 
+import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs'
+
 import { DesktopE2EServer } from './desktop-server.mjs'
 
 import {
@@ -1121,6 +1123,9 @@ async function main() {
       WEWORK_EXECUTOR_PATH: executorBinary,
       WEWORK_USER_DATA_DIR: join(resultDir, 'electron-user-data'),
       ...(electronCoreRuntimeRoot ? { WEWORK_HARNESS_RUNTIME_ROOT: electronCoreRuntimeRoot } : {}),
+      ...(RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition')
+        ? { WEWORK_E2E_EMPTY_CORE_DSH_UI_PROFILE: '1' }
+        : {}),
       ...(harnessRuntimes
         ? {
             WEWORK_HARNESS_RUNTIME_ROOT: harnessRuntimes.harnessRuntimeRoot,
@@ -1218,6 +1223,22 @@ async function main() {
         codexHome,
         control,
       })
+    }
+    if (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition')) {
+      phase = 'core-dsh-ui-plugin-composition'
+      await verifyCoreDshUiPluginComposition({
+        control,
+        initialRendererLocation: ready.location,
+        runtimeRoot: electronCoreRuntimeRoot,
+      })
+      if (DESKTOP_SEGMENT === 'core-dsh-ui-plugin-composition') {
+        console.log(
+          `Wework desktop plugin E2E segment ${DESKTOP_SEGMENT} passed. Evidence: ${resultDir}`
+        )
+        return
+      }
+    }
+    if (RUNS_PLUGIN_E2E) {
       await writeCodexConfig(
         codexHome,
         control.url,

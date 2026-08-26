@@ -60,7 +60,6 @@ import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 import { FileWorkspacePanel } from './workspace-panels/FileWorkspacePanel'
-import { rightWorkspaceBetterSidebar } from './workspace-panels/rightWorkspaceSidebarRegistry'
 
 const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
@@ -6626,22 +6625,29 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
   })
 
-  test('right workspace hosts a DSH better-sidebar tab in the existing Wework panel shell', async () => {
-    const onOpen = vi.fn()
-    const onClose = vi.fn()
-    const dispose = rightWorkspaceBetterSidebar.registerTab({
-      id: 'test:inspector',
-      title: 'DSH Inspector',
-      order: 5,
-      single: true,
-      onOpen,
-      onClose,
-      component: ({ tab, visible }) => (
-        <section data-testid="dsh-inspector-panel" data-visible={String(visible)}>
-          {tab.title}
-        </section>
-      ),
-    })
+  test('right workspace hosts a native DSH slot tab in the existing Wework panel shell', async () => {
+    const tabs = [{ id: 'test:inspector', title: 'DSH Inspector', order: 5 }]
+    const entries = tabs.map(tab => ({ ...tab, label: tab.title }))
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot => (slot === 'wework.workspace.sidebar.tab' ? entries : []),
+      subscribe: () => () => undefined,
+      attach: (_slot, _id, container, props) => {
+        const panel = document.createElement('section')
+        panel.dataset.testid = 'dsh-inspector-panel'
+        panel.dataset.visible = String(props.visible)
+        panel.textContent = props.tab.title
+        container.append(panel)
+        return {
+          update(nextProps) {
+            panel.dataset.visible = String(nextProps.visible)
+            panel.textContent = nextProps.tab.title
+          },
+          dispose() {
+            panel.remove()
+          },
+        }
+      },
+    }
 
     try {
       renderWorkspacePanelLayout()
@@ -6653,7 +6659,6 @@ describe('DesktopWorkbenchLayout', () => {
       expect(extensionTab).toHaveTextContent('DSH Inspector')
       expect(screen.getByTestId('dsh-inspector-panel')).toHaveAttribute('data-visible', 'true')
       expect(screen.getByTestId('right-workspace-panel-shell')).toContainElement(extensionTab)
-      expect(onOpen).toHaveBeenCalledTimes(1)
 
       await userEvent.click(
         within(extensionTab).getByTestId(
@@ -6661,9 +6666,8 @@ describe('DesktopWorkbenchLayout', () => {
         )
       )
       expect(screen.queryByTestId('dsh-inspector-panel')).not.toBeInTheDocument()
-      expect(onClose).toHaveBeenCalledTimes(1)
     } finally {
-      dispose()
+      delete window.__WEWORK_DSH_UI__
     }
   })
 

@@ -1,12 +1,17 @@
 import { join } from 'node:path'
 
-const INHERITED_EXECUTOR_ENV_KEYS = [
+const INHERITED_RUNTIME_ENV_KEYS = [
+  'CODEX_BINARY_PATH',
+  'DWS_BINARY_PATH',
   'WEGENT_EXECUTOR_APP_IPC_ADDR',
   'WEGENT_EXECUTOR_APP_IPC_ADDR_FILE',
   'WEGENT_EXECUTOR_APP_IPC_SOCKET',
   'WEGENT_EXECUTOR_BINARY',
   'WEGENT_EXECUTOR_SOURCE_DIR',
+  'WEWORK_EXECUTOR_PATH',
   'WEWORK_EXECUTOR_SIDECAR',
+  'WEWORK_HARNESS_RUNTIME_ROOT',
+  'WEWORK_NODE_PATH',
   'WEWORK_SHARED_EXECUTOR_HOME',
 ]
 
@@ -25,7 +30,7 @@ export function buildAiVerifyEnvironment(
   }
 ) {
   const isolatedEnvironment = { ...processEnvironment }
-  for (const key of INHERITED_EXECUTOR_ENV_KEYS) delete isolatedEnvironment[key]
+  for (const key of INHERITED_RUNTIME_ENV_KEYS) delete isolatedEnvironment[key]
 
   return {
     ...isolatedEnvironment,

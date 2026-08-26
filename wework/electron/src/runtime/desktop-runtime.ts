@@ -10,7 +10,7 @@ import {
   type WorkbenchRuntimeSnapshot,
 } from './workbench-runtime.js'
 
-const CORE_APP_PATH = '/wework/app/'
+const CORE_APP_PATH = '/'
 
 export interface DesktopRuntimeOptions {
   environment: NodeJS.ProcessEnv

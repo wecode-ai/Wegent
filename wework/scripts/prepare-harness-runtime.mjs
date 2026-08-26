@@ -1,16 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import {
-  access,
-  cp,
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises'
+import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -25,6 +15,7 @@ import {
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { normalizeFileViewerAssetManifest } from './lib/harness-runtime-metadata.mjs'
 import { assertPortableHarnessRuntime } from './lib/portable-runtime.mjs'
+import { acquireProcessLock } from './lib/process-lock.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const coreDshVersion = '0.1.1-rc.2'
@@ -49,6 +40,30 @@ const dshPlugins = [
     source: path.join(root, 'dsh', 'terminal-runtime'),
     target: path.join('plugins', 'wework-terminal-runtime'),
   },
+  {
+    source: path.join(root, 'dsh', 'ui-core-apps'),
+    target: path.join('plugins', 'wework-ui-core-apps'),
+  },
+  {
+    source: path.join(root, 'dsh', 'ui-core-settings'),
+    target: path.join('plugins', 'wework-ui-core-settings'),
+  },
+  {
+    source: path.join(root, 'dsh', 'ui-plugin-center'),
+    target: path.join('plugins', 'wework-ui-plugin-center'),
+  },
+  {
+    source: path.join(root, 'dsh', 'ui-applications'),
+    target: path.join('plugins', 'wework-ui-applications'),
+  },
+  {
+    source: path.join(root, 'dsh', 'ui-automations'),
+    target: path.join('plugins', 'wework-ui-automations'),
+  },
+  {
+    source: path.join(root, 'dsh', 'ui-cloud-work'),
+    target: path.join('plugins', 'wework-ui-cloud-work'),
+  },
 ]
 const dshAppOutput = path.join(root, 'dsh', 'app-wework', 'web')
 const targetDirectory = path.join(root, 'resources', 'bundled-harness-runtime')
@@ -57,6 +72,7 @@ const placeholder = path.join(targetDirectory, '.resource-placeholder')
 const cacheDirectory = path.join(root, 'node_modules', '.cache')
 const assetDirectory = path.join(cacheDirectory, 'harness-runtime-assets')
 const materializedRoot = path.join(cacheDirectory, 'harness-runtime-dev')
+const prepareLockPath = path.join(cacheDirectory, 'harness-runtime-prepare.lock')
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
 const archiveFormatVersion = 'dsh-runtime-tar-gzip-v5'
 const materializeRequested = process.argv.includes('--materialize')
@@ -415,51 +431,57 @@ async function buildRuntime(runtime) {
   }
 }
 
-if (process.argv.includes('--clean')) {
-  await resetTargetDirectory()
-  process.exit(0)
-}
-if (process.env.WEWORK_HARNESS_RUNTIME_URL?.trim()) {
-  throw new Error(
-    'WEWORK_HARNESS_RUNTIME_URL cannot address multiple DSH versions; use WEWORK_HARNESS_RUNTIME_BASE_URL'
-  )
-}
-
 await mkdir(assetDirectory, { recursive: true })
-await run(pnpmCommand, ['run', 'build:dsh-app'], root)
-await normalizeDshAppBuildMetadata()
-const runtimes = (await runtimeSources()).map(runtimeIdentity)
-if (runtimes.length === 0) {
-  throw new Error('Harness runtime must declare at least one DSH version')
-}
-const descriptors = []
-for (const runtime of runtimes) {
-  let descriptor = null
-  try {
-    const cached = JSON.parse(
-      await readFile(path.join(assetDirectory, runtime.descriptorName), 'utf8')
-    )
-    await access(runtime.assetPath)
-    descriptor = validateDescriptor(cached, runtime)
-    await ensurePublishedAsset(descriptor, runtime)
-  } catch {
-    descriptor = await reusePublishedRuntime(runtime)
-  }
-  descriptor ??= await buildRuntime(runtime)
-  descriptors.push(descriptor)
-  if (materializeRequested) {
-    await materializeRuntime(runtime, descriptor)
-  }
-}
+const releasePrepareLock = await acquireProcessLock(prepareLockPath)
+try {
+  if (process.argv.includes('--clean')) {
+    await resetTargetDirectory()
+    process.exitCode = 0
+  } else {
+    if (process.env.WEWORK_HARNESS_RUNTIME_URL?.trim()) {
+      throw new Error(
+        'WEWORK_HARNESS_RUNTIME_URL cannot address multiple DSH versions; use WEWORK_HARNESS_RUNTIME_BASE_URL'
+      )
+    }
 
-await resetTargetDirectory()
-await writeFile(catalogPath, `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`)
-if (materializeRequested) {
-  await mkdir(materializedRoot, { recursive: true })
-  await pruneMaterializedRuntimes(descriptors)
-  await writeFile(
-    path.join(materializedRoot, 'runtimes.json'),
-    `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`
-  )
-  console.log(`Harness runtime root: ${materializedRoot}`)
+    await run(pnpmCommand, ['run', 'build:dsh-app'], root)
+    await normalizeDshAppBuildMetadata()
+    const runtimes = (await runtimeSources()).map(runtimeIdentity)
+    if (runtimes.length === 0) {
+      throw new Error('Harness runtime must declare at least one DSH version')
+    }
+    const descriptors = []
+    for (const runtime of runtimes) {
+      let descriptor = null
+      try {
+        const cached = JSON.parse(
+          await readFile(path.join(assetDirectory, runtime.descriptorName), 'utf8')
+        )
+        await access(runtime.assetPath)
+        descriptor = validateDescriptor(cached, runtime)
+        await ensurePublishedAsset(descriptor, runtime)
+      } catch {
+        descriptor = await reusePublishedRuntime(runtime)
+      }
+      descriptor ??= await buildRuntime(runtime)
+      descriptors.push(descriptor)
+      if (materializeRequested) {
+        await materializeRuntime(runtime, descriptor)
+      }
+    }
+
+    await resetTargetDirectory()
+    await writeFile(catalogPath, `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`)
+    if (materializeRequested) {
+      await mkdir(materializedRoot, { recursive: true })
+      await pruneMaterializedRuntimes(descriptors)
+      await writeFile(
+        path.join(materializedRoot, 'runtimes.json'),
+        `${JSON.stringify({ runtimes: descriptors }, null, 2)}\n`
+      )
+      console.log(`Harness runtime root: ${materializedRoot}`)
+    }
+  }
+} finally {
+  await releasePrepareLock()
 }

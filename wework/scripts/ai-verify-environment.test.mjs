@@ -12,8 +12,13 @@ describe('buildAiVerifyEnvironment', () => {
         WEGENT_EXECUTOR_APP_IPC_SOCKET: '/tmp/legacy.sock',
         WEGENT_EXECUTOR_BINARY: '/tmp/foreign-executor',
         WEGENT_EXECUTOR_SOURCE_DIR: '/tmp/foreign-source',
+        WEWORK_EXECUTOR_PATH: '/tmp/foreign-executor-command',
         WEWORK_EXECUTOR_SIDECAR: '/tmp/foreign-sidecar',
+        WEWORK_HARNESS_RUNTIME_ROOT: '/tmp/foreign-harness-runtime',
+        WEWORK_NODE_PATH: '/tmp/foreign-node',
         WEWORK_SHARED_EXECUTOR_HOME: '/tmp/shared-home',
+        CODEX_BINARY_PATH: '/tmp/foreign-codex',
+        DWS_BINARY_PATH: '/tmp/foreign-dws',
       },
       {
         controlUrl: 'http://127.0.0.1:9999',
@@ -48,8 +53,13 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.WEGENT_EXECUTOR_APP_IPC_SOCKET).toBeUndefined()
     expect(environment.WEGENT_EXECUTOR_BINARY).toBeUndefined()
     expect(environment.WEGENT_EXECUTOR_SOURCE_DIR).toBeUndefined()
+    expect(environment.WEWORK_EXECUTOR_PATH).toBeUndefined()
     expect(environment.WEWORK_EXECUTOR_SIDECAR).toBeUndefined()
+    expect(environment.WEWORK_HARNESS_RUNTIME_ROOT).toBeUndefined()
+    expect(environment.WEWORK_NODE_PATH).toBeUndefined()
     expect(environment.WEWORK_SHARED_EXECUTOR_HOME).toBeUndefined()
+    expect(environment.CODEX_BINARY_PATH).toBeUndefined()
+    expect(environment.DWS_BINARY_PATH).toBeUndefined()
     expect(environment.WEWORK_APP_CONFIG_DIR).toBe(path.join('/tmp/session', 'app-config'))
     expect(environment.PATH).toBe('/usr/bin')
   })

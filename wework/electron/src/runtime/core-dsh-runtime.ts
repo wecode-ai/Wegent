@@ -5,14 +5,22 @@ import semver from 'semver'
 export const CORE_DSH_VERSION = '0.1.1-rc.2'
 const PROFILE_NAME = 'wework-core'
 const PROFILE_STAMP = '.wework-runtime.json'
-const CORE_DEPENDENCIES = [
-  '@wegent/dsh-app-wework',
-  '@wegent/dsh-electron-host',
-  '@wegent/dsh-executor-runtime',
-  '@wegent/dsh-terminal-runtime',
+const CORE_PLUGIN_PACKAGES = [
+  ['@wegent/dsh-app-wework', 'wework-app'],
+  ['@wegent/dsh-electron-host', 'wework-electron-host'],
+  ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
+  ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
+  ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
+  ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
+  ['@wegent/dsh-ui-plugin-center', 'wework-ui-plugin-center'],
+  ['@wegent/dsh-ui-applications', 'wework-ui-applications'],
+  ['@wegent/dsh-ui-automations', 'wework-ui-automations'],
+  ['@wegent/dsh-ui-cloud-work', 'wework-ui-cloud-work'],
 ] as const
+type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
+const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(4).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example', 'dsh-better-sidebar'] as const
-const CORE_BUNDLES = [
+const CORE_HOST_BUNDLES = [
   '@deepseek-ai/dsh-base',
   '@wegent/dsh-electron-host',
   '@wegent/dsh-terminal-runtime',
@@ -20,11 +28,24 @@ const CORE_BUNDLES = [
   '@deepseek-ai/dsh-web-app',
   '@wegent/dsh-executor-runtime',
 ] as const
+const CORE_UI_BUNDLES = [
+  '@wegent/dsh-ui-core-apps',
+  '@wegent/dsh-ui-core-settings',
+  '@wegent/dsh-ui-plugin-center',
+  '@wegent/dsh-ui-applications',
+  '@wegent/dsh-ui-automations',
+  '@wegent/dsh-ui-cloud-work',
+] as const
+const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 
 interface RuntimeIdentity {
   dshVersion: string
   role: string
   sourceFingerprint: string
+}
+
+interface ProfileStamp extends RuntimeIdentity {
+  managedUiPlugins: boolean
 }
 
 export interface BundledDshRuntime {
@@ -41,10 +62,7 @@ export interface CoreDshRuntime {
   version: string
   sourceFingerprint: string
   entry: string
-  appPluginRoot: string
-  pluginRoot: string
-  executorPluginRoot: string
-  terminalPluginRoot: string
+  pluginRoots: Record<CorePluginPackage, string>
 }
 
 export interface CoreDshLaunch {
@@ -75,9 +93,11 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
   const runtime = await selectCoreDshRuntime(options.runtimeRoot)
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(options.dataDirectory, 'dsh-core')
+  const managedUiPlugins = !usesEmptyUiPluginProfile(options.environment)
   await prepareProfile({
     runtime,
     dshHome,
+    managedUiPlugins,
   })
   return {
     command: nodeCommand,
@@ -97,20 +117,18 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
 
 export async function selectCoreDshRuntime(root: string): Promise<CoreDshRuntime> {
   const runtime = await selectBundledDshRuntime(root, 'core', CORE_DSH_VERSION)
-  const appPluginRoot = join(runtime.pluginsRoot, 'wework-app')
-  await readFile(join(appPluginRoot, 'package.json'))
-  const pluginRoot = join(runtime.pluginsRoot, 'wework-electron-host')
-  await readFile(join(pluginRoot, 'package.json'))
-  const executorPluginRoot = join(runtime.pluginsRoot, 'wework-executor-runtime')
-  await readFile(join(executorPluginRoot, 'package.json'))
-  const terminalPluginRoot = join(runtime.pluginsRoot, 'wework-terminal-runtime')
-  await readFile(join(terminalPluginRoot, 'package.json'))
+  const pluginRoots = Object.fromEntries(
+    CORE_PLUGIN_PACKAGES.map(([packageName, directory]) => [
+      packageName,
+      join(runtime.pluginsRoot, directory),
+    ])
+  ) as Record<CorePluginPackage, string>
+  await Promise.all(
+    Object.values(pluginRoots).map(pluginRoot => readFile(join(pluginRoot, 'package.json')))
+  )
   return {
     ...runtime,
-    appPluginRoot,
-    pluginRoot,
-    executorPluginRoot,
-    terminalPluginRoot,
+    pluginRoots,
   }
 }
 
@@ -149,18 +167,26 @@ export async function selectBundledDshRuntimeMatching(
 async function prepareProfile(options: {
   runtime: CoreDshRuntime
   dshHome: string
+  managedUiPlugins: boolean
 }): Promise<void> {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
   const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
-  const expectedStamp = {
+  const expectedStamp: ProfileStamp = {
     dshVersion: options.runtime.version,
     role: 'core',
     sourceFingerprint: options.runtime.sourceFingerprint,
+    managedUiPlugins: options.managedUiPlugins,
   }
+  const managedDependencies = managedCoreDependencies(options.runtime, options.managedUiPlugins)
+  const managedDependencyNames = Object.keys(managedDependencies)
+  const managedBundles = options.managedUiPlugins ? CORE_BUNDLES : CORE_HOST_BUNDLES
   const currentManifest = await readJsonFile(join(profileRoot, 'package.json'))
   const currentManifestRoot = objectRecord(currentManifest)
   const stampIsCurrent = await stampMatches(join(profileRoot, PROFILE_STAMP), expectedStamp)
-  const coreDependenciesAreCurrent = hasCurrentCoreDependencies(currentManifest, options.runtime)
+  const coreDependenciesAreCurrent = hasCurrentCoreDependencies(
+    currentManifest,
+    managedDependencies
+  )
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
   if (stampIsCurrent && !hasRemovedCoreDependency(currentManifest) && coreDependenciesAreCurrent) {
     await ensureCoreWorkspace(workspacePath)
@@ -181,15 +207,14 @@ async function prepareProfile(options: {
   const userDependencies = Object.fromEntries(
     Object.entries(currentDependencies).filter(
       ([name]) =>
-        !CORE_DEPENDENCIES.includes(name as never) &&
-        !REMOVED_CORE_DEPENDENCIES.includes(name as never)
+        !managedDependencyNames.includes(name) && !REMOVED_CORE_DEPENDENCIES.includes(name as never)
     )
   )
   const currentProfile = objectRecord(objectRecord(currentManifestRoot.dsh).profile)
   const currentBundles = stringArray(currentProfile.bundles)
   const userBundles = currentBundles.filter(
     bundle =>
-      !CORE_BUNDLES.includes(bundle as never) &&
+      !managedBundles.includes(bundle as never) &&
       !REMOVED_CORE_DEPENDENCIES.includes(bundle as never)
   )
   await writeFile(
@@ -200,14 +225,11 @@ async function prepareProfile(options: {
         private: true,
         dependencies: {
           ...userDependencies,
-          '@wegent/dsh-app-wework': `file:${options.runtime.appPluginRoot}`,
-          '@wegent/dsh-electron-host': `file:${options.runtime.pluginRoot}`,
-          '@wegent/dsh-executor-runtime': `file:${options.runtime.executorPluginRoot}`,
-          '@wegent/dsh-terminal-runtime': `file:${options.runtime.terminalPluginRoot}`,
+          ...managedDependencies,
         },
         dsh: {
           profile: {
-            bundles: [...CORE_BUNDLES, ...userBundles],
+            bundles: [...managedBundles, ...userBundles],
           },
         },
       },
@@ -219,13 +241,8 @@ async function prepareProfile(options: {
   await writeFile(join(profileRoot, 'cordis.yml'), '[]\n', { mode: 0o600 })
   await writeFile(join(profileRoot, 'cordis.patch.yml'), '[]\n', { mode: 0o600 })
   await ensureCoreWorkspace(workspacePath)
-  const pluginPackages = [
-    ['@wegent/dsh-app-wework', options.runtime.appPluginRoot],
-    ['@wegent/dsh-electron-host', options.runtime.pluginRoot],
-    ['@wegent/dsh-executor-runtime', options.runtime.executorPluginRoot],
-    ['@wegent/dsh-terminal-runtime', options.runtime.terminalPluginRoot],
-  ] as const
-  for (const [packageName, source] of pluginPackages) {
+  for (const packageName of managedDependencyNames) {
+    const source = options.runtime.pluginRoots[packageName as CorePluginPackage]
     const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
     await cp(source, destination, { recursive: true })
   }
@@ -306,13 +323,26 @@ function hasRemovedCoreDependency(manifest: unknown): boolean {
   return REMOVED_CORE_DEPENDENCIES.some(name => name in dependencies || bundles.includes(name))
 }
 
-function hasCurrentCoreDependencies(manifest: unknown, runtime: CoreDshRuntime): boolean {
+function hasCurrentCoreDependencies(
+  manifest: unknown,
+  managedDependencies: Partial<Record<CorePluginPackage, string>>
+): boolean {
   const dependencies = stringRecord(objectRecord(manifest).dependencies)
-  return (
-    dependencies['@wegent/dsh-app-wework'] === `file:${runtime.appPluginRoot}` &&
-    dependencies['@wegent/dsh-electron-host'] === `file:${runtime.pluginRoot}` &&
-    dependencies['@wegent/dsh-executor-runtime'] === `file:${runtime.executorPluginRoot}` &&
-    dependencies['@wegent/dsh-terminal-runtime'] === `file:${runtime.terminalPluginRoot}`
+  return Object.entries(managedDependencies).every(
+    ([packageName, source]) => dependencies[packageName] === source
+  )
+}
+
+function managedCoreDependencies(
+  runtime: CoreDshRuntime,
+  includeUiPlugins: boolean
+): Partial<Record<CorePluginPackage, string>> {
+  return Object.fromEntries(
+    Object.entries(runtime.pluginRoots)
+      .filter(
+        ([packageName]) => includeUiPlugins || !CORE_UI_DEPENDENCIES.includes(packageName as never)
+      )
+      .map(([packageName, root]) => [packageName, `file:${root}`])
   )
 }
 
@@ -379,14 +409,22 @@ async function readRuntime(root: string): Promise<BundledDshRuntime | null> {
   }
 }
 
-async function stampMatches(path: string, expected: RuntimeIdentity): Promise<boolean> {
+async function stampMatches(path: string, expected: ProfileStamp): Promise<boolean> {
   try {
-    const current = JSON.parse(await readFile(path, 'utf8')) as RuntimeIdentity
+    const current = JSON.parse(await readFile(path, 'utf8')) as ProfileStamp
     return (
       current.dshVersion === expected.dshVersion &&
-      current.sourceFingerprint === expected.sourceFingerprint
+      current.sourceFingerprint === expected.sourceFingerprint &&
+      current.managedUiPlugins === expected.managedUiPlugins
     )
   } catch {
     return false
   }
+}
+
+function usesEmptyUiPluginProfile(environment: NodeJS.ProcessEnv): boolean {
+  return (
+    environment.VITE_WEWORK_E2E === 'true' &&
+    environment.WEWORK_E2E_EMPTY_CORE_DSH_UI_PROFILE === '1'
+  )
 }

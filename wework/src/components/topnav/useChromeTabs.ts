@@ -1,20 +1,15 @@
 import { useCallback, useMemo } from 'react'
 import { stripAppBasePath } from '@/config/runtime'
+import { getDshApps, resolveDshApp, type WeworkDshApp } from '@/features/dsh-runtime/dshApps'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { navigateTo } from '@/lib/navigation'
-import {
-  getActiveWorkbenchAppRegistry,
-  type WorkbenchAppContribution,
-  useActiveWorkbenchApps,
-} from '@/plugin-runtime/apps'
-import { CORE_WORKBENCH_APPS } from '@/plugin-runtime/core-apps-data'
 
 const DEFAULT_APP_KEY = 'wework'
 
 export function useChromeTabs(currentPath: string) {
   const normalizedPath = stripAppBasePath(currentPath)
-  const registeredTabs = useActiveWorkbenchApps()
-  const tabs: readonly WorkbenchAppContribution[] =
-    registeredTabs.length > 0 ? registeredTabs : CORE_WORKBENCH_APPS
+  const tabs = useDshSlotEntries<WeworkDshApp>(WEWORK_DSH_SLOTS.app)
 
   const activeAppKey = useMemo(() => {
     const match = normalizedPath.match(/^\/app\/([^/]+)/)
@@ -36,13 +31,13 @@ export function useChromeTabs(currentPath: string) {
   const isNativeApp = activeTab?.mode === 'native'
 
   const navigateToApp = useCallback((appKey: string) => {
-    const tab = getActiveWorkbenchAppRegistry().resolve(appKey)
+    const tab = resolveDshApp(appKey)
     if (!tab) return
 
     if (tab.mode === 'native') {
       navigateTo(tab.path || '/')
     } else {
-      navigateTo(`/app/${appKey}`)
+      navigateTo(`/app/${encodeURIComponent(appKey)}`)
     }
   }, [])
 
@@ -53,4 +48,8 @@ export function useChromeTabs(currentPath: string) {
     navigateToApp,
     tabs: tabs.filter(tab => !tab.hidden),
   }
+}
+
+export function getChromeTabsSnapshot(): readonly WeworkDshApp[] {
+  return getDshApps()
 }

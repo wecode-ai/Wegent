@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs'
+import { createReadStream, readFileSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
@@ -37,6 +37,21 @@ const MIME_TYPES = {
 export function apply(ctx) {
   const backendUrl = resolveBackendUrl(process.env)
   const pluginManager = new CoreDshPluginManager()
+  const assets = weworkIndexAssets(readFileSync(indexPath, 'utf8'))
+  ctx.on('webserver/index-inject', table => {
+    table.push(
+      {
+        kind: 'html',
+        placement: 'head',
+        html: assets.head,
+      },
+      {
+        kind: 'html',
+        placement: 'body',
+        html: `<script src="${APP_BASE_PATH}/runtime-config.js"></script>`,
+      }
+    )
+  })
   register(ctx, 'prefix', APP_BASE_PATH, serveWeworkApp)
   register(ctx, 'exact', PLUGIN_API_PATH, (req, res) =>
     handlePluginRequest(req, res, pluginManager, ctx.weworkDesktop, '')
@@ -164,6 +179,19 @@ export async function serveWeworkApp(req, res) {
     new URL(req.url ?? APP_BASE_PATH, 'http://localhost').pathname
   )
   const relativePath = pathname.slice(APP_BASE_PATH.length).replace(/^\/+/, '')
+  if (relativePath === 'runtime-config.js') {
+    const body = runtimeConfigScript(
+      process.env,
+      desktopWindowLabel(req.headers['x-wework-window-label'])
+    )
+    res.writeHead(200, {
+      'content-type': MIME_TYPES['.js'],
+      'cache-control': 'no-store',
+      'content-length': Buffer.byteLength(body),
+    })
+    res.end(req.method === 'HEAD' ? undefined : body)
+    return
+  }
   const target = resolve(normalize(join(webRoot, relativePath)))
   if (target !== webRoot && !target.startsWith(`${webRoot}${sep}`)) {
     res.writeHead(403)
@@ -210,6 +238,11 @@ export async function serveWeworkApp(req, res) {
 }
 
 export function injectRuntimeConfig(html, environment = process.env, windowLabel = 'main') {
+  const script = `<script>${runtimeConfigScript(environment, windowLabel)}</script>`
+  return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
+}
+
+export function runtimeConfigScript(environment = process.env, windowLabel = 'main') {
   const backendUrl = resolveBackendUrl(environment)
   const runtimeConfig = {
     appBasePath: APP_BASE_PATH,
@@ -259,10 +292,23 @@ export function injectRuntimeConfig(html, environment = process.env, windowLabel
       'VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS'
     ),
   })
-  const script = `<script>window.__WEWORK_RUNTIME_CONFIG__=${escapeJsonForHtml(
+  return `window.__WEWORK_RUNTIME_CONFIG__=${escapeJsonForHtml(
     runtimeConfig
-  )};window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__=${escapeJsonForHtml(desktopE2EConfig)}</script>`
-  return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
+  )};window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__=${escapeJsonForHtml(desktopE2EConfig)}`
+}
+
+export function weworkIndexAssets(html) {
+  const head = html.match(/<head(?:\s[^>]*)?>([\s\S]*?)<\/head>/i)?.[1] ?? ''
+  const tags =
+    head.match(
+      /<(?:script)\b[^>]*type=["']module["'][^>]*><\/script>|<link\b[^>]*rel=["'](?:modulepreload|stylesheet)["'][^>]*>/gi
+    ) ?? []
+  if (tags.length === 0) {
+    throw new Error('Wework application index contains no module or stylesheet assets')
+  }
+  return {
+    head: tags.join(''),
+  }
 }
 
 function environmentBoolean(environment, ...keys) {
