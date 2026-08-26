@@ -159,6 +159,8 @@ It never returns plaintext contents. Wework also does not upload the local auth 
 
 Wework's Codex remaining-usage display follows the local Codex account. The Electron main process calls `runtime.codex.rate_limits.read` through the authenticated local executor IPC, reads the Codex app-server `account/rateLimits/read` snapshot, and displays the remaining percentages for the 5-hour and 7-day windows. The main process also counts running local tasks through `runtime.tasks.list` and reads cloud quota through `executor.backend.quota` with credentials retained by the executor; authentication tokens are not exposed to the main process. The system tray refreshes every 60 seconds and immediately after task start or completion events, so task counts and quota continue updating after the main window closes to the tray.
 
+The macOS tray must display the logo, running status, and up to two quota lines together. The Electron main process should compose these elements directly into an RGBA template bitmap before passing it to the native tray. Do not depend on `nativeImage` rasterizing SVG text or Data URLs, because that path can preserve the text width while dropping the actual glyph pixels.
+
 ## Disconnect
 
 Disconnecting cloud only clears cloud connection storage. It does not affect:

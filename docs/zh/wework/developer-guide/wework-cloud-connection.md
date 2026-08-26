@@ -157,6 +157,8 @@ Codex Responses 兼容模型可能通过 executor 内置的 `codex responses pro
 
 Wework 的 Codex 剩余额度展示以本机 Codex 账号为准。Electron 主进程通过受认证的本地 executor IPC 调用 `runtime.codex.rate_limits.read`，读取 Codex app-server 的 `account/rateLimits/read` 快照，并展示 5 小时和 7 天窗口的剩余百分比。主进程还通过 `runtime.tasks.list` 统计运行中的本地任务，并通过 `executor.backend.quota` 使用 executor 已持有的云端连接读取云端额度；认证令牌不会暴露给主进程。系统托盘每 60 秒刷新一次，并在任务开始或结束时立即刷新，因此主窗口关闭到托盘后仍能持续更新任务数和额度。
 
+macOS 托盘需要同时显示 Logo、运行状态和最多两行额度文字。Electron 主进程应直接合成 RGBA template 位图，再交给原生托盘显示；不要依赖 `nativeImage` 对 SVG 文本或 Data URL 的栅格化，因为该路径可能只保留文字宽度而丢失实际字形像素。
+
 ## 断开连接
 
 断开云端连接只清除云端连接存储，不影响：
