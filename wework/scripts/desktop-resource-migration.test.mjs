@@ -72,8 +72,28 @@ describe('desktop resource migration', () => {
     expect(source).toContain("configured === 'debug' || configured === 'release'")
     expect(source).toContain("profile === 'release' ? ['--release'] : []")
     expect(source).toContain('const [executorPath] = await Promise.all([')
-    expect(source).toContain("run('pnpm', ['prepare:harness-runtime', '--materialize']")
-    expect(source).toContain("run('pnpm', ['prepare:execution-runtime', '--materialize']")
+    expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
+    expect(source).toContain("run(pnpmCommand, ['prepare:harness-runtime', '--materialize']")
+    expect(source).toContain("run(pnpmCommand, ['prepare:execution-runtime', '--materialize']")
+    expect(source).toContain('wrapWindowsScriptCommand(command, args)')
+  })
+
+  test('signs the packaged Node runtime with the configured macOS keychain', async () => {
+    const source = await readFile(join(weworkRoot, 'scripts/prepare-execution-runtime.mjs'), 'utf8')
+
+    expect(source).toContain('macosCodesignKeychainArguments(process.env.MACOS_KEYCHAIN_PATH)')
+  })
+
+  test('collects the electron-builder Linux x64 artifact name', async () => {
+    const source = await readFile(
+      join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
+      'utf8'
+    )
+
+    expect(source).toContain(
+      "const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch"
+    )
+    expect(source).toContain('linux_${installerArchitecture}\\\\.AppImage')
   })
 
   test('desktop E2E reuses packaged Harness runtime assets', async () => {
