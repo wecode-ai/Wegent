@@ -7,6 +7,7 @@ import {
 
 interface Registration {
   active: boolean
+  chatStream: WorkbenchServices['chatStream']
   handlers: RuntimeConversationStreamHandlers
   order: number
 }
@@ -14,38 +15,77 @@ interface Registration {
 interface Coordinator {
   registrations: Map<symbol, Registration>
   nextOrder: number
+  sourceToken: symbol | null
+  unsubscribe: (() => void) | null
 }
 
-const coordinators = new WeakMap<WorkbenchServices['chatStream'], Coordinator>()
+const coordinator: Coordinator = {
+  registrations: new Map(),
+  nextOrder: 1,
+  sourceToken: null,
+  unsubscribe: null,
+}
 
 export function registerRuntimeConversationStream(
   chatStream: WorkbenchServices['chatStream'],
   handlers: RuntimeConversationStreamHandlers,
   active: boolean
 ): () => void {
-  const coordinator = getCoordinator(chatStream)
   const token = Symbol('runtime-conversation-stream-registration')
   coordinator.registrations.set(token, {
     active,
+    chatStream,
     handlers,
     order: coordinator.nextOrder++,
   })
+  ensureSubscription()
   return () => {
     coordinator.registrations.delete(token)
+    if (coordinator.sourceToken === token) {
+      replaceSubscription()
+    } else if (coordinator.registrations.size === 0) {
+      disposeSubscription()
+    }
   }
 }
 
-function getCoordinator(chatStream: WorkbenchServices['chatStream']): Coordinator {
-  const existing = coordinators.get(chatStream)
-  if (existing) return existing
+function ensureSubscription(): void {
+  if (coordinator.unsubscribe) return
+  const source = preferredRegistration()
+  if (!source) return
+  coordinator.sourceToken = source.token
+  coordinator.unsubscribe = source.registration.chatStream.subscribe(
+    createDelegatingHandlers(coordinator)
+  )
+}
 
-  const coordinator: Coordinator = {
-    registrations: new Map(),
-    nextOrder: 1,
+function replaceSubscription(): void {
+  disposeSubscription()
+  ensureSubscription()
+}
+
+function disposeSubscription(): void {
+  coordinator.unsubscribe?.()
+  coordinator.unsubscribe = null
+  coordinator.sourceToken = null
+}
+
+function preferredRegistration(): { token: symbol; registration: Registration } | null {
+  let selected: { token: symbol; registration: Registration } | null = null
+  for (const [token, registration] of coordinator.registrations) {
+    if (selected && Number(selected.registration.active) > Number(registration.active)) {
+      continue
+    }
+    if (
+      selected &&
+      selected.registration.active === registration.active &&
+      selected.registration.order > registration.order
+    ) {
+      continue
+    }
+    selected = { token, registration }
   }
-  coordinators.set(chatStream, coordinator)
-  chatStream.subscribe(createDelegatingHandlers(coordinator))
-  return coordinator
+  return selected
 }
 
 function activeHandlers(coordinator: Coordinator): RuntimeConversationStreamHandlers | undefined {

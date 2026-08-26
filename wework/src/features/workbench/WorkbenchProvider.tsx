@@ -319,7 +319,7 @@ export function WorkbenchProvider({
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
   useLayoutEffect(() => {
     lifecycleStore.syncRuntimeWork(state.runtimeWork)
-  }, [lifecycleStore, state.runtimeWork, syncRuntimeTaskLifecycle])
+  }, [lifecycleStore, state.runtimeWork])
   useLayoutEffect(() => {
     lifecycleStore.setCurrentTask(state.currentRuntimeTask)
   }, [lifecycleStore, state.currentRuntimeTask, syncRuntimeTaskLifecycle])
