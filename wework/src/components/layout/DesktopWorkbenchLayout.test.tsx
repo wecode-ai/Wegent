@@ -47,6 +47,7 @@ import {
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import { setActiveKeybindings } from '@/lib/keybindings'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
+import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
@@ -661,7 +662,8 @@ describe('DesktopWorkbenchLayout', () => {
     }
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await preloadDefaultDshUiTestModules()
     experimentalFeatures.enabled = true
     runtimeMocks.electron = false
     vi.clearAllMocks()

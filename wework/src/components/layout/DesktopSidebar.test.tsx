@@ -34,6 +34,7 @@ import {
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import * as changeRequestMonitor from '@/features/workbench/changeRequestMonitor'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { preloadDefaultDshUiTestModules } from '@/test/setup'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -202,7 +203,8 @@ async function waitForSidebarPointerSensorCleanup() {
 }
 
 describe('DesktopSidebar', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await preloadDefaultDshUiTestModules()
     experimentalFeatures.enabled = true
     window.history.replaceState({}, '', '/')
     localStorage.clear()

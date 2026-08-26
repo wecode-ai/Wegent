@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom/vitest'
 import { beforeEach } from 'vitest'
 import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
-import { clearDshUiModuleCache } from '@/features/dsh-runtime/dshUiModules'
+import { clearDshUiModuleCache, importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
 
 const electronHostInvokePath = '/wework/electron-host/v1/invoke'
 const nativeFetch = globalThis.fetch.bind(globalThis)
@@ -261,6 +261,12 @@ function installDefaultDshUiTestModules() {
       preload: () => undefined,
     },
   }
+}
+
+export async function preloadDefaultDshUiTestModules() {
+  installDefaultDshUiTestModules()
+  const modules = window.__WEWORK_DSH_UI_MODULES__ ?? {}
+  await Promise.all(Object.keys(modules).map(module => importDshUiModule(module)))
 }
 
 function requestUrl(input: RequestInfo | URL): string {

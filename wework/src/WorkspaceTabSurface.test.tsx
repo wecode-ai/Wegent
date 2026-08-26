@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabSurface } from './App'
 import {
   beginHarnessAppLaunch,
@@ -10,6 +10,7 @@ import {
   registerHarnessAppTab,
   unregisterHarnessAppTab,
 } from '@/features/harness-apps/harnessAppTabs'
+import { preloadDefaultDshUiTestModules } from '@/test/setup'
 
 const appIframeMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
@@ -109,6 +110,10 @@ vi.mock('@/pages/WorkbenchPage', () => ({
 }))
 
 describe('WorkspaceTabSurface', () => {
+  beforeEach(async () => {
+    await preloadDefaultDshUiTestModules()
+  })
+
   afterEach(() => {
     appIframeMocks.cleanup.mockClear()
     workbenchProviderMocks.cleanup.mockClear()
