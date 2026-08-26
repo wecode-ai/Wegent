@@ -761,7 +761,7 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
     dispatchAction: dispatchTrayAction,
     applyIcon: (tray, state) => {
       tray.setImage(
-        createTrayIcon(nativeImage, iconPath, state.usageTitle, {
+        createTrayIcon(nativeImage, iconPath, state.usageTitle, process.platform, {
           runningCount: state.runningCount,
           showRunningStatus: state.showRunningStatus,
         })

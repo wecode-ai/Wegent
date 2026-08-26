@@ -35,6 +35,12 @@ describe('tray native status', () => {
           },
         }
       }
+      if (method === 'executor.codex_home.status') {
+        return { shouldPromptMigration: false }
+      }
+      if (method === 'device.execute_command') {
+        return { success: true, stdout: { exists: true } }
+      }
       return {
         data: { remaining: 845.21 },
         quota_source: 'AIGC额度',
@@ -57,14 +63,53 @@ describe('tray native status', () => {
 
     expect(requestExecutor.mock.calls.map(call => call[0])).toEqual([
       'runtime.tasks.list',
-      'runtime.codex.rate_limits.read',
+      'executor.codex_home.status',
+      'device.execute_command',
       'executor.backend.quota',
+      'runtime.codex.rate_limits.read',
     ])
     expect(apply).toHaveBeenCalledWith({
       usageTitle: 'Codex  60%\nAIGC 845.21',
       usageTooltip:
         '1 个任务运行中\nCodex 额度\n5小时额度 80%\n7天额度 60%\nAIGC额度\n剩余 845.21 元',
       runningCount: 1,
+      showRunningStatus: true,
+    })
+  })
+
+  test('does not initialize Codex while home migration is pending', async () => {
+    const apply = vi.fn()
+    const requestExecutor = vi.fn(async (method: string) => {
+      if (method === 'runtime.tasks.list') return { workspaces: [] }
+      if (method === 'executor.codex_home.status') return { shouldPromptMigration: true }
+      if (method === 'device.execute_command') {
+        return { success: true, stdout: { exists: true } }
+      }
+      if (method === 'runtime.codex.rate_limits.read') {
+        throw new Error('rate limits must not initialize Codex')
+      }
+      throw new Error('cloud quota unavailable')
+    })
+    const controller = new TrayNativeStatusController({
+      preferences: {
+        read: vi.fn(async () => ({
+          language: 'zh-CN',
+          trayRunningEnabled: true,
+          trayUsageEnabled: true,
+          trayWegentUsageEnabled: true,
+        })),
+      } as unknown as PreferencesStore,
+      requestExecutor,
+      apply,
+    })
+
+    await controller.refresh()
+
+    expect(requestExecutor).not.toHaveBeenCalledWith('runtime.codex.rate_limits.read')
+    expect(apply).toHaveBeenCalledWith({
+      usageTitle: null,
+      usageTooltip: null,
+      runningCount: 0,
       showRunningStatus: true,
     })
   })

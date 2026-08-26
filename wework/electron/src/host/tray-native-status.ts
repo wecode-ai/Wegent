@@ -20,6 +20,15 @@ interface CodexRateLimitsResponse {
   rateLimitsByLimitId?: Record<string, CodexRateLimitSnapshot | undefined> | null
 }
 
+interface CodexHomeStatus {
+  shouldPromptMigration?: unknown
+}
+
+interface DeviceCommandResponse {
+  success?: unknown
+  stdout?: unknown
+}
+
 interface RuntimeTasksResponse {
   workspaces?: Array<{
     tasks?: RuntimeTaskStatus[]
@@ -103,9 +112,7 @@ export class TrayNativeStatusController {
       showRunningStatus
         ? this.read<RuntimeTasksResponse>('runtime.tasks.list')
         : Promise.resolve(null),
-      preferences.trayUsageEnabled !== false
-        ? this.read<CodexRateLimitsResponse>('runtime.codex.rate_limits.read')
-        : Promise.resolve(null),
+      this.readCodexRateLimits(preferences.trayUsageEnabled !== false),
       preferences.trayWegentUsageEnabled !== false
         ? this.read<BackendQuotaResponse>('executor.backend.quota')
         : Promise.resolve(null),
@@ -132,14 +139,46 @@ export class TrayNativeStatusController {
     })
   }
 
-  private async read<Result>(method: string): Promise<Result | null> {
+  private async readCodexRateLimits(enabled: boolean): Promise<CodexRateLimitsResponse | null> {
+    if (!enabled) return null
+    const [home, auth] = await Promise.all([
+      this.read<CodexHomeStatus>('executor.codex_home.status'),
+      this.read<DeviceCommandResponse>('device.execute_command', {
+        command_key: 'runtime_auth_status',
+        timeout_seconds: 10,
+        max_output_bytes: 4096,
+      }),
+    ])
+    if (
+      !home ||
+      home.shouldPromptMigration === true ||
+      auth?.success !== true ||
+      !recordValue(auth.stdout).exists
+    ) {
+      return null
+    }
+    return this.read<CodexRateLimitsResponse>('runtime.codex.rate_limits.read')
+  }
+
+  private async read<Result>(
+    method: string,
+    params?: Record<string, unknown>
+  ): Promise<Result | null> {
     try {
-      return await this.dependencies.requestExecutor<Result>(method)
+      return params
+        ? await this.dependencies.requestExecutor<Result>(method, params)
+        : await this.dependencies.requestExecutor<Result>(method)
     } catch (error) {
       this.dependencies.logError?.(`[tray] failed to refresh ${method}`, error)
       return null
     }
   }
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
 }
 
 function normalizedLanguage(value: unknown): 'en' | 'zh-CN' {

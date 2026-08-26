@@ -98,11 +98,11 @@ export function createTrayIcon(
   images: NativeImageFactory,
   iconPath: string,
   usageTitle: string | null = null,
+  platform: NodeJS.Platform = process.platform,
   status: { runningCount: number; showRunningStatus: boolean } = {
     runningCount: 0,
     showRunningStatus: false,
-  },
-  platform: NodeJS.Platform = process.platform
+  }
 ): NativeImage {
   const source = images.createFromPath(iconPath)
   if (source.isEmpty()) {

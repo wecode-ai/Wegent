@@ -105,13 +105,10 @@ describe('tray icon', () => {
       createFromDataURL,
     }
 
-    createTrayIcon(
-      images,
-      '/icons/128x128.png',
-      null,
-      { runningCount: 2, showRunningStatus: true },
-      'darwin'
-    )
+    createTrayIcon(images, '/icons/128x128.png', null, 'darwin', {
+      runningCount: 2,
+      showRunningStatus: true,
+    })
 
     const svg = Buffer.from(
       createFromDataURL.mock.calls[0][0].replace('data:image/svg+xml;base64,', ''),
@@ -139,13 +136,10 @@ describe('tray icon', () => {
       createFromDataURL,
     }
 
-    createTrayIcon(
-      images,
-      '/icons/128x128.png',
-      null,
-      { runningCount: 8, showRunningStatus: true },
-      'darwin'
-    )
+    createTrayIcon(images, '/icons/128x128.png', null, 'darwin', {
+      runningCount: 8,
+      showRunningStatus: true,
+    })
 
     const svg = Buffer.from(
       createFromDataURL.mock.calls[0][0].replace('data:image/svg+xml;base64,', ''),
@@ -163,13 +157,10 @@ describe('tray icon', () => {
     }
 
     expect(
-      createTrayIcon(
-        images,
-        '/icons/128x128.png',
-        null,
-        { runningCount: 0, showRunningStatus: false },
-        'win32'
-      )
+      createTrayIcon(images, '/icons/128x128.png', null, 'win32', {
+        runningCount: 0,
+        showRunningStatus: false,
+      })
     ).toBe(source)
     expect(source.resize).not.toHaveBeenCalled()
     expect(images.createFromBitmap).not.toHaveBeenCalled()
