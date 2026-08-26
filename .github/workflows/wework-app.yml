@@ -66,6 +66,7 @@ jobs:
       - name: Commit Wework version files
         id: version-files
         env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           PUBLISH_RELEASE: ${{ steps.version.outputs.publish_release }}
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
         run: |
