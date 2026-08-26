@@ -36,13 +36,6 @@ class ExternalDocumentImportError(Exception):
         self.status_code = status_code
 
 
-class ExternalDocumentAlreadyImportedError(ExternalDocumentImportError):
-    """The external document is already imported into the knowledge base."""
-
-    def __init__(self, message: str):
-        super().__init__(message, status_code=409)
-
-
 class ExternalDocumentFetchError(RuntimeError):
     """Background fetch of external document content failed."""
 

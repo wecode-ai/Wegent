@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.user import User
 from app.schemas.knowledge import ContentOrigin, DocumentProcessingStage
 from app.services.knowledge.external_document_providers import (
@@ -31,6 +31,12 @@ from app.services.knowledge.external_document_providers import (
     get_external_document_provider,
 )
 from app.services.knowledge.folder_policy import assert_document_can_be_placed_in_folder
+from app.services.knowledge.index_state_machine import (
+    ACTIVE_INDEX_STATUSES,
+    begin_external_import_attempt,
+    mark_document_index_failed,
+    prepare_document_index_enqueue,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.processing_errors import build_processing_error
 
@@ -156,12 +162,6 @@ class ExternalDocumentImportService:
         Raises:
             ExternalDocumentImportError: With the HTTP status to surface.
         """
-        from app.models.knowledge import DocumentIndexStatus
-        from app.services.knowledge.index_state_machine import (
-            ACTIVE_INDEX_STATUSES,
-            begin_external_import_attempt,
-        )
-
         current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
         if current_status in ACTIVE_INDEX_STATUSES:
             raise ExternalDocumentImportError(
@@ -293,10 +293,6 @@ class ExternalDocumentImportService:
                 "Only imported external documents can be retried"
             )
 
-        from app.services.knowledge.index_state_machine import (
-            prepare_document_index_enqueue,
-        )
-
         decision = prepare_document_index_enqueue(db=db, document_id=document.id)
         if not decision.should_enqueue:
             reason_messages = {
@@ -340,9 +336,6 @@ class ExternalDocumentImportService:
         placeholders. Documents mid import/update are skipped; settled ones
         (successful or failed) are returned for a re-import update.
         """
-        from app.models.knowledge import DocumentIndexStatus
-        from app.services.knowledge.index_state_machine import ACTIVE_INDEX_STATUSES
-
         existing = {
             document.external_resource_id: document
             for document in db.query(KnowledgeDocument).filter(
@@ -588,8 +581,6 @@ def _mark_external_source_unavailable(
     when this attempt's failure actually landed (a stale generation must not
     overwrite the outcome of a newer attempt).
     """
-    from app.services.knowledge.index_state_machine import mark_document_index_failed
-
     finalized = mark_document_index_failed(
         db=db,
         document_id=document.id,
@@ -624,8 +615,6 @@ def _mark_external_import_failed(
     exc: Exception,
 ) -> None:
     """Record the fetch failure on the document without deleting it."""
-    from app.services.knowledge.index_state_machine import mark_document_index_failed
-
     mark_document_index_failed(
         db=db,
         document_id=document.id,

@@ -21,6 +21,7 @@ Architecture:
 
 import base64
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
@@ -42,6 +43,9 @@ from app.schemas.knowledge import (
     KnowledgeDocumentResponse,
     ResourceScope,
 )
+from app.services.knowledge.attachment_cleanup import (
+    delete_attachment_best_effort,
+)
 from app.services.knowledge.code_wiki.source import SourceRepository
 from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_NOT_FOUND,
@@ -49,6 +53,7 @@ from app.services.knowledge.document_read_service import (
 )
 from app.services.knowledge.external_document_providers import (
     ExternalDocumentContent,
+    ExternalImportLostWriteError,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.retrieval_profile import (
@@ -1722,20 +1727,11 @@ class KnowledgeOrchestrator:
         Attach fetched external content to an external document and index it.
 
         Creates the attachment from the provider-fetched body, then lands it on
-        the document through a guarded write that requires the document to
-        still exist, carry the same external identity, and sit at the claimed
-        ``generation``. Losing that race (user deleted the document, or a newer
-        attempt superseded this one) raises ExternalImportLostWriteError after
-        deleting the just-created attachment, so a deleted document is never
-        revived and no orphan is left behind.
-
-        A document that already holds a live snapshot (a previously successful
-        import) keeps serving that snapshot while the new version indexes: the
-        new attachment is staged in source_config["external"] and only swaps
-        in atomically when indexing succeeds. A document without a usable
-        snapshot (placeholder or failed import) takes the attachment
-        immediately. Provider metadata is refreshed in both paths; the user's
-        own name and folder are never overwritten.
+        the document through a guarded write (see ``_land_external_content``).
+        A document that already holds a live snapshot keeps serving that
+        snapshot while the new version indexes; a document without one takes
+        the attachment immediately. Provider metadata is refreshed in both
+        paths; the user's own name and folder are never overwritten.
 
         Args:
             db: Database session
@@ -1751,12 +1747,6 @@ class KnowledgeOrchestrator:
             ExternalImportLostWriteError: The attempt lost its write right.
         """
         from app.services.context import context_service
-        from app.services.knowledge.attachment_cleanup import (
-            delete_attachment_best_effort,
-        )
-        from app.services.knowledge.external_document_providers import (
-            ExternalImportLostWriteError,
-        )
 
         kb, has_access = KnowledgeService.get_knowledge_base(
             db=db,
@@ -1777,11 +1767,68 @@ class KnowledgeOrchestrator:
             subtask_id=0,
         )
 
-        # Guarded write: only this attempt's generation may land the content,
-        # and only while the document still exists with its external identity.
-        # Capture the replaced attachment BEFORE the write: with
+        # Capture the replaced attachment BEFORE the guarded write: with
         # expire_on_commit=True the ORM reloads the new value after commit.
-        from datetime import datetime, timezone
+        keeps_live_snapshot = bool(document.is_active and document.attachment_id)
+        previous_attachment_id = document.attachment_id
+        previous_pending_id = document.external_pending_attachment_id
+
+        staged_attachment_id = self._land_external_content(
+            db,
+            document,
+            content,
+            attachment,
+            generation,
+            keeps_live_snapshot=keeps_live_snapshot,
+        )
+
+        db.refresh(document)
+
+        # A superseded earlier attempt may have staged an attachment that this
+        # attempt now replaces; drop it so it does not linger as an orphan.
+        superseded_ids = (
+            previous_pending_id,
+            None if keeps_live_snapshot else previous_attachment_id,
+        )
+        for superseded_id in superseded_ids:
+            if superseded_id and superseded_id != attachment.id:
+                delete_attachment_best_effort(db, document.user_id, superseded_id)
+
+        return self._schedule_indexing_celery(
+            db=db,
+            knowledge_base=kb,
+            document=document,
+            user=user,
+            trigger_summary=True,
+            replace_active=True,
+            attachment_id_override=staged_attachment_id,
+        )
+
+    def _land_external_content(
+        self,
+        db: Session,
+        document: KnowledgeDocument,
+        content: ExternalDocumentContent,
+        attachment: Any,
+        generation: int,
+        *,
+        keeps_live_snapshot: bool,
+    ) -> Optional[int]:
+        """
+        Land fetched content on the document through a guarded write.
+
+        Only this attempt's generation may land the content, and only while
+        the document still exists with its external identity. Losing that
+        race (user deleted the document, or a newer attempt superseded this
+        one) deletes the just-created attachment and raises
+        ExternalImportLostWriteError, so a deleted document is never revived
+        and no orphan is left behind.
+
+        Returns:
+            The staged attachment ID when the swap is deferred until index
+            success, else None (the attachment landed directly).
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # Refresh the provider-owned source metadata; never touch the user's
         # own document name or folder.
@@ -1792,11 +1839,7 @@ class KnowledgeOrchestrator:
         merged_source_config = dict(document.source_config or {})
         merged_source_config["external"] = merged_external
 
-        keeps_live_snapshot = bool(document.is_active and document.attachment_id)
-        previous_attachment_id = document.attachment_id
-        previous_pending_id = document.external_pending_attachment_id
         staged_attachment_id: Optional[int] = None
-
         if keeps_live_snapshot:
             # Defer the swap: stage the new attachment and let the index
             # success finalize (mark_document_index_succeeded) replace the
@@ -1806,9 +1849,7 @@ class KnowledgeOrchestrator:
             merged_external["pending_file_size"] = len(content.content)
             update_fields = {
                 KnowledgeDocument.source_config: merged_source_config,
-                KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
-                    tzinfo=None
-                ),
+                KnowledgeDocument.updated_at: now,
             }
         else:
             # No live snapshot to preserve: land the attachment directly and
@@ -1819,9 +1860,7 @@ class KnowledgeOrchestrator:
                 KnowledgeDocument.attachment_id: attachment.id,
                 KnowledgeDocument.file_size: len(content.content),
                 KnowledgeDocument.source_config: merged_source_config,
-                KnowledgeDocument.updated_at: datetime.now(timezone.utc).replace(
-                    tzinfo=None
-                ),
+                KnowledgeDocument.updated_at: now,
             }
 
         updated = (
@@ -1847,30 +1886,7 @@ class KnowledgeOrchestrator:
                 f"importing at generation {generation}"
             )
 
-        db.refresh(document)
-
-        # A superseded earlier attempt may have staged an attachment that this
-        # attempt now replaces; drop it so it does not linger as an orphan.
-        superseded_ids = [
-            attachment_id
-            for attachment_id in (
-                previous_pending_id,
-                None if keeps_live_snapshot else previous_attachment_id,
-            )
-            if attachment_id and attachment_id != attachment.id
-        ]
-        for superseded_id in superseded_ids:
-            delete_attachment_best_effort(db, document.user_id, superseded_id)
-
-        return self._schedule_indexing_celery(
-            db=db,
-            knowledge_base=kb,
-            document=document,
-            user=user,
-            trigger_summary=True,
-            replace_active=True,
-            attachment_id_override=staged_attachment_id,
-        )
+        return staged_attachment_id
 
     def _create_and_index_document(
         self,
@@ -2330,8 +2346,6 @@ class KnowledgeOrchestrator:
 
                 # Override QUEUED -> PENDING_CONVERSION: document is waiting
                 # for a conversion worker, not for direct indexing
-                from datetime import datetime, timezone
-
                 document.index_status = DocumentIndexStatus.PENDING_CONVERSION
                 document.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 db.commit()

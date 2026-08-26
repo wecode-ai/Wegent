@@ -1643,8 +1643,12 @@ class KnowledgeService:
         QUEUED import status; a background task later fetches the body, creates
         the attachment and reuses the regular indexing state machine.
 
+        The caller (the external import service) is responsible for KB access
+        and manage-permission validation; this method only locks the KB row so
+        creation serializes with deletion.
+
         Raises:
-            ValueError: If validation fails or permission denied
+            ValueError: If the knowledge base is missing or inactive
             IntegrityError: On a concurrent duplicate external identity
         """
         kb = (
@@ -1654,20 +1658,10 @@ class KnowledgeService:
                 Kind.kind == "KnowledgeBase",
                 Kind.is_active == True,  # noqa: E712
             )
+            .with_for_update()
             .first()
         )
 
-        if not kb:
-            raise ValueError("Knowledge base not found or access denied")
-
-        if not KnowledgeService.can_manage_knowledge_base_documents(
-            db, knowledge_base_id, user_id
-        ):
-            raise ValueError(
-                "You do not have permission to add documents to this knowledge base"
-            )
-
-        kb = KnowledgeService._lock_active_knowledge_base(db, kb)
         if not kb:
             raise ValueError("Knowledge base not found or access denied")
 
