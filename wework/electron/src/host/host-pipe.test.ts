@@ -101,7 +101,6 @@ describe('HostPipeServer', () => {
   test('writes the install response before running application shutdown', async () => {
     const router = new HostCapabilityRouter()
     router.grant('@wegent/dsh-app-wework', ['appUpdate.install'])
-    let server: HostPipeServer
     const prepareShutdown = vi.fn(async () => server.stop())
     const quitAndInstall = vi.fn()
     const appUpdates = {
@@ -111,7 +110,7 @@ describe('HostPipeServer', () => {
       }),
     } as unknown as AppUpdateService
     registerAppUpdateCapabilities(router, appUpdates)
-    server = new HostPipeServer(router)
+    const server = new HostPipeServer(router)
     const childToHost = new PassThrough()
     const hostToChild = new PassThrough()
     const replies = createInterface({ input: hostToChild })
