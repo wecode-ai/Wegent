@@ -4,7 +4,7 @@ sidebar_position: 37
 
 # 应用入口与 MCP Elicitation 桌面 E2E
 
-本文定义 Wework“应用”入口和 MCP 业务表单的真实桌面端回归方案。测试复用现有桌面 runner 与 checkpoint，不新增本地专用脚本，也不使用浏览器 mock 替代 Tauri、Executor 或 Codex。
+本文定义 Wework“应用”入口和 MCP 业务表单的真实桌面端回归方案。测试复用现有桌面 runner 与 checkpoint，不新增本地专用脚本，也不使用浏览器 mock 替代 Electron、Executor 或 Codex。
 
 ## 覆盖范围
 
@@ -230,4 +230,4 @@ default_tools_approval_mode = "approve"
 | 表单可见但 fixture 无 `accept`          | Executor 的 enum label 到稳定 enum value 映射与回复路由          |
 | 模型未完成                              | MCP tool output 是否回到下一次模型输入，成功标记是否一致         |
 
-测试结束时由现有 runner 终止 Tauri、Executor、Codex 和 stdio MCP 子进程，并清理隔离 home。fixture 不得读取或写入用户的个人 Codex home。
+测试结束时由现有 runner 终止 Electron、Executor、Codex 和 stdio MCP 子进程，并清理隔离 home。fixture 不得读取或写入用户的个人 Codex home。

@@ -1,0 +1,5 @@
+- insert:
+    - id: wework-electron-host
+      name: '@wegent/dsh-electron-host'
+      inject:
+        - webServer

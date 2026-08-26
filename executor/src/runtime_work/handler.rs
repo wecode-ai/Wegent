@@ -107,10 +107,10 @@ use super::{
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
-        item_type, normalize_device_id, normalize_workspace_path, now_ms, prompt_text,
-        restore_cloud_project_id, restore_origin, runtime_task_id, runtime_task_title,
-        set_runtime_task_title, string_field, timestamp_ms_field, workspace_group_path,
-        workspace_path,
+        item_type, normalize_device_id, normalize_runtime_goal_timestamps,
+        normalize_workspace_path, now_ms, prompt_text, restore_cloud_project_id, restore_origin,
+        runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
+        timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -151,7 +151,6 @@ fn worktree_error_code(error: &str) -> &'static str {
         "worktree_git_common_dir_unwritable",
         "worktree_ref_not_found",
         "worktree_target_conflict",
-        "worktree_device_mismatch",
         "worktree_persistent_storage_unverified",
     ]
     .into_iter()
@@ -170,7 +169,6 @@ struct SpawnTurnRequest {
     fork_thread_id: Option<String>,
     fork_thread_path: Option<String>,
     resume_thread_id: Option<String>,
-    initial_thread_name: Option<String>,
     initial_thread_goal: Option<Value>,
 }
 
@@ -742,13 +740,17 @@ impl RuntimeWorkRpcHandler {
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
         if !matches!(
             method,
-            "runtime.worktrees.capabilities" | "runtime.worktrees.preflight"
+            "runtime.tasks.running_count"
+                | "runtime.worktrees.capabilities"
+                | "runtime.worktrees.preflight"
         ) && self.reconcile_worktrees_once().await
         {
             self.resume_persisted_turns().await;
         }
         match method {
             "runtime.tasks.list" => self.list_tasks().await,
+            "runtime.tasks.running_count" => Ok(self.running_task_count()),
+            "runtime.tasks.status.replay" => self.replay_task_statuses(payload).await,
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,

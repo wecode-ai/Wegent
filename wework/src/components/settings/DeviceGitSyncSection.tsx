@@ -1,6 +1,5 @@
 import { AlertTriangle, Cloud, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ApiError } from '@/api/http'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/devices'
@@ -13,14 +12,21 @@ interface DeviceGitSyncSectionProps {
   onRefreshDevices?: () => Promise<unknown>
 }
 
+function httpErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== 'object' || !('status' in error)) return null
+  const status = (error as { status?: unknown }).status
+  return typeof status === 'number' ? status : null
+}
+
 function syncLoadErrorMessage(t: ReturnType<typeof useTranslation>['t'], error: unknown): string {
-  if (error instanceof ApiError && error.status === 401) {
+  const status = httpErrorStatus(error)
+  if (status === 401) {
     return t(
       'workbench.git_device_sync_login_expired',
       'Wegent 云端登录已失效，请在“云端连接”中重新连接后重试。'
     )
   }
-  if (error instanceof ApiError && error.status === 404) {
+  if (status === 404) {
     return t(
       'workbench.git_device_sync_backend_unsupported',
       '当前 Wegent Backend 不支持设备 Git 配置同步，请更新服务后重试。'
@@ -103,7 +109,7 @@ export function DeviceGitSyncSection({
         if (!usesProvidedDevices) setUncontrolledDevices([])
         setSelectedDeviceId('')
         setSyncError(syncLoadErrorMessage(t, loadError))
-        if (loadError instanceof ApiError && loadError.status === 401) {
+        if (httpErrorStatus(loadError) === 401) {
           void refreshCloudUser()
         }
       } finally {

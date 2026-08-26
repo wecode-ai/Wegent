@@ -42,6 +42,8 @@ import {
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
+const MEMORY_RESPONSE_TIMEOUT_MS = 30_000
+
 async function ensureTaskRowVisible(control, taskRowTestId) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const snapshot = await waitForSnapshot(
@@ -387,7 +389,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
 
   let completed = false
   const startedAt = Date.now()
-  while (!completed && Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+  while (!completed && Date.now() - startedAt < MEMORY_RESPONSE_TIMEOUT_MS) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, MEMORY_SAMPLE_INTERVAL_MS))
     samples.push(await captureMemorySample(control, 'streaming'))
     const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))

@@ -1,8 +1,9 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { Attachment, RuntimeTaskAddress } from '@/types/api'
+import type { Attachment, ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
 
 const attachment: Attachment = {
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   resetAttachments: vi.fn(),
   sendRuntimePaneMessage: vi.fn(async () => true),
   createTask: vi.fn(),
+  activeModelSelection: null as ModelSelectionConfig | null,
 }))
 
 vi.mock('@/components/chat/ScrollableMessageArea', () => ({
@@ -42,10 +44,26 @@ vi.mock('@/components/chat/ScrollableMessageArea', () => ({
 }))
 
 vi.mock('@/components/layout/BufferedChatInput', () => ({
-  BufferedChatInput: ({ onSubmit }: { onSubmit: (valueOverride?: string) => Promise<boolean> }) => (
-    <button type="button" data-testid="mock-send" onClick={() => void onSubmit('发送附件')}>
-      发送
-    </button>
+  BufferedChatInput: ({
+    onSubmit,
+    disabled,
+    error,
+  }: {
+    onSubmit: (valueOverride?: string) => Promise<boolean>
+    disabled?: boolean
+    error?: string | null
+  }) => (
+    <>
+      <button
+        type="button"
+        data-testid="mock-send"
+        disabled={disabled}
+        onClick={() => void onSubmit('发送附件')}
+      >
+        发送
+      </button>
+      {error ? <span data-testid="mock-error">{error}</span> : null}
+    </>
   ),
 }))
 
@@ -81,7 +99,11 @@ vi.mock('@/features/workbench/useWorkbenchAttachments', () => ({
 }))
 
 vi.mock('@/features/workbench/runtimeModelSelection', () => ({
-  selectedModelExecutionFields: () => ({}),
+  selectedModelExecutionFields: () => ({
+    modelId: 'gpt-5.6-sol',
+    modelType: 'runtime',
+    modelOptions: { reasoningEffort: 'high' },
+  }),
 }))
 
 vi.mock('@/features/workbench/runtimePaneStatus', () => ({
@@ -104,6 +126,7 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
 
 vi.mock('@/features/workbench/temporaryChatModelContext', () => ({
   resolveTemporaryChatActiveModel: () => null,
+  resolveTemporaryChatModelSelection: () => mocks.activeModelSelection,
 }))
 
 vi.mock('@/features/workbench/runtimeTaskLifecycle', () => ({
@@ -119,9 +142,16 @@ describe('TemporaryChatPanel', () => {
     mocks.resetAttachments.mockReset()
     mocks.sendRuntimePaneMessage.mockClear()
     mocks.createTask.mockReset()
+    mocks.activeModelSelection = null
   })
 
   it('keeps sent attachments on the user message after clearing the composer', async () => {
+    mocks.activeModelSelection = {
+      modelName: 'moonshot-kimi-k2.7-code-highspeed',
+      modelType: 'public',
+      options: {},
+    }
+
     render(
       <TemporaryChatPanel
         currentProject={null}
@@ -176,6 +206,87 @@ describe('TemporaryChatPanel', () => {
           content: '发送附件',
         }),
       })
+    )
+  })
+
+  it('continues an existing task with its immutable model instead of the global default', async () => {
+    mocks.activeModelSelection = {
+      modelName: 'moonshot-kimi-k2.7-code-highspeed',
+      modelType: 'public',
+      options: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '0',
+      },
+    }
+
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="moonshot-task"
+        initialAddress={address}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-send'))
+
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(1))
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address,
+        modelId: 'moonshot-kimi-k2.7-code-highspeed',
+        modelType: 'public',
+        modelOptions: {
+          weworkCloudModelNamespace: 'default',
+          weworkCloudModelResourceUserId: '0',
+        },
+      }),
+      expect.any(Object)
+    )
+  })
+
+  it('blocks an existing task until its immutable model identity is available', async () => {
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="pending-model-task"
+        initialAddress={address}
+      />
+    )
+
+    expect(screen.getByTestId('mock-send')).toBeDisabled()
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+  })
+
+  it('auto-submits the initial input once after the task model identity is available', async () => {
+    mocks.activeModelSelection = {
+      modelName: 'moonshot-kimi-k2.7-code-highspeed',
+      modelType: 'public',
+      options: {},
+    }
+
+    render(
+      <StrictMode>
+        <TemporaryChatPanel
+          autoSubmitInitialInput
+          currentProject={null}
+          initialAddress={address}
+          initialInput="自动发送"
+          instanceId="auto-submit-task"
+          source={address}
+        />
+      </StrictMode>
+    )
+
+    await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(1))
+    expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address,
+        message: '自动发送',
+        modelId: 'moonshot-kimi-k2.7-code-highspeed',
+      }),
+      expect.any(Object)
     )
   })
 })

@@ -1,12 +1,12 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { APP_PREFERENCES_CHANGED_EVENT, defaultAppPreferences } from '@/tauri/appPreferences'
+import { APP_PREFERENCES_CHANGED_EVENT, defaultAppPreferences } from '@/desktop/appPreferences'
 import { ExperimentalFeature } from './ExperimentalFeature'
 
 const getAppPreferencesMock = vi.hoisted(() => vi.fn())
 
-vi.mock('@/tauri/appPreferences', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/tauri/appPreferences')>()
+vi.mock('@/desktop/appPreferences', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/desktop/appPreferences')>()
   return { ...actual, getAppPreferences: getAppPreferencesMock }
 })
 

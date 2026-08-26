@@ -13,7 +13,7 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 export function PluginCreatePage() {
@@ -55,7 +55,7 @@ export function PluginCreatePage() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
-  const isTauri = isTauriRuntime()
+  const isDesktop = isElectronRuntime()
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
 
   const handleSelectProject = (projectId: number) => {
@@ -190,13 +190,13 @@ export function PluginCreatePage() {
       <PluginCreateWorkspace
         sidebarCollapsed={sidebarCollapsed && !isMobile}
         topBarLeftActions={
-          !isMobile && sidebarCollapsed && !isTauri ? (
+          !isMobile && sidebarCollapsed && !isDesktop ? (
             <DesktopWindowControls
               sidebarCollapsed
               onToggleSidebar={() => setSidebarCollapsed(false)}
               onNewChat={handleNewChat}
             />
-          ) : !isMobile && !isTauri ? (
+          ) : !isMobile && !isDesktop ? (
             <DesktopWindowControls
               sidebarCollapsed={false}
               onToggleSidebar={() => setSidebarCollapsed(true)}

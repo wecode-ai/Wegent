@@ -964,6 +964,50 @@ fn transcript_unwraps_codex_plan_items_as_plan_blocks() {
 }
 
 #[test]
+fn transcript_deduplicates_completed_event_and_response_items_with_equivalent_text() {
+    let thread = json!({
+        "id": "thread-1",
+        "turns": [{
+            "id": "turn-1",
+            "startedAt": 1_780_000_000,
+            "completedAt": 1_780_000_005,
+            "status": "completed",
+            "items": [
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "item_completed",
+                        "thread_id": "thread-1",
+                        "turn_id": "turn-1",
+                        "item": {
+                            "type": "AgentMessage",
+                            "id": "assistant-event-1",
+                            "content": [{"type": "Text", "text": "Done."}],
+                            "phase": "final_answer"
+                        }
+                    }
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "id": "assistant-response-1",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Done."}],
+                        "phase": "final_answer"
+                    }
+                }
+            ]
+        }]
+    });
+
+    let messages = transcript_messages(&thread, "device-1");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["content"], "Done.");
+}
+
+#[test]
 fn transcript_unwraps_completed_plan_events_and_skips_duplicate_final_text() {
     let thread = json!({
         "id": "thread-1",

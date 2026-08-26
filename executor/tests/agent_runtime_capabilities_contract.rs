@@ -618,23 +618,16 @@ async fn claude_runtime_retries_retryable_api_error_with_saved_session() {
 }
 
 #[tokio::test]
-async fn claude_runtime_decrypts_git_token_and_authenticates_github_cli() {
+async fn claude_runtime_decrypts_git_token_and_injects_request_auth_environment() {
     let _lock = env_lock().await;
     let workspace_root = unique_dir("claude-runtime-git-auth-workspace");
+    let home_dir = unique_dir("claude-runtime-git-auth-home");
     let log_path = unique_dir("claude-runtime-git-auth-log").join("args.json");
-    let marker = unique_dir("claude-runtime-git-auth-marker").join("token.txt");
-    let bin_dir = unique_dir("claude-runtime-git-auth-bin");
-    fs::create_dir_all(&bin_dir).unwrap();
-    write_fake_gh(&bin_dir, &marker, "github.com");
-    let fake_claude = write_fake_claude(&log_path);
+    let fake_claude =
+        write_fake_claude_with_git_auth(&log_path, "github.com", "token", "ghp_test_token");
+    let _home = EnvGuard::set("HOME", &home_dir.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
-    let path_value = format!(
-        "{}:{}",
-        bin_dir.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    let _path = EnvGuard::set("PATH", &path_value);
     let _key = EnvGuard::set("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012");
     let _iv = EnvGuard::set("GIT_TOKEN_AES_IV", "1234567890123456");
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
@@ -670,27 +663,23 @@ async fn claude_runtime_decrypts_git_token_and_authenticates_github_cli() {
             content: "ok".to_owned()
         }
     );
-    assert_eq!(fs::read_to_string(marker).unwrap(), "ghp_test_token\n");
 }
 
 #[tokio::test]
-async fn claude_runtime_authenticates_github_enterprise_cli_with_hostname() {
+async fn claude_runtime_injects_github_enterprise_auth_environment() {
     let _lock = env_lock().await;
     let workspace_root = unique_dir("claude-runtime-ghe-auth-workspace");
+    let home_dir = unique_dir("claude-runtime-ghe-auth-home");
     let log_path = unique_dir("claude-runtime-ghe-auth-log").join("args.json");
-    let marker = unique_dir("claude-runtime-ghe-auth-marker").join("token.txt");
-    let bin_dir = unique_dir("claude-runtime-ghe-auth-bin");
-    fs::create_dir_all(&bin_dir).unwrap();
-    write_fake_gh(&bin_dir, &marker, "github.internal.example");
-    let fake_claude = write_fake_claude(&log_path);
+    let fake_claude = write_fake_claude_with_git_auth(
+        &log_path,
+        "github.internal.example",
+        "token",
+        "ghp_enterprise_token",
+    );
+    let _home = EnvGuard::set("HOME", &home_dir.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
-    let path_value = format!(
-        "{}:{}",
-        bin_dir.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    let _path = EnvGuard::set("PATH", &path_value);
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
         "codex",
@@ -724,31 +713,23 @@ async fn claude_runtime_authenticates_github_enterprise_cli_with_hostname() {
             content: "ok".to_owned()
         }
     );
-    assert_eq!(
-        fs::read_to_string(marker).unwrap(),
-        "ghp_enterprise_token\n"
-    );
 }
 
 #[tokio::test]
-async fn claude_runtime_falls_back_to_github_hosts_config_when_read_org_is_missing() {
+async fn claude_runtime_keeps_request_auth_out_of_persistent_cli_config() {
     let _lock = env_lock().await;
     let workspace_root = unique_dir("claude-runtime-gh-hosts-workspace");
     let home_dir = unique_dir("claude-runtime-gh-hosts-home");
     let log_path = unique_dir("claude-runtime-gh-hosts-log").join("args.json");
-    let bin_dir = unique_dir("claude-runtime-gh-hosts-bin");
-    fs::create_dir_all(&bin_dir).unwrap();
-    write_fake_gh_missing_read_org(&bin_dir);
-    let fake_claude = write_fake_claude(&log_path);
+    let fake_claude = write_fake_claude_with_git_auth(
+        &log_path,
+        "github.com",
+        "feifei325",
+        "ghp_repo_only_token",
+    );
     let _home = EnvGuard::set("HOME", &home_dir.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
-    let path_value = format!(
-        "{}:{}",
-        bin_dir.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    let _path = EnvGuard::set("PATH", &path_value);
     let engine = AgentProcessEngine::new(AgentCommandPlanner::new(
         fake_claude.display().to_string(),
         "codex",
@@ -778,11 +759,7 @@ async fn claude_runtime_falls_back_to_github_hosts_config_when_read_org_is_missi
             content: "ok".to_owned()
         }
     );
-    let hosts = fs::read_to_string(home_dir.join(".config/gh/hosts.yml")).unwrap();
-    assert!(hosts.contains("github.com:"));
-    assert!(hosts.contains("oauth_token: ghp_repo_only_token"));
-    assert!(hosts.contains("user: feifei325"));
-    assert!(hosts.contains("git_protocol: https"));
+    assert!(!home_dir.join(".config/gh/hosts.yml").exists());
 }
 
 #[tokio::test]
@@ -1110,6 +1087,28 @@ fn skill_zip(path: &str, content: &str) -> Vec<u8> {
 }
 
 fn write_fake_claude(log_path: &Path) -> PathBuf {
+    write_fake_claude_with_prelude(log_path, "")
+}
+
+fn write_fake_claude_with_git_auth(
+    log_path: &Path,
+    expected_domain: &str,
+    expected_username: &str,
+    expected_token: &str,
+) -> PathBuf {
+    let prelude = format!(
+        r#"if [ "$GH_HOST" != "{expected_domain}" ]; then exit 31; fi
+if [ "$GH_TOKEN" != "{expected_token}" ]; then exit 32; fi
+if [ "$GIT_ASKPASS_REQUIRE" != "force" ]; then exit 33; fi
+if [ "$GIT_TERMINAL_PROMPT" != "0" ]; then exit 34; fi
+if [ ! -x "$GIT_ASKPASS" ]; then exit 35; fi
+if [ "$(cat "$WEGENT_GIT_USERNAME_FILE")" != "{expected_username}" ]; then exit 36; fi
+if [ "$(cat "$WEGENT_GIT_TOKEN_FILE")" != "{expected_token}" ]; then exit 37; fi"#
+    );
+    write_fake_claude_with_prelude(log_path, &prelude)
+}
+
+fn write_fake_claude_with_prelude(log_path: &Path, prelude: &str) -> PathBuf {
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent).unwrap();
     }
@@ -1118,6 +1117,7 @@ fn write_fake_claude(log_path: &Path) -> PathBuf {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let content = format!(
         r#"#!/bin/sh
+{}
 LOG_PATH='{}'
 STDIN_LOG_PATH='{}'
 printf '[' > "$LOG_PATH"
@@ -1135,6 +1135,7 @@ cat > "$STDIN_LOG_PATH"
 printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"ok"}}]}}}}'
 printf '%s\n' '{{"type":"result","is_error":false}}'
 "#,
+        prelude,
         log_path.display(),
         stdin_log_path.display()
     );
@@ -1354,19 +1355,6 @@ cat > '{}'
         expected_hostname,
         marker.display()
     );
-    fs::write(&path, content).unwrap();
-    make_executable(&path);
-}
-
-fn write_fake_gh_missing_read_org(bin_dir: &Path) {
-    let path = bin_dir.join("gh");
-    let content = r#"#!/bin/sh
-if [ "$1" != "auth" ] || [ "$2" != "login" ]; then
-  exit 11
-fi
-printf '%s\n' "error validating token: missing required scope 'read:org'" >&2
-exit 1
-"#;
     fs::write(&path, content).unwrap();
     make_executable(&path);
 }

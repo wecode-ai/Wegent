@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core'
 import {
   Check,
   ChevronDown,
@@ -23,6 +22,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { getComposerDiagnosticsSnapshot } from '@/components/chat/composer/composerDiagnostics'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 
 type FeedbackCategory =
   | 'report'
@@ -202,7 +202,7 @@ function TaskFeedbackDialogContent({
   const discardPreview = async () => {
     if (!preview) return
     try {
-      await invoke('discard_feedback_bundle', {
+      await invokeDesktopHost('feedback.discardBundle', {
         decision: { stagingId: preview.stagingId },
       })
     } catch {
@@ -238,7 +238,7 @@ function TaskFeedbackDialogContent({
         setCapturingScreenshot(true)
         await waitForScreenshotPaint()
         try {
-          screenshotDataUrl = await invoke<string>('capture_main_webview')
+          screenshotDataUrl = await invokeDesktopHost<string>('e2e.capturePrimaryView')
         } catch {
           screenshotDataUrl = null
         } finally {
@@ -246,7 +246,7 @@ function TaskFeedbackDialogContent({
           setCapturingScreenshot(false)
         }
       }
-      const prepared = await invoke<FeedbackPreviewResult>('preview_feedback_bundle', {
+      const prepared = await invokeDesktopHost<FeedbackPreviewResult>('feedback.previewBundle', {
         request: {
           includeRuntimeLogs: selection.runtimeLogs,
           includeTaskInfo: selection.taskInfo,
@@ -290,7 +290,7 @@ function TaskFeedbackDialogContent({
     setExporting(true)
     setError(null)
     try {
-      const exported = await invoke<FeedbackExportResult>('confirm_feedback_bundle', {
+      const exported = await invokeDesktopHost<FeedbackExportResult>('feedback.confirmBundle', {
         decision: { stagingId: preview.stagingId },
       })
       setResult(exported)

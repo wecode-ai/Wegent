@@ -48,7 +48,7 @@ from app.services.skill_resolution import (
     find_skill_by_ref,
 )
 from app.services.user_mcp_service import user_mcp_service
-from app.stores.tasks import task_store
+from app.stores.tasks import subtask_store, task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
 
@@ -462,7 +462,20 @@ class TaskRequestBuilder:
         )
         resolved_bot_namespace = getattr(bot, "namespace", None) or "default"
         fork_runtime = self._extract_task_fork_runtime(task)
-        inherited_sessions = self._extract_inherited_sessions(fork_runtime)
+        fork_sessions = self._extract_inherited_sessions(fork_runtime)
+        persisted_sessions: list[dict[str, Any]] = []
+        if getattr(subtask, "executor_deleted_at", False):
+            persisted_sessions = self._extract_persisted_sessions(
+                subtask_store.list_assistant_by_task(
+                    self.db,
+                    task_id=task.id,
+                    owner_user_id=user.id,
+                )
+            )
+        inherited_sessions = self._merge_inherited_sessions(
+            fork_sessions,
+            persisted_sessions,
+        )
 
         execution_request = ExecutionRequest(
             task_id=task.id,
@@ -578,6 +591,63 @@ class TaskRequestBuilder:
         if not isinstance(sessions, list):
             return []
         return [session for session in sessions if isinstance(session, dict)]
+
+    @staticmethod
+    def _extract_persisted_sessions(subtasks: list[Any]) -> list[dict[str, Any]]:
+        sessions: list[dict[str, Any]] = []
+        for subtask in reversed(subtasks):
+            result = getattr(subtask, "result", None)
+            if not isinstance(result, dict):
+                continue
+            session = TaskRequestBuilder._normalize_executor_session(
+                result.get("executor_session")
+            )
+            if session:
+                sessions.append(session)
+        return TaskRequestBuilder._merge_inherited_sessions(sessions)
+
+    @staticmethod
+    def _normalize_executor_session(session: Any) -> dict[str, Any] | None:
+        if not isinstance(session, dict):
+            return None
+        agent = session.get("agent")
+        session_id = session.get("sessionId") or session.get("session_id")
+        thread_id = session.get("threadId") or session.get("thread_id")
+        if not agent or not (session_id or thread_id):
+            return None
+
+        normalized: dict[str, Any] = {"agent": str(agent)}
+        if session_id:
+            normalized["sessionId"] = str(session_id)
+        if thread_id:
+            normalized["threadId"] = str(thread_id)
+        bot_id = session.get("botId", session.get("bot_id"))
+        if bot_id is not None:
+            normalized["botId"] = bot_id
+        return normalized
+
+    @staticmethod
+    def _merge_inherited_sessions(
+        *session_groups: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        for sessions in session_groups:
+            for session in sessions:
+                normalized = TaskRequestBuilder._normalize_executor_session(session)
+                if not normalized:
+                    continue
+                identity = (
+                    str(normalized.get("agent") or ""),
+                    str(normalized.get("botId") or ""),
+                    str(normalized.get("sessionId") or ""),
+                    str(normalized.get("threadId") or ""),
+                )
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                merged.append(normalized)
+        return merged
 
     def resolve_request_preload_skills(
         self,

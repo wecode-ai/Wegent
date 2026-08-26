@@ -3,9 +3,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { AppearanceProvider } from './AppearanceProvider'
 import { WorkbenchBackground } from './WorkbenchBackground'
 
-vi.mock('@tauri-apps/api/core', () => ({
-  convertFileSrc: vi.fn((path: string) => `asset://localhost/${path}`),
-  isTauri: vi.fn(() => true),
+vi.mock('@/components/chat/assistantMarkdownLinks', () => ({
+  desktopFileUrl: vi.fn((path: string) => `wework-file://${path}`),
 }))
 
 describe('WorkbenchBackground', () => {

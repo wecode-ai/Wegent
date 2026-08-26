@@ -1,5 +1,5 @@
 import type { DeviceCommandResponse } from '@/types/api'
-import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
+import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 
 export type GitHostingCliProvider = 'github' | 'gitlab'
 

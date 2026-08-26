@@ -448,19 +448,6 @@ mod tests {
     }
 
     #[test]
-    fn protected_internal_https_repositories_require_credentials() {
-        assert!(requires_credentials_for_clone(
-            "https://git.intra.weibo.com/im/message-flow.git"
-        ));
-        assert!(!requires_credentials_for_clone(
-            "https://github.com/wecode-ai/wegent.git"
-        ));
-        assert!(!requires_credentials_for_clone(
-            "git@git.intra.weibo.com:im/message-flow.git"
-        ));
-    }
-
-    #[test]
     fn configured_https_repositories_require_credentials() {
         let protected_domains = vec!["github.com".to_owned()];
 
@@ -476,6 +463,33 @@ mod tests {
             "git@github.com:wecode-ai/wegent.git",
             &protected_domains
         ));
+    }
+
+    #[test]
+    fn protected_internal_https_repositories_require_credentials() {
+        assert!(requires_credentials_for_clone(
+            "https://git.intra.weibo.com/im/message-flow.git"
+        ));
+        assert!(!requires_credentials_for_clone(
+            "https://github.com/wecode-ai/wegent.git"
+        ));
+        assert!(!requires_credentials_for_clone(
+            "git@git.intra.weibo.com:im/message-flow.git"
+        ));
+    }
+
+    #[test]
+    fn http_git_urls_reject_embedded_credentials_and_queries() {
+        assert!(git_url_contains_credentials(
+            "https://octocat:token@github.com/org/repo.git"
+        ));
+        assert!(git_url_contains_credentials(
+            "https://github.com/org/repo.git?token=secret"
+        ));
+        assert!(!git_url_contains_credentials(
+            "https://github.com/org/repo.git"
+        ));
+        assert!(!git_url_contains_credentials("git@github.com:org/repo.git"));
     }
 
     #[test]

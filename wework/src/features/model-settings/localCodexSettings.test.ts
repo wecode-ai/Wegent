@@ -3,7 +3,7 @@ import { getLocalCodexPersonality, saveLocalCodexPersonality } from './localCode
 
 const requestLocalExecutor = vi.fn()
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: vi.fn().mockResolvedValue(undefined),
   requestLocalExecutor: (...args: unknown[]) => requestLocalExecutor(...args),
 }))

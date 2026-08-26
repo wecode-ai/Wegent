@@ -34,9 +34,10 @@ import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSideba
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCloudDevice } from '@/lib/device-capabilities'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import type { RuntimeSendRequest, RuntimeTaskAddress, RuntimeTaskCreateRequest } from '@/types/api'
@@ -55,7 +56,7 @@ export function AutomationsPage() {
   const { t, i18n } = useTranslation('common')
   const { logout } = useAuth()
   const isMobile = useIsMobile()
-  const isTauri = isTauriRuntime()
+  const isDesktop = isElectronRuntime()
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const {
     state,
@@ -85,6 +86,7 @@ export function AutomationsPage() {
     listGitBranches,
     updateProjectName,
     removeProject,
+    setRuntimeTaskPinned,
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
@@ -138,7 +140,7 @@ export function AutomationsPage() {
       if (shouldSelectInitialAutomation && response.items[0]) {
         setSelectedAutomationId(response.items[0].id)
         setEditing(response.items[0])
-        setDraft(automationDraftFromAutomation(response.items[0]))
+        setDraft(automationDraftFromAutomation(response.items[0], state.runtimeWork))
         setDirty(false)
       }
       setError(null)
@@ -151,7 +153,7 @@ export function AutomationsPage() {
     } finally {
       setLoading(false)
     }
-  }, [automationApi, t])
+  }, [automationApi, state.runtimeWork, t])
 
   const loadRuns = useCallback(
     async (automationId: string) => {
@@ -266,7 +268,7 @@ export function AutomationsPage() {
   const selectAutomation = (automation: Automation) => {
     setSelectedAutomationId(automation.id)
     setEditing(automation)
-    setDraft(automationDraftFromAutomation(automation))
+    setDraft(automationDraftFromAutomation(automation, state.runtimeWork))
     setDirty(false)
   }
 
@@ -313,14 +315,16 @@ export function AutomationsPage() {
     if (!draft.deviceId) {
       throw new Error(t('workbench.automation_target_required', '请选择设备'))
     }
-    const team = state.defaultTeam
-    if (!team) {
-      throw new Error(t('workbench.automation_team_unavailable', '无法获取运行所需的默认智能体'))
-    }
+    const projectTarget =
+      draft.conversationMode === 'independent'
+        ? buildAutomationProjectOptions(state.runtimeWork?.projects ?? [], draft.deviceId).find(
+            option => option.workspacePath === draft.workspacePath
+          )?.target
+        : null
     const taskRequest: RuntimeTaskCreateRequest = {
+      schemaVersion: 2,
       deviceId: draft.deviceId,
-      ...automationWorkspaceTarget(draft.workspacePath),
-      teamId: team.id,
+      ...automationWorkspaceTarget(projectTarget),
       runtime: 'codex',
       message: draft.prompt.trim(),
       title: draft.name.trim(),
@@ -517,6 +521,7 @@ export function AutomationsPage() {
           onRefreshDevices={refreshDevices}
           onUpdateProjectName={updateProjectName}
           onRemoveProject={removeProject}
+          onSetRuntimeTaskPinned={setRuntimeTaskPinned}
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
@@ -566,7 +571,7 @@ export function AutomationsPage() {
       )}
 
       <main className="relative flex min-w-0 flex-1 overflow-hidden">
-        {!isMobile && isTauri && (
+        {!isMobile && isDesktop && (
           <DesktopCollapsedSidebarToggle
             collapsed={sidebarCollapsed}
             onToggle={() => setSidebarCollapsed(false)}
@@ -602,7 +607,7 @@ export function AutomationsPage() {
                 models={projectChat.models}
                 currentRuntimeTask={state.currentRuntimeTask}
                 runtimeWork={state.runtimeWork}
-                localDeviceIds={localDevices.map(device => device.device_id)}
+                localDeviceIds={localDevices.flatMap(getWorkbenchDeviceIds)}
                 cloudAvailable={cloudDevices.length > 0}
                 saving={saving}
                 dirty={dirty}

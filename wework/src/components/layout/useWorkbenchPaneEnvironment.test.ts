@@ -3,6 +3,7 @@ import type { ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import {
   applySharedChangeRequestSnapshot,
+  resolveEnvironmentExecutionDeviceId,
   resolveSelectedWorkspaceProject,
 } from './useWorkbenchPaneEnvironment'
 
@@ -37,6 +38,22 @@ describe('resolveSelectedWorkspaceProject', () => {
         projects: [persistedProject],
       })
     ).toBe(persistedProject)
+  })
+})
+
+describe('resolveEnvironmentExecutionDeviceId', () => {
+  test('keeps the task executor identity when workspace access uses a local host', () => {
+    expect(
+      resolveEnvironmentExecutionDeviceId(
+        { deviceId: 'cloud-device' },
+        {
+          deviceId: 'local-device',
+          path: '/workspace',
+          source: 'runtime',
+          workspaceSource: 'remote',
+        }
+      )
+    ).toBe('cloud-device')
   })
 })
 
@@ -104,25 +121,65 @@ describe('applySharedChangeRequestSnapshot', () => {
     expect(result.changeRequest).toEqual({ provider: 'github', state: 'not_found' })
   })
 
-  test('keeps the fresh Environment result when the shared snapshot is stale', () => {
-    const unavailableInfo: EnvironmentInfo = {
-      ...environmentInfo,
-      changeRequest: { provider: 'github', state: 'unavailable' },
-    }
-    const result = applySharedChangeRequestSnapshot(unavailableInfo, {
-      target: {
-        deviceId: 'local',
-        taskId: 'runtime-48',
-        workspacePath: '/workspace',
-        remoteUrl: 'https://github.com/wecode-ai/Wegent.git',
-        branch: 'fix/shared-pr-state',
+  test('keeps the fresh Environment result when the shared task snapshot is stale', () => {
+    const result = applySharedChangeRequestSnapshot(
+      {
+        ...environmentInfo,
+        changeRequest: {
+          provider: 'github',
+          state: 'unavailable',
+          hint: 'Install GitHub CLI',
+        },
       },
-      changeRequest: environmentInfo.changeRequest?.changeRequest ?? null,
-      fetchedAt: '2026-08-21T00:00:00Z',
-      stale: true,
-      error: 'GitHub CLI is unavailable',
-    })
+      {
+        target: {
+          deviceId: 'local',
+          taskId: 'runtime-48',
+          workspacePath: '/workspace',
+          remoteUrl: 'https://github.com/wecode-ai/Wegent.git',
+          branch: 'fix/shared-pr-state',
+        },
+        changeRequest: environmentInfo.changeRequest?.changeRequest ?? null,
+        fetchedAt: '2026-08-21T00:00:00Z',
+        stale: true,
+        error: 'GitHub CLI is unavailable',
+      }
+    )
 
-    expect(result).toBe(unavailableInfo)
+    expect(result.changeRequest).toEqual({
+      provider: 'github',
+      state: 'unavailable',
+      hint: 'Install GitHub CLI',
+    })
+  })
+
+  test('keeps an explicit Environment lookup failure instead of showing an older shared result', () => {
+    const result = applySharedChangeRequestSnapshot(
+      {
+        ...environmentInfo,
+        changeRequest: {
+          provider: 'github',
+          state: 'unavailable',
+          hint: 'Install GitHub CLI',
+        },
+      },
+      {
+        target: {
+          deviceId: 'local',
+          taskId: 'runtime-48',
+          workspacePath: '/workspace',
+          remoteUrl: 'https://github.com/wecode-ai/Wegent.git',
+          branch: 'fix/shared-pr-state',
+        },
+        changeRequest: environmentInfo.changeRequest?.changeRequest ?? null,
+        fetchedAt: '2026-08-21T00:00:00Z',
+      }
+    )
+
+    expect(result.changeRequest).toEqual({
+      provider: 'github',
+      state: 'unavailable',
+      hint: 'Install GitHub CLI',
+    })
   })
 })

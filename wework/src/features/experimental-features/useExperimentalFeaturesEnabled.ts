@@ -3,7 +3,7 @@ import {
   APP_PREFERENCES_CHANGED_EVENT,
   getAppPreferences,
   type AppPreferences,
-} from '@/tauri/appPreferences'
+} from '@/desktop/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 
 export interface ExperimentalFeaturesState {

@@ -3,6 +3,8 @@
 
 """Project trusted task and automation states onto one Issue workflow."""
 
+import logging
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -13,11 +15,13 @@ from app.models.delivery import (
     ProjectWorkflowRun,
     loop_datetime_is_unset,
 )
+from app.schemas.issue_workflow import workflow_node_execution_mode
 from app.services.loop_item_unread import advance_content_revision
 
 COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
 SUCCESS_TASK_STATUSES = {"succeeded", "archived"}
 FAILED_TASK_STATUSES = {"failed", "cancelled"}
+logger = logging.getLogger(__name__)
 
 
 def _project_task_status(
@@ -31,7 +35,7 @@ def _project_task_status(
         return "running"
     latest_status = task_statuses.get(ordered_task_ids[0]) if ordered_task_ids else None
     if latest_status in SUCCESS_TASK_STATUSES:
-        if not node.get("automation_rule_id"):
+        if workflow_node_execution_mode(node) == "human":
             return "awaiting_approval"
         from app.services.workflow_deliverables import missing_requirement_ids
 
@@ -99,6 +103,13 @@ def update_workflow_task_status(
     task_id: str,
     execution_status: str,
 ) -> LoopItem | None:
+    logger.info(
+        "[IssueTaskStatusSync] update received user=%s device=%s task=%s status=%s",
+        user_id,
+        device_id,
+        task_id,
+        execution_status,
+    )
     binding = (
         db.query(LoopItemTaskBinding)
         .filter(
@@ -110,8 +121,21 @@ def update_workflow_task_status(
         .first()
     )
     if binding is None:
+        logger.warning(
+            "[IssueTaskStatusSync] binding missing user=%s device=%s task=%s",
+            user_id,
+            device_id,
+            task_id,
+        )
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud context not found")
     if not binding.loop_item_id or not binding.workflow_node_id:
+        logger.info(
+            "[IssueTaskStatusSync] binding has no workflow target binding=%s "
+            "loop_item=%s workflow_node=%s",
+            binding.id,
+            binding.loop_item_id,
+            binding.workflow_node_id,
+        )
         return None
 
     item = (
@@ -152,6 +176,7 @@ def update_workflow_task_status(
         node = dict(raw_node) if isinstance(raw_node, dict) else {}
         if node.get("id") == binding.workflow_node_id:
             task_statuses = dict(node.get("task_statuses") or {})
+            previous_status = task_statuses.get(runtime_task_id)
             if task_statuses.get(runtime_task_id) != execution_status:
                 task_statuses[runtime_task_id] = execution_status
                 changed = True
@@ -182,6 +207,16 @@ def update_workflow_task_status(
             node["status"] = node_status
             node["task_ids"] = ordered_task_ids
             node["task_statuses"] = task_statuses
+            logger.info(
+                "[IssueTaskStatusSync] workflow task projected item=%s node=%s "
+                "runtime_task=%s previous=%s next=%s node_status=%s",
+                item.id,
+                binding.workflow_node_id,
+                runtime_task_id,
+                previous_status,
+                execution_status,
+                node_status,
+            )
         nodes.append(node)
     if not changed:
         return item
@@ -234,6 +269,7 @@ def update_workflow_node(
     node_id: str,
     node_status: str,
     automation_run_id: str | None = None,
+    execution_error: str | None = None,
 ) -> LoopItem | None:
     item = db.query(LoopItem).filter(LoopItem.id == item_id).with_for_update().first()
     if item is None:
@@ -256,6 +292,14 @@ def update_workflow_node(
                 changed = True
             if automation_run_id and node.get("automation_run_id") != automation_run_id:
                 node["automation_run_id"] = automation_run_id
+                changed = True
+            if execution_error:
+                normalized_error = execution_error[:2000]
+                if node.get("execution_error") != normalized_error:
+                    node["execution_error"] = normalized_error
+                    changed = True
+            elif "execution_error" in node:
+                node.pop("execution_error")
                 changed = True
         nodes.append(node)
 
@@ -314,6 +358,7 @@ def sync_automation_workflow_node(
         node_id=node_id,
         node_status=node_status,
         automation_run_id=str(run.id),
+        execution_error=run.description if node_status == "failed" else None,
     )
 
 

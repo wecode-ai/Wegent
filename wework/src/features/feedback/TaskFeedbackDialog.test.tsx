@@ -11,7 +11,7 @@ const { invokeMock } = vi.hoisted(() => ({
 }))
 const trackMock = vi.hoisted(() => vi.fn())
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
+vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: invokeMock }))
 vi.mock('@/telemetry/client', () => ({ track: trackMock }))
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -122,7 +122,7 @@ describe('TaskFeedbackDialog', () => {
     await screen.findByTestId('task-feedback-preview-list')
 
     expect(invokeMock).toHaveBeenCalledWith(
-      'preview_feedback_bundle',
+      'feedback.previewBundle',
       expect.objectContaining({
         request: expect.objectContaining({
           note: 'The toolbar disappears after reconnecting',
@@ -154,7 +154,7 @@ describe('TaskFeedbackDialog', () => {
     await screen.findByTestId('task-feedback-preview-list')
 
     expect(invokeMock).toHaveBeenCalledWith(
-      'preview_feedback_bundle',
+      'feedback.previewBundle',
       expect.objectContaining({
         request: expect.objectContaining({
           composerDiagnostics: expect.objectContaining({
@@ -187,7 +187,7 @@ describe('TaskFeedbackDialog', () => {
       ],
     }
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'preview_feedback_bundle') return Promise.resolve(previewWithAttachment)
+      if (command === 'feedback.previewBundle') return Promise.resolve(previewWithAttachment)
       return Promise.reject(new Error(`Unexpected command: ${command}`))
     })
     render(
@@ -212,7 +212,7 @@ describe('TaskFeedbackDialog', () => {
     await screen.findByTestId('task-feedback-preview-list')
 
     expect(invokeMock).toHaveBeenCalledWith(
-      'preview_feedback_bundle',
+      'feedback.previewBundle',
       expect.objectContaining({
         request: expect.objectContaining({
           attachments: [
@@ -255,7 +255,7 @@ describe('TaskFeedbackDialog', () => {
     await screen.findByTestId('task-feedback-preview-list')
 
     expect(invokeMock).toHaveBeenCalledWith(
-      'preview_feedback_bundle',
+      'feedback.previewBundle',
       expect.objectContaining({
         request: expect.objectContaining({
           attachments: [
@@ -296,7 +296,7 @@ describe('TaskFeedbackDialog', () => {
     await screen.findByTestId('task-feedback-preview-list')
 
     expect(invokeMock).toHaveBeenCalledWith(
-      'preview_feedback_bundle',
+      'feedback.previewBundle',
       expect.objectContaining({
         request: expect.objectContaining({ attachments: [] }),
       })
@@ -326,9 +326,9 @@ describe('TaskFeedbackDialog', () => {
 
   test('builds a preview before writing any exported file', async () => {
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'capture_main_webview')
+      if (command === 'e2e.capturePrimaryView')
         return Promise.resolve('data:image/png;base64,aGVsbG8=')
-      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      if (command === 'feedback.previewBundle') return Promise.resolve(previewResult)
       return Promise.reject(new Error(`Unexpected command: ${command}`))
     })
     const getTaskContext = vi.fn().mockResolvedValue({
@@ -355,7 +355,7 @@ describe('TaskFeedbackDialog', () => {
     expect(screen.queryByTestId('task-feedback-submit-button')).not.toBeInTheDocument()
     expect(getTaskContext).toHaveBeenCalledOnce()
     expect(invokeMock).toHaveBeenCalledWith(
-      'preview_feedback_bundle',
+      'feedback.previewBundle',
       expect.objectContaining({
         request: expect.objectContaining({
           taskContext: expect.objectContaining({
@@ -370,12 +370,12 @@ describe('TaskFeedbackDialog', () => {
       })
     )
     // Nothing has been written to disk yet.
-    expect(invokeMock).not.toHaveBeenCalledWith('confirm_feedback_bundle', expect.anything())
+    expect(invokeMock).not.toHaveBeenCalledWith('feedback.confirmBundle', expect.anything())
   })
 
   test('submits the exact previewed bundle through the configured feedback API', async () => {
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      if (command === 'feedback.previewBundle') return Promise.resolve(previewResult)
       return Promise.reject(new Error(`Unexpected command: ${command}`))
     })
     const feedbackApi = {
@@ -410,12 +410,12 @@ describe('TaskFeedbackDialog', () => {
       context: {},
     })
     expect(await screen.findByText(/FEEDBACK-1/)).toBeInTheDocument()
-    expect(invokeMock).not.toHaveBeenCalledWith('confirm_feedback_bundle', expect.anything())
+    expect(invokeMock).not.toHaveBeenCalledWith('feedback.confirmBundle', expect.anything())
   })
 
   test('logs a safe failure classification with the report ID when submission fails', async () => {
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      if (command === 'feedback.previewBundle') return Promise.resolve(previewResult)
       return Promise.reject(new Error(`Unexpected command: ${command}`))
     })
     const feedbackApi = {
@@ -450,7 +450,7 @@ describe('TaskFeedbackDialog', () => {
 
   test('never touches task context or the screenshot without opting into full task data', async () => {
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      if (command === 'feedback.previewBundle') return Promise.resolve(previewResult)
       return Promise.reject(new Error(`Unexpected command: ${command}`))
     })
     const getTaskContext = vi.fn().mockResolvedValue({ taskId: 'task-1' })
@@ -468,9 +468,9 @@ describe('TaskFeedbackDialog', () => {
       expect(screen.getByTestId('task-feedback-preview-list')).toBeInTheDocument()
     )
     expect(getTaskContext).not.toHaveBeenCalled()
-    expect(invokeMock).not.toHaveBeenCalledWith('capture_main_webview')
+    expect(invokeMock).not.toHaveBeenCalledWith('e2e.capturePrimaryView')
     expect(invokeMock).toHaveBeenCalledWith(
-      'preview_feedback_bundle',
+      'feedback.previewBundle',
       expect.objectContaining({
         request: expect.objectContaining({
           includeRuntimeLogs: false,
@@ -490,8 +490,8 @@ describe('TaskFeedbackDialog', () => {
       resolveCapture = resolve
     })
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'capture_main_webview') return capture
-      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      if (command === 'e2e.capturePrimaryView') return capture
+      if (command === 'feedback.previewBundle') return Promise.resolve(previewResult)
       return Promise.reject(new Error(`Unexpected command: ${command}`))
     })
     render(
@@ -526,8 +526,8 @@ describe('TaskFeedbackDialog', () => {
 
   test('skips checked categories whose content is missing instead of failing', async () => {
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'capture_main_webview') return Promise.reject(new Error('capture failed'))
-      if (command === 'preview_feedback_bundle') {
+      if (command === 'e2e.capturePrimaryView') return Promise.reject(new Error('capture failed'))
+      if (command === 'feedback.previewBundle') {
         // The real backend localizes this; the mock returns raw keys.
         const skippedLabels = ['taskInfo', 'screenshot']
         return Promise.resolve({
@@ -561,9 +561,9 @@ describe('TaskFeedbackDialog', () => {
 
   test('lets the user expand previewable entries and inspect redacted content', async () => {
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'capture_main_webview')
+      if (command === 'e2e.capturePrimaryView')
         return Promise.resolve('data:image/png;base64,aGVsbG8=')
-      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      if (command === 'feedback.previewBundle') return Promise.resolve(previewResult)
       return Promise.reject(new Error(`Unexpected command: ${command}`))
     })
     render(
@@ -597,10 +597,10 @@ describe('TaskFeedbackDialog', () => {
 
   test('confirms the staged bundle only after the user approves the preview', async () => {
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'capture_main_webview')
+      if (command === 'e2e.capturePrimaryView')
         return Promise.resolve('data:image/png;base64,aGVsbG8=')
-      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
-      if (command === 'confirm_feedback_bundle') {
+      if (command === 'feedback.previewBundle') return Promise.resolve(previewResult)
+      if (command === 'feedback.confirmBundle') {
         return Promise.resolve({ reportId: 'WF-1', path: '/tmp/wework-feedback-WF-1.zip' })
       }
       return Promise.reject(new Error(`Unexpected command: ${command}`))
@@ -624,7 +624,7 @@ describe('TaskFeedbackDialog', () => {
     fireEvent.click(screen.getByTestId('task-feedback-confirm-button'))
 
     await waitFor(() => expect(screen.getByText('已导出')).toBeInTheDocument())
-    expect(invokeMock).toHaveBeenCalledWith('confirm_feedback_bundle', {
+    expect(invokeMock).toHaveBeenCalledWith('feedback.confirmBundle', {
       decision: { stagingId: 'staging-1' },
     })
     expect(screen.getByText('/tmp/wework-feedback-WF-1.zip')).toBeInTheDocument()
@@ -632,10 +632,10 @@ describe('TaskFeedbackDialog', () => {
 
   test('discards the staged bundle when the user goes back from the preview', async () => {
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'capture_main_webview')
+      if (command === 'e2e.capturePrimaryView')
         return Promise.resolve('data:image/png;base64,aGVsbG8=')
-      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
-      if (command === 'discard_feedback_bundle') return Promise.resolve(null)
+      if (command === 'feedback.previewBundle') return Promise.resolve(previewResult)
+      if (command === 'feedback.discardBundle') return Promise.resolve(null)
       return Promise.reject(new Error(`Unexpected command: ${command}`))
     })
     render(
@@ -657,19 +657,19 @@ describe('TaskFeedbackDialog', () => {
     await waitFor(() =>
       expect(screen.getByTestId('task-feedback-group-standard-checkbox')).toBeInTheDocument()
     )
-    expect(invokeMock).toHaveBeenCalledWith('discard_feedback_bundle', {
+    expect(invokeMock).toHaveBeenCalledWith('feedback.discardBundle', {
       decision: { stagingId: 'staging-1' },
     })
-    expect(invokeMock).not.toHaveBeenCalledWith('confirm_feedback_bundle', expect.anything())
+    expect(invokeMock).not.toHaveBeenCalledWith('feedback.confirmBundle', expect.anything())
   })
 
   test('discards the staged bundle when the dialog is closed from the preview', async () => {
     const onClose = vi.fn()
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'capture_main_webview')
+      if (command === 'e2e.capturePrimaryView')
         return Promise.resolve('data:image/png;base64,aGVsbG8=')
-      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
-      if (command === 'discard_feedback_bundle') return Promise.resolve(null)
+      if (command === 'feedback.previewBundle') return Promise.resolve(previewResult)
+      if (command === 'feedback.discardBundle') return Promise.resolve(null)
       return Promise.reject(new Error(`Unexpected command: ${command}`))
     })
     render(
@@ -691,7 +691,7 @@ describe('TaskFeedbackDialog', () => {
     fireEvent.click(screen.getByTestId('task-feedback-close-button'))
 
     await waitFor(() => expect(onClose).toHaveBeenCalled())
-    expect(invokeMock).toHaveBeenCalledWith('discard_feedback_bundle', {
+    expect(invokeMock).toHaveBeenCalledWith('feedback.discardBundle', {
       decision: { stagingId: 'staging-1' },
     })
   })

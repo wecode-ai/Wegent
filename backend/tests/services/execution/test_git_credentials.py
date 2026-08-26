@@ -56,9 +56,7 @@ def test_build_execution_git_user_info_does_not_fallback_for_known_domain():
         ]
     )
 
-    user_info = git_credentials.build_execution_git_user_info(
-        user, "git.intra.weibo.com"
-    )
+    user_info = git_credentials.build_execution_git_user_info(user, "git.example.com")
 
     assert (
         git_credentials.classify_git_auth_transport(user_info)
@@ -72,7 +70,7 @@ def test_masked_token_uses_registered_resolver(mocker):
     user = _user(
         [
             {
-                "git_domain": "git.intra.weibo.com",
+                "git_domain": "git.example.com",
                 "git_token": "***",
                 "git_login": "alice",
             }
@@ -82,10 +80,10 @@ def test_masked_token_uses_registered_resolver(mocker):
     mocker.patch.object(git_credentials, "_placeholder_token_resolver", resolver)
 
     user_info = git_credentials.build_execution_git_user_info(
-        user, "https://git.intra.weibo.com"
+        user, "https://git.example.com"
     )
 
-    resolver.assert_called_once_with(user, "git.intra.weibo.com")
+    resolver.assert_called_once_with(user, "git.example.com")
     assert (
         git_credentials.classify_git_auth_transport(user_info)
         == GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN
@@ -97,7 +95,7 @@ def test_unresolved_masked_token_stays_on_legacy_secret_path(mocker):
     user = _user(
         [
             {
-                "git_domain": "git.intra.weibo.com",
+                "git_domain": "git.example.com",
                 "git_token": "***",
                 "git_login": "alice",
             }
@@ -105,9 +103,7 @@ def test_unresolved_masked_token_stays_on_legacy_secret_path(mocker):
     )
     mocker.patch.object(git_credentials, "_placeholder_token_resolver", None)
 
-    user_info = git_credentials.build_execution_git_user_info(
-        user, "git.intra.weibo.com"
-    )
+    user_info = git_credentials.build_execution_git_user_info(user, "git.example.com")
 
     assert (
         git_credentials.classify_git_auth_transport(user_info)

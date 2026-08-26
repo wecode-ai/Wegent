@@ -172,6 +172,8 @@ Best for personal or team-owned plugins.
 
 Cancelled, scan-rejected, or upload/scan-expired submissions do not reserve a version permanently. The client may call `init` again with the same `version`; an upload or scan that is still active returns `409` so concurrent submissions cannot overwrite each other.
 
+Cloud Plugin Creator does not upload a ZIP or create a separate draft record during creation. Source stays under `$WEGENT_TASK_WORKSPACE/plugins/<plugin-name>`, and `plugin-workspace describe` writes a result marker into the current Task conversation. When the user chooses Share or Publish on that result card, Wework sends a follow-up to the original Task. Its Executor runs `plugin-workspace publish`, revalidates and packages the current source, and then calls the submission APIs above. Workspace restoration and archival follow the existing Task lifecycle; unpublished content is not listed in the plugin center.
+
 ### WeWork official plugins
 
 Best for company-maintained built-in capabilities. Identity fields:

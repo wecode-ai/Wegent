@@ -1,5 +1,5 @@
 import i18n from '@/i18n'
-import type { AppLanguagePreference } from '@/tauri/appPreferences'
+import type { AppLanguagePreference } from '@/desktop/appPreferences'
 
 export const languagePreferenceOptions: Array<{
   value: AppLanguagePreference

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'vitest'
-import { APP_PREFERENCES_CHANGED_EVENT, defaultAppPreferences } from '@/tauri/appPreferences'
+import { APP_PREFERENCES_CHANGED_EVENT, defaultAppPreferences } from '@/desktop/appPreferences'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
   appendRuntimeTerminalContext,

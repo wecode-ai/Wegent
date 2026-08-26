@@ -145,6 +145,7 @@ async function verifySystemDragPanelLayout(control) {
         text: 'System drag Popout Window verification',
         paths: [],
       }),
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
   )
   try {

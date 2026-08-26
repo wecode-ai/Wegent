@@ -26,6 +26,47 @@ describe('resolveLocalTodoProjects', () => {
     ])
   })
 
+  it('assigns a stable UI id to local runtime projects without backend ids', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: {
+            key: 'local-project',
+            stateDeviceId: 'local-device',
+            name: 'Local project',
+            kind: 'local',
+          },
+          deviceWorkspaces: [
+            {
+              id: 1,
+              deviceId: 'local-device',
+              deviceName: 'Local',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/local-project',
+              workspaceKind: 'workspace',
+              workspaceSource: 'local',
+              mapped: true,
+              available: true,
+              tasks: [],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+
+    expect(resolveLocalTodoProjects([], runtimeWork)).toEqual([
+      expect.objectContaining({
+        id: expect.any(Number),
+        name: 'Local project',
+        config: expect.objectContaining({
+          workspace: expect.objectContaining({ localPath: '/workspace/local-project' }),
+        }),
+      }),
+    ])
+  })
+
   it('keeps stored metadata and excludes remote project descriptors', () => {
     const stored: ProjectWithTasks = {
       id: 11,

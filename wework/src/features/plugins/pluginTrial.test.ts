@@ -243,6 +243,30 @@ describe('plugin trial state', () => {
     )
   })
 
+  test('queues a prompted plugin reference for a local workspace', () => {
+    expect(
+      queuePluginReferenceTrial({
+        pluginName: 'smart-app-builder',
+        marketplaceName: 'wework-personal',
+        displayName: '智能工作台开发助手',
+        openInNewChat: true,
+        targetWorkspace: {
+          deviceId: ' local-device-1 ',
+          path: ' /tmp/blank-workbench ',
+        },
+      })
+    ).toBe(true)
+
+    expect(consumePluginTrial()).toEqual(
+      expect.objectContaining({
+        targetWorkspace: {
+          deviceId: 'local-device-1',
+          path: '/tmp/blank-workbench',
+        },
+      })
+    )
+  })
+
   test('queues plugin templates for the trial composer', () => {
     expect(
       queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'), {

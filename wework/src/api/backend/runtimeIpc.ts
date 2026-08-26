@@ -1,5 +1,5 @@
 import { createSocketClient, type AuthenticatedSocketClient } from '@wegent/chat-core'
-import type { LocalExecutorEvent } from '@/tauri/localExecutor'
+import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 
 const WEWORK_RUNTIME_NAMESPACE = '/wework-runtime'
 const REQUEST_EVENT = 'runtime:request'
@@ -38,6 +38,7 @@ export interface CloudRuntimeIpcClient {
     timeoutMs?: number
   ) => Promise<T>
   subscribe: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
+  reconnect: () => Promise<void>
   dispose: () => void
 }
 
@@ -71,6 +72,10 @@ export function createCloudRuntimeIpcClient(
       }
       client.socket.on(RUNTIME_EVENT, runtimeHandler)
       return () => client.socket.off(RUNTIME_EVENT, runtimeHandler)
+    },
+    async reconnect() {
+      client.disconnect()
+      await client.connect(undefined, true)
     },
     dispose() {
       client.dispose()

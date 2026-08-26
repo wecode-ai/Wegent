@@ -1,28 +1,24 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, test, vi, beforeEach } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WindowFrameControls } from './WindowFrameControls'
 
 const mocks = vi.hoisted(() => {
-  const unlisten = vi.fn()
-  const windowMock = {
-    minimize: vi.fn().mockResolvedValue(undefined),
-    maximize: vi.fn().mockResolvedValue(undefined),
-    unmaximize: vi.fn().mockResolvedValue(undefined),
-    close: vi.fn().mockResolvedValue(undefined),
-    isMaximized: vi.fn().mockResolvedValue(false),
-    onResized: vi.fn().mockResolvedValue(unlisten),
+  return {
+    desktopInvoke: vi.fn(),
   }
-  return { unlisten, windowMock }
 })
 
-vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: vi.fn(() => mocks.windowMock),
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: mocks.desktopInvoke,
 }))
 
 describe('WindowFrameControls', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mocks.windowMock.isMaximized.mockResolvedValue(false)
+    mocks.desktopInvoke.mockImplementation((capability: string) => {
+      if (capability === 'window.getState') return Promise.resolve({ maximized: false })
+      return Promise.resolve(undefined)
+    })
   })
 
   test('renders minimize, maximize and close buttons', () => {
@@ -32,71 +28,46 @@ describe('WindowFrameControls', () => {
     expect(screen.getByTestId('window-close-button')).toBeInTheDocument()
   })
 
-  test('minimize button calls window.minimize', async () => {
+  test('minimize button calls the Electron host', async () => {
     render(<WindowFrameControls />)
     fireEvent.click(screen.getByTestId('window-minimize-button'))
-    await waitFor(() => expect(mocks.windowMock.minimize).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mocks.desktopInvoke).toHaveBeenCalledWith('window.minimize'))
   })
 
-  test('maximize button calls window.maximize when not maximized', async () => {
+  test('maximize button toggles the Electron window state', async () => {
     render(<WindowFrameControls />)
     fireEvent.click(screen.getByTestId('window-maximize-button'))
-    await waitFor(() => expect(mocks.windowMock.maximize).toHaveBeenCalledTimes(1))
-    expect(mocks.windowMock.unmaximize).not.toHaveBeenCalled()
+    await waitFor(() => expect(mocks.desktopInvoke).toHaveBeenCalledWith('window.toggleMaximize'))
   })
 
-  test('maximize button calls window.unmaximize when already maximized from initial state', async () => {
-    mocks.windowMock.isMaximized.mockResolvedValue(true)
-
-    render(<WindowFrameControls />)
-    await waitFor(() => expect(mocks.windowMock.isMaximized).toHaveBeenCalled())
-
-    fireEvent.click(screen.getByTestId('window-maximize-button'))
-    await waitFor(() => expect(mocks.windowMock.unmaximize).toHaveBeenCalledTimes(1))
-    expect(mocks.windowMock.maximize).not.toHaveBeenCalled()
-  })
-
-  test('maximize button calls window.unmaximize when already maximized', async () => {
-    let capturedHandler: (() => void) | undefined
-    mocks.windowMock.onResized.mockImplementationOnce((handler: () => void) => {
-      capturedHandler = handler
-      return Promise.resolve(mocks.unlisten)
+  test('shows restore semantics when the Electron window is maximized', async () => {
+    mocks.desktopInvoke.mockImplementation((capability: string) => {
+      if (capability === 'window.getState') return Promise.resolve({ maximized: true })
+      return Promise.resolve(undefined)
     })
-    mocks.windowMock.isMaximized.mockResolvedValue(true)
 
     render(<WindowFrameControls />)
-    capturedHandler?.()
-    await waitFor(() => expect(mocks.windowMock.isMaximized).toHaveBeenCalled())
-
-    fireEvent.click(screen.getByTestId('window-maximize-button'))
-    await waitFor(() => expect(mocks.windowMock.unmaximize).toHaveBeenCalledTimes(1))
-    expect(mocks.windowMock.maximize).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(screen.getByTestId('window-maximize-button')).toHaveAttribute(
+        'aria-label',
+        'window.restore'
+      )
+    )
   })
 
   test('close button requests the standard window close flow', async () => {
     render(<WindowFrameControls />)
     fireEvent.click(screen.getByTestId('window-close-button'))
-    await waitFor(() => expect(mocks.windowMock.close).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mocks.desktopInvoke).toHaveBeenCalledWith('window.close'))
   })
 
-  test('subscribes to resize events to update maximized state', async () => {
+  test('refreshes maximized state after a resize event', async () => {
     render(<WindowFrameControls />)
-    expect(mocks.windowMock.onResized).toHaveBeenCalled()
-  })
+    await waitFor(() => expect(mocks.desktopInvoke).toHaveBeenCalledWith('window.getState'))
+    mocks.desktopInvoke.mockClear()
 
-  test('updates maximized state on resize', async () => {
-    let capturedHandler: (() => void) | undefined
-    mocks.windowMock.onResized.mockImplementationOnce((handler: () => void) => {
-      capturedHandler = handler
-      return Promise.resolve(mocks.unlisten)
-    })
-    mocks.windowMock.isMaximized.mockResolvedValue(true)
+    fireEvent(window, new Event('resize'))
 
-    render(<WindowFrameControls />)
-    expect(mocks.windowMock.onResized).toHaveBeenCalled()
-    expect(capturedHandler).toBeDefined()
-    capturedHandler?.()
-
-    await waitFor(() => expect(mocks.windowMock.isMaximized).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.desktopInvoke).toHaveBeenCalledWith('window.getState'))
   })
 })

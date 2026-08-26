@@ -544,7 +544,7 @@ const neverResolvingCloudRequest = new Promise<never>(() => undefined);
 
 测试环境：
 
-- 隔离的真实 Tauri 会话。
+- 隔离的真实 Electron 会话。
 - 本地 Executor 正常。
 - 保存一份有效但当前不可达的云端连接配置，或通过测试云端服务稳定模拟连接后断开。
 - 创建至少一个本地项目和一条本地任务。
@@ -562,10 +562,10 @@ const neverResolvingCloudRequest = new Promise<never>(() => undefined);
 
 不得通过重试获得通过结果。出现间歇性失败时必须定位并修复。
 
-### 8.4 真实 Tauri 验证
+### 8.4 真实 Electron 验证
 
 由于修改 Wework UI、服务路由和本地运行时边界，必须使用
-`pnpm --filter wework ai:verify` 完成真实 Tauri 验证。
+`pnpm --filter wework ai:verify` 完成真实 Electron 验证。
 
 至少验证：
 
@@ -578,7 +578,7 @@ const neverResolvingCloudRequest = new Promise<never>(() => undefined);
 - 从本地详情返回项目首页。
 - 重新加载和标签页恢复。
 
-保留 `app.log`、`executor.log` 和 Tauri 日志作为请求边界证据。
+保留 `app.log`、`executor.log` 和 Electron 日志作为请求边界证据。
 
 ## 9. 诊断日志
 
@@ -593,7 +593,7 @@ console.info("[ProjectSpace] request", {
 });
 ```
 
-测试和真实 Tauri 验证应能够根据日志确认：
+测试和真实 Electron 验证应能够根据日志确认：
 
 - 本地详情只出现 `source=local`。
 - 云端列表失败不会阻塞本地列表完成事件。
@@ -641,7 +641,7 @@ console.info("[ProjectSpace] request", {
 7. 本地项目自动化不使用 Backend 项目自动化 API。
 8. 全局聚合视图按来源独立加载和失败。
 9. 独立自动化页面中本地数据不等待云端设备。
-10. 聚焦单元测试、组件测试、Desktop E2E 和真实 Tauri 验证全部通过。
+10. 聚焦单元测试、组件测试、Desktop E2E 和真实 Electron 验证全部通过。
 11. 云端不可达时，本地项目列表和详情在正常交互时间内可用。
 12. 没有通过重试、fallback、静默 catch 或跳过测试掩盖失败。
 
@@ -658,4 +658,4 @@ console.info("[ProjectSpace] request", {
 7. `test(wework): cover offline local project boundaries`
 
 每个提交都应保持可编译，并运行对应的聚焦测试。最终提交前运行 Wework 的完整测试和真实
-Tauri 验证。
+Electron 验证。

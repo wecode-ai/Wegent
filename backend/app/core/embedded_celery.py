@@ -20,6 +20,8 @@ Usage:
 """
 
 import logging
+import os
+import sys
 import threading
 from typing import Optional
 
@@ -32,6 +34,15 @@ _worker_thread: Optional[threading.Thread] = None
 _beat_thread: Optional[threading.Thread] = None
 _beat_instance = None  # Store Beat instance for graceful shutdown
 _shutdown_event = threading.Event()
+
+
+def _prepare_embedded_worker_environment() -> None:
+    """Prevent Celery's macOS workaround from hiding system proxy settings."""
+    if sys.platform == "darwin":
+        # Celery normally sets this non-empty dummy variable for standalone
+        # workers. In embedded mode that mutates the Backend process environment,
+        # causing urllib/httpx to skip the actual macOS system proxy settings.
+        os.environ["celery_dummy_proxy"] = ""
 
 
 def _run_worker(app: Celery) -> None:
@@ -80,6 +91,7 @@ def start_embedded_celery() -> None:
     from app.core.celery_app import celery_app
 
     _shutdown_event.clear()
+    _prepare_embedded_worker_environment()
 
     # Start worker thread
     _worker_thread = threading.Thread(

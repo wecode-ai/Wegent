@@ -10,7 +10,10 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import LoopItem, LoopItemTaskBinding, loop_datetime_is_unset
 from app.schemas.base_role import BaseRole
-from app.schemas.issue_workflow import WorkflowNodeDecisionRequest
+from app.schemas.issue_workflow import (
+    WorkflowNodeDecisionRequest,
+    workflow_node_execution_mode,
+)
 from app.services.delivery.access import require_loop_item_access
 from app.services.project_workflow_projection import (
     apply_workflow_nodes,
@@ -67,7 +70,7 @@ class IssueWorkflowDecisionService:
         )
         if node is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Workflow node not found")
-        if node.get("automation_rule_id"):
+        if workflow_node_execution_mode(node) == "robot":
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Automated workflow stages do not accept human decisions",

@@ -1,10 +1,7 @@
-import { invoke } from '@tauri-apps/api/core'
-
 export interface FeedbackSubmitResult {
   report_id: string
   project_id: string
   item_id: string
-  created_by_user_id: number
   duplicate: boolean
 }
 
@@ -20,10 +17,9 @@ export function createFeedbackApi(feedbackUrl: string, getToken: () => string | 
     async submit(input: FeedbackSubmitInput): Promise<FeedbackSubmitResult> {
       const accessToken = getToken()
       if (!accessToken) throw new Error('反馈通道异常，请联系开发者')
-      const apiUrl = new URL(feedbackUrl, window.location.origin).toString()
-      return invoke<FeedbackSubmitResult>('submit_feedback_bundle', {
+      return invokeDesktopHost<FeedbackSubmitResult>('feedback.submitBundle', {
         request: {
-          apiUrl,
+          apiUrl: new URL(feedbackUrl, window.location.origin).toString(),
           accessToken,
           stagingId: input.stagingId,
           title: input.title,
@@ -34,3 +30,4 @@ export function createFeedbackApi(feedbackUrl: string, getToken: () => string | 
     },
   }
 }
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'

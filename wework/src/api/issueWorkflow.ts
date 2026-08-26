@@ -2,6 +2,7 @@ import type {
   CloudLoopItem,
   IssueWorkflowInstance,
   ProjectWorkflowDefinition,
+  WorkflowNodeDefinition,
   WorkflowNodeInstance,
 } from './deliveries'
 
@@ -14,6 +15,12 @@ export interface WorkflowTaskBinding {
   task_id: string
   workflow_node_id?: string | null
   linked_at?: string
+}
+
+export function workflowNodeExecutionMode(
+  node: Pick<WorkflowNodeDefinition, 'execution_mode' | 'automation_rule_id'>
+): 'human' | 'robot' {
+  return node.execution_mode ?? (node.automation_rule_id ? 'robot' : 'human')
 }
 
 export function instantiateIssueWorkflow(

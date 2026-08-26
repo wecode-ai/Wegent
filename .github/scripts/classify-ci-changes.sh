@@ -10,7 +10,6 @@ declare -A changed=(
   [knowledge_engine]=false
   [frontend]=false
   [wework]=false
-  [wework_rust]=false
   [wegent_cli]=false
   [platform_e2e]=false
   [wework_e2e]=false
@@ -59,7 +58,6 @@ classify_path() {
     .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
-      .github/scripts/install-wework-tauri-system-dependencies.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh)
       changed[wework_e2e]=true
       ;;
@@ -104,11 +102,6 @@ classify_path() {
       changed[platform_e2e]=true
       changed[wework_e2e]=true
       ;;
-    wework/src-tauri/*)
-      changed[wework]=true
-      changed[wework_rust]=true
-      changed[wework_e2e]=true
-      ;;
     wework/*)
       changed[wework]=true
       changed[wework_e2e]=true
@@ -135,6 +128,6 @@ else
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-for key in backend executor executor_manager shared knowledge_engine frontend wework wework_rust wegent_cli platform_e2e wework_e2e; do
+for key in backend executor executor_manager shared knowledge_engine frontend wework wegent_cli platform_e2e wework_e2e; do
   printf '%s=%s\n' "$key" "${changed[$key]}" >> "$output_file"
 done
