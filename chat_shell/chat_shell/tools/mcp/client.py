@@ -127,30 +127,9 @@ def wrap_tool_with_protection(
                 if arun_accepts_config and "config" not in kwargs:
                     kwargs["config"] = None
 
-                is_interactive_form = "interactive_form_question" in tool.name
-                if is_interactive_form:
-                    logger.info(
-                        "[MCP:InteractiveFormDiagnostic] invoking tool=%s "
-                        "response_format=%s argument_keys=%s",
-                        tool.name,
-                        response_format,
-                        sorted(key for key in kwargs if key != "config"),
-                    )
-                result = await asyncio.wait_for(
+                return await asyncio.wait_for(
                     original_arun(*args, **kwargs), timeout=timeout
                 )
-                if is_interactive_form:
-                    result_keys = (
-                        sorted(result.keys()) if isinstance(result, dict) else []
-                    )
-                    logger.info(
-                        "[MCP:InteractiveFormDiagnostic] completed tool=%s "
-                        "result_type=%s result_keys=%s",
-                        tool.name,
-                        type(result).__name__,
-                        result_keys,
-                    )
-                return result
             return _format_error(f"Error: Tool {tool.name} has no async implementation")
         except asyncio.TimeoutError:
             error_msg = f"MCP tool '{tool.name}' timed out after {timeout}s"

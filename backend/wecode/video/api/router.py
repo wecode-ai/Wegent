@@ -26,7 +26,6 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.core.config import settings
 from app.models.user import User
 from app.services.media.weibo_image_upload import weibo_image_upload_service
 from app.services.media.weibo_media_service import resolve_weibo_media_uid
@@ -93,7 +92,9 @@ def _upstream_url(path: str, query_params: list[tuple[str, str]] | None = None) 
         normalized_path = f"aigc_video/{normalized_path}"
     elif not normalized_path.startswith("aigc_video/"):
         normalized_path = f"aigc_video/{normalized_path}"
-    url = f"{settings.AIGC_VIDEO_AGENT_URL.rstrip('/')}/{normalized_path}"
+    url = (
+        f"{video_media_settings.AIGC_VIDEO_AGENT_URL.rstrip('/')}/" f"{normalized_path}"
+    )
     if query_params:
         url = f"{url}?{urlencode(query_params)}"
     return url

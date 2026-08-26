@@ -30,6 +30,14 @@ class ExternalAttachmentPlayback:
     delivery_mode: Literal["proxy", "direct"] = "proxy"
 
 
+@dataclass(frozen=True)
+class ExternalAttachmentReference:
+    """Stable model-facing reference for an externally stored attachment."""
+
+    name: str
+    value: Any
+
+
 class ExternalAttachmentStorageAdapter(Protocol):
     """Store selected attachment types outside the default attachment backend."""
 
@@ -64,8 +72,20 @@ class ExternalAttachmentPlaybackResolver(Protocol):
         """Return playback information when this resolver handles the attachment."""
 
 
+class ExternalAttachmentReferenceResolver(Protocol):
+    """Resolve a model-facing reference for an externally stored attachment."""
+
+    def resolve_reference(
+        self,
+        *,
+        type_data: dict[str, Any],
+    ) -> ExternalAttachmentReference | None:
+        """Return a stable reference when this resolver handles the attachment."""
+
+
 _adapters: list[ExternalAttachmentStorageAdapter] = []
 _playback_resolvers: list[ExternalAttachmentPlaybackResolver] = []
+_reference_resolvers: list[ExternalAttachmentReferenceResolver] = []
 
 
 def register_external_attachment_storage_adapter(
@@ -106,4 +126,23 @@ def resolve_external_attachment_playback(
         )
         if playback is not None:
             return playback
+    return None
+
+
+def register_external_attachment_reference_resolver(
+    resolver: ExternalAttachmentReferenceResolver,
+) -> None:
+    """Register an external attachment reference resolver."""
+    _reference_resolvers.append(resolver)
+
+
+def resolve_external_attachment_reference(
+    *,
+    type_data: dict[str, Any],
+) -> ExternalAttachmentReference | None:
+    """Resolve a stable reference using the first matching resolver."""
+    for resolver in _reference_resolvers:
+        reference = resolver.resolve_reference(type_data=type_data)
+        if reference is not None:
+            return reference
     return None

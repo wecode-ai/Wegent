@@ -35,8 +35,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
-from wecode.video.api.clarification import (
-    normalize_video_clarification_questions,
+from app.services.interactive_form_extensions import (
+    normalize_interactive_form_questions,
 )
 
 logger = logging.getLogger(__name__)
@@ -333,7 +333,7 @@ def build_render_payload_from_tool_input(
     questions = tool_input.get("questions")
     if not isinstance(questions, list) or not questions:
         return None
-    questions = normalize_video_clarification_questions(
+    questions = normalize_interactive_form_questions(
         task_id=task_id,
         questions=questions,
     )
@@ -460,24 +460,11 @@ async def _notify_frontend(
         # so match by checking if the name contains "interactive_form_question".
         blocks = await session_manager.get_blocks(subtask_id)
         tool_use_id = None
-        matching_block_count = 0
         for block in reversed(blocks):
             tool_name = block.get("tool_name", "")
             if block.get("type") == "tool" and "interactive_form_question" in tool_name:
-                matching_block_count += 1
                 tool_use_id = block.get("tool_use_id")
                 break
-
-        logger.info(
-            "[InteractiveFormDiagnostic] frontend lookup: task_id=%s "
-            "subtask_id=%s block_count=%d matching_block_count=%d "
-            "tool_use_id_present=%s",
-            task_id,
-            subtask_id,
-            len(blocks),
-            matching_block_count,
-            bool(tool_use_id),
-        )
 
         if not tool_use_id:
             logger.warning(
@@ -510,13 +497,6 @@ async def _notify_frontend(
             tool_output=tool_result,
             render_payload=render_payload,
             status=BlockStatus.PENDING.value,
-        )
-        logger.info(
-            "[InteractiveFormDiagnostic] frontend update emitted: task_id=%s "
-            "subtask_id=%s tool_use_id=%s",
-            task_id,
-            subtask_id,
-            tool_use_id,
         )
     except Exception as e:
         logger.error(
@@ -577,14 +557,6 @@ async def interactive_form_question(
         Always returns {"__silent_exit__": True, "reason": "..."} to end the
         current task silently. The user's answer arrives as a new conversation.
     """
-    logger.info(
-        "[InteractiveFormDiagnostic] tool invoked: task_id=%s subtask_id=%s "
-        "user_id=%s question_count=%d",
-        token_info.task_id,
-        token_info.subtask_id,
-        token_info.user_id,
-        len(questions),
-    )
     if not questions:
         logger.error(
             "[InteractiveForm] Invalid input: task_id=%s, subtask_id=%s, questions is empty",

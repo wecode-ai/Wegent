@@ -14,6 +14,8 @@ def initialize_internal_runtime() -> None:
         return
 
     import wecode.service.qia_async_card_adapter  # noqa: F401
+    import wecode.video.api.clarification  # noqa: F401
+    import wecode.video.api.skill_context  # noqa: F401
     import wecode.video.services.generation_extension  # noqa: F401
     import wecode.video.services.image_staging  # noqa: F401
 

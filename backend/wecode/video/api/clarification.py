@@ -9,6 +9,9 @@ from typing import Any
 
 from app.db.session import SessionLocal
 from app.models.task import TaskResource
+from app.services.interactive_form_extensions import (
+    register_interactive_form_question_normalizer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,3 +161,16 @@ def normalize_video_clarification_questions(
     if not _is_one_minute_video_task(task_id):
         return questions
     return normalize_one_minute_video_questions(questions)
+
+
+def _normalize_registered_video_questions(
+    task_id: int,
+    questions: list[Any],
+) -> list[Any]:
+    return normalize_video_clarification_questions(
+        task_id=task_id,
+        questions=questions,
+    )
+
+
+register_interactive_form_question_normalizer(_normalize_registered_video_questions)

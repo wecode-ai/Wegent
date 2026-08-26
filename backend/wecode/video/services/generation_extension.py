@@ -15,8 +15,10 @@ from app.models.subtask_context import ContextStatus, SubtaskContext
 from app.models.user import User
 from app.services.attachment.external_storage import (
     ExternalAttachmentPlayback,
+    ExternalAttachmentReference,
     ExternalAttachmentStorageResult,
     register_external_attachment_playback_resolver,
+    register_external_attachment_reference_resolver,
     register_external_attachment_storage_adapter,
 )
 from app.services.execution.agents.video.extensions import (
@@ -192,6 +194,24 @@ class WeiboMediaAttachmentPlaybackResolver:
             media_type=str(type_data.get("mime_type") or "video/mp4"),
             delivery_mode="direct",
         )
+
+
+class WeiboMediaAttachmentReferenceResolver:
+    """Resolve persisted Weibo media identifiers for model-facing metadata."""
+
+    def resolve_reference(
+        self,
+        *,
+        type_data: dict[str, Any],
+    ) -> Optional[ExternalAttachmentReference]:
+        _, media_id = _stored_media_reference(type_data)
+        if media_id:
+            return ExternalAttachmentReference(name="media_id", value=media_id)
+
+        fid = type_data.get("fid")
+        if fid:
+            return ExternalAttachmentReference(name="fid", value=fid)
+        return None
 
 
 class WeiboVideoGenerationExtension:
@@ -479,4 +499,5 @@ def _https(url: str) -> str:
 
 register_external_attachment_storage_adapter(WeiboMediaAttachmentStorageAdapter())
 register_external_attachment_playback_resolver(WeiboMediaAttachmentPlaybackResolver())
+register_external_attachment_reference_resolver(WeiboMediaAttachmentReferenceResolver())
 register_video_generation_extension(WeiboVideoGenerationExtension())

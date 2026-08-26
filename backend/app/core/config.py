@@ -208,9 +208,6 @@ class Settings(BaseSettings):
     SEEDANCE_ASSET_STATUS_POLL_INTERVAL_SECONDS: int = 5
     SEEDANCE_ASSET_STATUS_TIMEOUT_SECONDS: int = 60
 
-    # External AIGC workflow used by stepped creative-video skills.
-    AIGC_VIDEO_AGENT_URL: str = ""
-
     # Default models used by image/video generation MCP tools when the current
     # task model is not a matching generation model.
     DEFAULT_IMAGE_GENERATION_MODEL: str = ""
