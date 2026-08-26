@@ -10,6 +10,7 @@ import {
   buildSourceRuntimeEnvironment,
   monitorAppProcess,
   parseArgs,
+  prepareElectronApp,
   readSessionForCleanup,
   resolveElectronLaunch,
   resolveHostTarget,
@@ -290,6 +291,105 @@ describe('resolveElectronLaunch', () => {
     ).toMatchObject({
       args: [],
     })
+  })
+})
+
+describe('prepareElectronApp', () => {
+  test.each([
+    [false, 'ai:verify:electron:prepare'],
+    [true, 'ai:verify:electron:build'],
+  ])('runs the required preparation when packaged is %s', async (packaged, script) => {
+    const child = new EventEmitter()
+    const spawnProcess = vi.fn(() => child)
+    const result = prepareElectronApp({
+      packaged,
+      environment: {},
+      platform: 'darwin',
+      spawnProcess,
+    })
+
+    child.emit('exit', 0)
+
+    await expect(result).resolves.toBeUndefined()
+    expect(spawnProcess).toHaveBeenCalledWith('pnpm', ['run', script], {
+      cwd: expect.any(String),
+      env: { CI: '1' },
+      stdio: 'inherit',
+    })
+  })
+
+  test('uses an explicitly configured packaged app without rebuilding', async () => {
+    const spawnProcess = vi.fn()
+
+    await expect(
+      prepareElectronApp({
+        packaged: true,
+        environment: { WEWORK_ELECTRON_APP_BIN: '/tmp/custom-wework' },
+        spawnProcess,
+      })
+    ).resolves.toBeUndefined()
+
+    expect(spawnProcess).not.toHaveBeenCalled()
+  })
+
+  test('wraps the preparation command for Windows', async () => {
+    const child = new EventEmitter()
+    const spawnProcess = vi.fn(() => child)
+    const result = prepareElectronApp({
+      packaged: false,
+      environment: {},
+      platform: 'win32',
+      spawnProcess,
+    })
+
+    child.emit('exit', 0)
+
+    await expect(result).resolves.toBeUndefined()
+    expect(spawnProcess).toHaveBeenCalledWith(
+      process.env.ComSpec || 'cmd.exe',
+      ['/c', 'pnpm.cmd', 'run', 'ai:verify:electron:prepare'],
+      expect.objectContaining({
+        env: { CI: '1' },
+        stdio: 'inherit',
+      })
+    )
+  })
+
+  test('preserves an explicitly configured CI value', async () => {
+    const child = new EventEmitter()
+    const spawnProcess = vi.fn(() => child)
+    const result = prepareElectronApp({
+      packaged: false,
+      environment: { CI: 'custom' },
+      platform: 'darwin',
+      spawnProcess,
+    })
+
+    child.emit('exit', 0)
+
+    await expect(result).resolves.toBeUndefined()
+    expect(spawnProcess).toHaveBeenCalledWith(
+      'pnpm',
+      ['run', 'ai:verify:electron:prepare'],
+      expect.objectContaining({
+        env: { CI: 'custom' },
+      })
+    )
+  })
+
+  test('reports a failed packaged app build', async () => {
+    const child = new EventEmitter()
+    const result = prepareElectronApp({
+      packaged: true,
+      environment: {},
+      platform: 'darwin',
+      spawnProcess: () => child,
+    })
+    const expectation = expect(result).rejects.toThrow('Electron package build exited with code 1')
+
+    child.emit('exit', 1)
+
+    await expectation
   })
 })
 

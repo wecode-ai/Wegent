@@ -367,19 +367,33 @@ async function resolveSourceElectronBinary() {
   return require('electron')
 }
 
-async function prepareSourceElectron() {
-  await new Promise((resolvePromise, reject) => {
-    const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-    const command = wrapWindowsScriptCommand(pnpmCommand, ['run', 'ai:verify:electron:prepare'])
-    const child = spawn(command.command, command.args, {
+export function prepareElectronApp({
+  packaged,
+  environment = process.env,
+  platform = process.platform,
+  spawnProcess = spawn,
+}) {
+  if (packaged && environment.WEWORK_ELECTRON_APP_BIN?.trim()) return Promise.resolve()
+  const script = packaged ? 'ai:verify:electron:build' : 'ai:verify:electron:prepare'
+  const description = packaged ? 'Electron package build' : 'Electron source preparation'
+  const preparationEnvironment = {
+    ...environment,
+    CI: environment.CI || '1',
+  }
+  return new Promise((resolvePromise, reject) => {
+    const pnpmCommand = platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+    const command = wrapWindowsScriptCommand(pnpmCommand, ['run', script], { platform })
+    const child = spawnProcess(command.command, command.args, {
       cwd: weworkDir,
-      env: process.env,
+      env: preparationEnvironment,
       stdio: 'inherit',
     })
-    child.once('error', reject)
+    child.once('error', error => {
+      reject(new Error(`${description} failed to start: ${error.message}`))
+    })
     child.once('exit', code => {
       if (code === 0) resolvePromise()
-      else reject(new Error(`Electron source preparation exited with code ${code ?? 'unknown'}`))
+      else reject(new Error(`${description} exited with code ${code ?? 'unknown'}`))
     })
   })
 }
@@ -607,7 +621,7 @@ async function main() {
   if (command === 'start') {
     validateStartOptions(options)
     const packaged = resolveOptionalBoolean(options.packaged, 'packaged') ?? false
-    if (!packaged) await prepareSourceElectron()
+    await prepareElectronApp({ packaged })
     const launch = resolveElectronLaunch({
       packaged,
       sourceBinary: packaged ? undefined : await resolveSourceElectronBinary(),
