@@ -101,6 +101,7 @@ async function waitForHttp(url: string, signal: AbortSignal): Promise<void> {
     }
     await abortableDelay(250, signal)
   }
+  if (signal.reason instanceof Error) throw signal.reason
   throw new Error(`DSH did not become reachable at ${url}`, {
     cause: signal.reason ?? lastError,
   })
