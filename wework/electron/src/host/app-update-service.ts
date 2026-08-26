@@ -57,7 +57,13 @@ export class AppUpdateService {
     this.downloadedVersion = null
     this.downloadPromise = null
     this.progress = { downloadedBytes: 0, totalBytes: null }
-    const result = await this.updater.checkForUpdates()
+    let result
+    try {
+      result = await this.updater.checkForUpdates()
+    } catch (error) {
+      if (isMissingChannelManifestError(error)) return null
+      throw error
+    }
     if (!result?.isUpdateAvailable || !result.updateInfo) return null
 
     const update = toWeworkUpdateInfo(this.currentVersion(), result.updateInfo)
@@ -105,6 +111,12 @@ export class AppUpdateService {
       this.updater.quitAndInstall(false, true)
     }
   }
+}
+
+function isMissingChannelManifestError(error: unknown): boolean {
+  return (
+    error instanceof Error && 'code' in error && error.code === 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND'
+  )
 }
 
 function toWeworkUpdateInfo(currentVersion: string, update: UpdateInfo): WeworkUpdateInfo {
