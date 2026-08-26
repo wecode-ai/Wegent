@@ -1536,7 +1536,9 @@ def test_project_automation_webhook_verifies_github_signature(
         f"/api/v1/cloud-projects/{project['id']}/automations/{rule['id']}/run",
         headers=_auth(test_token),
     )
-    assert manual_response.status_code == 409
+    assert manual_response.status_code == 200, manual_response.text
+    assert manual_response.json()["trigger"] == "manual"
+    assert manual_response.json()["automationId"] == rule["id"]
 
 
 def test_project_automation_webhook_verifies_gitlab_token(
