@@ -10,6 +10,7 @@ const scripts = [
   'electron/scripts/package-app.mjs',
   'electron/scripts/prepare-package-assets.mjs',
   'scripts/dev-mac-app.sh',
+  'scripts/prepare-ai-verify-electron.mjs',
   'scripts/prepare-codex-binary.mjs',
   'scripts/prepare-dws-binary.mjs',
   'scripts/prepare-execution-runtime.mjs',
@@ -25,6 +26,9 @@ describe('desktop resource migration', () => {
     )
     expect(packageJson.scripts['dev:desktop']).toContain('pnpm run prepare:electron')
     expect(packageJson.scripts['dev:mac']).toBe('bash scripts/dev-mac-app.sh')
+    expect(packageJson.scripts['ai:verify:electron:prepare']).toBe(
+      'node scripts/prepare-ai-verify-electron.mjs'
+    )
     expect(packageJson.scripts['ai:verify:electron:build']).toContain('pnpm run prepare:electron')
     expect(packageJson.scripts['ai:verify:electron:build']).not.toContain('pnpm run build:dsh-app')
   })
@@ -70,6 +74,15 @@ describe('desktop resource migration', () => {
     expect(source).toContain('const packagedResources = join(')
     expect(source).toContain("['resources', 'harness-runtime']")
     expect(source).not.toContain("['prepare:harness-runtime', '--materialize']")
+  })
+
+  test('prepares AI verification source mode without packaged Node resources', async () => {
+    const source = await readFile(
+      join(weworkRoot, 'scripts/prepare-ai-verify-electron.mjs'),
+      'utf8'
+    )
+
+    expect(source).not.toContain('prepare:execution-runtime')
   })
 
   test.each([
