@@ -124,12 +124,19 @@ export type HostCapability = (typeof HOST_CAPABILITIES)[number]
 
 export interface HostInvocationContext {
   principal: string
+  deferUntilResponseSent: (completion: HostCapabilityCompletion) => void
 }
+
+export type HostCapabilityCompletion = () => void | Promise<void>
 
 export type HostCapabilityHandler = (
   params: Record<string, unknown>,
   context: HostInvocationContext
 ) => unknown | Promise<unknown>
+
+interface HostInvocationOptions {
+  onResponseSent?: (completion: HostCapabilityCompletion) => void
+}
 
 export class HostCapabilityError extends Error {
   constructor(
@@ -164,7 +171,8 @@ export class HostCapabilityRouter {
   async invoke(
     principal: string,
     capability: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    options: HostInvocationOptions = {}
   ): Promise<unknown> {
     if (!isHostCapability(capability)) {
       throw new HostCapabilityError(
@@ -186,7 +194,17 @@ export class HostCapabilityRouter {
         `Desktop capability is unavailable: ${capability}`
       )
     }
-    return handler(params, { principal })
+    const completions: HostCapabilityCompletion[] = []
+    const result = await handler(params, {
+      principal,
+      deferUntilResponseSent: completion => completions.push(completion),
+    })
+    if (options.onResponseSent) {
+      completions.forEach(options.onResponseSent)
+    } else {
+      for (const completion of completions) await completion()
+    }
+    return result
   }
 }
 

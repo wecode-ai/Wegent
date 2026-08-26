@@ -132,28 +132,39 @@ describe('registerAppUpdateCapabilities', () => {
       check: vi.fn(async () => ({ currentVersion: '0.2.6', version: '0.2.7' })),
       download: vi.fn(async () => undefined),
       downloadProgress: vi.fn(() => ({ downloadedBytes: 25, totalBytes: 100 })),
-      install: vi.fn(async () => undefined),
+      createInstallAction: vi.fn(() => vi.fn(async () => undefined)),
     } as unknown as AppUpdateService
+    const installCompletions: Array<() => void | Promise<void>> = []
+    const context = {
+      principal: 'test',
+      deferUntilResponseSent: (completion: () => void | Promise<void>) =>
+        installCompletions.push(completion),
+    }
 
     registerAppUpdateCapabilities(router, appUpdates)
 
     await expect(
-      handlers.get('appUpdate.check')?.({ channel: 'stable' }, { principal: 'test' })
-    ).resolves.toEqual({ currentVersion: '0.2.6', version: '0.2.7' })
-    await handlers.get('appUpdate.download')?.({}, { principal: 'test' })
-    expect(await handlers.get('appUpdate.downloadProgress')?.({}, { principal: 'test' })).toEqual({
+      handlers.get('appUpdate.check')?.({ channel: 'stable' }, context)
+    ).resolves.toEqual({
+      currentVersion: '0.2.6',
+      version: '0.2.7',
+    })
+    await handlers.get('appUpdate.download')?.({}, context)
+    expect(await handlers.get('appUpdate.downloadProgress')?.({}, context)).toEqual({
       downloadedBytes: 25,
       totalBytes: 100,
     })
-    await handlers.get('appUpdate.install')?.({}, { principal: 'test' })
+    await handlers.get('appUpdate.install')?.({}, context)
 
     expect(appUpdates.check).toHaveBeenCalledWith('stable')
     expect(appUpdates.download).toHaveBeenCalledOnce()
     expect(appUpdates.downloadProgress).toHaveBeenCalledOnce()
-    expect(appUpdates.install).toHaveBeenCalledOnce()
-    expect(() =>
-      handlers.get('appUpdate.check')?.({ channel: 'nightly' }, { principal: 'test' })
-    ).toThrow('channel is invalid')
+    expect(appUpdates.createInstallAction).toHaveBeenCalledOnce()
+    expect(installCompletions).toHaveLength(1)
+    await installCompletions[0]()
+    expect(() => handlers.get('appUpdate.check')?.({ channel: 'nightly' }, context)).toThrow(
+      'channel is invalid'
+    )
   })
 
   test('reports update capabilities as unavailable without an updater service', () => {
@@ -166,9 +177,12 @@ describe('registerAppUpdateCapabilities', () => {
 
     registerAppUpdateCapabilities(router, undefined)
 
-    expect(() => handlers.get('appUpdate.download')?.({}, { principal: 'test' })).toThrow(
-      'App updates are unavailable'
-    )
+    expect(() =>
+      handlers.get('appUpdate.download')?.(
+        {},
+        { principal: 'test', deferUntilResponseSent: vi.fn() }
+      )
+    ).toThrow('App updates are unavailable')
   })
 })
 

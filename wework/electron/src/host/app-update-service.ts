@@ -96,12 +96,14 @@ export class AppUpdateService {
     return this.downloadPromise
   }
 
-  async install(): Promise<void> {
+  createInstallAction(): () => Promise<void> {
     if (!this.pendingVersion || this.downloadedVersion !== this.pendingVersion) {
       throw new Error('The pending Wework update has not finished downloading.')
     }
-    await this.prepareInstall()
-    this.updater.quitAndInstall(false, true)
+    return async () => {
+      await this.prepareInstall()
+      this.updater.quitAndInstall(false, true)
+    }
   }
 }
 

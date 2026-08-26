@@ -652,7 +652,9 @@ export function registerAppUpdateCapabilities(
   router.register('appUpdate.downloadProgress', () =>
     requiredAppUpdates(appUpdates).downloadProgress()
   )
-  router.register('appUpdate.install', () => requiredAppUpdates(appUpdates).install())
+  router.register('appUpdate.install', (_params, context) => {
+    context.deferUntilResponseSent(requiredAppUpdates(appUpdates).createInstallAction())
+  })
 }
 
 export function registerDesktopServiceCapabilities(

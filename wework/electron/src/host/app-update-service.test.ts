@@ -85,13 +85,37 @@ describe('AppUpdateService', () => {
 
     await appUpdate.check('beta')
     await Promise.all([appUpdate.download(), appUpdate.download()])
-    await appUpdate.install()
+    const install = appUpdate.createInstallAction()
+    expect(prepareInstall).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    await install()
 
     expect(updater.channel).toBe('beta')
     expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
     expect(appUpdate.downloadProgress()).toEqual({ downloadedBytes: 40, totalBytes: 100 })
     expect(prepareInstall).toHaveBeenCalledTimes(1)
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+  })
+
+  test('rejects install actions before the pending update finishes downloading', async () => {
+    const updater = new FakeUpdater()
+    updater.checkForUpdates.mockResolvedValue({
+      updateInfo: {
+        version: '0.2.7',
+        files: [],
+        path: 'pending',
+        sha512: 'sha',
+        releaseDate: '2026-08-25T00:00:00Z',
+      },
+      cancellationToken: {} as never,
+      downloadPromise: null,
+      isUpdateAvailable: true,
+    })
+
+    const appUpdate = service(updater)
+    await appUpdate.check('stable')
+
+    expect(() => appUpdate.createInstallAction()).toThrow('has not finished downloading')
   })
 
   test('rejects checks from an unpackaged development app', async () => {
