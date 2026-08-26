@@ -14,6 +14,18 @@ const STATE_FILE = '.wework-change-request-e2e-state'
 const TASK_PROMPT = 'Inspect the pull request status for this branch'
 const TASK_COMPLETION = 'Pull request status fixture ready'
 
+function json(response, status, body) {
+  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+  response.end(`${JSON.stringify(body)}\n`)
+}
+
+async function readJsonBody(request) {
+  let body = ''
+  request.setEncoding('utf8')
+  for await (const chunk of request) body += chunk
+  return body ? JSON.parse(body) : {}
+}
+
 async function run(command, args, cwd) {
   await execFileAsync(command, args, { cwd })
 }
@@ -155,18 +167,109 @@ export async function createDesktopScenario({
   await configureGitFixture(workspacePath)
   await createGitHubCliFixture(homePath)
   const statePath = join(homePath, STATE_FILE)
+  const gitSyncRequests = []
   await writeFile(statePath, 'pending\n')
   const capture = (control, name, selector = ACTIVE_WORKBENCH_SELECTOR) =>
     captureScreenshot(control, name, selector)
 
   return {
     async handleHttp(request, response, url) {
-      if (request.method !== 'POST' || url.pathname !== '/v1/responses') return false
-      for await (const _chunk of request) {
-        // Consume the request before returning the deterministic response.
+      if (request.method === 'GET' && url.pathname === '/api/auth/wework/config') {
+        json(response, 200, {
+          web_url: `${url.protocol}//${url.host}`,
+          socket_url: `${url.protocol}//${url.host}`,
+        })
+        return true
       }
-      writeTaskCompletion(response)
-      return true
+      if (request.method === 'GET' && url.pathname === '/api/users/me/git-accounts/sync-summary') {
+        assert.equal(request.headers.authorization, 'Bearer wework-desktop-e2e-cloud-token')
+        json(response, 200, {
+          accounts: [
+            {
+              id: 'desktop-e2e-git-account',
+              domain: 'git.example.test',
+              provider: 'gitlab',
+              login: 'desktop-e2e-user',
+              email: 'desktop-e2e@example.test',
+              effective: true,
+              duplicate_of: null,
+            },
+          ],
+          effective_count: 1,
+          duplicate_count: 0,
+        })
+        return true
+      }
+      if (request.method === 'GET' && url.pathname === '/api/devices') {
+        assert.equal(request.headers.authorization, 'Bearer wework-desktop-e2e-cloud-token')
+        json(response, 200, {
+          items: [
+            {
+              id: 71,
+              device_id: 'desktop-e2e-git-target',
+              name: 'Git Sync Remote',
+              status: 'online',
+              is_default: false,
+              device_type: 'remote',
+              bind_shell: 'claudecode',
+            },
+            {
+              id: 72,
+              device_id: 'desktop-e2e-busy-cloud',
+              name: 'Busy Cloud',
+              status: 'busy',
+              is_default: false,
+              device_type: 'cloud',
+              bind_shell: 'claudecode',
+            },
+            {
+              id: 73,
+              device_id: 'desktop-e2e-local',
+              name: 'Local Device',
+              status: 'online',
+              is_default: false,
+              device_type: 'local',
+              bind_shell: 'claudecode',
+            },
+          ],
+          total: 3,
+        })
+        return true
+      }
+      if (
+        request.method === 'PUT' &&
+        url.pathname === '/api/devices/desktop-e2e-git-target/git-accounts'
+      ) {
+        assert.equal(request.headers.authorization, 'Bearer wework-desktop-e2e-cloud-token')
+        const body = await readJsonBody(request)
+        gitSyncRequests.push(body)
+        json(response, 200, {
+          device_id: 'desktop-e2e-git-target',
+          status: 'synced',
+          synced_domains: ['git.example.test'],
+          removed_domains: [],
+          duplicate_domains: [],
+          identity_warning_domains: [],
+          cli: [
+            {
+              provider: 'glab',
+              domain: 'git.example.test',
+              status: 'configured',
+              reason_code: null,
+            },
+          ],
+          warning_codes: [],
+        })
+        return true
+      }
+      if (request.method === 'POST' && url.pathname === '/v1/responses') {
+        for await (const _chunk of request) {
+          // Consume the request before returning the deterministic response.
+        }
+        writeTaskCompletion(response)
+        return true
+      }
+      return false
     },
 
     async verify(control) {
@@ -263,8 +366,64 @@ export async function createDesktopScenario({
         'true',
         'PR/MR status lookup should be enabled by default'
       )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="git-device-sync-section"]')),
+        0,
+        'Device Git configuration should not remain under Git hosting settings'
+      )
+      await control.command('click', '[data-testid="settings-nav-connections"]')
+      await control.command('waitFor', '[data-testid="cloud-connection-status-card"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="git-device-sync-accounts"]', {
+        text: 'gitlab · git.example.test',
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            '[data-testid="git-device-sync-select"] option[value="desktop-e2e-git-target"]'
+          )
+        ),
+        1,
+        'The eligible remote device was not available as a Git sync target'
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            '[data-testid="git-device-sync-select"] option[value="desktop-e2e-busy-cloud"]'
+          )
+        ),
+        0,
+        'A busy cloud device was offered as a Git sync target'
+      )
+      await control.command('select', '[data-testid="git-device-sync-select"]', {
+        value: 'desktop-e2e-git-target',
+      })
+      await control.command('clickWhenEnabled', '[data-testid="git-device-sync-submit"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="git-device-sync-result"]', {
+        text: '已同步 1 个域',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="git-device-sync-terminal-hint"]', {
+        text: '打开新终端',
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.deepEqual(
+        gitSyncRequests,
+        [{ allow_empty: false }],
+        'Git credentials were not synced exactly once to the explicitly selected device'
+      )
       await capture(control, 'change-request-status-06-settings-enabled.png', 'body')
 
+      await control.command('click', '[data-testid="settings-nav-git-hosting"]')
+      await control.command('waitFor', '[data-testid="git-hosting-settings-page"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="change-request-status-switch"]')
       await waitForAttribute(
         control,
@@ -315,7 +474,7 @@ export async function createDesktopScenario({
     },
 
     diagnostics() {
-      return { changeRequestState: statePath }
+      return { changeRequestState: statePath, gitSyncRequestCount: gitSyncRequests.length }
     },
   }
 }

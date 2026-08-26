@@ -4,7 +4,10 @@
 
 """Tests for OpenAI request conversion defaults."""
 
-from shared.models.execution import ExecutionRequest
+from shared.models.execution import (
+    GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN,
+    ExecutionRequest,
+)
 from shared.models.knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 from shared.models.openai_converter import OpenAIRequestConverter
 
@@ -67,6 +70,22 @@ def test_round_trip_preserves_skill_reference_metadata():
 
     assert converted.skill_refs == request.skill_refs
     assert converted.preload_skill_refs == request.preload_skill_refs
+
+
+def test_round_trip_preserves_git_auth_transport():
+    request = ExecutionRequest(
+        git_url="https://github.com/wecode-ai/wegent.git",
+        git_auth_transport=GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN,
+    )
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert (
+        openai_request["metadata"]["git_auth_transport"]
+        == GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN
+    )
+    assert converted.git_auth_transport == GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN
 
 
 def test_round_trip_preserves_selected_knowledge_context():

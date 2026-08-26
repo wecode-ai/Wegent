@@ -1,10 +1,11 @@
 import { createServer } from 'node:http'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { DshRuntime } from './dsh-runtime.js'
 
 const servers: Array<ReturnType<typeof createServer>> = []
 
 afterEach(async () => {
+  vi.unstubAllGlobals()
   await Promise.all(
     servers.splice(0).map(
       server =>
@@ -16,6 +17,22 @@ afterEach(async () => {
 })
 
 describe('DSH runtime readiness', () => {
+  test('preserves the timeout reason while a probe request is still in flight', async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        if (!signal) throw new Error('Probe request has no abort signal')
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(new DshRuntime({ url: 'http://127.0.0.1/pending' }).start(10)).rejects.toThrow(
+      'DSH startup timed out'
+    )
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
   test('does not treat a missing route as ready', async () => {
     const server = createServer((_request, response) => {
       response.writeHead(404)
