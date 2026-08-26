@@ -1,12 +1,17 @@
-const status = document.querySelector('#status')
+const status = document.querySelector('#runtime-status')
 const details = document.querySelector('#details')
 const reloadButton = document.querySelector('#reload-dsh')
 const overlay = document.querySelector('#runtime-overlay')
+const runtimeCard = document.querySelector('.runtime-card')
+const splash = document.querySelector('#splash-root')
 
 async function refreshState() {
   try {
     const state = await window.weworkElectron.getRuntimeState()
     overlay.dataset.phase = state.phase
+    const failed = state.phase === 'failed'
+    runtimeCard.hidden = !failed
+    splash.hidden = failed
     status.textContent = state.ready
       ? '运行时已就绪'
       : state.phase === 'failed'
@@ -19,6 +24,8 @@ async function refreshState() {
     reloadButton.disabled = false
   } catch (error) {
     overlay.dataset.phase = 'failed'
+    runtimeCard.hidden = false
+    splash.hidden = true
     status.textContent = `无法读取运行时状态：${error instanceof Error ? error.message : String(error)}`
     details.hidden = false
     details.textContent = error instanceof Error ? error.stack || error.message : String(error)

@@ -1946,6 +1946,16 @@ async fn read_shared_turn_notifications(
         let notification = shared_notification_result(received, last_outcome.clone())?;
         let message = match notification {
             SharedNotification::Message(message) => message,
+            SharedNotification::Lagged(skipped) => {
+                log_executor_event(
+                    "codex shared notification stream recovered from lag",
+                    &[
+                        ("thread_id", thread_id.to_owned()),
+                        ("skipped", skipped.to_string()),
+                    ],
+                );
+                continue;
+            }
             SharedNotification::Completed(outcome) => {
                 if cancellation_requested {
                     return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
@@ -2194,6 +2204,7 @@ fn codex_notification_has_initial_progress(message: &Value, state: &CodexRunStat
 
 enum SharedNotification {
     Message(Value),
+    Lagged(u64),
     Completed(ExecutionOutcome),
 }
 
@@ -2203,8 +2214,8 @@ fn shared_notification_result(
 ) -> Result<SharedNotification, String> {
     match result {
         Ok(message) => Ok(SharedNotification::Message(message)),
-        Err(broadcast::error::RecvError::Lagged(_)) => {
-            Err("codex app-server notification stream lagged".to_owned())
+        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+            Ok(SharedNotification::Lagged(skipped))
         }
         Err(broadcast::error::RecvError::Closed) => last_outcome
             .map(SharedNotification::Completed)
