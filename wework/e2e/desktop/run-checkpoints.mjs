@@ -31,6 +31,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
   'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
+  'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
   'tray-lifecycle': './scenarios/tray-lifecycle.scenario.mjs',
   'project-automation': './scenarios/project-automation.scenario.mjs',
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
@@ -56,6 +57,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'split-workbench',
   'native-window-startup',
   'native-window-chrome',
+  'renderer-storage',
   'tray-lifecycle',
   'temporary-chat',
 ])

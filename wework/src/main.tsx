@@ -17,6 +17,7 @@ import { installDesktopExtensions } from '@extensions/desktop'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
 import { initializeWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
+import { initializeDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 
 const isSystemDragPanel = isDesktopRuntime() && window.location.pathname.endsWith('/system-drag')
 if (!isSystemDragPanel) {
@@ -73,7 +74,13 @@ function renderStartupFailure(error: unknown): void {
 }
 
 let shouldRenderApp = true
-if (!isSystemDragPanel) {
+try {
+  await initializeDesktopLocalStoragePersistence()
+} catch (error) {
+  renderStartupFailure(error)
+  shouldRenderApp = false
+}
+if (!isSystemDragPanel && shouldRenderApp) {
   try {
     await installWeworkAutomationBridge()
   } catch (error) {

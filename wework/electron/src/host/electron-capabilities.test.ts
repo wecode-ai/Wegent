@@ -12,11 +12,13 @@ import {
   registerBrowserHistoryCapabilities,
   registerCoreDshPluginCapabilities,
   registerDesktopServiceCapabilities,
+  registerRendererStorageCapabilities,
 } from './electron-capabilities.js'
 import { HOST_CAPABILITIES } from './capability-router.js'
 import type { AppUpdateService } from './app-update-service.js'
 import type { FeedbackBundleManager } from './feedback-bundle-manager.js'
 import type { WorkbenchPluginManager } from './workbench-plugin-manager.js'
+import type { RendererStorageStore } from './renderer-storage-store.js'
 
 function createWebContents(input: {
   captureDataUrl?: string
@@ -184,6 +186,49 @@ describe('registerAppUpdateCapabilities', () => {
         { principal: 'test', deferUntilResponseSent: vi.fn() }
       )
     ).toThrow('App updates are unavailable')
+  })
+})
+
+describe('registerRendererStorageCapabilities', () => {
+  test('validates and forwards renderer storage initialization and updates', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const rendererStorage = {
+      initialize: vi.fn(async entries => entries),
+      update: vi.fn(async () => undefined),
+    } as unknown as RendererStorageStore
+
+    registerRendererStorageCapabilities(router, rendererStorage)
+
+    await expect(
+      handlers.get('rendererStorage.initialize')?.(
+        { entries: { appearance: 'dark' } },
+        { principal: 'test' }
+      )
+    ).resolves.toEqual({ appearance: 'dark' })
+    await expect(
+      handlers.get('rendererStorage.update')?.(
+        {
+          clear: false,
+          changes: { appearance: 'light', removed: null },
+        },
+        { principal: 'test' }
+      )
+    ).resolves.toEqual({ persisted: true })
+    expect(rendererStorage.update).toHaveBeenCalledWith({
+      clear: false,
+      changes: { appearance: 'light', removed: null },
+    })
+    await expect(
+      handlers.get('rendererStorage.update')?.(
+        { clear: 'false', changes: {} },
+        { principal: 'test' }
+      )
+    ).rejects.toThrow('clear is invalid')
   })
 })
 

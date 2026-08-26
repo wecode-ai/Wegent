@@ -17,6 +17,16 @@ Cloud connection state is owned by the frontend `cloud-connection` layer and is 
 - Cloud login token, expiry, cloud user, and connection time.
 - Current status: disconnected, connecting, connected, expired, or error.
 
+The packaged Electron desktop mirrors the renderer's complete `localStorage` into
+`renderer-local-storage.json` under the app `userData` directory and restores it
+before other frontend services initialize. If a Core DSH restart changes the page
+origin by selecting a new random port, cloud connection state, local models,
+unsent drafts, layout state, and other UI preferences backed by `localStorage`
+therefore remain available. The main process serializes updates, writes through
+atomic file replacement, and uses mode `0600` on Unix. Explicitly disconnecting,
+deleting a configuration, or clearing its state also removes the durable copy.
+The web app, which has no Electron host, does not use this desktop mirror.
+
 Users may enter either the Backend root URL or an `/api` URL. The frontend normalizes that input into HTTP API and Socket.IO connection settings. Connecting first checks `/health`, then calls `/auth/wework/sessions` to create a short-lived authorization session. Backend returns a complete `authorize_url`; local Wework opens that cloud authorization page in the embedded authorization browser and polls the session result with the client-only `poll_token`.
 
 The desktop authorization window defaults to `1000 × 640` with a minimum size of `960 × 620`, which accommodates enterprise login pages that do not provide responsive layouts. It stays hidden until positioning completes, remains above ordinary windows after it is shown, and repositions when the Wework main window moves or its display scale changes. Placement is clamped to the usable area of Wework's current display. On macOS, positioning uses AppKit's unified logical desktop coordinates directly so moving between Retina and non-Retina displays cannot send the window off-screen through physical-to-logical pixel conversion.
