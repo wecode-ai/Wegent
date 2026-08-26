@@ -122,9 +122,13 @@ describe('managed executor runtime', () => {
         `
           const net = require('node:net')
           const fs = require('node:fs')
+          const path = require('node:path')
           const endpoint = process.env.WEGENT_APP_IPC_ENDPOINT
           const ownerConnectionsPath = process.argv[1]
-          if (process.platform !== 'win32') fs.rmSync(endpoint, { force: true })
+          if (process.platform !== 'win32') {
+            fs.mkdirSync(path.dirname(endpoint), { recursive: true })
+            fs.rmSync(endpoint, { force: true })
+          }
           net.createServer(socket => {
             socket.setEncoding('utf8')
             socket.once('data', line => {
