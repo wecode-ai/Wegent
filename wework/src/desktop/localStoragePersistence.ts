@@ -6,18 +6,29 @@ interface PendingStorageUpdate {
   changes: Map<string, string | null>
 }
 
+interface StorageMethods {
+  setItem: Storage['setItem']
+  removeItem: Storage['removeItem']
+  clear: Storage['clear']
+}
+
+const STORAGE_METHODS = Symbol.for('wework.desktop.localStoragePersistence.methods')
+
 let installed = false
 let pending: PendingStorageUpdate = {
   clear: false,
   changes: new Map(),
 }
 let flushScheduled = false
-let writeQueue: Promise<unknown> = Promise.resolve()
+let writeQueue: Promise<void> = Promise.resolve()
+let writeFailure: unknown = null
+let retryUpdate: PendingStorageUpdate | null = null
 
 export async function initializeDesktopLocalStoragePersistence(): Promise<void> {
   if (!isElectronRuntime() || installed) return
 
   const localStorage = window.localStorage
+  restoreStorageMethods(localStorage)
   const durableEntries = await invokeDesktopHost<Record<string, string>>(
     'rendererStorage.initialize',
     {
@@ -32,6 +43,7 @@ export async function initializeDesktopLocalStoragePersistence(): Promise<void> 
 export async function flushDesktopLocalStoragePersistence(): Promise<void> {
   if (flushScheduled) flushPendingChanges()
   await writeQueue
+  if (writeFailure !== null) throw writeFailure
 }
 
 function storageEntries(storage: Storage): Record<string, string> {
@@ -53,22 +65,45 @@ function replaceStorage(storage: Storage, entries: Record<string, string>): void
 }
 
 function installPersistence(localStorage: Storage): void {
-  const prototype = Object.getPrototypeOf(localStorage) as Storage
-  const originalSetItem = prototype.setItem
-  const originalRemoveItem = prototype.removeItem
-  const originalClear = prototype.clear
+  const prototype = storagePrototype(localStorage)
+  const methods = prototype[STORAGE_METHODS] ?? {
+    setItem: prototype.setItem,
+    removeItem: prototype.removeItem,
+    clear: prototype.clear,
+  }
+  Object.defineProperty(prototype, STORAGE_METHODS, {
+    configurable: true,
+    value: methods,
+  })
 
   prototype.setItem = function setItem(key: string, value: string): void {
-    originalSetItem.call(this, key, value)
+    methods.setItem.call(this, key, value)
     if (this === localStorage) queueChange(String(key), String(value))
   }
   prototype.removeItem = function removeItem(key: string): void {
-    originalRemoveItem.call(this, key)
+    methods.removeItem.call(this, key)
     if (this === localStorage) queueChange(String(key), null)
   }
   prototype.clear = function clear(): void {
-    originalClear.call(this)
+    methods.clear.call(this)
     if (this === localStorage) queueClear()
+  }
+}
+
+function restoreStorageMethods(localStorage: Storage): void {
+  const prototype = storagePrototype(localStorage)
+  const methods = prototype[STORAGE_METHODS]
+  if (!methods) return
+  prototype.setItem = methods.setItem
+  prototype.removeItem = methods.removeItem
+  prototype.clear = methods.clear
+}
+
+function storagePrototype(storage: Storage): Storage & {
+  [key: symbol]: StorageMethods | undefined
+} {
+  return Object.getPrototypeOf(storage) as Storage & {
+    [key: symbol]: StorageMethods | undefined
   }
 }
 
@@ -100,14 +135,32 @@ function flushPendingChanges(): void {
   }
   if (!update.clear && update.changes.size === 0) return
 
-  writeQueue = writeQueue
-    .then(() =>
-      invokeDesktopHost('rendererStorage.update', {
-        clear: update.clear,
-        changes: Object.fromEntries(update.changes),
+  writeQueue = writeQueue.then(async () => {
+    const persistedUpdate = retryUpdate ? mergeUpdates(retryUpdate, update) : update
+    retryUpdate = null
+    try {
+      await invokeDesktopHost('rendererStorage.update', {
+        clear: persistedUpdate.clear,
+        changes: Object.fromEntries(persistedUpdate.changes),
       })
-    )
-    .catch(error => {
+      writeFailure = null
+    } catch (error) {
+      retryUpdate = persistedUpdate
+      writeFailure = error
       console.error('[Wework] Failed to persist renderer localStorage:', error)
-    })
+    }
+  })
+}
+
+function mergeUpdates(
+  previous: PendingStorageUpdate,
+  next: PendingStorageUpdate
+): PendingStorageUpdate {
+  if (next.clear) return next
+  const changes = new Map(previous.changes)
+  for (const [key, value] of next.changes) changes.set(key, value)
+  return {
+    clear: previous.clear,
+    changes,
+  }
 }

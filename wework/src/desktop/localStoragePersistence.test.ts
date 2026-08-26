@@ -18,11 +18,12 @@ async function loadPersistence() {
 }
 
 describe('desktop localStorage persistence', () => {
-  beforeEach(() => {
-    mocks.invokeDesktopHost.mockReset()
-    mocks.isElectronRuntime.mockReset()
+  beforeEach(async () => {
     localStorage.clear()
     sessionStorage.clear()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    mocks.invokeDesktopHost.mockReset()
+    mocks.isElectronRuntime.mockReset()
   })
 
   it('does nothing outside Electron', async () => {
@@ -90,6 +91,31 @@ describe('desktop localStorage persistence', () => {
           'after-clear': 'value',
         },
       })
+    })
+  })
+
+  it('rejects flushes after a failed write and retries the complete update later', async () => {
+    mocks.isElectronRuntime.mockReturnValue(true)
+    const failure = new Error('disk unavailable')
+    mocks.invokeDesktopHost
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValue({ persisted: true })
+    const { flushDesktopLocalStoragePersistence, initializeDesktopLocalStoragePersistence } =
+      await loadPersistence()
+    await initializeDesktopLocalStoragePersistence()
+
+    localStorage.setItem('first', 'one')
+    await expect(flushDesktopLocalStoragePersistence()).rejects.toBe(failure)
+
+    localStorage.setItem('second', 'two')
+    await expect(flushDesktopLocalStoragePersistence()).resolves.toBeUndefined()
+    expect(mocks.invokeDesktopHost).toHaveBeenLastCalledWith('rendererStorage.update', {
+      clear: false,
+      changes: {
+        first: 'one',
+        second: 'two',
+      },
     })
   })
 })
