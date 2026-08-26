@@ -3,19 +3,79 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>Wework</title>
+    <script>
+      const theme = new URLSearchParams(window.location.search).get('theme')
+      document.documentElement.dataset.theme = theme === 'dark' ? 'dark' : 'light'
+    </script>
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./startup-splash/styles.css" />
   </head>
   <body>
     <main id="runtime-overlay" data-phase="initializing">
-      <section class="runtime-card" aria-live="polite">
-        <div class="runtime-spinner" aria-hidden="true"></div>
+      <section id="splash-root" class="splash" aria-label="Wework is starting">
+        <div class="workbench-scene" aria-hidden="true">
+          <svg class="workbench" viewBox="0 0 300 132">
+            <path class="connection connection-left" d="M74 66h36" />
+            <path class="connection connection-right" d="M190 66h36" />
+            <circle class="connection-pulse connection-pulse-left" cx="74" cy="66" r="3" />
+            <circle class="connection-pulse connection-pulse-right" cx="226" cy="66" r="3" />
+
+            <g class="side-card side-card-left">
+              <rect x="24" y="42" width="50" height="48" rx="12" />
+              <path d="M37 56h24M37 65h18M37 74h21" />
+              <circle cx="60" cy="80" r="3" />
+            </g>
+
+            <g class="workbench-window">
+              <rect class="window-shell" x="110" y="24" width="80" height="84" rx="16" />
+              <path class="window-toolbar" d="M110 44h80" />
+              <circle class="window-control" cx="124" cy="34" r="3" />
+              <circle class="window-control" cx="134" cy="34" r="3" />
+              <g class="morph-icon" transform="translate(126 53) scale(2)">
+                <path id="morph-primary" />
+                <path id="morph-secondary" />
+                <path id="morph-tertiary" />
+              </g>
+              <path class="window-content-line" d="M126 94h48" />
+            </g>
+
+            <g class="side-card side-card-right">
+              <rect x="226" y="42" width="50" height="48" rx="12" />
+              <rect x="239" y="55" width="24" height="20" rx="6" />
+              <path d="m244 65 4 4 9-10" />
+            </g>
+
+            <path class="baseline" d="M45 116h210" />
+          </svg>
+        </div>
+        <div class="splash-copy">
+          <h1 id="splash-title">We're preparing your workbench</h1>
+          <p id="splash-status" aria-live="polite">Opening your projects</p>
+        </div>
+        <div
+          id="stage-indicator"
+          class="stage-indicator"
+          role="progressbar"
+          aria-label="Preparing your workbench"
+          aria-valuemin="1"
+          aria-valuemax="3"
+          aria-valuenow="1"
+        >
+          <span class="stage-dot is-active"></span>
+          <span class="stage-dot"></span>
+          <span class="stage-dot"></span>
+        </div>
+      </section>
+      <section class="runtime-card" aria-live="polite" hidden>
         <h1>正在启动 Wework</h1>
-        <p id="status">正在初始化 Core DSH…</p>
+        <p id="runtime-status">正在初始化 Core DSH…</p>
         <pre id="details" hidden></pre>
         <button id="reload-dsh" type="button" hidden>重试启动</button>
       </section>
     </main>
+    <script src="./startup-splash/splash.js"></script>
     <script src="./shell.js"></script>
   </body>
 </html>

@@ -121,6 +121,15 @@ async fn notification_hub_delivers_unscoped_process_exit_to_each_thread() {
     }
 }
 
+#[test]
+fn shared_notification_lag_is_recoverable() {
+    let notification =
+        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None)
+            .expect("lagged notifications should keep the turn alive");
+
+    assert!(matches!(notification, SharedNotification::Lagged(37)));
+}
+
 #[tokio::test]
 async fn interaction_answer_router_matches_reverse_order_answers() {
     let (sender, receiver) = mpsc::channel(2);

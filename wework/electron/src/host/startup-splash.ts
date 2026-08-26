@@ -1,6 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import type { BrowserWindowConstructorOptions, LoadFileOptions } from 'electron'
 
 export type StartupSplashEventName = 'created' | 'shown' | 'animation-ready' | 'closed'
 export type StartupSplashTheme = 'light' | 'dark'
@@ -32,18 +31,15 @@ interface SplashWebContents {
 }
 
 export interface StartupSplashWindow {
-  close: () => void
   isDestroyed: () => boolean
   isVisible: () => boolean
-  loadFile: (path: string, options?: LoadFileOptions) => Promise<void>
   once: (event: 'closed' | 'ready-to-show', listener: () => void) => void
   show: () => void
   webContents: SplashWebContents
 }
 
 export interface StartupSplashOptions {
-  createWindow: (options: BrowserWindowConstructorOptions) => StartupSplashWindow
-  htmlPath: string
+  window: StartupSplashWindow
   theme: StartupSplashTheme
   now?: () => number
   writePng?: (path: string, bytes: Buffer) => Promise<void>
@@ -66,38 +62,12 @@ const WAIT_FOR_ANIMATION_READY = `
   })
 `
 
-const WINDOW_OPTIONS: Readonly<BrowserWindowConstructorOptions> = {
-  width: 420,
-  height: 260,
-  show: false,
-  frame: false,
-  transparent: false,
-  resizable: false,
-  minimizable: false,
-  maximizable: false,
-  fullscreenable: false,
-  movable: false,
-  center: true,
-  alwaysOnTop: true,
-  skipTaskbar: true,
-  hasShadow: false,
-  webPreferences: {
-    contextIsolation: true,
-    nodeIntegration: false,
-    sandbox: true,
-  },
-}
-
 export function resolveStartupSplashTheme(
   appearanceMode: unknown,
   systemUsesDarkColors: boolean
 ): StartupSplashTheme {
   if (appearanceMode === 'light' || appearanceMode === 'dark') return appearanceMode
   return systemUsesDarkColors ? 'dark' : 'light'
-}
-
-function startupSplashBackgroundColor(theme: StartupSplashTheme): string {
-  return theme === 'dark' ? '#171717' : '#fafafa'
 }
 
 async function writePng(path: string, bytes: Buffer): Promise<void> {
@@ -109,13 +79,13 @@ export class StartupSplash {
   private readonly events: StartupSplashEvent[] = []
   private readonly now: () => number
   private readonly persistPng: (path: string, bytes: Buffer) => Promise<void>
-  private window: StartupSplashWindow | null = null
   private state: StartupSplashSnapshot['state'] = 'idle'
   private showPromise: Promise<StartupSplashSnapshot> | null = null
 
   constructor(private readonly options: StartupSplashOptions) {
     this.now = options.now ?? Date.now
     this.persistPng = options.writePng ?? writePng
+    this.record('created')
   }
 
   show(): Promise<StartupSplashSnapshot> {
@@ -129,8 +99,8 @@ export class StartupSplash {
   }
 
   async close(options: CloseStartupSplashOptions = {}): Promise<StartupSplashSnapshot> {
-    const target = this.window
-    if (!target || target.isDestroyed()) {
+    const target = this.options.window
+    if (target.isDestroyed()) {
       this.markClosed()
       return this.snapshot()
     }
@@ -141,7 +111,6 @@ export class StartupSplash {
         await this.persistPng(options.capturePath, image.toPNG())
       }
     } finally {
-      if (!target.isDestroyed()) target.close()
       this.markClosed()
     }
 
@@ -149,28 +118,23 @@ export class StartupSplash {
   }
 
   snapshot(): StartupSplashSnapshot {
-    const target = this.window
-    const destroyed = target?.isDestroyed() ?? false
+    const target = this.options.window
+    const destroyed = target.isDestroyed()
     return {
       state: this.state,
       theme: this.options.theme,
       events: this.events.map(event => ({ ...event })),
       window: {
-        exists: target !== null,
+        exists: true,
         destroyed,
-        visible: target !== null && !destroyed && target.isVisible(),
+        visible: !destroyed && target.isVisible(),
       },
     }
   }
 
   private async createAndShow(): Promise<StartupSplashSnapshot> {
     this.state = 'loading'
-    const target = this.options.createWindow({
-      ...WINDOW_OPTIONS,
-      backgroundColor: startupSplashBackgroundColor(this.options.theme),
-    })
-    this.window = target
-    this.record('created')
+    const target = this.options.window
 
     const shown = new Promise<void>(resolve => {
       target.once('ready-to-show', () => {
@@ -184,9 +148,6 @@ export class StartupSplash {
     })
     target.once('closed', () => this.markClosed())
 
-    await target.loadFile(this.options.htmlPath, {
-      query: { theme: this.options.theme },
-    })
     await shown
     if (!target.webContents.isDestroyed()) {
       await target.webContents.executeJavaScript(WAIT_FOR_ANIMATION_READY)
