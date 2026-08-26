@@ -514,36 +514,69 @@ def _schedule_video_job_poll(
 
 def _is_stale_video_poll_attempt(
     subtask_id: int,
+    job_id: str,
     incoming_poll_count: int,
 ) -> bool:
-    """Return True when this poll message is behind the persisted poll owner."""
+    """Return True unless this task still owns the active video poll chain."""
     from app.db.session import SessionLocal
+    from app.models.subtask import SubtaskStatus
 
     db = SessionLocal()
     try:
         subtask = subtask_store.get_basic_by_id(db, subtask_id=subtask_id)
-        result = subtask.result if subtask else None
+        if not subtask:
+            logger.warning(
+                "[video_tasks] Ignoring poll for missing subtask: "
+                "subtask_id=%d job_id=%s",
+                subtask_id,
+                job_id,
+            )
+            return True
+
+        if subtask.status != SubtaskStatus.RUNNING:
+            logger.info(
+                "[video_tasks] Ignoring poll for inactive subtask: "
+                "subtask_id=%d job_id=%s status=%s",
+                subtask_id,
+                job_id,
+                subtask.status,
+            )
+            return True
+
+        result = subtask.result
         if not isinstance(result, dict):
-            return False
+            return True
 
         video_job = result.get("video_job")
         if not isinstance(video_job, dict):
-            return False
+            return True
+
+        persisted_job_id = video_job.get("job_id")
+        if persisted_job_id != job_id:
+            logger.info(
+                "[video_tasks] Ignoring poll for superseded job: "
+                "subtask_id=%d job_id=%s current_job_id=%s",
+                subtask_id,
+                job_id,
+                persisted_job_id,
+            )
+            return True
 
         persisted_poll_count = video_job.get("poll_count")
         if not isinstance(persisted_poll_count, int):
-            return False
+            return True
 
         return persisted_poll_count > incoming_poll_count
     except Exception as exc:
         logger.warning(
-            "[video_tasks] Failed to inspect video poll freshness: "
-            "subtask_id=%d poll_count=%d error=%s",
+            "[video_tasks] Failed to verify video poll ownership: "
+            "subtask_id=%d job_id=%s poll_count=%d error=%s",
             subtask_id,
+            job_id,
             incoming_poll_count,
             exc,
         )
-        return False
+        return True
     finally:
         db.close()
 
@@ -639,7 +672,7 @@ def poll_video_job(
     )
     _release_video_poll_schedule(subtask_id, scheduled_token)
 
-    if _is_stale_video_poll_attempt(subtask_id, incoming_poll_count):
+    if _is_stale_video_poll_attempt(subtask_id, job_id, incoming_poll_count):
         logger.info(
             "[video_tasks] Ignoring stale duplicated poll: "
             "job_id=%s task_id=%d subtask_id=%d incoming_poll=%d",

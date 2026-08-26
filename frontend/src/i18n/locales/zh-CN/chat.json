@@ -748,6 +748,7 @@
       "adaptive": "自适应"
     },
     "generating": "正在生成视频...",
+    "loading": "正在加载视频...",
     "preparing": "准备中...",
     "progress": "生成进度: {{progress}}%",
     "completed": "视频生成完成",

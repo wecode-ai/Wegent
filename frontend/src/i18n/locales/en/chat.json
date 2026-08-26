@@ -748,6 +748,7 @@
       "adaptive": "Adaptive"
     },
     "generating": "Generating video...",
+    "loading": "Loading video...",
     "preparing": "Preparing...",
     "progress": "Progress: {{progress}}%",
     "completed": "Video generation completed",
