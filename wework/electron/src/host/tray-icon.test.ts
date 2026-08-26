@@ -88,6 +88,72 @@ describe('tray icon', () => {
     expect(template.setTemplateImage).toHaveBeenCalledWith(true)
   })
 
+  test('renders running task level beside the macOS icon', () => {
+    const bitmap = Buffer.alloc(36 * 36 * 4, 255)
+    const resized = image({ toBitmap: vi.fn(() => bitmap) })
+    const source = image({ resize: vi.fn(() => resized) })
+    const baseIcon = image()
+    const rendered = image({
+      getSize: vi.fn(() => ({ width: 46, height: 36 })),
+      toBitmap: vi.fn(() => Buffer.alloc(46 * 36 * 4)),
+    })
+    const template = image()
+    const createFromDataURL = vi.fn(() => rendered)
+    const images: NativeImageFactory = {
+      createFromPath: vi.fn(() => source),
+      createFromBitmap: vi.fn().mockReturnValueOnce(baseIcon).mockReturnValueOnce(template),
+      createFromDataURL,
+    }
+
+    createTrayIcon(
+      images,
+      '/icons/128x128.png',
+      null,
+      { runningCount: 2, showRunningStatus: true },
+      'darwin'
+    )
+
+    const svg = Buffer.from(
+      createFromDataURL.mock.calls[0][0].replace('data:image/svg+xml;base64,', ''),
+      'base64'
+    ).toString()
+    expect(svg).toContain('<rect x="42" y="18" width="4" height="15"')
+    expect(svg).toContain('M41 2h6v32h-6z')
+    expect(svg.indexOf('<image')).toBeLessThan(svg.indexOf('M41 2h6v32h-6z'))
+  })
+
+  test('fills the running task meter at four or more tasks', () => {
+    const bitmap = Buffer.alloc(36 * 36 * 4, 255)
+    const resized = image({ toBitmap: vi.fn(() => bitmap) })
+    const source = image({ resize: vi.fn(() => resized) })
+    const baseIcon = image()
+    const rendered = image({
+      getSize: vi.fn(() => ({ width: 50, height: 36 })),
+      toBitmap: vi.fn(() => Buffer.alloc(50 * 36 * 4)),
+    })
+    const template = image()
+    const createFromDataURL = vi.fn(() => rendered)
+    const images: NativeImageFactory = {
+      createFromPath: vi.fn(() => source),
+      createFromBitmap: vi.fn().mockReturnValueOnce(baseIcon).mockReturnValueOnce(template),
+      createFromDataURL,
+    }
+
+    createTrayIcon(
+      images,
+      '/icons/128x128.png',
+      null,
+      { runningCount: 8, showRunningStatus: true },
+      'darwin'
+    )
+
+    const svg = Buffer.from(
+      createFromDataURL.mock.calls[0][0].replace('data:image/svg+xml;base64,', ''),
+      'base64'
+    ).toString()
+    expect(svg).toContain('<rect x="42" y="3" width="4" height="30"')
+  })
+
   test('keeps the application icon unchanged outside macOS', () => {
     const source = image()
     const images: NativeImageFactory = {
@@ -96,7 +162,15 @@ describe('tray icon', () => {
       createFromDataURL: vi.fn(),
     }
 
-    expect(createTrayIcon(images, '/icons/128x128.png', null, 'win32')).toBe(source)
+    expect(
+      createTrayIcon(
+        images,
+        '/icons/128x128.png',
+        null,
+        { runningCount: 0, showRunningStatus: false },
+        'win32'
+      )
+    ).toBe(source)
     expect(source.resize).not.toHaveBeenCalled()
     expect(images.createFromBitmap).not.toHaveBeenCalled()
   })

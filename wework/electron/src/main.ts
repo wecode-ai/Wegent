@@ -52,6 +52,7 @@ import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
 import { resolveStartupSplashTheme, StartupSplash } from './host/startup-splash.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon } from './host/tray-icon.js'
+import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { installNativeContextMenu } from './host/image-context-menu.js'
 import {
@@ -102,6 +103,7 @@ let preferences: PreferencesStore | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
+let trayNativeStatus: TrayNativeStatusController | null = null
 let pendingTrayActions: TrayAction[] = []
 const pendingEmbeddedBrowserAttachments = new Map<
   number,
@@ -728,8 +730,13 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
     createTray: () => new Tray(createTrayIcon(nativeImage, iconPath)),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
-    applyTitle: (tray, title) => {
-      tray.setImage(createTrayIcon(nativeImage, iconPath, title))
+    applyIcon: (tray, state) => {
+      tray.setImage(
+        createTrayIcon(nativeImage, iconPath, state.usageTitle, {
+          runningCount: state.runningCount,
+          showRunningStatus: state.showRunningStatus,
+        })
+      )
       tray.setTitle('')
     },
   })
@@ -761,6 +768,8 @@ function installIpc(): void {
 async function shutdown(): Promise<void> {
   systemResume.stop()
   systemSleep.stop()
+  trayNativeStatus?.stop()
+  trayNativeStatus = null
   trayManager?.destroy()
   trayManager = null
   for (const workspaceWindow of workspaceWindows.values()) {
@@ -843,7 +852,10 @@ async function configureDesktopRuntime(): Promise<void> {
     environment,
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
-    onExecutorEvent: (event, payload) => systemSleep.handleExecutorEvent(event, payload),
+    onExecutorEvent: (event, payload) => {
+      systemSleep.handleExecutorEvent(event, payload)
+      trayNativeStatus?.handleExecutorEvent(event)
+    },
     hostPipe: new HostPipeServer(
       createElectronCapabilityRouter(
         () => mainWindow,
@@ -879,7 +891,10 @@ async function configureDesktopRuntime(): Promise<void> {
           dockVisible: () => dockVisible,
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
           trayActivate: activation => trayManager?.activate(activation) ?? false,
-          traySetState: state => trayManager?.setState(state),
+          traySetState: state => {
+            trayManager?.setState(state)
+            void trayNativeStatus?.refresh()
+          },
           traySnapshot: () => trayManager?.snapshot() ?? null,
           takePendingTrayActions: () => {
             const actions = pendingTrayActions
@@ -955,6 +970,14 @@ async function configureDesktopRuntime(): Promise<void> {
       )
     ),
   })
+  trayNativeStatus = new TrayNativeStatusController({
+    preferences,
+    requestExecutor: (method, params) => {
+      if (!desktopRuntime) return Promise.reject(new Error('Desktop runtime is unavailable'))
+      return desktopRuntime.requestExecutor(method, params)
+    },
+    apply: status => trayManager?.setNativeStatus(status),
+  })
   workbenchTabs = new WorkbenchTabController({
     runtime: desktopRuntime,
     surface: {
@@ -980,6 +1003,7 @@ function startDesktopRuntime(): Promise<void> {
   runtimeStartPromise = (async () => {
     await configureDesktopRuntime()
     await desktopRuntime?.start()
+    trayNativeStatus?.start()
     await loadPrimaryDshView()
     runtimePhase = 'ready'
   })()

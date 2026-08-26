@@ -1,14 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
-import {
-  emptyCodexUsageDisplay,
-  getLocalCodexUsageDisplay,
-  type CodexUsageDisplay,
-} from '@/api/local/codexUsage'
-import {
-  emptyWegentUsageDisplay,
-  getWegentUsageDisplay,
-  type WegentUsageDisplay,
-} from '@/api/wegentUsage'
+import { useEffect, useMemo } from 'react'
 import { DesktopWorkbenchLayout } from '@/components/layout/DesktopWorkbenchLayout'
 import { MobileWorkbenchLayout } from '@/components/layout/MobileWorkbenchLayout'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
@@ -18,10 +8,8 @@ import { shouldUseMobileWorkbenchLayout } from '@/lib/workbench-layout-mode'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { buildTrayMenuTaskGroups } from '@/desktop/trayMenuState'
 import { syncTrayMenuState } from '@/desktop/trayNavigation'
-import { buildTrayUsageTitle } from '@/desktop/trayUsageTitle'
 import { useRuntimeTaskRouteRestoration } from '@/features/workbench/useRuntimeTaskRouteRestoration'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 
 interface WorkbenchPageProps {
   routeActive?: boolean
@@ -37,26 +25,12 @@ export function WorkbenchPage({ routeActive = true, surfaceKind }: WorkbenchPage
 
 function TaskWorkbenchPage({ routeActive = true, surfaceKind }: WorkbenchPageProps) {
   const isDesktop = isElectronRuntime()
-  const cloudConnection = useOptionalCloudConnection()
   const { state, runtimeTaskReminders } = useWorkbench()
   const lifecycle = useRuntimeTaskLifecycleStoreSnapshot()
   useRuntimeTaskRouteRestoration(routeActive)
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
-  const { trayUnreadEnabled, trayRunningEnabled, trayUsageEnabled, trayWegentUsageEnabled } =
-    taskReminders.preferences
-  const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
-  const [wegentUsage, setWegentUsage] = useState<WegentUsageDisplay>(() =>
-    emptyWegentUsageDisplay()
-  )
-  const showTrayCodexUsage = trayUsageEnabled && codexUsage.status === 'available'
-  const showTrayWegentUsage =
-    trayWegentUsageEnabled && cloudConnection.isConnected && wegentUsage.status === 'available'
+  const { trayUnreadEnabled, trayRunningEnabled } = taskReminders.preferences
   const taskSurfaceActive = routeActive
-  const trayUsageTitle = buildTrayUsageTitle({
-    codex: showTrayCodexUsage ? codexUsage.trayTitle : null,
-    compactCodex: showTrayCodexUsage ? compactCodexTrayTitle(codexUsage) : null,
-    wegent: showTrayWegentUsage ? wegentUsage.trayTitle : null,
-  })
   const trayMenuTaskGroups = useMemo(
     () =>
       buildTrayMenuTaskGroups(state.runtimeWork, {
@@ -68,100 +42,19 @@ function TaskWorkbenchPage({ routeActive = true, surfaceKind }: WorkbenchPagePro
     [lifecycle, state.runtimeWork, taskReminders, trayUnreadEnabled, trayRunningEnabled]
   )
   const trayTooltip = useMemo(() => {
-    const parts = []
-    if (trayMenuTaskGroups.hasRunningTasks) {
-      parts.push(i18nLabel('running'))
-    }
     if (trayUnreadEnabled && taskReminders.unreadCount > 0) {
-      parts.push(i18nLabel('unread', taskReminders.unreadCount))
+      return unreadLabel(taskReminders.unreadCount)
     }
-    if (showTrayCodexUsage) parts.push(codexUsage.tooltip)
-    if (showTrayWegentUsage) parts.push(wegentUsage.tooltip)
-    return parts.length > 0 ? parts.join('\n') : null
-  }, [
-    codexUsage.tooltip,
-    wegentUsage.tooltip,
-    taskReminders.unreadCount,
-    trayMenuTaskGroups.hasRunningTasks,
-    trayUnreadEnabled,
-    showTrayCodexUsage,
-    showTrayWegentUsage,
-  ])
+    return null
+  }, [taskReminders.unreadCount, trayUnreadEnabled])
 
   useEffect(() => {
     if (!taskSurfaceActive) return
     syncTrayMenuState(trayMenuTaskGroups, undefined, {
-      title: trayUsageTitle,
+      title: null,
       tooltip: trayTooltip,
     })
-  }, [taskSurfaceActive, trayMenuTaskGroups, trayTooltip, trayUsageTitle])
-
-  useEffect(() => {
-    if (!isDesktop || !taskSurfaceActive) {
-      return
-    }
-
-    let cancelled = false
-    const refreshUsage = () => {
-      getLocalCodexUsageDisplay()
-        .then(usage => {
-          if (!cancelled) {
-            setCodexUsage(usage)
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setCodexUsage(emptyCodexUsageDisplay())
-          }
-        })
-    }
-
-    refreshUsage()
-    const interval = window.setInterval(refreshUsage, 60_000)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [isDesktop, taskSurfaceActive])
-
-  useEffect(() => {
-    if (!isDesktop || !cloudConnection.isConnected || !taskSurfaceActive) {
-      return
-    }
-
-    let cancelled = false
-    const refreshUsage = () => {
-      getWegentUsageDisplay({
-        isConnected: cloudConnection.isConnected,
-        apiBaseUrl: cloudConnection.apiBaseUrl,
-        token: cloudConnection.token,
-      })
-        .then(usage => {
-          if (!cancelled) {
-            setWegentUsage(usage)
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setWegentUsage(emptyWegentUsageDisplay())
-          }
-        })
-    }
-
-    refreshUsage()
-    const interval = window.setInterval(refreshUsage, 60_000)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [
-    cloudConnection.apiBaseUrl,
-    cloudConnection.isConnected,
-    cloudConnection.serviceKey,
-    cloudConnection.token,
-    isDesktop,
-    taskSurfaceActive,
-  ])
+  }, [taskSurfaceActive, trayMenuTaskGroups, trayTooltip])
 
   return (
     <WorkbenchPageLayout
@@ -189,16 +82,8 @@ function WorkbenchPageLayout({
   )
 }
 
-function compactCodexTrayTitle(usage: CodexUsageDisplay): string {
-  const percents = [usage.fiveHour.percent, usage.sevenDay.percent].filter(
-    (percent): percent is number => percent !== null
-  )
-  return `Codex  ${percents.length > 0 ? `${Math.min(...percents)}%` : '--'}`
-}
-
-function i18nLabel(type: 'running' | 'unread', count?: number) {
+function unreadLabel(count: number) {
   const language = navigator.language || ''
   const english = language.toLowerCase().startsWith('en')
-  if (type === 'running') return english ? 'Tasks running' : '有任务运行中'
-  return english ? `${count ?? 0} unread completed` : `${count ?? 0} 个未读完成任务`
+  return english ? `${count} unread completed` : `${count} 个未读完成任务`
 }

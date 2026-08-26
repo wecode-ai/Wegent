@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   prepareManagedExecutorEnvironment,
+  requestExecutor,
   waitForEndpointAuthentication,
 } from './managed-executor-runtime.js'
 import { temporaryDirectory } from './test-helpers.js'
@@ -105,6 +106,74 @@ describe('managed executor runtime', () => {
       await expect(
         waitForEndpointAuthentication(endpoint, token, AbortSignal.timeout(1_000))
       ).resolves.toBeUndefined()
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      await directory.remove()
+    }
+  })
+
+  test('sends authenticated executor requests without a renderer transport', async () => {
+    const directory = await temporaryDirectory('managed-executor-request-')
+    const endpoint =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\managed-executor-request-${process.pid}-${Date.now()}`
+        : `${directory.path}/executor.sock`
+    const token = '0123456789abcdef0123456789abcdef'
+    const server = createServer(socket => {
+      let authenticated = false
+      let buffer = ''
+      socket.setEncoding('utf8')
+      socket.on('data', chunk => {
+        buffer += chunk
+        for (;;) {
+          const newline = buffer.indexOf('\n')
+          if (newline < 0) return
+          const message = JSON.parse(buffer.slice(0, newline)) as {
+            type: string
+            id?: string
+            method?: string
+            params?: Record<string, unknown>
+          }
+          buffer = buffer.slice(newline + 1)
+          if (!authenticated) {
+            authenticated = true
+            socket.write(
+              `${JSON.stringify({
+                type: 'authenticated',
+                ok: true,
+                protocol_version: 1,
+              })}\n`
+            )
+            continue
+          }
+          socket.write(
+            `${JSON.stringify({
+              type: 'response',
+              id: message.id,
+              ok: true,
+              result: { method: message.method, params: message.params },
+            })}\n`
+          )
+        }
+      })
+    })
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(endpoint, resolve)
+    })
+    try {
+      await expect(
+        requestExecutor(
+          endpoint,
+          token,
+          'runtime.tasks.list',
+          { includeArchived: false },
+          AbortSignal.timeout(1_000)
+        )
+      ).resolves.toEqual({
+        method: 'runtime.tasks.list',
+        params: { includeArchived: false },
+      })
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()))
       await directory.remove()

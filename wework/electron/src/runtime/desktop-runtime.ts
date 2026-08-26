@@ -80,6 +80,13 @@ export class DesktopRuntime {
     }
   }
 
+  requestExecutor<Result>(method: string, params: Record<string, unknown> = {}): Promise<Result> {
+    if (!this.executor) {
+      return Promise.reject(new Error('Managed executor is unavailable'))
+    }
+    return this.executor.request<Result>(method, params)
+  }
+
   openWorkbenchRuntime(launch: WorkbenchRuntimeLaunch): Promise<WorkbenchRuntimeSnapshot> {
     if (!this.started) {
       return Promise.reject(new Error('Core desktop runtime is not ready'))
