@@ -840,12 +840,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    const defaultExecutionDevice =
-      '[data-testid="issue-execution-config-default-device"] [data-value]'
     assert.equal(
-      await control.command('getAttribute', defaultExecutionDevice, {
-        name: 'data-value',
-      }),
+      await control.command('getValue', '[data-testid="issue-execution-config-default-device"]'),
       localDefaultDevice.device_id,
       'The workflow dialog did not promote the legacy node device to the shared configuration'
     )
@@ -970,9 +966,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The execution dialog lost the robot preset identity'
     )
     assert.equal(
-      await control.command('getAttribute', `${executionDevice} [data-value]`, {
-        name: 'data-value',
-      }),
+      await control.command('getValue', executionDevice),
       localDefaultDevice.device_id,
       'The execution dialog did not expose the robot local-device default'
     )
@@ -1241,40 +1235,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     await captureScreenshot(control, 'project-automation-unified-home.png')
-    await control.command('click', '[data-testid="automation-card-automation-rule-created"]', {
-      visible: true,
-    })
-    await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
-      timeoutMs: uiTimeoutMs,
-      visible: true,
-    })
-    await control.command('click', '[data-testid="automation-editor-section-menu"]', {
-      visible: true,
-    })
-    await control.command('click', '[data-testid="open-current-automation-runs"]', {
-      visible: true,
-    })
-    await control.command('waitFor', '[data-testid="current-run-automation-run-history-1"]', {
-      text: '待配置',
-      timeoutMs: uiTimeoutMs,
-      visible: true,
-    })
-    await control.command('waitFor', '[data-testid="current-run-automation-run-history-2"]', {
-      text: '排队中',
-      timeoutMs: uiTimeoutMs,
-      visible: true,
-    })
-    await control.command('waitFor', '[data-testid="current-run-automation-run-history-3"]', {
-      text: '成功',
-      timeoutMs: uiTimeoutMs,
-      visible: true,
-    })
-    const waitingRunText = await control.command(
-      'getText',
-      '[data-testid="current-run-automation-run-history-1"]'
-    )
-    assert.ok(!waitingRunText.includes('执行中'))
-    assert.ok(!waitingRunText.includes('0 秒'))
 
     const workflowProject = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)
     await cloudRequest(`/api/v1/cloud-projects/${projectId}`, {
@@ -1651,6 +1611,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
+    await control.command(
+      'click',
+      '[data-testid^="ai-allocation-node-"] .react-flow-group-header',
+      {
+        visible: true,
+      }
+    )
     await control.command('waitFor', '[data-testid="ai-coordinator-prompt"]', {
       timeoutMs: uiTimeoutMs,
     })
@@ -3936,6 +3903,33 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       assert.equal(createdGraphNodes?.[1].kind, 'dynamic')
       assert.equal(createdGraphNodes?.[1].subgraph.nodes.length, 1)
+      await control.command('click', '[data-testid="automation-editor-section-menu"]', {
+        visible: true,
+      })
+      await control.command('click', '[data-testid="open-current-automation-runs"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="current-run-automation-run-history-1"]', {
+        text: '待配置',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="current-run-automation-run-history-2"]', {
+        text: '排队中',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="current-run-automation-run-history-3"]', {
+        text: '成功',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      const waitingRunText = await control.command(
+        'getText',
+        '[data-testid="current-run-automation-run-history-1"]'
+      )
+      assert.ok(!waitingRunText.includes('执行中'))
+      assert.ok(!waitingRunText.includes('0 秒'))
 
       await control.command(
         'click',
