@@ -48,6 +48,7 @@ class DocumentSourceType(str, PyEnum):
     TABLE = "table"  # External table (DingTalk, Feishu, etc.)
     WEB = "web"  # Web page (scraped URL)
     CODE = "code"  # Source file indexed for retrieval, not a browsable document
+    EXTERNAL = "external"  # Document imported from an external provider
 
 
 class ContentOrigin(str, PyEnum):
@@ -155,6 +156,13 @@ class KnowledgeDocument(Base):
         default=ContentOrigin.USER.value,
         server_default=ContentOrigin.USER.value,
     )
+    # External identity of an imported provider document. Both columns are NULL
+    # together (regular documents) or set together (external documents); the
+    # application layer enforces the pairing, and (kind_id, external_provider,
+    # external_resource_id) is the unique identity of an external document
+    # within one knowledge base.
+    external_provider = Column(String(32), nullable=True)
+    external_resource_id = Column(String(255), nullable=True)
 
     # --- Helper properties for converted attachment reference ---
 
@@ -226,6 +234,14 @@ class KnowledgeDocument(Base):
         ),
         # Index for attachment lookup
         Index("ix_knowledge_documents_attachment", "attachment_id"),
+        # Unique external identity: one provider document per knowledge base
+        Index(
+            "uq_knowledge_documents_external",
+            "kind_id",
+            "external_provider",
+            "external_resource_id",
+            unique=True,
+        ),
         {
             "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",

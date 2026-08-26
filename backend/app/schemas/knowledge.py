@@ -59,6 +59,9 @@ class DocumentSourceType(str, Enum):
     # Source file indexed for retrieval rather than a browsable document. Declared so
     # ensure_source_type_enum does not silently coerce it to FILE.
     CODE = "code"
+    # Document imported from an external provider (e.g. DingTalk) through the
+    # external import path, not the regular upload API.
+    EXTERNAL = "external"
 
 
 def reject_code_source_type(value: "DocumentSourceType") -> "DocumentSourceType":
@@ -1002,6 +1005,28 @@ class KnowledgeDocumentCreate(MultimodalDocumentPromptMixin):
     )
 
 
+class ExternalDocumentImportRequest(BaseModel):
+    """Request schema for importing one external provider document."""
+
+    provider: str = Field(
+        ...,
+        min_length=1,
+        max_length=32,
+        description="External provider ID (e.g. 'dingtalk')",
+    )
+    external_resource_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Provider-scoped external document ID",
+    )
+    folder_id: int = Field(
+        default=0,
+        ge=0,
+        description="Target folder ID in this knowledge base (0 = root level)",
+    )
+
+
 class KnowledgeDocumentUpdate(BaseModel):
     """Schema for updating a knowledge document."""
 
@@ -1031,6 +1056,12 @@ class KnowledgeDocumentResponse(BaseModel):
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = DocumentSourceType.FILE
     source_config: Optional[dict] = None
+    external_provider: Optional[str] = Field(
+        None, description="External provider ID when the document was imported"
+    )
+    external_resource_id: Optional[str] = Field(
+        None, description="Provider-scoped external document ID when imported"
+    )
     origin: ContentOrigin = ContentOrigin.USER
     folder_id: int = Field(default=0, ge=0, description="Folder ID (0 = root level)")
     doc_ref: Optional[str] = Field(

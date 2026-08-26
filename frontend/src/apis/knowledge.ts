@@ -154,6 +154,28 @@ export async function createDocument(
   return apiClient.post<KnowledgeDocument>(`/knowledge-bases/${knowledgeBaseId}/documents`, data)
 }
 
+export interface ExternalDocumentImportRequest {
+  provider: string
+  external_resource_id: string
+  folder_id?: number
+}
+
+/**
+ * Import one external provider document into a knowledge base.
+ *
+ * Creates a placeholder document immediately; the backend fetches the
+ * external body and indexes it in the background.
+ */
+export async function importExternalDocument(
+  knowledgeBaseId: number,
+  data: ExternalDocumentImportRequest
+): Promise<KnowledgeDocument> {
+  return apiClient.post<KnowledgeDocument>(
+    `/knowledge-bases/${knowledgeBaseId}/documents/external-import`,
+    data
+  )
+}
+
 /** Get the latest metadata and processing state for one document. */
 export async function getDocument(
   documentId: number,

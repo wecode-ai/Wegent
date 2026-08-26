@@ -20,6 +20,7 @@ import {
   Link,
   Check,
   Globe,
+  BookOpen,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -52,6 +53,8 @@ import { MULTIMODAL_EXTENSIONS } from '@/features/knowledge/multimodal/constants
 import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { validateTableUrl } from '@/apis/knowledge'
+import { DingtalkDocumentImport } from './DingtalkDocumentImport'
+import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 import { DEFAULT_FLAT_CHUNK_CONFIG, DEFAULT_SPLITTER_CONFIG } from '@/types/knowledge'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 import {
@@ -79,7 +82,7 @@ function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
 }
 
 // Upload mode type
-type UploadMode = 'file' | 'text' | 'table' | 'web'
+type UploadMode = 'file' | 'text' | 'table' | 'web' | 'dingtalk'
 
 // Table document data
 export interface TableDocument {
@@ -101,6 +104,8 @@ interface DocumentUploadProps {
   onTableAdd?: (data: TableDocument) => Promise<void>
   /** Callback to add a web page document. Backend handles scraping and document creation. */
   onWebAdd?: (url: string, name?: string) => Promise<void>
+  /** Callback to import one DingTalk document. Backend creates the placeholder and indexes it. */
+  onDingtalkAdd?: (node: DingtalkDocNode) => Promise<void>
   /** Deprecated compatibility prop. kb_type no longer limits uploads. */
   kbType?: string
   /** Deprecated compatibility prop. kb_type no longer limits uploads. */
@@ -134,6 +139,7 @@ export function DocumentUpload({
   onUploadComplete,
   onTableAdd,
   onWebAdd,
+  onDingtalkAdd,
   folderId = 0,
   folderOptions = [],
   onFolderChange,
@@ -642,6 +648,18 @@ export function DocumentUpload({
     setWebFetching(false)
   }
 
+  // Handle DingTalk document import; the DingtalkDocumentImport child owns
+  // the import state and resets it by unmounting when the mode changes.
+  const handleDingtalkImport = useCallback(
+    async (node: DingtalkDocNode) => {
+      if (!onDingtalkAdd) return
+      await onDingtalkAdd(node)
+      setUploadMode('file')
+      handleClose()
+    },
+    [onDingtalkAdd, handleClose]
+  )
+
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -828,6 +846,19 @@ export function DocumentUpload({
               <ClipboardPaste className="w-4 h-4 mr-2" />
               {t('document.upload.pasteText')}
             </Button>
+            {onDingtalkAdd && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 px-4"
+                onClick={() => setUploadMode('dingtalk')}
+                disabled={state.isUploading}
+                data-testid="dingtalk-source-button"
+              >
+                <BookOpen className="w-4 h-4 mr-2" />
+                {t('document.upload.dingtalk.entry')}
+              </Button>
+            )}
             {/* Table add button hidden - deprecated in favor of DingTalk document sync */}
             {/* {onTableAdd && (
               <Button
@@ -1442,6 +1473,22 @@ export function DocumentUpload({
     </>
   )
 
+  // Handle back from dingtalk mode
+  const handleBackFromDingtalkMode = () => {
+    setUploadMode('file')
+  }
+
+  // Render DingTalk import mode
+  const renderDingtalkMode = () => (
+    <DingtalkDocumentImport
+      onBack={handleBackFromDingtalkMode}
+      onImport={handleDingtalkImport}
+      folderId={folderId}
+      folderOptions={folderOptions}
+      onFolderChange={onFolderChange}
+    />
+  )
+
   // Render mode selector
   const renderContent = () => {
     switch (uploadMode) {
@@ -1451,6 +1498,8 @@ export function DocumentUpload({
         return renderTableMode()
       case 'web':
         return renderWebMode()
+      case 'dingtalk':
+        return renderDingtalkMode()
       default:
         return renderFileMode()
     }

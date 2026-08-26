@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from sqlalchemy import and_, case, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -20,6 +21,7 @@ from app.models.kind import Kind
 from app.models.knowledge import (
     ContentOrigin,
     DocumentIndexStatus,
+    DocumentSourceType,
     DocumentStatus,
     KnowledgeDocument,
     KnowledgeFolder,
@@ -1623,6 +1625,93 @@ class KnowledgeService:
         return document
 
     @staticmethod
+    def create_external_document(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+        *,
+        name: str,
+        external_provider: str,
+        external_resource_id: str,
+        folder_id: int,
+        external_meta: dict[str, Any],
+    ) -> KnowledgeDocument:
+        """
+        Create the placeholder row for an imported external document.
+
+        The placeholder carries the external identity, target folder and the
+        QUEUED import status; a background task later fetches the body, creates
+        the attachment and reuses the regular indexing state machine.
+
+        Raises:
+            ValueError: If validation fails or permission denied
+            IntegrityError: On a concurrent duplicate external identity
+        """
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+
+        if not kb:
+            raise ValueError("Knowledge base not found or access denied")
+
+        if not KnowledgeService.can_manage_knowledge_base_documents(
+            db, knowledge_base_id, user_id
+        ):
+            raise ValueError(
+                "You do not have permission to add documents to this knowledge base"
+            )
+
+        kb = KnowledgeService._lock_active_knowledge_base(db, kb)
+        if not kb:
+            raise ValueError("Knowledge base not found or access denied")
+
+        validated_folder_id = folder_id
+        if folder_id:
+            target_folder = assert_document_can_be_placed_in_folder(
+                db,
+                knowledge_base_id,
+                folder_id,
+                content_origin=ContentOrigin.USER,
+            )
+            validated_folder_id = target_folder.id
+
+        document = KnowledgeDocument(
+            kind_id=knowledge_base_id,
+            attachment_id=0,
+            name=name,
+            file_extension="md",
+            file_size=0,
+            user_id=user_id,
+            folder_id=validated_folder_id,
+            status=DocumentStatus.DISABLED,
+            is_active=False,
+            index_status=DocumentIndexStatus.QUEUED,
+            source_type=DocumentSourceType.EXTERNAL.value,
+            source_config={"external": dict(external_meta)},
+            external_provider=external_provider,
+            external_resource_id=external_resource_id,
+            origin=ContentOrigin.USER.value,
+        )
+        db.add(document)
+        db.flush()
+
+        KnowledgeService._update_document_count_cache(db, knowledge_base_id)
+
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise
+        db.refresh(document)
+        return document
+
+    @staticmethod
     def get_document(
         db: Session,
         document_id: int,
@@ -1865,6 +1954,14 @@ class KnowledgeService:
             doc.name = data.name
 
         if data.status is not None:
+            if (
+                data.status == DocumentStatus.ENABLED
+                and doc.source_type == DocumentSourceType.EXTERNAL.value
+                and doc.attachment_id == 0
+            ):
+                # External import placeholders have no attachment until the
+                # background fetch succeeds; they cannot be enabled before that.
+                raise ValueError("Document content is not ready and cannot be enabled")
             doc.status = DocumentStatus(data.status.value)
 
         if data.splitter_config is not None:

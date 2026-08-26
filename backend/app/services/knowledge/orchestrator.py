@@ -47,6 +47,9 @@ from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_NOT_FOUND,
     document_read_service,
 )
+from app.services.knowledge.external_document_providers import (
+    ExternalDocumentContent,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.retrieval_profile import (
     get_profile,
@@ -1684,6 +1687,63 @@ class KnowledgeOrchestrator:
             trigger_indexing=trigger_indexing,
             trigger_summary=trigger_summary,
             splitter_config=splitter_config_dict,
+        )
+
+    def attach_external_document_content(
+        self,
+        db: Session,
+        document: KnowledgeDocument,
+        user: User,
+        content: ExternalDocumentContent,
+    ) -> Dict[str, Any]:
+        """
+        Attach fetched external content to a placeholder document and index it.
+
+        Creates the attachment from the provider-fetched body, points the
+        document at it, then reuses the regular indexing dispatch so external
+        documents go through the same conversion/split/index state machine.
+
+        Args:
+            db: Database session
+            document: Placeholder KnowledgeDocument with external identity
+            user: Document owner (used for indexing dispatch metadata)
+            content: Fetched external document content
+
+        Returns:
+            Dispatch result dict from the indexing scheduler
+        """
+        from app.services.context import context_service
+
+        kb, has_access = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=document.kind_id,
+            user_id=document.user_id,
+        )
+        if not kb or not has_access:
+            raise ValueError(
+                f"Knowledge base {document.kind_id} not found for external "
+                f"document {document.id}"
+            )
+
+        attachment, _ = context_service.upload_attachment(
+            db=db,
+            user_id=document.user_id,
+            filename=_build_filename(content.name, content.file_extension),
+            binary_data=content.content,
+            subtask_id=0,
+        )
+
+        document.attachment_id = attachment.id
+        document.file_size = len(content.content)
+        db.commit()
+
+        return self._schedule_indexing_celery(
+            db=db,
+            knowledge_base=kb,
+            document=document,
+            user=user,
+            trigger_summary=True,
+            replace_active=True,
         )
 
     def _create_and_index_document(

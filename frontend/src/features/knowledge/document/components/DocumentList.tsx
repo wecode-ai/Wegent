@@ -32,6 +32,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { DocumentDetailDialog } from './DocumentDetailDialog'
 import { DocumentUpload, type TableDocument } from './DocumentUpload'
+import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
@@ -730,6 +731,23 @@ export function DocumentList({
       nextSelectedIds.add(result.document.id)
       setDocumentSelection(nextSelectedIds)
     }
+
+    setShowUpload(false)
+    onDocumentsChanged?.()
+  }
+
+  const handleDingtalkAdd = async (node: DingtalkDocNode) => {
+    // Import the API function
+    const { importExternalDocument } = await import('@/apis/knowledge')
+
+    await importExternalDocument(knowledgeBase.id, {
+      provider: 'dingtalk',
+      external_resource_id: node.dingtalk_node_id,
+      folder_id: selectedUploadFolderId || 0,
+    })
+
+    // Refresh so the placeholder shows up with its backend-driven state.
+    await refresh()
 
     setShowUpload(false)
     onDocumentsChanged?.()
@@ -1622,6 +1640,7 @@ export function DocumentList({
         onUploadComplete={handleUploadComplete}
         onTableAdd={handleTableAdd}
         onWebAdd={handleWebAdd}
+        onDingtalkAdd={handleDingtalkAdd}
         kbType={documentViewOf(knowledgeBase.kb_type) ?? undefined}
         folderId={selectedUploadFolderId}
         folderOptions={folderOptions}

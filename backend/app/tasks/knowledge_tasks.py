@@ -93,6 +93,50 @@ def _enqueue_document_summary_task(
 
 @celery_app.task(
     bind=True,
+    name="app.tasks.knowledge_tasks.import_external_document",
+)
+def import_external_document_task(self, document_id: int):
+    """
+    Celery task for importing one external provider document.
+
+    Fetches the external document body, creates the attachment, and reuses
+    the regular indexing pipeline. Failures are recorded on the document as
+    a structured processing error instead of deleting the placeholder.
+
+    Args:
+        document_id: Placeholder KnowledgeDocument ID with external identity
+    """
+    from app.models.knowledge import KnowledgeDocument
+    from app.models.user import User
+    from app.services.knowledge.external_document_import import (
+        run_external_document_import,
+    )
+
+    with SessionLocal() as db:
+        document = (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .first()
+        )
+        if document is None:
+            logger.info(
+                "[Celery External Import] Document %s no longer exists; skipping",
+                document_id,
+            )
+            return
+        if not document.external_provider or not document.external_resource_id:
+            logger.info(
+                "[Celery External Import] Document %s has no external identity; "
+                "skipping",
+                document_id,
+            )
+            return
+        user = db.query(User).filter(User.id == document.user_id).first()
+        run_external_document_import(db, document, user)
+
+
+@celery_app.task(
+    bind=True,
     name="app.tasks.knowledge_tasks.index_document",
     max_retries=settings.KNOWLEDGE_INDEX_LOCK_MAX_RETRIES,
     default_retry_delay=settings.KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS,

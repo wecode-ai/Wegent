@@ -1,0 +1,260 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""API tests for the single external document import endpoint."""
+
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.api.dependencies import get_db
+from app.api.endpoints.knowledge import router
+from app.core import security
+from app.models.dingtalk_doc import DingtalkSyncedNode
+from app.models.user import User
+from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeFolderCreate
+from app.services.knowledge.folder_service import KnowledgeFolderService
+from app.services.knowledge.knowledge_service import KnowledgeService
+
+
+@pytest.fixture
+def import_client(test_db: Session, test_user: User) -> TestClient:
+    """Create a focused test client for the knowledge import endpoint."""
+
+    app = FastAPI()
+    app.include_router(router, prefix="/knowledge-bases")
+
+    def override_get_db():
+        yield test_db
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[security.get_current_user] = lambda: test_user
+
+    return TestClient(app)
+
+
+@pytest.fixture
+def configured_dingtalk(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.services.dingtalk_doc_service.DingTalkDocService.is_configured",
+        lambda user: True,
+    )
+
+
+@pytest.fixture
+def dispatched(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Capture background import task dispatches instead of hitting Celery."""
+    import app.tasks.knowledge_tasks as knowledge_tasks_module
+
+    document_ids: list[int] = []
+    monkeypatch.setattr(
+        knowledge_tasks_module,
+        "import_external_document_task",
+        SimpleNamespace(delay=lambda **kw: document_ids.append(kw["document_id"])),
+    )
+    return document_ids
+
+
+def _create_kb(test_db: Session, user_id: int, name: str = "api-import-kb") -> int:
+    return KnowledgeService.create_knowledge_base(
+        test_db,
+        user_id,
+        KnowledgeBaseCreate(name=name),
+    )
+
+
+def _create_synced_node(
+    test_db: Session,
+    user_id: int,
+    dingtalk_node_id: str,
+    name: str = "API Doc",
+    node_type: str = "doc",
+) -> DingtalkSyncedNode:
+    node = DingtalkSyncedNode(
+        user_id=user_id,
+        dingtalk_node_id=dingtalk_node_id,
+        name=name,
+        doc_url=f"https://alidocs.dingtalk.com/i/nodes/{dingtalk_node_id}",
+        parent_node_id="",
+        node_type=node_type,
+        workspace_id="",
+        is_active=True,
+        last_synced_at=datetime.now(timezone.utc),
+    )
+    test_db.add(node)
+    test_db.commit()
+    return node
+
+
+def _import_payload(node_id: str, folder_id: int = 0) -> dict:
+    return {
+        "provider": "dingtalk",
+        "external_resource_id": node_id,
+        "folder_id": folder_id,
+    }
+
+
+class TestImportExternalDocument:
+    def test_creates_placeholder_document(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        node = _create_synced_node(test_db, test_user.id, "a" * 32, name="API Doc")
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import",
+            json=_import_payload(node.dingtalk_node_id),
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["name"] == "API Doc"
+        assert data["source_type"] == "external"
+        assert data["external_provider"] == "dingtalk"
+        assert data["external_resource_id"] == node.dingtalk_node_id
+        assert data["index_status"] == "queued"
+        assert data["is_active"] is False
+        assert data["status"] == "disabled"
+        assert dispatched == [data["id"]]
+
+    def test_places_document_in_target_folder(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            kb_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="Target folder"),
+        )
+        node = _create_synced_node(test_db, test_user.id, "b" * 32)
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import",
+            json=_import_payload(node.dingtalk_node_id, folder_id=folder.id),
+        )
+
+        assert response.status_code == 201
+        assert response.json()["folder_id"] == folder.id
+
+    def test_rejects_folder_of_other_knowledge_base(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id, "api-import-kb-a")
+        other_kb_id = _create_kb(test_db, test_user.id, "api-import-kb-b")
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            other_kb_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="Foreign folder"),
+        )
+        node = _create_synced_node(test_db, test_user.id, "c" * 32)
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import",
+            json=_import_payload(node.dingtalk_node_id, folder_id=folder.id),
+        )
+
+        assert response.status_code == 400
+
+    def test_rejects_unconfigured_provider(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            "app.services.dingtalk_doc_service.DingTalkDocService.is_configured",
+            lambda user: False,
+        )
+        kb_id = _create_kb(test_db, test_user.id)
+        node = _create_synced_node(test_db, test_user.id, "d" * 32)
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import",
+            json=_import_payload(node.dingtalk_node_id),
+        )
+
+        assert response.status_code == 400
+
+    def test_rejects_unknown_external_node(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import",
+            json=_import_payload("e" * 32),
+        )
+
+        assert response.status_code == 404
+
+    def test_rejects_duplicate_import(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        node = _create_synced_node(test_db, test_user.id, "f" * 32, name="Once Doc")
+
+        first = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import",
+            json=_import_payload(node.dingtalk_node_id),
+        )
+        second = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import",
+            json=_import_payload(node.dingtalk_node_id),
+        )
+
+        assert first.status_code == 201
+        assert second.status_code == 409
+
+    def test_rejects_importer_without_manage_permission(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        node = _create_synced_node(test_db, test_user.id, "g" * 32)
+        monkeypatch.setattr(
+            KnowledgeService,
+            "can_manage_knowledge_base_documents",
+            staticmethod(lambda db, kb_id, user_id: False),
+        )
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import",
+            json=_import_payload(node.dingtalk_node_id),
+        )
+
+        assert response.status_code == 403

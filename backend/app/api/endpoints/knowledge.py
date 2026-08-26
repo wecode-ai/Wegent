@@ -47,6 +47,7 @@ from app.schemas.knowledge import (
     DocumentContentUpdate,
     DocumentDetailResponse,
     DocumentMoveRequest,
+    ExternalDocumentImportRequest,
     InitialMemberCreate,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
@@ -73,6 +74,10 @@ from app.services.knowledge import (
     KnowledgeFolderService,
     KnowledgeService,
     knowledge_base_qa_service,
+)
+from app.services.knowledge.external_document_import import (
+    ExternalDocumentImportError,
+    external_document_import_service,
 )
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
@@ -773,6 +778,57 @@ async def create_document(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+@router.post(
+    "/{knowledge_base_id}/documents/external-import",
+    response_model=KnowledgeDocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@trace_async("import_external_document", "knowledge.api")
+async def import_external_document(
+    knowledge_base_id: int,
+    data: ExternalDocumentImportRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Import one external provider document into this knowledge base.
+
+    Creates a placeholder document immediately, then a background task fetches
+    the external body and reuses the regular conversion and indexing pipeline.
+    """
+    try:
+        result = external_document_import_service.import_document(
+            db=db,
+            user=current_user,
+            knowledge_base_id=knowledge_base_id,
+            provider_id=data.provider,
+            external_resource_id=data.external_resource_id,
+            folder_id=data.folder_id,
+        )
+    except ExternalDocumentImportError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=str(exc),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    add_span_event(
+        "knowledge.document.external_imported",
+        {
+            "document_id": str(result.id),
+            "knowledge_base_id": str(knowledge_base_id),
+            "provider": data.provider,
+            "user_id": str(current_user.id),
+        },
+    )
+
+    return result
 
 
 # Document-specific endpoints (without knowledge_base_id in path)
