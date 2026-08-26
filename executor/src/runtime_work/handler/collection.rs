@@ -727,6 +727,18 @@ impl RuntimeWorkRpcHandler {
         self.store.upsert_task(link);
     }
 
+    pub(super) fn running_task_count(&self) -> Value {
+        let running_count = self
+            .active_local_executions
+            .lock()
+            .expect("active local execution map lock should not be poisoned")
+            .len();
+        json!({
+            "success": true,
+            "runningCount": running_count,
+        })
+    }
+
     pub(super) fn start_local_task_execution(
         &self,
         local_task_id: String,

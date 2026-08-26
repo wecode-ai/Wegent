@@ -24,21 +24,8 @@ interface CodexHomeStatus {
   shouldPromptMigration?: unknown
 }
 
-interface DeviceCommandResponse {
-  success?: unknown
-  stdout?: unknown
-}
-
-interface RuntimeTasksResponse {
-  workspaces?: Array<{
-    tasks?: RuntimeTaskStatus[]
-  }>
-}
-
-interface RuntimeTaskStatus {
-  running?: unknown
-  status?: unknown
-  turnStatus?: unknown
+interface RuntimeRunningCountResponse {
+  runningCount?: unknown
 }
 
 interface BackendQuotaResponse {
@@ -108,16 +95,21 @@ export class TrayNativeStatusController {
     const preferences = await this.dependencies.preferences.read()
     const language = normalizedLanguage(preferences.language)
     const showRunningStatus = preferences.trayRunningEnabled !== false
-    const [tasks, codex, wegent] = await Promise.all([
+    const [running, codex, wegent] = await Promise.all([
       showRunningStatus
-        ? this.read<RuntimeTasksResponse>('runtime.tasks.list')
+        ? this.read<RuntimeRunningCountResponse>('runtime.tasks.running_count')
         : Promise.resolve(null),
       this.readCodexRateLimits(preferences.trayUsageEnabled !== false),
       preferences.trayWegentUsageEnabled !== false
         ? this.read<BackendQuotaResponse>('executor.backend.quota')
         : Promise.resolve(null),
     ])
-    const runningCount = countRunningTasks(tasks)
+    const runningCount =
+      typeof running?.runningCount === 'number' &&
+      Number.isInteger(running.runningCount) &&
+      running.runningCount > 0
+        ? running.runningCount
+        : 0
     const codexDisplay = formatCodexUsage(codex, language)
     const wegentDisplay = formatBackendQuota(wegent, language)
     const tooltip = [
@@ -141,22 +133,8 @@ export class TrayNativeStatusController {
 
   private async readCodexRateLimits(enabled: boolean): Promise<CodexRateLimitsResponse | null> {
     if (!enabled) return null
-    const [home, auth] = await Promise.all([
-      this.read<CodexHomeStatus>('executor.codex_home.status'),
-      this.read<DeviceCommandResponse>('device.execute_command', {
-        command_key: 'runtime_auth_status',
-        timeout_seconds: 10,
-        max_output_bytes: 4096,
-      }),
-    ])
-    if (
-      !home ||
-      home.shouldPromptMigration === true ||
-      auth?.success !== true ||
-      !recordValue(auth.stdout).exists
-    ) {
-      return null
-    }
+    const home = await this.read<CodexHomeStatus>('executor.codex_home.status')
+    if (!home || home.shouldPromptMigration === true) return null
     return this.read<CodexRateLimitsResponse>('runtime.codex.rate_limits.read')
   }
 
@@ -175,34 +153,8 @@ export class TrayNativeStatusController {
   }
 }
 
-function recordValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
-}
-
 function normalizedLanguage(value: unknown): 'en' | 'zh-CN' {
   return typeof value === 'string' && value.toLowerCase().startsWith('en') ? 'en' : 'zh-CN'
-}
-
-function isRunningTask(task: RuntimeTaskStatus): boolean {
-  if (task.running === true) return true
-  const values = [task.status, task.turnStatus]
-  return values.some(
-    value =>
-      typeof value === 'string' &&
-      ['running', 'inprogress'].includes(value.replace(/[-_]/g, '').toLowerCase())
-  )
-}
-
-export function countRunningTasks(response: RuntimeTasksResponse | null): number {
-  return (
-    response?.workspaces?.reduce(
-      (count, workspace) =>
-        count + (workspace.tasks?.filter(task => isRunningTask(task)).length ?? 0),
-      0
-    ) ?? 0
-  )
 }
 
 function remainingPercent(window: CodexRateLimitWindow | null | undefined): number | null {

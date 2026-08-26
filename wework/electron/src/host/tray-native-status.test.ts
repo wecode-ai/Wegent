@@ -1,31 +1,13 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { PreferencesStore } from './preferences-store.js'
-import { countRunningTasks, TrayNativeStatusController } from './tray-native-status.js'
+import { TrayNativeStatusController } from './tray-native-status.js'
 
 describe('tray native status', () => {
-  test('counts executor tasks from explicit and normalized running states', () => {
-    expect(
-      countRunningTasks({
-        workspaces: [
-          {
-            tasks: [
-              { running: true },
-              { status: 'running' },
-              { turnStatus: 'in_progress' },
-              { status: 'active' },
-              { status: 'done' },
-            ],
-          },
-        ],
-      })
-    ).toBe(3)
-  })
-
   test('builds quota and running status without renderer state', async () => {
     const apply = vi.fn()
     const requestExecutor = vi.fn(async (method: string) => {
-      if (method === 'runtime.tasks.list') {
-        return { workspaces: [{ tasks: [{ running: true }, { status: 'done' }] }] }
+      if (method === 'runtime.tasks.running_count') {
+        return { runningCount: 1 }
       }
       if (method === 'runtime.codex.rate_limits.read') {
         return {
@@ -37,9 +19,6 @@ describe('tray native status', () => {
       }
       if (method === 'executor.codex_home.status') {
         return { shouldPromptMigration: false }
-      }
-      if (method === 'device.execute_command') {
-        return { success: true, stdout: { exists: true } }
       }
       return {
         data: { remaining: 845.21 },
@@ -62,9 +41,8 @@ describe('tray native status', () => {
     await controller.refresh()
 
     expect(requestExecutor.mock.calls.map(call => call[0])).toEqual([
-      'runtime.tasks.list',
+      'runtime.tasks.running_count',
       'executor.codex_home.status',
-      'device.execute_command',
       'executor.backend.quota',
       'runtime.codex.rate_limits.read',
     ])
@@ -80,11 +58,8 @@ describe('tray native status', () => {
   test('does not initialize Codex while home migration is pending', async () => {
     const apply = vi.fn()
     const requestExecutor = vi.fn(async (method: string) => {
-      if (method === 'runtime.tasks.list') return { workspaces: [] }
+      if (method === 'runtime.tasks.running_count') return { runningCount: 0 }
       if (method === 'executor.codex_home.status') return { shouldPromptMigration: true }
-      if (method === 'device.execute_command') {
-        return { success: true, stdout: { exists: true } }
-      }
       if (method === 'runtime.codex.rate_limits.read') {
         throw new Error('rate limits must not initialize Codex')
       }
@@ -106,6 +81,8 @@ describe('tray native status', () => {
     await controller.refresh()
 
     expect(requestExecutor).not.toHaveBeenCalledWith('runtime.codex.rate_limits.read')
+    expect(requestExecutor).not.toHaveBeenCalledWith('device.execute_command', expect.anything())
+    expect(requestExecutor).not.toHaveBeenCalledWith('runtime.tasks.list')
     expect(apply).toHaveBeenCalledWith({
       usageTitle: null,
       usageTooltip: null,
