@@ -261,7 +261,8 @@ export class RuntimeTaskLifecycleStore {
     )
     const hasStreamingTurn = Boolean(streamingTurn)
     const current = this.getTask(address)
-    const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
+    const ignoreStaleRunningTranscript =
+      shouldIgnoreStaleRunningTranscript(current) && !isNewStreamingTurn(current, streamingTurn?.id)
     const ignoreStaleIdleTranscript =
       transcript.running === false &&
       options.preserveActiveTurn === true &&
@@ -583,6 +584,17 @@ function shouldIgnoreStaleRunningTranscript(current: RuntimeTaskLifecycleSnapsho
         current.task !== null &&
         isRuntimeTaskAuthoritativeCompletion(current.task)))
   )
+}
+
+function isNewStreamingTurn(
+  current: RuntimeTaskLifecycleSnapshot | null,
+  turnId: string | null | undefined
+): boolean {
+  const normalizedTurnId = turnId?.trim()
+  if (!current || !normalizedTurnId) return false
+  const runtimeHandle = current.address.runtimeHandle ?? current.task?.runtimeHandle
+  const lastTurnId = runtimeHandle?.lastTurnId
+  return typeof lastTurnId === 'string' && lastTurnId.trim() !== normalizedTurnId
 }
 
 export function consumeRuntimeTaskLifecycleBlock(

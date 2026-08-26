@@ -54,6 +54,7 @@ export interface LocalExecutorLog {
 export interface LocalExecutorEvent {
   event: string
   payload: Record<string, unknown>
+  sequence?: number
 }
 
 interface CodexStartupStatus {
@@ -339,7 +340,7 @@ export function subscribeLocalExecutorEvents(
 ): Promise<UnlistenFn> {
   return Promise.resolve(
     subscribeDshExecutorEvents(event => {
-      handler({ event: event.event, payload: event.payload })
+      handler({ event: event.event, payload: event.payload, sequence: event.sequence })
     })
   )
 }
