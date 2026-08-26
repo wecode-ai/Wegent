@@ -365,9 +365,11 @@ jobs:
           publish_channel() {
             local channel="$1"
             local electron_channel="$channel"
+            local current_assets="$RUNNER_TEMP/current-${channel}-assets.json"
             local current_manifest="$RUNNER_TEMP/current-${channel}.json"
             [[ "$channel" == "stable" ]] && electron_channel="latest"
 
+            gh release view wework-updater --json assets > "$current_assets"
             if gh release download wework-updater \
               --pattern "${channel}-darwin-aarch64.json" \
               --output "$current_manifest" \
@@ -377,8 +379,17 @@ jobs:
                 "$current_manifest")"
               if ! node wework/scripts/update-channel-manifests.mjs \
                 is-newer "$RELEASE_VERSION" "$current_version"; then
-                echo "Keeping newer or equal ${channel} update manifests at ${current_version}."
-                return
+                if node wework/scripts/update-channel-manifests.mjs \
+                  has-complete-channel-assets "$current_assets" "$channel"; then
+                  echo "Keeping newer or equal ${channel} update manifests at ${current_version}."
+                  return
+                fi
+                if node wework/scripts/update-channel-manifests.mjs \
+                  is-newer "$current_version" "$RELEASE_VERSION"; then
+                  echo "::error::The newer ${channel} channel at ${current_version} has incomplete updater assets."
+                  return 1
+                fi
+                echo "Repairing incomplete ${channel} updater assets at ${current_version}."
               fi
             fi
 

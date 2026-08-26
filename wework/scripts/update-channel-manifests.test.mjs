@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  expectedChannelAssetNames,
   generateChannelManifests,
+  hasCompleteChannelAssets,
   isNewerWeworkVersion,
   parseWeworkVersion,
 } from './update-channel-manifests.mjs'
@@ -26,6 +28,37 @@ describe('Wework update channel manifests', () => {
 
   test('rejects unsupported prerelease formats', () => {
     expect(() => parseWeworkVersion('1.2.3-alpha.1')).toThrow('Unsupported Wework version')
+  })
+
+  test('requires every Electron and legacy manifest before treating a channel as complete', () => {
+    const stableAssets = expectedChannelAssetNames('stable')
+
+    expect(stableAssets).toEqual([
+      'latest.yml',
+      'latest-mac.yml',
+      'stable-darwin-aarch64.json',
+      'stable-darwin-x86_64.json',
+      'stable-windows-x86_64.json',
+    ])
+    expect(hasCompleteChannelAssets(stableAssets, 'stable')).toBe(true)
+    expect(
+      hasCompleteChannelAssets(
+        stableAssets.filter(name => name !== 'latest-mac.yml'),
+        'stable'
+      )
+    ).toBe(false)
+    expect(
+      hasCompleteChannelAssets(
+        [
+          'beta.yml',
+          'beta-mac.yml',
+          'beta-darwin-aarch64.json',
+          'beta-darwin-x86_64.json',
+          'beta-windows-x86_64.json',
+        ],
+        'beta'
+      )
+    ).toBe(true)
   })
 
   test('creates architecture-specific manifests for a custom channel target', async () => {
