@@ -1,13 +1,18 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   ipcMain,
   Menu,
+  nativeImage,
+  nativeTheme,
+  powerMonitor,
   screen,
   session,
   shell,
   Tray,
   WebContentsView,
+  webContents,
   type MenuItemConstructorOptions,
   type WebContents,
 } from 'electron'
@@ -41,14 +46,23 @@ import {
 } from './host/workbench-tab-controller.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions, workbenchDshBounds } from './host/window-layout.js'
-import { presentWindow } from './host/window-presentation.js'
+import { createSingleFlight, presentWindow } from './host/window-presentation.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
-import { StartupSplash } from './host/startup-splash.js'
+import { resolveStartupSplashTheme, StartupSplash } from './host/startup-splash.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
+import { createTrayIcon } from './host/tray-icon.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { AppUpdateService } from './host/app-update-service.js'
+import { installNativeContextMenu } from './host/image-context-menu.js'
+import {
+  cleanupStaleTemporaryImages,
+  materializeTemporaryImage,
+  resolveRendererImageContext,
+  scheduleTemporaryImageCleanup,
+} from './host/image-context-actions.js'
+import { SystemResumeBridge } from './host/system-resume-bridge.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
@@ -93,7 +107,7 @@ let dockVisible = true
 let preferences: PreferencesStore | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
-let trayManager: ElectronTrayManager<Electron.Menu | null> | null = null
+let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let pendingTrayActions: TrayAction[] = []
 const pendingEmbeddedBrowserAttachments = new Map<
   number,
@@ -108,6 +122,7 @@ const appUpdates = new AppUpdateService({
   prepareInstall: prepareApplicationShutdown,
   updateBaseUrl,
 })
+const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (!hasSingleInstanceLock) app.quit()
@@ -125,6 +140,30 @@ rendererHealth.on('change', () => {
 
 function secureDshContents(contents: WebContents, dshUrl: string): void {
   const allowedOrigin = new URL(dshUrl).origin
+  installNativeContextMenu(
+    contents,
+    items => Menu.buildFromTemplate(items),
+    {
+      copyPath: path => clipboard.writeText(path),
+      copyText: text => clipboard.writeText(text),
+      openImage: async image => {
+        const temporaryPath = image.localPath
+          ? null
+          : await materializeTemporaryImage(contents, image)
+        const path = image.localPath ?? temporaryPath
+        if (!path) throw new Error('Image path is unavailable')
+        const error = await shell.openPath(path)
+        if (temporaryPath) scheduleTemporaryImageCleanup(temporaryPath)
+        if (error) throw new Error(error)
+      },
+      reportError: (action, error) => {
+        console.error(`[context-menu] ${action} failed`, error)
+      },
+      resolveImageContext: params => resolveRendererImageContext(contents, params),
+      showItemInFolder: path => shell.showItemInFolder(path),
+    },
+    app.getLocale()
+  )
   contents.setWindowOpenHandler(({ url }) => {
     const target = new URL(url)
     if (target.origin === allowedOrigin) return { action: 'allow' }
@@ -343,7 +382,7 @@ class ElectronWorkbenchView implements WorkbenchTabView {
   }
 }
 
-async function loadPrimaryDshView(): Promise<void> {
+const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   if (!mainWindow || !desktopRuntime) return
   if (primaryDshLoaded) return
   rendererHealth.loading()
@@ -389,7 +428,7 @@ async function loadPrimaryDshView(): Promise<void> {
     rendererHealth.failed('renderer_load_failed')
     throw error
   }
-}
+})
 
 function disposeCoreDshViews(): void {
   for (const workspaceWindow of workspaceWindows.values()) {
@@ -687,18 +726,25 @@ function dispatchTrayAction(action: TrayAction): void {
     requestApplicationShutdown(() => app.quit())
     return
   }
-  void reactivateMainWindow()
+  void reactivateMainWindow().catch(error => {
+    console.error('[window] failed to handle tray action', error)
+  })
   if (action.type === 'open-settings' || action.type === 'open-task') {
     pendingTrayActions.push(action)
   }
 }
 
-function createTrayManager(): ElectronTrayManager<Electron.Menu | null> {
+function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const resourcesRoot = app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'resources')
+  const iconPath = join(resourcesRoot, 'icons', '128x128.png')
   return new ElectronTrayManager({
-    createTray: () => new Tray(join(resourcesRoot, 'icons', '32x32.png')),
+    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath)),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
+    applyTitle: (tray, title) => {
+      tray.setImage(createTrayIcon(nativeImage, iconPath, title))
+      tray.setTitle('')
+    },
   })
 }
 
@@ -726,6 +772,7 @@ function installIpc(): void {
 }
 
 async function shutdown(): Promise<void> {
+  systemResume.stop()
   systemSleep.stop()
   trayManager?.destroy()
   trayManager = null
@@ -973,8 +1020,12 @@ function startDesktopRuntime(): Promise<void> {
 
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
+    await cleanupStaleTemporaryImages().catch(error => {
+      console.error('[context-menu] failed to remove stale temporary images', error)
+    })
     installDshWindowLabelHeaders()
     installIpc()
+    systemResume.start()
     preferences = new PreferencesStore(app.getPath('userData'))
     windowClosePolicy = new WindowClosePolicy({
       read: async () => {
@@ -990,8 +1041,10 @@ if (hasSingleInstanceLock) {
         await preferences?.update({ closeToTrayHintSeen: true })
       },
     })
-    trayManager = createTrayManager()
-    trayManager.create()
+    const createdTrayManager = createTrayManager()
+    createdTrayManager.create()
+    trayManager = createdTrayManager
+    const startupPreferences = await preferences.read()
     startupSplash = new StartupSplash({
       createWindow: options => {
         const target = new BrowserWindow(options)
@@ -999,7 +1052,7 @@ if (hasSingleInstanceLock) {
           close: () => target.close(),
           isDestroyed: () => target.isDestroyed(),
           isVisible: () => target.isVisible(),
-          loadFile: path => target.loadFile(path),
+          loadFile: (path, options) => target.loadFile(path, options),
           once: (event, listener) => {
             if (event === 'closed') target.once('closed', listener)
             else target.once('ready-to-show', listener)
@@ -1013,6 +1066,10 @@ if (hasSingleInstanceLock) {
         }
       },
       htmlPath: resolve(packageRoot, 'dist/shell/startup-splash/index.html'),
+      theme: resolveStartupSplashTheme(
+        startupPreferences.appearanceMode,
+        nativeTheme.shouldUseDarkColors
+      ),
     })
     await Promise.all([startupSplash.show(), createWindow()])
     void startDesktopRuntime()

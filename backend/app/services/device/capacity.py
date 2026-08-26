@@ -90,6 +90,31 @@ def get_runtime_capacity_sync(
     return _parse_capacity(online_info, expected_instance_id)
 
 
+def validate_runtime_capacity_observation_sync(
+    db: Session,
+    *,
+    owner_user_id: int,
+    device_id: str,
+    runtime_instance_id: str,
+    runtime_capacity: Any,
+) -> RuntimeCapacity | None:
+    """Validate a pull-time capacity snapshot against the canonical route."""
+
+    route = _runtime_route(db, owner_user_id, device_id)
+    if route is None:
+        return None
+    _, expected_instance_id = route
+    if runtime_instance_id != expected_instance_id:
+        return None
+    return _parse_capacity(
+        {
+            "runtime_instance_id": runtime_instance_id,
+            "runtime_capacity": runtime_capacity,
+        },
+        expected_instance_id,
+    )
+
+
 async def get_runtime_capacity(
     db: Session, *, owner_user_id: int, device_id: str
 ) -> RuntimeCapacity | None:

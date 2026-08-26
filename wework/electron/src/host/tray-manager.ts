@@ -51,10 +51,14 @@ export interface TrayAdapter<TMenu = unknown> {
   destroy(): void
 }
 
-export interface TrayManagerDependencies<TMenu = unknown> {
-  createTray: () => TrayAdapter<TMenu>
+export interface TrayManagerDependencies<
+  TMenu = unknown,
+  TTray extends TrayAdapter<TMenu> = TrayAdapter<TMenu>,
+> {
+  createTray: () => TTray
   buildMenu: (template: TrayMenuTemplateItem[]) => TMenu
   dispatchAction: (action: TrayAction) => void
+  applyTitle?: (tray: TTray, title: string) => void
   platform?: NodeJS.Platform
   defaultTooltip?: string
 }
@@ -184,15 +188,18 @@ function toSnapshotItem(item: TrayMenuTemplateItem): TrayMenuSnapshotItem {
   }
 }
 
-export class ElectronTrayManager<TMenu = unknown> {
+export class ElectronTrayManager<
+  TMenu = unknown,
+  TTray extends TrayAdapter<TMenu> = TrayAdapter<TMenu>,
+> {
   private readonly platform: NodeJS.Platform
   private readonly defaultTooltip: string
-  private tray: TrayAdapter<TMenu> | null = null
+  private tray: TTray | null = null
   private state: TrayMenuState = EMPTY_STATE
   private menuTemplate: TrayMenuTemplateItem[] = []
   private menuActions = new Map<string, TrayAction>()
 
-  constructor(private readonly dependencies: TrayManagerDependencies<TMenu>) {
+  constructor(private readonly dependencies: TrayManagerDependencies<TMenu, TTray>) {
     this.platform = dependencies.platform ?? process.platform
     this.defaultTooltip = dependencies.defaultTooltip ?? 'WeWork'
   }
@@ -265,7 +272,12 @@ export class ElectronTrayManager<TMenu = unknown> {
     tray.setContextMenu(this.dependencies.buildMenu(this.menuTemplate))
     tray.setToolTip(this.state.usageTooltip?.trim() || this.defaultTooltip)
     if (this.platform === 'darwin' && tray.setTitle) {
-      tray.setTitle(this.state.usageTitle?.trim() ?? '')
+      const title = this.state.usageTitle?.trim() ?? ''
+      if (this.dependencies.applyTitle) {
+        this.dependencies.applyTitle(tray, title)
+      } else {
+        tray.setTitle(title)
+      }
     }
   }
 

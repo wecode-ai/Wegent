@@ -1482,6 +1482,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         let wait_for_goal_continuation = state.goal_is_active();
         let expected_client_user_message_id = request_client_user_message_id(request);
+        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         client.mark_thread_active(&thread_id).await;
@@ -1546,6 +1547,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 active_turn_started,
                 active_turn_finished,
                 wait_for_goal_continuation,
+                auto_approve_mcp_tool_calls,
             },
         )
         .await;
@@ -1785,6 +1787,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         }
 
         let turn_input = turn_input(&request.prompt);
+        let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
         let mut turn_fields = codex_turn_fields(request, &thread_id);
         turn_fields.push(("input_items", turn_input.len().to_string()));
         log_executor_event("codex turn request started", &turn_fields);
@@ -1805,6 +1808,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
                     &mut state,
                     notifications,
                     request_user_input_answers,
+                    auto_approve_mcp_tool_calls,
                 ) => outcome?,
                 _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
             }
@@ -1814,6 +1818,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
                 &mut state,
                 notifications,
                 request_user_input_answers,
+                auto_approve_mcp_tool_calls,
             )
             .await?
         };
@@ -1866,6 +1871,7 @@ struct SharedTurnNotificationOptions {
     active_turn_started: Option<CodexActiveTurnCallback>,
     active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
     wait_for_goal_continuation: bool,
+    auto_approve_mcp_tool_calls: bool,
 }
 
 async fn read_shared_turn_notifications(
@@ -2021,8 +2027,16 @@ async fn read_shared_turn_notifications(
         {
             waiting_for_initial_progress = false;
         }
-        if let Some(sender) = &options.notifications {
-            let _ = sender.send(message.clone());
+        let auto_approve_mcp_tool_call = options.auto_approve_mcp_tool_calls
+            && message
+                .get("method")
+                .and_then(Value::as_str)
+                .is_some_and(|method| method == "mcpServer/elicitation/request")
+            && is_mcp_tool_call_approval(message_params(&message));
+        if !auto_approve_mcp_tool_call {
+            if let Some(sender) = &options.notifications {
+                let _ = sender.send(message.clone());
+            }
         }
 
         if message
@@ -2063,6 +2077,7 @@ async fn read_shared_turn_notifications(
                 &message,
                 request_user_input_answers.clone(),
                 response_error_tx.clone(),
+                options.auto_approve_mcp_tool_calls,
             )?;
             continue;
         }
@@ -2438,6 +2453,7 @@ fn spawn_shared_mcp_server_elicitation_response(
     message: &Value,
     request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
     response_error_tx: mpsc::UnboundedSender<String>,
+    auto_approve_mcp_tool_calls: bool,
 ) -> Result<(), String> {
     let request_id = json_rpc_request_id(message)
         .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
@@ -2447,6 +2463,10 @@ fn spawn_shared_mcp_server_elicitation_response(
     let message = message.clone();
     tokio::spawn(async move {
         let result = async {
+            if auto_approve_mcp_tool_calls && is_mcp_tool_call_approval(message_params(&message)) {
+                let result = mcp_server_tool_call_approval_response(&message)?;
+                return client.send_response(request_id, result).await;
+            }
             let has_response_router = request_user_input_answers.is_some();
             let response = match request_user_input_answers {
                 Some(receiver) => receiver.receive(correlation_key).await?,
@@ -2798,6 +2818,9 @@ struct CodexLocalImage {
 
 fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
+    let configured_base_url = non_empty_config(&request.model_config, "base_url")
+        .or_else(|| non_empty_config(&request.model_config, "baseUrl"));
+    let configured_auth_present = api_key(&request.model_config).is_some();
     let reasoning = normalize_reasoning(request.model_config.get("reasoning"));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
@@ -2845,6 +2868,20 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
             &inference_provider,
             runtime_proxy_url(&request.model_config),
         ) {
+            log_executor_event(
+                "codex model route selected",
+                &[
+                    ("task_id", request.task_id.clone()),
+                    ("route", "local_proxy_user_provider".to_owned()),
+                    ("provider", inference_provider.clone()),
+                    ("model", model.clone().unwrap_or_default()),
+                    (
+                        "payload_base_url_present",
+                        configured_base_url.is_some().to_string(),
+                    ),
+                    ("payload_auth_present", configured_auth_present.to_string()),
+                ],
+            );
             configure_codex_router(
                 &mut launch_config,
                 &request.task_id,
@@ -2854,6 +2891,20 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                 vision_sidecar_upstream(&request.model_config)?,
             );
         } else {
+            log_executor_event(
+                "codex model route selected",
+                &[
+                    ("task_id", request.task_id.clone()),
+                    ("route", "direct_user_provider".to_owned()),
+                    ("provider", inference_provider.clone()),
+                    ("model", model.clone().unwrap_or_default()),
+                    (
+                        "payload_base_url_present",
+                        configured_base_url.is_some().to_string(),
+                    ),
+                    ("payload_auth_present", configured_auth_present.to_string()),
+                ],
+            );
             launch_config.model_provider = Some(inference_provider.clone());
             launch_config.config_overrides.extend(header_overrides(
                 &inference_provider,
@@ -2864,6 +2915,20 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
     } else if let Some(upstream) =
         local_model_proxy::upstream_from_model_config(&request.model_config)
     {
+        log_executor_event(
+            "codex model route selected",
+            &[
+                ("task_id", request.task_id.clone()),
+                ("route", "local_proxy_payload".to_owned()),
+                ("provider", inference_model_provider(&request.model_config)),
+                ("model", model.clone().unwrap_or_default()),
+                (
+                    "payload_base_url_present",
+                    configured_base_url.is_some().to_string(),
+                ),
+                ("payload_auth_present", configured_auth_present.to_string()),
+            ],
+        );
         configure_codex_router(
             &mut launch_config,
             &request.task_id,
@@ -2873,7 +2938,22 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
             vision_sidecar_upstream(&request.model_config)?,
         );
     } else {
-        launch_config.model_provider = Some(inference_model_provider(&request.model_config));
+        let inference_provider = inference_model_provider(&request.model_config);
+        log_executor_event(
+            "codex model route selected",
+            &[
+                ("task_id", request.task_id.clone()),
+                ("route", "direct_payload_provider".to_owned()),
+                ("provider", inference_provider.clone()),
+                ("model", model.clone().unwrap_or_default()),
+                (
+                    "payload_base_url_present",
+                    configured_base_url.is_some().to_string(),
+                ),
+                ("payload_auth_present", configured_auth_present.to_string()),
+            ],
+        );
+        launch_config.model_provider = Some(inference_provider);
     }
 
     launch_config
@@ -2920,6 +3000,22 @@ fn configure_codex_router(
     vision_sidecar: Option<VisionSidecarUpstream>,
 ) {
     upstream.routing_model_id = routing_model_id;
+    log_executor_event(
+        "codex local model router configuring",
+        &[
+            ("task_id", task_id.to_owned()),
+            (
+                "model",
+                upstream.routing_model_id.clone().unwrap_or_default(),
+            ),
+            (
+                "upstream_model",
+                upstream.model_id.clone().unwrap_or_default(),
+            ),
+            ("api_format", upstream.api_format.clone()),
+            ("auth_present", (!upstream.api_key.is_empty()).to_string()),
+        ],
+    );
     let local_token =
         local_model_proxy::register_with_vision_sidecar(task_id, upstream, vision_sidecar);
     if model_switched {
@@ -3072,9 +3168,6 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
 }
 
 fn project_plugin_config_overrides(request: &ExecutionRequest) -> Vec<String> {
-    if request.runtime_project_key.is_none() {
-        return Vec::new();
-    }
     request
         .extra
         .get("project_plugin_ids")
@@ -4482,6 +4575,10 @@ pub(crate) fn codex_runtime_approval_policy(request: &ExecutionRequest) -> Value
     }
 }
 
+fn codex_auto_approve_mcp_tool_calls(request: &ExecutionRequest) -> bool {
+    codex_runtime_permission_profile(request) == CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+}
+
 fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str {
     match request
         .extra
@@ -5098,7 +5195,11 @@ const MCP_ELICITATION_DECLINE: &str = "Decline";
 async fn receive_mcp_server_elicitation_response(
     message: &Value,
     request_user_input_answers: Option<&mut CodexRequestUserInputReceiver>,
+    auto_approve_mcp_tool_calls: bool,
 ) -> Result<Value, String> {
+    if auto_approve_mcp_tool_calls && is_mcp_tool_call_approval(message_params(message)) {
+        return mcp_server_tool_call_approval_response(message);
+    }
     if mcp_server_elicitation_request_user_input_params(message_params(message)).is_none() {
         return mcp_server_elicitation_response(message, None);
     }
@@ -5110,6 +5211,26 @@ async fn receive_mcp_server_elicitation_response(
         .await
         .ok_or_else(|| "mcp elicitation response channel closed".to_owned())?;
     mcp_server_elicitation_response(message, Some(&response))
+}
+
+fn mcp_server_tool_call_approval_response(message: &Value) -> Result<Value, String> {
+    let response = json!({
+        "answers": {
+            MCP_ELICITATION_APPROVAL_QUESTION_ID: {
+                "answers": [MCP_ELICITATION_ALLOW]
+            }
+        }
+    });
+    mcp_server_elicitation_response(message, Some(&response))
+}
+
+fn is_mcp_tool_call_approval(params: &Value) -> bool {
+    params
+        .get("_meta")
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("codex_approval_kind"))
+        .and_then(Value::as_str)
+        == Some("mcp_tool_call")
 }
 
 fn mcp_server_elicitation_response(
@@ -5185,10 +5306,7 @@ pub(crate) fn mcp_server_elicitation_request_user_input_params(params: &Value) -
     let schema = params.get("requestedSchema")?;
     let properties = schema.get("properties").and_then(Value::as_object)?;
     let meta = params.get("_meta").and_then(Value::as_object);
-    let is_tool_approval = meta
-        .and_then(|meta| meta.get("codex_approval_kind"))
-        .and_then(Value::as_str)
-        == Some("mcp_tool_call");
+    let is_tool_approval = is_mcp_tool_call_approval(params);
     let mut questions = Vec::new();
 
     if is_tool_approval || properties.is_empty() {

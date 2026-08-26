@@ -50,6 +50,7 @@ import {
 import { openLocalFile } from '@/lib/local-terminal'
 import { getRecognizedLink } from '@/lib/link-preview'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
 import { ComposerLinkChip } from './ComposerLinkChip'
 import { ComposerTextarea } from './composer/ComposerTextarea'
@@ -57,6 +58,7 @@ import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { pluginNameInitial } from '@/components/plugins/plugin-assets'
+import { stripPluginWorkspaceResultMarkers } from '@/components/plugins/pluginWorkspaceResult'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
@@ -821,7 +823,9 @@ function shouldRenderMessage(message: WorkbenchMessage): boolean {
     return true
   }
 
-  const visibleContent = shouldHideFailedAssistantContent(message) ? '' : message.content
+  const visibleContent = shouldHideFailedAssistantContent(message)
+    ? ''
+    : stripPluginWorkspaceResultMarkers(message.content)
   if (visibleContent.trim()) return true
 
   return getDisplayProcessingBlocks(message.blocks).length > 0
@@ -965,22 +969,6 @@ function formatMessageTime(createdAt: string) {
   }
 
   return `${date.getFullYear()}年${dateLabel} ${time}`
-}
-
-async function copyText(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  document.execCommand('copy')
-  document.body.removeChild(textarea)
 }
 
 function UserMessage({
@@ -1584,7 +1572,7 @@ function MessageHoverActions({
     if (event.detail > 0) {
       event.currentTarget.blur()
     }
-    void copyText(copyContent).then(() => {
+    void copyTextToClipboard(copyContent).then(() => {
       setCopied(true)
       resetCopiedAfterHideRef.current = false
     })
@@ -2015,7 +2003,7 @@ export function AssistantMessage({
   const shouldHideContent =
     shouldHideFailedAssistantContent(message) ||
     (isCancelled && isCancelledPlaceholderContent(message.content))
-  const visibleContent = shouldHideContent ? '' : message.content
+  const visibleContent = shouldHideContent ? '' : stripPluginWorkspaceResultMarkers(message.content)
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
   const displayBlocks = useMemo(

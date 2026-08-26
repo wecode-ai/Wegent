@@ -9,6 +9,7 @@ import {
   DEBUG_SNAPSHOT_DEBOUNCE_MS,
 } from '@/lib/debugPanel'
 import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
+import { appendBufferedRuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessageBuffer'
 import {
   deriveRuntimePaneStatus,
   isRuntimeTaskBusyError,
@@ -59,6 +60,7 @@ import type {
   RuntimeRollbackRequest,
   RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
   RuntimeTurnNavigationItem,
 } from '@/types/api'
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
@@ -131,6 +133,7 @@ interface RuntimePaneSendOptions {
   modelSelection?: ModelSelectionConfig | null
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
+  origin?: RuntimeTaskCreateRequest['origin']
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   onRuntimeTaskCreated?: (address: RuntimeTaskAddress) => void
   onRuntimeTaskReady?: (address: RuntimeTaskAddress) => void
@@ -425,7 +428,7 @@ export function useWorkbenchPaneSession({
         return
       }
 
-      pendingMessageActionsRef.current.push(action)
+      appendBufferedRuntimePaneMessageAction(pendingMessageActionsRef.current, action)
       if (messageActionFrameRef.current !== null) return
       messageActionFrameRef.current = requestAnimationFrame(() => {
         messageActionFrameRef.current = null
@@ -2021,6 +2024,7 @@ export function useWorkbenchPaneSession({
             codeCommentContexts,
             additionalContext: options.additionalContext,
             cloudProjectId: options.cloudProjectId,
+            origin: options.origin,
             ...(options.runtime ? { runtime: options.runtime } : {}),
             ...(options.runtimeExecutablePath
               ? { runtimeExecutablePath: options.runtimeExecutablePath }
@@ -2070,6 +2074,7 @@ export function useWorkbenchPaneSession({
             initialGoal: pendingInitialGoal,
             additionalContext: resolvedAdditionalContext,
             cloudProjectId: options.cloudProjectId,
+            origin: options.origin,
             initialSupervisor: options.initialSupervisor,
             ...(options.runtime ? { runtime: options.runtime } : {}),
             ...(options.runtimeExecutablePath
@@ -2627,18 +2632,15 @@ export function useWorkbenchPaneSession({
     if (shouldPauseQueue) {
       setQueuedMessagesPaused(true)
     }
-    const interruptedTurn = optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
     const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
     if (!cancelled) {
-      if (interruptedTurn) {
-        restoreOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
-      }
       if (shouldPauseQueue) {
         setQueuedMessagesPaused(false)
       }
       return
     }
 
+    optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
     void refreshWorkLists()
   }, [
     cancelRuntimePaneTask,

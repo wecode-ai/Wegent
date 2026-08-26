@@ -20,8 +20,10 @@ import {
 } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
+import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
@@ -1127,6 +1129,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ...options,
         additionalContext: cloudSubmission.additionalContext,
         cloudProjectId: cloudSubmission.cloudProjectId,
+        origin: cloudSubmission.origin,
         initialSupervisor: supervisorConfig,
         onRuntimeTaskCreated: cloudSubmission.onRuntimeTaskCreated,
         onRuntimeTaskReady: () => {
@@ -3710,7 +3713,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
   const openWorkspaceFileFromMessage = useCallback(
     async (path: string, options?: WorkspaceFileOpenOptions) => {
-      const trimmedPath = path.trim()
+      const trimmedPath = decodeMarkdownFilePath(path.trim())
       if (!trimmedPath) return
       const attachmentTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
       const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices)
@@ -4428,7 +4431,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   chatContentResizing && 'transition-none'
                 )}
                 contentFooter={
-                  isCreatingWorktree ? <WorktreeCreationStatus className="py-8" /> : undefined
+                  isCreatingWorktree ? (
+                    <WorktreeCreationStatus className="py-8" />
+                  ) : (
+                    <PluginWorkspaceConversationResult
+                      taskId={currentRuntimeTask?.taskId}
+                      workspacePath={currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath}
+                      messages={paneMessages}
+                      waiting={paneSession.status.isWaitingForAssistantIndicator}
+                      onOpenFile={path => void openWorkspaceFileFromMessage(path)}
+                      onSendAction={(message, additionalContext) =>
+                        paneSession.send(message, { additionalContext })
+                      }
+                    />
+                  )
                 }
                 contentFooterClassName={DESKTOP_MESSAGE_LIST_WIDTH_CLASS}
                 stickyFooterClassName={cn(

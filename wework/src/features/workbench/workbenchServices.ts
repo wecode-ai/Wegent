@@ -30,8 +30,14 @@ import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
-import type { Attachment, ProjectDeviceSessionResponse, User } from '@/types/api'
-import type { ModelOptions, ModelType } from '@/types/api'
+import type {
+  Attachment,
+  ModelOptions,
+  ModelType,
+  ProjectDeviceSessionResponse,
+  RuntimeProjectPluginRef,
+  User,
+} from '@/types/api'
 import type { DeviceSessionResponse } from '@/types/devices'
 import type {
   Automation,
@@ -51,6 +57,7 @@ import type {
 } from '@/features/local-harness/localHarnessModels'
 import type { LocalHarnessId } from '@/lib/local-harness'
 import type { createProjectAutomationApi } from '@/api/projectAutomations'
+import type { createRuntimeProfileApi } from '@/api/runtimeProfiles'
 import type { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
 
 export interface WorkspaceSessionApi {
@@ -76,11 +83,17 @@ export interface ProjectSpaceDetailServices {
   projectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
+  runtimeProfileApi?: ReturnType<typeof createRuntimeProfileApi>
   projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
   loopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
   deviceApi: WorkbenchServices['deviceApi']
   modelApi: WorkbenchServices['modelApi']
   teamApi: WorkbenchServices['teamApi']
+  pluginApi?: ProjectPluginCatalogApi
+}
+
+export interface ProjectPluginCatalogApi {
+  listPlugins: (deviceId: string) => Promise<RuntimeProjectPluginRef[]>
 }
 
 export interface ProjectSpaceDetailServiceMap {
@@ -144,6 +157,7 @@ export interface WorkbenchServices {
   projectSpaceDetailServices?: ProjectSpaceDetailServiceMap
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
+  pluginApi?: ProjectPluginCatalogApi
   automationApi?: AutomationApi
   attachmentApi?: {
     uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
@@ -154,10 +168,12 @@ export interface WorkbenchServices {
   executorClient?: ExecutorClient
   userApi?: ReturnType<typeof createUserApi>
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
+  recoverRuntimeConnections?: () => Promise<void>
   projectChatClient?: ProjectChatClient
   localProjectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   projectAutomationApi?: ReturnType<typeof createProjectAutomationApi>
+  runtimeProfileApi?: ReturnType<typeof createRuntimeProfileApi>
   projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
   localProjectChatAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>
   localLoopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
@@ -182,7 +198,6 @@ export interface WorkbenchServices {
   chatStream: ReturnType<typeof createChatStream>
   cloudBackgroundApi?: {
     listTeams?: ReturnType<typeof createTeamApi>['listTeams']
-    getDefaultWorkbenchTeam?: ReturnType<typeof createTeamApi>['getDefaultWorkbenchTeam']
     listDevices?: ReturnType<typeof createDeviceApi>['listDevices']
     listRuntimeWork?: ReturnType<typeof createRuntimeWorkApi>['listRuntimeWork']
   }

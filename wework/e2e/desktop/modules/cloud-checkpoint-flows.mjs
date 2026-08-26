@@ -67,7 +67,11 @@ import {
   verifyBackgroundTaskWindowLifecycle,
 } from './window-attachment-flows.mjs'
 
-import { verifyWorkspaceTabIsolation, waitForControlValue } from './workspace-flows.mjs'
+import {
+  captureVerificationScreenshot,
+  verifyWorkspaceTabIsolation,
+  waitForControlValue,
+} from './workspace-flows.mjs'
 
 const CLOUD_CHECKPOINTS = [
   'workspace-tabs',
@@ -76,6 +80,7 @@ const CLOUD_CHECKPOINTS = [
   'telemetry-consent',
   'automation-lifecycle',
   'plugin-auto-update',
+  'plugin-workspace-publication',
   'model-routing',
   'core-task-flow',
   'cloud-git-worktree',
@@ -339,6 +344,92 @@ async function verifyCloudWorkspacePathMentions({ composerSelector, control, wor
   )
 }
 
+async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
+  const taskAddress = await cloudEnvironment.createPluginWorkspaceTask()
+  const taskId = taskAddress.taskId
+  const runtimeTask = await cloudEnvironment.waitForRuntimeTask(taskAddress)
+  const taskWorkspace = runtimeTask.workspacePath
+  const pluginRoot = join(taskWorkspace, 'plugins', 'cloud-workspace-e2e')
+  await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true })
+  await mkdir(join(pluginRoot, 'skills', 'cloud-draft'), { recursive: true })
+  await writeFile(
+    join(pluginRoot, '.codex-plugin', 'plugin.json'),
+    `${JSON.stringify(
+      {
+        name: 'cloud-workspace-e2e',
+        version: '1.0.0',
+        description: 'Cloud Plugin Creator Task workspace E2E',
+        author: { name: 'Wework E2E' },
+        skills: './skills/',
+        interface: {
+          displayName: 'Cloud Workspace E2E',
+          shortDescription: 'Verifies Task workspace publication',
+        },
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
+  )
+  await writeFile(
+    join(pluginRoot, 'skills', 'cloud-draft', 'SKILL.md'),
+    '---\nname: cloud-draft\ndescription: Verify Task workspace publication.\n---\n',
+    'utf8'
+  )
+
+  const described = await cloudEnvironment.describePluginWorkspace(
+    pluginRoot,
+    taskWorkspace,
+    taskId
+  )
+  assert.equal(described.status, 'ready')
+  assert.equal(described.relativePath, 'plugins/cloud-workspace-e2e')
+  await cloudEnvironment.restartCloudExecutor()
+
+  const readyMarker = `[WEGENT_PLUGIN_RESULT]${JSON.stringify(described)}`
+  await cloudEnvironment.sendPluginWorkspaceResult(taskAddress, readyMarker)
+  await control.command('navigate', 'body', { value: '/' })
+  const taskRowSelector = `[data-testid="runtime-local-task-row-${taskId}"]`
+  await control.command('waitFor', taskRowSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', taskRowSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="plugin-workspace-result"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugin-creator-publish-plugin"]')
+  await control.command('waitFor', '[data-testid="plugin-publish-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugin-publish-confirm"]')
+  await control.command('waitFor', '[data-testid="plugin-workspace-result"]', {
+    text: '已发布',
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  await control.command('navigate', 'body', { value: '/plugins' })
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="plugins-search-input"]', {
+    value: 'Cloud Workspace E2E',
+  })
+  await control.command('waitFor', '[data-testid^="plugin-marketplace-row-"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const publishedRow = snapshot.testIds.find(testId => testId.startsWith('plugin-marketplace-row-'))
+  assert.match(
+    publishedRow ?? '',
+    /^plugin-marketplace-row-\d+$/,
+    'The result-card publication did not create a marketplace plugin row'
+  )
+  assert.ok(snapshot.text.includes('Cloud Workspace E2E'))
+  await captureVerificationScreenshot(control, 'cloud-plugin-workspace-published.png')
+}
+
 async function verifyCloudCheckpoint({
   app,
   appBundlePath,
@@ -411,6 +502,15 @@ async function verifyCloudCheckpoint({
     setPhase('cloud-plugin-auto-update-without-codex-rpc')
     await cloudEnvironment.syncPluginAutoUpdatesToCloudDevice()
     await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
+    return
+  }
+
+  if (checkpoint === 'plugin-workspace-publication') {
+    setPhase('cloud-plugin-workspace-publication')
+    await verifyPluginWorkspacePublication({
+      cloudEnvironment,
+      control,
+    })
     return
   }
 

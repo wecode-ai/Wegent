@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchPaneContextValue } from '@/features/workbench/workbenchContextTypes'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
+import type { RuntimeWorkListResponse } from '@/types/api'
 import { IssueComposer } from './IssueComposer'
 import { issueDraftFromText } from './issueComposerDraft'
 
@@ -63,7 +65,15 @@ function renderWithProjectChat(
     ...overrides,
   }
   return render(
-    <WorkbenchPaneContext.Provider value={{ projectChat } as unknown as WorkbenchPaneContextValue}>
+    <WorkbenchPaneContext.Provider
+      value={
+        {
+          projectChat,
+          projectExecutionMode: 'current_workspace',
+          projectWorktreeBranch: null,
+        } as unknown as WorkbenchPaneContextValue
+      }
+    >
       {component}
     </WorkbenchPaneContext.Provider>
   )
@@ -112,7 +122,7 @@ describe('IssueComposer', () => {
 
   it('creates a lightweight issue without requiring a local execution project', async () => {
     const onCreate = vi.fn()
-    render(
+    renderWithProjectChat(
       <IssueComposer
         projects={[workItemProject]}
         initialBoardKey="backend:1"
@@ -155,13 +165,12 @@ describe('IssueComposer', () => {
       description: '修复工作空间创建入口\n只创建 Issue',
       files: [],
       createTask: false,
-      localProjectId: null,
     })
   })
 
   it('switches to the full task composer without losing the issue content', async () => {
     const onCreate = vi.fn()
-    render(
+    renderWithProjectChat(
       <IssueComposer
         projects={[workItemProject]}
         initialBoardKey="backend:1"
@@ -193,13 +202,124 @@ describe('IssueComposer', () => {
       description: '修复创建流程',
       files: [],
       createTask: true,
-      localProjectId: 92,
+      taskRequest: {
+        schemaVersion: 2,
+        runtime: 'codex',
+        message: '修复创建流程',
+        modelOptions: { collaborationMode: 'default' },
+        modelSelection: null,
+        additionalSkills: [],
+      },
+    })
+  })
+
+  it('selects a cloud runtime project and captures its concrete workspace target', async () => {
+    const onCreate = vi.fn()
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: {
+            key: 'remote:docs',
+            name: '文档',
+            kind: 'remote',
+            source: 'remote_project',
+            stateDeviceId: 'cloud-state-device',
+          },
+          deviceWorkspaces: [
+            {
+              id: 71,
+              projectId: null,
+              deviceId: 'cloud-state-device',
+              remoteHostId: 'cloud-executor',
+              deviceName: 'Cloud Executor',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/workspace/docs',
+              workspaceKind: 'workspace',
+              workspaceSource: 'remote',
+              mapped: true,
+              tasks: [],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const cloudProjectId = runtimeProjectUiId(runtimeWork.projects[0].project)
+    const projectChat: ProjectChatControls = {
+      models: [],
+      skills: [],
+      selectedModel: null,
+      selectedModelOptions: {},
+      selectedSkills: [],
+      attachments: [],
+      uploadingFiles: new Map(),
+      errors: new Map(),
+      isOptionsLocked: false,
+      setSelectedModel: vi.fn(),
+      setSelectedModelOption: vi.fn(),
+      toggleSkill: vi.fn(),
+      handleFileSelect: vi.fn(async () => undefined),
+      removeAttachment: vi.fn(async () => undefined),
+      listLocalSkills: vi.fn(async () => []),
+    }
+
+    render(
+      <WorkbenchPaneContext.Provider
+        value={
+          {
+            projectChat,
+            projectExecutionMode: 'current_workspace',
+            projectWorktreeBranch: null,
+            state: { runtimeWork },
+          } as unknown as WorkbenchPaneContextValue
+        }
+      >
+        <IssueComposer
+          projects={[workItemProject]}
+          initialBoardKey="backend:1"
+          initialStartExecution
+          localProjects={[{ id: 91, name: '本地项目' }]}
+          initialLocalProjectId={91}
+          onCancel={vi.fn()}
+          onCreate={onCreate}
+        />
+      </WorkbenchPaneContext.Provider>
+    )
+
+    await userEvent.type(screen.getByTestId('workspace-issue-input'), '处理云端项目')
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId(`project-option-${cloudProjectId}`))
+
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('文档')
+
+    await userEvent.click(screen.getByTestId('workspace-issue-submit'))
+
+    expect(onCreate).toHaveBeenCalledWith({
+      boardKey: 'backend:1',
+      title: '处理云端项目',
+      description: '处理云端项目',
+      files: [],
+      createTask: true,
+      taskRequest: {
+        schemaVersion: 2,
+        runtime: 'codex',
+        message: '处理云端项目',
+        deviceId: 'cloud-executor',
+        runtimeProjectKey: 'remote:docs',
+        runtimeProjectName: '文档',
+        runtimeWorkspaceRoots: [],
+        modelOptions: { collaborationMode: 'default' },
+        modelSelection: null,
+        additionalSkills: [],
+      },
     })
   })
 
   it('selects the target project space from the compact composer', async () => {
     const onCreate = vi.fn()
-    render(
+    renderWithProjectChat(
       <IssueComposer
         projects={[workItemProject, productProject]}
         initialBoardKey="local:default-work-items"
@@ -221,7 +341,6 @@ describe('IssueComposer', () => {
       description: '发布产品需求',
       files: [],
       createTask: false,
-      localProjectId: null,
     })
   })
 
@@ -246,13 +365,12 @@ describe('IssueComposer', () => {
       description: '快捷创建 Issue',
       files: [],
       createTask: false,
-      localProjectId: null,
     })
   })
 
   it('can open directly in task creation mode', async () => {
     const onCreate = vi.fn()
-    render(
+    renderWithProjectChat(
       <IssueComposer
         projects={[workItemProject]}
         initialBoardKey="backend:1"
@@ -271,7 +389,14 @@ describe('IssueComposer', () => {
       description: '完成发布验证',
       files: [],
       createTask: true,
-      localProjectId: null,
+      taskRequest: {
+        schemaVersion: 2,
+        runtime: 'codex',
+        message: '完成发布验证',
+        modelOptions: { collaborationMode: 'default' },
+        modelSelection: null,
+        additionalSkills: [],
+      },
     })
   })
 
@@ -313,7 +438,6 @@ describe('IssueComposer', () => {
       description: '完成发布验证',
       files: [file],
       createTask: false,
-      localProjectId: null,
     })
   })
 
@@ -409,7 +533,6 @@ describe('IssueComposer', () => {
       description: '完整 Issue 内容',
       files: [file],
       createTask: false,
-      localProjectId: null,
     })
   })
 
@@ -556,7 +679,6 @@ describe('IssueComposer', () => {
       description: '第一条描述',
       files: [],
       createTask: false,
-      localProjectId: null,
       continueCreating: true,
       status: 'in_progress',
       priority: 'high',

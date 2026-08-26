@@ -1,8 +1,36 @@
 import { describe, expect, test } from 'vitest'
-import { runtimeProjectToProject, runtimeProjectUiId } from './runtime-project'
+import {
+  resolveRuntimeTaskProjects,
+  runtimeProjectToProject,
+  runtimeProjectUiId,
+} from './runtime-project'
 import type { RuntimeProjectWork } from '@/types/api'
 
 describe('runtime project helpers', () => {
+  test('includes remote runtime projects in task project choices', () => {
+    const runtimeProject: RuntimeProjectWork = {
+      project: {
+        key: 'remote:docs',
+        name: '文档',
+        kind: 'remote',
+        source: 'remote_project',
+        stateDeviceId: 'cloud-device',
+      },
+      deviceWorkspaces: [],
+    }
+
+    expect(
+      resolveRuntimeTaskProjects([], { projects: [runtimeProject], chats: [], totalTasks: 0 })
+    ).toEqual([
+      {
+        id: runtimeProjectUiId(runtimeProject.project),
+        name: '文档',
+        config: undefined,
+        tasks: [],
+      },
+    ])
+  })
+
   test('builds a workspace project config from runtime device workspace context', () => {
     const runtimeProject: RuntimeProjectWork = {
       project: {

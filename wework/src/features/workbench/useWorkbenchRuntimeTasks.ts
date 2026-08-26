@@ -17,6 +17,7 @@ import type {
   RuntimeWorkSearchRequest,
   User,
 } from '@/types/api'
+import { projectTaskTrackingApi } from './projectTaskTracking'
 import type {
   RuntimePaneTranscript,
   RuntimePaneTranscriptLoadOptions,
@@ -253,11 +254,10 @@ export function useWorkbenchRuntimeTasks({
 
   const completeArchivedBoardTasks = useCallback(
     async (addresses: RuntimeTaskAddress[]) => {
-      const trackingApi = services.projectSpaceApis?.local
-      if (!trackingApi) return
-
       await Promise.all(
         addresses.map(async address => {
+          const trackingApi = projectTaskTrackingApi(services, address)
+          if (!trackingApi) return
           try {
             await trackingApi.updateTaskTrackingStatus(address, 'archived')
           } catch (error) {
@@ -269,7 +269,7 @@ export function useWorkbenchRuntimeTasks({
         })
       )
     },
-    [services.projectSpaceApis?.local]
+    [services]
   )
 
   const archiveRuntimeConversations = useCallback(

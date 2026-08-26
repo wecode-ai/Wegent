@@ -8,5 +8,5 @@ export async function openCloudAuthorizationWindow(
     return
   }
 
-  await openExternalUrl(url)
+  await openExternalUrl(url, { target: 'system' })
 }

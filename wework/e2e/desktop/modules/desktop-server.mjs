@@ -97,6 +97,7 @@ import {
   EMBEDDED_BROWSER_SETUP_PROMPT,
   FILE_PANEL_ANCHOR_PROMPT,
   FILE_PANEL_ANCHOR_RESPONSE,
+  FILE_PANEL_LINK_NAME,
   FOLLOW_UP_COMPLETION_TEXT,
   FOLLOW_UP_PROMPT,
   FORK_ENCRYPTED_CONTENT,
@@ -231,6 +232,9 @@ import {
 } from './shared.mjs'
 
 const DESKTOP_CONTROL_COMMAND_INTERVAL_MS = 250
+const PLUGIN_WORKSPACE_PUBLISH_CALL_ID = 'wework-plugin-workspace-publish'
+const PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX = 'Run this exact command: '
+const PLUGIN_WORKSPACE_RESULT_MARKER = '[WEGENT_PLUGIN_RESULT]'
 const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'getAttribute',
@@ -241,6 +245,68 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'text',
   'waitFor',
 ])
+
+function findNestedString(value, predicate) {
+  if (typeof value === 'string') return predicate(value) ? value : null
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const match = findNestedString(item, predicate)
+      if (match) return match
+    }
+    return null
+  }
+  if (!value || typeof value !== 'object') return null
+  for (const item of Object.values(value)) {
+    const match = findNestedString(item, predicate)
+    if (match) return match
+  }
+  return null
+}
+
+function pluginWorkspacePublishCommand(body) {
+  const context = findNestedString(body, value =>
+    value.includes(PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX)
+  )
+  if (!context) return null
+  const commandLine = context
+    .split(/\r?\n/u)
+    .find(line => line.startsWith(PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX))
+  return commandLine?.slice(PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX.length) ?? null
+}
+
+function publishedPluginWorkspaceResult(body) {
+  const output = findNestedString(
+    body,
+    value =>
+      value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && value.includes('"status":"published"')
+  )
+  if (!output) return null
+  const line = output
+    .split(/\r?\n/u)
+    .find(
+      candidate =>
+        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) &&
+        candidate.includes('"status":"published"')
+    )
+  if (!line) return null
+  return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
+}
+
+function readyPluginWorkspaceResult(body) {
+  const output = findNestedString(
+    body,
+    value => value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && value.includes('"status":"ready"')
+  )
+  if (!output) return null
+  const line = output
+    .split(/\r?\n/u)
+    .find(
+      candidate =>
+        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && candidate.includes('"status":"ready"')
+    )
+  if (!line) return null
+  return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
+}
 
 class DesktopE2EServer {
   constructor(
@@ -1755,6 +1821,40 @@ class DesktopE2EServer {
       return
     }
 
+    const publishCommand = pluginWorkspacePublishCommand(body)
+    if (requestContainsToolOutput(body, PLUGIN_WORKSPACE_PUBLISH_CALL_ID)) {
+      const publishedResult = publishedPluginWorkspaceResult(body)
+      assert.ok(
+        publishedResult,
+        'The Plugin Creator publish command did not return a result marker'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(publishedResult),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+    if (publishCommand) {
+      const tool = selectShellToolCommand(body, publishCommand, this.cloudWorkspacePath)
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall(PLUGIN_WORKSPACE_PUBLISH_CALL_ID, tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    const readyResult = readyPluginWorkspaceResult(body)
+    if (readyResult) {
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(readyResult),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (JSON.stringify(body).includes(PLUGIN_CREATOR_PROMPT)) {
       this.writeSse(response, [
         responseCreated(responseId),
@@ -3033,7 +3133,10 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(
-          FILE_PANEL_ANCHOR_RESPONSE.replace('README.md:1', `${this.workspacePath}/README.md:1`)
+          FILE_PANEL_ANCHOR_RESPONSE.replace(
+            `${FILE_PANEL_LINK_NAME.replaceAll(' ', '%20')}:1`,
+            `${encodeURI(`${this.workspacePath}/${FILE_PANEL_LINK_NAME}`)}:1`
+          )
         ),
         responseCompleted(responseId),
       ])

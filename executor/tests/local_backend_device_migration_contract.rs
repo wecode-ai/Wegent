@@ -68,6 +68,7 @@ async fn local_backend_registers_all_python_local_device_events() {
         "terminal:resize",
         "terminal:close",
         "runtime:rpc",
+        "runtime.tasks.available",
         "device:upgrade",
         "device:run_extension",
     ] {

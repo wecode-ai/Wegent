@@ -17,6 +17,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
 import { isImeEnterEvent } from '@/lib/ime'
 import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
+import { cn } from '@/lib/utils'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
   canUseForProjectCreation,
@@ -194,6 +195,7 @@ export function StandaloneBlankProjectDialog({
   open,
   devices,
   preferredDeviceId,
+  layer = 'modal',
   onClose,
   onGetDeviceHomeDirectory,
   onListDeviceDirectories,
@@ -203,6 +205,7 @@ export function StandaloneBlankProjectDialog({
   open: boolean
   devices: DeviceInfo[]
   preferredDeviceId?: string | null
+  layer?: 'modal' | 'system-popover'
   onClose: () => void
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
@@ -265,7 +268,12 @@ export function StandaloneBlankProjectDialog({
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
+    <div
+      className={cn(
+        'fixed inset-0 flex items-center justify-center bg-black/35 px-4',
+        layer === 'system-popover' ? 'z-system-popover' : 'z-modal'
+      )}
+    >
       <div
         role="dialog"
         aria-modal="true"
@@ -343,6 +351,9 @@ export function StandaloneFolderProjectDialog({
   open,
   mode,
   remoteIntent = 'project',
+  fixedDeviceId,
+  chooseProjectSource = false,
+  layer = 'modal',
   devices,
   preferredDeviceId,
   onClose,
@@ -359,6 +370,9 @@ export function StandaloneFolderProjectDialog({
   open: boolean
   mode: StandaloneWorkspaceDialogMode
   remoteIntent?: StandaloneRemoteDialogIntent
+  fixedDeviceId?: string
+  chooseProjectSource?: boolean
+  layer?: 'modal' | 'system-popover'
   preferNativeLocalPicker?: boolean
   devices: DeviceInfo[]
   preferredDeviceId?: string | null
@@ -398,24 +412,32 @@ export function StandaloneFolderProjectDialog({
   const [gitError, setGitError] = useState<string | null>(null)
   const nativePickerStartedRef = useRef(false)
   const gitParentDefaultDeviceIdRef = useRef<string | null>(null)
-  const selectableDevices = useMemo(
-    () => getUsableStandaloneDevices(devices, mode),
-    [devices, mode]
-  )
+  const selectableDevices = useMemo(() => {
+    if (!fixedDeviceId) return getUsableStandaloneDevices(devices, mode)
+    const fixedDevice = devices.find(device => device.device_id === fixedDeviceId)
+    if (!fixedDevice) return []
+    const usable = isRemoteProjectDevice(fixedDevice)
+      ? canUseForRemoteProjectCreation(fixedDevice)
+      : canUseForProjectCreation(fixedDevice)
+    return usable ? [fixedDevice] : []
+  }, [devices, fixedDeviceId, mode])
   const remoteDeviceOptions = useMemo(
     () =>
-      mode === 'remote'
+      mode === 'remote' && !fixedDeviceId
         ? getStandaloneDeviceOptions(devices, mode).sort((left, right) =>
             getRemoteDeviceLabel(left).localeCompare(getRemoteDeviceLabel(right))
           )
         : [],
-    [devices, mode]
+    [devices, fixedDeviceId, mode]
   )
   const cloudDeviceOptions = remoteDeviceOptions.filter(isCloudDevice)
   const remoteDockerDeviceOptions = remoteDeviceOptions.filter(isRemoteDevice)
   const defaultDevice = useMemo(
-    () => getPreferredStandaloneWorkspaceDevice(devices, preferredDeviceId, mode),
-    [devices, mode, preferredDeviceId]
+    () =>
+      fixedDeviceId
+        ? (selectableDevices.find(device => device.device_id === fixedDeviceId) ?? null)
+        : getPreferredStandaloneWorkspaceDevice(devices, preferredDeviceId, mode),
+    [devices, fixedDeviceId, mode, preferredDeviceId, selectableDevices]
   )
   const [activeDeviceId, setActiveDeviceId] = useState(
     defaultDevice?.device_id ?? selectableDevices[0]?.device_id ?? ''
@@ -425,13 +447,16 @@ export function StandaloneFolderProjectDialog({
     selectableDevices[0] ??
     null
   const addingRemoteDevice = mode === 'remote' && remoteIntent === 'add-device'
-  const choosingRemoteProjectSource =
-    mode === 'remote' && remoteIntent === 'project' && remoteProjectSource === null
+  const choosingProjectSource =
+    (mode === 'remote' || chooseProjectSource) &&
+    remoteIntent === 'project' &&
+    remoteProjectSource === null
   const showStartupCommand =
     mode === 'remote' &&
     (addingRemoteDevice || !activeDevice) &&
     Boolean(onGetRemoteDeviceStartupCommand)
   const usesRemoteFolderPicker =
+    chooseProjectSource ||
     mode === 'remote' ||
     (mode === 'existing' && activeDevice !== null && isRemoteProjectDevice(activeDevice))
   const closeDialog = useCallback(() => {
@@ -454,28 +479,35 @@ export function StandaloneFolderProjectDialog({
 
   useEscapeKey(closeDialog, open)
 
-  const title = usesRemoteFolderPicker
-    ? remoteIntent === 'add-device'
-      ? t('workbench.add_cloud_device_title', '添加新设备')
-      : remoteIntent === 'cloud-work'
-        ? t('workbench.cloud_work_title', '云端工作')
-        : t('workbench.add_remote_project_title', '添加远程项目')
-    : t('workbench.use_existing_folder_title', '使用现有文件夹')
-  const description = usesRemoteFolderPicker
-    ? remoteIntent === 'add-device'
-      ? t(
-          'workbench.add_cloud_device_desc',
-          '在要接入的云主机或宿主机上运行连接脚本，启动后回到这里刷新设备。'
-        )
-      : remoteIntent === 'cloud-work'
-        ? showStartupCommand
-          ? t(
-              'workbench.cloud_work_connect_desc',
-              '还没有可用云端设备。先在云主机或另一台电脑上运行下面的连接脚本。'
-            )
-          : t('workbench.cloud_work_desc', '选择这台云端设备要处理的项目目录。')
-        : t('workbench.add_remote_project_desc', '选择已连接的远程主机，并选择此项目的文件夹。')
-    : t('workbench.use_existing_folder_desc', '选择本地设备上的一个文件夹。')
+  const title = chooseProjectSource
+    ? t('workbench.add_project_to_device_title', '添加代码项目')
+    : usesRemoteFolderPicker
+      ? remoteIntent === 'add-device'
+        ? t('workbench.add_cloud_device_title', '添加新设备')
+        : remoteIntent === 'cloud-work'
+          ? t('workbench.cloud_work_title', '云端工作')
+          : t('workbench.add_remote_project_title', '添加远程项目')
+      : t('workbench.use_existing_folder_title', '使用现有文件夹')
+  const description = chooseProjectSource
+    ? t(
+        'workbench.add_project_to_device_desc',
+        '选择项目来源和设备上的目录，保存后将绑定到当前机器人。'
+      )
+    : usesRemoteFolderPicker
+      ? remoteIntent === 'add-device'
+        ? t(
+            'workbench.add_cloud_device_desc',
+            '在要接入的云主机或宿主机上运行连接脚本，启动后回到这里刷新设备。'
+          )
+        : remoteIntent === 'cloud-work'
+          ? showStartupCommand
+            ? t(
+                'workbench.cloud_work_connect_desc',
+                '还没有可用云端设备。先在云主机或另一台电脑上运行下面的连接脚本。'
+              )
+            : t('workbench.cloud_work_desc', '选择这台云端设备要处理的项目目录。')
+          : t('workbench.add_remote_project_desc', '选择已连接的远程主机，并选择此项目的文件夹。')
+      : t('workbench.use_existing_folder_desc', '选择本地设备上的一个文件夹。')
   const startupCommandLoading = showStartupCommand && !startupCommand && !startupCommandError
   const startupCommands = useMemo(
     () => normalizeRemoteDeviceStartupCommands(startupCommand),
@@ -488,6 +520,7 @@ export function StandaloneFolderProjectDialog({
   const shouldUseNativeLocalPicker =
     open &&
     mode === 'existing' &&
+    !chooseProjectSource &&
     activeDevice !== null &&
     isLocalDevice(activeDevice) &&
     preferNativeLocalPicker &&
@@ -743,7 +776,10 @@ export function StandaloneFolderProjectDialog({
       onClick={event => {
         if (event.target === event.currentTarget) closeDialog()
       }}
-      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+      className={cn(
+        'fixed inset-0 flex items-center justify-center bg-black/35 px-4',
+        layer === 'system-popover' ? 'z-system-popover' : 'z-modal'
+      )}
     >
       <div
         role="dialog"
@@ -1014,7 +1050,7 @@ export function StandaloneFolderProjectDialog({
                 : t('workbench.no_local_project_device', '暂无可用本地设备')}
             </p>
           )
-        ) : choosingRemoteProjectSource ? (
+        ) : choosingProjectSource ? (
           <div data-testid="remote-project-source-options" className="mt-5 space-y-2">
             {(
               [
@@ -1240,7 +1276,7 @@ export function StandaloneFolderProjectDialog({
           </div>
         ) : (
           <div className="mt-5">
-            {mode === 'remote' && remoteIntent === 'project' && (
+            {(mode === 'remote' || chooseProjectSource) && remoteIntent === 'project' && (
               <button
                 type="button"
                 data-testid="remote-project-source-back"

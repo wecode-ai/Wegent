@@ -227,6 +227,27 @@ class ProjectChatAgent(LoopNode):
         super().__init__(**kwargs)
 
 
+class RuntimeProfile(LoopNode):
+    """A reusable, user-owned Wework execution configuration."""
+
+    __mapper_args__ = {"polymorphic_identity": "runtime_profile"}
+
+    def __init__(self, **kwargs: object) -> None:
+        kwargs.setdefault("status", "active")
+        super().__init__(**kwargs)
+
+
+class RuntimeBinding(LoopNode):
+    """One project member's default Runtime profile."""
+
+    __mapper_args__ = {"polymorphic_identity": "runtime_binding"}
+
+    def __init__(self, **kwargs: object) -> None:
+        kwargs.setdefault("status", "active")
+        kwargs.setdefault("is_default", True)
+        super().__init__(**kwargs)
+
+
 class ProjectAutomationRule(LoopNode):
     """A scheduled automation owned by one Wework project."""
 

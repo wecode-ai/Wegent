@@ -1,4 +1,5 @@
 import type { CloudLoopItem, WorkflowNodeInstance } from '@/api/deliveries'
+import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
 
 type TaskEntryStatus = 'pending' | 'in_progress'
 
@@ -33,12 +34,17 @@ export function workflowStageTaskInput(stage: WorkflowNodeInstance): string {
 }
 
 export function shouldPrepareWorkItemTask(
-  item: Pick<CloudLoopItem, 'parent_id' | 'status' | 'workflow'>,
+  item: Pick<
+    CloudLoopItem,
+    'assignee_agent_id' | 'assignee_team_id' | 'parent_id' | 'status' | 'workflow'
+  >,
   targetStatus: TaskEntryStatus,
   taskBindingCount: number
 ): boolean {
   return (
     isSelfManagedWorkItem(item) &&
+    !item.assignee_agent_id &&
+    !item.assignee_team_id &&
     item.parent_id === null &&
     item.status !== targetStatus &&
     taskBindingCount === 0
@@ -46,7 +52,10 @@ export function shouldPrepareWorkItemTask(
 }
 
 export function shouldDeferWorkItemMoveUntilTaskCreated(
-  item: Pick<CloudLoopItem, 'parent_id' | 'status' | 'workflow'>,
+  item: Pick<
+    CloudLoopItem,
+    'assignee_agent_id' | 'assignee_team_id' | 'parent_id' | 'status' | 'workflow'
+  >,
   targetStatus: TaskEntryStatus,
   taskBindingCount: number
 ): boolean {
@@ -64,7 +73,9 @@ export function shouldRevealWorkItemWorkflowActions(
     targetStatus === 'pending' &&
     !isSelfManagedWorkItem(item) &&
     Boolean(
-      item.workflow?.nodes.some(stage => !stage.automation_rule_id && stage.status === 'ready')
+      item.workflow?.nodes.some(
+        stage => workflowNodeExecutionMode(stage) === 'human' && stage.status === 'ready'
+      )
     )
   )
 }

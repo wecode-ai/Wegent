@@ -33,6 +33,8 @@ describe('projectAutomationForm', () => {
         ...draftWithAllExecutorFields(),
         assignmentMode: 'ai_managed',
         managerType: 'custom',
+        runtimeSource: 'fixed_profile',
+        runtimeProfileId: 'runtime-profile',
       },
       schedule,
       {}
@@ -61,9 +63,11 @@ describe('projectAutomationForm', () => {
       managerType: 'custom',
       agentId: null,
       wegentTeamId: null,
-      model: 'gpt-5-codex',
-      executionEnvironment: 'cloud',
-      executionDeviceId: 'remote-device',
+      runtimeSource: 'fixed_profile',
+      runtimeProfileId: 'runtime-profile',
+      model: null,
+      executionEnvironment: null,
+      executionDeviceId: null,
     })
     expect(wegentRobot).toMatchObject({
       assignmentMode: 'ai_managed',

@@ -35,6 +35,11 @@ import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { TrayActivation, TrayAction, TrayMenuState, TraySnapshot } from './tray-manager.js'
 import type { StartupSplashSnapshot } from './startup-splash.js'
 import type { AppUpdateService, WeworkUpdateChannel } from './app-update-service.js'
+import {
+  listLocalWorkspaceOpeners,
+  openLocalWorkspace,
+  saveCustomWorkspaceOpener,
+} from './local-workspace-openers.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -480,6 +485,35 @@ export function createElectronCapabilityRouter(
   router.register('shell.showItemInFolder', params =>
     shell.showItemInFolder(stringParam(params, 'path'))
   )
+  router.register('workspace.listOpeners', () => listLocalWorkspaceOpeners(app.getPath('userData')))
+  router.register('workspace.open', async params => {
+    const opener = stringParam(params, 'opener')
+    const path = stringParam(params, 'path')
+    const metadata = await stat(path)
+    if (!metadata.isDirectory()) {
+      throw new HostCapabilityError(
+        'workspace_path_not_directory',
+        'Workspace path is not a directory'
+      )
+    }
+    if (opener === 'file-manager') {
+      const error = await shell.openPath(path)
+      if (error) throw new HostCapabilityError('open_path_failed', error)
+      return
+    }
+    await openLocalWorkspace(opener, path, app.getPath('userData'))
+  })
+  router.register('workspace.pickOpener', async () => {
+    if (process.platform !== 'win32') return null
+    const result = await dialog.showOpenDialog(requiredWindow(window), {
+      properties: ['openFile'],
+      filters: [{ name: 'Executable', extensions: ['exe', 'cmd', 'bat', 'com'] }],
+    })
+    const executablePath = result.canceled ? null : (result.filePaths[0] ?? null)
+    if (!executablePath) return null
+    await saveCustomWorkspaceOpener(app.getPath('userData'), executablePath)
+    return executablePath
+  })
   router.register('smartApps.list', () => requiredSmartApps(smartApps).list())
   router.register('smartApps.createDirectory', params =>
     requiredSmartApps(smartApps).createDirectory({

@@ -25,7 +25,10 @@ import {
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
-import { resolveTemporaryChatActiveModel } from '@/features/workbench/temporaryChatModelContext'
+import {
+  resolveTemporaryChatActiveModel,
+  resolveTemporaryChatModelSelection,
+} from '@/features/workbench/temporaryChatModelContext'
 import {
   consumeRuntimeTaskLifecycleBlock,
   type RuntimeTaskLifecycleSnapshot,
@@ -131,6 +134,14 @@ export function TemporaryChatPanel({
     () => resolveTemporaryChatActiveModel(projectChat.models, state.runtimeWork, address),
     [address, projectChat.models, state.runtimeWork]
   )
+  const activeModelSelection = useMemo(
+    () => resolveTemporaryChatModelSelection(state.runtimeWork, address),
+    [address, state.runtimeWork]
+  )
+  const globalSelectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
+  const globalSelectedModelOptions =
+    projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+  const taskModelIdentityPending = Boolean(address && !activeModelSelection)
   const sideChatProjectChat = useMemo(
     () => ({
       ...projectChat,
@@ -303,11 +314,27 @@ export function TemporaryChatPanel({
   }, [address, subscribeRuntimeTaskStream])
 
   const selectedModelFields = useMemo(() => {
-    const selectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
-    const selectedModelOptions =
-      projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
-    return selectedModelExecutionFields(selectedModel, selectedModelOptions)
-  }, [projectChat])
+    if (address && activeModelSelection) {
+      return {
+        modelId: activeModelSelection.modelName,
+        modelType: activeModelSelection.modelType,
+        modelOptions: activeModelSelection.options ?? {},
+      }
+    }
+    return selectedModelExecutionFields(globalSelectedModel, globalSelectedModelOptions)
+  }, [activeModelSelection, address, globalSelectedModel, globalSelectedModelOptions])
+
+  useEffect(() => {
+    if (!address) return
+    console.info('[runtime-v2] task conversation identity resolved', {
+      deviceId: address.deviceId,
+      taskId: address.taskId,
+      taskModel: activeModelSelection?.modelName ?? null,
+      taskModelType: activeModelSelection?.modelType ?? null,
+      resolvedCatalogModel: activeModel?.name ?? null,
+      globalComposerModel: globalSelectedModel?.name ?? null,
+    })
+  }, [activeModel, activeModelSelection, address, globalSelectedModel])
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: RuntimePaneQueuedMessage) => {
@@ -478,6 +505,10 @@ export function TemporaryChatPanel({
     async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
       const message = (valueOverride ?? input).trim()
       if (!message) return false
+      if (taskModelIdentityPending) {
+        setError('正在同步任务模型配置，请稍后重试')
+        return false
+      }
       setError(null)
       setInput('')
 
@@ -632,6 +663,7 @@ export function TemporaryChatPanel({
       sendRuntimePaneMessage,
       source,
       sendEphemeral,
+      taskModelIdentityPending,
       updateAddress,
     ]
   )
@@ -640,9 +672,14 @@ export function TemporaryChatPanel({
     if (!autoSubmitInitialInput || !initialInput.trim() || autoSubmittedInitialInputRef.current) {
       return
     }
-    autoSubmittedInitialInputRef.current = true
-    void send(initialInput)
-  }, [autoSubmitInitialInput, initialInput, send])
+    if (taskModelIdentityPending) return
+    const timeoutId = window.setTimeout(() => {
+      if (autoSubmittedInitialInputRef.current) return
+      autoSubmittedInitialInputRef.current = true
+      void send(initialInput)
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [autoSubmitInitialInput, initialInput, send, taskModelIdentityPending])
 
   const cancelQueuedMessage = useCallback((id: string) => {
     queuedMessageBusyBlocksRef.current.delete(id)
@@ -734,7 +771,7 @@ export function TemporaryChatPanel({
             onChange={setInput}
             onDraftEdit={() => setError(null)}
             onSubmit={send}
-            disabled={false}
+            disabled={taskModelIdentityPending}
             pluginPickerIconOnly
             error={error}
             placeholder={placeholder}

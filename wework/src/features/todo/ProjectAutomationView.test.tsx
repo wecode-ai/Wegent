@@ -15,7 +15,25 @@ vi.mock('./ProjectAutomationRulesSection', () => ({
 }))
 
 vi.mock('./ProjectChatAgentsSection', () => ({
-  ProjectChatAgentsSection: () => <div data-testid="mock-project-agents" />,
+  ProjectChatAgentsSection: ({
+    deviceApi,
+    modelApi,
+    localProjects,
+    runtimeWork,
+  }: {
+    deviceApi?: unknown
+    modelApi?: unknown
+    localProjects?: unknown[]
+    runtimeWork?: unknown
+  }) => (
+    <div
+      data-testid="mock-project-agents"
+      data-has-device-api={Boolean(deviceApi)}
+      data-has-model-api={Boolean(modelApi)}
+      data-local-project-count={localProjects?.length ?? 0}
+      data-has-runtime-work={Boolean(runtimeWork)}
+    />
+  ),
 }))
 
 vi.mock('./ProjectQueueView', () => ({
@@ -32,7 +50,7 @@ vi.mock('./ProjectWorkflowEditor', () => ({
     onChange: (value: ProjectWorkflowDefinition) => void
     onSave: (value: ProjectWorkflowDefinition) => void
   }) => (
-    <div>
+    <div data-testid="mock-project-workflow">
       <span data-testid="workflow-node-count">{value.nodes.length}</span>
       <button
         type="button"
@@ -94,6 +112,66 @@ const initialProject: CloudProject = {
 }
 
 describe('ProjectAutomationView', () => {
+  test('orders Issue orchestration before robots and automation rules', () => {
+    render(
+      <ProjectAutomationView
+        api={
+          {
+            updateCloudProject: vi.fn(),
+          } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
+        }
+        project={initialProject}
+        canManageAgents
+      />
+    )
+
+    const sectionOrder = [
+      'mock-project-workflow',
+      'mock-project-agents',
+      'mock-automation-rules',
+    ].map(testId => screen.getByTestId(testId))
+
+    expect(
+      sectionOrder.every(
+        (section, index) =>
+          index === 0 ||
+          Boolean(
+            sectionOrder[index - 1].compareDocumentPosition(section) &
+            Node.DOCUMENT_POSITION_FOLLOWING
+          )
+      )
+    ).toBe(true)
+  })
+
+  test('passes device, model, and project runtime sources to robot creation', () => {
+    render(
+      <ProjectAutomationView
+        api={
+          {
+            updateCloudProject: vi.fn(),
+          } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
+        }
+        project={initialProject}
+        deviceApi={{} as WorkbenchServices['deviceApi']}
+        modelApi={{} as WorkbenchServices['modelApi']}
+        localProjects={[{ id: 1 }] as never[]}
+        runtimeWork={{ projects: [] } as never}
+        canManageAgents
+      />
+    )
+
+    expect(screen.getByTestId('mock-project-agents')).toHaveAttribute('data-has-device-api', 'true')
+    expect(screen.getByTestId('mock-project-agents')).toHaveAttribute('data-has-model-api', 'true')
+    expect(screen.getByTestId('mock-project-agents')).toHaveAttribute(
+      'data-local-project-count',
+      '1'
+    )
+    expect(screen.getByTestId('mock-project-agents')).toHaveAttribute(
+      'data-has-runtime-work',
+      'true'
+    )
+  })
+
   test('adopts the saved project definition so re-entering restores the workflow', async () => {
     let persistedProject = initialProject
     const updateCloudProject = vi.fn(async (_projectId, values) => {
@@ -112,7 +190,6 @@ describe('ProjectAutomationView', () => {
       <ProjectAutomationView
         api={api}
         project={initialProject}
-        localProjects={[]}
         canManageAgents
         onProjectUpdated={project => {
           persistedProject = project
@@ -120,6 +197,7 @@ describe('ProjectAutomationView', () => {
       />
     )
 
+    expect(screen.queryByTestId('runtime-profile-create')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('mock-add-stage'))
     fireEvent.click(screen.getByTestId('mock-save-workflow'))
 
@@ -136,14 +214,7 @@ describe('ProjectAutomationView', () => {
     await waitFor(() => expect(persistedProject.workflow_definition?.nodes).toHaveLength(1))
 
     firstView.unmount()
-    render(
-      <ProjectAutomationView
-        api={api}
-        project={persistedProject}
-        localProjects={[]}
-        canManageAgents
-      />
-    )
+    render(<ProjectAutomationView api={api} project={persistedProject} canManageAgents />)
 
     expect(screen.getByTestId('workflow-node-count')).toHaveTextContent('1')
   })
@@ -178,7 +249,6 @@ describe('ProjectAutomationView', () => {
           } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
         }
         project={initialProject}
-        localProjects={[]}
         canManageAgents
       />
     )
@@ -192,7 +262,6 @@ describe('ProjectAutomationView', () => {
           } as unknown as NonNullable<WorkbenchServices['deliveryApi']>
         }
         project={updatedProject}
-        localProjects={[]}
         canManageAgents
       />
     )
