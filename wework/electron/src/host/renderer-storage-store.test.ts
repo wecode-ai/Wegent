@@ -49,4 +49,19 @@ describe('RendererStorageStore', () => {
       '{"version":1,"entries":{"final":"value"}}\n'
     )
   })
+
+  it('persists prototype-shaped keys as ordinary entries', async () => {
+    const { root, store } = await createStore()
+    const changes = JSON.parse('{"__proto__":"safe","constructor":"value"}') as Record<
+      string,
+      string
+    >
+
+    await store.update({ clear: true, changes })
+
+    await expect(new RendererStorageStore(root).initialize({})).resolves.toEqual(changes)
+    expect(await readFile(join(root, 'renderer-local-storage.json'), 'utf8')).toBe(
+      '{"version":1,"entries":{"__proto__":"safe","constructor":"value"}}\n'
+    )
+  })
 })
