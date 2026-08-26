@@ -28,6 +28,8 @@
     "app_wework_description": "Use AI to solve specific problems",
     "app_weloop_description": "AI project planning, execution, and feedback",
     "app_weloop_requires_cloud": "Available after connecting to cloud",
+    "workspace_route_unavailable_title": "This workspace is unavailable",
+    "workspace_route_unavailable_description": "The plugin that provides this page may be disabled or uninstalled. Close this tab or enable the plugin again.",
     "project_chat": "Message AI",
     "project_chat_subtitle": "Use for project exploration and temporary questions",
     "project_chat_task_subtitle": "Activity",

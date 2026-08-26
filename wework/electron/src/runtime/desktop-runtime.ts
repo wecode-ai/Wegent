@@ -12,7 +12,7 @@ import {
   type WorkbenchRuntimeSnapshot,
 } from './workbench-runtime.js'
 
-const CORE_APP_PATH = '/wework/app/'
+const CORE_APP_PATH = '/'
 
 export interface DesktopRuntimeOptions {
   environment: NodeJS.ProcessEnv
@@ -201,7 +201,7 @@ export class DesktopRuntime {
       this.coreDshPlugins = new CoreDshPluginManager({
         dshHome: launch.dshHome,
         runtimeRoot: launch.cwd,
-        dshEntry: launch.args[0],
+        dshEntry: launch.entry,
         nodeCommand: launch.command,
         environment: launch.environment,
       })

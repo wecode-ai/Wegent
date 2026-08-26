@@ -29,11 +29,13 @@ Options:
   -h, --help                Show this help message.
 
 Environment:
-  VITE_WEGENT_BACKEND_URL   Backend URL. Defaults to WEWORK_HOST/BACKEND_PORT.
-  WEWORK_EXECUTOR_PATH      Executor command. Defaults to the source sidecar.
-  WEWORK_DEV_CODEX_BINARY   Codex binary. Defaults to the repository-locked binary.
-  WEWORK_DEV_DWS_BINARY     DWS binary. Defaults to the repository-prepared binary.
-  WEWORK_DRY_RUN=1          Print the resolved launch configuration without starting.
+  VITE_WEGENT_BACKEND_URL          Backend URL. Defaults to WEWORK_HOST/BACKEND_PORT.
+  WEWORK_USER_DATA_DIR             Electron user data. Defaults to a directory isolated by worktree.
+  WEWORK_DEV_EXECUTOR_PATH         Executor command. Defaults to the source sidecar.
+  WEWORK_DEV_HARNESS_RUNTIME_ROOT  Harness runtime. Defaults to the worktree runtime.
+  WEWORK_DEV_CODEX_BINARY          Codex binary. Defaults to the repository-locked binary.
+  WEWORK_DEV_DWS_BINARY            DWS binary. Defaults to the repository-prepared binary.
+  WEWORK_DRY_RUN=1                 Print the resolved launch configuration without starting.
 EOF
 }
 
@@ -149,6 +151,9 @@ MACOS_TARGET="$(resolve_macos_target)"
 export WEWORK_DEV_WORKTREE="$PROJECT_DIR"
 export WEWORK_DEV_BRANCH="$(git_branch_name)"
 export WEWORK_DEV_TITLE="$(build_dev_title)"
+export WEWORK_USER_DATA_DIR="$(
+  node "$SCRIPT_DIR/resolve-dev-user-data.mjs" "$PROJECT_DIR" "${WEWORK_USER_DATA_DIR:-}"
+)"
 export VITE_WEWORK_DEV_TITLE="$WEWORK_DEV_TITLE"
 export VITE_WEWORK_DEV_WORKTREE="$WEWORK_DEV_WORKTREE"
 export VITE_WEWORK_DEV_BRANCH="$WEWORK_DEV_BRANCH"
@@ -161,7 +166,10 @@ export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$(wework_resolve_back
 export VITE_WEWORK_RELEASE_CHANNEL="${VITE_WEWORK_RELEASE_CHANNEL:-development}"
 export VITE_WEWORK_RUNTIME_MODE="${VITE_WEWORK_RUNTIME_MODE:-local-first}"
 export ELECTRON_GET_USE_PROXY="${ELECTRON_GET_USE_PROXY:-true}"
-if [ -z "${WEWORK_EXECUTOR_PATH:-}" ]; then
+unset WEGENT_EXECUTOR_BINARY
+if [ -n "${WEWORK_DEV_EXECUTOR_PATH:-}" ]; then
+  export WEWORK_EXECUTOR_PATH="$WEWORK_DEV_EXECUTOR_PATH"
+else
   export WEWORK_EXECUTOR_PATH="$SCRIPT_DIR/dev-executor-sidecar.sh"
   MANAGED_SOURCE_EXECUTOR="true"
   configure_wegent_cargo_target_dir "$PROJECT_DIR" "executor-dev"
@@ -169,8 +177,7 @@ if [ -z "${WEWORK_EXECUTOR_PATH:-}" ]; then
     cargo_target_binary_path "$PROJECT_DIR/executor" debug wegent-executor
   )"
 fi
-export WEWORK_HARNESS_RUNTIME_ROOT="${WEWORK_HARNESS_RUNTIME_ROOT:-$WEWORK_DIR/node_modules/.cache/harness-runtime-dev}"
-export WEWORK_NODE_PATH="${WEWORK_NODE_PATH:-$WEWORK_DIR/node_modules/.cache/execution-runtime-node-dev/bin/node}"
+export WEWORK_HARNESS_RUNTIME_ROOT="${WEWORK_DEV_HARNESS_RUNTIME_ROOT:-$WEWORK_DIR/node_modules/.cache/harness-runtime-dev}"
 export WEWORK_APP_HOT_RELOAD="1"
 export WEWORK_APP_WEB_ROOT="$WEWORK_DIR/dsh/app-wework/web"
 
@@ -196,7 +203,7 @@ print_configuration() {
   echo "  WEWORK_EXECUTOR_PATH=$WEWORK_EXECUTOR_PATH"
   echo "  WEGENT_EXECUTOR_BINARY=${WEGENT_EXECUTOR_BINARY:-<managed by command>}"
   echo "  WEGENT_EXECUTOR_HOME=${WEGENT_EXECUTOR_HOME:-<release app default>}"
-  echo "  WEWORK_NODE_PATH=$WEWORK_NODE_PATH"
+  echo "  WEWORK_HARNESS_RUNTIME_ROOT=$WEWORK_HARNESS_RUNTIME_ROOT"
   echo "  CODEX_BINARY_PATH=$CODEX_BINARY_PATH"
   echo "  DWS_BINARY_PATH=$DWS_BINARY_PATH"
 }
@@ -221,7 +228,6 @@ if [ -z "${WEWORK_DEV_CODEX_BINARY:-}" ]; then
   WEWORK_CODEX_TARGET="$MACOS_TARGET" pnpm run prepare:codex
 fi
 WEWORK_DWS_TARGET="$MACOS_TARGET" pnpm run prepare:dws
-pnpm run prepare:execution-runtime -- --materialize
 pnpm run prepare:harness-runtime -- --materialize
 
 if [ "$MANAGED_SOURCE_EXECUTOR" = "true" ]; then
@@ -239,11 +245,6 @@ if [ ! -x "$DWS_BINARY_PATH" ]; then
   echo "Error: DWS binary is not executable: $DWS_BINARY_PATH" >&2
   exit 1
 fi
-if [ ! -x "$WEWORK_NODE_PATH" ]; then
-  echo "Error: Node runtime is not executable: $WEWORK_NODE_PATH" >&2
-  exit 1
-fi
-
 WEWORK_APP_WATCH_READY_FILE="$(mktemp "${TMPDIR:-/tmp}/wework-app-watch.XXXXXX")"
 rm -f "$WEWORK_APP_WATCH_READY_FILE"
 export WEWORK_APP_WATCH_READY_FILE

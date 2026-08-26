@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-ui-plugin-center
+      name: '@wegent/dsh-ui-plugin-center'

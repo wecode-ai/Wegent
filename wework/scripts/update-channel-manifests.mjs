@@ -51,6 +51,10 @@ export function expectedChannelAssetNames(channel) {
     `${channel}-darwin-aarch64.json`,
     `${channel}-darwin-x86_64.json`,
     `${channel}-windows-x86_64.json`,
+    `components-${channel}-macos-arm64.json`,
+    `components-${channel}-macos-x64.json`,
+    `components-${channel}-windows-x64.json`,
+    `components-${channel}-linux-x64.json`,
   ]
 }
 

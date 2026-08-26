@@ -29,6 +29,8 @@
     "app_wework_description": "使用 AI 解决具体问题",
     "app_weloop_description": "用 AI 管理项目的规划、执行与反馈",
     "app_weloop_requires_cloud": "连接云端后可用",
+    "workspace_route_unavailable_title": "此工作区不可用",
+    "workspace_route_unavailable_description": "提供此页面的插件可能已停用或卸载。你可以关闭此标签页，或重新启用对应插件。",
     "project_chat": "私信 AI",
     "project_chat_subtitle": "用于项目探索和临时提问",
     "project_chat_task_subtitle": "动态",

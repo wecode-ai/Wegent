@@ -1,12 +1,16 @@
 import { useEffect } from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabSurface } from './App'
 import {
   beginHarnessAppLaunch,
   clearHarnessAppLaunch,
 } from '@/features/harness-apps/harnessAppLaunchState'
-import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
+import {
+  registerHarnessAppTab,
+  unregisterHarnessAppTab,
+} from '@/features/harness-apps/harnessAppTabs'
+import { preloadDefaultDshUiTestModules } from '@/test/setup'
 
 const appIframeMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
@@ -106,6 +110,10 @@ vi.mock('@/pages/WorkbenchPage', () => ({
 }))
 
 describe('WorkspaceTabSurface', () => {
+  beforeEach(async () => {
+    await preloadDefaultDshUiTestModules()
+  })
+
   afterEach(() => {
     appIframeMocks.cleanup.mockClear()
     workbenchProviderMocks.cleanup.mockClear()
@@ -121,7 +129,7 @@ describe('WorkspaceTabSurface', () => {
     runtimeEnvironmentMocks.electron = false
   })
 
-  test('keeps the board workbench connected and stateful while its tab is inactive', () => {
+  test('keeps the board workbench connected and stateful while its tab is inactive', async () => {
     const props = {
       cloudWebUrl: null,
       lifecycleStore: {} as never,
@@ -140,7 +148,10 @@ describe('WorkspaceTabSurface', () => {
     }
 
     const { rerender, unmount } = render(<WorkspaceTabSurface {...props} active />)
-    expect(screen.getByTestId('mock-workbench-board')).toHaveAttribute('data-route-active', 'true')
+    expect(await screen.findByTestId('mock-workbench-board')).toHaveAttribute(
+      'data-route-active',
+      'true'
+    )
     expect(workbenchProviderMocks.loadTaskComposerCatalogs).toHaveBeenLastCalledWith(true)
     expect(workbenchProviderMocks.prewarm).toHaveBeenLastCalledWith(false)
 
@@ -158,13 +169,35 @@ describe('WorkspaceTabSurface', () => {
     expect(workbenchProviderMocks.cleanup).toHaveBeenCalledTimes(1)
   })
 
-  test('keeps composer catalogs loaded when a retained board tab displays an auxiliary page', () => {
-    const dispose = getWorkbenchPluginRuntime().routes.register({
-      id: 'board-auxiliary-catalog-test',
-      path: '/board-auxiliary-catalog-test',
-      telemetryFeature: 'apps',
-      render: () => <div data-testid="mock-board-auxiliary-page" />,
-    })
+  test('keeps composer catalogs loaded when a retained board tab displays an auxiliary page', async () => {
+    const defaultRuntime = window.__WEWORK_DSH_UI__
+    const routes = [
+      {
+        id: 'board-auxiliary-catalog-test',
+        path: '/board-auxiliary-catalog-test',
+        telemetryFeature: 'apps',
+      },
+    ]
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot =>
+        slot === 'wework.route' ? routes : (defaultRuntime?.getEntries(slot) ?? []),
+      subscribe: defaultRuntime?.subscribe ?? (() => () => undefined),
+      attach(slot, id, container) {
+        if (slot === 'wework.route' && id === 'board-auxiliary-catalog-test') {
+          const page = document.createElement('div')
+          page.dataset.testid = 'mock-board-auxiliary-page'
+          container.append(page)
+          return {
+            update: () => undefined,
+            dispose: () => page.remove(),
+          }
+        }
+        return {
+          update: () => undefined,
+          dispose: () => undefined,
+        }
+      },
+    }
     const props = {
       active: true,
       cloudWebUrl: null,
@@ -185,6 +218,7 @@ describe('WorkspaceTabSurface', () => {
     }
 
     const { rerender, unmount } = render(<WorkspaceTabSurface {...props} />)
+    await screen.findByTestId('mock-workbench-board')
     expect(workbenchProviderMocks.loadTaskComposerCatalogs).toHaveBeenLastCalledWith(true)
 
     rerender(
@@ -199,20 +233,89 @@ describe('WorkspaceTabSurface', () => {
     expect(workbenchProviderMocks.cleanup).not.toHaveBeenCalled()
 
     unmount()
-    dispose()
+    window.__WEWORK_DSH_UI__ = defaultRuntime
+  })
+
+  test('shows an unavailable route instead of degrading a removed plugin route to the task workbench', () => {
+    const defaultRuntime = window.__WEWORK_DSH_UI__
+    let routes = [
+      {
+        id: 'removed-plugin-route',
+        path: '/removed-plugin-route',
+        telemetryFeature: 'apps',
+      },
+    ]
+    const listeners = new Set<() => void>()
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot =>
+        slot === 'wework.route' ? routes : (defaultRuntime?.getEntries(slot) ?? []),
+      subscribe(slot, listener) {
+        if (slot !== 'wework.route') return defaultRuntime?.subscribe(slot, listener) ?? (() => {})
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      attach(slot, id, container) {
+        if (slot === 'wework.route' && id === 'removed-plugin-route') {
+          const page = document.createElement('div')
+          page.dataset.testid = 'removed-plugin-page'
+          container.append(page)
+          return {
+            update: () => undefined,
+            dispose: () => page.remove(),
+          }
+        }
+        return {
+          update: () => undefined,
+          dispose: () => undefined,
+        }
+      },
+    }
+    const props = {
+      active: true,
+      cloudWebUrl: null,
+      lifecycleStore: {} as never,
+      services: {} as never,
+      tab: {
+        id: 'removed-plugin-tab',
+        kind: 'auxiliary' as const,
+        title: 'Removed plugin',
+        contentRoute: '/removed-plugin-route',
+      },
+      user: {
+        id: 1,
+        user_name: 'tester',
+        email: 'tester@example.com',
+      },
+    }
+
+    const { unmount } = render(<WorkspaceTabSurface {...props} />)
+    expect(screen.getByTestId('removed-plugin-page')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-route-unavailable')).not.toBeInTheDocument()
+
+    act(() => {
+      routes = []
+      for (const listener of listeners) listener()
+    })
+
+    expect(screen.queryByTestId('removed-plugin-page')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-route-unavailable')).toHaveTextContent(
+      '提供此页面的插件可能已停用或卸载'
+    )
+    expect(screen.queryByTestId('mock-workbench-task')).not.toBeInTheDocument()
+
+    unmount()
+    window.__WEWORK_DSH_UI__ = defaultRuntime
   })
 
   test('keeps an inactive iframe app connected so its page state survives tab switches', () => {
-    const dispose = getWorkbenchPluginRuntime().apps.register({
-      key: 'harness-stateful',
-      mode: 'iframe',
-      url: 'http://localhost:3000',
-      hidden: true,
-      labelKey: 'harness-stateful.label',
-      label: 'Stateful Harness',
-      descriptionKey: 'harness-stateful.description',
-      description: 'Stateful Harness',
-    })
+    registerHarnessAppTab({
+      id: 'stateful',
+      webUrl: 'http://localhost:3000',
+      manifest: {
+        displayName: 'Stateful Harness',
+        description: 'Stateful Harness',
+      },
+    } as never)
     const props = {
       cloudWebUrl: null,
       lifecycleStore: {} as never,
@@ -245,20 +348,18 @@ describe('WorkspaceTabSurface', () => {
 
     unmount()
     expect(appIframeMocks.cleanup).toHaveBeenCalledTimes(1)
-    dispose()
+    unregisterHarnessAppTab('stateful')
   })
 
   test('re-syncs titlebar portal ownership when a retained workspace becomes active again', () => {
-    const dispose = getWorkbenchPluginRuntime().apps.register({
-      key: 'harness-titlebar',
-      mode: 'iframe',
-      url: 'http://localhost:3000',
-      hidden: true,
-      labelKey: 'harness-titlebar.label',
-      label: 'Titlebar Harness',
-      descriptionKey: 'harness-titlebar.description',
-      description: 'Titlebar Harness',
-    })
+    registerHarnessAppTab({
+      id: 'titlebar',
+      webUrl: 'http://localhost:3000',
+      manifest: {
+        displayName: 'Titlebar Harness',
+        description: 'Titlebar Harness',
+      },
+    } as never)
     const props = {
       cloudWebUrl: null,
       lifecycleStore: {} as never,
@@ -283,21 +384,19 @@ describe('WorkspaceTabSurface', () => {
 
     expect(portalOwnershipMocks.setActiveOwner).toHaveBeenLastCalledWith('smart-app-tab-1')
     unmount()
-    dispose()
+    unregisterHarnessAppTab('titlebar')
   })
 
   test('renders the launch surface when a running Harness app opens directly as an iframe', () => {
     const installationId = 'running-app'
-    const dispose = getWorkbenchPluginRuntime().apps.register({
-      key: `harness-${installationId}`,
-      mode: 'iframe',
-      url: 'http://localhost:3000',
-      hidden: true,
-      labelKey: 'running-app.label',
-      label: 'Running app',
-      descriptionKey: 'running-app.description',
-      description: 'Running app',
-    })
+    registerHarnessAppTab({
+      id: installationId,
+      webUrl: 'http://localhost:3000',
+      manifest: {
+        displayName: 'Running app',
+        description: 'Running app',
+      },
+    } as never)
     beginHarnessAppLaunch(installationId, 'Running app', vi.fn(), 'loadingApp')
 
     const { unmount } = render(
@@ -324,7 +423,7 @@ describe('WorkspaceTabSurface', () => {
 
     unmount()
     clearHarnessAppLaunch(installationId)
-    dispose()
+    unregisterHarnessAppTab(installationId)
   })
 
   test('keeps an Electron Harness app launch connected while its tab is inactive', async () => {
