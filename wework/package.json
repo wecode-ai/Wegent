@@ -13,7 +13,7 @@
     "prepare:dws": "node scripts/prepare-dws-binary.mjs",
     "prepare:execution-runtime": "node scripts/prepare-execution-runtime.mjs",
     "prepare:harness-runtime": "node scripts/prepare-harness-runtime.mjs",
-    "build:dsh-app": "WEWORK_DSH_APP_OUT_DIR=$PWD/dsh/app-wework/web vite build",
+    "build:dsh-app": "vite build --base /wework/app/ --outDir dsh/app-wework/web --emptyOutDir",
     "build": "tsc -b && vite build",
     "build:desktop": "pnpm run ai:verify:electron:build",
     "build:release": "pnpm run prepare:electron && pnpm run prepare:codex --materialize && pnpm run prepare:dws && pnpm run build:dsh-app && pnpm --dir electron build:release",
