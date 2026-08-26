@@ -114,6 +114,56 @@ describe('TaskStateMachine', () => {
     })
   })
 
+  it('preserves an interactive form update that arrives before block creation', () => {
+    const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const machine = new TaskStateMachine(42, createRuntimeActions())
+    const renderPayload = {
+      type: 'interactive_form_question',
+      task_id: 42,
+      subtask_id: 7,
+      questions: [
+        {
+          id: 'audience',
+          question: 'Who is the target audience?',
+          input_type: 'text',
+        },
+      ],
+    }
+
+    machine.handleChatBlockUpdated(7, {
+      id: 'tool-1',
+      status: 'pending',
+      render_payload: renderPayload,
+    })
+    machine.handleChatStart(7, 'Chat', 1)
+    machine.handleChatBlockUpdated(7, {
+      id: 'tool-1',
+      type: 'tool',
+      status: 'pending',
+      tool_name: 'interactive_form_question',
+      tool_use_id: 'tool-1',
+      tool_input: {},
+    })
+
+    expect(machine.getState().messages.get('ai-7')).toMatchObject({
+      status: 'streaming',
+      result: {
+        blocks: [
+          {
+            id: 'tool-1',
+            type: 'tool',
+            tool_name: 'interactive_form_question',
+            tool_use_id: 'tool-1',
+            render_payload: renderPayload,
+          },
+        ],
+      },
+    })
+    expect(machine.getState().messages.get('ai-7')?.result?.blocks).toHaveLength(1)
+
+    consoleInfoSpy.mockRestore()
+  })
+
   it('does not regress a populated card when a delayed pending update arrives', () => {
     const machine = new TaskStateMachine(42, createRuntimeActions())
     machine.handleChatStart(7, 'Chat', 1)

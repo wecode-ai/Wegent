@@ -34,6 +34,15 @@ interface ChatChunkReducerResult {
   notifyListenersImmediately: boolean
 }
 
+function getRenderPayloadType(block: Partial<MessageBlock>): string | undefined {
+  const renderPayload = 'render_payload' in block ? block.render_payload : undefined
+  if (!renderPayload || typeof renderPayload !== 'object' || Array.isArray(renderPayload)) {
+    return undefined
+  }
+  const type = (renderPayload as { type?: unknown }).type
+  return typeof type === 'string' ? type : undefined
+}
+
 export function reduceChatStartEvent({
   state,
   event,
@@ -56,17 +65,20 @@ export function reduceChatStartEvent({
     return state
   }
 
-  const initialResult = event.shellType ? { shell_type: event.shellType } : undefined
+  const streamingMessage = existingMessage?.status === 'streaming' ? existingMessage : undefined
+  const initialResult = event.shellType
+    ? { ...streamingMessage?.result, shell_type: event.shellType }
+    : streamingMessage?.result
   const newMessages = new Map(state.messages)
   newMessages.set(aiMessageId, {
     id: aiMessageId,
     type: 'ai',
     status: 'streaming',
-    content: '',
-    timestamp: Date.now(),
+    content: streamingMessage?.content || '',
+    timestamp: streamingMessage?.timestamp || Date.now(),
     subtaskId: event.subtaskId,
-    messageId: event.messageId,
-    botName: event.botName,
+    messageId: event.messageId ?? streamingMessage?.messageId,
+    botName: event.botName ?? streamingMessage?.botName,
     result: initialResult,
   })
 
@@ -208,7 +220,9 @@ export function reduceChatBlockUpdatedEvent({
   const aiMessageId = generateMessageId('ai', event.subtaskId)
   const existingMessage = state.messages.get(aiMessageId)
   const isCardUpdate = 'card_id' in event.block || 'card_type' in event.block
-  const inferredType = event.block.type || (isCardUpdate ? 'card' : undefined)
+  const renderPayloadType = getRenderPayloadType(event.block)
+  const inferredType =
+    event.block.type || (isCardUpdate ? 'card' : renderPayloadType ? 'tool' : undefined)
   if (!existingMessage) {
     if (!inferredType) return state
 
