@@ -660,6 +660,9 @@ must not discard entered data without warning. Do not stack modal dialogs.
   validation, or persistent system feedback.
 - Open on keyboard focus as well as hover and dismiss on blur, pointer exit, or
   Escape.
+- A focusable row retaining focus after activation must not keep its hover card
+  open unless that card explicitly opens on focus or focus has moved into its
+  interactive content.
 - Use the shared `Tooltip` component for compact controls instead of the native
   HTML `title` attribute. Icon-only controls must keep a localized
   `aria-label`; controls that currently have neither a visible label nor a
