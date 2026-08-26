@@ -160,6 +160,9 @@ describe('bundled plugin resources', () => {
     expect(workflow).toContain('generate-desktop-update-manifests.mjs')
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY')
     expect(workflow).toContain('release-manifests/*')
+    expect(workflow).toMatch(
+      /- name: Commit Wework version files[\s\S]*?GH_TOKEN: \$\{\{ steps\.release-app-token\.outputs\.token \}\}/
+    )
     expect(workflow).toMatch(/gh release edit "\$RELEASE_TAG"[\s\S]*--target "\$RELEASE_SHA"/)
     expect(installerHooks).toContain('Software\\you\\WeWork')
     expect(installerHooks).toContain('InstallLocation')
