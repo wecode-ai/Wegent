@@ -30,6 +30,7 @@ core_segments=(
   split-workbench
   native-window-startup
   native-window-chrome
+  renderer-storage
   tray-lifecycle
   conversation-state
   temporary-chat
@@ -117,7 +118,7 @@ core_shards=(
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter
   rendering-extensions
-  runtime-task-queue,native-window-startup
+  runtime-task-queue,native-window-startup,renderer-storage
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
   model-routing

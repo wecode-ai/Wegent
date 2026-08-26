@@ -152,12 +152,14 @@ describe('StartupSplash', () => {
     await show()
 
     await splash.close({ capturePath: '/tmp/wework-e2e/startup-splash.png' })
+    await splash.close({ capturePath: '/tmp/wework-e2e/startup-splash-second.png' })
 
     expect(target.webContents.capturePage).toHaveBeenCalledOnce()
     expect(writePng).toHaveBeenCalledWith(
       '/tmp/wework-e2e/startup-splash.png',
       Buffer.from('splash-png')
     )
+    expect(writePng).toHaveBeenCalledOnce()
   })
 
   test('shows the main startup window only once when show is called concurrently', async () => {

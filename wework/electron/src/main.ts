@@ -31,6 +31,7 @@ import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
+import { RendererStorageStore } from './host/renderer-storage-store.js'
 import {
   EMBEDDED_BROWSER_PARTITION,
   EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR,
@@ -864,6 +865,7 @@ async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   const environment = await desktopEnvironment()
   if (!preferences) throw new Error('Desktop preferences are unavailable')
+  const rendererStorage = new RendererStorageStore(app.getPath('userData'))
   workbenchPlugins = new WorkbenchPluginManager()
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
@@ -909,6 +911,7 @@ async function configureDesktopRuntime(): Promise<void> {
         () => rendererHealth.snapshot(),
         () => smartApps,
         preferences,
+        rendererStorage,
         embeddedBrowser,
         {
           coreDshPlugins: () => desktopRuntime,

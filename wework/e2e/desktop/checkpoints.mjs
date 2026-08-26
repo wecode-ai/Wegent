@@ -33,6 +33,7 @@ export const DESKTOP_CHECKPOINTS = [
   'split-workbench',
   'native-window-startup',
   'native-window-chrome',
+  'renderer-storage',
   'tray-lifecycle',
   'window-lifecycle',
   'goal-lifecycle',
