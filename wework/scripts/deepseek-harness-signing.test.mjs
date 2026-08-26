@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  macosCodesignKeychainArguments,
   macosSigningFingerprint,
   signPreparedMacOsBinaries,
 } from './lib/deepseek-harness-signing.mjs'
@@ -31,6 +32,19 @@ describe('macosSigningFingerprint', () => {
   test('uses the unsigned variant without a macOS signing identity', () => {
     expect(macosSigningFingerprint('linux', 'Developer ID Application: One')).toBe('unsigned')
     expect(macosSigningFingerprint('darwin', '')).toBe('unsigned')
+  })
+})
+
+describe('macosCodesignKeychainArguments', () => {
+  test('selects an explicit keychain for release signing', () => {
+    expect(macosCodesignKeychainArguments(' /tmp/signing.keychain-db ')).toEqual([
+      '--keychain',
+      '/tmp/signing.keychain-db',
+    ])
+  })
+
+  test('uses the default keychain search list when no path is configured', () => {
+    expect(macosCodesignKeychainArguments()).toEqual([])
   })
 })
 
