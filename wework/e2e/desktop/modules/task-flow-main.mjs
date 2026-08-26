@@ -141,6 +141,7 @@ import {
   E2E_TRANSCRIPT_PAGE_SIZE,
   FILE_PANEL_ANCHOR_MARKER,
   FILE_PANEL_ANCHOR_PROMPT,
+  FILE_PANEL_LINK_NAME,
   FILE_PREVIEW_RESTORE_MARKER,
   GIT_SEED_CONTENT,
   GIT_SEED_NAME,
@@ -816,7 +817,13 @@ async function main() {
     mkdir(composerProjectPath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
   ])
-  await writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT)
+  await Promise.all([
+    writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
+    writeFile(
+      join(workspacePath, FILE_PANEL_LINK_NAME),
+      `${GIT_SEED_CONTENT}${FILE_PREVIEW_RESTORE_MARKER}\n`
+    ),
+  ])
   await writeFile(join(workspacePath, 'auth.ts'), 'export const authenticated = true\n')
   await writeFile(
     join(workspacePath, IMAGE_ARTIFACT_NAME),
@@ -851,9 +858,13 @@ async function main() {
   await runChecked('git', ['config', 'user.email', 'desktop-e2e@wework.local'], {
     cwd: workspacePath,
   })
-  await runChecked('git', ['add', GIT_SEED_NAME, 'auth.ts', IMAGE_ARTIFACT_NAME], {
-    cwd: workspacePath,
-  })
+  await runChecked(
+    'git',
+    ['add', GIT_SEED_NAME, FILE_PANEL_LINK_NAME, 'auth.ts', IMAGE_ARTIFACT_NAME],
+    {
+      cwd: workspacePath,
+    }
+  )
   await runChecked('git', ['commit', '-m', 'test: initialize desktop e2e workspace'], {
     cwd: workspacePath,
   })
@@ -2996,6 +3007,11 @@ last_updated = "2026-07-30T00:00:00Z"`
       await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      assert.equal(
+        await control.command('getText', '[data-testid="workspace-file-path"]'),
+        join(workspacePath, FILE_PANEL_LINK_NAME),
+        'The encoded Markdown file link did not resolve to the workspace file path'
+      )
       await control.command('finishAnimations', 'body')
       await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const filePanelScrollerAfterOpen = await getSingleElementMetrics(
@@ -3121,7 +3137,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           'getText',
           `${activeTaskWorkbenchSelector} [data-testid="workspace-file-path"]`
         ),
-        join(workspacePath, GIT_SEED_NAME),
+        join(workspacePath, FILE_PANEL_LINK_NAME),
         'The linked absolute file opened from the wrong workspace target'
       )
       await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
@@ -3289,7 +3305,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           'getText',
           `${activeTaskWorkbenchSelector} [data-testid="workspace-file-path"]`
         ),
-        join(workspacePath, GIT_SEED_NAME),
+        join(workspacePath, FILE_PANEL_LINK_NAME),
         'The linked absolute file path was lost after switching conversations'
       )
       await control.command('click', rightBrowserTabSelector)

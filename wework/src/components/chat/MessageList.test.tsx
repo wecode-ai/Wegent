@@ -2583,6 +2583,56 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
   })
 
+  test('decodes URL-encoded assistant file paths before opening the workspace file panel', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-encoded-file-link',
+            role: 'assistant',
+            content:
+              '[startup-splash.png](/Users/dev/Library/Application%20Support/Wework/startup-splash.png)',
+            status: 'done',
+            createdAt: '2026-08-25T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+      '/Users/dev/Library/Application Support/Wework/startup-splash.png'
+    )
+  })
+
+  test('decodes an encoded relative file path before extracting its line number', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-encoded-relative-file-link',
+            role: 'assistant',
+            content: '[README file.md](README%20file.md:1)',
+            status: 'done',
+            createdAt: '2026-08-25T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('README file.md', {
+      lineStart: 1,
+      lineEnd: undefined,
+    })
+  })
+
   test('routes assistant folder links to the workspace directory panel', () => {
     const onOpenWorkspaceFile = vi.fn()
     render(

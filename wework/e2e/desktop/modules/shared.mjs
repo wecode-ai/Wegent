@@ -187,13 +187,14 @@ const MESSAGE_EDIT_UPDATED_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MESSAGE_EDIT_UP
 const FILE_PANEL_ANCHOR_PROMPT =
   'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR: create a long response with a file link in the middle.'
 const FILE_PANEL_ANCHOR_MARKER = 'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR_MARKER'
+const FILE_PANEL_LINK_NAME = 'README file.md'
 const FILE_PREVIEW_RESTORE_MARKER = 'WEWORK_DESKTOP_E2E_FILE_PREVIEW_RESTORED'
 const REVIEW_RESTORE_MARKER = 'WEWORK_DESKTOP_E2E_REVIEW_RESTORED'
 const FILE_PANEL_ANCHOR_RESPONSE = [
   'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR_RESPONSE',
   ...Array.from({ length: 30 }, (_, index) =>
     index === 14
-      ? `${FILE_PANEL_ANCHOR_MARKER}: inspect [README.md](README.md:1) without moving this paragraph.`
+      ? `${FILE_PANEL_ANCHOR_MARKER}: inspect [${FILE_PANEL_LINK_NAME}](${FILE_PANEL_LINK_NAME.replaceAll(' ', '%20')}:1) without moving this paragraph.`
       : `File panel anchor paragraph ${String(index + 1).padStart(2, '0')}. ${'Scrollable anchor content '.repeat(8)}`
   ),
 ].join('\n\n')
@@ -1524,6 +1525,7 @@ export {
   MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
   FILE_PANEL_ANCHOR_PROMPT,
   FILE_PANEL_ANCHOR_MARKER,
+  FILE_PANEL_LINK_NAME,
   FILE_PREVIEW_RESTORE_MARKER,
   REVIEW_RESTORE_MARKER,
   FILE_PANEL_ANCHOR_RESPONSE,
