@@ -5,6 +5,8 @@
 
 import asyncio
 import logging
+from collections.abc import Coroutine
+from typing import Any, TypeVar
 
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
@@ -12,11 +14,19 @@ from app.services.project_automations import project_automation_service
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
+
+def _run_async(coro: Coroutine[Any, Any, T]) -> T:
+    """Run a coroutine without relying on a process-patched asyncio.run."""
+    with asyncio.Runner() as runner:
+        return runner.run(coro)
+
 
 def check_due_project_automations_sync() -> int:
     db = SessionLocal()
     try:
-        return asyncio.run(project_automation_service.check_due(db))
+        return _run_async(project_automation_service.check_due(db))
     except Exception:
         db.rollback()
         logger.exception("Project automation scheduler failed")
@@ -44,7 +54,7 @@ def dispatch_board_robot_execution(*, execution_id: int) -> bool:
 
     db = SessionLocal()
     try:
-        execution = asyncio.run(dispatch_execution(db, execution_id=execution_id))
+        execution = _run_async(dispatch_execution(db, execution_id=execution_id))
         return execution is not None
     except Exception as exc:
         db.rollback()
@@ -112,7 +122,7 @@ def execute_managed_project_automation(
                     "execution_id": execution_id,
                 }
             )
-        dispatched = asyncio.run(
+        dispatched = _run_async(
             project_automation_managed_execution_service.execute(**execute_kwargs)
         )
     except Exception as exc:
@@ -184,7 +194,7 @@ def execute_board_team_continuation(
         source=CONTINUATION_SOURCE,
     )
     try:
-        dispatched = asyncio.run(
+        dispatched = _run_async(
             project_automation_managed_execution_service.execute(
                 handle=handle,
                 user_subtask_id=user_subtask_id,
@@ -220,7 +230,7 @@ def cancel_managed_board_team_execution(*, task_id: int, user_id: int) -> bool:
         project_automation_managed_execution_service,
     )
 
-    return asyncio.run(
+    return _run_async(
         project_automation_managed_execution_service.cancel(
             task_id=task_id,
             user_id=user_id,
