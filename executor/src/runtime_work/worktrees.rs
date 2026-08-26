@@ -389,7 +389,6 @@ impl WorktreeManager {
             .records
             .get_mut(&key)
             .ok_or_else(|| "Managed worktree was not found".to_owned())?;
-        validate_or_bind_record_device(record, &self.device_id)?;
         if let Some((task_id, execution_id)) = expected_execution {
             match record.execution_lease.as_ref() {
                 Some(lease) if lease.execution_id == execution_id && lease.task_id == task_id => {}
@@ -544,7 +543,6 @@ impl WorktreeManager {
         let key = normalized_path_key(path);
         let now = now_ms();
         let mut record = state.records.remove(&key).unwrap_or_default();
-        validate_or_bind_record_device(&mut record, &self.device_id)?;
         validate_existing_record_identity(&record, path, worktree_id, &repository.git_common_dir)?;
         record.worktree_id = worktree_id.to_owned();
         record.device_id = self.device_id.clone();
@@ -633,7 +631,7 @@ impl WorktreeManager {
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         let mut state = self.load();
         discover_worktrees(&mut state, &self.device_id);
-        reconcile_worktree_state(&mut state, &self.device_id, &self.execution_owner_id, false)?;
+        reconcile_worktree_state(&mut state, &self.execution_owner_id, false)?;
         let mut result = state
             .records
             .values_mut()
@@ -673,8 +671,7 @@ impl WorktreeManager {
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         let mut state = self.load();
         discover_worktrees(&mut state, &self.device_id);
-        let reconciled =
-            reconcile_worktree_state(&mut state, &self.device_id, &self.execution_owner_id, true)?;
+        let reconciled = reconcile_worktree_state(&mut state, &self.execution_owner_id, true)?;
         self.save(&state)?;
         Ok(reconciled)
     }
@@ -692,7 +689,6 @@ impl WorktreeManager {
             .records
             .remove(&key)
             .ok_or_else(|| "Managed worktree was not found".to_owned())?;
-        validate_or_bind_record_device(&mut record, &self.device_id)?;
         if path.exists() {
             validate_record_worktree_identity(&record, path)?;
         }
@@ -755,7 +751,6 @@ impl WorktreeManager {
             }
             return Ok(None);
         };
-        validate_or_bind_record_device(&mut record, &self.device_id)?;
         if record.worktree_id != worktree_id {
             state.records.insert(key, record);
             return Err(worktree_target_conflict(format!(
@@ -814,7 +809,6 @@ impl WorktreeManager {
             .records
             .remove(&key)
             .ok_or_else(|| "Managed worktree was not found".to_owned())?;
-        validate_or_bind_record_device(&mut record, &self.device_id)?;
         if path.exists() {
             validate_record_worktree_identity(&record, path)?;
             record.state = STATE_ACTIVE.to_owned();
@@ -855,10 +849,9 @@ impl WorktreeManager {
             .lock()
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         let mut state = self.load();
-        let Some(mut record) = state.records.remove(&normalized_path_key(path)) else {
+        let Some(record) = state.records.remove(&normalized_path_key(path)) else {
             return Ok(false);
         };
-        validate_or_bind_record_device(&mut record, &self.device_id)?;
         if let (Some(git_common_dir), Some(reference)) = (
             record.git_common_dir.as_deref(),
             record.snapshot_ref.as_deref(),
@@ -1606,23 +1599,6 @@ fn normalize_device_id(device_id: &str) -> String {
     }
 }
 
-fn validate_or_bind_record_device(
-    record: &mut ManagedWorktree,
-    device_id: &str,
-) -> Result<(), String> {
-    if record.device_id.trim().is_empty() {
-        record.device_id = device_id.to_owned();
-        return Ok(());
-    }
-    if record.device_id != device_id {
-        return Err(format!(
-            "worktree_device_mismatch: Managed worktree {} belongs to device {}",
-            record.path, record.device_id
-        ));
-    }
-    Ok(())
-}
-
 fn validate_record_worktree_identity(record: &ManagedWorktree, path: &Path) -> Result<(), String> {
     let expected_git_common_dir = if let Some(git_common_dir) = record.git_common_dir.as_deref() {
         PathBuf::from(git_common_dir)
@@ -1648,13 +1624,11 @@ fn validate_record_worktree_identity(record: &ManagedWorktree, path: &Path) -> R
 
 fn reconcile_worktree_state(
     state: &mut WorktreeState,
-    device_id: &str,
     execution_owner_id: &str,
     recover_interrupted_execution: bool,
 ) -> Result<Vec<WorktreeReconciliation>, String> {
     let mut reconciled = Vec::new();
     for record in state.records.values_mut() {
-        validate_or_bind_record_device(record, device_id)?;
         let path = PathBuf::from(&record.path);
         if record.state == STATE_PREPARING {
             let result = if path.exists() {
@@ -2573,55 +2547,12 @@ mod tests {
     }
 
     #[test]
-    fn managed_worktree_operations_reject_a_different_device() {
-        let root = test_directory("wegent-worktree-device-identity-test");
+    fn different_device_id_does_not_block_managed_worktree_operations() {
+        let root = test_directory("wegent-worktree-device-id-metadata-test");
         let source = root.join("source");
         initialize_repository(&source);
         let state_path = root.join("runtime-work/worktrees.json");
-        let manager_a = WorktreeManager::new_for_device(state_path.clone(), "device-a");
-        manager_a
-            .update_settings(WorktreeSettingsPatch {
-                worktree_root: Some(root.join("managed").display().to_string()),
-                ..WorktreeSettingsPatch::default()
-            })
-            .unwrap();
-        let plan = manager_a.plan(&source, "task-1", None).unwrap();
-        let record = manager_a
-            .prepare_planned(
-                &source,
-                "task-1",
-                None,
-                false,
-                &plan.path,
-                &plan.repo_root_fingerprint,
-            )
-            .unwrap();
-        assert_eq!(record.device_id, "device-a");
-
-        let manager_b = WorktreeManager::new_for_device(state_path, "device-b");
-        for error in [
-            manager_b
-                .prepare_at(&source, "task-1", None, false, &plan.path)
-                .unwrap_err(),
-            manager_b.reconcile().unwrap_err(),
-            manager_b.delete(&plan.path, true).unwrap_err(),
-        ] {
-            assert!(error.starts_with("worktree_device_mismatch:"));
-        }
-
-        manager_a.delete(&plan.path, true).unwrap();
-        let restore_error = manager_b.restore(&plan.path).unwrap_err();
-        assert!(restore_error.starts_with("worktree_device_mismatch:"));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn legacy_managed_worktree_records_bind_to_the_current_device() {
-        let root = test_directory("wegent-worktree-legacy-device-binding-test");
-        let source = root.join("source");
-        initialize_repository(&source);
-        let manager =
-            WorktreeManager::new_for_device(root.join("runtime-work/worktrees.json"), "device-a");
+        let manager = WorktreeManager::new_for_device(state_path.clone(), "device-a");
         manager
             .update_settings(WorktreeSettingsPatch {
                 worktree_root: Some(root.join("managed").display().to_string()),
@@ -2630,14 +2561,26 @@ mod tests {
             .unwrap();
         let record = manager.prepare(&source, "task-1", None, false).unwrap();
         let key = normalized_path_key(Path::new(&record.path));
-        let mut state = manager.load();
-        state.records.get_mut(&key).unwrap().device_id.clear();
-        manager.save(&state).unwrap();
+        let mut persisted: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+        persisted["records"][&key]["deviceId"] = Value::String("legacy-device".to_owned());
+        fs::write(&state_path, serde_json::to_vec_pretty(&persisted).unwrap()).unwrap();
 
-        manager.reconcile().unwrap();
+        let restarted = WorktreeManager::new_for_device(state_path.clone(), "device-b");
+        restarted.reconcile().unwrap();
+        restarted
+            .begin_execution(Path::new(&record.path), "task-1", 1)
+            .unwrap();
+        assert!(restarted
+            .finish_execution(Path::new(&record.path), "task-1", 1)
+            .unwrap());
 
-        assert_eq!(manager.load().records[&key].device_id, "device-a");
-        manager.delete(Path::new(&record.path), false).unwrap();
+        let persisted: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+        assert_eq!(persisted["records"][&key]["deviceId"], "legacy-device");
+        let deleted = restarted.delete(Path::new(&record.path), true).unwrap();
+        assert_eq!(deleted.device_id, "legacy-device");
+        let restored = restarted.restore(Path::new(&record.path)).unwrap();
+        assert_eq!(restored.device_id, "legacy-device");
+        restarted.delete(Path::new(&record.path), false).unwrap();
         let _ = fs::remove_dir_all(root);
     }
 
