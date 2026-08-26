@@ -170,6 +170,10 @@ export interface ProjectWithTasks {
   tasks?: ProjectTask[]
 }
 
+export interface CreatedRuntimeProject extends ProjectWithTasks {
+  runtimeProjectKey: string
+}
+
 export type ProjectExecutionMode = 'current_workspace' | 'git_worktree'
 
 export interface ProjectListResponse {
@@ -258,6 +262,17 @@ export interface RuntimeTaskAddress {
   workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
   worktreeId?: string | null
   runtimeHandle?: Record<string, unknown> | null
+}
+
+export interface RuntimeTaskStatusReplayRequest {
+  deviceId: string
+  taskIds: string[]
+}
+
+export interface RuntimeTaskStatusReplayResponse {
+  success: boolean
+  replayedTaskIds: string[]
+  missingTaskIds: string[]
 }
 
 export type RuntimeAdditionalContextKind = 'application' | 'untrusted'
@@ -1289,7 +1304,15 @@ export interface RuntimeTaskCancelResponse {
   error?: string | null
 }
 
+export interface RuntimeTaskExecutionConfig {
+  workspace?: {
+    source: 'git_worktree'
+    branch?: string
+  }
+}
+
 export interface RuntimeTaskCreateRequest {
+  schemaVersion?: 1 | 2
   projectId?: number
   deviceWorkspaceId?: number
   deviceId?: string
@@ -1301,7 +1324,6 @@ export interface RuntimeTaskCreateRequest {
   projectInstructions?: string
   projectPlugins?: RuntimeProjectPluginRef[]
   taskId?: string
-  teamId: number
   runtime: RuntimeName
   runtimeExecutablePath?: string
   runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
@@ -1318,11 +1340,12 @@ export interface RuntimeTaskCreateRequest {
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
   attachments?: Attachment[]
-  execution?: ChatSendPayload['execution']
+  execution?: RuntimeTaskExecutionConfig
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean
   sideSource?: RuntimeTaskAddress | null
+  workspaceSourceTask?: RuntimeTaskAddress | null
   deliveryId?: string
   cloudProjectId?: string
   origin?: {
@@ -2528,6 +2551,7 @@ export interface ChatBlockUpdatedPayload {
   subtaskId?: string
   blockId: string
   content?: string
+  contentDelta?: string
   toolOutput?: unknown
   toolOutputDelta?: string
   toolOutputTruncated?: boolean

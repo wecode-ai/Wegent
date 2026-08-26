@@ -7,6 +7,7 @@ import { ComposerLinkChip } from './ComposerLinkChip'
 import 'streamdown/styles.css'
 import {
   classifyMarkdownLink,
+  decodeMarkdownFilePath,
   getAuthenticatedAttachmentId,
   isAuthenticatedAttachmentImageSrc,
   isHtmlFilePath,
@@ -22,7 +23,7 @@ import { splitCodexInlineVisualizations } from '@/lib/codex-directives'
 import { openExternalUrl } from '@/lib/external-links'
 import { getRecognizedLink } from '@/lib/link-preview'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
 import { useAttachmentDownload } from './AttachmentDownloadContext'
@@ -109,7 +110,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     () => stripUnsupportedContentReferenceCitations(bufferedContent),
     [bufferedContent]
   )
-  const windowMarkdown = isTauriRuntime() && variant === 'default'
+  const windowMarkdown = isElectronRuntime() && variant === 'default'
   const contentParts = useMemo(() => {
     const parts = splitCodexInlineVisualizations(displayContent)
     return parts.flatMap<AssistantMarkdownPart>(part => {
@@ -481,7 +482,9 @@ function encodeLocalMarkdownLinks(content: string): string {
     const href = String(rawHref).trim()
     const target = classifyMarkdownLink(href)
     if (target.kind !== 'file') return match
-    return `[${label}](${WEWORK_MARKDOWN_FILE_LINK_PREFIX}${encodeURIComponent(href)})`
+    return `[${label}](${WEWORK_MARKDOWN_FILE_LINK_PREFIX}${encodeURIComponent(
+      decodeMarkdownFilePath(href)
+    )})`
   })
 }
 

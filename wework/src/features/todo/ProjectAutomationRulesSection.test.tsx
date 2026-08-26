@@ -171,6 +171,22 @@ describe('ProjectAutomationRulesSection', () => {
         agentApi={agentApi}
         deviceApi={deviceApi}
         modelApi={modelApi}
+        runtimeProfiles={[
+          {
+            id: 'runtime-1',
+            name: 'My Runtime',
+            executionEnvironment: 'local',
+            executionDeviceId: 'local-device',
+            model: 'model-1',
+            modelType: 'runtime',
+            modelOptions: {},
+            workspacePolicy: 'project',
+            status: 'active',
+            version: 1,
+            createdAt: '',
+            updatedAt: '',
+          },
+        ]}
         canManage
       />
     )
@@ -196,8 +212,9 @@ describe('ProjectAutomationRulesSection', () => {
     expect(
       (screen.getByTestId('project-automation-prompt') as HTMLTextAreaElement).value
     ).not.toContain('wework-space')
-    expect(screen.getByTestId('project-automation-model')).toHaveTextContent('Model 1')
-    expect(screen.getByTestId('project-automation-device')).toHaveTextContent('Local executor')
+    expect(screen.getByTestId('project-automation-runtime-profile')).toHaveTextContent(
+      'My Runtime · model-1'
+    )
     expect(screen.getByTestId('project-automation-save')).toBeEnabled()
   })
 
@@ -411,6 +428,22 @@ describe('ProjectAutomationRulesSection', () => {
         agentApi={agentApi}
         deviceApi={deviceApi}
         modelApi={modelApi}
+        runtimeProfiles={[
+          {
+            id: 'runtime-remote',
+            name: 'Remote Runtime',
+            executionEnvironment: 'cloud',
+            executionDeviceId: 'remote-device',
+            model: 'model-1',
+            modelType: 'public',
+            modelOptions: {},
+            workspacePolicy: 'project',
+            status: 'active',
+            version: 1,
+            createdAt: '',
+            updatedAt: '',
+          },
+        ]}
         canManage
       />
     )
@@ -425,21 +458,14 @@ describe('ProjectAutomationRulesSection', () => {
     expect(screen.getByTestId('project-automation-prompt')).toHaveValue(
       'workbench.project_automation_default_managed_prompt'
     )
-    fireEvent.click(screen.getByTestId('project-automation-model'))
-    expect(
-      screen.queryByTestId('project-automation-model-option-local-model')
-    ).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('project-automation-model-option-model-1'))
-    fireEvent.click(screen.getByTestId('project-automation-device'))
-    fireEvent.click(screen.getByTestId('project-automation-device-option-remote-device'))
-
     fireEvent.click(screen.getByTestId('project-automation-executor-type'))
     fireEvent.click(screen.getByTestId('project-automation-executor-type-option-manual'))
     fireEvent.click(screen.getByTestId('project-automation-executor-type'))
     fireEvent.click(screen.getByTestId('project-automation-executor-type-option-ai_managed'))
 
-    expect(screen.getByTestId('project-automation-model')).toHaveTextContent('Model 1')
-    expect(screen.getByTestId('project-automation-device')).toHaveTextContent('Remote executor')
+    expect(screen.getByTestId('project-automation-runtime-profile')).toHaveTextContent(
+      'Remote Runtime · model-1'
+    )
     fireEvent.click(screen.getByTestId('project-automation-save'))
 
     await waitFor(() =>
@@ -450,9 +476,11 @@ describe('ProjectAutomationRulesSection', () => {
           managerType: 'custom',
           agentId: null,
           wegentTeamId: null,
-          model: 'model-1',
-          executionEnvironment: 'cloud',
-          executionDeviceId: 'remote-device',
+          model: null,
+          executionEnvironment: null,
+          executionDeviceId: null,
+          runtimeSource: 'fixed_profile',
+          runtimeProfileId: 'runtime-remote',
         })
       )
     )

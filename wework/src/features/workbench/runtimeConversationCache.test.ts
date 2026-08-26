@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   abortRuntimeConversationHydration,
   appendOptimisticRuntimeConversationGuidance,
@@ -19,6 +19,7 @@ import {
   getRuntimeConversationLiveActivitySnapshot,
   getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
+  getRuntimeConversationMessagesForLogicalAddress,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
   markRuntimeConversationGuidanceInterrupted,
@@ -45,7 +46,10 @@ const address = {
 }
 
 describe('runtimeConversationCache', () => {
-  afterEach(clearRuntimeConversationCacheForTests)
+  afterEach(() => {
+    clearRuntimeConversationCacheForTests()
+    vi.unstubAllGlobals()
+  })
 
   test('keeps transcript data independently from a mounted pane', () => {
     applyRuntimeConversationAction(address, {
@@ -60,6 +64,51 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
+  })
+
+  test('resolves the local-device alias to a unique executor conversation', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'assistant-1',
+      content: 'visible assistant message',
+    })
+
+    expect(
+      getRuntimeConversationMessagesForLogicalAddress({
+        ...address,
+        deviceId: 'local-device',
+      })
+    ).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        content: 'visible assistant message',
+        turnId: 'turn-1',
+      }),
+    ])
+  })
+
+  test('does not guess between duplicate local task ids', () => {
+    for (const deviceId of ['device-1', 'device-2']) {
+      const duplicateAddress = { ...address, deviceId }
+      applyRuntimeConversationAction(duplicateAddress, {
+        type: 'assistant_started',
+        taskId: address.taskId,
+        subtaskId: `turn-${deviceId}`,
+      })
+    }
+
+    expect(
+      getRuntimeConversationMessagesForLogicalAddress({
+        ...address,
+        deviceId: 'local-device',
+      })
+    ).toEqual([])
   })
 
   test('does not project an empty live-activity row before thinking or tools arrive', () => {
@@ -108,6 +157,96 @@ describe('runtimeConversationCache', () => {
     cacheRuntimeConversationQueuePaused(address, false)
 
     expect(notifications).toBe(2)
+    unsubscribe()
+  })
+
+  test('coalesces burst streaming notifications before the terminal update', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'subtask-1',
+    })
+    const notifications: Array<string | undefined> = []
+    const unsubscribe = subscribeRuntimeConversation(address, action => {
+      notifications.push(action?.type)
+    })
+
+    for (let index = 0; index < 2200; index += 1) {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_chunk',
+        subtaskId: 'subtask-1',
+        itemId: 'assistant-item-1',
+        content: 'x',
+      })
+    }
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'subtask-1',
+      itemId: 'assistant-item-1',
+      content: 'complete',
+      contentMode: 'snapshot',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'subtask-1',
+    })
+
+    expect(notifications).toEqual(['assistant_done'])
+    expect(getRuntimeConversationMessages(address)).toMatchObject([
+      {
+        content: 'complete',
+        status: 'done',
+      },
+    ])
+    unsubscribe()
+  })
+
+  test('cancels a pending streaming notification when bounded eviction removes its turn', () => {
+    const animationFrames = new Map<number, FrameRequestCallback>()
+    let nextFrameId = 1
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const frameId = nextFrameId++
+      animationFrames.set(frameId, callback)
+      return frameId
+    })
+    const cancelAnimationFrame = vi.fn((frameId: number) => {
+      animationFrames.delete(frameId)
+    })
+    vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame)
+
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'subtask-1',
+    })
+    const listener = vi.fn()
+    const unsubscribe = subscribeRuntimeConversation(address, listener)
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'subtask-1',
+      itemId: 'assistant-item-1',
+      content: 'pending update',
+    })
+
+    expect(animationFrames.size).toBe(1)
+
+    for (let index = 0; index < 50; index += 1) {
+      const otherAddress = { ...address, taskId: `other-task-${index}` }
+      applyRuntimeConversationAction(otherAddress, {
+        type: 'user_added',
+        message: {
+          id: `other-user-${index}`,
+          role: 'user',
+          content: `other message ${index}`,
+          status: 'done',
+        },
+      })
+    }
+
+    expect(getRuntimeConversationMessages(address)).toEqual([])
+    expect(cancelAnimationFrame).toHaveBeenCalledOnce()
+    expect(animationFrames.size).toBe(0)
+    expect(listener).not.toHaveBeenCalled()
     unsubscribe()
   })
 
@@ -510,6 +649,83 @@ describe('runtimeConversationCache', () => {
     ])
   })
 
+  test('keeps late-delivered pre-guidance blocks before the applied guidance', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'subtask-1',
+    })
+    const guidance = {
+      id: 'client-guidance-1',
+      content: 'follow the updated direction',
+      status: 'sending' as const,
+      deliveryMode: 'guidance' as const,
+      createdAt: '2026-07-27T00:00:01.000Z',
+    }
+    appendOptimisticRuntimeConversationGuidance(address, 'subtask-1', guidance)
+    cacheRuntimeConversationQueuedMessages(address, [guidance])
+    settleRuntimeConversationGuidance(address, {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      subtaskId: 'subtask-1',
+      guidanceId: 'runtime-guidance-1',
+      clientGuidanceId: guidance.id,
+      message: guidance.content,
+      appliedAtMs: Date.parse('2026-07-27T00:00:02.000Z'),
+    })
+
+    applyRuntimeConversationAction(address, {
+      type: 'block_created',
+      subtaskId: 'subtask-1',
+      block: {
+        id: 'pre-guidance-text',
+        subtaskId: 'subtask-1',
+        type: 'text',
+        content: 'working before guidance',
+        status: 'done',
+        createdAt: Date.parse('2026-07-27T00:00:01.500Z'),
+      },
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'block_created',
+      subtaskId: 'subtask-1',
+      block: {
+        id: 'post-guidance-tool',
+        subtaskId: 'subtask-1',
+        type: 'tool',
+        toolName: 'bash',
+        status: 'streaming',
+        createdAt: Date.parse('2026-07-27T00:00:02.500Z'),
+      },
+    })
+
+    expect(getRuntimeConversationMessages(address)).toMatchObject([
+      {
+        role: 'assistant',
+        runtimeGuidanceSplitBefore: true,
+        blocks: [{ id: 'pre-guidance-text' }],
+      },
+      {
+        id: guidance.id,
+        role: 'user',
+        runtimeGuidance: true,
+      },
+      {
+        role: 'assistant',
+        runtimeGuidanceContinuation: true,
+        blocks: [
+          {
+            type: 'tool',
+            toolName: 'conversation_guidance',
+          },
+          {
+            id: 'post-guidance-tool',
+          },
+        ],
+      },
+    ])
+  })
+
   test('settles an optimistic guidance message into the active turn without duplicating its id', () => {
     applyRuntimeConversationAction(address, {
       type: 'assistant_started',
@@ -640,6 +856,84 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationMessages(address).at(-1)).toMatchObject({
       runtimeStatus: 'streaming',
     })
+  })
+
+  test('keeps a cancelled optimistic turn stopped when late stream events bind it', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: {
+        id: 'client-user-cancelled',
+        role: 'user',
+        content: 'Stop before the assistant starts',
+        status: 'done',
+      },
+    })
+
+    const interruption = optimisticallyInterruptRuntimeConversation(address)
+    expect(interruption).toMatchObject({
+      turnId: null,
+      clientUserMessageId: 'client-user-cancelled',
+      status: 'pending',
+    })
+
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-late',
+      clientUserMessageId: 'client-user-cancelled',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-late',
+      itemId: 'assistant-late',
+      content: 'Late content',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_done',
+      subtaskId: 'turn-late',
+      itemId: 'assistant-late',
+      content: 'Late completion',
+    })
+
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      expect.objectContaining({
+        id: 'client-user-cancelled',
+        role: 'user',
+      }),
+      expect.objectContaining({
+        role: 'assistant',
+        runtimeStatus: 'cancelled',
+        stoppedNotice: true,
+        content: '',
+      }),
+    ])
+  })
+
+  test('keeps a cancelled turn stopped when a late assistant error arrives', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-cancelled',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_cancelled',
+      subtaskId: 'turn-cancelled',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_error',
+      subtaskId: 'turn-cancelled',
+      error: 'late upstream failure',
+      errorType: 'runtime_error',
+    })
+
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        runtimeStatus: 'cancelled',
+        stoppedNotice: true,
+        error: undefined,
+      }),
+    ])
   })
 
   test('preserves multiple guidance messages applied during one assistant turn', () => {

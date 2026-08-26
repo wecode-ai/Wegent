@@ -255,7 +255,7 @@ pnpm --dir wework test -- runtimePaneMessages.test.ts
 pnpm --filter wework e2e:desktop:cloud-features
 ```
 
-该场景会启动真实后端、Redis、云设备 executor 和 Tauri 应用，验证云项目任务、
+该场景会启动真实后端、Redis、云设备 executor 和 Electron 应用，验证云项目任务、
 Goal 自动续跑与未读状态、忙碌任务转 Goal，以及本地与云端模型协议矩阵。失败时应
 使用命令输出中的 `wework/test-results/desktop-e2e/<run-id>/` 目录，对照前端、
 后端和 executor 日志定位主链路问题。
@@ -325,7 +325,7 @@ CI 稳定性依赖以下约束：
   在多个桌面 job 之间复用同一套完整二进制产物。
 - 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
   build cache tag，不占用 GitHub Actions dependency cache 配额。
-- 非 Wework E2E 的 Executor 和 Tauri 系统依赖安装前先检查 runner 已安装的软件包；
+- 非 Wework E2E 的 Executor 和 Electron 系统依赖安装前先检查 runner 已安装的软件包；
   APT 下载缓存只有 `main` 写入，PR 只恢复。
 
 `.github/workflows/ci-cache-warmup.yml` 在相关源码、依赖锁文件或缓存实现合入

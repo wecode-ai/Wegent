@@ -1,4 +1,7 @@
-from app.services.chat.external_knowledge_refs import merge_external_knowledge_refs
+from app.services.chat.external_knowledge_refs import (
+    merge_external_knowledge_refs,
+    normalize_external_knowledge_refs,
+)
 
 
 def _ref(target_type: str, node_id: str | None = None) -> dict[str, str]:
@@ -32,3 +35,20 @@ def test_later_child_selection_can_narrow_existing_whole_knowledge_base() -> Non
     merged = merge_external_knowledge_refs(existing, incoming)
 
     assert merged == [_ref("document", "doc-d1")]
+
+
+def test_normalize_drops_external_folder_descendant_policy() -> None:
+    refs = normalize_external_knowledge_refs(
+        [
+            {
+                "provider": "dingtalk",
+                "mode": "explicit",
+                "id": "space-d",
+                "target_type": "folder",
+                "node_id": "folder-d",
+                "include_descendants": False,
+            }
+        ]
+    )
+
+    assert "include_descendants" not in refs[0]

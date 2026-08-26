@@ -1,6 +1,6 @@
 import { getRuntimeConfig } from '@/config/runtime'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 
 export function isLocalFirstAppRuntime(): boolean {
-  return getRuntimeConfig().runtimeMode === 'local-first' && isTauriRuntime()
+  return getRuntimeConfig().runtimeMode === 'local-first' && isDesktopRuntime()
 }

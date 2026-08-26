@@ -163,11 +163,23 @@ async function waitForStableSnapshot(control, predicate, message) {
   throw new Error(`${message}: ${JSON.stringify(lastSnapshot)}`)
 }
 
+const HARNESS_MILESTONE_SCREENSHOTS = new Set([
+  'harness-apps-03-marketplace.png',
+  'harness-apps-03a-official-running.png',
+  'harness-apps-03b4-plugin-reloaded.png',
+  'harness-apps-04a-publish-dialog-zh.png',
+  'harness-apps-08-native-page.png',
+  'harness-apps-09-running.png',
+  'harness-apps-15-returned-to-marketplace.png',
+  'harness-apps-16-experimental-disabled.png',
+])
+
 async function captureVerificationScreenshot(control, name, selector = 'body') {
-  if (
-    process.env.WEWORK_E2E_SCREENSHOTS === 'final' &&
-    !name.endsWith('04-task-completed-after-reopen.png')
-  ) {
+  const screenshotMode = process.env.WEWORK_E2E_SCREENSHOTS
+  if (screenshotMode === 'final' && !name.endsWith('04-task-completed-after-reopen.png')) {
+    return null
+  }
+  if (screenshotMode === 'harness-milestones' && !HARNESS_MILESTONE_SCREENSHOTS.has(name)) {
     return null
   }
   const screenshotPath = join(resultDir, name)
@@ -546,6 +558,24 @@ async function verifyWorkspaceIssueCreation(control) {
     'workspace-issue-02-created.png',
     boardContentSelector
   )
+  const issueStatusSelector = `${boardContentSelector} [data-testid="cloud-todo-detail-status"]`
+  await control.command('select', issueStatusSelector, { value: 'pending' })
+  assert.equal(
+    await control.command('getValue', issueStatusSelector),
+    'pending',
+    'The Issue did not enter pending before verifying its task composer'
+  )
+  await control.command(
+    'clickWhenEnabled',
+    `${boardContentSelector} [data-testid="cloud-todo-save"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('waitFor', `${boardContentSelector} [data-testid="cloud-todo-save"]`, {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', `${boardContentSelector} [data-testid="cloud-todo-create-task"]`)
   const activeTaskPanel = `${boardContentSelector} [data-testid="cloud-todo-panel-stack"][data-conversation-open="true"]`
   const taskPanelBackdrop = '[data-testid="ai-chat-modal-backdrop"][data-presentation="sidebar"]'
@@ -628,7 +658,7 @@ async function verifyWorkspaceIssueCreation(control) {
   })
   await control.command(
     'waitFor',
-    `${boardContentSelector} [data-testid="cloud-todo-column-inbox"]`,
+    `${boardContentSelector} [data-testid="cloud-todo-column-pending"]`,
     {
       text: 'WEWORK_DESKTOP_E2E_ISSUE',
       visible: true,
@@ -991,6 +1021,22 @@ async function verifyWorkspaceTabIsolation(control) {
     'Switching back did not restore the first project-space tab state'
   )
   await captureVerificationScreenshot(control, 'workspace-tabs-isolation-02-project-spaces.png')
+
+  await control.command('click', `[data-testid="workspace-tab-select-${firstTaskId}"]`)
+  await control.command('waitFor', firstTaskComposer, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getValue', firstTaskComposer),
+    '第一个任务标签草稿',
+    'Switching through a project-space tab discarded the task draft'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'workspace-tabs-isolation-02b-task-restored-after-project-space.png',
+    firstTaskContent
+  )
 
   const firstAgentId = initialAgentIds[0].slice('workspace-tab-'.length)
   const firstAgentContent = `[data-testid="workspace-tab-content-${firstAgentId}"]`

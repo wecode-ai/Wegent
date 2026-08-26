@@ -12,6 +12,7 @@ WORKDIR /app
 
 # Copy dependency files and postinstall scripts
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
 COPY frontend/package.json ./frontend/package.json
 COPY frontend/scripts ./frontend/scripts
@@ -59,6 +60,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
 COPY wework/package.json ./wework/package.json
 

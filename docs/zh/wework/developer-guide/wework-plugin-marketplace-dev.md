@@ -170,6 +170,8 @@ pnpm --filter wework dev:mac -- --executor-isolation
 
 取消、扫描拒绝或超过上传/扫描超时的投稿不会永久占用版本号。客户端可以用相同 `version` 重新调用 `init`；仍在有效上传或扫描中的版本会返回 `409`，避免并发投稿互相覆盖。
 
+云端 Plugin Creator 不在创建阶段上传 ZIP，也不创建独立草稿记录。源码位于 `$WEGENT_TASK_WORKSPACE/plugins/<plugin-name>`，创建完成后由 `plugin-workspace describe` 把结果标记写回当前 Task 对话。用户从结果卡选择分享或发布时，Wework 向原 Task 发送后续指令，Executor 执行 `plugin-workspace publish`，对当前源码重新校验和打包后调用上述投稿接口。Task 工作区恢复与归档沿用现有 Task 生命周期；未发布内容不会出现在插件中心。
+
 ### WeWork 官方插件
 
 适合公司维护的内置能力。统一字段：

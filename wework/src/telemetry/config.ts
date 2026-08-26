@@ -32,7 +32,7 @@ export function getTelemetryConfig(): TelemetryConfig {
       desktopE2ERuntimeConfig.posthogHost ||
       env('VITE_WEWORK_POSTHOG_HOST') ||
       'https://us.i.posthog.com',
-    posthogKey: env('VITE_WEWORK_POSTHOG_KEY'),
+    posthogKey: desktopE2ERuntimeConfig.posthogKey || env('VITE_WEWORK_POSTHOG_KEY'),
     releaseChannel: env('VITE_WEWORK_RELEASE_CHANNEL') || 'development',
     sentryDsn: env('VITE_WEWORK_SENTRY_DSN'),
     sentryTracesSampleRate: sampleRate(env('VITE_WEWORK_SENTRY_TRACES_SAMPLE_RATE')),

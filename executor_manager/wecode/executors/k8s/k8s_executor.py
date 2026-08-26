@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urlparse
 
 import requests
 from kubernetes import client, config
@@ -29,6 +30,8 @@ from executor_manager.utils.executor_info import attach_executor_info
 from executor_manager.utils.executor_name import generate_executor_name
 from executor_manager.wecode.config.config import (
     EXECUTOR_DEFAULT_MAGE,
+    EXECUTOR_GIT_WARMPOOL_ENABLED,
+    EXECUTOR_NON_GIT_WARMPOOL_ENABLED,
     EXECUTOR_WARMPOOL_ENABLED,
     K8S_NAMESPACE,
     MAX_USER_TASKS,
@@ -52,11 +55,16 @@ from executor_manager.wecode.executors.warmpool.constants import (
     SANDBOX_KIND,
 )
 from shared.logger import setup_logger
-from shared.models.execution import ExecutionRequest
+from shared.models.execution import (
+    GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN,
+    ExecutionRequest,
+)
 from shared.models.openai_converter import get_metadata_field
 from shared.status import TaskStatus
+from shared.utils.crypto import is_token_encrypted
 from shared.utils.http_client import traced_session, traced_sync_client
 from shared.utils.task_identity import build_task_identity_env
+from shared.utils.url_util import domains_match
 
 logger = setup_logger(__name__)
 
@@ -586,8 +594,68 @@ class K8sExecutor(Executor):
         if self._get_base_image_from_task(task):
             return "custom_base_image"
         if self._task_has_git_repository(task):
-            return "git_repository"
+            return self._git_warmpool_ineligibility_reason(task)
+        if not EXECUTOR_NON_GIT_WARMPOOL_ENABLED:
+            return "non_git_warmpool_disabled"
         return None
+
+    @staticmethod
+    def _git_warmpool_ineligibility_reason(task: Dict[str, Any]) -> Optional[str]:
+        """Return why a Git task cannot safely claim a shared warm sandbox."""
+
+        if not EXECUTOR_GIT_WARMPOOL_ENABLED:
+            return "git_warmpool_disabled"
+        if get_metadata_field(task, "workspace_source") == "git_worktree":
+            return "git_worktree"
+
+        git_url = K8sExecutor._task_git_url(task)
+        parsed_url = urlparse(git_url)
+        if parsed_url.scheme != "https" or not parsed_url.hostname:
+            return "git_requires_https"
+        if (
+            parsed_url.username
+            or parsed_url.password
+            or parsed_url.query
+            or parsed_url.fragment
+        ):
+            return "git_url_contains_credentials"
+
+        if (
+            get_metadata_field(task, "git_auth_transport")
+            != GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN
+        ):
+            return "git_credentials_not_request_scoped"
+
+        user = get_metadata_field(task, "user", {}) or {}
+        if not isinstance(user, dict):
+            return "git_credentials_missing"
+        token = str(user.get("git_token") or user.get("gitToken") or "").strip()
+        if not token or token == "***":
+            return "git_credentials_missing"
+        if not is_token_encrypted(token):
+            return "git_credentials_not_encrypted"
+
+        credential_domain = str(
+            user.get("git_domain") or user.get("gitDomain") or ""
+        ).strip()
+        if not credential_domain or not domains_match(
+            credential_domain, parsed_url.hostname
+        ):
+            return "git_credential_domain_mismatch"
+        return None
+
+    @staticmethod
+    def _task_git_url(task: Dict[str, Any]) -> str:
+        git_url = str(get_metadata_field(task, "git_url", "") or "").strip()
+        if git_url:
+            return git_url
+        workspace = get_metadata_field(task, "workspace", {}) or {}
+        repository = (
+            workspace.get("repository") if isinstance(workspace, dict) else None
+        )
+        if not isinstance(repository, dict):
+            return ""
+        return str(repository.get("gitUrl") or repository.get("git_url") or "").strip()
 
     @staticmethod
     def _task_has_git_repository(task: Dict[str, Any]) -> bool:

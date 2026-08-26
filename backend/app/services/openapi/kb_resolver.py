@@ -258,8 +258,8 @@ class KnowledgeBaseNameResolver:
                         db=self.db,
                         knowledge_base_id=kb_id,
                         user_id=self.user_id,
-                        folder_ids=folder_ids,
-                        document_ids=explicit_document_ids,
+                        folder_ids=folder_ids or None,
+                        document_ids=explicit_document_ids or None,
                         include_subfolders=include_subfolders,
                     )
                 )

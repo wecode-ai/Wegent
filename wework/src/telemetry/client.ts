@@ -161,9 +161,7 @@ function sanitizeSentryResourceUrl(value: string | undefined): string | undefine
     const url = new URL(value, relativeBase)
     const isRelativeAppPath = url.protocol === 'wework-relative:' && url.hostname === 'localhost'
     const isProductionAppUrl =
-      (url.protocol === 'tauri:' && url.hostname === 'localhost') ||
-      ((url.protocol === 'http:' || url.protocol === 'https:') &&
-        url.hostname === 'tauri.localhost')
+      (url.protocol === 'http:' || url.protocol === 'https:') && url.hostname === 'localhost'
     const isDevelopmentAppUrl =
       url.protocol === 'http:' && url.hostname === 'localhost' && url.port === '1420'
     if (

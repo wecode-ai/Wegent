@@ -55,7 +55,7 @@ describe('createSmartAppsApi', () => {
       expect.objectContaining({
         filename: 'app.zip',
         sizeBytes: 3,
-        sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+        sha256: '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81',
         extensions: { 'io.wegent.test': { owner: 'api-test' } },
         releaseExtensions: { 'io.wegent.build': { pipeline: 'test' } },
       })

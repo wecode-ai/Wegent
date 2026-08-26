@@ -105,6 +105,36 @@ export function replaceComposerApps(apps: LocalDeviceApp[]): void {
   notifyComposerAppsListeners()
 }
 
+function normalizedComposerAppIdentities(app: LocalDeviceApp): Set<string> {
+  return new Set(
+    [
+      app.id,
+      app.id.replace(/^(plugin:|wegent:)/, ''),
+      app.pluginKey,
+      app.name,
+      ...(app.pluginDisplayNames ?? []),
+    ]
+      .map(value => value?.trim().toLowerCase() ?? '')
+      .filter(Boolean)
+  )
+}
+
+/** Remove successfully uninstalled plugins before the slower inventory refresh finishes. */
+export function removeComposerAppsByPluginIdentity(identities: readonly string[]): void {
+  const normalizedIdentities = new Set(
+    identities.map(value => value.trim().toLowerCase()).filter(Boolean)
+  )
+  if (normalizedIdentities.size === 0) return
+
+  const current = getComposerApps()
+  const next = current.filter(app => {
+    const appIdentities = normalizedComposerAppIdentities(app)
+    return ![...normalizedIdentities].some(identity => appIdentities.has(identity))
+  })
+  if (next.length === current.length) return
+  replaceComposerApps(next)
+}
+
 export function shouldSuppressComposerAppsSync(): boolean {
   const store = getStore()
   return store.suppressEmptySync && store.memoryApps.length === 0

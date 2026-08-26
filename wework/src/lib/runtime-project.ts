@@ -3,6 +3,7 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeProjectRef,
   RuntimeProjectWork,
+  RuntimeWorkListResponse,
 } from '@/types/api'
 
 export function runtimeProjectKey(project: RuntimeProjectRef): string {
@@ -72,4 +73,26 @@ export function runtimeProjectToProject(projectWork: RuntimeProjectWork): Projec
         : undefined,
     tasks: [],
   }
+}
+
+export function resolveRuntimeTaskProjects(
+  projects: ProjectWithTasks[],
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): ProjectWithTasks[] {
+  const resolved = new Map(projects.map(project => [project.id, project]))
+
+  for (const runtimeProject of runtimeWork?.projects ?? []) {
+    const project = runtimeProjectToProject(runtimeProject)
+    const existing = resolved.get(project.id)
+    resolved.set(project.id, {
+      ...existing,
+      ...project,
+      description: project.description ?? existing?.description,
+      color: project.color ?? existing?.color,
+      config: project.config ?? existing?.config,
+      tasks: existing?.tasks ?? [],
+    })
+  }
+
+  return [...resolved.values()]
 }

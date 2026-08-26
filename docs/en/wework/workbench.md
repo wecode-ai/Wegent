@@ -10,6 +10,8 @@ The Wework desktop app uses top-level tabs for tasks, project spaces, agents, an
 
 When experimental features are enabled, the first main window shows three default tabs: Task, Workspaces, and Agent. When experimental features are off, the Workspaces tab is hidden. Every tab is an independent work instance. Two Task tabs retain separate conversations and unsent drafts, two Workspace tabs retain separate projects and routes, and two Agent tabs retain separate page state. Switching tabs does not synchronize content from another tab.
 
+Task and Workspace tabs retain their mounted interface while they are in the background instead of recreating it whenever the user returns. Unsent drafts, the selected project, board routes, and panel state therefore restore immediately, and background tabs do not restart the workbench runtime. The first Task workbench centrally prewarms the Codex app catalog needed by composers; mounting a composer or switching tabs does not request the catalog again. A Workspace board loads task-composer model and skill catalogs on demand only when the user creates a runtime task from an issue, avoiding the complete Task-workbench startup cost during ordinary board browsing.
+
 When many tabs are open, the tab list scrolls horizontally while the **+** and the rightmost feedback button remain visible. A tab can also be moved to a separate window from its context menu. After the move succeeds, the source window removes the tab and the destination window contains only the moved tab and its state; it does not create the three default tabs again. If destination-window creation fails, the source tab remains unchanged.
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
@@ -107,7 +109,7 @@ Select **+** in the bottom tab bar to choose **Terminal**, **IDE**, or **Desktop
 
 When diagnosing a terminal that does not repaint after a task switch, frontend logs record the terminal type, task and session identifiers, activation phase, xterm row and column count, container dimensions, and hidden state. They never record terminal output, commands, or workspace paths.
 
-To diagnose `[Terminal connection failed]`, correlate `Local terminal start`, `Local terminal connection`, `Tauri local terminal attach`, and `Local terminal close` logs by session identifier. The logs include the host process, child process, task, workspace path, connection stage, and close reason so output-listener, exit-listener, native-attach, missing-session, and intentional-close cases can be distinguished. They never include terminal input, output, executed commands, or environment-variable contents.
+To diagnose `[Terminal connection failed]`, correlate `Local terminal start`, `Local terminal connection`, ` Electron local terminal attach`, and `Local terminal close` logs by session identifier. The logs include the host process, child process, task, workspace path, connection stage, and close reason so output-listener, exit-listener, native-attach, missing-session, and intentional-close cases can be distinguished. They never include terminal input, output, executed commands, or environment-variable contents.
 
 ## Expand the right workspace
 

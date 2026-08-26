@@ -66,6 +66,7 @@ import wecode.service.cloud_device_patch  # noqa: F401  register CloudDeviceProv
 import wecode.service.dispatch_tasks_patch  # noqa: F401  patch executor_kinds_service.dispatch_tasks to replace API key placeholders (push mode)
 import wecode.service.executor_job_patch  # noqa: F401  patch JobService with K8s orphan pod cleanup capabilities
 import wecode.service.executor_kinds_patch  # noqa: F401  patch executor_kinds_service with K8s orphan pod cleanup methods
+import wecode.service.git_execution_credentials  # noqa: F401  register task-scoped Git token resolution
 import wecode.service.jobs  # noqa: F401  register notification and evaluation grading monitor background workers
 import wecode.service.knowledge.weibo_dispatch_validator  # noqa: F401  register Weibo dispatch validator (replaces weibo_multimodal_patch monkeypatch)
 import wecode.service.knowledge.weibo_video_upload_provider  # noqa: F401  register Weibo VideoUploadProvider (two-phase KB video upload)

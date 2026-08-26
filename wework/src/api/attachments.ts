@@ -1,6 +1,6 @@
 import type { Attachment } from '@/types/api'
 import { getRuntimeConfig } from '@/config/runtime'
-import { createHttpClient, shouldUseTauriFetch } from './http'
+import { createHttpClient } from './http'
 
 export const MAX_FILE_SIZE = 100 * 1024 * 1024
 
@@ -70,17 +70,6 @@ export function createAttachmentApi(options: CreateAttachmentApiOptions = {}): A
 
       const formData = new FormData()
       formData.append('file', file)
-
-      if (shouldUseTauriFetch()) {
-        onProgress?.(0)
-        const client = createHttpClient({ baseUrl: apiBaseUrl, getToken })
-        return client
-          .post<UploadAttachmentResponse>('/attachments/upload', formData)
-          .then(response => {
-            onProgress?.(100)
-            return toAttachmentResponse(response, file)
-          })
-      }
 
       return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest()

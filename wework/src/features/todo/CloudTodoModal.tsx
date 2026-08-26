@@ -7,7 +7,7 @@ interface CloudTodoModalProps {
   title: string
   children: ReactNode
   onClose: () => void
-  width?: 'default' | 'wide' | 'workspace'
+  width?: 'default' | 'wide' | 'workflow' | 'workspace'
 }
 
 export function CloudTodoModal({
@@ -20,7 +20,7 @@ export function CloudTodoModal({
     <div
       className={cn(
         'inset-0 z-system flex items-center justify-center bg-black/35 p-6 backdrop-blur-sm',
-        width === 'workspace' ? 'fixed' : 'absolute'
+        width === 'workspace' || width === 'workflow' ? 'fixed' : 'absolute'
       )}
       onMouseDown={event => event.currentTarget === event.target && onClose()}
     >
@@ -29,9 +29,11 @@ export function CloudTodoModal({
           'flex max-h-[calc(100vh-96px)] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-2xl bg-background shadow-2xl',
           width === 'workspace'
             ? 'h-[calc(100vh-72px)] w-[calc(100vw-48px)]'
-            : width === 'wide'
-              ? 'w-[560px]'
-              : 'w-[480px]'
+            : width === 'workflow'
+              ? 'w-[680px]'
+              : width === 'wide'
+                ? 'w-[560px]'
+                : 'w-[480px]'
         )}
       >
         <header className="flex items-center gap-3 px-5 pt-4">
@@ -51,5 +53,5 @@ export function CloudTodoModal({
     </div>
   )
 
-  return width === 'workspace' ? createPortal(modal, document.body) : modal
+  return width === 'workspace' || width === 'workflow' ? createPortal(modal, document.body) : modal
 }

@@ -12,6 +12,15 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 RuntimeName = Literal["codex", "claude_code"]
 RuntimeWorkspaceKind = Literal["workspace", "worktree", "chat"]
 RuntimeWorkspaceSource = Literal["local", "remote"]
+RuntimeGoalStatus = Literal[
+    "active",
+    "paused",
+    "blocked",
+    "usageLimited",
+    "budgetLimited",
+    "complete",
+]
+RuntimeSupervisorMode = Literal["suggest", "auto"]
 
 
 class RuntimeWorktreeDeviceRequest(BaseModel):
@@ -74,6 +83,15 @@ class RuntimeTaskAddress(BaseModel):
     )
 
 
+class RuntimeTaskStatusReplayRequest(BaseModel):
+    """Request a Runtime to replay authoritative status for selected tasks."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: str = Field(..., alias="deviceId", min_length=1)
+    task_ids: list[str] = Field(..., alias="taskIds", min_length=1, max_length=200)
+
+
 class RuntimeModelSelection(BaseModel):
     """Model selection persisted with a device-local runtime task."""
 
@@ -82,6 +100,34 @@ class RuntimeModelSelection(BaseModel):
     model_name: str = Field(..., alias="modelName", min_length=1)
     model_type: Optional[str] = Field(default=None, alias="modelType")
     options: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeGoalCreateInput(BaseModel):
+    """Initial persistent goal configured before the first Runtime turn."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    objective: str = Field(..., min_length=1)
+    status: Optional[RuntimeGoalStatus] = None
+    token_budget: Optional[int] = Field(default=None, alias="tokenBudget", ge=1)
+
+
+class RuntimeSupervisorCreateInput(BaseModel):
+    """Initial supervisor configured atomically with Runtime task creation."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    mode: RuntimeSupervisorMode
+    instructions: str = ""
+    model_selection: RuntimeModelSelection = Field(..., alias="modelSelection")
+    supervisor_model_config: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="modelConfig",
+    )
+    interval_seconds: Literal[10, 30, 60, 300] = Field(
+        ...,
+        alias="intervalSeconds",
+    )
 
 
 class RuntimeTranscriptRequest(RuntimeTaskAddress):
@@ -166,6 +212,10 @@ class LocalTaskSummary(BaseModel):
         alias="runtimeHandle",
         exclude=True,
     )
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
     queue_position: Optional[int] = Field(default=None, alias="queuePosition", ge=1)
     git_info: Optional[dict[str, Any]] = Field(default=None, alias="gitInfo")
     parent: Optional[RuntimeTaskAddressRef] = None
@@ -183,6 +233,23 @@ class LocalTaskSummary(BaseModel):
     pinned_order: Optional[int] = Field(default=None, alias="pinnedOrder")
     sidebar_order: Optional[int] = Field(default=None, alias="sidebarOrder")
     status: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def project_safe_runtime_identity(cls, value: Any) -> Any:
+        """Expose model identity without returning the private runtime handle."""
+
+        if not isinstance(value, dict):
+            return value
+        if value.get("modelSelection") or value.get("model_selection"):
+            return value
+        handle = value.get("runtimeHandle") or value.get("runtime_handle")
+        if not isinstance(handle, dict):
+            return value
+        selection = handle.get("modelSelection") or handle.get("model_selection")
+        if not isinstance(selection, dict):
+            return value
+        return {**value, "modelSelection": selection}
 
 
 class DeviceWorkspaceUpsert(BaseModel):
@@ -811,10 +878,11 @@ class RuntimeTaskQueueReorderResponse(RuntimeTaskCancelResponse):
 
 
 class RuntimeTaskCreateRequest(BaseModel):
-    """Request to create a device-local runtime task without DB Task rows."""
+    """Producer-facing task intent before target and CRD materialization."""
 
     model_config = ConfigDict(populate_by_name=True)
 
+    schema_version: Literal[1, 2] = Field(default=1, alias="schemaVersion")
     project_id: Optional[int] = Field(default=None, alias="projectId", ge=1)
     device_workspace_id: Optional[int] = Field(
         default=None,
@@ -823,10 +891,46 @@ class RuntimeTaskCreateRequest(BaseModel):
     )
     device_id: Optional[str] = Field(default=None, alias="deviceId")
     workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
-    local_task_id: Optional[str] = Field(default=None, alias="localTaskId")
-    team_id: int = Field(..., alias="teamId", ge=1)
+    standalone_chat_workspace: Optional[bool] = Field(
+        default=None,
+        alias="standaloneChatWorkspace",
+    )
+    runtime_project_key: Optional[str] = Field(default=None, alias="runtimeProjectKey")
+    runtime_project_name: Optional[str] = Field(
+        default=None,
+        alias="runtimeProjectName",
+    )
+    runtime_workspace_roots: list[str] = Field(
+        default_factory=list,
+        alias="runtimeWorkspaceRoots",
+    )
+    project_instructions: Optional[str] = Field(
+        default=None,
+        alias="projectInstructions",
+    )
+    project_plugins: list[dict[str, Any]] = Field(
+        default_factory=list,
+        alias="projectPlugins",
+    )
+    local_task_id: Optional[str] = Field(
+        default=None,
+        alias="taskId",
+        validation_alias=AliasChoices("taskId", "localTaskId", "local_task_id"),
+    )
     runtime: RuntimeName
+    runtime_executable_path: Optional[str] = Field(
+        default=None,
+        alias="runtimeExecutablePath",
+    )
+    runtime_permission_mode: Optional[
+        Literal["default", "acceptEdits", "plan", "auto", "bypassPermissions"]
+    ] = Field(default=None, alias="runtimePermissionMode")
     message: str = Field(..., min_length=1)
+    bot: list[dict[str, Any]] = Field(default_factory=list)
+    client_user_message_id: Optional[str] = Field(
+        default=None,
+        alias="clientUserMessageId",
+    )
     title: Optional[str] = None
     model_id: Optional[str] = Field(default=None, alias="modelId")
     model_type: Optional[str] = Field(default=None, alias="modelType")
@@ -838,20 +942,148 @@ class RuntimeTaskCreateRequest(BaseModel):
         default=None,
         alias="modelSelection",
     )
+    runtime_model_config: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="modelConfig",
+    )
+    friendly_title: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="friendlyTitle",
+    )
     additional_skills: list[Any] = Field(
         default_factory=list,
         alias="additionalSkills",
     )
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
     execution: Optional[dict[str, Any]] = None
+    initial_goal: Optional[RuntimeGoalCreateInput] = Field(
+        default=None,
+        alias="initialGoal",
+    )
+    initial_supervisor: Optional[RuntimeSupervisorCreateInput] = Field(
+        default=None,
+        alias="initialSupervisor",
+    )
+    ephemeral: Optional[bool] = None
+    side_source: Optional[RuntimeTaskAddress] = Field(
+        default=None,
+        alias="sideSource",
+    )
+    workspace_source_task: Optional[RuntimeTaskAddress] = Field(
+        default=None,
+        alias="workspaceSourceTask",
+    )
     delivery_id: Optional[str] = Field(
         default=None, alias="deliveryId", min_length=36, max_length=36
     )
-    cloud_project_id: Optional[int] = Field(default=None, alias="cloudProjectId", ge=1)
+    cloud_project_id: Optional[str] = Field(
+        default=None,
+        alias="cloudProjectId",
+        min_length=1,
+    )
+    origin: Optional[dict[str, Any]] = None
     additional_context: Optional[dict[str, dict[str, Any]]] = Field(
         default=None,
         alias="additionalContext",
         validation_alias=AliasChoices("additionalContext", "additional_context"),
+    )
+
+    @model_validator(mode="after")
+    def validate_v2_intent_boundary(self) -> "RuntimeTaskCreateRequest":
+        """Keep materialized provider configuration out of producer V2 intent."""
+
+        if self.schema_version == 2 and self.runtime_model_config is not None:
+            raise ValueError(
+                "RuntimeTaskCreateRequest V2 cannot carry materialized modelConfig"
+            )
+        return self
+
+
+class RuntimeTaskCreatePayload(BaseModel):
+    """Executor-facing wire payload after Backend materialization."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    schema_version: Literal[1, 2] = Field(default=1, alias="schemaVersion")
+    runtime: RuntimeName
+    message: str = Field(..., min_length=1)
+    title: str = Field(..., min_length=1)
+    execution_request: dict[str, Any] = Field(..., alias="executionRequest")
+    workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
+    local_task_id: Optional[str] = Field(default=None, alias="taskId")
+    runtime_executable_path: Optional[str] = Field(
+        default=None,
+        alias="runtimeExecutablePath",
+    )
+    runtime_permission_mode: Optional[
+        Literal["default", "acceptEdits", "plan", "auto", "bypassPermissions"]
+    ] = Field(default=None, alias="runtimePermissionMode")
+    client_user_message_id: Optional[str] = Field(
+        default=None,
+        alias="clientUserMessageId",
+    )
+    standalone_chat_workspace: Optional[bool] = Field(
+        default=None,
+        alias="standaloneChatWorkspace",
+    )
+    runtime_project_key: Optional[str] = Field(default=None, alias="runtimeProjectKey")
+    runtime_project_name: Optional[str] = Field(
+        default=None,
+        alias="runtimeProjectName",
+    )
+    runtime_workspace_roots: list[str] = Field(
+        default_factory=list,
+        alias="runtimeWorkspaceRoots",
+    )
+    project_instructions: Optional[str] = Field(
+        default=None,
+        alias="projectInstructions",
+    )
+    project_plugins: list[dict[str, Any]] = Field(
+        default_factory=list,
+        alias="projectPlugins",
+    )
+    bot: list[dict[str, Any]] = Field(default_factory=list)
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+    friendly_title: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="friendlyTitle",
+    )
+    model_id: Optional[str] = Field(default=None, alias="modelId")
+    model_type: Optional[str] = Field(default=None, alias="modelType")
+    model_options: dict[str, Any] = Field(default_factory=dict, alias="modelOptions")
+    model_selection: Optional[RuntimeModelSelection] = Field(
+        default=None,
+        alias="modelSelection",
+    )
+    runtime_model_config: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="modelConfig",
+    )
+    execution: Optional[dict[str, Any]] = None
+    initial_goal: Optional[RuntimeGoalCreateInput] = Field(
+        default=None,
+        alias="initialGoal",
+    )
+    initial_supervisor: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="initialSupervisor",
+    )
+    ephemeral: Optional[bool] = None
+    side_source: Optional[RuntimeTaskAddress] = Field(
+        default=None,
+        alias="sideSource",
+    )
+    workspace_source_task: Optional[RuntimeTaskAddress] = Field(
+        default=None,
+        alias="workspaceSourceTask",
+    )
+    cloud_project_id: Optional[str] = Field(default=None, alias="cloudProjectId")
+    origin: Optional[dict[str, Any]] = None
+    additional_context: Optional[dict[str, dict[str, Any]]] = Field(
+        default=None,
+        alias="additionalContext",
     )
 
 

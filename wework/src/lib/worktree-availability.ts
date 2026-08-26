@@ -92,7 +92,7 @@ function projectedWorktreeCapability(
   device: Pick<DeviceInfo, 'runtime_features'>
 ): RuntimeWorktreeCapability | null {
   const runtimeFeatures = device.runtime_features
-  if (!runtimeFeatures || runtimeFeatures.schemaVersion !== 1) return null
+  if (!runtimeFeatures) return null
   return runtimeFeatures.worktrees ?? null
 }
 

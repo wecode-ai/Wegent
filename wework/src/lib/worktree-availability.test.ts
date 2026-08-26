@@ -115,6 +115,16 @@ function createPreflight(
 describe('resolveProjectWorktreeAvailability', () => {
   test.each([
     ['supported capability', createDevice(), true],
+    [
+      'supported capability in a newer runtime feature envelope',
+      createDevice({
+        runtime_features: {
+          ...createDevice().runtime_features!,
+          schemaVersion: 2,
+        },
+      }),
+      true,
+    ],
     ['missing capability', createDevice({ runtime_features: null }), false],
     [
       'old capability version',

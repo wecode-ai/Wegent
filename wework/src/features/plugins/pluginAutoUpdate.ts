@@ -2,7 +2,12 @@ import type {
   PluginAutoUpdateBatchResponse,
   PluginDeviceSyncResponse,
   PluginMarketplaceItem,
+  PluginMarketplaceListResponse,
 } from '@/types/api'
+import {
+  beginPluginDeviceSync,
+  marketplaceNeedsDeviceSync,
+} from '@/features/plugins/pluginDeviceAutoSync'
 
 export interface PluginAutoUpdateProgress {
   updatedCount: number
@@ -14,6 +19,19 @@ interface PluginAutoUpdateDependencies {
   syncDevice: () => Promise<PluginDeviceSyncResponse>
   syncWhenNoUpdates?: boolean
   onProgress?: (progress: PluginAutoUpdateProgress) => void
+}
+
+interface CurrentDevicePluginAutoUpdateDependencies {
+  listLocalInstalledPlugins: () => Promise<{ deviceId?: string }>
+  listMarketplacePlugins: (deviceId: string) => Promise<PluginMarketplaceListResponse>
+  updateBatch: () => Promise<PluginAutoUpdateBatchResponse>
+  syncDevice: (deviceId: string) => Promise<PluginDeviceSyncResponse>
+}
+
+export interface CurrentDevicePluginAutoUpdateResult {
+  deviceId: string
+  updatedCount: number
+  deviceSyncPerformed: boolean
 }
 
 export const PLUGIN_AUTO_UPDATE_FAILURE_LIMIT = 3
@@ -74,6 +92,42 @@ export async function runPluginAutoUpdate({
 
     await syncDeviceOrThrow(syncDevice)
     if (batch.remainingCount === 0) return totalUpdated
+  }
+}
+
+/**
+ * Resolve the live local executor device and run one shared auto-update pass.
+ * The marketplace lookup is advisory: a release update can still proceed when
+ * catalog refresh fails, while a known pending device row can request a repair
+ * sync even after the account installation already advanced.
+ */
+export async function runCurrentDevicePluginAutoUpdate({
+  listLocalInstalledPlugins,
+  listMarketplacePlugins,
+  updateBatch,
+  syncDevice,
+}: CurrentDevicePluginAutoUpdateDependencies): Promise<CurrentDevicePluginAutoUpdateResult | null> {
+  const local = await listLocalInstalledPlugins()
+  const deviceId = local.deviceId?.trim() ?? ''
+  if (!deviceId) return null
+
+  const finishDeviceSync = beginPluginDeviceSync(deviceId)
+  if (!finishDeviceSync) return null
+
+  try {
+    const marketplace = await listMarketplacePlugins(deviceId).catch(() => null)
+    let deviceSyncPerformed = false
+    const updatedCount = await runPluginAutoUpdate({
+      updateBatch,
+      syncDevice: () => {
+        deviceSyncPerformed = true
+        return syncDevice(deviceId)
+      },
+      syncWhenNoUpdates: Boolean(marketplace && marketplaceNeedsDeviceSync(marketplace.items)),
+    })
+    return { deviceId, updatedCount, deviceSyncPerformed }
+  } finally {
+    finishDeviceSync()
   }
 }
 

@@ -16,7 +16,11 @@
     "title": "项目",
     "empty": "暂无项目，点击 + 创建"
   },
+  "createMenu": {
+    "title": "新建项目或分组"
+  },
   "actions": {
+    "menu": "更多操作",
     "edit": "编辑",
     "delete": "删除"
   },

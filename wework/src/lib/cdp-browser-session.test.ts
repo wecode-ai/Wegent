@@ -17,17 +17,17 @@ const localExecutorMocks = vi.hoisted(() => ({
 }))
 
 const runtimeMocks = vi.hoisted(() => ({
-  isTauriRuntime: vi.fn(),
+  isElectronRuntime: vi.fn(),
 }))
 
-vi.mock('@/tauri/localExecutor', () => localExecutorMocks)
+vi.mock('@/desktop/localExecutor', () => localExecutorMocks)
 
 vi.mock('./runtime-environment', () => runtimeMocks)
 
 describe('CDP browser session', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isElectronRuntime.mockReturnValue(true)
     localExecutorMocks.ensureLocalExecutorStarted.mockResolvedValue({
       running: true,
       ready: true,
@@ -45,12 +45,12 @@ describe('CDP browser session', () => {
     })
   })
 
-  test('is available only in the Tauri runtime', () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(false)
+  test('is available only in the desktop runtime', () => {
+    runtimeMocks.isElectronRuntime.mockReturnValue(false)
 
     expect(canUseCdpBrowserSession()).toBe(false)
 
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isElectronRuntime.mockReturnValue(true)
     expect(canUseCdpBrowserSession()).toBe(true)
   })
 

@@ -70,6 +70,7 @@ def _make_bot(
         metadata_json={
             "runtime": runtime,
             "wegent_team_id": wegent_team_id,
+            "model": "test-model",
             "execution_mode": mode,
             "execution_environment": "local",
             "visibility": visibility,

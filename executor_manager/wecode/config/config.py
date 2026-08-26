@@ -44,11 +44,22 @@ WARMPOOL_MAX_REPLICAS = int(os.getenv("WARMPOOL_MAX_REPLICAS", "20"))
 # Maximum idle time before pod recycling (e.g., "30m", "1h")
 WARMPOOL_MAX_IDLE_TIME = os.getenv("WARMPOOL_MAX_IDLE_TIME", "30m")
 
-# Enable warm pool claims for non-Git standard online executor tasks. These
-# tasks share the SandboxTemplate selected by WARMPOOL_TEMPLATE_NAME. It is
-# enabled by default whenever the shared warm pool is enabled.
+# Enable warm pool claims for standard online executor tasks. These tasks share
+# the SandboxTemplate selected by WARMPOOL_TEMPLATE_NAME.
 EXECUTOR_WARMPOOL_ENABLED = (
     os.getenv("EXECUTOR_WARMPOOL_ENABLED", "true").lower() == "true"
+)
+
+# Non-Git online tasks are a separate rollout surface. Keep them on direct Pods
+# unless an environment explicitly opts in to shared warm-pool claims.
+EXECUTOR_NON_GIT_WARMPOOL_ENABLED = (
+    os.getenv("EXECUTOR_NON_GIT_WARMPOOL_ENABLED", "false").lower() == "true"
+)
+
+# Git tasks require request-scoped encrypted credentials. Keep this rollout
+# independently disabled until the executor image contains the secure Git path.
+EXECUTOR_GIT_WARMPOOL_ENABLED = (
+    os.getenv("EXECUTOR_GIT_WARMPOOL_ENABLED", "false").lower() == "true"
 )
 
 # ==================== Executor Manager URLs ====================

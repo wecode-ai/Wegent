@@ -5,6 +5,23 @@ const PROCESS_GROUP_GRACE_PERIOD_MS = 1_000
 const PROCESS_GROUP_POLL_INTERVAL_MS = 25
 const DEAD_LINUX_PROCESS_STATES = new Set(['Z', 'X', 'x'])
 
+function linuxProcessStateFromStat(stat) {
+  const commandEnd = stat.lastIndexOf(')')
+  if (commandEnd === -1) return null
+  return (
+    stat
+      .slice(commandEnd + 1)
+      .trim()
+      .split(/\s+/)[0] ?? null
+  )
+}
+
+export function processIsAliveFromLinuxStat(stat) {
+  const state = linuxProcessStateFromStat(stat)
+  if (state === null) return null
+  return !DEAD_LINUX_PROCESS_STATES.has(state)
+}
+
 function withTimeout(promise, timeoutMs, message) {
   let timeout
   const timeoutPromise = new Promise((_, reject) => {
@@ -16,7 +33,14 @@ function withTimeout(promise, timeoutMs, message) {
 function waitForProcessExit(child, timeoutMs) {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
   return withTimeout(
-    new Promise(resolvePromise => child.once('exit', resolvePromise)),
+    new Promise(resolvePromise => {
+      const onExit = () => resolvePromise()
+      child.once('exit', onExit)
+      if (child.exitCode !== null || child.signalCode !== null) {
+        child.off('exit', onExit)
+        resolvePromise()
+      }
+    }),
     timeoutMs,
     `Timed out waiting for process ${child.pid ?? 'unknown'} to exit`
   )
@@ -27,8 +51,11 @@ export function processGroupHasLiveMembersFromLinuxStats(stats, processGroupId) 
   for (const stat of stats) {
     const commandEnd = stat.lastIndexOf(')')
     if (commandEnd === -1) continue
-    const fields = stat.slice(commandEnd + 1).trim().split(/\s+/)
-    const state = fields[0]
+    const fields = stat
+      .slice(commandEnd + 1)
+      .trim()
+      .split(/\s+/)
+    const state = linuxProcessStateFromStat(stat)
     const statProcessGroupId = Number.parseInt(fields[2], 10)
     if (statProcessGroupId !== processGroupId) continue
     foundProcessGroupMember = true
@@ -55,6 +82,29 @@ function inspectLinuxProcessGroup(processGroupId) {
     }
   }
   return processGroupHasLiveMembersFromLinuxStats(stats, processGroupId)
+}
+
+function inspectLinuxProcess(processId) {
+  try {
+    return processIsAliveFromLinuxStat(readFileSync(`/proc/${processId}/stat`, 'utf8'))
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false
+    return null
+  }
+}
+
+export function processIsAlive(processId) {
+  try {
+    process.kill(processId, 0)
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false
+    if (error?.code !== 'EPERM') throw error
+  }
+  if (process.platform === 'linux') {
+    const isAlive = inspectLinuxProcess(processId)
+    if (isAlive !== null) return isAlive
+  }
+  return true
 }
 
 function isProcessGroupRunning(processGroupId) {

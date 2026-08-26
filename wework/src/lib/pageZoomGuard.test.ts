@@ -8,10 +8,7 @@ afterEach(() => {
   cleanup = undefined
 })
 
-function dispatchKey(
-  key: string,
-  modifiers: { ctrlKey?: boolean; metaKey?: boolean } = {},
-) {
+function dispatchKey(key: string, modifiers: { ctrlKey?: boolean; metaKey?: boolean } = {}) {
   const event = new KeyboardEvent('keydown', {
     key,
     cancelable: true,
@@ -53,7 +50,7 @@ describe('installPageZoomGuard', () => {
       document.dispatchEvent(event)
 
       expect(event.defaultPrevented).toBe(true)
-    },
+    }
   )
 
   test('allows ordinary wheel scrolling', () => {
@@ -65,17 +62,14 @@ describe('installPageZoomGuard', () => {
     expect(event.defaultPrevented).toBe(false)
   })
 
-  test.each(['gesturestart', 'gesturechange'])(
-    'prevents native %s page zoom',
-    eventName => {
-      cleanup = installPageZoomGuard(document)
-      const event = new Event(eventName, { cancelable: true })
+  test.each(['gesturestart', 'gesturechange'])('prevents native %s page zoom', eventName => {
+    cleanup = installPageZoomGuard(document)
+    const event = new Event(eventName, { cancelable: true })
 
-      document.dispatchEvent(event)
+    document.dispatchEvent(event)
 
-      expect(event.defaultPrevented).toBe(true)
-    },
-  )
+    expect(event.defaultPrevented).toBe(true)
+  })
 
   test('removes every listener during cleanup', () => {
     cleanup = installPageZoomGuard(document)

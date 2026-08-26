@@ -11,7 +11,9 @@ from app.models.delivery import (
     ProjectAutomationRun,
     loop_unset_datetime_for_connection,
 )
+from app.models.loop_item_execution import LoopItemExecution
 from app.services import project_automations as project_automations_module
+from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_automations import (
     _next_run,
     project_automation_execution,
@@ -155,6 +157,15 @@ async def test_workflow_node_run_is_created_once_and_projects_queued_state(
             "workflow": {
                 "version": 1,
                 "definition_version": 1,
+                "execution_config": {
+                    "agent_id": "agent-1",
+                    "runtime_profile_id": None,
+                    "model": "custom-model",
+                    "workspace_binding": {
+                        "type": "backend_project",
+                        "projectId": 1,
+                    },
+                },
                 "nodes": [
                     {
                         "id": "test",
@@ -211,3 +222,85 @@ async def test_workflow_node_run_is_created_once_and_projects_queued_state(
 
     assert exc_info.value.status_code == 409
     assert test_db.query(ProjectAutomationRun).count() == 1
+
+
+@pytest.mark.asyncio
+async def test_direct_workflow_node_queues_without_robot_rule(
+    test_db, test_user, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = CloudProject(
+        project_key="DIRECTWF",
+        name="Direct workflow project",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/direct-workflow",
+    )
+    test_db.add(project)
+    test_db.flush()
+    item = LoopItem(
+        cloud_project_id=project.id,
+        title="Direct workflow issue",
+        description="",
+        status="pending",
+        priority="medium",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "stage_mode": "dag",
+                "advancement_policy": "manual",
+                "execution_config": {
+                    "execution_device_id": "local-device",
+                    "model": "custom-model",
+                    "workspace_binding": {"type": "standalone"},
+                },
+                "nodes": [
+                    {
+                        "id": "develop",
+                        "name": "Develop",
+                        "prompt": "Implement the requested change",
+                        "execution_mode": "robot",
+                        "depends_on": [],
+                        "required": True,
+                        "workspace_policy": "none",
+                        "automation_rule_id": None,
+                        "status": "ready",
+                    }
+                ],
+            }
+        },
+    )
+    test_db.add(item)
+    test_db.commit()
+    monkeypatch.setattr(
+        project_automations_module, "require_cloud_project_role", lambda *_args: None
+    )
+
+    result = await project_automation_service.run_direct_workflow_node(
+        test_db,
+        str(project.id),
+        str(item.id),
+        "develop",
+        test_user.id,
+    )
+
+    test_db.refresh(item)
+    execution = test_db.get(LoopItemExecution, result["execution_id"])
+    assert execution is not None
+    assert execution.executor_type == "generic_robot"
+    assert execution.status == "queued"
+    assert execution.agent_id == ""
+    assert execution.execution_device_id == "local-device"
+    assert item.metadata_json["workflow"]["nodes"][0]["status"] == "queued"
+    run = test_db.get(ProjectAutomationRun, result["id"])
+    assert run is not None
+    assert run.parent_id == item.id
+    assert run.metadata_json["workflow_node_id"] == "develop"
+
+    profile, context = loop_item_execution_service._runtime_profile_and_context(
+        test_db,
+        execution=execution,
+    )
+    assert profile.execution_prompt == "Implement the requested change"
+    assert profile.model == "custom-model"
+    assert context["workspace_binding"]["type"] == "standalone"

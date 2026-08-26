@@ -18,6 +18,7 @@ const refreshProjectsMock = jest.fn()
 const refreshTasksMock = jest.fn()
 const deleteProjectMock = jest.fn()
 const toggleProjectExpandedMock = jest.fn()
+const setProjectSectionCollapsedMock = jest.fn()
 const setSelectedProjectTaskIdMock = jest.fn()
 const setSelectedTaskMock = jest.fn()
 let isWorkspaceEnabledMock = true
@@ -39,6 +40,7 @@ const pathlessProject: ProjectWithTasks = {
       task_id: 101,
       task_title: 'pathless task',
       task_status: 'COMPLETED',
+      device_id: 'device-2',
       is_group_chat: false,
       project_id: 1,
     },
@@ -102,16 +104,8 @@ jest.mock('@/contexts/DeviceContext', () => ({
 jest.mock('@/components/ui/dropdown', () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DropdownMenuItem: ({
-    children,
-    onClick,
-    className,
-  }: {
-    children: React.ReactNode
-    onClick?: React.MouseEventHandler<HTMLButtonElement>
-    className?: string
-  }) => (
-    <button type="button" className={className} onClick={onClick}>
+  DropdownMenuItem: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button type="button" {...props}>
       {children}
     </button>
   ),
@@ -138,6 +132,8 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
     isLoading: false,
     expandedProjects: new Set(projects.map(project => project.id)),
     toggleProjectExpanded: toggleProjectExpandedMock,
+    isProjectSectionCollapsed: false,
+    setProjectSectionCollapsed: setProjectSectionCollapsedMock,
     selectedProjectTaskId: null,
     setSelectedProjectTaskId: setSelectedProjectTaskIdMock,
     refreshProjects: refreshProjectsMock,
@@ -159,6 +155,11 @@ jest.mock('@/features/projects/components/DraggableProjectTask', () => ({
   DraggableProjectTask: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 
+jest.mock('@/features/projects/components/ProjectCreateDialog', () => ({
+  ProjectCreateDialog: ({ open, mode }: { open: boolean; mode?: 'group' | 'workspace' }) =>
+    open ? <div data-testid="project-create-dialog-mode">{mode}</div> : null,
+}))
+
 jest.mock('@/components/common/TaskInlineRename', () => ({
   TaskInlineRename: () => <input aria-label="rename task" />,
 }))
@@ -170,51 +171,81 @@ describe('project sidebar behavior', () => {
     isWorkspaceEnabledMock = true
   })
 
-  test('renders the unified project section as one compact row by default', () => {
+  test('renders the unified project section expanded by default', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
     expect(screen.getByTestId('project-section-header')).toHaveClass('h-6')
     expect(screen.getByText('workspaceSection.title')).toBeInTheDocument()
     expect(screen.queryByText('section.title')).not.toBeInTheDocument()
     expect(screen.queryByText('(2)')).not.toBeInTheDocument()
-    expect(screen.queryByText('pathless-project')).not.toBeInTheDocument()
-    expect(screen.queryByText('workspace-project')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByTestId('project-section-toggle'))
-
     expect(screen.getByTestId('project-section-list')).toHaveClass('mt-1', 'space-y-0.5')
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.getByText('workspace-project')).toBeInTheDocument()
+    expect(screen.getByTestId('conversation-group-icon')).toHaveClass('lucide-folder-open')
+    expect(screen.getByTestId('workspace-project-icon')).toHaveClass('lucide-folder-kanban')
+
+    fireEvent.click(screen.getByTestId('project-section-toggle'))
+    expect(setProjectSectionCollapsedMock).toHaveBeenCalledTimes(1)
   })
 
-  test('keeps workspace projects visible in the unified section when workspace creation is disabled', () => {
+  test('keeps workspace projects and creation available regardless of the workspace whitelist', () => {
     isWorkspaceEnabledMock = false
 
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
-    fireEvent.click(screen.getByTestId('project-section-toggle'))
-
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.getByText('workspace-project')).toBeInTheDocument()
+    expect(screen.getByTestId('create-workspace-project-button')).toBeInTheDocument()
+    expect(screen.getByTestId('create-workspace-project-menu-item')).toBeInTheDocument()
   })
 
-  test('shows the new conversation shortcut only for projects with a workspace path', () => {
+  test('opens group and workspace creation from the shared create menu', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
-    fireEvent.click(screen.getByTestId('project-section-toggle'))
+    expect(screen.getByTestId('create-workspace-project-menu-item')).toHaveTextContent(
+      'workspaceCreate.title'
+    )
+    expect(screen.getByTestId('create-group-button')).toHaveTextContent('create.title')
 
-    expect(screen.getAllByTestId('project-new-conversation-btn')).toHaveLength(1)
-    expect(screen.getByText('pathless-project')).toBeInTheDocument()
-    expect(screen.getByText('workspace-project')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('create-group-button'))
+    expect(screen.getByTestId('project-create-dialog-mode')).toHaveTextContent('group')
+
+    fireEvent.click(screen.getByTestId('create-workspace-project-menu-item'))
+    expect(screen.getByTestId('project-create-dialog-mode')).toHaveTextContent('workspace')
+  })
+
+  test('starts a new conversation inside either a group or a workspace project', () => {
+    render(<ProjectSection onTaskSelect={jest.fn()} />)
+
+    const newConversationButtons = screen.getAllByTestId('project-new-conversation-btn')
+    expect(newConversationButtons).toHaveLength(2)
+    expect(newConversationButtons[0]).toHaveClass('opacity-100')
+    expect(screen.getAllByTestId('project-menu-new-conversation-btn')).toHaveLength(2)
+
+    fireEvent.click(screen.getAllByTestId('project-menu-new-conversation-btn')[0])
+    expect(pushMock).toHaveBeenLastCalledWith('/chat?conversationGroupId=1')
+
+    fireEvent.click(newConversationButtons[1])
+    expect(pushMock).toHaveBeenLastCalledWith('/devices/chat?projectId=2&deviceId=device-1')
+    expect(setSelectedProjectTaskIdMock).toHaveBeenCalledWith(null)
+    expect(setSelectedTaskMock).toHaveBeenCalledWith(null)
   })
 
   test('opens workspace project tasks in device chat from the unified section', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
-    fireEvent.click(screen.getByTestId('project-section-toggle'))
     fireEvent.click(screen.getByText('workspace task'))
 
     expect(pushMock).toHaveBeenCalledWith('/devices/chat?taskId=202&projectId=2&deviceId=device-1')
+  })
+
+  test('keeps a grouped device conversation on the device chat page', () => {
+    render(<ProjectSection onTaskSelect={jest.fn()} />)
+
+    fireEvent.click(screen.getByText('pathless task'))
+
+    expect(pushMock).toHaveBeenCalledWith('/devices/chat?taskId=101')
+    expect(toggleProjectExpandedMock).not.toHaveBeenCalled()
   })
 
   test('ordinary task menu imports only into pathless projects', () => {

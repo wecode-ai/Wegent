@@ -2,8 +2,7 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
-const ACTIVE_WORKBENCH_SELECTOR =
-  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 
 const WEBSITE_PROJECT = {
   id: '896185331840201807',
@@ -114,6 +113,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         json(response, 200, created)
         return true
       }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/cloud-projects/${WEBSITE_PROJECT.id}/board-snapshot`
+      ) {
+        json(response, 200, {
+          items: [WEBSITE_TODO],
+          task_bindings: [],
+          members: [],
+          agents: [PROJECT_AI],
+        })
+        return true
+      }
       const loopItemsMatch = url.pathname.match(/^\/api\/v1\/cloud-projects\/([^/]+)\/loop-items$/)
       if (request.method === 'GET' && loopItemsMatch) {
         json(response, 200, {
@@ -175,9 +186,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       )
       await control.command('click', `[data-testid="cloud-todo-card-${WEBSITE_TODO.id}"]`)
       await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[data-testid="cloud-todo-detail-activity-rail"]', {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', `[data-testid="cloud-task-activity-${WEBSITE_TODO.id}"]`, {

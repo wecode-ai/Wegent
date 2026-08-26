@@ -2,15 +2,20 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { terminalOutputToText } from '@/lib/terminal-text'
 import { navigateTo } from '@/lib/navigation'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { track } from '@/telemetry/client'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { AssistantMarkdown } from '../AssistantMarkdown'
 import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
-import { resolveDirectMarkdownImageSrc } from '../assistantMarkdownLinks'
+import {
+  localPathFromMarkdownImageSrc,
+  resolveDirectMarkdownImageSrc,
+} from '../assistantMarkdownLinks'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import {
   getToolActivityFilePaths,
@@ -1340,7 +1345,7 @@ function stringifyToolValue(value: unknown): string {
 function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
   const { t } = useTranslation('chat')
   const source = getImageViewSource(block)
-  const resolvedSource = source ? resolveDirectMarkdownImageSrc(source) : null
+  const resolvedSource = useResolvedImageViewSource(source)
 
   if (!resolvedSource) return null
 
@@ -1357,6 +1362,42 @@ function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
       />
     </div>
   )
+}
+
+function useResolvedImageViewSource(source?: string): string | null {
+  const electronLocalPath = useMemo(() => {
+    if (!source || !isElectronRuntime()) return null
+    const path = localPathFromMarkdownImageSrc(source)
+    return path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) ? path : null
+  }, [source])
+  const [electronImage, setElectronImage] = useState<{
+    path: string
+    url: string
+  } | null>(null)
+
+  useEffect(() => {
+    if (!electronLocalPath) return undefined
+
+    let active = true
+    let objectUrl: string | null = null
+    void readElectronLocalFile(electronLocalPath)
+      .then(bytes => {
+        objectUrl = URL.createObjectURL(new Blob([bytes]))
+        if (active) setElectronImage({ path: electronLocalPath, url: objectUrl })
+        else URL.revokeObjectURL(objectUrl)
+      })
+      .catch(() => undefined)
+
+    return () => {
+      active = false
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [electronLocalPath])
+
+  if (electronLocalPath) {
+    return electronImage?.path === electronLocalPath ? electronImage.url : null
+  }
+  return source ? resolveDirectMarkdownImageSrc(source) : null
 }
 
 function getImageViewSource(block: ToolBlock): string | undefined {

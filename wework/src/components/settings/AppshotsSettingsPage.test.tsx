@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { AppPreferences } from '@/tauri/appPreferences'
+import type { AppPreferences } from '@/desktop/appPreferences'
 import { AppshotsSettingsPage } from './AppshotsSettingsPage'
 
 const getAppshotsStatusMock = vi.hoisted(() => vi.fn())
@@ -36,12 +36,12 @@ vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (_key: string, fallback?: string) => fallback ?? _key }),
 }))
 
-vi.mock('@/tauri/appshots', () => ({
+vi.mock('@/desktop/appshots', () => ({
   getAppshotsStatus: getAppshotsStatusMock,
   openAppshotsPermissionSettings: openAppshotsPermissionSettingsMock,
 }))
 
-vi.mock('@/tauri/appPreferences', () => ({
+vi.mock('@/desktop/appPreferences', () => ({
   defaultAppPreferences: {
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,

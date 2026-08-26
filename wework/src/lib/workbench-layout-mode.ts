@@ -1,9 +1,11 @@
 export function shouldUseMobileWorkbenchLayout({
   isMobileViewport,
-  isTauri,
+  isDesktop,
+  surfaceKind,
 }: {
   isMobileViewport: boolean
-  isTauri: boolean
+  isDesktop: boolean
+  surfaceKind?: 'task' | 'board'
 }): boolean {
-  return isMobileViewport && !isTauri
+  return surfaceKind !== 'board' && isMobileViewport && !isDesktop
 }

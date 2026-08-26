@@ -18,7 +18,7 @@ import {
 } from '@/lib/local-harness'
 import { listLocalHarnesses, type LocalHarnessDescriptor } from '@/lib/local-terminal'
 import { openNativeExecutablePicker } from '@/lib/native-executable-picker'
-import { updateAppPreferences } from '@/tauri/appPreferences'
+import { updateAppPreferences } from '@/desktop/appPreferences'
 import {
   SettingsGroup,
   SettingsPage,

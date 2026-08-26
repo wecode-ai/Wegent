@@ -33,7 +33,7 @@ import {
   type AppPreferences,
   type AppPreferencesPatch,
   type FixedWorkspaceTabPreference,
-} from '@/tauri/appPreferences'
+} from '@/desktop/appPreferences'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -132,14 +132,13 @@ export function GeneralSettingsPage() {
   }, [runtimeWorkApi, t])
 
   useEffect(() => {
-    if (!preferences.experimentalFeaturesEnabled) return
     void harnessAppsApi
       .list()
       .then(setInstalledSmartApps)
       .catch(error => {
         console.warn('[Wework] Failed to load installed Smart apps for fixed tabs', error)
       })
-  }, [preferences.experimentalFeaturesEnabled])
+  }, [])
 
   useEffect(() => {
     if (!cloudConnection.isConnected) return
@@ -579,7 +578,7 @@ export function GeneralSettingsPage() {
                       {t(`workbench.general_settings_default_workspace_tab_${kind}`)}
                     </option>
                   ))}
-                  {(preferences.experimentalFeaturesEnabled ? installedSmartApps : [])
+                  {installedSmartApps
                     .filter(
                       app =>
                         !fixedWorkspaceTabs.some(

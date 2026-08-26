@@ -4,6 +4,9 @@
 
 use super::codex_config::optional_proxy_url;
 use super::*;
+use ignore::WalkBuilder;
+
+const WORKSPACE_SEARCH_RESULT_LIMIT: usize = 50;
 
 impl RuntimeWorkRpcHandler {
     pub(super) fn spawn_startup_worktree_reconciliation(&self) {
@@ -223,7 +226,7 @@ impl RuntimeWorkRpcHandler {
             )
             .await
             .map_err(|error| AppIpcError::new("workspace_search_failed", error))?;
-        let files = response
+        let mut files = response
             .get("files")
             .and_then(Value::as_array)
             .map(|items| {
@@ -242,6 +245,20 @@ impl RuntimeWorkRpcHandler {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        if files.is_empty() {
+            let fallback_root = root.clone();
+            let fallback_query = query.clone();
+            files = tokio::task::spawn_blocking(move || {
+                search_workspace_without_parent_ignores(&fallback_root, &fallback_query)
+            })
+            .await
+            .map_err(|error| {
+                AppIpcError::new(
+                    "workspace_search_failed",
+                    format!("Workspace fallback search task failed: {error}"),
+                )
+            })?;
+        }
         Ok(json!({ "files": files }))
     }
 
@@ -830,6 +847,93 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+fn search_workspace_without_parent_ignores(root: &Path, query: &str) -> Vec<Value> {
+    let mut matches = WalkBuilder::new(root)
+        .hidden(false)
+        .follow_links(false)
+        .parents(false)
+        .require_git(false)
+        .build()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.depth() > 0)
+        .filter_map(|entry| {
+            let file_type = entry.file_type()?;
+            if !file_type.is_file() && !file_type.is_dir() {
+                return None;
+            }
+            let relative = entry.path().strip_prefix(root).ok()?;
+            let relative_text = relative.to_string_lossy();
+            let file_name = entry.file_name().to_string_lossy();
+            let (score, indices) = score_workspace_search_match(&relative_text, &file_name, query)?;
+            Some(json!({
+                "root": root.to_string_lossy(),
+                "path": relative_text,
+                "fileName": file_name,
+                "matchType": if file_type.is_dir() { "directory" } else { "file" },
+                "score": score,
+                "indices": indices,
+            }))
+        })
+        .collect::<Vec<_>>();
+    matches.sort_by(|left, right| {
+        let left_score = left["score"].as_u64().unwrap_or_default();
+        let right_score = right["score"].as_u64().unwrap_or_default();
+        right_score.cmp(&left_score).then_with(|| {
+            left["path"]
+                .as_str()
+                .unwrap_or_default()
+                .cmp(right["path"].as_str().unwrap_or_default())
+        })
+    });
+    matches.truncate(WORKSPACE_SEARCH_RESULT_LIMIT);
+    matches
+}
+
+fn score_workspace_search_match(
+    relative_path: &str,
+    file_name: &str,
+    query: &str,
+) -> Option<(u32, Vec<u32>)> {
+    let query_chars = query.to_lowercase().chars().collect::<Vec<_>>();
+    if query_chars.is_empty() {
+        return None;
+    }
+    let path_chars = relative_path.to_lowercase().chars().collect::<Vec<_>>();
+    let mut indices = Vec::with_capacity(query_chars.len());
+    let mut query_index = 0;
+    for (path_index, path_char) in path_chars.iter().enumerate() {
+        if query_chars.get(query_index) != Some(path_char) {
+            continue;
+        }
+        indices.push(path_index as u32);
+        query_index += 1;
+        if query_index == query_chars.len() {
+            break;
+        }
+    }
+    if query_index != query_chars.len() {
+        return None;
+    }
+
+    let normalized_name = file_name.to_lowercase();
+    let normalized_query = query.to_lowercase();
+    let score = if normalized_name == normalized_query {
+        1_000
+    } else if normalized_name.starts_with(&normalized_query) {
+        900
+    } else if normalized_name.contains(&normalized_query) {
+        800
+    } else {
+        let span = indices
+            .last()
+            .zip(indices.first())
+            .map(|(last, first)| last.saturating_sub(*first))
+            .unwrap_or_default();
+        500_u32.saturating_sub(span)
+    };
+    Some((score, indices))
+}
+
 fn runtime_settings_path() -> PathBuf {
     runtime_work_dir().join("settings.json")
 }
@@ -929,5 +1033,49 @@ mod tests {
             "worktree_persistent_storage_unverified"
         );
         assert_eq!(prepare_error.code, "worktree_persistent_storage_unverified");
+    }
+
+    #[test]
+    fn workspace_fallback_search_ignores_parent_gitignore_boundary() {
+        let repository = tempfile::tempdir().expect("temporary repository");
+        fs::create_dir(repository.path().join(".git")).expect("git marker");
+        fs::write(repository.path().join(".gitignore"), "workspace/\n").expect("parent gitignore");
+        let workspace = repository.path().join("workspace");
+        fs::create_dir_all(workspace.join("cloud-context-folder")).expect("workspace folder");
+        fs::write(
+            workspace.join("cloud-context-folder/nested.txt"),
+            "context\n",
+        )
+        .expect("nested context");
+        fs::write(workspace.join("auth.ts"), "export const auth = true\n").expect("workspace file");
+
+        let folder_matches =
+            search_workspace_without_parent_ignores(&workspace, "cloud-context-folder");
+        let file_matches = search_workspace_without_parent_ignores(&workspace, "auth");
+
+        assert!(folder_matches.iter().any(|item| {
+            item["path"] == "cloud-context-folder" && item["matchType"] == "directory"
+        }));
+        assert!(file_matches
+            .iter()
+            .any(|item| item["path"] == "auth.ts" && item["matchType"] == "file"));
+    }
+
+    #[test]
+    fn workspace_fallback_search_keeps_workspace_local_ignore_rules() {
+        let workspace = tempfile::tempdir().expect("temporary workspace");
+        fs::write(workspace.path().join(".gitignore"), "ignored/\n").expect("workspace gitignore");
+        fs::create_dir_all(workspace.path().join("ignored")).expect("ignored folder");
+        fs::write(workspace.path().join("ignored/secret.txt"), "secret\n").expect("ignored file");
+        fs::write(workspace.path().join("visible-secret.txt"), "visible\n").expect("visible file");
+
+        let matches = search_workspace_without_parent_ignores(workspace.path(), "secret");
+
+        assert!(matches
+            .iter()
+            .any(|item| item["path"] == "visible-secret.txt"));
+        assert!(!matches
+            .iter()
+            .any(|item| item["path"] == "ignored/secret.txt"));
     }
 }

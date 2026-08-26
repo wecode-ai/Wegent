@@ -1,9 +1,10 @@
 import { act, render, screen } from '@testing-library/react'
 import { useEffect, useState } from 'react'
-import { beforeEach, describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { navigateTo } from '@/lib/navigation'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import { useWorkspaceTabs } from './workspaceTabsContextValue'
+import { WORKSPACE_TABS_CLOSED_EVENT, type WorkspaceTabsClosedEventDetail } from './workspaceTabs'
 
 const labels = {
   task: '任务',
@@ -19,7 +20,7 @@ const labels = {
 }
 
 function TabsState() {
-  const { activeTab, openTab, selectTab, tabs } = useWorkspaceTabs()
+  const { activeTab, closeTab, openTab, selectTab, tabs } = useWorkspaceTabs()
   const boardTab = tabs.find(tab => tab.kind === 'board')
 
   return (
@@ -30,8 +31,12 @@ function TabsState() {
       <div data-testid="active-tab-title">{activeTab.title}</div>
       <div data-testid="active-tab-route">{activeTab.contentRoute}</div>
       <div data-testid="board-tab-title">{boardTab?.title}</div>
+      <div data-testid="tab-ids">{tabs.map(tab => tab.id).join(',')}</div>
       <button type="button" onClick={() => openTab('board')}>
         新建项目空间标签
+      </button>
+      <button type="button" onClick={() => closeTab(activeTab.id)}>
+        关闭当前标签
       </button>
       <button
         type="button"
@@ -108,6 +113,21 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('auxiliary')
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('插件')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/plugins')
+  })
+
+  test('notifies resource owners when a workspace tab closes', () => {
+    const onTabsClosed = vi.fn()
+    window.addEventListener(WORKSPACE_TABS_CLOSED_EVENT, onTabsClosed)
+    render(<RoutingHarness />)
+    const closingTabId = screen.getByTestId('active-tab-id').textContent
+
+    act(() => screen.getByRole('button', { name: '关闭当前标签' }).click())
+
+    expect(onTabsClosed).toHaveBeenCalledTimes(1)
+    expect(
+      (onTabsClosed.mock.calls[0][0] as CustomEvent<WorkspaceTabsClosedEventDetail>).detail
+    ).toEqual({ tabIds: [closingTabId] })
+    window.removeEventListener(WORKSPACE_TABS_CLOSED_EVENT, onTabsClosed)
   })
 
   test('activates the preferred tab when the main workspace starts at the root route', () => {
@@ -195,6 +215,88 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
     expect(window.location.pathname).toBe('/todo')
     expect(window.location.search).toContain('workspaceTab=fixed-board')
+  })
+
+  test('replaces bootstrap defaults when fixed tabs load after the provider mounts', () => {
+    const fixedTabs = [
+      {
+        id: 'fixed-task',
+        kind: 'task' as const,
+        title: '任务',
+        contentRoute: '/',
+        fixed: true,
+      },
+      {
+        id: 'fixed-board',
+        kind: 'board' as const,
+        title: '项目空间',
+        contentRoute: '/todo',
+        fixed: true,
+      },
+      {
+        id: 'fixed-agent',
+        kind: 'agent' as const,
+        title: '智能体',
+        contentRoute: '/app/wegent',
+        fixed: true,
+      },
+    ]
+    const { rerender } = render(<RoutingHarness fixedTabs={[]} restoreSessionTabs={false} />)
+
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('3')
+
+    rerender(
+      <RoutingHarness fixedTabs={fixedTabs} startupTabId="fixed-task" restoreSessionTabs={false} />
+    )
+
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('3')
+    expect(screen.getByTestId('tab-ids')).toHaveTextContent('fixed-task,fixed-board,fixed-agent')
+    expect(screen.getByTestId('active-tab-id')).toHaveTextContent('fixed-task')
+  })
+
+  test('keeps the current task route when delayed fixed tabs replace bootstrap tabs', () => {
+    window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=runtime-1')
+    const fixedTabs = [
+      {
+        id: 'fixed-task',
+        kind: 'task' as const,
+        title: '任务',
+        contentRoute: '/',
+        fixed: true,
+      },
+      {
+        id: 'fixed-board',
+        kind: 'board' as const,
+        title: '项目空间',
+        contentRoute: '/todo',
+        fixed: true,
+      },
+      {
+        id: 'fixed-agent',
+        kind: 'agent' as const,
+        title: '智能体',
+        contentRoute: '/app/wegent',
+        fixed: true,
+      },
+    ]
+    const { rerender } = render(<RoutingHarness fixedTabs={[]} restoreSessionTabs={false} />)
+
+    const bootstrapTaskId = screen.getByTestId('active-tab-id').textContent
+    expect(bootstrapTaskId).toMatch(/^task-/)
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent(
+      '/runtime-tasks?deviceId=local-device&taskId=runtime-1'
+    )
+
+    rerender(
+      <RoutingHarness fixedTabs={fixedTabs} startupTabId="fixed-task" restoreSessionTabs={false} />
+    )
+
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('3')
+    expect(screen.getByTestId('tab-ids')).not.toHaveTextContent(bootstrapTaskId!)
+    expect(screen.getByTestId('active-tab-id')).toHaveTextContent('fixed-task')
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent(
+      '/runtime-tasks?deviceId=local-device&taskId=runtime-1'
+    )
   })
 
   test('renames the persisted default board tab without changing named project tabs', () => {

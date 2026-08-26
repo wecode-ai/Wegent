@@ -310,6 +310,18 @@ pub(crate) fn timestamp_ms(value: i64) -> i64 {
     }
 }
 
+pub(crate) fn normalize_runtime_goal_timestamps(mut goal: Value) -> Value {
+    if let Some(object) = goal.as_object_mut() {
+        for key in ["createdAt", "updatedAt", "created_at", "updated_at"] {
+            let timestamp = object.get(key).and_then(timestamp_ms_value);
+            if let Some(timestamp) = timestamp {
+                object.insert(key.to_owned(), Value::Number(timestamp.into()));
+            }
+        }
+    }
+    goal
+}
+
 fn parse_utc_timestamp_ms(value: &str) -> Option<i64> {
     let value = value.trim();
     if let Ok(number) = value.parse::<i64>() {
@@ -1001,6 +1013,36 @@ mod tests {
         assert_eq!(
             workspace_task_path(&planned_path, &checkout.path().display().to_string()),
             planned_path
+        );
+    }
+
+    #[test]
+    fn normalizes_runtime_goal_seconds_to_milliseconds() {
+        assert_eq!(
+            normalize_runtime_goal_timestamps(json!({
+                "threadId": "thread-1",
+                "createdAt": 1_787_636_000,
+                "updatedAt": 1_787_636_001,
+            })),
+            json!({
+                "threadId": "thread-1",
+                "createdAt": 1_787_636_000_000_i64,
+                "updatedAt": 1_787_636_001_000_i64,
+            })
+        );
+    }
+
+    #[test]
+    fn preserves_runtime_goal_millisecond_timestamps() {
+        assert_eq!(
+            normalize_runtime_goal_timestamps(json!({
+                "createdAt": 1_787_636_000_123_i64,
+                "updatedAt": 1_787_636_001_456_i64,
+            })),
+            json!({
+                "createdAt": 1_787_636_000_123_i64,
+                "updatedAt": 1_787_636_001_456_i64,
+            })
         );
     }
 }

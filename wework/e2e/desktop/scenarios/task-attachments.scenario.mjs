@@ -2,9 +2,6 @@ import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
-const ACTIVE_WORKBENCH_SELECTOR =
-  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
-
 const PROJECT = {
   id: '896185331840201807',
   public_id: 'e2e-task-attachments',
@@ -78,6 +75,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
 
       if (url.pathname === '/api/v1/cloud-projects') {
         json(response, 200, { items: [PROJECT] })
+        return true
+      }
+
+      if (url.pathname === `/api/v1/cloud-projects/${PROJECT.id}/board-snapshot`) {
+        json(response, 200, {
+          items: [TASK],
+          task_bindings: [],
+          members: [],
+          agents: [AGENT],
+        })
         return true
       }
 
@@ -209,7 +216,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await captureScreenshot(
         control,
         'task-attachments-remote-delivery-only.png',
-        ACTIVE_WORKBENCH_SELECTOR
+        activeBoard
       )
     },
 

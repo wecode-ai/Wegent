@@ -39,10 +39,40 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                 .cloned()
                 .filter(Value::is_object)
                 .unwrap_or_else(|| json!({}));
-            self.codex_app_server
+            let response = self
+                .codex_app_server
                 .request(&method, params)
                 .await
-                .map_err(|error| AppIpcError::new("codex_app_server_request_failed", error))
+                .map_err(|error| AppIpcError::new("codex_app_server_request_failed", error))?;
+            if matches!(
+                method.as_str(),
+                "marketplace/add" | "marketplace/remove" | "plugin/list" | "plugin/installed"
+            ) {
+                let marketplace_names = response
+                    .get("marketplaces")
+                    .and_then(Value::as_array)
+                    .map(|marketplaces| {
+                        marketplaces
+                            .iter()
+                            .filter_map(|marketplace| {
+                                marketplace
+                                    .get("name")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_owned)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                log_executor_event(
+                    "codex plugin app server request finished",
+                    &[
+                        ("method", method.clone()),
+                        ("marketplace_count", marketplace_names.len().to_string()),
+                        ("marketplaces", marketplace_names.join("|")),
+                    ],
+                );
+            }
+            Ok(response)
         })
     }
 }

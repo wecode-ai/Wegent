@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 from minio import Minio
 from minio.commonconfig import CopySource
 from minio.error import S3Error
-from minio_release_assets import publish_runtime_asset_pairs
 
 VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-beta\.([1-9]\d*))?$")
 
@@ -111,6 +110,23 @@ def read_manifest(
             response.release_conn()
 
 
+def read_text_object(
+    client: Minio, bucket: str, prefix: str, filename: str
+) -> str | None:
+    response = None
+    try:
+        response = client.get_object(bucket, storage_key(prefix, filename))
+        return response.read().decode("utf-8")
+    except S3Error as error:
+        if error.code in {"NoSuchKey", "NoSuchObject"}:
+            return None
+        raise
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
+
+
 def version_parts(version: str) -> tuple[int, int, int, int, int]:
     match = VERSION_PATTERN.fullmatch(version)
     if match is None:
@@ -142,6 +158,59 @@ def upload_channel_manifest(
         ):
             print(
                 f"Keeping newer or equal channel manifest: "
+                f"s3://{bucket}/{storage_key(prefix, path.name)}"
+            )
+            return
+    upload_file(client, bucket, prefix, path, "no-cache, no-store")
+
+
+def release_advances_channel(
+    client: Minio,
+    bucket: str,
+    prefix: str,
+    path: Path,
+) -> bool:
+    if not path.is_file():
+        raise SystemExit(f"Updater channel manifest not found: {path}")
+    candidate = json.loads(path.read_text(encoding="utf-8"))
+    current = read_manifest(client, bucket, prefix, path.name)
+    if current is None:
+        return True
+    advances = version_parts(candidate["version"]) > version_parts(current["version"])
+    if not advances:
+        print(
+            f"Keeping newer or equal release channel: "
+            f"s3://{bucket}/{storage_key(prefix, path.name)}"
+        )
+    return advances
+
+
+def electron_manifest_version(content: str, path: Path | None = None) -> str:
+    match = re.search(r"(?m)^version:\s*['\"]?([^'\"\s]+)", content)
+    if match is None:
+        location = f" {path}" if path is not None else ""
+        raise SystemExit(f"Electron updater manifest{location} has no version")
+    return match.group(1)
+
+
+def upload_electron_manifest(
+    client: Minio,
+    bucket: str,
+    prefix: str,
+    path: Path,
+    replace_only_if_newer: bool = False,
+) -> None:
+    if not path.is_file():
+        raise SystemExit(f"Electron updater manifest not found: {path}")
+    candidate = path.read_text(encoding="utf-8")
+    candidate_version = electron_manifest_version(candidate, path)
+    if replace_only_if_newer:
+        current = read_text_object(client, bucket, prefix, path.name)
+        if current is not None and version_parts(candidate_version) <= version_parts(
+            electron_manifest_version(current)
+        ):
+            print(
+                f"Keeping newer or equal Electron manifest: "
                 f"s3://{bucket}/{storage_key(prefix, path.name)}"
             )
             return
@@ -192,23 +261,19 @@ def main() -> None:
             artifact,
             "public, max-age=31536000, immutable",
         )
-    publish_runtime_asset_pairs(
-        client,
-        bucket,
-        prefix,
-        output_dir,
-        lambda path: upload_file(
-            client, bucket, prefix, path, "public, max-age=31536000, immutable"
-        ),
-    )
     manifest = output_dir / "latest.json"
     if not manifest.is_file():
         raise SystemExit(f"Updater manifest not found: {manifest}")
-    upload_channel_manifest(
+    channel_manifest = output_dir / f"{channel}-windows-x86_64.json"
+    if not release_advances_channel(client, bucket, prefix, channel_manifest):
+        return
+    upload_channel_manifest(client, bucket, prefix, channel_manifest)
+    electron_channel = "latest" if channel == "stable" else "beta"
+    upload_electron_manifest(
         client,
         bucket,
         prefix,
-        output_dir / f"{channel}-windows-x86_64.json",
+        output_dir / f"{electron_channel}.yml",
     )
     if channel == "stable":
         upload_channel_manifest(
@@ -216,6 +281,13 @@ def main() -> None:
             bucket,
             prefix,
             output_dir / "beta-windows-x86_64.json",
+            replace_only_if_newer=True,
+        )
+        upload_electron_manifest(
+            client,
+            bucket,
+            prefix,
+            output_dir / "beta.yml",
             replace_only_if_newer=True,
         )
         publish_latest_installer(client, bucket, prefix, version, artifacts)

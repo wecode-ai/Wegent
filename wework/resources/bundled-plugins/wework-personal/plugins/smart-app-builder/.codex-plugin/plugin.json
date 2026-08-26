@@ -1,0 +1,18 @@
+{
+  "name": "smart-app-builder",
+  "version": "0.1.0",
+  "description": "Build, test, package, and install DeepSeek Harness Smart apps for Wework.",
+  "author": {
+    "name": "Wework"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "智能工作台开发助手",
+    "shortDescription": "创建并验证 DeepSeek Harness 智能工作台。",
+    "longDescription": "持续开发 Wework 关联的 DSH Web 工作台目录，检索并增量添加 DSH 插件、在 Wework 内置浏览器中验证，并按需导出 ZIP。",
+    "developerName": "Wework",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": "帮我创建或继续开发一个智能工作台：先读取现有目录和配置，再准备 DSH 环境、增量添加所需插件或开发工作台代码，在 Wework 内置浏览器验证，并按需导出 ZIP。"
+  }
+}
