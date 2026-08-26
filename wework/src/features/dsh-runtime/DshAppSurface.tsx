@@ -3,7 +3,7 @@ import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import type { WeworkDshApp } from './dshApps'
 import { DshSlotSurface } from './DshSlotSurface'
 import { WEWORK_DSH_SLOTS } from './dshUiSlots'
-import { importDshUiModule } from './dshUiModules'
+import { getLoadedDshUiModule, importDshUiModule } from './dshUiModules'
 
 export interface WeworkDshAppModuleProps {
   active: boolean
@@ -16,7 +16,8 @@ interface DshAppModule {
 }
 
 function DshAppModuleLoader({ module, ...props }: WeworkDshAppModuleProps & { module: string }) {
-  const loaded = use(importDshUiModule<DshAppModule>(module))
+  const cached = getLoadedDshUiModule<DshAppModule>(module)
+  const loaded = cached ?? use(importDshUiModule<DshAppModule>(module))
   return createElement(loaded.default, props)
 }
 

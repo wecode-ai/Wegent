@@ -4,13 +4,14 @@ import type {
   DshSidebarNavigationModule,
   WeworkDshSidebarNavigationModuleProps,
 } from './dshSidebarNavigation'
-import { importDshUiModule } from './dshUiModules'
+import { getLoadedDshUiModule, importDshUiModule } from './dshUiModules'
 
 function DshSidebarNavigationModuleLoader({
   module,
   ...props
 }: WeworkDshSidebarNavigationModuleProps & { module: string }) {
-  const loaded = use(importDshUiModule<DshSidebarNavigationModule>(module))
+  const cached = getLoadedDshUiModule<DshSidebarNavigationModule>(module)
+  const loaded = cached ?? use(importDshUiModule<DshSidebarNavigationModule>(module))
   return createElement(loaded.default, props)
 }
 

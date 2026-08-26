@@ -3,7 +3,7 @@ import { createElement, Suspense, use, type ComponentType } from 'react'
 import { DshSlotSurface } from './DshSlotSurface'
 import type { WeworkDshRoute } from './dshRoutes'
 import { WEWORK_DSH_SLOTS } from './dshUiSlots'
-import { importDshUiModule } from './dshUiModules'
+import { getLoadedDshUiModule, importDshUiModule } from './dshUiModules'
 
 interface DshRouteModuleProps {
   search?: string
@@ -14,7 +14,8 @@ interface DshRouteModule {
 }
 
 function DshRouteModuleLoader({ module, ...props }: DshRouteModuleProps & { module: string }) {
-  const loaded = use(importDshUiModule<DshRouteModule>(module))
+  const cached = getLoadedDshUiModule<DshRouteModule>(module)
+  const loaded = cached ?? use(importDshUiModule<DshRouteModule>(module))
   return createElement(loaded.default, props)
 }
 

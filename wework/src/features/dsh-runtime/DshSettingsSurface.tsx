@@ -1,7 +1,7 @@
 import { createElement, Suspense, use, type ComponentType } from 'react'
 
 import type { WeworkDshSettingsContext, WeworkDshSettingsPage } from './dshSettings'
-import { importDshUiModule } from './dshUiModules'
+import { getLoadedDshUiModule, importDshUiModule } from './dshUiModules'
 
 export interface WeworkDshSettingsModuleProps extends WeworkDshSettingsContext {
   autoOpenAddCloudDeviceDialog?: boolean
@@ -16,7 +16,8 @@ function DshSettingsModuleLoader({
   module,
   ...props
 }: WeworkDshSettingsModuleProps & { module: string }) {
-  const loaded = use(importDshUiModule<DshSettingsModule>(module))
+  const cached = getLoadedDshUiModule<DshSettingsModule>(module)
+  const loaded = cached ?? use(importDshUiModule<DshSettingsModule>(module))
   return createElement(loaded.default, props)
 }
 
