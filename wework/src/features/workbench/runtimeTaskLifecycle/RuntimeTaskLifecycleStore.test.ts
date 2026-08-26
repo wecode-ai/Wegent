@@ -608,7 +608,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.isBusy).toBe(false)
   })
 
-  test('recovers a new streaming turn after the previous turn completed', () => {
+  test('does not revive authoritative completion from an unmatched streaming turn', () => {
     const store = new RuntimeTaskLifecycleStore('test')
 
     store.syncRuntimeWork(
@@ -631,9 +631,9 @@ describe('RuntimeTaskLifecycleStore', () => {
     )
 
     const snapshot = store.getTask(address)
-    expect(snapshot?.execution.phase).toBe('running')
-    expect(snapshot?.turn.phase).toBe('streaming')
-    expect(snapshot?.turn.id).toBe('turn-2')
+    expect(snapshot?.execution.phase).toBe('idle')
+    expect(snapshot?.turn.phase).toBe('idle')
+    expect(snapshot?.derived.isBusy).toBe(false)
   })
 
   test('recovers a streaming transcript after an explicit send restarts a completed task', () => {
