@@ -129,6 +129,12 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "todos.*",
 ];
 const APP_IPC_WRITE_BUFFER_CAPACITY: usize = 8192;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LocalEndpointRole {
+    Client,
+    Owner,
+}
 const GIT_PUSH_SCRIPT: &str = r#"branch=$(git branch --show-current)
 if [ -z "$branch" ]; then
   echo "Cannot push detached HEAD" >&2
@@ -871,13 +877,25 @@ impl AppIpcServer {
         self.serve_io(tokio::io::stdin(), tokio::io::stdout()).await
     }
 
-    pub async fn serve_local_endpoint(&self, endpoint: &str, token: &str) -> Result<(), String> {
+    pub async fn serve_local_endpoint(
+        &self,
+        endpoint: &str,
+        token: &str,
+        owner_token: &str,
+    ) -> Result<(), String> {
         validate_local_endpoint_credentials(endpoint, token)?;
-        self.serve_platform_endpoint(endpoint, token).await
+        validate_local_endpoint_credentials(endpoint, owner_token)?;
+        self.serve_platform_endpoint(endpoint, token, owner_token)
+            .await
     }
 
     #[cfg(unix)]
-    async fn serve_platform_endpoint(&self, endpoint: &str, token: &str) -> Result<(), String> {
+    async fn serve_platform_endpoint(
+        &self,
+        endpoint: &str,
+        token: &str,
+        owner_token: &str,
+    ) -> Result<(), String> {
         let path = Path::new(endpoint);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -890,61 +908,106 @@ impl AppIpcServer {
             .map_err(|error| format!("failed to bind app IPC Unix socket: {error}"))?;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
             .map_err(|error| format!("failed to secure app IPC Unix socket: {error}"))?;
+        let (owner_closed_tx, mut owner_closed_rx) = mpsc::channel::<()>(1);
         loop {
-            let (stream, _) = listener
-                .accept()
-                .await
-                .map_err(|error| format!("failed to accept app IPC Unix socket: {error}"))?;
+            let (stream, _) = tokio::select! {
+                _ = owner_closed_rx.recv() => return Ok(()),
+                accepted = listener.accept() => accepted
+                    .map_err(|error| format!("failed to accept app IPC Unix socket: {error}"))?,
+            };
             let server = self.clone();
             let token = token.to_owned();
+            let owner_token = owner_token.to_owned();
+            let owner_closed_tx = owner_closed_tx.clone();
             tokio::spawn(async move {
-                if let Err(error) = server.serve_authenticated_stream(stream, &token).await {
-                    write_executor_log_line(&format_executor_log(
-                        "app IPC local endpoint connection closed",
-                        &[("error", error)],
-                    ));
+                match server
+                    .serve_authenticated_stream(stream, &token, &owner_token)
+                    .await
+                {
+                    Ok(Some(LocalEndpointRole::Owner)) => {
+                        let _ = owner_closed_tx.send(()).await;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        write_executor_log_line(&format_executor_log(
+                            "app IPC local endpoint connection closed",
+                            &[("error", error)],
+                        ));
+                    }
                 }
             });
         }
     }
 
     #[cfg(windows)]
-    async fn serve_platform_endpoint(&self, endpoint: &str, token: &str) -> Result<(), String> {
+    async fn serve_platform_endpoint(
+        &self,
+        endpoint: &str,
+        token: &str,
+        owner_token: &str,
+    ) -> Result<(), String> {
         if !endpoint.starts_with(r"\\.\pipe\") {
             return Err("app IPC named pipe must use the \\\\.\\pipe\\ prefix".to_owned());
         }
         let mut first_instance = true;
         let mut pipe = create_named_pipe_server(endpoint, first_instance)?;
+        let (owner_closed_tx, mut owner_closed_rx) = mpsc::channel::<()>(1);
         loop {
-            pipe.connect()
-                .await
-                .map_err(|error| format!("failed to accept app IPC named pipe: {error}"))?;
+            tokio::select! {
+                _ = owner_closed_rx.recv() => return Ok(()),
+                connected = pipe.connect() => connected
+                    .map_err(|error| format!("failed to accept app IPC named pipe: {error}"))?,
+            }
             let connected = pipe;
             first_instance = false;
             pipe = create_named_pipe_server(endpoint, first_instance)?;
             let server = self.clone();
             let token = token.to_owned();
+            let owner_token = owner_token.to_owned();
+            let owner_closed_tx = owner_closed_tx.clone();
             tokio::spawn(async move {
-                if let Err(error) = server.serve_authenticated_stream(connected, &token).await {
-                    write_executor_log_line(&format_executor_log(
-                        "app IPC local endpoint connection closed",
-                        &[("error", error)],
-                    ));
+                match server
+                    .serve_authenticated_stream(connected, &token, &owner_token)
+                    .await
+                {
+                    Ok(Some(LocalEndpointRole::Owner)) => {
+                        let _ = owner_closed_tx.send(()).await;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        write_executor_log_line(&format_executor_log(
+                            "app IPC local endpoint connection closed",
+                            &[("error", error)],
+                        ));
+                    }
                 }
             });
         }
     }
 
-    async fn serve_authenticated_stream<S>(&self, mut stream: S, token: &str) -> Result<(), String>
+    async fn serve_authenticated_stream<S>(
+        &self,
+        mut stream: S,
+        token: &str,
+        owner_token: &str,
+    ) -> Result<Option<LocalEndpointRole>, String>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
-        let authenticated = authenticate_local_endpoint(&mut stream, token).await?;
-        if !authenticated {
-            return Ok(());
-        }
+        let Some(role) = authenticate_local_endpoint(&mut stream, token, owner_token).await? else {
+            return Ok(None);
+        };
         let (reader, writer) = split(stream);
-        self.serve_io(reader, writer).await
+        if let Err(error) = self.serve_io(reader, writer).await {
+            if role != LocalEndpointRole::Owner {
+                return Err(error);
+            }
+            write_executor_log_line(&format_executor_log(
+                "app IPC owner connection closed",
+                &[("error", error)],
+            ));
+        }
+        Ok(Some(role))
     }
 
     pub async fn serve_io<R, W>(&self, reader: R, writer: W) -> Result<(), String>
@@ -1263,7 +1326,8 @@ fn validate_local_endpoint_credentials(endpoint: &str, token: &str) -> Result<()
 async fn authenticate_local_endpoint<S>(
     stream: &mut S,
     expected_token: &str,
-) -> Result<bool, String>
+    expected_owner_token: &str,
+) -> Result<Option<LocalEndpointRole>, String>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -1273,9 +1337,16 @@ where
     )
     .await
     .map_err(|_| "app IPC local endpoint authentication timed out".to_owned())??;
-    let authenticated = parse_auth_token(&frame)
-        .is_some_and(|token| constant_time_equal(token.as_bytes(), expected_token.as_bytes()));
-    let response = if authenticated {
+    let role = parse_auth_token(&frame).and_then(|token| {
+        if constant_time_equal(token.as_bytes(), expected_owner_token.as_bytes()) {
+            Some(LocalEndpointRole::Owner)
+        } else if constant_time_equal(token.as_bytes(), expected_token.as_bytes()) {
+            Some(LocalEndpointRole::Client)
+        } else {
+            None
+        }
+    });
+    let response = if role.is_some() {
         json!({
             "type": "authenticated",
             "ok": true,
@@ -1294,7 +1365,7 @@ where
     write_message(stream, &response)
         .await
         .map_err(|error| format!("failed to write app IPC authentication response: {error}"))?;
-    Ok(authenticated)
+    Ok(role)
 }
 
 async fn read_auth_frame<S>(stream: &mut S) -> Result<Vec<u8>, String>
@@ -3393,11 +3464,12 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory should be created");
         let endpoint = directory.path().join("executor.sock");
         let token = "0123456789abcdef0123456789abcdef";
+        let owner_token = "abcdef0123456789abcdef0123456789";
         let server = AppIpcServer::new();
         let endpoint_for_server = endpoint.clone();
         let serving = tokio::spawn(async move {
             server
-                .serve_local_endpoint(endpoint_for_server.to_str().unwrap(), token)
+                .serve_local_endpoint(endpoint_for_server.to_str().unwrap(), token, owner_token)
                 .await
         });
         for _ in 0..100 {
@@ -3488,7 +3560,37 @@ mod tests {
             message["id"] == Value::String("health".to_owned()) && message["ok"] == true
         }));
 
-        serving.abort();
-        let _ = serving.await;
+        let owner = UnixStream::connect(&endpoint)
+            .await
+            .expect("owner should connect");
+        let (owner_reader, mut owner_writer) = split(owner);
+        owner_writer
+            .write_all(
+                format!(
+                    "{{\"type\":\"authenticate\",\"protocol_version\":1,\"token\":\"{owner_token}\"}}\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("owner authentication should be written");
+        let mut owner_reader = BufReader::new(owner_reader);
+        let mut owner_authentication = String::new();
+        owner_reader
+            .read_line(&mut owner_authentication)
+            .await
+            .expect("owner authentication response should be read");
+        let owner_authentication: Value = serde_json::from_str(&owner_authentication)
+            .expect("owner authentication response should be JSON");
+        assert_eq!(owner_authentication["ok"], true);
+        owner_writer
+            .shutdown()
+            .await
+            .expect("owner connection should close");
+
+        assert!(tokio::time::timeout(Duration::from_secs(1), serving)
+            .await
+            .expect("owner disconnect should stop the local endpoint")
+            .expect("local endpoint task should join")
+            .is_ok());
     }
 }

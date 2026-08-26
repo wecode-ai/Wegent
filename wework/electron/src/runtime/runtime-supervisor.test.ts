@@ -126,6 +126,45 @@ describe('RuntimeSupervisor', () => {
       timeout: 3_000,
     })
   })
+
+  test.skipIf(process.platform === 'win32')(
+    'kills surviving process-group members after the leader exits',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'wework-process-group-'))
+      const pidPath = join(directory, 'grandchild.pid')
+      const script = `
+        const { spawn } = require('node:child_process')
+        const { writeFileSync } = require('node:fs')
+        const child = spawn(
+          process.execPath,
+          ['-e', 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'],
+          { stdio: 'ignore' }
+        )
+        writeFileSync(process.argv[1], String(child.pid))
+        setInterval(() => {}, 1000)
+      `
+      const supervisor = track(
+        new RuntimeSupervisor({
+          command: process.execPath,
+          args: ['-e', script, pidPath],
+          name: 'surviving-process-group-member',
+          stopTimeoutMs: 100,
+        })
+      )
+
+      await supervisor.start()
+      let grandchildPid = 0
+      await vi.waitFor(async () => {
+        grandchildPid = Number(await readFile(pidPath, 'utf8'))
+        expect(grandchildPid).toBeGreaterThan(0)
+      })
+      await supervisor.stop()
+
+      await vi.waitFor(() => expect(processExists(grandchildPid)).toBe(false), {
+        timeout: 3_000,
+      })
+    }
+  )
 })
 
 function track(supervisor: RuntimeSupervisor): RuntimeSupervisor {

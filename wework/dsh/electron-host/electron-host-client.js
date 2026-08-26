@@ -15,7 +15,7 @@ export class ElectronHostError extends Error {
 }
 
 export class ElectronHostClient {
-  static fromEnvironment(environment = process.env) {
+  static fromEnvironment(environment = process.env, options = {}) {
     const protocolVersion = requiredInteger(
       environment.WEWORK_ELECTRON_HOST_PROTOCOL,
       'WEWORK_ELECTRON_HOST_PROTOCOL'
@@ -43,6 +43,7 @@ export class ElectronHostClient {
       token,
       input: createReadStream(null, { fd: requestFd, autoClose: false }),
       output: createWriteStream(null, { fd: responseFd, autoClose: false }),
+      onDisconnect: options.onDisconnect,
     })
   }
 
@@ -53,6 +54,7 @@ export class ElectronHostClient {
     output,
     principal = '@wegent/dsh-app-wework',
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    onDisconnect = () => {},
   }) {
     this.protocolVersion = protocolVersion
     this.token = token
@@ -60,6 +62,7 @@ export class ElectronHostClient {
     this.output = output
     this.principal = principal
     this.timeoutMs = timeoutMs
+    this.onDisconnect = onDisconnect
     this.lines = null
     this.capabilities = new Set()
     this.pending = new Map()
@@ -69,6 +72,9 @@ export class ElectronHostClient {
     this.handshake = null
     this.onInputClose = () => {
       this.closeWithError(new ElectronHostError('host_disconnected', 'Electron host pipe closed'))
+    }
+    this.onInputEnd = () => {
+      this.closeWithError(new ElectronHostError('host_disconnected', 'Electron host pipe ended'))
     }
     this.onOutputError = error => this.closeWithError(normalizeError(error))
   }
@@ -82,6 +88,7 @@ export class ElectronHostClient {
     this.lines = createInterface({ input: this.input })
     this.lines.on('line', line => this.handleLine(line))
     this.input.once('close', this.onInputClose)
+    this.input.once('end', this.onInputEnd)
     this.output.once('error', this.onOutputError)
     this.handshake = deferred()
     this.write({
@@ -138,6 +145,7 @@ export class ElectronHostClient {
     this.lines?.close()
     this.lines = null
     this.input.off('close', this.onInputClose)
+    this.input.off('end', this.onInputEnd)
     this.output.off('error', this.onOutputError)
     if (!this.output.destroyed) this.output.end()
     this.rejectPending(new ElectronHostError('client_closed', 'Electron host client stopped'))
@@ -227,6 +235,7 @@ export class ElectronHostClient {
     this.rejectPending(error)
     this.lines?.close()
     this.lines = null
+    this.onDisconnect(error)
   }
 
   rejectPending(error) {

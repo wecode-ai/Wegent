@@ -38,7 +38,7 @@ flowchart LR
 
 打包后的 Wework Electron app 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Electron renderer 内，Electron 主进程提供 app 内部命令层。
 
-本地优先模式只需要两个本机进程：
+本地优先模式包含 Electron 主进程、executor sidecar 和 core DSH 三个本机运行时角色：
 
 ```mermaid
 flowchart LR
@@ -47,17 +47,24 @@ flowchart LR
         UI["React UI"]
         ELECTRON["Electron IPC"]
         EX["Executor Sidecar"]
+        DSH["Core DSH"]
         FS["本地文件"]
     end
 
     UI --> ELECTRON
-    ELECTRON <-->|"stdio JSONL"| EX
+    ELECTRON <-->|"带 owner 身份的本地端点"| EX
+    ELECTRON <-->|"继承的 host pipes"| DSH
+    DSH <-->|"普通客户端身份"| EX
     EX --> FS
 ```
 
-Electron 无参数启动 executor sidecar，并通过子进程 stdin/stdout 交换换行分隔 JSON。stdout 只承载协议响应和事件，诊断信息写入 stderr 和 `~/.wegent-executor/logs/executor.log`。App 自己启动的 sidecar 归 Electron 进程管理：macOS/Linux 下会放入独立进程组，关闭或重启 App 时先发送 `SIGTERM`，短暂等待后再用 `SIGKILL` 清理剩余子进程；开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。Wework renderer 通过 Electron IPC command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
+Electron 无参数启动 executor sidecar，并通过每次 App 启动独有的 Unix socket 或 Windows named pipe 交换换行分隔 JSON。普通客户端使用 app IPC token；Electron 另用独立 owner token 建立一个贯穿该代 executor 生命周期的长连接。普通客户端（包括 core DSH）断开只结束自己的连接，owner 连接 EOF 则关闭本地端点并退出 executor。因此即使 Electron 被 `SIGKILL`、崩溃或 Force Quit，无法执行 JavaScript 清理，executor 仍会从 owner socket 断开检测到所有者死亡。
 
-stdio 生命周期由父子进程关系直接确定：写入失败、stdout EOF 或子进程退出才表示本地 IPC 失效。普通请求超时只结束对应请求，不销毁通道，因此系统休眠或调度延迟不会触发端口重连或误切换到其他 executor。
+Core DSH 通过 Electron 创建的继承 pipe 调用受限 host command。pipe 的 `end` 或 `close` 表示 Electron host 已不存在，DSH 必须调用 launcher 提供的 `appExit` 服务退出；正常释放客户端时会先移除这些断开监听，避免把有序停机误判为所有者死亡。
+
+App 自己启动的 executor 和 DSH 归 Electron 主进程管理：macOS/Linux 下各自位于独立进程组。正常关闭或重启时先发送 `SIGTERM`；即使进程组 leader 已退出，也要继续等待整个进程组，超时后对仍存活的成员发送 `SIGKILL`。开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。owner socket 和 host pipe 是强退路径的进程内自终止机制，进程组清理是正常停机路径的兜底，两者不能相互替代。
+
+本地端点的写入失败、EOF 或子进程退出表示对应 IPC 连接失效。普通请求超时只结束该请求，不销毁通道，因此系统休眠或调度延迟不会触发端点重连或误切换到其他 executor。executor 意外退出并由 supervisor 拉起后，Electron 必须在新进程进入 ready 前重新完成 owner 握手。
 
 Executor 启动的设备命令必须关闭 stdin，不能继承承载 App JSONL 协议的进程 stdin，否则子命令读取标准输入时会窃取请求字节并破坏后续协议帧。Executor 按字节读取并以换行符划分 App IPC 帧，再单独验证每一帧的 UTF-8；非法帧只记录长度和错误偏移后丢弃，不能终止整个 executor 或中断其他正在运行的任务。检测到 executor runtime instance 变化后，Wework 会重新获取受影响任务的列表和 transcript；已被 transcript 确认接收的排队消息会从队列移除，断线时尚未确认的发送会恢复为可重试的排队状态。
 
@@ -65,7 +72,7 @@ Executor 启动的设备命令必须关闭 stdin，不能继承承载 App JSONL 
 
 工具输出事件最多携带 64 KiB，文件变化事件中的 diff 预览最多携带 128 KiB；完整 patch 仍保存在可读取的 artifact 中。Wework 收到 `executor.event_lagged` 后会重新拉取当前任务和全部运行中任务的 transcript，并使用稳定的客户端消息 ID 将 transcript 与尚未落盘的乐观用户消息合并。因此任务切换或事件积压后，运行状态、用户输入和 AI 输出会从同一份恢复结果重新收敛。
 
-Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过 stdio 服务 Wework App，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
+Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本地 app IPC 端点服务 Wework App 和 core DSH，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
 ### Executor 启动环境与 Codex Home 初始化
 

@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
+  ManagedExecutorRuntime,
   prepareManagedExecutorEnvironment,
   requestExecutor,
   waitForEndpointAuthentication,
@@ -108,6 +109,71 @@ describe('managed executor runtime', () => {
       ).resolves.toBeUndefined()
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()))
+      await directory.remove()
+    }
+  })
+
+  test('reconnects the owner stream after the executor restarts', async () => {
+    const directory = await temporaryDirectory('managed-executor-restart-')
+    const ownerConnectionsPath = join(directory.path, 'owner-connections')
+    const runtime = new ManagedExecutorRuntime({
+      command: process.execPath,
+      args: [
+        '-e',
+        `
+          const net = require('node:net')
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const endpoint = process.env.WEGENT_APP_IPC_ENDPOINT
+          const ownerConnectionsPath = process.argv[1]
+          if (process.platform !== 'win32') {
+            fs.mkdirSync(path.dirname(endpoint), { recursive: true })
+            fs.rmSync(endpoint, { force: true })
+          }
+          net.createServer(socket => {
+            socket.setEncoding('utf8')
+            socket.once('data', line => {
+              const message = JSON.parse(line)
+              const accepted =
+                message.token === process.env.WEGENT_APP_IPC_TOKEN ||
+                message.token === process.env.WEGENT_APP_IPC_OWNER_TOKEN
+              if (message.token === process.env.WEGENT_APP_IPC_OWNER_TOKEN) {
+                fs.appendFileSync(ownerConnectionsPath, 'connected\\n')
+              }
+              socket.write(JSON.stringify({
+                type: 'authenticated',
+                ok: accepted,
+                protocol_version: 1,
+              }) + '\\n')
+            })
+          }).listen(endpoint)
+        `,
+        ownerConnectionsPath,
+      ],
+      environment: {
+        VITE_WEWORK_E2E: 'true',
+        WEGENT_EXECUTOR_HOME: join(directory.path, 'executor-home'),
+      },
+      dataDirectory: join(directory.path, 'data'),
+      logDirectory: join(directory.path, 'logs'),
+      deviceId: 'test-device',
+    })
+
+    try {
+      await runtime.start()
+      const firstPid = runtime.pid()
+      expect(firstPid).not.toBeNull()
+      process.kill(firstPid!, 'SIGKILL')
+
+      await expect
+        .poll(
+          async () =>
+            (await readFile(ownerConnectionsPath, 'utf8')).split('\n').filter(Boolean).length,
+          { timeout: 5_000 }
+        )
+        .toBe(2)
+    } finally {
+      await runtime.stop()
       await directory.remove()
     }
   })

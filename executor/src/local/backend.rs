@@ -1140,10 +1140,11 @@ pub async fn serve_local_app_endpoint(
     config: DeviceConfig,
     endpoint: &str,
     token: &str,
+    owner_token: &str,
 ) -> Result<(), String> {
     local_app_ipc_server(config)
         .await?
-        .serve_local_endpoint(endpoint, token)
+        .serve_local_endpoint(endpoint, token, owner_token)
         .await
 }
 

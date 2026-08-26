@@ -38,7 +38,7 @@ flowchart LR
 
 The packaged Wework Electron app defaults to local-first mode. This mode does not start the frontend Node dev server and does not start an extra local HTTP Backend service. The React UI runs inside the Electron renderer, while the Electron main process provides the app's internal command layer.
 
-Local-first mode needs only two local processes:
+Local-first mode has three local runtime roles: the Electron main process, the executor sidecar, and core DSH:
 
 ```mermaid
 flowchart LR
@@ -47,17 +47,24 @@ flowchart LR
         UI["React UI"]
         ELECTRON["Electron IPC"]
         EX["Executor Sidecar"]
+        DSH["Core DSH"]
         FS["Local Files"]
     end
 
     UI --> ELECTRON
-    ELECTRON <-->|"stdio JSONL"| EX
+    ELECTRON <-->|"owner-authenticated local endpoint"| EX
+    ELECTRON <-->|"inherited host pipes"| DSH
+    DSH <-->|"ordinary client identity"| EX
     EX --> FS
 ```
 
-Electron starts the executor sidecar with no arguments and exchanges newline-delimited JSON through the child process stdin/stdout. Stdout carries protocol responses and events only; diagnostics go to stderr and `~/.wegent-executor/logs/executor.log`. Sidecars started by the App are owned by the Electron main process: on macOS/Linux they run in an isolated process group, and App close or restart sends `SIGTERM` before using `SIGKILL` for remaining child processes. The dev-mode reload supervisor and the executor it launches are included in that cleanup scope. The Wework renderer sends `runtime.*` and `device.execute_command` requests through Electron IPC commands and subscribes to Responses stream events emitted by the sidecar.
+Electron starts the executor sidecar with no arguments and exchanges newline-delimited JSON through a Unix socket or Windows named pipe unique to that App launch. Ordinary clients authenticate with the App IPC token. Electron uses a separate owner token for one connection that remains open for the lifetime of that executor generation. Disconnecting an ordinary client, including core DSH, closes only that connection; EOF on the owner connection closes the local endpoint and exits the executor. The executor therefore detects owner death even when Electron is killed with `SIGKILL`, crashes, or is force-quit before JavaScript cleanup can run.
 
-The parent-child relationship defines the stdio lifecycle directly: a write failure, stdout EOF, or child exit marks local IPC unavailable. A normal request timeout ends only that request and does not tear down the transport, so system sleep or scheduling delays cannot trigger endpoint reconnection or attach the App to another executor.
+Core DSH calls restricted host commands over inherited pipes created by Electron. An `end` or `close` on the input pipe means the Electron host no longer exists, so DSH invokes the launcher's `appExit` service. Normal client disposal removes those disconnect listeners first, preventing an orderly shutdown from being treated as owner death.
+
+The Electron main process owns the executor and DSH processes it starts. On macOS and Linux, each runtime uses an isolated process group. An orderly App close or restart sends `SIGTERM`, continues waiting for the complete process group even if its leader has already exited, and sends `SIGKILL` to surviving members after the deadline. The dev-mode reload supervisor and the executor it launches remain in the same cleanup scope. Owner sockets and host pipes provide in-process self-termination for forced exits; process-group cleanup is the fallback for orderly shutdown, and neither mechanism replaces the other.
+
+A local-endpoint write failure, EOF, or child exit marks the corresponding IPC connection unavailable. A normal request timeout ends only that request and does not tear down the transport, so system sleep or scheduling delays cannot trigger endpoint reconnection or attach the App to another executor. If the supervisor starts a new executor generation after a crash, Electron must complete a new owner handshake before that generation becomes ready.
 
 Device commands started by the executor must have stdin closed instead of inheriting the process stdin that carries the App JSONL protocol. Otherwise, a child command that reads standard input can steal request bytes and corrupt the next protocol frame. The executor reads App IPC as bytes, splits frames on newlines, and validates UTF-8 per frame; an invalid frame is discarded after logging only its length and error offset and must not terminate the executor or interrupt unrelated running tasks. When Wework detects a changed executor runtime instance, it reloads the affected task list and transcripts. Queued messages confirmed by the transcript are removed, while sends that were still unconfirmed at disconnection return to a retryable queued state.
 
@@ -65,7 +72,7 @@ The local runtime event channel and App IPC write queues use bounded buffers wit
 
 Tool-output events carry at most 64 KiB, and file-change events carry at most a 128 KiB diff preview; the complete patch remains available in its artifact. When Wework receives `executor.event_lagged`, it reloads transcripts for the current task and every running task, then reconciles those transcripts with optimistic user messages that have not yet been persisted by using the stable client message ID. Task switching or event congestion therefore converges execution state, user input, and assistant output from the same recovery result.
 
-Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend Socket.IO channel. The same executor sidecar reuses one command handler and one runtime work handler while serving Wework App over stdio and Backend over Socket.IO. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
+Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend Socket.IO channel. The same executor sidecar reuses one command handler and one runtime work handler while serving Wework App and core DSH over the local App IPC endpoint and Backend over Socket.IO. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
 
 ### Executor Startup Environment and Codex Home Initialization
 

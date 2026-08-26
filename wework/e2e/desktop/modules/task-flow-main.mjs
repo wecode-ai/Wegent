@@ -2921,6 +2921,11 @@ last_updated = "2026-07-30T00:00:00Z"`
       await control.command('waitFor', '[data-testid="pause-response-button"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      const cancellationTaskSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      const cancelledTaskId = cancellationTaskSnapshot.workbench?.currentRuntimeTask?.taskId
+      assert.ok(cancelledTaskId, 'The running cancellation task did not expose its runtime task ID')
       const cancellationExecutorLogOffset = (
         await readFile(executorLogPath, 'utf8').catch(() => '')
       ).length
@@ -2930,11 +2935,14 @@ last_updated = "2026-07-30T00:00:00Z"`
         /app IPC request finished .* method=runtime\.tasks\.cancel .* ok=true/,
         { fromOffset: cancellationExecutorLogOffset }
       )
-      const cancelledTaskSnapshot = JSON.parse(
-        await control.command('getWorkbenchDebugSnapshot', 'body')
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
+          snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+          snapshot.pane?.status?.taskExecution?.status === 'cancelled',
+        'The current cancellation did not settle before releasing the upstream response'
       )
-      const cancelledTaskId = cancelledTaskSnapshot.workbench?.currentRuntimeTask?.taskId
-      assert.ok(cancelledTaskId, 'The cancelled task did not expose its runtime task ID')
       const cancelledTaskUnreadTestId = `runtime-local-task-unread-dot-${cancelledTaskId}`
       await waitForSnapshot(
         control,
