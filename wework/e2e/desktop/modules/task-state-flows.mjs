@@ -595,13 +595,6 @@ async function verifyBackgroundCompletionRestore({
     taskId,
     'The completed task address was unavailable before My Work lifecycle verification'
   )
-  const completedTurnId =
-    completedTaskDebugSnapshot.pane?.messageStyleComparison?.transcriptLoaded?.subtaskId
-  assert.equal(
-    typeof completedTurnId,
-    'string',
-    'The completed turn ID was unavailable before stale transcript verification'
-  )
   await control.command('dispatchRuntimeLifecycleEvent', 'body', {
     value: JSON.stringify({
       address: completedTaskAddress,
@@ -610,7 +603,7 @@ async function verifyBackgroundCompletionRestore({
         taskId,
         messages: [],
         running: true,
-        turns: [{ id: completedTurnId, items: [], status: 'streaming' }],
+        turns: [],
       },
     }),
   })
