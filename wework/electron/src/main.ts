@@ -136,7 +136,6 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     items => Menu.buildFromTemplate(items),
     {
       copyPath: path => clipboard.writeText(path),
-      copyText: text => clipboard.writeText(text),
       openImage: async image => {
         const temporaryPath = image.localPath
           ? null
