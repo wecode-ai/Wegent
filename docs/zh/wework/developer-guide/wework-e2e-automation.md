@@ -133,21 +133,21 @@ node e2e/utils/mock-connector-upstream-server.mjs
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
-完整 Core 套件固定使用 16 个 GitHub Actions matrix job，Cloud 套件使用 13 个；每个 job
+完整 Core 套件固定使用 17 个 GitHub Actions matrix job，Cloud 套件使用 15 个；每个 job
 串行运行其 checkpoint，避免多个真实 Electron、WebView 和 Executor 栈在同一
 GitHub runner 上争用 CPU 和内存，导致正常异步状态越过统一的 10 秒门槛。
-跨 runner 的 29 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
+跨 runner 的 32 个 matrix job 仍提供套件级并行。分片按 CI 实测耗时平衡并设定
 上限，以确保完整套件处于 10 分钟关键路径预算内；新增或明显变慢的 checkpoint
 必须重新校准分片，不能靠删覆盖或重跑失败用例来缩短关键路径。包含 2200 个增量的
 Codex 通知隔离压力场景和耗时较长的插件自动更新 checkpoint 各自使用独立分片；
-通知场景使用定向的 120 秒渲染预算，不改变共享的 10 秒 UI 超时。CI 会先构建一次 Core Electron
+通知场景使用定向的 30 秒渲染预算，不改变共享的 10 秒 UI 超时。CI 会先构建一次 Core Electron
 应用、Executor 和 Codex artifact。Electron 打包会并行准备 Harness runtime、
 Node execution runtime 和 Executor；Harness 准备流程负责唯一一次 DSH 应用 Vite
 构建，避免重复编译同一前端。各 Core/Cloud 分片下载并复用该 artifact，不再重复
 执行 Vite、Electron 和 Executor 构建。Rust 构建同时复用由 `main`
 维护的 Cargo target cache 和 sccache 编译单元：target cache 保障 PR 与首次
 运行的延迟，sccache 降低依赖或源码变化后的增量编译成本。归档时只移除复制到
-artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 29 个分片的
+artifact 中的 Linux debug symbols，原始构建产物保持不变，以缩短 32 个分片的
 上传和下载时间。桌面 E2E 和对应的 cache warmup 显式设置
 `WEWORK_EXECUTOR_PROFILE=debug`，避免为测试 artifact 优化 Executor；正式打包
 不设置该变量，继续默认构建 `release` Executor。桌面 E2E 构建跳过由并行 Lint
