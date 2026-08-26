@@ -968,7 +968,28 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         timeoutMs: 35_000,
       })
       await bridgeCall({ action: 'close', timeoutMs: 8_000 })
+      await waitForElementCount(
+        control,
+        BROWSER_NATIVE_VIEW_SELECTOR,
+        0,
+        uiTimeoutMs,
+        'The browser host remained mounted after the bridge close completed'
+      )
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        '',
+        uiTimeoutMs,
+        'The browser address bar did not settle after the bridge close'
+      )
       await control.command('fill', BROWSER_INPUT_SELECTOR, { value: cacheFixtureUrl })
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        cacheFixtureUrl,
+        uiTimeoutMs,
+        'The browser address bar lost the cache fixture URL before submission'
+      )
       await control.command('submit', BROWSER_INPUT_SELECTOR)
       await control.command('waitFor', BROWSER_NATIVE_VIEW_SELECTOR, { timeoutMs: uiTimeoutMs })
       await bridgeCall({

@@ -2448,6 +2448,10 @@ fn local_workflow_stage_snapshot(
 }
 
 fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
+    if schema_is_current(connection)? {
+        ensure_default_work_item_project(connection)?;
+        return Ok(());
+    }
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY,
@@ -2678,6 +2682,36 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
          ON loop_items(assignee_agent_id)",
         [],
     )?;
+    ensure_default_work_item_project(connection)?;
+    connection.execute(
+        "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
+        params![LOCAL_SCHEMA_VERSION, now()],
+    )?;
+    Ok(())
+}
+
+fn schema_is_current(connection: &Connection) -> Result<bool, rusqlite::Error> {
+    let migration_table_exists = connection.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'schema_migrations'
+         )",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !migration_table_exists {
+        return Ok(false);
+    }
+    connection.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM schema_migrations WHERE version = ?1
+         )",
+        [LOCAL_SCHEMA_VERSION],
+        |row| row.get::<_, bool>(0),
+    )
+}
+
+fn ensure_default_work_item_project(connection: &Connection) -> Result<(), TaskRuntimeError> {
     let default_board_exists = connection.query_row(
         "SELECT EXISTS(
             SELECT 1 FROM loop_items
@@ -2767,10 +2801,6 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
             ));
         }
     }
-    connection.execute(
-        "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
-        params![LOCAL_SCHEMA_VERSION, now()],
-    )?;
     Ok(())
 }
 
@@ -5521,6 +5551,25 @@ mod tests {
             .filter(|project| project.project_key.as_deref() == Some(DEFAULT_WORK_ITEM_PROJECT_KEY))
             .count();
         assert_eq!(default_board_count, 1);
+    }
+
+    #[test]
+    fn opens_current_schema_while_another_connection_is_writing() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("tasks.sqlite");
+        let _store = LocalTaskStore::open(&db_path).unwrap();
+        let mut writer = rusqlite::Connection::open(&db_path).unwrap();
+        let transaction = writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+
+        let reopened_store = LocalTaskStore::open(&db_path)
+            .expect("opening a current schema must not require the SQLite write lock");
+
+        assert!(reopened_store
+            .get_project(DEFAULT_WORK_ITEM_PROJECT_ID)
+            .is_ok());
+        transaction.rollback().unwrap();
     }
 
     #[test]

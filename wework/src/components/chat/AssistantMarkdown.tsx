@@ -7,6 +7,7 @@ import { ComposerLinkChip } from './ComposerLinkChip'
 import 'streamdown/styles.css'
 import {
   classifyMarkdownLink,
+  decodeMarkdownFilePath,
   getAuthenticatedAttachmentId,
   isAuthenticatedAttachmentImageSrc,
   isHtmlFilePath,
@@ -481,7 +482,9 @@ function encodeLocalMarkdownLinks(content: string): string {
     const href = String(rawHref).trim()
     const target = classifyMarkdownLink(href)
     if (target.kind !== 'file') return match
-    return `[${label}](${WEWORK_MARKDOWN_FILE_LINK_PREFIX}${encodeURIComponent(href)})`
+    return `[${label}](${WEWORK_MARKDOWN_FILE_LINK_PREFIX}${encodeURIComponent(
+      decodeMarkdownFilePath(href)
+    )})`
   })
 }
 

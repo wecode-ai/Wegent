@@ -6,6 +6,12 @@ import { darkPalette, lightPalette } from './presets'
 import { useAppearance } from './useAppearance'
 import { WEWORK_RESET_FONT_SIZE_EVENT, WEWORK_STEP_FONT_SIZE_EVENT } from '@/lib/keybindings'
 
+const updateAppPreferencesMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@/desktop/appPreferences', () => ({
+  updateAppPreferences: updateAppPreferencesMock,
+}))
+
 let mediaQueryMatches = false
 let mediaQueryListener: ((event: MediaQueryListEvent) => void) | null = null
 
@@ -88,9 +94,15 @@ describe('AppearanceProvider', () => {
     document.documentElement.className = ''
     document.documentElement.removeAttribute('style')
     installMatchMedia()
+    updateAppPreferencesMock.mockReset()
+    updateAppPreferencesMock.mockResolvedValue(undefined)
   })
 
   test('applies and persists selected dark mode', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      desktopHost: 'electron',
+    }
     render(
       <AppearanceProvider>
         <Harness />
@@ -103,6 +115,9 @@ describe('AppearanceProvider', () => {
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     expect(localStorage.getItem('wework.appearance')).toContain('"mode":"dark"')
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenLastCalledWith({ appearanceMode: 'dark' })
+    })
   })
 
   test('updates system mode when system preference changes', async () => {

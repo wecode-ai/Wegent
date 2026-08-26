@@ -80,8 +80,7 @@ export class ManagedExecutorRuntime {
 export function prepareManagedExecutorEnvironment(
   options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'>
 ): NodeJS.ProcessEnv {
-  const executorHome =
-    options.environment.WEGENT_EXECUTOR_HOME?.trim() || join(options.dataDirectory, 'executor')
+  const executorHome = managedExecutorHome(options)
   const codexHome = options.environment.WEGENT_CODEX_HOME?.trim() || join(executorHome, 'codex')
   const nativeCodexHome = resolveNativeCodexHome(options.environment, codexHome)
   if (nativeCodexHome) prepareCodexAuth(nativeCodexHome, codexHome)
@@ -91,6 +90,12 @@ export function prepareManagedExecutorEnvironment(
     WEGENT_CODEX_HOME: codexHome,
     WEGENT_EXECUTOR_HOME: executorHome,
   }
+}
+
+export function managedExecutorHome(
+  options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'>
+): string {
+  return options.environment.WEGENT_EXECUTOR_HOME?.trim() || join(homedir(), '.wework')
 }
 
 function resolveNativeCodexHome(

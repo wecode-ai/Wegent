@@ -1358,6 +1358,13 @@ export function createHybridWorkbenchServices(
       resolveDevice: resolveExecutorDevice,
     }),
     chatStream: hybridChatStream,
+    async recoverRuntimeConnections() {
+      await Promise.all([
+        localServices.recoverRuntimeConnections?.(),
+        cloudServices.recoverRuntimeConnections?.(),
+        cloudRuntimeIpc.reconnect(),
+      ])
+    },
   }
 }
 

@@ -7880,6 +7880,65 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('decodes an encoded assistant file path before opening it in the workspace panel', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const filePath = '/workspace/project/README file.md'
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: filePath,
+      name: 'README file.md',
+      content: 'opened encoded file path',
+      truncated: false,
+      size: 24,
+      modifiedAt: null,
+    })
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [],
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        messages={[
+          {
+            id: 'assistant-encoded-file-link',
+            role: 'assistant',
+            content: '[README file.md](/workspace/project/README%2520file.md)',
+            status: 'done',
+            createdAt: '2026-08-25T08:00:00.000Z',
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'opened encoded file path'
+    )
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      'local-device',
+      filePath,
+      '/workspace/project'
+    )
+    expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(filePath)
+  })
+
   test('opens a markdown directory link in the workspace tree without reading it as a file', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()

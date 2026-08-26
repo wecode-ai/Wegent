@@ -17,6 +17,7 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
   afterEach(() => {
     vi.useRealTimers()
     clearRuntimeConversationCacheForTests()
+    delete window.weworkElectronLifecycle
   })
 
   test('does not poll running task transcripts or work lists', async () => {
@@ -42,6 +43,53 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
 
     expect(listRuntimeWork).not.toHaveBeenCalled()
     expect(getRuntimeTranscript).not.toHaveBeenCalled()
+  })
+
+  test('reconnects and reconciles running tasks after system resume', async () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    const address = runtimeTaskAddress()
+    store.syncRuntimeWork(runtimeWork(true))
+    store.setCurrentTask(address)
+    let resumeListener: (() => void) | null = null
+    window.weworkElectronLifecycle = {
+      onSystemResume(listener) {
+        resumeListener = listener
+        return () => {
+          resumeListener = null
+        }
+      },
+    }
+    const recoverRuntimeConnections = vi.fn().mockResolvedValue(undefined)
+    const listRuntimeWork = vi.fn().mockResolvedValue(runtimeWork(false))
+    const getRuntimeTranscript = vi.fn().mockResolvedValue(runtimeTranscript(false))
+    const services = {
+      chatStream: {
+        subscribe: vi.fn(() => vi.fn()),
+      },
+      recoverRuntimeConnections,
+      executorClient: {
+        runtime: {
+          listRuntimeWork,
+          getRuntimeTranscript,
+        },
+      },
+    } as unknown as WorkbenchServices
+
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+    await act(async () => {
+      resumeListener?.()
+    })
+
+    expect(recoverRuntimeConnections).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
+    await waitFor(() => {
+      expect(getRuntimeTranscript).toHaveBeenCalledWith({
+        ...address,
+        limit: 50,
+        refresh: true,
+      })
+    })
+    expect(store.getTask(address)?.derived.isRunning).toBe(false)
   })
 
   test('serializes stale-projection recovery with one trailing reconciliation', async () => {

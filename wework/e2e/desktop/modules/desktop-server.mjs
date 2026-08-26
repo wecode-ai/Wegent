@@ -97,6 +97,7 @@ import {
   EMBEDDED_BROWSER_SETUP_PROMPT,
   FILE_PANEL_ANCHOR_PROMPT,
   FILE_PANEL_ANCHOR_RESPONSE,
+  FILE_PANEL_LINK_NAME,
   FOLLOW_UP_COMPLETION_TEXT,
   FOLLOW_UP_PROMPT,
   FORK_ENCRYPTED_CONTENT,
@@ -3132,7 +3133,10 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(
-          FILE_PANEL_ANCHOR_RESPONSE.replace('README.md:1', `${this.workspacePath}/README.md:1`)
+          FILE_PANEL_ANCHOR_RESPONSE.replace(
+            `${FILE_PANEL_LINK_NAME.replaceAll(' ', '%20')}:1`,
+            `${encodeURI(`${this.workspacePath}/${FILE_PANEL_LINK_NAME}`)}:1`
+          )
         ),
         responseCompleted(responseId),
       ])

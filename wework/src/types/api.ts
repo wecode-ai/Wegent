@@ -2551,6 +2551,7 @@ export interface ChatBlockUpdatedPayload {
   subtaskId?: string
   blockId: string
   content?: string
+  contentDelta?: string
   toolOutput?: unknown
   toolOutputDelta?: string
   toolOutputTruncated?: boolean

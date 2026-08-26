@@ -63,6 +63,18 @@ export async function handleExecutorEvents(req, res, client) {
   if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET')
   const after = eventCursor(req)
+  let active = true
+  let dispose = () => {}
+  let writer = null
+  const disconnect = () => {
+    if (!active) return
+    active = false
+    writer?.close()
+    dispose()
+  }
+  req.once('close', disconnect)
+  res.once('close', disconnect)
+  res.on('error', disconnect)
   try {
     const replay = client.replay(after)
     res.writeHead(200, {
@@ -70,23 +82,110 @@ export async function handleExecutorEvents(req, res, client) {
       'cache-control': 'no-cache, no-store',
       connection: 'keep-alive',
     })
-    let dispose = () => {}
-    const write = event => {
-      const writable = res.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
-      if (!writable) {
-        dispose()
-        res.end()
+    const writeChunk = chunk => {
+      if (!active || res.writableEnded || res.destroyed) {
+        disconnect()
+        return false
       }
+      const writable = res.write(chunk)
+      if (!writable) {
+        disconnect()
+        if (!res.writableEnded && !res.destroyed) res.end()
+      }
+      return writable
     }
-    for (const event of replay) write(event)
-    if (res.writableEnded) return
-    dispose = client.listen(write)
-    req.on('close', dispose)
-    res.write(': connected\n\n')
+    writer = createExecutorEventWriter(writeChunk)
+    for (const event of replay) {
+      writer.write(event)
+      if (!active) return
+    }
+    writer.flush()
+    if (!active || res.writableEnded || res.destroyed) return
+    dispose = client.listen(event => writer.write(event))
+    if (!active) {
+      dispose()
+      return
+    }
+    writeChunk(': connected\n\n')
   } catch (error) {
+    disconnect()
     if (!res.headersSent) sendError(res, error)
-    else res.end(`event: error\ndata: ${JSON.stringify(errorBody(error))}\n\n`)
+    else if (!res.writableEnded && !res.destroyed) {
+      res.end(`event: error\ndata: ${JSON.stringify(errorBody(error))}\n\n`)
+    }
   }
+}
+
+function createExecutorEventWriter(writeChunk) {
+  const pendingBlockUpdates = new Map()
+  let flushImmediate = null
+  let closed = false
+
+  const writeRaw = event => {
+    if (closed) return false
+    const writable = writeChunk(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
+    if (!writable) {
+      closed = true
+      if (flushImmediate) clearImmediate(flushImmediate)
+      flushImmediate = null
+      pendingBlockUpdates.clear()
+      return false
+    }
+    return true
+  }
+
+  const flush = () => {
+    if (flushImmediate) clearImmediate(flushImmediate)
+    flushImmediate = null
+    if (closed || pendingBlockUpdates.size === 0) return
+    const events = [...pendingBlockUpdates.values()]
+    pendingBlockUpdates.clear()
+    for (const event of events) {
+      if (!writeRaw(event)) return
+    }
+  }
+
+  const write = event => {
+    const key = coalescibleBlockUpdateKey(event)
+    if (!key) {
+      flush()
+      writeRaw(event)
+      return
+    }
+    pendingBlockUpdates.set(key, event)
+    if (!flushImmediate) {
+      flushImmediate = setImmediate(flush)
+    }
+  }
+
+  return {
+    write,
+    flush,
+    close() {
+      closed = true
+      if (flushImmediate) clearImmediate(flushImmediate)
+      flushImmediate = null
+      pendingBlockUpdates.clear()
+    },
+  }
+}
+
+function coalescibleBlockUpdateKey(event) {
+  if (event?.event !== 'response.block.updated') return null
+  const payload = isRecord(event.payload) ? event.payload : {}
+  const data = isRecord(payload.data) ? payload.data : {}
+  const updates = isRecord(data.updates) ? data.updates : {}
+  if (
+    typeof updates.content !== 'string' ||
+    Object.keys(updates).some(key => key !== 'content' && key !== 'status')
+  ) {
+    return null
+  }
+  const taskId = stringValue(payload.taskId)
+  const subtaskId = stringValue(payload.subtaskId)
+  const blockId = stringValue(data.blockId) ?? stringValue(data.block_id)
+  if (!taskId || !subtaskId || !blockId) return null
+  return [stringValue(payload.deviceId) ?? '', taskId, subtaskId, blockId].join(':')
 }
 
 function eventCursor(req) {
@@ -191,4 +290,8 @@ function singleHeader(value) {
 
 function isRecord(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function stringValue(value) {
+  return typeof value === 'string' && value ? value : null
 }

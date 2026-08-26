@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
-import { presentWindow, type PresentableWindow } from './window-presentation.js'
+import { createSingleFlight, presentWindow, type PresentableWindow } from './window-presentation.js'
 
 function createWindow(input: { destroyed?: boolean; minimized?: boolean } = {}) {
   const webContents = {
@@ -49,5 +49,31 @@ describe('presentWindow', () => {
     expect(target.show).toHaveBeenCalledOnce()
     expect(target.focus).toHaveBeenCalledOnce()
     expect(webContents.focus).not.toHaveBeenCalled()
+  })
+})
+
+describe('createSingleFlight', () => {
+  test('shares an in-flight action and permits a later action after it settles', async () => {
+    let resolveAction = () => {}
+    const action = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveAction = resolve
+        })
+    )
+    const singleFlight = createSingleFlight(action)
+
+    const first = singleFlight()
+    const second = singleFlight()
+
+    expect(second).toBe(first)
+    expect(action).toHaveBeenCalledOnce()
+    resolveAction()
+    await first
+
+    const third = singleFlight()
+    expect(action).toHaveBeenCalledTimes(2)
+    resolveAction()
+    await third
   })
 })
