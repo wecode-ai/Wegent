@@ -16,10 +16,34 @@ import type { RuntimeTaskAddress } from '@/types/api'
 
 type ReconciliationReason = 'event_lagged' | 'runtime_replaced' | 'system_resume'
 
-interface TerminalEventPayload {
+interface LifecycleEventPayload {
   taskId?: string
   subtaskId?: string
   deviceId?: string
+}
+
+function matchingLifecycleAddress(
+  store: RuntimeTaskLifecycleStore,
+  payload: LifecycleEventPayload
+): RuntimeTaskAddress | null {
+  if (!payload.taskId) return null
+  const snapshot = store.getSnapshot()
+  for (const lifecycle of snapshot.tasks.values()) {
+    if (!lifecycle || lifecycle.address.taskId !== payload.taskId) continue
+    if (
+      payload.deviceId &&
+      lifecycle.address.deviceId !== payload.deviceId &&
+      store.getTask({ ...lifecycle.address, deviceId: payload.deviceId })?.key !== lifecycle.key
+    ) {
+      continue
+    }
+    return lifecycle.address
+  }
+  if (!payload.deviceId) return null
+  return {
+    deviceId: payload.deviceId,
+    taskId: payload.taskId,
+  }
 }
 
 export function RuntimeTaskLifecycleStreamCoordinator({
@@ -106,29 +130,18 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     })
 
     const settleMatchingTask = (
-      payload: TerminalEventPayload,
+      payload: LifecycleEventPayload,
       outcome: 'succeeded' | 'failed' | 'cancelled'
     ): { address: RuntimeTaskAddress; settled: boolean } | null => {
-      if (!payload.taskId) return null
-      const snapshot = store.getSnapshot()
-      for (const lifecycle of snapshot.tasks.values()) {
-        if (!lifecycle || lifecycle.address.taskId !== payload.taskId) continue
-        if (
-          payload.deviceId &&
-          lifecycle.address.deviceId !== payload.deviceId &&
-          store.getTask({ ...lifecycle.address, deviceId: payload.deviceId })?.key !== lifecycle.key
-        ) {
-          continue
-        }
-        const terminalTurnId = payload.subtaskId?.trim() || null
-        const activeTurnId = lifecycle.turn.id
-        if (terminalTurnId && activeTurnId && terminalTurnId !== activeTurnId) {
-          return { address: lifecycle.address, settled: false }
-        }
-        store.turnSettled(lifecycle.address, terminalTurnId, outcome)
-        return { address: lifecycle.address, settled: true }
+      const address = matchingLifecycleAddress(store, payload)
+      if (!address) return null
+      const terminalTurnId = payload.subtaskId?.trim() || null
+      const activeTurnId = store.getTask(address)?.turn.id
+      if (terminalTurnId && activeTurnId && terminalTurnId !== activeTurnId) {
+        return { address, settled: false }
       }
-      return null
+      store.turnSettled(address, terminalTurnId, outcome)
+      return { address, settled: true }
     }
 
     const reconcileTerminalTranscript = async (
@@ -160,6 +173,11 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     }
 
     const unsubscribe = services.chatStream.subscribe({
+      onChatStart: payload => {
+        const address = matchingLifecycleAddress(store, payload)
+        if (!address) return
+        store.turnStarted(address, payload.subtaskId?.trim() || null)
+      },
       onChatDone: payload => {
         const match = settleMatchingTask(payload, 'succeeded')
         if (match) {
