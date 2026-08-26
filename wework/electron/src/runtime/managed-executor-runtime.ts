@@ -95,7 +95,7 @@ export function prepareManagedExecutorEnvironment(
 export function managedExecutorHome(
   options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'>
 ): string {
-  return options.environment.WEGENT_EXECUTOR_HOME?.trim() || join(options.dataDirectory, 'executor')
+  return options.environment.WEGENT_EXECUTOR_HOME?.trim() || join(homedir(), '.wework')
 }
 
 function resolveNativeCodexHome(

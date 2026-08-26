@@ -81,12 +81,16 @@ describe('SystemSleepController', () => {
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('response.block.updated'))
   })
 
-  test('ignores high-frequency response updates that do not change task activity', () => {
+  test('ignores high-frequency response updates without logging or changing task activity', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     const controller = new SystemSleepController()
 
-    controller.handleExecutorEvent('response.output_text.delta', { taskId: 'task-1' })
-    controller.handleExecutorEvent('response.block.updated', { taskId: 'task-1' })
+    for (let index = 0; index < 2_200; index += 1) {
+      controller.handleExecutorEvent('response.output_text.delta', { taskId: 'task-1' })
+      controller.handleExecutorEvent('response.block.updated', { taskId: 'task-1' })
+    }
 
+    expect(log).not.toHaveBeenCalled()
     expect(mocks.start).not.toHaveBeenCalled()
     expect(mocks.stop).not.toHaveBeenCalled()
   })
