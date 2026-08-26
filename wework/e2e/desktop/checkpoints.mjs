@@ -27,6 +27,7 @@ export const DESKTOP_CHECKPOINTS = [
   'context-compaction',
   'runtime-task-queue',
   'runtime-terminal-convergence',
+  'executor-stream-recovery',
   'running-conversation-history',
   'codex-notification-isolation',
   'split-workbench',
