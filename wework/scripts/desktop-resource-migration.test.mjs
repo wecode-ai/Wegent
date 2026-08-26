@@ -75,6 +75,13 @@ describe('desktop resource migration', () => {
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
   })
 
+  test('launches the release builder through the Windows command interpreter', async () => {
+    const source = await readFile(join(weworkRoot, 'electron/scripts/build-release.mjs'), 'utf8')
+
+    expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
+    expect(source).toContain('wrapWindowsScriptCommand(command, args)')
+  })
+
   test('signs the packaged Node runtime with the configured macOS keychain', async () => {
     const source = await readFile(join(weworkRoot, 'scripts/prepare-execution-runtime.mjs'), 'utf8')
 
