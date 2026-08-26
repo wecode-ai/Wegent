@@ -501,7 +501,7 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         fi
 
         if [ "$WEWORK_ELECTRON_CHANGED" -eq 1 ]; then
-            pnpm --filter wework run prepare:electron > "$TEMP_DIR/wework_electron_install.log" 2>&1
+            CI=true pnpm --filter wework run prepare:electron > "$TEMP_DIR/wework_electron_install.log" 2>&1
             ELECTRON_INSTALL_EXIT=$?
             if [ "$ELECTRON_INSTALL_EXIT" -eq 0 ]; then
                 pnpm --dir wework/electron typecheck > "$TEMP_DIR/wework_electron_tsc.log" 2>&1 &
