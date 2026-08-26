@@ -5,6 +5,7 @@ import {
 } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
 import { RotatingLog, type RotatingLogOptions } from './rotating-log.js'
+import { resolveSpawnCommand } from './spawn-command.js'
 
 export type RuntimeSupervisorState =
   | 'idle'
@@ -97,7 +98,8 @@ export class RuntimeSupervisor extends EventEmitter<RuntimeSupervisorEvents> {
     for (let index = 0; index < (this.options.extraPipeCount ?? 0); index += 1) {
       stdio.push('pipe')
     }
-    const child = spawn(this.options.command, this.options.args ?? [], {
+    const resolved = resolveSpawnCommand(this.options.command, this.options.args ?? [])
+    const child = spawn(resolved.command, resolved.args, {
       cwd: this.options.cwd,
       env: this.options.env,
       detached: process.platform !== 'win32',

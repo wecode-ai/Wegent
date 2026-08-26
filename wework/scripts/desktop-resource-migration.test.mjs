@@ -6,10 +6,13 @@ import { describe, expect, test } from 'vitest'
 const weworkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const legacyRustDesktopDirectory = ['src', ['t', 'a', 'u', 'r', 'i'].join('')].join('-')
 const scripts = [
+  'scripts/build-dsh-app.mjs',
+  'scripts/dev-executor-sidecar.cmd',
   'electron/scripts/copy-static.mjs',
   'electron/scripts/package-app.mjs',
   'electron/scripts/prepare-package-assets.mjs',
   'scripts/dev-mac-app.sh',
+  'scripts/dev-windows-app.ps1',
   'scripts/prepare-codex-binary.mjs',
   'scripts/prepare-dws-binary.mjs',
   'scripts/prepare-execution-runtime.mjs',
@@ -25,6 +28,8 @@ describe('desktop resource migration', () => {
     )
     expect(packageJson.scripts['dev:desktop']).toContain('pnpm run prepare:electron')
     expect(packageJson.scripts['dev:mac']).toBe('bash scripts/dev-mac-app.sh')
+    expect(packageJson.scripts['dev:windows']).toContain('scripts/dev-windows-app.ps1')
+    expect(packageJson.scripts['build:dsh-app']).toBe('node scripts/build-dsh-app.mjs')
     expect(packageJson.scripts['ai:verify:electron:build']).toContain('pnpm run prepare:electron')
   })
 

@@ -364,6 +364,7 @@ async function buildRuntime(runtime) {
         '--virtual-store-dir=node_modules/.pnpm',
         '--package-import-method=copy',
         '--config.enable-global-virtual-store=false',
+        ...(process.platform === 'win32' ? ['--config.node-linker=hoisted'] : []),
       ],
       staging
     )
