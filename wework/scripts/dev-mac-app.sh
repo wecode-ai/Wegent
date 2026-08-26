@@ -186,17 +186,11 @@ fi
 cd "$WEWORK_DIR"
 pnpm run prepare:electron
 node electron/node_modules/electron/install.js
-mkdir -p electron/resources
-for resource in icons bundled-plugins; do
-  if [ ! -e "electron/resources/$resource" ]; then
-    ln -s "../../resources/$resource" "electron/resources/$resource"
-  fi
-done
-if [ ! -f electron/resources/icons/32x32.png ]; then
+if [ ! -f resources/icons/32x32.png ]; then
   echo "Error: Electron development icons are unavailable." >&2
   exit 1
 fi
-if [ ! -f electron/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json ]; then
+if [ ! -f resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json ]; then
   echo "Error: Electron bundled plugins are unavailable." >&2
   exit 1
 fi

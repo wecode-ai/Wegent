@@ -7,9 +7,12 @@ import {
   AI_VERIFY_ACTIONS,
   acknowledgeStartedCommand,
   appExitMessage,
+  buildSourceRuntimeEnvironment,
   monitorAppProcess,
   parseArgs,
   readSessionForCleanup,
+  resolveElectronLaunch,
+  resolveHostTarget,
   resolveCommandTimeout,
   resolveOptionalBoolean,
   resolveStartupTimeout,
@@ -244,6 +247,7 @@ describe('validateStartOptions', () => {
     expect(() =>
       validateStartOptions({
         'codex-home-initialization': 'true',
+        packaged: 'false',
         timeout: '180000',
       })
     ).not.toThrow()
@@ -253,5 +257,65 @@ describe('validateStartOptions', () => {
     expect(() => validateStartOptions({ runtime: 'electron' })).toThrow(
       'Unexpected option for start: --runtime'
     )
+  })
+
+  test('rejects an invalid packaged option', () => {
+    expect(() => validateStartOptions({ packaged: 'yes' })).toThrow(
+      '--packaged must be "true" or "false"'
+    )
+  })
+})
+
+describe('resolveElectronLaunch', () => {
+  test('launches the Electron development binary from the source application directory', () => {
+    expect(
+      resolveElectronLaunch({
+        packaged: false,
+        sourceBinary: '/electron/Electron',
+      })
+    ).toMatchObject({
+      command: '/electron/Electron',
+      args: ['.'],
+    })
+  })
+
+  test('launches the packaged application without source arguments', () => {
+    expect(
+      resolveElectronLaunch({
+        packaged: true,
+        sourceBinary: '/electron/Electron',
+        platform: 'darwin',
+        arch: 'arm64',
+      })
+    ).toMatchObject({
+      args: [],
+    })
+  })
+})
+
+describe('resolveHostTarget', () => {
+  test.each([
+    ['darwin', 'arm64', 'aarch64-apple-darwin'],
+    ['darwin', 'x64', 'x86_64-apple-darwin'],
+    ['linux', 'x64', 'x86_64-unknown-linux-gnu'],
+    ['win32', 'x64', 'x86_64-pc-windows-msvc'],
+  ])('maps %s/%s to %s', (platform, arch, target) => {
+    expect(resolveHostTarget(platform, arch)).toBe(target)
+  })
+
+  test('rejects unsupported source platforms', () => {
+    expect(() => resolveHostTarget('win32', 'arm64')).toThrow(
+      'Unsupported Electron source platform: win32/arm64'
+    )
+  })
+})
+
+describe('buildSourceRuntimeEnvironment', () => {
+  test('uses the current Node executable without preparing packaged Node resources', async () => {
+    const environment = await buildSourceRuntimeEnvironment('darwin', 'arm64')
+
+    expect(environment.WEWORK_NODE_PATH).toBe(process.execPath)
+    expect(environment.WEWORK_EXECUTOR_PATH).toContain('/debug/wegent-executor')
+    expect(environment.WEWORK_HARNESS_RUNTIME_ROOT).toContain('harness-runtime-dev')
   })
 })
