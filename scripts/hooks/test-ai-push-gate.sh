@@ -10,6 +10,7 @@ CALL_LOG="$TMP_DIR/calls.log"
 DEFAULT_TEST_OUT="$(mktemp "${TMP_DIR}/default-test.XXXXXX")"
 FULL_TEST_OUT="$(mktemp "${TMP_DIR}/full-test.XXXXXX")"
 WEWORK_TEST_OUT="$(mktemp "${TMP_DIR}/wework-test.XXXXXX")"
+WEWORK_FULL_TEST_OUT="$(mktemp "${TMP_DIR}/wework-full-test.XXXXXX")"
 WEWORK_ELECTRON_TEST_OUT="$(mktemp "${TMP_DIR}/wework-electron-test.XXXXXX")"
 WEWORK_MIXED_TEST_OUT="$(mktemp "${TMP_DIR}/wework-mixed-test.XXXXXX")"
 FRONTEND_TEST_OUT="$(mktemp "${TMP_DIR}/frontend-test.XXXXXX")"
@@ -174,7 +175,7 @@ if ! grep -qE '^pnpm --filter wework typecheck$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE '^pnpm --filter wework exec vitest run src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts$' "$CALL_LOG"; then
     echo "Expected renderer source changes to run changed and sibling test files."
     echo "Calls:"
     cat "$CALL_LOG"
@@ -188,18 +189,54 @@ if grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT"; then
-    echo "Expected focused Wework pre-push tests to use two workers by default."
+if ! grep -qE 'Running focused renderer unit tests with 4 workers' "$WEWORK_TEST_OUT"; then
+    echo "Expected focused Wework pre-push tests to use four workers by default."
     cat "$WEWORK_TEST_OUT"
     exit 1
 fi
 
-STATIC_CHECK_LINE=$(grep -n 'Running static checks in parallel' "$WEWORK_TEST_OUT" | cut -d: -f1)
-UNIT_TEST_LINE=$(grep -n 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
+STATIC_CHECK_LINE=$(grep -n 'Running static checks and unit tests in parallel' "$WEWORK_TEST_OUT" | cut -d: -f1)
+UNIT_TEST_LINE=$(grep -n 'Running focused renderer unit tests with 4 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
 if [ -z "$STATIC_CHECK_LINE" ] || [ -z "$UNIT_TEST_LINE" ] ||
     [ "$STATIC_CHECK_LINE" -ge "$UNIT_TEST_LINE" ]; then
     echo "Expected Wework static checks to be reported before unit tests."
     cat "$WEWORK_TEST_OUT"
+    exit 1
+fi
+
+: > "$CALL_LOG"
+
+# Build a synthetic commit changing renderer-wide Vitest configuration. Full
+# renderer checks must stay inside src/ so Electron tests remain package-owned.
+WEWORK_FULL_BASE_SHA=$(git rev-parse HEAD)
+WEWORK_FULL_FIXTURE="$TMP_DIR/vite.config.ts.fixture"
+cp "$PROJECT_ROOT/wework/vite.config.ts" "$WEWORK_FULL_FIXTURE"
+printf '\n' >> "$WEWORK_FULL_FIXTURE"
+WEWORK_FULL_BLOB=$(git hash-object -w "$WEWORK_FULL_FIXTURE")
+WEWORK_FULL_INDEX="$TMP_DIR/wework-full.index"
+GIT_INDEX_FILE="$WEWORK_FULL_INDEX" git read-tree "$WEWORK_FULL_BASE_SHA"
+GIT_INDEX_FILE="$WEWORK_FULL_INDEX" git update-index --cacheinfo \
+    100644 "$WEWORK_FULL_BLOB" wework/vite.config.ts
+WEWORK_FULL_TREE=$(GIT_INDEX_FILE="$WEWORK_FULL_INDEX" git write-tree)
+WEWORK_FULL_LOCAL_SHA=$(printf 'full renderer pre-push fixture\n' |
+    git commit-tree "$WEWORK_FULL_TREE" -p "$WEWORK_FULL_BASE_SHA")
+
+AI_VERIFIED=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_FULL_TEST_OUT" 2>&1
+refs/heads/topic $WEWORK_FULL_LOCAL_SHA refs/heads/topic $WEWORK_FULL_BASE_SHA
+EOF
+
+if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads$' "$CALL_LOG"; then
+    echo "Expected full renderer tests to exclude Electron-owned test files."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if ! grep -qE 'Running full renderer unit tests with 4 workers' "$WEWORK_FULL_TEST_OUT"; then
+    echo "Expected full Wework renderer tests to use four workers by default."
+    cat "$WEWORK_FULL_TEST_OUT"
     exit 1
 fi
 
@@ -283,7 +320,7 @@ bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$WEWORK_MIXED_TEST_OU
 refs/heads/topic $MIXED_LOCAL_SHA refs/heads/topic $MIXED_BASE_SHA
 EOF
 
-if ! grep -qE '^pnpm --filter wework exec vitest run src/api/changeRequests.test.ts$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads src/api/changeRequests.test.ts$' "$CALL_LOG"; then
     echo "Expected merge-like Wework changes to run only the related renderer test."
     echo "Calls:"
     cat "$CALL_LOG"

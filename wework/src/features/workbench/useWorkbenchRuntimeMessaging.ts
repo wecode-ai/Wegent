@@ -78,7 +78,10 @@ import {
   mergeRuntimeTaskHandles,
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
-import { applyRuntimeConversationAction } from './runtimeConversationCache'
+import {
+  applyRuntimeConversationAction,
+  removeRuntimeConversationTurn,
+} from './runtimeConversationCache'
 import { findFileChangesBySubtaskId } from './runtimePaneMessages'
 import { isRuntimeTaskBusyError } from './runtimePaneStatus'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
@@ -420,8 +423,21 @@ export function useWorkbenchRuntimeMessaging({
   const sendRuntimePaneMessage = useCallback(
     async (request: RuntimeSendRequest, options?: RuntimePaneActionOptions): Promise<boolean> => {
       let sendRequested = false
+      const optimisticUserMessage = options?.optimisticUserMessage
+      const outboundRequestWithClientId = optimisticUserMessage
+        ? {
+            ...request,
+            clientUserMessageId: optimisticUserMessage.id,
+          }
+        : request
+      if (optimisticUserMessage) {
+        applyRuntimeConversationAction(request.address, {
+          type: 'user_added',
+          message: optimisticUserMessage,
+        })
+      }
       try {
-        const outboundRequest = await prepareRuntimeSendRequest(request)
+        const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
         if (!options?.silentBusyRetry) {
           lifecycleStore.sendRequested(outboundRequest.address)
           sendRequested = true
@@ -444,6 +460,11 @@ export function useWorkbenchRuntimeMessaging({
         }
         return true
       } catch (error) {
+        if (optimisticUserMessage) {
+          removeRuntimeConversationTurn(request.address, {
+            clientUserMessageId: optimisticUserMessage.id,
+          })
+        }
         const errorMessage = error instanceof Error ? error.message : '发送失败'
         const blockedByActiveTurn = isRuntimeTaskBusyError(errorMessage)
         if (sendRequested) {
@@ -709,18 +730,16 @@ export function useWorkbenchRuntimeMessaging({
 
   const cancelRuntimePaneTask = useCallback(
     async (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): Promise<boolean> => {
-      lifecycleStore.stopRequested(address)
       try {
         const ack = await executorClient.runtime.cancelRuntimeTask(address)
         if (!ack.accepted) {
-          lifecycleStore.stopRejected(address)
           reportError(normalizeGuidanceError(ack.error ?? '取消当前回复失败'), options)
           return false
         }
+        lifecycleStore.stopRequested(address)
         await refreshWorkLists()
         return true
       } catch (error) {
-        lifecycleStore.stopRejected(address)
         reportError(
           normalizeGuidanceError(error instanceof Error ? error.message : '取消当前回复失败'),
           options
@@ -968,7 +987,10 @@ export function useWorkbenchRuntimeMessaging({
           reportSendBlocked('无法解析任务运行项目', undefined, options)
           return false
         }
-        runtimeTaskTarget = workspaceBinding
+        runtimeTaskTarget = {
+          ...workspaceBinding,
+          deviceId: optimisticDeviceId,
+        }
       } else {
         if (!activeDeviceId) {
           reportSendBlocked('请选择设备后再发送', undefined, options)

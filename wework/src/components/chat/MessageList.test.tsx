@@ -2583,6 +2583,56 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
   })
 
+  test('decodes URL-encoded assistant file paths before opening the workspace file panel', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-encoded-file-link',
+            role: 'assistant',
+            content:
+              '[startup-splash.png](/Users/dev/Library/Application%20Support/Wework/startup-splash.png)',
+            status: 'done',
+            createdAt: '2026-08-25T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+      '/Users/dev/Library/Application Support/Wework/startup-splash.png'
+    )
+  })
+
+  test('decodes an encoded relative file path before extracting its line number', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-encoded-relative-file-link',
+            role: 'assistant',
+            content: '[README file.md](README%20file.md:1)',
+            status: 'done',
+            createdAt: '2026-08-25T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('README file.md', {
+      lineStart: 1,
+      lineEnd: undefined,
+    })
+  })
+
   test('routes assistant folder links to the workspace directory panel', () => {
     const onOpenWorkspaceFile = vi.fn()
     render(
@@ -4134,6 +4184,35 @@ describe('MessageList', () => {
     expect(screen.getByTestId('copy-message-success-icon')).toBeInTheDocument()
     fireEvent.transitionEnd(hoverActions, { propertyName: 'opacity' })
     expect(screen.getByTestId('copy-message-icon')).toBeInTheDocument()
+  })
+
+  test('uses the Electron host clipboard when the browser clipboard is unavailable', async () => {
+    runtimeMock.electron = true
+    desktopHostMock.invoke.mockResolvedValue(undefined)
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'electron-copy',
+            role: 'user',
+            content: '复制到系统剪贴板',
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
+    await userEvent.click(screen.getByTestId('copy-message-button'))
+
+    await waitFor(() =>
+      expect(desktopHostMock.invoke).toHaveBeenCalledWith('clipboard.writeText', {
+        text: '复制到系统剪贴板',
+      })
+    )
+    expect(await screen.findByTestId('copy-message-success-icon')).toBeInTheDocument()
   })
 
   test('shows edit action only for the final completed user turn and submits edited text', async () => {

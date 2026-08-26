@@ -1881,6 +1881,40 @@ describe('runtimeConversationTurns', () => {
     }
   })
 
+  test('appends processing block content deltas in runtime conversation state', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'text-1',
+        subtaskId: 'turn-1',
+        type: 'text',
+        content: 'partial',
+        status: 'streaming',
+        createdAt: 1_780_000_000_000,
+      },
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'block_updated',
+      subtaskId: 'turn-1',
+      blockId: 'text-1',
+      updates: {
+        contentDelta: ' response',
+        status: 'streaming',
+      },
+    })
+
+    expect(turns[0].items[0]).toMatchObject({
+      type: 'block',
+      block: {
+        id: 'text-1',
+        content: 'partial response',
+        status: 'streaming',
+      },
+    })
+  })
+
   test('replaces the optimistic context compaction block with the runtime block', () => {
     const createdAt = 1_780_000_001_250
     let turns = reduceRuntimeConversationTurns(

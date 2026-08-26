@@ -21,9 +21,11 @@ describe('openCloudAuthorizationWindow', () => {
     expect(openExternalUrlMock).not.toHaveBeenCalled()
   })
 
-  test('opens authorization through the Electron-aware external link path', async () => {
+  test('opens authorization in the system browser regardless of link preferences', async () => {
     await expect(openCloudAuthorizationWindow('https://example.com/auth')).resolves.toBeUndefined()
 
-    expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/auth')
+    expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/auth', {
+      target: 'system',
+    })
   })
 })

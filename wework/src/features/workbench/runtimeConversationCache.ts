@@ -348,6 +348,12 @@ export function removeRuntimeConversationTurn(
   address: RuntimeTaskAddress,
   identity: { turnId?: string; clientUserMessageId?: string }
 ): WorkbenchMessage[] {
+  const hydration = hydrationByConversation.get(runtimeConversationKey(address))
+  if (hydration && identity.clientUserMessageId) {
+    hydration.bufferedActions = hydration.bufferedActions.filter(
+      action => action.type !== 'user_added' || action.message.id !== identity.clientUserMessageId
+    )
+  }
   return updateRuntimeConversationTurns(address, turns =>
     turns.filter(turn => {
       if (identity.turnId && turn.id === identity.turnId) return false

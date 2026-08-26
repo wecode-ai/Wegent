@@ -8,12 +8,16 @@ const socket = {
   off: vi.fn(),
 }
 const ensureConnected = vi.fn().mockResolvedValue(undefined)
+const connect = vi.fn().mockResolvedValue(undefined)
+const disconnect = vi.fn()
 const dispose = vi.fn()
 
 vi.mock('@wegent/chat-core', () => ({
   createSocketClient: () => ({
     socket,
     ensureConnected,
+    connect,
+    disconnect,
     dispose,
   }),
 }))
@@ -24,6 +28,8 @@ describe('createCloudRuntimeIpcClient', () => {
     socket.on.mockReset()
     socket.off.mockReset()
     ensureConnected.mockClear()
+    connect.mockClear()
+    disconnect.mockClear()
     dispose.mockClear()
   })
 
@@ -135,5 +141,18 @@ describe('createCloudRuntimeIpcClient', () => {
     await expect(
       client.request('device.execute_command', { timeout_seconds: 900 }, 'device-1')
     ).resolves.toEqual({ success: true })
+  })
+
+  it('replaces the runtime socket after system resume', async () => {
+    const client = createCloudRuntimeIpcClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      token: 'token',
+    })
+
+    await client.reconnect()
+
+    expect(disconnect).toHaveBeenCalledTimes(1)
+    expect(connect).toHaveBeenCalledWith(undefined, true)
   })
 })

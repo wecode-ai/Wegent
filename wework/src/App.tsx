@@ -341,7 +341,7 @@ export function WorkspaceTabSurface({
               workspaceTabId={tab.id}
               debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
-              loadTaskComposerCatalogs={(nativeWorkbenchKind ?? tab.kind) !== 'board'}
+              loadTaskComposerCatalogs
               prewarmComposerApps={prewarmComposerApps}
               publishDebugSnapshots={active && !iframe}
               syncRemoteProjects={active}
