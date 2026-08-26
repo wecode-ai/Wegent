@@ -593,8 +593,9 @@ export function parseGitRemote(remoteUrl: string): GitRemoteParts | null {
 
   try {
     const url = new URL(trimmed)
+    const host = url.protocol === 'ssh:' || url.protocol === 'git+ssh:' ? url.hostname : url.host
     return {
-      host: url.host,
+      host,
       repoPath: url.pathname.replace(/^\/+/, ''),
     }
   } catch {
