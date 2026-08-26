@@ -1,4 +1,4 @@
-import { createReadStream, readFileSync } from 'node:fs'
+import { createReadStream, readFileSync, statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
@@ -12,7 +12,10 @@ export const APP_BASE_PATH = '/wework/app'
 const API_PROXY_PATH = '/wework/api'
 const SOCKET_PROXY_PATH = '/wework/socket.io'
 const DEEP_LINK_PARAMETER = '__wework_route'
-const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), 'web')
+const configuredWebRoot = process.env.WEWORK_APP_WEB_ROOT?.trim()
+const webRoot = configuredWebRoot
+  ? resolve(configuredWebRoot)
+  : resolve(dirname(fileURLToPath(import.meta.url)), 'web')
 const indexPath = join(webRoot, 'index.html')
 
 const MIME_TYPES = {
@@ -36,6 +39,7 @@ const MIME_TYPES = {
 export function apply(ctx) {
   const backendUrl = resolveBackendUrl(process.env)
   const assets = weworkIndexAssets(readFileSync(indexPath, 'utf8'))
+  const developmentReload = injectDevelopmentReload('', process.env, fileBuildId(indexPath))
   ctx.on('webserver/index-inject', table => {
     table.push(
       {
@@ -49,6 +53,13 @@ export function apply(ctx) {
         html: `<script src="${APP_BASE_PATH}/runtime-config.js"></script>`,
       }
     )
+    if (developmentReload) {
+      table.push({
+        kind: 'html',
+        placement: 'body',
+        html: developmentReload,
+      })
+    }
   })
   register(ctx, 'prefix', APP_BASE_PATH, serveWeworkApp)
   if (!backendUrl) return
@@ -117,6 +128,14 @@ export async function serveWeworkApp(req, res) {
   }
 
   if (asset === indexPath) {
+    if (req.method === 'HEAD' && process.env.WEWORK_APP_HOT_RELOAD === '1') {
+      res.writeHead(200, {
+        'cache-control': 'no-store',
+        'x-wework-app-build-id': fileBuildId(indexPath),
+      })
+      res.end()
+      return
+    }
     res.writeHead(302, {
       'cache-control': 'no-store',
       location: coreDshDeepLinkLocation(requestUrl),
@@ -146,6 +165,21 @@ export function coreDshDeepLinkLocation(value) {
     `${requestUrl.pathname}${requestUrl.search}${requestUrl.hash}`
   )
   return `${location.pathname}${location.search}`
+}
+
+export function injectDevelopmentReload(html, environment, buildId) {
+  if (environment.WEWORK_APP_HOT_RELOAD !== '1') return html
+  const script = `<script>(()=>{const current=${escapeJsonForHtml(
+    buildId
+  )};let checking=false;setInterval(async()=>{if(checking)return;checking=true;try{const response=await fetch(${JSON.stringify(
+    `${APP_BASE_PATH}/`
+  )},{method:'HEAD',cache:'no-store'});const next=response.headers.get('x-wework-app-build-id');if(next&&next!==current)window.location.reload()}catch{}finally{checking=false}},500)})()</script>`
+  return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
+}
+
+function fileBuildId(path) {
+  const metadata = statSync(path, { bigint: true })
+  return `${metadata.mtimeNs}:${metadata.size}`
 }
 
 export function injectRuntimeConfig(html, environment = process.env, windowLabel = 'main') {

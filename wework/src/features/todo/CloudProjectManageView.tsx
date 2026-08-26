@@ -252,7 +252,11 @@ export function CloudProjectManageView({
     try {
       const updated = await updateProject({
         version,
-        board_config: { group_by: project.board_config?.group_by ?? 'status', statuses: next },
+        board_config: {
+          group_by: project.board_config?.group_by ?? 'status',
+          statuses: next,
+          processing_start_status_id: project.board_config?.processing_start_status_id ?? null,
+        },
       })
       setStatuses(updated.board_config?.statuses ?? next)
       track('feature_action_completed', { domain: 'project_space', action: 'update' })

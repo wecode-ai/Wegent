@@ -157,9 +157,10 @@ describe('WorkspaceTabSurface', () => {
 
     rerender(<WorkspaceTabSurface {...props} active={false} />)
 
-    expect(screen.getByTestId('workspace-tab-content-fixed-board')).toHaveClass(
-      'pointer-events-none',
-      'invisible'
+    expect(screen.getByTestId('workspace-tab-content-fixed-board')).toHaveClass('hidden')
+    expect(screen.getByTestId('workspace-tab-content-fixed-board')).not.toHaveClass(
+      'invisible',
+      'pointer-events-none'
     )
     expect(screen.getByTestId('mock-workbench-board')).toHaveAttribute('data-route-active', 'false')
     expect(workbenchProviderMocks.cleanup).not.toHaveBeenCalled()
@@ -338,9 +339,10 @@ describe('WorkspaceTabSurface', () => {
     rerender(<WorkspaceTabSurface {...props} active={false} />)
 
     expect(screen.getByTestId('mock-app-iframe')).toHaveAttribute('data-active', 'false')
-    expect(screen.getByTestId('workspace-tab-content-smart-app-1')).toHaveClass(
-      'pointer-events-none',
-      'invisible'
+    expect(screen.getByTestId('workspace-tab-content-smart-app-1')).toHaveClass('hidden')
+    expect(screen.getByTestId('workspace-tab-content-smart-app-1')).not.toHaveClass(
+      'invisible',
+      'pointer-events-none'
     )
     expect(appIframeMocks.cleanup).not.toHaveBeenCalled()
 
@@ -458,9 +460,10 @@ describe('WorkspaceTabSurface', () => {
 
     rerender(<WorkspaceTabSurface {...props} active={false} />)
 
-    expect(screen.getByTestId(`workspace-tab-content-${props.tab.id}`)).toHaveClass(
-      'pointer-events-none',
-      'invisible'
+    expect(screen.getByTestId(`workspace-tab-content-${props.tab.id}`)).toHaveClass('hidden')
+    expect(screen.getByTestId(`workspace-tab-content-${props.tab.id}`)).not.toHaveClass(
+      'invisible',
+      'pointer-events-none'
     )
     expect(harnessAppLauncherMocks.cleanup).not.toHaveBeenCalled()
 

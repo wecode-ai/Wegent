@@ -22,6 +22,7 @@ export interface ManagedExecutorRuntimeOptions {
   dataDirectory: string
   logDirectory: string
   deviceId: string
+  deviceName: string
   onEvent?: (event: string, payload: Record<string, unknown>) => void
 }
 
@@ -40,11 +41,14 @@ export class ManagedExecutorRuntime {
       args: options.args,
       env: {
         ...environment,
+        DEVICE_NAME: options.deviceName,
         WEGENT_APP_IPC_DEVICE_ID: options.deviceId,
         WEGENT_APP_IPC_ENDPOINT: this.endpoint,
         WEGENT_APP_IPC_OWNER_TOKEN: this.ownerToken,
+        WEGENT_APP_LIFECYCLE_FD: process.platform === 'win32' ? undefined : '3',
         WEGENT_APP_IPC_TOKEN: this.token,
       },
+      extraPipeCount: process.platform === 'win32' ? 0 : 1,
       name: 'wegent-executor',
       log: { path: join(options.logDirectory, 'executor-runtime.log') },
       probe: async (_child, signal) => {

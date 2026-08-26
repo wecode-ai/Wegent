@@ -7,7 +7,11 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem, LoopItemTaskBinding
+from app.models.delivery import (
+    LoopItem,
+    LoopItemTaskBinding,
+    ProjectAutomationRun,
+)
 from app.models.user import User
 from app.services.delivery import delivery_service
 from app.services.project_workflow_projection import (
@@ -121,6 +125,69 @@ def test_workflow_projection_unlocks_dependencies_and_updates_issue_status(
     )
     test_db.commit()
     assert item.status == "in_review"
+
+
+def test_workflow_projection_updates_owning_automation_run(
+    test_db: Session,
+    workflow_project: CloudProject,
+) -> None:
+    run = ProjectAutomationRun(
+        cloud_project_id=workflow_project.id,
+        parent_id="automation-rule",
+        task_id="workflow-owned-item",
+        task_title="Workflow owned item",
+        source="event",
+        status="running",
+        created_by_user_id=workflow_project.created_by_user_id,
+        metadata_json={},
+    )
+    test_db.add(run)
+    test_db.flush()
+    item = LoopItem(
+        id="workflow-owned-item",
+        cloud_project_id=workflow_project.id,
+        sequence_number=103,
+        created_by_user_id=workflow_project.created_by_user_id,
+        title="Workflow owned item",
+        description="",
+        status="in_progress",
+        priority="none",
+        sort_order=0,
+        metadata_json={
+            "workflow_automation": {
+                "rule_id": "automation-rule",
+                "run_id": run.id,
+            },
+            "workflow": {
+                "version": 1,
+                "definition_version": 1,
+                "nodes": [
+                    {
+                        "id": "develop",
+                        "name": "Develop",
+                        "execution_mode": "robot",
+                        "depends_on": [],
+                        "required": True,
+                        "status": "running",
+                    }
+                ],
+            },
+        },
+    )
+    test_db.add(item)
+    test_db.commit()
+
+    update_workflow_node(
+        test_db,
+        item_id=item.id,
+        node_id="develop",
+        node_status="completed",
+    )
+    test_db.commit()
+
+    test_db.refresh(run)
+    assert run.status == "succeeded"
+    assert run.completed_at is not None
 
 
 def test_direct_robot_task_succeeds_without_automation_rule(
@@ -287,4 +354,4 @@ def test_direct_robot_delivery_completes_after_runtime_success(
 
     nodes = item.metadata_json["workflow"]["nodes"]
     assert [node["status"] for node in nodes] == ["completed", "ready"]
-    assert item.status == "pending"
+    assert item.status == "in_progress"

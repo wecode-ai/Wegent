@@ -3094,6 +3094,68 @@ describe('DesktopSidebar', () => {
     expect(screen.getAllByTestId('project-item')).toHaveLength(2)
   })
 
+  test('shows the device name and original device id in project and task hover cards', async () => {
+    vi.useFakeTimers()
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device-id',
+          socket_device_id: 'remote-runtime-id',
+          name: '公司云端 MacBook Pro',
+          is_default: false,
+          device_type: 'remote',
+        }),
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'remote-project-id', name: 'Sites' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'remote-runtime-id',
+                deviceName: 'remote-runtime-id',
+                remoteHostId: 'cloud-device-dev',
+                workspacePath: '/Users/alice/Sites',
+                workspaceSource: 'remote',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'remote-hover-task',
+                    title: 'Deploy Sites',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    const projectRow = screen.getByTestId('project-row-7')
+    fireEvent.mouseEnter(projectRow)
+    await act(async () => vi.advanceTimersByTime(450))
+    const projectHover = screen.getByTestId('project-hover-card-7')
+    expect(projectHover).toHaveTextContent('公司云端 MacBook Pro')
+    expect(projectHover).toHaveTextContent('ID：cloud-device-dev')
+    expect(projectHover).not.toHaveTextContent('remote-runtime-id')
+
+    fireEvent.pointerMove(document.body)
+    await act(async () => vi.advanceTimersByTime(120))
+    fireEvent.click(screen.getByTestId('project-item-button'))
+    const taskRow = screen.getByTestId('runtime-local-task-row-remote-hover-task')
+    fireEvent.mouseEnter(taskRow)
+    await act(async () => vi.advanceTimersByTime(450))
+    const taskHover = screen.getByTestId('runtime-local-task-hover-content-remote-hover-task')
+    expect(taskHover).toHaveTextContent('公司云端 MacBook Pro')
+    expect(taskHover).toHaveTextContent('ID：cloud-device-dev')
+    expect(taskHover).not.toHaveTextContent('remote-runtime-id')
+  })
+
   test('shows cached tasks for an offline remote project without allowing them to open', async () => {
     const onOpenRuntimeTask = vi.fn()
     const onSetRuntimeTaskPinned = vi.fn()

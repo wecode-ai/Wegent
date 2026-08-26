@@ -1538,6 +1538,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       ) {
         return element.value
       }
+      const declaredValue =
+        element.getAttribute('data-value') ?? element.firstElementChild?.getAttribute('data-value')
+      if (declaredValue !== null && declaredValue !== undefined) return declaredValue
       return element.textContent?.trim() ?? ''
     }
     case 'getSelectionOffset': {
