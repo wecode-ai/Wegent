@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Start the configured Issue orchestration when work enters Pending."""
+"""Start the configured Issue orchestration when work enters processing."""
 
 import logging
 
@@ -15,6 +15,7 @@ from app.models.delivery import (
 )
 from app.schemas.issue_workflow import IssueWorkflowInstance
 from app.services.issue_workflow_planning import issue_workflow_planning_service
+from app.services.loop_item_status_history import is_processing_status
 from app.services.project_automations import (
     project_automation_service,
 )
@@ -25,7 +26,11 @@ logger = logging.getLogger(__name__)
 class IssueWorkflowStartService:
     """Enter an Issue's snapshotted orchestration exactly once."""
 
-    def should_start_after_creation(self, item: LoopItem) -> bool:
+    def should_start_after_creation(
+        self,
+        item: LoopItem,
+        project: CloudProject,
+    ) -> bool:
         """Return whether a newly created Issue should start its workflow."""
 
         workflow = self._workflow(item)
@@ -33,7 +38,7 @@ class IssueWorkflowStartService:
             return False
         if workflow.advancement_policy == "ai":
             return True
-        return item.status in {"pending", "in_progress"}
+        return is_processing_status(project, item.status)
 
     async def start(
         self,

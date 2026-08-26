@@ -27,6 +27,32 @@ export interface IssueExecutionConfigResult {
   workflow?: IssueWorkflowInstance
 }
 
+function initializeWorkflow(
+  source: IssueWorkflowInstance | null | undefined
+): IssueWorkflowInstance | null {
+  if (!source) return null
+  const workflow = structuredClone(source)
+  if (workflow.execution_config || workflow.advancement_policy === 'ai') return workflow
+
+  const sharedConfig = workflow.nodes.find(
+    node =>
+      workflowNodeExecutionMode(node) === 'robot' &&
+      !node.execution_config_override &&
+      node.execution_config
+  )?.execution_config
+  if (!sharedConfig) return workflow
+
+  return {
+    ...workflow,
+    execution_config: structuredClone(sharedConfig),
+    nodes: workflow.nodes.map(node =>
+      workflowNodeExecutionMode(node) === 'robot' && !node.execution_config_override
+        ? { ...node, execution_config: null }
+        : node
+    ),
+  }
+}
+
 export function IssueExecutionConfigDialog({
   item,
   projectChatAgentApi,
@@ -59,7 +85,7 @@ export function IssueExecutionConfigDialog({
     }
   )
   const [workflow, setWorkflow] = useState<IssueWorkflowInstance | null>(() =>
-    item.workflow ? structuredClone(item.workflow) : null
+    initializeWorkflow(item.workflow)
   )
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -215,11 +241,7 @@ export function IssueExecutionConfigDialog({
         ) : workflow ? (
           <>
             <WorkflowExecutionConfigFields
-              value={
-                workflow.execution_config ??
-                automatedNodes[0]?.execution_config ??
-                emptyWorkflowExecutionConfig()
-              }
+              value={workflow.execution_config ?? emptyWorkflowExecutionConfig()}
               onChange={execution_config =>
                 setWorkflow(current => (current ? { ...current, execution_config } : current))
               }
@@ -310,7 +332,7 @@ export function IssueExecutionConfigDialog({
           />
         )}
         {!loading &&
-        runtimeProfiles.length === 0 &&
+        devices.length === 0 &&
         !(workflow ? workflowComplete : workflowExecutionConfigComplete(executionConfig)) ? (
           <p
             className="mt-3 text-sm text-amber-600"

@@ -1,5 +1,8 @@
 import { cn } from '@/lib/utils'
 
+const FLOATING_SURFACE = 'rounded-xl border border-border/80 bg-background/95 shadow-md'
+const FLOATING_CONTROL_SURFACE = `${FLOATING_SURFACE} hover:bg-muted hover:text-text-primary`
+
 const recipes: Record<string, string> = {
   'automation-root':
     'relative h-full min-h-0 w-full min-w-0 overflow-hidden bg-background text-base text-text-primary',
@@ -42,8 +45,6 @@ const recipes: Record<string, string> = {
     'mt-5 grid gap-1 rounded-xl bg-muted px-4 py-3 [&>span]:flex [&>span]:items-center [&>span]:gap-2 [&>span]:text-xs [&>span]:text-text-secondary [&_strong]:truncate [&_strong]:text-sm [&_strong]:font-medium [&_strong]:text-text-primary [&_small]:line-clamp-2 [&_small]:text-xs [&_small]:text-text-muted',
   'card-footer':
     'mt-auto flex items-center justify-between border-t border-border/50 pt-4 text-xs text-text-muted',
-  'run-dot':
-    'size-2 rounded-full bg-text-muted/50 [&.success]:bg-success [&.failed]:bg-destructive [&.running]:bg-amber-500',
   switch:
     'relative h-5 w-9 rounded-full bg-border transition-colors [&_i]:absolute [&_i]:left-0.5 [&_i]:top-0.5 [&_i]:size-4 [&_i]:rounded-full [&_i]:bg-background [&_i]:shadow-sm [&_i]:transition-transform [&.on]:bg-focus [&.on_i]:translate-x-4',
   'home-empty':
@@ -92,28 +93,24 @@ const recipes: Record<string, string> = {
   'template-empty':
     'col-span-2 grid min-h-56 place-items-center content-center gap-2 rounded-xl border border-dashed border-border text-center [&_strong]:text-sm [&_strong]:font-medium [&_span]:text-sm [&_span]:text-text-muted',
   'template-preview-empty': 'grid h-full place-items-center text-center text-sm text-text-muted',
-  'editor-shell': 'h-full min-h-0 w-full min-w-0 overflow-hidden bg-background text-text-primary',
-  'back-button':
-    'grid size-8 shrink-0 place-items-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary',
+  'editor-shell':
+    'relative h-full min-h-0 w-full min-w-0 overflow-hidden bg-background text-text-primary',
+  'floating-icon-button': `grid size-8 shrink-0 place-items-center text-text-muted transition-colors ${FLOATING_CONTROL_SURFACE}`,
   'dark-secondary':
-    'inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40',
-  'publish-button':
-    'inline-flex h-8 items-center gap-1.5 rounded-lg bg-focus px-3 text-xs font-medium text-white hover:bg-focus/90 disabled:cursor-not-allowed disabled:opacity-50',
-  'editor-body': 'grid h-full min-h-0 grid-cols-[220px_minmax(520px,1fr)_400px]',
-  'editor-leftbar':
-    'flex min-h-0 flex-col border-r border-border bg-surface/60 p-3 text-text-secondary',
-  'workflow-identity':
-    'grid gap-2 border-b border-border px-1 pb-4 [&_input]:min-w-0 [&_input]:truncate [&_input]:border-0 [&_input]:bg-transparent [&_input]:px-2 [&_input]:text-sm [&_input]:font-medium [&_input]:text-text-primary [&_input]:outline-none [&_small]:px-2 [&_small]:text-xs [&_small]:text-text-muted',
-  'workflow-identity-top': 'flex items-center gap-2',
-  'editor-nav':
-    'mt-3 grid gap-1 [&_button]:flex [&_button]:h-10 [&_button]:items-center [&_button]:gap-3 [&_button]:rounded-lg [&_button]:px-3 [&_button]:text-sm [&_button]:text-text-secondary [&_button:hover]:bg-muted [&_button:hover]:text-text-primary [&_button.active]:bg-muted [&_button.active]:text-text-primary',
-  'leftbar-trigger':
-    'mt-auto border-t border-border pt-4 [&>span]:mb-2 [&>span]:block [&>span]:text-xs [&>span]:text-text-muted [&_button]:grid [&_button]:w-full [&_button]:grid-cols-[20px_minmax(0,1fr)] [&_button]:items-start [&_button]:gap-2 [&_button]:rounded-xl [&_button]:border [&_button]:border-focus/25 [&_button]:bg-focus/5 [&_button]:p-3 [&_button]:text-left [&_button]:text-focus [&_button_div]:grid [&_button_div]:min-w-0 [&_button_div]:gap-1 [&_button_strong]:truncate [&_button_strong]:text-xs [&_button_strong]:font-medium [&_button_small]:line-clamp-2 [&_button_small]:text-xs [&_button_small]:text-focus/65',
-  'workflow-canvas': 'relative min-h-0 overflow-hidden bg-surface',
+    'inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/80 bg-background/95 px-2.5 text-xs text-text-secondary shadow-md hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40',
+  'editor-body': 'relative h-full min-h-0 overflow-hidden',
+  'editor-navigation-actions':
+    'absolute left-[var(--automation-panel-gap)] top-[var(--automation-panel-gap)] z-30 flex items-center gap-2',
+  'editor-section-trigger': `inline-flex h-8 min-w-24 items-center gap-2 px-3 text-xs font-medium text-text-secondary transition-colors [&>span]:min-w-0 [&>span]:flex-1 [&>span]:text-left ${FLOATING_CONTROL_SURFACE}`,
+  'editor-section-menu':
+    'grid gap-1 [&>label]:grid [&>label]:gap-1.5 [&>label]:px-2 [&>label]:pb-2 [&>label]:pt-1 [&>label>span]:text-xs [&>label>span]:text-text-muted [&_input]:h-9 [&_input]:w-full [&_input]:rounded-lg [&_input]:border [&_input]:border-border [&_input]:bg-background [&_input]:px-2.5 [&_input]:text-sm [&_input]:text-text-primary [&_input]:outline-none [&_input:focus]:border-focus [&>div]:grid [&>div]:gap-1 [&>div]:border-t [&>div]:border-border [&>div]:pt-1 [&>div>button]:grid [&>div>button]:h-9 [&>div>button]:grid-cols-[20px_minmax(0,1fr)_16px] [&>div>button]:items-center [&>div>button]:gap-2 [&>div>button]:rounded-lg [&>div>button]:px-2.5 [&>div>button]:text-left [&>div>button]:text-sm [&>div>button]:text-text-secondary [&>div>button:hover]:bg-muted [&>div>button:hover]:text-text-primary [&>div>button.active]:text-text-primary',
+  'workflow-canvas': 'absolute inset-0 min-h-0 overflow-hidden bg-surface',
   'react-flow-workflow-canvas':
     'absolute inset-0 select-none font-sans [&_.react-flow]:bg-transparent [&_.react-flow__node]:font-sans [&_.react-flow__node.dragging]:z-10 [&_.react-flow__node.dragging]:will-change-transform [&_.react-flow__node:focus-visible]:outline-none [&_.react-flow__minimap]:overflow-hidden [&_.react-flow__minimap]:rounded-xl [&_.react-flow__minimap]:border [&_.react-flow__minimap]:border-border/70 [&_.react-flow__minimap]:bg-background/95 [&_.react-flow__minimap]:shadow-md',
   'automation-hidden-handle': '!size-px !border-0 !bg-transparent opacity-0',
   'automation-node-handle': '!h-4 !w-2 !rounded-sm !border-2 !border-background !bg-focus',
+  'workflow-node-shell':
+    'relative h-full w-full [&.selected_.workflow-node-insert]:pointer-events-auto [&.selected_.workflow-node-insert]:opacity-100 [&:hover_.workflow-node-insert]:pointer-events-auto [&:hover_.workflow-node-insert]:opacity-100 [&:focus-within_.workflow-node-insert]:pointer-events-auto [&:focus-within_.workflow-node-insert]:opacity-100',
   'flow-node':
     'grid h-full w-full grid-cols-[38px_minmax(0,1fr)_18px] items-center gap-3 rounded-xl border border-border/80 bg-background p-3 text-left text-text-primary shadow-sm transition-[border-color,box-shadow] duration-150 hover:border-border hover:shadow-md [&.selected]:border-focus [&.selected]:shadow-md [&.selected]:ring-1 [&.selected]:ring-focus/20 [&>svg]:-rotate-90 [&>svg]:text-text-muted',
   'node-icon':
@@ -122,55 +119,62 @@ const recipes: Record<string, string> = {
     'grid min-w-0 gap-1 [&_small]:text-xs [&_small]:text-text-muted [&_strong]:truncate [&_strong]:text-sm [&_strong]:font-medium [&>span]:truncate [&>span]:text-xs [&>span]:text-text-muted',
   'subgraph-count': 'whitespace-nowrap rounded-md bg-muted px-2 py-1 text-xs text-text-secondary',
   'react-flow-dynamic-group':
-    'relative h-full w-full overflow-hidden rounded-2xl border border-border/80 bg-background/95 shadow-sm [&.selected]:border-focus [&.selected]:shadow-md [&.selected]:ring-1 [&.selected]:ring-focus/20',
+    'relative h-full w-full rounded-2xl border border-border/80 bg-background/95 shadow-sm [&.selected]:border-focus [&.selected]:shadow-md [&.selected]:ring-1 [&.selected]:ring-focus/20 [&.selected_.workflow-node-insert]:pointer-events-auto [&.selected_.workflow-node-insert]:opacity-100 [&:hover_.workflow-node-insert]:pointer-events-auto [&:hover_.workflow-node-insert]:opacity-100 [&:focus-within_.workflow-node-insert]:pointer-events-auto [&:focus-within_.workflow-node-insert]:opacity-100',
   'react-flow-group-header':
     'grid h-[88px] w-full cursor-grab grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 border-0 border-b border-border/70 bg-background px-3.5 py-3 text-left text-text-primary active:cursor-grabbing [&>span:nth-child(2)]:grid [&>span:nth-child(2)]:gap-1 [&_small]:text-xs [&_small]:text-text-muted [&_strong]:text-sm [&_strong]:font-medium [&_em]:text-xs [&_em]:not-italic [&_em]:text-text-muted',
   'react-flow-group-label':
     'pointer-events-none absolute left-[18px] top-[99px] inline-flex items-center gap-1 text-xs text-text-muted',
   'react-flow-stage-node':
-    'relative h-full w-full rounded-lg border border-border/80 bg-background shadow-sm [&.selected]:border-focus [&.selected]:shadow-md [&.selected]:ring-1 [&.selected]:ring-focus/20 [&:hover_.react-flow-stage-handle]:opacity-100 [&.selected_.react-flow-stage-handle]:opacity-100',
+    'relative h-full w-full rounded-lg border border-border/80 bg-background shadow-sm [&.selected]:border-focus [&.selected]:shadow-md [&.selected]:ring-1 [&.selected]:ring-focus/20 [&:hover_.react-flow-stage-handle]:opacity-100 [&.selected_.react-flow-stage-handle]:opacity-100 [&.selected_.react-flow-stage-insert]:pointer-events-auto [&.selected_.react-flow-stage-insert]:opacity-100 [&:hover_.react-flow-stage-insert]:pointer-events-auto [&:hover_.react-flow-stage-insert]:opacity-100 [&:focus-within_.react-flow-stage-insert]:pointer-events-auto [&:focus-within_.react-flow-stage-insert]:opacity-100',
   'react-flow-stage-main':
     'grid h-full w-full cursor-grab grid-cols-[28px_minmax(0,1fr)] items-center gap-2 rounded-lg border-0 bg-transparent p-2 text-left text-text-primary active:cursor-grabbing [&>span:first-child]:grid [&>span:first-child]:size-7 [&>span:first-child]:place-items-center [&>span:first-child]:rounded-lg [&>span:first-child]:bg-focus/10 [&>span:first-child]:text-xs [&>span:first-child]:text-focus [&>span:last-child]:grid [&>span:last-child]:min-w-0 [&>span:last-child]:gap-1 [&_strong]:truncate [&_strong]:text-xs [&_strong]:font-medium [&_small]:text-xs [&_small]:text-text-muted',
   'react-flow-stage-handle':
-    '!size-2.5 !border-2 !border-background !bg-focus opacity-0 transition-opacity',
-  'react-flow-stage-add':
-    'absolute -top-2.5 right-3 z-10 grid size-5 place-items-center rounded-full border border-focus bg-background text-focus hover:bg-focus hover:text-white',
-  'react-flow-edge-insert': 'absolute z-20 transition-opacity',
-  'react-flow-edge-insert-trigger':
-    'grid size-[22px] place-items-center rounded-full border border-border-strong bg-background text-focus shadow-md transition hover:scale-110 hover:border-focus hover:bg-focus hover:text-white',
-  'react-flow-edge-insert-menu':
-    'absolute left-1/2 top-7 grid w-44 -translate-x-1/2 gap-1 rounded-xl border border-border bg-popover p-1 shadow-xl [&_button]:flex [&_button]:h-8 [&_button]:items-center [&_button]:gap-2 [&_button]:rounded-lg [&_button]:px-2 [&_button]:text-xs [&_button]:text-text-secondary [&_button:hover]:bg-muted',
-  'react-flow-insert-node': 'relative size-9',
-  'react-flow-insert-trigger':
-    'grid size-9 place-items-center rounded-full border border-border bg-background text-text-muted shadow-sm hover:border-focus hover:text-focus',
-  'react-flow-insert-menu':
-    'absolute left-1/2 top-10 z-20 grid w-44 -translate-x-1/2 gap-1 rounded-xl border border-border bg-popover p-1 shadow-xl [&_button]:flex [&_button]:h-8 [&_button]:items-center [&_button]:gap-2 [&_button]:rounded-lg [&_button]:px-2 [&_button]:text-xs [&_button]:text-text-secondary [&_button:hover]:bg-muted',
-  'canvas-mode-controls':
-    '!m-4 grid w-10 gap-1 rounded-xl border border-border/80 bg-background/95 p-1 shadow-md [&_button]:grid [&_button]:size-8 [&_button]:place-items-center [&_button]:rounded-lg [&_button]:text-text-muted [&_button]:transition-colors [&_button:hover]:bg-muted [&_button:hover]:text-text-primary [&_button.active]:bg-focus/10 [&_button.active]:text-focus',
+    '!top-[72%] !size-2.5 !border-2 !border-background !bg-focus opacity-0 transition-opacity',
+  'react-flow-stage-insert':
+    'pointer-events-none absolute top-1/2 z-20 grid size-6 -translate-y-1/2 place-items-center rounded-full border border-focus bg-background text-focus opacity-0 shadow-sm transition-[opacity,transform,background-color,color] hover:scale-110 hover:bg-focus hover:text-white [&.before]:left-0 [&.before]:-translate-x-1/2 [&.after]:right-0 [&.after]:translate-x-1/2',
+  'workflow-node-insert':
+    'pointer-events-none absolute top-1/2 z-30 -translate-y-1/2 opacity-0 transition-opacity [&.before]:left-0 [&.before]:-translate-x-1/2 [&.after]:right-0 [&.after]:translate-x-1/2',
+  'workflow-node-insert-trigger':
+    'grid size-7 place-items-center rounded-full border border-focus bg-background text-focus shadow-md transition-transform hover:scale-110 hover:bg-focus hover:text-white',
+  'workflow-node-insert-menu':
+    'absolute top-8 z-40 grid w-44 gap-1 rounded-xl border border-border bg-popover p-1 shadow-xl [&.before]:left-0 [&.after]:right-0 [&_button]:flex [&_button]:h-8 [&_button]:items-center [&_button]:gap-2 [&_button]:rounded-lg [&_button]:px-2 [&_button]:text-xs [&_button]:text-text-secondary [&_button:hover]:bg-muted [&_button:hover]:text-text-primary',
+  'canvas-mode-controls': `!left-[var(--automation-panel-gap)] !top-14 !m-0 grid h-16 w-8 grid-rows-2 overflow-hidden ${FLOATING_SURFACE}`,
+  'canvas-mode-button':
+    'grid h-full w-full place-items-center text-text-muted transition-colors hover:bg-muted hover:text-text-primary [&.active]:bg-focus/10 [&.active]:text-focus',
+  'canvas-minimap':
+    '!bottom-16 !right-[calc(var(--automation-panel-gap)+var(--automation-right-panel-width)+16px)] !m-0',
   'canvas-viewport-controls':
-    '!m-4 flex h-9 items-center overflow-hidden rounded-xl border border-border/80 bg-background/95 px-1 shadow-md [&_button]:grid [&_button]:size-7 [&_button]:place-items-center [&_button]:rounded-lg [&_button]:text-text-muted [&_button]:transition-colors [&_button:hover]:bg-muted [&_button:hover]:text-text-primary [&_span]:min-w-12 [&_span]:text-center [&_span]:text-xs [&_span]:text-text-secondary',
-  'editor-rightbar': 'flex min-h-0 flex-col border-l border-border bg-surface/60 text-text-primary',
+    '!bottom-4 !right-[calc(var(--automation-panel-gap)+var(--automation-right-panel-width)+16px)] !m-0 flex h-9 items-center overflow-hidden rounded-xl border border-border/80 bg-background/95 px-1 shadow-md [&_button]:grid [&_button]:size-7 [&_button]:place-items-center [&_button]:rounded-lg [&_button]:text-text-muted [&_button]:transition-colors [&_button:hover]:bg-muted [&_button:hover]:text-text-primary [&_span]:min-w-12 [&_span]:text-center [&_span]:text-xs [&_span]:text-text-secondary',
+  'editor-rightbar':
+    'absolute bottom-[var(--automation-panel-gap)] right-[var(--automation-panel-gap)] top-[var(--automation-right-panel-top)] z-20 flex w-[var(--automation-right-panel-width)] min-h-0 flex-col overflow-hidden rounded-2xl border border-border/80 bg-background/95 text-text-primary shadow-lg',
   'editor-global-actions':
-    'flex h-14 shrink-0 items-center justify-end gap-2 border-b border-border bg-background px-3',
+    'absolute right-[var(--automation-panel-gap)] top-[var(--automation-panel-gap)] z-30 flex h-8 items-center justify-end gap-2',
   'editor-save-state':
-    'mr-auto inline-flex min-w-0 items-center gap-1.5 text-xs text-text-muted [&_i]:size-1.5 [&_i]:shrink-0 [&_i]:rounded-full [&.saved_i]:bg-success [&.dirty_i]:bg-amber-500 [&.saving_i]:animate-pulse [&.saving_i]:bg-focus',
-  'node-panel': 'flex min-h-0 flex-1 flex-col bg-surface/60 text-text-primary',
+    'inline-flex h-8 min-w-0 items-center gap-1.5 rounded-lg border border-border/80 bg-background/95 px-2.5 text-xs text-text-muted shadow-md [&_i]:size-1.5 [&_i]:shrink-0 [&_i]:rounded-full [&.saved_i]:bg-success [&.dirty_i]:bg-amber-500 [&.saving_i]:animate-pulse [&.saving_i]:bg-focus',
+  'node-panel': 'flex min-h-0 flex-1 flex-col bg-background text-text-primary',
   'panel-head':
-    'flex min-h-[76px] items-center gap-3 border-b border-border px-5 py-4 [&>div]:grid [&>div]:min-w-0 [&>div]:gap-0.5 [&_strong]:truncate [&_strong]:text-sm [&_strong]:font-medium [&_small]:text-xs [&_small]:text-text-muted',
+    'grid min-h-[84px] grid-cols-[40px_minmax(0,1fr)_32px] items-center gap-3 px-5 py-4',
+  'panel-head-copy':
+    'grid min-w-0 gap-1 [&_strong]:truncate [&_strong]:text-lg [&_strong]:font-medium [&_small]:truncate [&_small]:text-sm [&_small]:text-text-muted',
+  'panel-close':
+    'grid size-8 place-items-center rounded-lg text-text-muted transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/25',
   'panel-tabs':
-    'flex h-11 items-end gap-5 border-b border-border px-5 [&_button]:h-full [&_button]:border-b-2 [&_button]:border-transparent [&_button]:text-xs [&_button]:text-text-muted [&_button.active]:border-focus [&_button.active]:text-text-primary',
-  'panel-content': 'min-h-0 flex-1 overflow-y-auto bg-background p-5',
+    'flex h-12 shrink-0 items-end gap-6 border-b border-border px-5 [&_button]:h-full [&_button]:border-b-2 [&_button]:border-transparent [&_button]:text-base [&_button]:font-medium [&_button]:text-text-muted [&_button]:transition-colors [&_button:hover]:text-text-primary [&_button.active]:border-focus [&_button.active]:text-text-primary',
+  'panel-content': 'min-h-0 flex-1 overflow-y-auto bg-background',
   'last-run-panel':
-    'grid gap-2 rounded-xl border border-border bg-surface p-4 [&_strong]:text-sm [&_strong]:font-medium [&_span]:text-xs [&_span]:text-text-muted [&_button]:mt-2 h-8 rounded-lg border border-border bg-background text-xs hover:bg-muted',
+    'm-5 grid place-items-center gap-2 rounded-xl bg-muted/45 px-5 py-8 text-center [&_strong]:text-sm [&_strong]:font-medium [&_span]:text-xs [&_span]:text-text-muted [&_button]:mt-2 h-8 rounded-lg bg-background px-3 text-xs shadow-sm hover:bg-muted',
+  'panel-settings': 'grid gap-4 p-5',
+  'panel-section': 'grid gap-4 border-b border-border/60 px-5 py-5',
+  'panel-danger-zone': 'px-5 py-5 [&.compact]:p-0 [&.compact]:pt-1',
   'prominent-trigger':
-    'mb-5 flex gap-3 rounded-xl border border-focus/25 bg-focus/5 p-4 text-focus [&_div]:grid [&_div]:gap-1 [&_strong]:text-sm [&_strong]:font-medium [&_span]:text-xs [&_span]:text-focus/65',
+    'flex gap-3 rounded-xl bg-muted/45 p-4 text-text-secondary [&_div]:grid [&_div]:gap-1 [&_strong]:text-sm [&_strong]:font-medium [&_strong]:text-text-primary [&_span]:text-xs [&_span]:text-text-muted',
   'coordinator-intro':
-    'mb-5 flex items-start gap-3 rounded-xl border border-emerald-700/20 bg-emerald-50/50 p-4 text-emerald-800 [&>div]:grid [&>div]:flex-1 [&>div]:gap-1 [&_strong]:text-sm [&_strong]:font-medium [&_span]:text-xs [&_span]:text-emerald-800/65 [&>button]:grid [&>button]:size-8 [&>button]:place-items-center [&>button]:rounded-lg [&>button:hover]:bg-emerald-100',
+    'flex items-start gap-3 rounded-xl bg-muted/45 p-4 text-text-secondary [&>div]:grid [&>div]:flex-1 [&>div]:gap-1 [&_strong]:text-sm [&_strong]:font-medium [&_strong]:text-text-primary [&_span]:text-xs [&_span]:text-text-muted',
   'panel-field':
-    'mb-4 grid gap-2 [&>span]:flex [&>span]:items-center [&>span]:gap-2 [&>span]:text-xs [&>span]:font-medium [&>span]:text-text-secondary [&_select]:h-10 [&_select]:w-full [&_select]:rounded-lg [&_select]:border [&_select]:border-border [&_select]:bg-background [&_select]:px-3 [&_select]:text-sm [&_select]:text-text-primary [&_select]:outline-none [&_input]:h-10 [&_input]:w-full [&_input]:rounded-lg [&_input]:border [&_input]:border-border [&_input]:bg-background [&_input]:px-3 [&_input]:text-sm [&_input]:text-text-primary [&_input]:outline-none [&_textarea]:min-h-32 [&_textarea]:w-full [&_textarea]:resize-y [&_textarea]:rounded-lg [&_textarea]:border [&_textarea]:border-border [&_textarea]:bg-background [&_textarea]:p-3 [&_textarea]:text-sm [&_textarea]:text-text-primary [&_textarea]:outline-none [&_select:focus]:border-focus [&_input:focus]:border-focus [&_textarea:focus]:border-focus',
+    'relative grid gap-2 [&>span]:flex [&>span]:items-center [&>span]:gap-2 [&>span]:text-sm [&>span]:font-medium [&>span]:text-text-secondary [&_select]:h-10 [&_select]:w-full [&_select]:rounded-lg [&_select]:border [&_select]:border-transparent [&_select]:bg-muted/60 [&_select]:px-3 [&_select]:text-sm [&_select]:text-text-primary [&_select]:outline-none [&_select]:transition-colors [&_input]:h-10 [&_input]:w-full [&_input]:rounded-lg [&_input]:border [&_input]:border-transparent [&_input]:bg-muted/60 [&_input]:px-3 [&_input]:text-sm [&_input]:text-text-primary [&_input]:outline-none [&_input]:transition-colors [&_input::placeholder]:text-text-muted [&_textarea]:min-h-28 [&_textarea]:w-full [&_textarea]:resize-y [&_textarea]:rounded-lg [&_textarea]:border [&_textarea]:border-transparent [&_textarea]:bg-muted/60 [&_textarea]:p-3 [&_textarea]:text-sm [&_textarea]:text-text-primary [&_textarea]:outline-none [&_textarea]:transition-colors [&_textarea::placeholder]:text-text-muted [&_select:hover]:bg-muted [&_input:hover]:bg-muted [&_textarea:hover]:bg-muted [&_select:focus]:border-focus/60 [&_select:focus]:bg-background [&_input:focus]:border-focus/60 [&_input:focus]:bg-background [&_textarea:focus]:border-focus/60 [&_textarea:focus]:bg-background',
   'cascade-index':
     'grid size-5 shrink-0 place-items-center rounded-md bg-focus/10 text-xs not-italic text-focus',
-  'schedule-settings': 'border-t border-border pt-4',
+  'schedule-settings': 'grid gap-4 border-t border-border pt-4',
   'start-mode-section': 'border-t border-border pt-4',
   'cascade-heading':
     'mb-3 flex items-start gap-2 [&>div]:grid [&>div]:gap-0.5 [&_strong]:text-xs [&_strong]:font-medium [&_span]:text-xs [&_span]:text-text-muted',
@@ -188,11 +192,11 @@ const recipes: Record<string, string> = {
   'execution-status-list':
     'grid grid-cols-2 gap-2 [&_button]:flex [&_button]:h-10 [&_button]:items-center [&_button]:gap-2 [&_button]:rounded-lg [&_button]:border [&_button]:border-border [&_button]:bg-background [&_button]:px-3 [&_button]:text-xs [&_button]:text-text-secondary [&_button:hover]:border-focus/35 [&_button.selected]:border-focus [&_button.selected]:bg-focus/5 [&_button.selected]:text-focus [&_svg]:text-focus',
   'trigger-explanation':
-    'mt-5 flex gap-3 rounded-xl border border-focus/25 bg-focus/5 p-4 text-focus [&>svg]:mt-0.5 [&_div]:grid [&_div]:gap-1 [&_strong]:text-sm [&_strong]:font-medium [&_p]:text-xs [&_p]:text-focus/65',
+    'flex gap-3 border-t border-border/60 pt-4 text-text-secondary [&>svg]:mt-0.5 [&>svg]:text-focus [&_div]:grid [&_div]:gap-1 [&_strong]:text-sm [&_strong]:font-medium [&_strong]:text-text-primary [&_p]:text-xs [&_p]:text-text-muted',
   'node-model-settings':
-    'mb-4 rounded-xl border border-border bg-surface p-4 [&.coordinator-model-settings]:border-emerald-700/20 [&.coordinator-model-settings]:bg-emerald-50/40',
+    'grid gap-4 border-t border-border/60 pt-4 [&.coordinator-model-settings]:border-border/60',
   'panel-plugins':
-    'relative flex min-h-10 flex-wrap items-center gap-2 rounded-lg border border-border bg-background p-2 [&_button]:inline-flex h-7 items-center gap-1 rounded-md bg-muted px-2 text-xs text-text-secondary [&_button.add]:border border-dashed border-border-strong bg-transparent hover:bg-muted',
+    'relative flex min-h-10 flex-wrap items-center gap-2 rounded-lg bg-muted/60 p-2 [&_button]:inline-flex h-7 items-center gap-1 rounded-md bg-background px-2 text-xs text-text-secondary shadow-sm [&_button:hover]:text-text-primary [&_button.add]:border border-dashed border-border-strong bg-transparent shadow-none hover:bg-muted',
   'plugin-popover':
     'absolute left-0 top-[calc(100%+8px)] z-popover grid w-56 gap-1 rounded-xl border border-border bg-popover p-1.5 shadow-2xl [&_button]:flex [&_button]:h-9 [&_button]:items-center [&_button]:gap-2 [&_button]:rounded-lg [&_button]:bg-transparent [&_button]:px-2.5 [&_button]:text-xs [&_button]:text-text-secondary [&_button:hover]:bg-muted [&_button>span]:grid [&_button>span]:size-4 [&_button>span]:place-items-center [&_button>span]:rounded [&_button>span]:border [&_button>span]:border-border-strong [&_button>span.checked]:border-focus [&_button>span.checked]:bg-focus',
   'subgraph-mode-settings':
@@ -200,24 +204,27 @@ const recipes: Record<string, string> = {
   'dag-stage-settings-intro':
     'mb-5 flex items-start gap-3 rounded-xl border border-emerald-700/20 bg-emerald-50/40 p-4 text-emerald-800 [&>div]:grid [&>div]:flex-1 [&>div]:gap-1 [&_strong]:text-sm [&_strong]:font-medium [&_span]:text-xs [&_span]:text-emerald-800/60 [&>button]:grid [&>button]:size-8 [&>button]:place-items-center [&>button]:rounded-lg [&>button]:text-emerald-800/60 [&>button:hover]:bg-emerald-100 [&>button:hover]:text-emerald-800',
   'dag-stage-dependency-summary':
-    'mb-4 grid gap-2 rounded-xl border border-border bg-surface p-4 text-xs text-text-muted [&>span]:font-medium [&>span]:text-text-secondary [&>div]:flex [&>div]:flex-wrap [&>div]:gap-2 [&_em]:rounded-md [&_em]:bg-focus/10 [&_em]:px-2 [&_em]:py-1 [&_em]:not-italic [&_em]:text-focus [&_small]:text-text-muted [&_p]:text-text-muted',
-  'deliverables-section': 'mb-4 border-t border-border pt-4',
+    'grid gap-2 text-xs text-text-muted [&>span]:font-medium [&>span]:text-text-secondary [&>div]:flex [&>div]:flex-wrap [&>div]:gap-2 [&_em]:rounded-md [&_em]:bg-focus/10 [&_em]:px-2 [&_em]:py-1 [&_em]:not-italic [&_em]:text-focus [&_small]:text-text-muted [&_p]:leading-relaxed [&_p]:text-text-muted',
+  'deliverables-section':
+    'grid gap-4 border-b border-border/60 px-5 py-5 [&>p]:text-xs [&>p]:leading-relaxed [&>p]:text-text-muted',
   'section-heading':
-    'mb-3 flex items-center justify-between gap-3 [&_strong]:text-xs [&_strong]:font-medium [&_button]:inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-focus [&_button:hover]:bg-muted',
-  'deliverable-list': 'overflow-hidden rounded-xl border border-border bg-surface',
+    'flex items-center justify-between gap-3 [&_strong]:text-sm [&_strong]:font-medium [&_button]:inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-focus [&_button:hover]:bg-muted',
+  'deliverable-list': 'grid gap-2',
   'deliverable-item':
-    'grid grid-cols-[minmax(0,1fr)_64px_28px] items-center gap-2 p-3 [&+.deliverable-item]:border-t [&+.deliverable-item]:border-border [&>div]:grid [&>div]:gap-1 [&_input]:h-auto [&_input]:border-0 [&_input]:bg-transparent [&_input]:p-0 [&_input]:text-sm [&_input]:text-text-primary [&_input]:outline-none [&_input+input]:text-xs [&_input+input]:text-text-muted [&>span]:rounded-md [&>span]:bg-muted [&>span]:px-2 [&>span]:py-1 [&>span]:text-center [&>span]:text-xs [&>span]:text-text-secondary [&>button]:grid [&>button]:size-7 [&>button]:place-items-center [&>button]:rounded-lg [&>button]:text-text-muted [&>button:hover]:bg-muted [&>button:hover]:text-destructive',
+    'grid grid-cols-[minmax(0,1fr)_56px_28px] items-center gap-2 rounded-lg bg-muted/60 p-3 [&>div]:grid [&>div]:gap-1 [&_input]:h-auto [&_input]:border-0 [&_input]:bg-transparent [&_input]:p-0 [&_input]:text-sm [&_input]:text-text-primary [&_input]:outline-none [&_input+input]:text-xs [&_input+input]:text-text-muted [&>span]:rounded-md [&>span]:bg-background [&>span]:px-2 [&>span]:py-1 [&>span]:text-center [&>span]:text-xs [&>span]:text-text-secondary [&>button]:grid [&>button]:size-7 [&>button]:place-items-center [&>button]:rounded-lg [&>button]:text-text-muted [&>button:hover]:bg-background [&>button:hover]:text-destructive',
   'empty-deliverables':
-    'grid min-h-20 place-items-center rounded-xl border border-dashed border-border text-xs text-text-muted',
+    'grid min-h-16 place-items-center rounded-lg border border-dashed border-border bg-muted/30 text-xs text-text-muted transition-colors hover:bg-muted/60 hover:text-text-secondary',
   'execution-mode':
-    'mb-4 border-0 p-0 [&_legend]:mb-3 [&_legend]:text-xs [&_legend]:font-medium [&>div]:grid [&>div]:grid-cols-2 [&>div]:gap-2 [&_button]:flex [&_button]:h-11 [&_button]:items-center [&_button]:justify-center [&_button]:gap-2 [&_button]:rounded-xl [&_button]:border [&_button]:border-border [&_button]:bg-background [&_button]:text-sm [&_button]:text-text-secondary [&_button:hover]:border-focus/35 [&_button.selected]:border-focus [&_button.selected]:bg-focus/5 [&_button.selected]:text-focus',
-  'execution-hint': 'mb-4 text-xs text-text-muted',
+    'border-0 p-0 [&_legend]:mb-3 [&_legend]:text-sm [&_legend]:font-medium [&>div]:grid [&>div]:grid-cols-2 [&>div]:gap-2 [&_button]:flex [&_button]:h-10 [&_button]:items-center [&_button]:justify-center [&_button]:gap-2 [&_button]:rounded-lg [&_button]:border [&_button]:border-transparent [&_button]:bg-muted/60 [&_button]:text-sm [&_button]:text-text-secondary [&_button]:transition-colors [&_button:hover]:bg-muted [&_button:hover]:text-text-primary [&_button.selected]:border-focus/60 [&_button.selected]:bg-focus/10 [&_button.selected]:text-focus',
+  'execution-hint': 'text-xs leading-relaxed text-text-muted',
   'required-node':
-    'mb-4 flex items-center gap-2 text-xs font-medium text-text-secondary [&_input]:size-4 [&_input]:accent-focus',
-  'panel-help': 'mb-4 rounded-xl bg-muted p-3 text-xs text-text-muted [&_p]:leading-relaxed',
+    'flex items-center gap-2 text-sm text-text-secondary [&_input]:size-4 [&_input]:accent-focus',
+  'panel-help':
+    'flex items-start gap-2 border-t border-border/60 pt-4 text-xs text-text-muted [&_svg]:mt-0.5 [&_svg]:shrink-0 [&_p]:leading-relaxed',
   'delete-step':
-    'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-destructive/30 text-xs text-destructive hover:bg-destructive/10',
-  'rule-runs-view': 'flex min-h-0 flex-col gap-4 bg-background p-5 text-text-primary',
+    'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-destructive/30 text-sm text-destructive transition-colors hover:bg-destructive/10',
+  'rule-runs-view':
+    'absolute inset-0 flex min-h-0 flex-col gap-4 bg-surface pb-5 pl-5 pr-[calc(var(--automation-panel-gap)+var(--automation-right-panel-width)+20px)] pt-20 text-text-primary',
   'rule-runs-header':
     'flex items-center justify-between gap-4 [&_h2]:text-base [&_h2]:font-medium [&_p]:mt-1 [&_p]:text-xs [&_p]:text-text-muted',
   'rule-run-filters':
@@ -234,7 +241,7 @@ const recipes: Record<string, string> = {
   'run-detail-head':
     'flex items-center gap-3 border-b border-border pb-4 [&>div]:grid [&>div]:gap-1 [&_strong]:text-sm [&_strong]:font-medium [&_small]:text-xs [&_small]:text-text-muted',
   'run-detail-icon':
-    'grid size-10 place-items-center rounded-xl bg-muted text-text-muted [&.success]:bg-success/10 [&.success]:text-success [&.failed]:bg-destructive/10 [&.failed]:text-destructive [&.running]:bg-amber-500/10 [&.running]:text-amber-600',
+    'grid size-10 place-items-center rounded-xl bg-muted text-text-muted [&.queued]:bg-focus/10 [&.queued]:text-focus [&.waiting]:bg-amber-500/10 [&.waiting]:text-amber-600 [&.success]:bg-success/10 [&.success]:text-success [&.failed]:bg-destructive/10 [&.failed]:text-destructive [&.running]:bg-amber-500/10 [&.running]:text-amber-600',
   'run-detail-summary':
     'grid grid-cols-2 gap-3 border-b border-border py-4 [&>div]:grid [&>div]:gap-1 [&>div>span:first-child]:text-xs [&>div>span:first-child]:text-text-muted [&_strong]:text-xs [&_strong]:font-medium',
   'run-detail-steps':
@@ -252,7 +259,7 @@ const recipes: Record<string, string> = {
   'runs-row':
     'grid grid-cols-[minmax(0,1fr)_120px_150px_80px] items-center gap-3 border-b border-border/60 px-4 py-3 last:border-0 [&>span:first-child]:grid [&>span:first-child]:gap-1 [&_strong]:text-sm [&_strong]:font-medium [&_small]:text-xs [&_small]:text-text-muted [&>button]:text-xs [&>button]:text-focus hover:[&>button]:underline',
   'run-status':
-    'inline-flex w-fit items-center rounded-md bg-muted px-2 py-1 text-xs text-text-secondary [&.success]:bg-success/10 [&.success]:text-success [&.failed]:bg-destructive/10 [&.failed]:text-destructive [&.running]:bg-amber-500/10 [&.running]:text-amber-600',
+    'inline-flex w-fit items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs text-text-secondary [&.queued]:bg-focus/10 [&.queued]:text-focus [&.waiting]:bg-amber-500/10 [&.waiting]:text-amber-600 [&.success]:bg-success/10 [&.success]:text-success [&.failed]:bg-destructive/10 [&.failed]:text-destructive [&.running]:bg-amber-500/10 [&.running]:text-amber-600',
   spin: 'animate-spin',
 }
 

@@ -1,8 +1,6 @@
 import type { CloudLoopItem, WorkflowNodeInstance } from '@/api/deliveries'
 import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
 
-type TaskEntryStatus = 'pending' | 'in_progress'
-
 export function isSelfManagedWorkItem(item: Pick<CloudLoopItem, 'workflow'>): boolean {
   const workflow = item.workflow
   if (!workflow) return true
@@ -38,7 +36,7 @@ export function shouldPrepareWorkItemTask(
     CloudLoopItem,
     'assignee_agent_id' | 'assignee_team_id' | 'parent_id' | 'status' | 'workflow'
   >,
-  targetStatus: TaskEntryStatus,
+  previousStatus: string,
   taskBindingCount: number
 ): boolean {
   return (
@@ -46,31 +44,17 @@ export function shouldPrepareWorkItemTask(
     !item.assignee_agent_id &&
     !item.assignee_team_id &&
     item.parent_id === null &&
-    item.status !== targetStatus &&
+    item.status !== previousStatus &&
     taskBindingCount === 0
   )
 }
 
-export function shouldDeferWorkItemMoveUntilTaskCreated(
-  item: Pick<
-    CloudLoopItem,
-    'assignee_agent_id' | 'assignee_team_id' | 'parent_id' | 'status' | 'workflow'
-  >,
-  targetStatus: TaskEntryStatus,
-  taskBindingCount: number
-): boolean {
-  return (
-    targetStatus === 'pending' && shouldPrepareWorkItemTask(item, targetStatus, taskBindingCount)
-  )
-}
-
 export function shouldRevealWorkItemWorkflowActions(
-  item: Pick<CloudLoopItem, 'status' | 'workflow'>,
-  targetStatus: TaskEntryStatus
+  item: Pick<CloudLoopItem, 'workflow'>,
+  statusChanged: boolean
 ): boolean {
   return (
-    item.status === 'inbox' &&
-    targetStatus === 'pending' &&
+    statusChanged &&
     !isSelfManagedWorkItem(item) &&
     Boolean(
       item.workflow?.nodes.some(

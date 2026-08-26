@@ -7,6 +7,8 @@ import { cn } from '@/lib/utils'
 export interface MenuOption {
   value: string
   label: string
+  icon?: ReactNode
+  ariaLabel?: string
   disabled?: boolean
 }
 
@@ -27,6 +29,8 @@ export function MenuSelect({
   disabled = false,
   placeholder,
   invalid = false,
+  field = false,
+  fullWidth = false,
 }: {
   testId: string
   value: string
@@ -37,6 +41,8 @@ export function MenuSelect({
   disabled?: boolean
   placeholder?: string
   invalid?: boolean
+  field?: boolean
+  fullWidth?: boolean
 }) {
   const selected = options.find(option => option.value === value)
   const selectionState = value ? 'selected' : 'unselected'
@@ -45,19 +51,26 @@ export function MenuSelect({
       testId={testId}
       disabled={disabled}
       invalid={invalid}
+      fullWidth={fullWidth}
       trigger={
         <span
           data-selection-state={selectionState}
+          data-value={value}
           data-invalid={invalid || undefined}
           className={cn(
             'inline-flex h-8 max-w-64 items-center justify-end gap-1.5 rounded-full px-2 text-sm font-medium',
+            field &&
+              'h-9 w-full max-w-none justify-between rounded-lg border border-border bg-background',
             pill && 'bg-surface',
             selectionState === 'selected' && 'text-text-primary',
             selectionState === 'unselected' && 'text-text-muted',
             invalid && 'text-destructive ring-1 ring-destructive/40'
           )}
         >
-          <span className="truncate">{selected?.label ?? placeholder ?? value}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            {selected?.icon}
+            <span className="truncate">{selected?.label ?? placeholder ?? value}</span>
+          </span>
           <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
         </span>
       }
@@ -70,13 +83,15 @@ export function MenuSelect({
               type="button"
               data-testid={`${testId}-option-${option.value}`}
               disabled={option.disabled}
+              aria-label={option.ariaLabel}
               onClick={() => {
                 if (option.disabled) return
                 onChange(option.value)
                 close()
               }}
-              className="flex h-10 w-full items-center rounded-xl px-3 text-left text-sm font-medium hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+              className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
             >
+              {option.icon}
               <span className="min-w-0 flex-1 truncate">{option.label}</span>
               {option.value === value ? <Check className="h-4 w-4 shrink-0" /> : null}
             </button>

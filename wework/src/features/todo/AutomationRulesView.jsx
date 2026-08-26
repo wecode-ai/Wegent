@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
   ArrowLeft,
@@ -17,10 +17,8 @@ import {
   Laptop,
   LayoutGrid,
   MoreHorizontal,
-  Play,
   Plus,
   Puzzle,
-  Rocket,
   Search,
   Sparkles,
   Tag,
@@ -31,8 +29,41 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react'
+import { PopupMenu } from '@/components/common/MenuSelect'
 import { AutomationWorkflowCanvas } from './AutomationWorkflowCanvas.jsx'
 import { automationClass } from './automationStyles'
+
+const ACTIVE_RUN_STATUSES = new Set([
+  'pending',
+  'queued',
+  'waiting_runtime',
+  'waiting_device',
+  'running',
+])
+const EMPTY_EXECUTION_CATALOG = { environments: [], models: [], plugins: [] }
+
+function runMatchesFilter(status, filter) {
+  if (filter === 'all') return true
+  if (filter === 'active') return ACTIVE_RUN_STATUSES.has(status)
+  if (filter === 'success') return status === 'succeeded'
+  if (filter === 'failed') return status === 'failed' || status === 'cancelled'
+  return false
+}
+
+function runStatusPresentation(status) {
+  const presentations = {
+    pending: { label: '准备中', tone: 'queued', icon: Clock3 },
+    queued: { label: '排队中', tone: 'queued', icon: Clock3 },
+    waiting_runtime: { label: '待配置', tone: 'waiting', icon: Clock3 },
+    waiting_device: { label: '等待设备', tone: 'waiting', icon: Clock3 },
+    running: { label: '执行中', tone: 'running', icon: Activity },
+    succeeded: { label: '成功', tone: 'success', icon: CheckCircle2 },
+    failed: { label: '失败', tone: 'failed', icon: XCircle },
+    skipped: { label: '已跳过', tone: 'neutral', icon: Circle },
+    cancelled: { label: '已取消', tone: 'failed', icon: XCircle },
+  }
+  return presentations[status] ?? presentations.pending
+}
 
 function createExecutionNode({
   id,
@@ -366,7 +397,7 @@ function triggerPresentation(trigger) {
   if (trigger.startMode === 'status') {
     return {
       label: 'Issue 开始处理时',
-      detail: 'Issue 状态进入「待开始」或「进行中」时启动',
+      detail: 'Issue 从未开始区域进入处理阶段或其后任意状态时启动',
     }
   }
 
@@ -411,7 +442,6 @@ function cloneRule(rule) {
     trigger: {
       ...rule.trigger,
       tags: [...rule.trigger.tags],
-      statuses: [...(rule.trigger.statuses ?? ['pending', 'in_progress'])],
       schedule: { ...rule.trigger.schedule },
     },
     steps: rule.steps.map(cloneNode),
@@ -427,14 +457,13 @@ function makeRule() {
     name: '未命名自动化',
     description: '描述这条自动化要完成什么',
     enabled: false,
-    updatedAt: '尚未发布',
+    updatedAt: '尚未保存',
     trigger: {
       type: 'event',
       source: 'issue',
       startMode: 'immediate',
       event: 'created',
       tags: [],
-      statuses: ['pending', 'in_progress'],
       schedule: {
         frequency: 'daily',
         weekday: 'monday',
@@ -443,7 +472,6 @@ function makeRule() {
       },
     },
     steps: [],
-    lastStatus: 'idle',
     legacyDefinition: null,
   }
 }
@@ -459,7 +487,6 @@ function makeRuleFromTemplate(template, executionCatalog) {
     trigger: {
       ...template.trigger,
       tags: [...template.trigger.tags],
-      statuses: [...(template.trigger.statuses ?? ['pending', 'in_progress'])],
       schedule: { ...template.trigger.schedule },
     },
     steps: template.steps.map((step, stepIndex) =>
@@ -480,23 +507,6 @@ function makeRuleFromTemplate(template, executionCatalog) {
   }
 }
 
-function executionNodesComplete(rule) {
-  const nodesComplete = nodes =>
-    nodes.every(
-      step =>
-        step.name.trim() &&
-        step.prompt.trim() &&
-        (step.executionMode === 'automatic'
-          ? step.environment &&
-            step.model &&
-            (step.workspacePolicy !== 'composer' ||
-              Boolean(step.executionConfig?.workspace_binding))
-          : true) &&
-        (!step.subgraph || nodesComplete(step.subgraph.nodes))
-    )
-  return rule.steps.length > 0 && nodesComplete(rule.steps)
-}
-
 export function AutomationRulesView({
   rules: backendRules,
   runs: backendRuns,
@@ -504,13 +514,14 @@ export function AutomationRulesView({
   error = '',
   canManage = true,
   projectTags = [],
-  executionCatalog = { environments: [], models: [], plugins: [] },
+  executionCatalog: initialExecutionCatalog = EMPTY_EXECUTION_CATALOG,
   onReload,
+  onLoadExecutionCatalog,
+  onLoadRuns,
   onSaveRule,
   onToggleRule,
   onDuplicateRule,
   onDeleteRule,
-  onRunRule,
 }) {
   const [view, setView] = useState('home')
   const [homeTab, setHomeTab] = useState('rules')
@@ -518,6 +529,7 @@ export function AutomationRulesView({
   const [query, setQuery] = useState('')
   const [rules, setRules] = useState(backendRules)
   const [runs, setRuns] = useState(backendRuns)
+  const [executionCatalog, setExecutionCatalog] = useState(initialExecutionCatalog)
   const [draft, setDraft] = useState(makeRule)
   const [savedSnapshot, setSavedSnapshot] = useState('')
   const [editorSection, setEditorSection] = useState('workflow')
@@ -526,8 +538,10 @@ export function AutomationRulesView({
   const [templateStoreOpen, setTemplateStoreOpen] = useState(false)
   const [pluginMenuOpen, setPluginMenuOpen] = useState(false)
   const [toast, setToast] = useState('')
-  const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [runsLoading, setRunsLoading] = useState(false)
+  const executionCatalogRequestRef = useRef(null)
+  const runsRequestRef = useRef(null)
 
   const dirty = JSON.stringify(draft) !== savedSnapshot
 
@@ -543,6 +557,10 @@ export function AutomationRulesView({
   useEffect(() => {
     setRuns(backendRuns)
   }, [backendRuns])
+
+  useEffect(() => {
+    setExecutionCatalog(initialExecutionCatalog)
+  }, [initialExecutionCatalog])
 
   const visibleRules = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -562,55 +580,127 @@ export function AutomationRulesView({
     window.setTimeout(() => setToast(''), 2200)
   }
 
+  const resolveExecutionCatalog = async () => {
+    if (!onLoadExecutionCatalog) return executionCatalog
+    if (!executionCatalogRequestRef.current) {
+      executionCatalogRequestRef.current = onLoadExecutionCatalog()
+        .then(catalog => {
+          setExecutionCatalog(catalog)
+          return catalog
+        })
+        .finally(() => {
+          executionCatalogRequestRef.current = null
+        })
+    }
+    return executionCatalogRequestRef.current
+  }
+
+  const prepareEditor = async open => {
+    setView('preparing-editor')
+    try {
+      const catalog = await resolveExecutionCatalog()
+      open(catalog)
+    } catch (loadError) {
+      setView('home')
+      notify(loadError instanceof Error ? loadError.message : String(loadError))
+    }
+  }
+
   const openRule = rule => {
-    setDraft(cloneRule(rule))
-    setSavedSnapshot(JSON.stringify(rule))
-    setEditorSection('workflow')
-    setSelectedNode({ type: 'trigger' })
-    setPanelTab('settings')
-    setView('editor')
+    void prepareEditor(() => {
+      setDraft(cloneRule(rule))
+      setSavedSnapshot(JSON.stringify(rule))
+      setEditorSection('workflow')
+      setSelectedNode({ type: 'trigger' })
+      setPanelTab('settings')
+      setView('editor')
+    })
   }
 
   const createRule = () => {
-    const rule = makeRule()
-    setDraft(rule)
-    setSavedSnapshot('')
-    setEditorSection('workflow')
-    setSelectedNode({ type: 'trigger' })
-    setView('editor')
+    void prepareEditor(() => {
+      const rule = makeRule()
+      setDraft(rule)
+      setSavedSnapshot('')
+      setEditorSection('workflow')
+      setSelectedNode({ type: 'trigger' })
+      setPanelTab('settings')
+      setView('editor')
+    })
   }
 
   const applyTemplate = template => {
-    const rule = makeRuleFromTemplate(template, executionCatalog)
-    setTemplateStoreOpen(false)
-    setDraft(rule)
-    setSavedSnapshot('')
-    setEditorSection('workflow')
-    setSelectedNode({ type: 'trigger' })
-    setPanelTab('settings')
-    setView('editor')
+    void prepareEditor(catalog => {
+      const rule = makeRuleFromTemplate(template, catalog)
+      setTemplateStoreOpen(false)
+      setDraft(rule)
+      setSavedSnapshot('')
+      setEditorSection('workflow')
+      setSelectedNode({ type: 'trigger' })
+      setPanelTab('settings')
+      setView('editor')
+    })
+  }
+
+  const loadRuns = async () => {
+    if (!onLoadRuns) return runs
+    if (!runsRequestRef.current) {
+      setRunsLoading(true)
+      runsRequestRef.current = onLoadRuns()
+        .then(loadedRuns => {
+          setRuns(loadedRuns)
+          return loadedRuns
+        })
+        .catch(loadError => {
+          notify(loadError instanceof Error ? loadError.message : String(loadError))
+          throw loadError
+        })
+        .finally(() => {
+          setRunsLoading(false)
+          runsRequestRef.current = null
+        })
+    }
+    return runsRequestRef.current
+  }
+
+  const openRunsHome = () => {
+    setHomeTab('runs')
+    void loadRuns().catch(() => undefined)
+  }
+
+  const changeEditorSection = section => {
+    setEditorSection(section)
+    if (section === 'runs') void loadRuns().catch(() => undefined)
+  }
+
+  const changePanelTab = tab => {
+    setPanelTab(tab)
+    if (tab === 'lastRun') void loadRuns().catch(() => undefined)
   }
 
   const updateDraft = updater => {
     setDraft(current => (typeof updater === 'function' ? updater(current) : updater))
   }
 
-  const saveRule = async published => {
-    if (published && !executionNodesComplete(draft)) {
-      notify(draft.steps.length ? '请完善执行节点后再发布' : '请先添加执行节点')
-      return null
-    }
+  const saveRule = async () => {
     if (!draft.name.trim() || !draft.description.trim()) {
       notify('请填写自动化名称和说明')
       return null
     }
+    const hasUnnamedNode = nodes =>
+      nodes.some(
+        node =>
+          !node.name.trim() ||
+          (node.kind === 'dynamic' && hasUnnamedNode(node.subgraph?.nodes ?? []))
+      )
+    if (hasUnnamedNode(draft.steps)) {
+      notify('请填写所有执行节点名称')
+      return null
+    }
     setSaving(true)
     try {
-      const candidate = {
-        ...cloneRule(draft),
-        enabled: published ? true : draft.enabled,
-      }
-      const saved = onSaveRule ? await onSaveRule(candidate, published) : candidate
+      const candidate = cloneRule(draft)
+      const saved = onSaveRule ? await onSaveRule(candidate) : candidate
       setDraft(cloneRule(saved))
       setRules(current => {
         const withoutDraft = current.filter(rule => rule.id !== draft.id)
@@ -620,7 +710,7 @@ export function AutomationRulesView({
           : [saved, ...withoutDraft]
       })
       setSavedSnapshot(JSON.stringify(saved))
-      notify(published ? '自动化已发布并启用' : '自动化已保存')
+      notify('自动化已保存')
       return saved
     } catch (saveError) {
       notify(saveError instanceof Error ? saveError.message : String(saveError))
@@ -642,7 +732,6 @@ export function AutomationRulesView({
             version: 1,
             name: `${rule.name} 副本`,
             enabled: false,
-            lastStatus: 'idle',
           }
       setRules(current => [copy, ...current.filter(item => item.id !== copy.id)])
       notify('已创建独立副本')
@@ -662,28 +751,7 @@ export function AutomationRulesView({
     }
   }
 
-  const runTest = async () => {
-    if (!executionNodesComplete(draft)) {
-      notify(draft.steps.length ? '请完善执行节点后再测试' : '请先添加执行节点')
-      return
-    }
-    setTesting(true)
-    try {
-      const saved = dirty || !draft.persisted ? await saveRule(false) : draft
-      if (!saved) return
-      notify('测试运行已开始')
-      const run = onRunRule ? await onRunRule(saved) : null
-      if (run) setRuns(current => [run, ...current.filter(item => item.id !== run.id)])
-    } catch (runError) {
-      notify(runError instanceof Error ? runError.message : String(runError))
-    } finally {
-      setTesting(false)
-    }
-  }
-
-  const addStep = (afterIndex, kind = 'task', dependencyIds = null) => {
-    const predecessor = draft.steps[afterIndex] ?? null
-    const successor = draft.steps[afterIndex + 1] ?? null
+  const addStep = (anchorStepId, placement = 'after', kind = 'task') => {
     const step =
       kind === 'dynamic'
         ? createDynamicAllocationNode(executionCatalog)
@@ -693,32 +761,76 @@ export function AutomationRulesView({
             name: '',
             prompt: '',
           })
-    step.dependencies = dependencyIds ?? (predecessor ? [predecessor.id] : [])
-    step.dependencyContext = Object.fromEntries(
-      step.dependencies.map(dependencyId => [dependencyId, ['final_result', 'deliveries']])
-    )
-    step.x = predecessor ? predecessor.x + 420 : 440
-    step.y = predecessor?.y ?? 226
     updateDraft(current => {
-      const next = [...current.steps]
-      next.splice(afterIndex + 1, 0, step)
-      if (successor && dependencyIds === null) {
-        const successorIndex = next.findIndex(candidate => candidate.id === successor.id)
-        next[successorIndex] = {
-          ...next[successorIndex],
-          dependencies: next[successorIndex].dependencies.map(dependencyId =>
-            dependencyId === predecessor?.id ? step.id : dependencyId
-          ),
+      const anchorIndex = anchorStepId
+        ? current.steps.findIndex(candidate => candidate.id === anchorStepId)
+        : -1
+      const anchor = anchorIndex >= 0 ? current.steps[anchorIndex] : null
+      if (anchorStepId && !anchor) return current
+      if (placement === 'before' && !anchor) return current
+
+      const insertionX = placement === 'before' ? (anchor?.x ?? 440) : anchor ? anchor.x + 420 : 440
+      const insertionY = anchor?.y ?? 226
+      const shifted = current.steps.map(candidate =>
+        candidate.id !== anchor?.id && candidate.x >= insertionX
+          ? { ...candidate, x: candidate.x + 420 }
+          : candidate
+      )
+      const inheritedDependencies =
+        placement === 'before' ? [...anchor.dependencies] : anchor ? [anchor.id] : []
+      const inserted = {
+        ...step,
+        dependencies: inheritedDependencies,
+        dependencyContext:
+          placement === 'before'
+            ? { ...(anchor.dependencyContext ?? {}) }
+            : Object.fromEntries(
+                inheritedDependencies.map(dependencyId => [
+                  dependencyId,
+                  ['final_result', 'deliveries'],
+                ])
+              ),
+        x: insertionX,
+        y: insertionY,
+      }
+      const rewired = shifted.map(candidate => {
+        if (placement === 'before' && candidate.id === anchor.id) {
+          return {
+            ...candidate,
+            x: candidate.x + 420,
+            dependencies: [inserted.id],
+            dependencyContext: {
+              [inserted.id]: ['final_result', 'deliveries'],
+            },
+          }
+        }
+
+        const followsAnchor = anchor
+          ? candidate.dependencies.includes(anchor.id)
+          : candidate.dependencies.length === 0
+        if (placement !== 'after' || !followsAnchor) return candidate
+        const inheritedContext = anchor
+          ? (candidate.dependencyContext?.[anchor.id] ?? ['final_result', 'deliveries'])
+          : ['final_result', 'deliveries']
+        return {
+          ...candidate,
+          dependencies: anchor
+            ? candidate.dependencies.map(dependencyId =>
+                dependencyId === anchor.id ? inserted.id : dependencyId
+              )
+            : [inserted.id],
           dependencyContext: {
             ...Object.fromEntries(
-              Object.entries(next[successorIndex].dependencyContext ?? {}).filter(
-                ([dependencyId]) => dependencyId !== predecessor?.id
+              Object.entries(candidate.dependencyContext ?? {}).filter(
+                ([dependencyId]) => dependencyId !== anchor?.id
               )
             ),
-            [step.id]: ['final_result', 'deliveries'],
+            [inserted.id]: inheritedContext,
           },
         }
-      }
+      })
+      const next = [...rewired]
+      next.splice(placement === 'before' ? anchorIndex : anchorIndex + 1, 0, inserted)
       return { ...current, steps: next }
     })
     setSelectedNode({ type: 'step', id: step.id })
@@ -758,29 +870,41 @@ export function AutomationRulesView({
     setSelectedNode({ type: 'trigger' })
   }
 
+  if (view === 'preparing-editor') {
+    return (
+      <div className={automationClass('automation-root')} data-testid="project-automation-view">
+        <main className={automationClass('project-content')}>
+          <div className={automationClass('home-empty')} data-testid="automation-editor-preparing">
+            <Activity className={automationClass('spin')} size={22} />
+            <strong>正在准备自动化编辑器</strong>
+            <span>正在读取可用的执行环境、模型和插件。</span>
+          </div>
+        </main>
+      </div>
+    )
+  }
+
   if (view === 'editor') {
     const editor = (
       <div className={automationClass('project-editor-host')}>
         <WorkflowEditor
           draft={draft}
           runs={runs.filter(run => run.ruleId === draft.id)}
+          runsLoading={runsLoading}
           dirty={dirty}
           editorSection={editorSection}
           selectedNode={selectedNode}
           panelTab={panelTab}
-          testing={testing}
           saving={saving}
           projectTags={projectTags}
           executionCatalog={executionCatalog}
           pluginMenuOpen={pluginMenuOpen}
           onBack={() => setView('home')}
-          onEditorSectionChange={setEditorSection}
+          onEditorSectionChange={changeEditorSection}
           onSelectNode={setSelectedNode}
-          onPanelTabChange={setPanelTab}
+          onPanelTabChange={changePanelTab}
           onDraftChange={updateDraft}
-          onSave={() => saveRule(false)}
-          onPublish={() => saveRule(true)}
-          onTest={runTest}
+          onSave={saveRule}
           onAddStep={addStep}
           onRemoveStep={removeSelectedStep}
           onPluginMenuChange={setPluginMenuOpen}
@@ -818,7 +942,8 @@ export function AutomationRulesView({
           <div className={automationClass('project-page-actions')}>
             <button
               className={automationClass('project-secondary-action')}
-              onClick={() => setHomeTab('runs')}
+              data-testid="automation-open-runs"
+              onClick={openRunsHome}
             >
               <History size={15} />
               运行记录
@@ -900,7 +1025,7 @@ export function AutomationRulesView({
               <div className={automationClass('home-empty')}>
                 <Activity className={automationClass('spin')} size={22} />
                 <strong>正在加载自动化</strong>
-                <span>正在读取当前项目的规则和运行记录。</span>
+                <span>正在读取当前项目的自动化规则。</span>
               </div>
             ) : null}
 
@@ -957,7 +1082,7 @@ export function AutomationRulesView({
             <ArrowLeft size={14} />
             返回自动化规则
           </button>
-          <RunsHome runs={runs} rules={rules} onOpenRule={openRule} />
+          <RunsHome runs={runs} rules={rules} loading={runsLoading} onOpenRule={openRule} />
         </section>
       )}
     </main>
@@ -1289,7 +1414,6 @@ function AutomationCard({ rule, canManage, onOpen, onToggle, onDuplicate, onDele
       </div>
 
       <div className={automationClass('card-footer')}>
-        <span className={automationClass(`run-dot ${rule.lastStatus}`)} />
         <span>{rule.updatedAt}</span>
         <button
           role="switch"
@@ -1311,11 +1435,11 @@ function AutomationCard({ rule, canManage, onOpen, onToggle, onDuplicate, onDele
 function WorkflowEditor({
   draft,
   runs,
+  runsLoading,
   dirty,
   editorSection,
   selectedNode,
   panelTab,
-  testing,
   saving,
   projectTags,
   executionCatalog,
@@ -1325,8 +1449,6 @@ function WorkflowEditor({
   onPanelTabChange,
   onDraftChange,
   onSave,
-  onPublish,
-  onTest,
   onAddStep,
   onRemoveStep,
   onPluginMenuChange,
@@ -1337,7 +1459,7 @@ function WorkflowEditor({
   const needsSave = dirty || !draft.persisted
   const trigger = triggerPresentation(draft.trigger)
   const TriggerIcon = draft.trigger.type === 'schedule' ? Clock3 : Webhook
-  const visibleRuns = runs.filter(run => runStatus === 'all' || run.status === runStatus)
+  const visibleRuns = runs.filter(run => runMatchesFilter(run.status, runStatus))
   const selectedRun = visibleRuns.find(run => run.id === selectedRunId) ?? visibleRuns[0] ?? null
   const latestRun = runs[0] ?? null
   const selectedStep =
@@ -1350,6 +1472,8 @@ function WorkflowEditor({
       : null
   const selectedDagStage =
     selectedDagParent?.subgraph?.nodes.find(stage => stage.id === selectedNode.stageId) ?? null
+  const hasSelectedNode = selectedNode.type !== 'none'
+  const showRightPanel = editorSection === 'runs' || hasSelectedNode
 
   const updateTrigger = (key, value) => {
     onDraftChange(current => ({
@@ -1391,58 +1515,73 @@ function WorkflowEditor({
     }))
   }
 
-  const addDagStage = (stepId, parentStageId) => {
+  const addDagStage = (stepId, anchorStageId, placement) => {
     const id = `dag-stage-${Date.now()}`
     onDraftChange(current => ({
       ...current,
       steps: current.steps.map(step => {
         if (step.id !== stepId) return step
-        const parent = step.subgraph.nodes.find(stage => stage.id === parentStageId)
-        const parentX = parent?.x ?? 24
-        const parentY = parent?.y ?? 105
-        const nextColumnX = parentX + 200
-        const yCandidates = [
-          parentY,
-          parentY - 110,
-          parentY + 110,
-          parentY - 220,
-          parentY + 220,
-        ].map(y => Math.max(24, y))
-        let x = nextColumnX
-        let y = parentY
-        let placed = false
-        for (let column = 0; column < 4 && !placed; column += 1) {
-          const candidateX = nextColumnX + column * 200
-          const availableY = yCandidates.find(
-            candidateY =>
-              !step.subgraph.nodes.some(
-                stage =>
-                  Math.abs((stage.x ?? 0) - candidateX) < 100 &&
-                  Math.abs((stage.y ?? 0) - candidateY) < 54
-              )
-          )
-          if (availableY !== undefined) {
-            x = candidateX
-            y = availableY
-            placed = true
-          }
-        }
+        const anchorIndex = step.subgraph.nodes.findIndex(stage => stage.id === anchorStageId)
+        const anchor = step.subgraph.nodes[anchorIndex]
+        if (!anchor) return step
+        const insertionX = placement === 'before' ? anchor.x : anchor.x + 200
+        const shifted = step.subgraph.nodes.map(stage =>
+          stage.id !== anchor.id && stage.x >= insertionX ? { ...stage, x: stage.x + 200 } : stage
+        )
+        const dependencies = placement === 'before' ? [...anchor.dependencies] : [anchorStageId]
         const stage = createExecutionNode({
           ...defaultExecutionConfiguration(executionCatalog),
           id,
           name: '新阶段',
           prompt: '说明这个阶段需要完成什么。',
-          dependencies: [parentStageId],
-          dependencyContext: {
-            [parentStageId]: ['final_result', 'deliveries'],
-          },
-          x: placed ? x : nextColumnX + 200,
-          y,
+          dependencies,
+          dependencyContext:
+            placement === 'before'
+              ? { ...(anchor.dependencyContext ?? {}) }
+              : {
+                  [anchorStageId]: ['final_result', 'deliveries'],
+                },
+          x: insertionX,
+          y: anchor.y,
         })
+        const rewired = shifted.map(candidate => {
+          if (placement === 'before' && candidate.id === anchor.id) {
+            return {
+              ...candidate,
+              x: candidate.x + 200,
+              dependencies: [stage.id],
+              dependencyContext: {
+                [stage.id]: ['final_result', 'deliveries'],
+              },
+            }
+          }
+          if (placement !== 'after' || !candidate.dependencies.includes(anchor.id)) {
+            return candidate
+          }
+          return {
+            ...candidate,
+            dependencies: candidate.dependencies.map(dependencyId =>
+              dependencyId === anchor.id ? stage.id : dependencyId
+            ),
+            dependencyContext: {
+              ...Object.fromEntries(
+                Object.entries(candidate.dependencyContext ?? {}).filter(
+                  ([dependencyId]) => dependencyId !== anchor.id
+                )
+              ),
+              [stage.id]: candidate.dependencyContext?.[anchor.id] ?? [
+                'final_result',
+                'deliveries',
+              ],
+            },
+          }
+        })
+        const nodes = [...rewired]
+        nodes.splice(placement === 'before' ? anchorIndex : anchorIndex + 1, 0, stage)
         return {
           ...step,
           subgraph: {
-            nodes: [...step.subgraph.nodes, stage],
+            nodes,
           },
         }
       }),
@@ -1562,9 +1701,8 @@ function WorkflowEditor({
     }))
   }
 
-  const insertNode = (afterIndex, kind, dependencyIds = null) => {
-    onAddStep(afterIndex, kind, dependencyIds)
-    setInsertMenuIndex(null)
+  const insertNode = (anchorStepId, placement, kind) => {
+    onAddStep(anchorStepId, placement, kind)
   }
 
   const workspaceActions = (
@@ -1580,15 +1718,6 @@ function WorkflowEditor({
         <i />
         {saving ? '保存中' : dirty ? '有未保存更改' : !draft.persisted ? '待保存' : '已保存'}
       </span>
-      <button
-        className={automationClass('dark-secondary')}
-        data-testid="automation-test-run"
-        onClick={onTest}
-        disabled={testing}
-      >
-        {testing ? <Activity className={automationClass('spin')} size={15} /> : <Play size={15} />}
-        {testing ? '运行中' : '测试运行'}
-      </button>
       {needsSave ? (
         <button
           className={automationClass('dark-secondary')}
@@ -1600,82 +1729,88 @@ function WorkflowEditor({
           保存
         </button>
       ) : null}
-      <button
-        className={automationClass('publish-button')}
-        data-testid="automation-publish"
-        onClick={onPublish}
-        disabled={saving}
-      >
-        <Rocket size={15} />
-        发布
-      </button>
     </div>
   )
 
   return (
-    <div className={automationClass('editor-shell')} data-testid="automation-rule-editor">
+    <div
+      className={automationClass('editor-shell')}
+      data-testid="automation-rule-editor"
+      style={{
+        '--automation-panel-gap': '12px',
+        '--automation-right-panel-width': showRightPanel ? '400px' : '0px',
+        '--automation-right-panel-top': '64px',
+      }}
+    >
       <div className={automationClass('editor-body')}>
-        <aside
-          className={automationClass('editor-leftbar')}
-          data-testid="automation-editor-leftbar"
+        <div
+          className={automationClass('editor-navigation-actions')}
+          data-testid="automation-editor-navigation"
         >
-          <div className={automationClass('workflow-identity')}>
-            <div className={automationClass('workflow-identity-top')}>
-              <button
-                className={automationClass('back-button')}
-                data-testid="automation-editor-back"
-                onClick={onBack}
-                aria-label="返回"
-              >
-                <ArrowLeft size={17} />
-              </button>
-              <span className={automationClass('automation-icon')}>
-                <Zap size={18} />
+          <button
+            className={automationClass('floating-icon-button')}
+            data-testid="automation-editor-back"
+            onClick={onBack}
+            aria-label="返回"
+          >
+            <ArrowLeft size={17} />
+          </button>
+          <PopupMenu
+            testId="automation-editor-section-menu"
+            keepOpen
+            menuWidth={220}
+            trigger={
+              <span className={automationClass('editor-section-trigger')}>
+                {editorSection === 'workflow' ? <GitBranch size={16} /> : <History size={16} />}
+                <span>{editorSection === 'workflow' ? '编排' : '运行记录'}</span>
+                <ChevronDown size={14} />
               </span>
-            </div>
-            <input
-              value={draft.name}
-              onChange={event =>
-                onDraftChange(current => ({ ...current, name: event.target.value }))
-              }
-              aria-label="自动化名称"
-            />
-            <small>{draft.enabled ? '已发布' : '自动化规则'}</small>
-          </div>
-          <nav className={automationClass('editor-nav')}>
-            <button
-              className={editorSection === 'workflow' ? 'active' : ''}
-              data-testid="editor-nav-workflow"
-              onClick={() => onEditorSectionChange('workflow')}
-            >
-              <GitBranch size={16} />
-              编排
-            </button>
-            <button
-              className={editorSection === 'runs' ? 'active' : ''}
-              data-testid="open-current-automation-runs"
-              onClick={() => onEditorSectionChange('runs')}
-            >
-              <History size={16} />
-              运行记录
-            </button>
-          </nav>
-          <div className={automationClass('leftbar-trigger')}>
-            <span>当前触发规则</span>
-            <button
-              onClick={() => {
-                onEditorSectionChange('workflow')
-                onSelectNode({ type: 'trigger' })
-              }}
-            >
-              <TriggerIcon size={15} />
-              <div>
-                <strong>{trigger.label}</strong>
-                <small>{trigger.detail}</small>
+            }
+          >
+            {close => (
+              <div className={automationClass('editor-section-menu')}>
+                <label>
+                  <span>自动化名称</span>
+                  <input
+                    value={draft.name}
+                    onChange={event =>
+                      onDraftChange(current => ({ ...current, name: event.target.value }))
+                    }
+                    aria-label="自动化名称"
+                  />
+                </label>
+                <div>
+                  <button
+                    type="button"
+                    className={editorSection === 'workflow' ? 'active' : ''}
+                    data-testid="editor-nav-workflow"
+                    onClick={() => {
+                      onEditorSectionChange('workflow')
+                      close()
+                    }}
+                  >
+                    <GitBranch size={16} />
+                    <span>编排</span>
+                    {editorSection === 'workflow' ? <Check size={15} /> : null}
+                  </button>
+                  <button
+                    type="button"
+                    className={editorSection === 'runs' ? 'active' : ''}
+                    data-testid="open-current-automation-runs"
+                    onClick={() => {
+                      onEditorSectionChange('runs')
+                      close()
+                    }}
+                  >
+                    <History size={16} />
+                    <span>运行记录</span>
+                    {editorSection === 'runs' ? <Check size={15} /> : null}
+                  </button>
+                </div>
               </div>
-            </button>
-          </div>
-        </aside>
+            )}
+          </PopupMenu>
+        </div>
 
         {editorSection === 'workflow' ? (
           <main className={automationClass('workflow-canvas')}>
@@ -1695,6 +1830,7 @@ function WorkflowEditor({
         ) : (
           <RuleRunsPanel
             runs={visibleRuns}
+            loading={runsLoading}
             status={runStatus}
             selectedRun={selectedRun}
             onStatusChange={setRunStatus}
@@ -1702,152 +1838,162 @@ function WorkflowEditor({
           />
         )}
 
+        {workspaceActions}
+
         {editorSection === 'workflow' ? (
-          <aside
-            className={automationClass('editor-rightbar')}
-            data-testid="automation-editor-rightbar"
-          >
-            {workspaceActions}
-            <div className={automationClass('node-panel')}>
-              <div className={automationClass('panel-head')}>
-                <span
-                  className={automationClass(
-                    `node-icon ${
-                      selectedStep?.kind === 'dynamic' ? 'coordinator' : selectedNode.type
-                    }`
-                  )}
-                >
-                  {selectedNode.type === 'trigger' ? (
-                    <TriggerIcon size={17} />
-                  ) : selectedStep?.kind === 'dynamic' ? (
-                    <Sparkles size={17} />
-                  ) : (
-                    <Box size={17} />
-                  )}
-                </span>
-                <div>
-                  <strong>
-                    {selectedNode.type === 'trigger'
-                      ? '触发规则'
-                      : selectedDagStage
-                        ? selectedDagStage.name
-                        : selectedStep?.kind === 'dynamic'
-                          ? 'AI 动态分配'
-                          : selectedStep?.name || '未命名执行节点'}
-                  </strong>
-                  <small>
-                    {selectedNode.type === 'trigger'
-                      ? '整条自动化的入口'
-                      : selectedDagStage
-                        ? 'DAG 子图执行节点'
-                        : selectedStep?.kind === 'dynamic'
-                          ? '运行时拆解并分配具体任务'
-                          : '执行节点设置'}
-                  </small>
+          hasSelectedNode ? (
+            <aside
+              className={automationClass('editor-rightbar')}
+              data-testid="automation-editor-rightbar"
+            >
+              <div className={automationClass('node-panel')}>
+                <div className={automationClass('panel-head')}>
+                  <span
+                    className={automationClass(
+                      `node-icon ${
+                        selectedStep?.kind === 'dynamic' ? 'coordinator' : selectedNode.type
+                      }`
+                    )}
+                  >
+                    {selectedNode.type === 'trigger' ? (
+                      <TriggerIcon size={17} />
+                    ) : selectedStep?.kind === 'dynamic' ? (
+                      <Sparkles size={17} />
+                    ) : (
+                      <Box size={17} />
+                    )}
+                  </span>
+                  <div className={automationClass('panel-head-copy')}>
+                    <strong>
+                      {selectedNode.type === 'trigger'
+                        ? '触发规则'
+                        : selectedDagStage
+                          ? selectedDagStage.name
+                          : selectedStep?.kind === 'dynamic'
+                            ? 'AI 动态分配'
+                            : selectedStep?.name || '未命名执行节点'}
+                    </strong>
+                    <small>
+                      {selectedNode.type === 'trigger'
+                        ? '整条自动化的入口'
+                        : selectedDagStage
+                          ? 'DAG 子图执行节点'
+                          : selectedStep?.kind === 'dynamic'
+                            ? '运行时拆解并分配具体任务'
+                            : '执行节点设置'}
+                    </small>
+                  </div>
+                  <button
+                    type="button"
+                    className={automationClass('panel-close')}
+                    data-testid="automation-editor-close-rightbar"
+                    aria-label="关闭节点详情"
+                    onClick={() => onSelectNode({ type: 'none' })}
+                  >
+                    <X size={17} />
+                  </button>
                 </div>
-              </div>
 
-              <div className={automationClass('panel-tabs')}>
-                <button
-                  className={panelTab === 'settings' ? 'active' : ''}
-                  onClick={() => onPanelTabChange('settings')}
-                >
-                  设置
-                </button>
-                <button
-                  className={panelTab === 'lastRun' ? 'active' : ''}
-                  onClick={() => onPanelTabChange('lastRun')}
-                >
-                  上次运行
-                </button>
-              </div>
-
-              {panelTab === 'lastRun' ? (
-                <div className={automationClass('last-run-panel')}>
-                  {latestRun ? (
-                    <>
-                      {latestRun.status === 'success' ? (
-                        <CheckCircle2 size={24} />
-                      ) : latestRun.status === 'failed' ? (
-                        <XCircle size={24} />
-                      ) : (
-                        <Activity size={24} />
-                      )}
-                      <strong>
-                        {latestRun.status === 'success'
-                          ? '上次运行成功'
-                          : latestRun.status === 'failed'
-                            ? '上次运行失败'
-                            : '正在运行'}
-                      </strong>
-                      <span>
-                        {latestRun.startedAt} · {latestRun.duration}
-                      </span>
-                      <button onClick={() => onEditorSectionChange('runs')}>
-                        查看完整运行记录
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <History size={24} />
-                      <strong>暂无运行记录</strong>
-                      <span>测试或触发自动化后，这里会显示最近一次结果。</span>
-                    </>
-                  )}
+                <div className={automationClass('panel-tabs')}>
+                  <button
+                    type="button"
+                    className={panelTab === 'settings' ? 'active' : ''}
+                    data-testid="automation-panel-tab-settings"
+                    onClick={() => onPanelTabChange('settings')}
+                  >
+                    设置
+                  </button>
+                  <button
+                    type="button"
+                    className={panelTab === 'lastRun' ? 'active' : ''}
+                    data-testid="automation-panel-tab-last-run"
+                    onClick={() => onPanelTabChange('lastRun')}
+                  >
+                    上次运行
+                  </button>
                 </div>
-              ) : (
-                <div className={automationClass('panel-content')}>
-                  {selectedNode.type === 'trigger' ? (
-                    <TriggerSettings
-                      draft={draft}
-                      projectTags={projectTags}
-                      onChange={updateTrigger}
-                      onRuleChange={updateRule}
-                    />
-                  ) : selectedDagStage ? (
-                    <>
-                      <StepSettings
-                        step={selectedDagStage}
+
+                {panelTab === 'lastRun' ? (
+                  <div className={automationClass('last-run-panel')}>
+                    {runsLoading ? (
+                      <>
+                        <Activity className={automationClass('spin')} size={24} />
+                        <strong>正在加载运行记录</strong>
+                      </>
+                    ) : latestRun ? (
+                      <>
+                        <RunStatusIcon status={latestRun.status} size={24} />
+                        <strong>最近一次：{runStatusPresentation(latestRun.status).label}</strong>
+                        <span>
+                          {latestRun.startedAt} · {latestRun.duration}
+                        </span>
+                        <button onClick={() => onEditorSectionChange('runs')}>
+                          查看完整运行记录
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <History size={24} />
+                        <strong>暂无运行记录</strong>
+                        <span>测试或触发自动化后，这里会显示最近一次结果。</span>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className={automationClass('panel-content')}>
+                    {selectedNode.type === 'trigger' ? (
+                      <TriggerSettings
+                        draft={draft}
+                        projectTags={projectTags}
+                        onChange={updateTrigger}
+                        onRuleChange={updateRule}
+                      />
+                    ) : selectedDagStage ? (
+                      <>
+                        <StepSettings
+                          step={selectedDagStage}
+                          executionCatalog={executionCatalog}
+                          pluginMenuOpen={pluginMenuOpen}
+                          onChange={updateDagStage}
+                          onDelete={removeDagStage}
+                          onPluginMenuChange={onPluginMenuChange}
+                          supplemental={
+                            <SubgraphDependencySummary
+                              node={selectedDagStage}
+                              parent={selectedDagParent}
+                            />
+                          }
+                        />
+                      </>
+                    ) : selectedStep?.kind === 'dynamic' ? (
+                      <CoordinatorSettings
+                        coordinator={selectedStep}
                         executionCatalog={executionCatalog}
                         pluginMenuOpen={pluginMenuOpen}
-                        onChange={updateDagStage}
-                        onDelete={removeDagStage}
+                        onChange={updateStep}
+                        onDelete={onRemoveStep}
                         onPluginMenuChange={onPluginMenuChange}
                       />
-                      <SubgraphDependencySummary
-                        node={selectedDagStage}
-                        parent={selectedDagParent}
+                    ) : (
+                      <StepSettings
+                        step={selectedStep}
+                        executionCatalog={executionCatalog}
+                        pluginMenuOpen={pluginMenuOpen}
+                        onChange={updateStep}
+                        onDelete={onRemoveStep}
+                        onPluginMenuChange={onPluginMenuChange}
                       />
-                    </>
-                  ) : selectedStep?.kind === 'dynamic' ? (
-                    <CoordinatorSettings
-                      coordinator={selectedStep}
-                      executionCatalog={executionCatalog}
-                      pluginMenuOpen={pluginMenuOpen}
-                      onChange={updateStep}
-                      onDelete={onRemoveStep}
-                      onPluginMenuChange={onPluginMenuChange}
-                    />
-                  ) : (
-                    <StepSettings
-                      step={selectedStep}
-                      executionCatalog={executionCatalog}
-                      pluginMenuOpen={pluginMenuOpen}
-                      onChange={updateStep}
-                      onDelete={onRemoveStep}
-                      onPluginMenuChange={onPluginMenuChange}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-          </aside>
+                    )}
+                  </div>
+                )}
+              </div>
+            </aside>
+          ) : null
         ) : (
           <aside
             className={automationClass('editor-rightbar')}
             data-testid="automation-editor-rightbar"
           >
-            {workspaceActions}
             <RunDetailPanel run={selectedRun} steps={draft.steps} />
           </aside>
         )}
@@ -1856,7 +2002,7 @@ function WorkflowEditor({
   )
 }
 
-function RuleRunsPanel({ runs, status, selectedRun, onStatusChange, onSelectRun }) {
+function RuleRunsPanel({ runs, loading, status, selectedRun, onStatusChange, onSelectRun }) {
   return (
     <main className={automationClass('rule-runs-view')} data-testid="current-automation-runs">
       <div className={automationClass('rule-runs-header')}>
@@ -1867,7 +2013,7 @@ function RuleRunsPanel({ runs, status, selectedRun, onStatusChange, onSelectRun 
         <div className={automationClass('rule-run-filters')}>
           {[
             ['all', '全部'],
-            ['running', '执行中'],
+            ['active', '未结束'],
             ['success', '成功'],
             ['failed', '失败'],
           ].map(([value, label]) => (
@@ -1884,12 +2030,17 @@ function RuleRunsPanel({ runs, status, selectedRun, onStatusChange, onSelectRun 
         </div>
       </div>
 
-      {runs.length ? (
+      {loading ? (
+        <div className={automationClass('rule-runs-empty')} data-testid="automation-runs-loading">
+          <Activity className={automationClass('spin')} size={22} />
+          <strong>正在加载运行记录</strong>
+        </div>
+      ) : runs.length ? (
         <div className={automationClass('rule-runs-list')}>
           <div className={automationClass('rule-runs-list-head')}>
             <span>Issue / 任务</span>
             <span>状态</span>
-            <span>开始时间</span>
+            <span>触发时间</span>
             <span>耗时</span>
           </div>
           {runs.map(run => (
@@ -1916,7 +2067,7 @@ function RuleRunsPanel({ runs, status, selectedRun, onStatusChange, onSelectRun 
         <div className={automationClass('rule-runs-empty')}>
           <History size={24} />
           <strong>当前自动化暂无运行记录</strong>
-          <span>发布并触发自动化后，执行记录会出现在这里。</span>
+          <span>启用并触发自动化后，执行记录会出现在这里。</span>
         </div>
       )}
     </main>
@@ -1934,17 +2085,13 @@ function RunDetailPanel({ run, steps }) {
     )
   }
 
+  const presentation = runStatusPresentation(run.status)
+
   return (
     <aside className={automationClass('run-detail-panel')}>
       <div className={automationClass('run-detail-head')}>
-        <span className={automationClass(`run-detail-icon ${run.status}`)}>
-          {run.status === 'success' ? (
-            <CheckCircle2 size={18} />
-          ) : run.status === 'failed' ? (
-            <XCircle size={18} />
-          ) : (
-            <Activity size={18} />
-          )}
+        <span className={automationClass(`run-detail-icon ${presentation.tone}`)}>
+          <RunStatusIcon status={run.status} size={18} />
         </span>
         <div>
           <strong>执行详情</strong>
@@ -1983,17 +2130,17 @@ function RunDetailPanel({ run, steps }) {
   )
 }
 
+function RunStatusIcon({ status, size }) {
+  const Icon = runStatusPresentation(status).icon
+  return <Icon size={size} />
+}
+
 function RunStatus({ status }) {
+  const presentation = runStatusPresentation(status)
   return (
-    <span className={automationClass(`run-status ${status}`)}>
-      {status === 'success' ? (
-        <CheckCircle2 size={14} />
-      ) : status === 'failed' ? (
-        <XCircle size={14} />
-      ) : (
-        <Activity size={14} />
-      )}
-      {status === 'success' ? '成功' : status === 'failed' ? '失败' : '执行中'}
+    <span className={automationClass(`run-status ${presentation.tone}`)}>
+      <RunStatusIcon status={status} size={14} />
+      {presentation.label}
     </span>
   )
 }
@@ -2013,20 +2160,12 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
     )
   }
 
-  const toggleStatus = status => {
-    const statuses = trigger.statuses ?? ['pending', 'in_progress']
-    onChange(
-      'statuses',
-      statuses.includes(status) ? statuses.filter(item => item !== status) : [...statuses, status]
-    )
-  }
-
   const updateSchedule = (key, value) => {
     onChange('schedule', { ...trigger.schedule, [key]: value })
   }
 
   return (
-    <>
+    <div className={automationClass('panel-settings')}>
       <label className={automationClass('panel-field')}>
         <span>自动化说明</span>
         <textarea
@@ -2203,30 +2342,10 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
                 <i className={automationClass('cascade-index')}>3</i>
                 <div>
                   <strong>什么算“开始处理”？</strong>
-                  <span>沿用当前 Issue 编排的执行状态</span>
+                  <span>由项目看板的处理起点统一定义</span>
                 </div>
               </div>
-              <div className={automationClass('execution-status-list')}>
-                {[
-                  ['pending', '待开始'],
-                  ['in_progress', '进行中'],
-                ].map(([status, label]) => {
-                  const selected = (trigger.statuses ?? []).includes(status)
-                  return (
-                    <button
-                      key={status}
-                      type="button"
-                      className={selected ? 'selected' : ''}
-                      aria-pressed={selected}
-                      onClick={() => toggleStatus(status)}
-                    >
-                      {selected ? <Check size={12} /> : null}
-                      {label}
-                    </button>
-                  )
-                })}
-              </div>
-              <p>Issue 状态每次进入任一已选状态时触发。</p>
+              <p>Issue 从处理起点之前，进入处理起点或其后任意状态时触发。</p>
             </section>
           )}
         </>
@@ -2238,7 +2357,7 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
           <p>{presentation.detail}</p>
         </div>
       </div>
-    </>
+    </div>
   )
 }
 
@@ -2319,16 +2438,13 @@ function CoordinatorSettings({
   }
 
   return (
-    <>
+    <div className={automationClass('panel-settings')}>
       <div className={automationClass('coordinator-intro')}>
         <Sparkles size={17} />
         <div>
           <strong>由 AI 决定具体怎么做</strong>
           <span>AI 读取 Issue，运行时拆解任务、选择执行方式并安排顺序。</span>
         </div>
-        <button type="button" onClick={onDelete} aria-label="删除 AI 动态分配节点">
-          <Trash2 size={15} />
-        </button>
       </div>
 
       <div className={automationClass('node-model-settings coordinator-model-settings')}>
@@ -2434,7 +2550,18 @@ function CoordinatorSettings({
           onChange={event => onChange('prompt', event.target.value)}
         />
       </label>
-    </>
+      <div className={automationClass('panel-danger-zone compact')}>
+        <button
+          type="button"
+          className={automationClass('delete-step')}
+          data-testid="ai-coordinator-delete"
+          onClick={onDelete}
+        >
+          <Trash2 size={14} />
+          删除 AI 动态分配节点
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -2465,6 +2592,7 @@ function StepSettings({
   onChange,
   onDelete,
   onPluginMenuChange,
+  supplemental,
 }) {
   if (!step) return null
 
@@ -2559,27 +2687,29 @@ function StepSettings({
 
   return (
     <>
-      <label className={automationClass('panel-field')}>
-        <span>节点名称</span>
-        <input
-          data-testid={`execution-node-name-${step.id}`}
-          value={step.name}
-          placeholder="例如：分析需求"
-          onChange={event => onChange('name', event.target.value)}
-        />
-      </label>
-      <label className={automationClass('panel-field')}>
-        <span>
-          <Code2 size={14} />
-          节点提示词
-        </span>
-        <textarea
-          data-testid={`execution-node-prompt-${step.id}`}
-          value={step.prompt}
-          placeholder="清楚描述这个节点需要完成的具体任务"
-          onChange={event => onChange('prompt', event.target.value)}
-        />
-      </label>
+      <section className={automationClass('panel-section')}>
+        <label className={automationClass('panel-field')}>
+          <span>节点名称</span>
+          <input
+            data-testid={`execution-node-name-${step.id}`}
+            value={step.name}
+            placeholder="例如：分析需求"
+            onChange={event => onChange('name', event.target.value)}
+          />
+        </label>
+        <label className={automationClass('panel-field')}>
+          <span>
+            <Code2 size={14} />
+            节点提示词
+          </span>
+          <textarea
+            data-testid={`execution-node-prompt-${step.id}`}
+            value={step.prompt}
+            placeholder="清楚描述这个节点需要完成的具体任务"
+            onChange={event => onChange('prompt', event.target.value)}
+          />
+        </label>
+      </section>
 
       <section className={automationClass('deliverables-section')}>
         <div className={automationClass('section-heading')}>
@@ -2646,172 +2776,179 @@ function StepSettings({
         <p>每项交付要求都会绑定一个实际结果；全部满足后才可继续。</p>
       </section>
 
-      <fieldset className={automationClass('execution-mode')}>
-        <legend>任务执行方式</legend>
-        <div>
-          <button
-            type="button"
-            data-testid={`execution-node-mode-manual-${step.id}`}
-            className={step.executionMode === 'manual' ? 'selected' : ''}
-            onClick={() => onChange('executionMode', 'manual')}
-          >
-            <UserRound size={16} />
-            手动执行
-          </button>
-          <button
-            type="button"
-            data-testid={`execution-node-mode-automatic-${step.id}`}
-            className={step.executionMode === 'automatic' ? 'selected' : ''}
-            onClick={() => onChange('executionMode', 'automatic')}
-          >
-            <Bot size={16} />
-            自动执行
-          </button>
-        </div>
-      </fieldset>
+      <section className={automationClass('panel-section execution-section')}>
+        <fieldset className={automationClass('execution-mode')}>
+          <legend>任务执行方式</legend>
+          <div>
+            <button
+              type="button"
+              data-testid={`execution-node-mode-manual-${step.id}`}
+              className={step.executionMode === 'manual' ? 'selected' : ''}
+              onClick={() => onChange('executionMode', 'manual')}
+            >
+              <UserRound size={16} />
+              手动执行
+            </button>
+            <button
+              type="button"
+              data-testid={`execution-node-mode-automatic-${step.id}`}
+              className={step.executionMode === 'automatic' ? 'selected' : ''}
+              onClick={() => onChange('executionMode', 'automatic')}
+            >
+              <Bot size={16} />
+              自动执行
+            </button>
+          </div>
+        </fieldset>
 
-      {step.executionMode === 'automatic' ? (
-        <div className={automationClass('node-model-settings')}>
-          <label className={automationClass('panel-field')}>
-            <span>
-              <Laptop size={14} />
-              执行环境
-            </span>
-            <select
-              data-testid={`execution-node-environment-${step.id}`}
-              value={step.executionDeviceId ?? ''}
-              onChange={event => selectEnvironment(event.target.value)}
-            >
-              <option value="" disabled>
-                选择执行环境
-              </option>
-              {environmentOptions.map(option => (
-                <option key={option.deviceId} value={option.deviceId}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className={automationClass('panel-field')}>
-            <span>
-              <Sparkles size={14} />
-              模型
-            </span>
-            <select
-              data-testid={`execution-node-model-${step.id}`}
-              value={step.model}
-              onChange={event => selectModel(event.target.value)}
-            >
-              <option value="" disabled>
-                选择模型
-              </option>
-              {modelOptions.map(option => (
-                <option key={`${option.type}-${option.name}`} value={option.name}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className={automationClass('panel-field')}>
-            <span>
-              <Puzzle size={14} />
-              插件
-            </span>
-            <div className={automationClass('panel-plugins')}>
-              {step.plugins.map(plugin => (
-                <button
-                  key={plugin}
-                  type="button"
-                  onClick={() =>
-                    togglePlugin(
-                      configuredPluginOptions.find(option => option.label === plugin) ?? {
-                        id: plugin,
-                        label: plugin,
-                        reference: { displayName: plugin },
-                      }
-                    )
-                  }
-                >
-                  {plugin}
-                  <X size={12} />
-                </button>
-              ))}
-              <button
-                className={automationClass('add')}
-                type="button"
-                data-testid={`execution-node-add-plugin-${step.id}`}
-                onClick={() => onPluginMenuChange(!pluginMenuOpen)}
+        {step.executionMode === 'automatic' ? (
+          <div className={automationClass('node-model-settings')}>
+            <label className={automationClass('panel-field')}>
+              <span>
+                <Laptop size={14} />
+                执行环境
+              </span>
+              <select
+                data-testid={`execution-node-environment-${step.id}`}
+                value={step.executionDeviceId ?? ''}
+                onChange={event => selectEnvironment(event.target.value)}
               >
-                <Plus size={12} />
-                添加
-              </button>
-            </div>
-            {pluginMenuOpen ? (
-              <div className={automationClass('plugin-popover')}>
-                {configuredPluginOptions.map(option => (
-                  <button key={option.id} type="button" onClick={() => togglePlugin(option)}>
-                    <span className={step.plugins.includes(option.label) ? 'checked' : ''}>
-                      {step.plugins.includes(option.label) ? <Check size={11} /> : null}
-                    </span>
+                <option value="" disabled>
+                  选择执行环境
+                </option>
+                {environmentOptions.map(option => (
+                  <option key={option.deviceId} value={option.deviceId}>
                     {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={automationClass('panel-field')}>
+              <span>
+                <Sparkles size={14} />
+                模型
+              </span>
+              <select
+                data-testid={`execution-node-model-${step.id}`}
+                value={step.model}
+                onChange={event => selectModel(event.target.value)}
+              >
+                <option value="" disabled>
+                  选择模型
+                </option>
+                {modelOptions.map(option => (
+                  <option key={`${option.type}-${option.name}`} value={option.name}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className={automationClass('panel-field')}>
+              <span>
+                <Puzzle size={14} />
+                插件
+              </span>
+              <div className={automationClass('panel-plugins')}>
+                {step.plugins.map(plugin => (
+                  <button
+                    key={plugin}
+                    type="button"
+                    onClick={() =>
+                      togglePlugin(
+                        configuredPluginOptions.find(option => option.label === plugin) ?? {
+                          id: plugin,
+                          label: plugin,
+                          reference: { displayName: plugin },
+                        }
+                      )
+                    }
+                  >
+                    {plugin}
+                    <X size={12} />
                   </button>
                 ))}
-                {!configuredPluginOptions.length ? <small>当前执行环境没有可用插件</small> : null}
+                <button
+                  className={automationClass('add')}
+                  type="button"
+                  data-testid={`execution-node-add-plugin-${step.id}`}
+                  onClick={() => onPluginMenuChange(!pluginMenuOpen)}
+                >
+                  <Plus size={12} />
+                  添加
+                </button>
               </div>
-            ) : null}
+              {pluginMenuOpen ? (
+                <div className={automationClass('plugin-popover')}>
+                  {configuredPluginOptions.map(option => (
+                    <button key={option.id} type="button" onClick={() => togglePlugin(option)}>
+                      <span className={step.plugins.includes(option.label) ? 'checked' : ''}>
+                        {step.plugins.includes(option.label) ? <Check size={11} /> : null}
+                      </span>
+                      {option.label}
+                    </button>
+                  ))}
+                  {!configuredPluginOptions.length ? <small>当前执行环境没有可用插件</small> : null}
+                </div>
+              ) : null}
+            </div>
+            <p className={automationClass('execution-hint')}>
+              节点提示词会作为当前模型的任务指令，执行记录归入当前节点。
+            </p>
           </div>
+        ) : (
           <p className={automationClass('execution-hint')}>
-            节点提示词会作为当前模型的任务指令，执行记录归入当前节点。
+            节点就绪后由成员手动执行，完成结果仍归入当前节点。
           </p>
+        )}
+
+        <label className={automationClass('panel-field')}>
+          <span>任务工作空间</span>
+          <select
+            data-testid={`execution-node-workspace-${step.id}`}
+            value={step.workspacePolicy}
+            onChange={event => onChange('workspacePolicy', event.target.value)}
+          >
+            <option value="composer">创建任务时选择工作空间</option>
+            <option value="inherit">继承前序任务工作空间</option>
+            <option value="none">不限定工作空间</option>
+          </select>
+        </label>
+
+        <label className={automationClass('required-node')}>
+          <input
+            type="checkbox"
+            data-testid={`execution-node-required-${step.id}`}
+            checked={step.required}
+            onChange={event => onChange('required', event.target.checked)}
+          />
+          该节点完成后才能推进 Issue
+        </label>
+
+        <div className={automationClass('panel-help')}>
+          <GitBranch size={15} />
+          <p>执行节点按画布顺序运行；模型、环境和插件只影响当前节点。</p>
         </div>
-      ) : (
-        <p className={automationClass('execution-hint')}>
-          节点就绪后由成员手动执行，完成结果仍归入当前节点。
-        </p>
-      )}
-
-      <label className={automationClass('panel-field')}>
-        <span>任务工作空间</span>
-        <select
-          data-testid={`execution-node-workspace-${step.id}`}
-          value={step.workspacePolicy}
-          onChange={event => onChange('workspacePolicy', event.target.value)}
+      </section>
+      {supplemental ? (
+        <section className={automationClass('panel-section')}>{supplemental}</section>
+      ) : null}
+      <section className={automationClass('panel-danger-zone')}>
+        <button
+          className={automationClass('delete-step')}
+          data-testid={`execution-node-delete-${step.id}`}
+          onClick={onDelete}
         >
-          <option value="composer">创建任务时选择工作空间</option>
-          <option value="inherit">继承前序任务工作空间</option>
-          <option value="none">不限定工作空间</option>
-        </select>
-      </label>
-
-      <label className={automationClass('required-node')}>
-        <input
-          type="checkbox"
-          data-testid={`execution-node-required-${step.id}`}
-          checked={step.required}
-          onChange={event => onChange('required', event.target.checked)}
-        />
-        该节点完成后才能推进 Issue
-      </label>
-
-      <div className={automationClass('panel-help')}>
-        <GitBranch size={15} />
-        <p>执行节点按画布顺序运行；模型、环境和插件只影响当前节点。</p>
-      </div>
-      <button
-        className={automationClass('delete-step')}
-        data-testid={`execution-node-delete-${step.id}`}
-        onClick={onDelete}
-      >
-        <Trash2 size={14} />
-        删除执行节点
-      </button>
+          <Trash2 size={14} />
+          删除执行节点
+        </button>
+      </section>
     </>
   )
 }
 
-function RunsHome({ runs, rules, onOpenRule }) {
+function RunsHome({ runs, rules, loading, onOpenRule }) {
   const [status, setStatus] = useState('all')
-  const visibleRuns = runs.filter(run => status === 'all' || run.status === status)
+  const visibleRuns = runs.filter(run => runMatchesFilter(run.status, status))
 
   return (
     <main className={automationClass('runs-home')}>
@@ -2823,7 +2960,7 @@ function RunsHome({ runs, rules, onOpenRule }) {
         <div className={automationClass('run-filters')}>
           {[
             ['all', '全部'],
-            ['running', '执行中'],
+            ['active', '未结束'],
             ['success', '成功'],
             ['failed', '失败'],
           ].map(([value, label]) => (
@@ -2841,38 +2978,36 @@ function RunsHome({ runs, rules, onOpenRule }) {
         <div className={automationClass('runs-table-head')}>
           <span>自动化与 Issue</span>
           <span>状态</span>
-          <span>开始时间</span>
+          <span>触发时间</span>
           <span>耗时</span>
           <span />
         </div>
-        {visibleRuns.map(run => (
-          <div className={automationClass('runs-row')} key={run.id}>
-            <span>
-              <strong>{run.ruleName}</strong>
-              <small>{run.issue}</small>
-            </span>
-            <span className={automationClass(`run-status ${run.status}`)}>
-              {run.status === 'success' ? (
-                <CheckCircle2 size={14} />
-              ) : run.status === 'failed' ? (
-                <XCircle size={14} />
-              ) : (
-                <Activity size={14} />
-              )}
-              {run.status === 'success' ? '成功' : run.status === 'failed' ? '失败' : '执行中'}
-            </span>
-            <span>{run.startedAt}</span>
-            <span>{run.duration}</span>
-            <button
-              onClick={() => {
-                const rule = rules.find(item => item.id === run.ruleId)
-                if (rule) onOpenRule(rule)
-              }}
-            >
-              打开规则
-            </button>
+        {loading ? (
+          <div className={automationClass('home-empty')} data-testid="automation-runs-loading">
+            <Activity className={automationClass('spin')} size={22} />
+            <strong>正在加载运行记录</strong>
           </div>
-        ))}
+        ) : (
+          visibleRuns.map(run => (
+            <div className={automationClass('runs-row')} key={run.id}>
+              <span>
+                <strong>{run.ruleName}</strong>
+                <small>{run.issue}</small>
+              </span>
+              <RunStatus status={run.status} />
+              <span>{run.startedAt}</span>
+              <span>{run.duration}</span>
+              <button
+                onClick={() => {
+                  const rule = rules.find(item => item.id === run.ruleId)
+                  if (rule) onOpenRule(rule)
+                }}
+              >
+                打开规则
+              </button>
+            </div>
+          ))
+        )}
       </div>
     </main>
   )

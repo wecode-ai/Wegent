@@ -170,6 +170,208 @@ describe('IssueExecutionConfigDialog', () => {
     expect(screen.getByTestId('issue-execution-config-confirm')).toBeDisabled()
   })
 
+  it('enables confirmation when a legacy complete selection only lacks the form workspace default', async () => {
+    render(
+      <IssueExecutionConfigDialog
+        item={
+          {
+            ...item,
+            assignee_agent_id: null,
+            workflow: {
+              version: 1,
+              definition_version: 1,
+              stage_mode: 'dag',
+              advancement_policy: 'manual',
+              execution_config: {
+                agent_id: null,
+                runtime_profile_id: null,
+                execution_device_id: 'device-online',
+                model: 'deepseek-v4-flash',
+                model_type: 'runtime',
+                model_options: {},
+                workspace_binding: null,
+              },
+              nodes: [
+                {
+                  id: 'pwd',
+                  name: 'pwd',
+                  execution_mode: 'robot',
+                  depends_on: [],
+                  required: true,
+                  workspace_policy: 'composer',
+                  automation_rule_id: null,
+                  status: 'ready',
+                },
+              ],
+            },
+          } as never
+        }
+        projectChatAgentApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        runtimeProfileApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        modelApi={
+          {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'deepseek-v4-flash',
+                  type: 'runtime',
+                  displayName: 'deepseek-v4-flash',
+                },
+              ],
+            }),
+          } as never
+        }
+        deviceApi={
+          {
+            listDevices: vi
+              .fn()
+              .mockResolvedValue([{ device_id: 'device-online', status: 'online' }]),
+          } as never
+        }
+        localProjects={[]}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(await screen.findByTestId('issue-execution-config-default-project')).toHaveValue(
+      'standalone'
+    )
+    expect(screen.getByText('运行配置已完整')).toBeInTheDocument()
+    expect(screen.getByTestId('issue-execution-config-confirm')).toBeEnabled()
+  })
+
+  it('promotes a legacy node runtime snapshot to the shared workflow configuration', async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined)
+    render(
+      <IssueExecutionConfigDialog
+        item={
+          {
+            ...item,
+            assignee_agent_id: null,
+            workflow: {
+              version: 1,
+              definition_version: 1,
+              stage_mode: 'dag',
+              advancement_policy: 'manual',
+              execution_config: null,
+              nodes: [
+                {
+                  id: 'pwd',
+                  name: 'pwd',
+                  execution_mode: 'robot',
+                  depends_on: [],
+                  required: true,
+                  workspace_policy: 'composer',
+                  automation_rule_id: null,
+                  status: 'ready',
+                  execution_config_override: false,
+                  execution_config: {
+                    agent_id: null,
+                    runtime_profile_id: null,
+                    execution_device_id: 'local-device',
+                    model: 'local-model',
+                    model_type: 'runtime',
+                    model_options: {},
+                    workspace_binding: { type: 'standalone' },
+                  },
+                },
+                {
+                  id: 'ls',
+                  name: 'ls',
+                  execution_mode: 'robot',
+                  depends_on: ['pwd'],
+                  required: true,
+                  workspace_policy: 'composer',
+                  automation_rule_id: null,
+                  status: 'blocked',
+                  execution_config_override: false,
+                  execution_config: null,
+                },
+              ],
+            },
+          } as never
+        }
+        projectChatAgentApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        runtimeProfileApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        modelApi={
+          {
+            listModels: vi.fn().mockResolvedValue({
+              data: [{ name: 'local-model', type: 'runtime', displayName: 'Local Model' }],
+            }),
+          } as never
+        }
+        deviceApi={
+          {
+            listDevices: vi
+              .fn()
+              .mockResolvedValue([
+                { device_id: 'local-device', name: 'Local Executor', status: 'online' },
+              ]),
+          } as never
+        }
+        localProjects={[]}
+        onClose={vi.fn()}
+        onConfirm={onConfirm}
+      />
+    )
+
+    expect(
+      (await screen.findByTestId('issue-execution-config-default-device')).firstElementChild
+    ).toHaveAttribute('data-value', 'local-device')
+    expect(screen.getByTestId('issue-execution-config-default-device')).toHaveTextContent('本机')
+    expect(
+      screen.getByTestId('issue-execution-config-default-device').querySelector('.lucide-laptop')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('issue-execution-config-default-model')).toHaveValue(
+      'runtime:local-model'
+    )
+    expect(screen.queryByTestId('issue-execution-config-no-runtime')).not.toBeInTheDocument()
+
+    const confirm = screen.getByTestId('issue-execution-config-confirm')
+    expect(confirm).toBeEnabled()
+    await userEvent.click(confirm)
+
+    await waitFor(() =>
+      expect(onConfirm).toHaveBeenCalledWith({
+        workflow: expect.objectContaining({
+          execution_config: expect.objectContaining({
+            execution_device_id: 'local-device',
+            model: 'local-model',
+            workspace_binding: { type: 'standalone' },
+          }),
+          nodes: [
+            expect.objectContaining({ id: 'pwd', execution_config: null }),
+            expect.objectContaining({ id: 'ls', execution_config: null }),
+          ],
+        }),
+      })
+    )
+  })
+
+  it('reports no online runtime only when no online execution device exists', async () => {
+    render(
+      <IssueExecutionConfigDialog
+        item={{ ...item, assignee_agent_id: null } as never}
+        projectChatAgentApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        runtimeProfileApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        modelApi={{ listModels: vi.fn().mockResolvedValue({ data: [] }) } as never}
+        deviceApi={
+          {
+            listDevices: vi
+              .fn()
+              .mockResolvedValue([{ device_id: 'offline-device', status: 'offline' }]),
+          } as never
+        }
+        localProjects={[]}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(await screen.findByTestId('issue-execution-config-no-runtime')).toBeVisible()
+  })
+
   it('uses a configured custom robot without requiring a runtime profile', async () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined)
     render(
@@ -281,9 +483,9 @@ describe('IssueExecutionConfigDialog', () => {
     )
 
     await waitFor(() =>
-      expect(screen.getByTestId('issue-execution-config-fields-device')).toHaveValue(
-        'configured-local-device'
-      )
+      expect(
+        screen.getByTestId('issue-execution-config-fields-device').firstElementChild
+      ).toHaveAttribute('data-value', 'configured-local-device')
     )
   })
 
@@ -345,12 +547,28 @@ describe('IssueExecutionConfigDialog', () => {
       />
     )
 
-    const deviceSelect = await screen.findByTestId('issue-execution-config-fields-device')
-    expect(deviceSelect).toHaveTextContent('device-online')
-    expect(deviceSelect).not.toHaveTextContent('device-offline')
+    await userEvent.selectOptions(
+      await screen.findByTestId('issue-execution-config-fields-agent'),
+      ''
+    )
 
-    await userEvent.selectOptions(screen.getByTestId('issue-execution-config-fields-agent'), '')
-    await userEvent.selectOptions(deviceSelect, 'device-online')
+    const deviceSelect = await screen.findByTestId('issue-execution-config-fields-device')
+    await userEvent.click(deviceSelect)
+    expect(screen.getByTestId('issue-execution-config-fields-device-menu')).toHaveTextContent(
+      'device-online'
+    )
+    expect(screen.getByTestId('issue-execution-config-fields-device-menu')).not.toHaveTextContent(
+      'device-offline'
+    )
+    expect(
+      screen
+        .getByTestId('issue-execution-config-fields-device-option-device-online')
+        .querySelector('.lucide-cloud')
+    ).toBeInTheDocument()
+
+    await userEvent.click(
+      screen.getByTestId('issue-execution-config-fields-device-option-device-online')
+    )
     await userEvent.selectOptions(
       screen.getByTestId('issue-execution-config-fields-model'),
       'public:kimi-code'

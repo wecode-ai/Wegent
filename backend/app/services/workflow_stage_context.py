@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models.cloud_project import LoopItemTaskBinding
 from app.models.delivery import Delivery, LoopItem, loop_datetime_is_unset
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.services.delivery.service import delivery_service
 from app.services.delivery.storage import DeliveryObjectNotFoundError
@@ -101,7 +102,7 @@ class WorkflowStageContextResolver:
                 "selected_sources": list(selected),
                 "runtime_tasks": [
                     {
-                        "device_id": binding.device_id,
+                        "device_id": self._workspace_device_id(db, binding),
                         "task_id": binding.task_id,
                         "task_title": binding.task_title or binding.task_id,
                     }
@@ -142,6 +143,30 @@ class WorkflowStageContextResolver:
         ).encode()
         snapshot["sha256"] = hashlib.sha256(encoded).hexdigest()
         return snapshot
+
+    @staticmethod
+    def _workspace_device_id(
+        db: Session,
+        binding: LoopItemTaskBinding,
+    ) -> str:
+        metadata = (
+            binding.metadata_json if isinstance(binding.metadata_json, dict) else {}
+        )
+        persisted = metadata.get("workspace_device_id")
+        if isinstance(persisted, str) and persisted:
+            return persisted
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.runtime_device_id == binding.device_id,
+                LoopItemExecution.runtime_task_id == binding.task_id,
+            )
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+        if execution is not None and execution.execution_device_id:
+            return execution.execution_device_id
+        return binding.device_id
 
     @staticmethod
     def freeze_binding(

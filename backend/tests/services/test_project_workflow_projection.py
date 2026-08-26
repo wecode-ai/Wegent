@@ -354,4 +354,4 @@ def test_direct_robot_delivery_completes_after_runtime_success(
 
     nodes = item.metadata_json["workflow"]["nodes"]
     assert [node["status"] for node in nodes] == ["completed", "ready"]
-    assert item.status == "pending"
+    assert item.status == "in_progress"

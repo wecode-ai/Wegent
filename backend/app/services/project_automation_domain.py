@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from croniter import croniter
@@ -39,11 +39,14 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def utc_aware(value: datetime | None) -> datetime | None:
+def utc_aware(
+    value: datetime | None,
+    naive_timezone: tzinfo = timezone.utc,
+) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        value = value.replace(tzinfo=naive_timezone)
     return value.astimezone(timezone.utc)
 
 

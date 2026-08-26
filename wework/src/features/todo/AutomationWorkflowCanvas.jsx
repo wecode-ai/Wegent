@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BaseEdge,
   Background,
-  EdgeLabelRenderer,
   Handle,
   MiniMap,
   Panel,
@@ -52,52 +51,138 @@ const HorizontalHandles = ({ hidden = true }) => (
   </>
 )
 
+const WorkflowNodeInsertControl = memo(function WorkflowNodeInsertControl({
+  nodeId,
+  placement,
+  onAddTask,
+  onAddDynamic,
+}) {
+  const [open, setOpen] = useState(false)
+  const placementLabel = placement === 'before' ? '之前' : '之后'
+
+  return (
+    <div
+      className={automationClass(`workflow-node-insert ${placement}`)}
+      onPointerDown={event => event.stopPropagation()}
+      onClick={event => event.stopPropagation()}
+    >
+      <button
+        type="button"
+        className={automationClass('workflow-node-insert-trigger nodrag nopan')}
+        data-testid={`automation-node-insert-${placement}-${nodeId}`}
+        aria-label={`在当前节点${placementLabel}添加流程节点`}
+        aria-expanded={open}
+        onClick={() => setOpen(current => !current)}
+      >
+        <Plus size={14} />
+      </button>
+      {open ? (
+        <div className={automationClass(`workflow-node-insert-menu nodrag nopan ${placement}`)}>
+          <button
+            type="button"
+            data-testid={`automation-node-insert-${placement}-task-${nodeId}`}
+            onClick={() => {
+              onAddTask()
+              setOpen(false)
+            }}
+          >
+            <Box size={14} />
+            执行任务
+          </button>
+          <button
+            type="button"
+            data-testid={`automation-node-insert-${placement}-dynamic-${nodeId}`}
+            onClick={() => {
+              onAddDynamic()
+              setOpen(false)
+            }}
+          >
+            <Sparkles size={14} />
+            AI 动态分配
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+})
+
+const WorkflowNodeInsertControls = memo(function WorkflowNodeInsertControls({
+  nodeId,
+  allowBefore = true,
+  onInsert,
+}) {
+  return (
+    <>
+      {allowBefore ? (
+        <WorkflowNodeInsertControl
+          nodeId={nodeId}
+          placement="before"
+          onAddTask={() => onInsert('before', 'task')}
+          onAddDynamic={() => onInsert('before', 'dynamic')}
+        />
+      ) : null}
+      <WorkflowNodeInsertControl
+        nodeId={nodeId}
+        placement="after"
+        onAddTask={() => onInsert('after', 'task')}
+        onAddDynamic={() => onInsert('after', 'dynamic')}
+      />
+    </>
+  )
+})
+
 const TriggerCanvasNode = memo(function TriggerCanvasNode({ data }) {
   const TriggerIcon = data.triggerType === 'schedule' ? Clock3 : Webhook
   return (
-    <button
-      type="button"
-      className={automationClass(`flow-node trigger ${data.selected ? 'selected' : ''}`)}
-      data-testid="automation-trigger-node"
-      onClick={data.onSelect}
-    >
+    <article className={automationClass(`workflow-node-shell ${data.selected ? 'selected' : ''}`)}>
       <HorizontalHandles />
-      <span className={automationClass('node-icon trigger')}>
-        <TriggerIcon size={17} />
-      </span>
-      <span className={automationClass('flow-node-copy')}>
-        <small>触发规则</small>
-        <strong>{data.title}</strong>
-        <span>{data.meta}</span>
-      </span>
-      <ChevronRight size={14} />
-    </button>
+      <button
+        type="button"
+        className={automationClass(`flow-node trigger ${data.selected ? 'selected' : ''}`)}
+        data-testid="automation-trigger-node"
+        onClick={data.onSelect}
+      >
+        <span className={automationClass('node-icon trigger')}>
+          <TriggerIcon size={17} />
+        </span>
+        <span className={automationClass('flow-node-copy')}>
+          <small>触发规则</small>
+          <strong>{data.title}</strong>
+          <span>{data.meta}</span>
+        </span>
+        <ChevronRight size={14} />
+      </button>
+      <WorkflowNodeInsertControls nodeId="trigger" allowBefore={false} onInsert={data.onInsert} />
+    </article>
   )
 })
 
 const ExecutionCanvasNode = memo(function ExecutionCanvasNode({ data }) {
   return (
-    <button
-      type="button"
-      className={automationClass(`flow-node step ${data.selected ? 'selected' : ''}`)}
-      data-testid={`execution-node-${data.step.id}`}
-      onClick={data.onSelect}
-    >
+    <article className={automationClass(`workflow-node-shell ${data.selected ? 'selected' : ''}`)}>
       <HorizontalHandles />
-      <span className={automationClass('node-icon step')}>
-        <Box size={17} />
-      </span>
-      <span className={automationClass('flow-node-copy')}>
-        <small>{data.step.executionMode === 'automatic' ? '自动执行' : '手动执行'}</small>
-        <strong>{data.step.name || '未命名执行节点'}</strong>
-        <span>
-          {data.step.executionMode === 'automatic'
-            ? `${data.step.environment} · ${data.step.model}`
-            : '由成员手动完成'}
+      <button
+        type="button"
+        className={automationClass(`flow-node step ${data.selected ? 'selected' : ''}`)}
+        data-testid={`execution-node-${data.step.id}`}
+        onClick={data.onSelect}
+      >
+        <span className={automationClass('node-icon step')}>
+          <Box size={17} />
         </span>
-      </span>
-      <ChevronRight size={14} />
-    </button>
+        <span className={automationClass('flow-node-copy')}>
+          <small>{data.step.executionMode === 'automatic' ? '自动执行' : '手动执行'}</small>
+          <strong>{data.step.name || '未命名执行节点'}</strong>
+          <span>
+            {data.step.executionMode === 'automatic'
+              ? `${data.step.environment} · ${data.step.model}`
+              : '由成员手动完成'}
+          </span>
+        </span>
+        <ChevronRight size={14} />
+      </button>
+      <WorkflowNodeInsertControls nodeId={data.step.id} onInsert={data.onInsert} />
+    </article>
   )
 })
 
@@ -108,6 +193,7 @@ const DynamicGroupCanvasNode = memo(function DynamicGroupCanvasNode({ data }) {
       data-testid={`ai-allocation-node-${data.step.id}`}
     >
       <HorizontalHandles />
+      <WorkflowNodeInsertControls nodeId={data.step.id} onInsert={data.onInsert} />
       <button
         type="button"
         className={automationClass('react-flow-group-header')}
@@ -166,11 +252,24 @@ const DagStageCanvasNode = memo(function DagStageCanvasNode({ data }) {
       </button>
       <button
         type="button"
-        className={automationClass('react-flow-stage-add nodrag nopan')}
+        className={automationClass('react-flow-stage-insert before nodrag nopan')}
+        data-testid={`dag-stage-insert-before-${data.stage.id}`}
+        aria-label={`在 ${data.stage.name} 前添加阶段`}
+        onClick={event => {
+          event.stopPropagation()
+          data.onInsert('before')
+        }}
+      >
+        <Plus size={12} />
+      </button>
+      <button
+        type="button"
+        className={automationClass('react-flow-stage-insert after nodrag nopan')}
+        data-testid={`dag-stage-insert-after-${data.stage.id}`}
         aria-label={`在 ${data.stage.name} 后添加阶段`}
         onClick={event => {
           event.stopPropagation()
-          data.onAdd()
+          data.onInsert('after')
         }}
       >
         <Plus size={12} />
@@ -184,50 +283,6 @@ const DagStageCanvasNode = memo(function DagStageCanvasNode({ data }) {
   )
 })
 
-const InsertCanvasNode = memo(function InsertCanvasNode({ data }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className={automationClass('react-flow-insert-node')}>
-      <HorizontalHandles />
-      <button
-        type="button"
-        className={automationClass('react-flow-insert-trigger nodrag nopan')}
-        data-testid={`automation-insert-node-${data.afterIndex}`}
-        aria-label="添加流程节点"
-        onClick={() => setOpen(current => !current)}
-      >
-        <Plus size={15} />
-      </button>
-      {open ? (
-        <div className={automationClass('react-flow-insert-menu nodrag nopan')}>
-          <button
-            type="button"
-            data-testid={`automation-insert-task-${data.afterIndex}`}
-            onClick={() => {
-              data.onAddTask()
-              setOpen(false)
-            }}
-          >
-            <Box size={14} />
-            执行任务
-          </button>
-          <button
-            type="button"
-            data-testid={`automation-insert-dynamic-${data.afterIndex}`}
-            onClick={() => {
-              data.onAddDynamic()
-              setOpen(false)
-            }}
-          >
-            <Sparkles size={14} />
-            AI 动态分配
-          </button>
-        </div>
-      ) : null}
-    </div>
-  )
-})
-
 const DifyStyleEdge = memo(function DifyStyleEdge({
   id,
   sourceX,
@@ -235,11 +290,9 @@ const DifyStyleEdge = memo(function DifyStyleEdge({
   targetX,
   targetY,
   selected,
-  data,
 }) {
   const [hovered, setHovered] = useState(false)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [edgePath, labelX, labelY] = getBezierPath({
+  const [edgePath] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition: Position.Right,
@@ -248,7 +301,6 @@ const DifyStyleEdge = memo(function DifyStyleEdge({
     targetPosition: Position.Left,
     curvature: 0.3,
   })
-  const showInsert = data?.kind === 'outer' && (hovered || menuOpen)
 
   return (
     <>
@@ -270,53 +322,6 @@ const DifyStyleEdge = memo(function DifyStyleEdge({
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       />
-      {data?.kind === 'outer' ? (
-        <EdgeLabelRenderer>
-          <div
-            className={automationClass('react-flow-edge-insert nodrag nopan')}
-            style={{
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              opacity: showInsert ? 1 : 0,
-              pointerEvents: showInsert ? 'all' : 'none',
-            }}
-            onMouseEnter={() => setHovered(true)}
-            onMouseLeave={() => setHovered(false)}
-          >
-            <button
-              type="button"
-              className={automationClass('react-flow-edge-insert-trigger')}
-              aria-label="在连线中添加流程节点"
-              onClick={() => setMenuOpen(current => !current)}
-            >
-              <Plus size={12} />
-            </button>
-            {menuOpen ? (
-              <div className={automationClass('react-flow-edge-insert-menu')}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    data.onAddTask()
-                    setMenuOpen(false)
-                  }}
-                >
-                  <Box size={14} />
-                  执行任务
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    data.onAddDynamic()
-                    setMenuOpen(false)
-                  }}
-                >
-                  <Sparkles size={14} />
-                  AI 动态分配
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </EdgeLabelRenderer>
-      ) : null}
     </>
   )
 })
@@ -344,11 +349,17 @@ const nodeTypes = {
   execution: ExecutionCanvasNode,
   dynamicGroup: DynamicGroupCanvasNode,
   dagStage: DagStageCanvasNode,
-  insert: InsertCanvasNode,
 }
 
 const edgeTypes = {
   dify: DifyStyleEdge,
+}
+
+const CANVAS_FIT_PADDING = {
+  top: '72px',
+  right: '96px',
+  bottom: '72px',
+  left: '260px',
 }
 
 const CanvasViewportControls = memo(function CanvasViewportControls() {
@@ -378,7 +389,7 @@ const CanvasViewportControls = memo(function CanvasViewportControls() {
         type="button"
         aria-label="显示全部节点"
         data-testid="automation-canvas-fit-view"
-        onClick={() => fitView({ duration: 240, padding: 0.16 })}
+        onClick={() => fitView({ duration: 240, padding: CANVAS_FIT_PADDING })}
       >
         <Focus size={14} />
       </button>
@@ -397,7 +408,7 @@ const CanvasAutoFit = memo(function CanvasAutoFit({ nodeCount }) {
     }
     previousNodeCount.current = nodeCount
     const frame = window.requestAnimationFrame(() => {
-      void fitView({ duration: 240, padding: 0.18 })
+      void fitView({ duration: 240, padding: CANVAS_FIT_PADDING })
     })
     return () => window.cancelAnimationFrame(frame)
   }, [fitView, nodeCount])
@@ -430,7 +441,7 @@ export function AutomationWorkflowCanvas({
   onToggleStepDependency,
   onMoveStep,
 }) {
-  const [interactionMode, setInteractionMode] = useState('pointer')
+  const [interactionMode, setInteractionMode] = useState('hand')
 
   const graph = useMemo(() => {
     const nodes = []
@@ -451,6 +462,7 @@ export function AutomationWorkflowCanvas({
         meta: trigger.detail,
         selected: selectedNode.type === 'trigger',
         onSelect: () => onSelectNode({ type: 'trigger' }),
+        onInsert: (placement, kind) => onInsertNode(null, placement, kind),
       },
       style: { width: OUTER_NODE_WIDTH, height: OUTER_NODE_HEIGHT },
     })
@@ -483,6 +495,7 @@ export function AutomationWorkflowCanvas({
               (selectedNode.type === 'step' && selectedNode.id === step.id) ||
               (selectedNode.type === 'dagStage' && selectedNode.stepId === step.id),
             onSelect: () => onSelectNode({ type: 'step', id: step.id }),
+            onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
           },
           style: { width: graphWidth, height: groupHeight },
         })
@@ -508,7 +521,7 @@ export function AutomationWorkflowCanvas({
                 selectedNode.stageId === stage.id,
               onSelect: () =>
                 onSelectNode({ type: 'dagStage', stepId: step.id, stageId: stage.id }),
-              onAdd: () => onAddDagStage(step.id, stage.id),
+              onInsert: placement => onAddDagStage(step.id, stage.id, placement),
             },
             style: { width: STAGE_WIDTH, height: STAGE_HEIGHT },
           })
@@ -542,6 +555,7 @@ export function AutomationWorkflowCanvas({
             step,
             selected: selectedNode.type === 'step' && selectedNode.id === step.id,
             onSelect: () => onSelectNode({ type: 'step', id: step.id }),
+            onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
           },
           style: { width: OUTER_NODE_WIDTH, height: OUTER_NODE_HEIGHT },
         })
@@ -562,55 +576,6 @@ export function AutomationWorkflowCanvas({
             targetStepId: step.id,
           },
         })
-      })
-    })
-
-    const dependedOn = new Set(draft.steps.flatMap(step => step.dependencies))
-    const terminalSteps = draft.steps.filter(step => !dependedOn.has(step.id))
-    const finalInsertId = `insert-${draft.steps.length - 1}`
-    const maxRight = draft.steps.reduce((value, step) => {
-      const width =
-        step.kind === 'dynamic'
-          ? Math.max(
-              GROUP_MIN_WIDTH,
-              ...(step.subgraph?.nodes ?? []).map(stage => (stage.x ?? 0) + STAGE_WIDTH + 40)
-            )
-          : OUTER_NODE_WIDTH
-      return Math.max(value, (step.x ?? 440) + width)
-    }, 80 + OUTER_NODE_WIDTH)
-    nodes.push({
-      id: finalInsertId,
-      type: 'insert',
-      position: {
-        x: maxRight + 86,
-        y: centerY - 18,
-      },
-      draggable: false,
-      selectable: false,
-      data: {
-        afterIndex: draft.steps.length - 1,
-        onAddTask: () =>
-          onInsertNode(
-            draft.steps.length - 1,
-            'task',
-            terminalSteps.map(step => step.id)
-          ),
-        onAddDynamic: () =>
-          onInsertNode(
-            draft.steps.length - 1,
-            'dynamic',
-            terminalSteps.map(step => step.id)
-          ),
-      },
-      style: { width: 36, height: 36 },
-    })
-    ;(terminalSteps.length ? terminalSteps.map(step => step.id) : ['trigger']).forEach(sourceId => {
-      edges.push({
-        id: `append-edge:${sourceId}:${finalInsertId}`,
-        source: sourceId,
-        target: finalInsertId,
-        type: 'dify',
-        selectable: false,
       })
     })
 
@@ -725,6 +690,17 @@ export function AutomationWorkflowCanvas({
     <div
       className={automationClass('react-flow-workflow-canvas')}
       data-testid="automation-workflow-canvas"
+      onClick={event => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest(
+            '.react-flow__node, .react-flow__edge, .react-flow__panel, .react-flow__minimap'
+          )
+        ) {
+          return
+        }
+        onSelectNode({ type: 'none' })
+      }}
     >
       <ReactFlow
         nodes={nodes}
@@ -750,7 +726,7 @@ export function AutomationWorkflowCanvas({
         zoomOnDoubleClick={false}
         minZoom={0.25}
         maxZoom={1.8}
-        defaultViewport={{ x: 48, y: 136, zoom: 0.82 }}
+        defaultViewport={{ x: 176, y: 136, zoom: 0.78 }}
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={['Backspace', 'Delete']}
       >
@@ -764,7 +740,10 @@ export function AutomationWorkflowCanvas({
         <Panel position="top-left" className={automationClass('canvas-mode-controls')}>
           <button
             type="button"
-            className={interactionMode === 'pointer' ? 'active' : ''}
+            className={automationClass(
+              'canvas-mode-button',
+              interactionMode === 'pointer' && 'active'
+            )}
             aria-label="选择节点"
             data-testid="automation-canvas-pointer-mode"
             onClick={() => setInteractionMode('pointer')}
@@ -773,7 +752,10 @@ export function AutomationWorkflowCanvas({
           </button>
           <button
             type="button"
-            className={interactionMode === 'hand' ? 'active' : ''}
+            className={automationClass(
+              'canvas-mode-button',
+              interactionMode === 'hand' && 'active'
+            )}
             aria-label="移动画布"
             data-testid="automation-canvas-hand-mode"
             onClick={() => setInteractionMode('hand')}
@@ -782,10 +764,10 @@ export function AutomationWorkflowCanvas({
           </button>
         </Panel>
         <MiniMap
+          className={automationClass('canvas-minimap')}
           pannable
           zoomable
           position="bottom-right"
-          style={{ bottom: 52 }}
           nodeColor={node =>
             node.type === 'trigger'
               ? 'rgb(var(--color-focus))'

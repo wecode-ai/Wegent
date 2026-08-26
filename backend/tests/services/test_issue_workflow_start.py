@@ -92,8 +92,12 @@ def test_should_start_after_creation_matches_workflow_entry_semantics(
         status=status,
         metadata_json={"workflow": workflow(advancement_policy=advancement_policy)},
     )
+    project = SimpleNamespace(metadata_json={})
 
-    assert issue_workflow_start_service.should_start_after_creation(item) is expected
+    assert (
+        issue_workflow_start_service.should_start_after_creation(item, project)
+        is expected
+    )
 
 
 @pytest.mark.asyncio

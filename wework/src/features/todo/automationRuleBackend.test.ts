@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
-import type { ProjectAutomationRule } from '@/api/projectAutomations'
+import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
 import {
   automationInputFromUi,
+  automationRunFromBackend,
   automationRuleFromLegacyWorkflow,
   automationRuleFromBackend,
   legacyWorkflowFromAutomationRule,
@@ -18,7 +19,7 @@ function backendRule(overrides: Partial<ProjectAutomationRule> = {}): ProjectAut
     triggerType: 'event',
     eventType: 'task.status_changed',
     eventConfig: {
-      statuses: ['pending', 'in_progress'],
+      transition: 'entered_processing',
       tags: ['自动开发'],
     },
     webhookEventId: null,
@@ -57,14 +58,12 @@ function uiRule(): AutomationUiRule {
     description: '创建后完成开发流程',
     enabled: true,
     updatedAt: '尚未发布',
-    lastStatus: 'idle',
     trigger: {
       type: 'event',
       source: 'issue',
       startMode: 'status',
       event: 'status_changed',
       tags: ['自动开发'],
-      statuses: ['pending', 'in_progress'],
       schedule: {
         frequency: 'daily',
         weekday: 'monday',
@@ -110,12 +109,52 @@ function uiRule(): AutomationUiRule {
 }
 
 describe('automationRuleBackend', () => {
+  test.each([
+    ['pending', '—'],
+    ['queued', '—'],
+    ['waiting_runtime', '—'],
+    ['waiting_device', '—'],
+    ['running', '进行中'],
+  ] satisfies Array<[ProjectAutomationRun['status'], string]>)(
+    'preserves the backend %s run state instead of presenting it as running',
+    (status, duration) => {
+      const run: ProjectAutomationRun = {
+        id: `run-${status}`,
+        automationId: 'rule-1',
+        projectId: '11',
+        trigger: 'event',
+        status,
+        timezone: 'Asia/Shanghai',
+        scheduledFor: '2026-08-26T10:00:00Z',
+        expiresAt: null,
+        taskId: 'issue-1',
+        taskTitle: '真实执行状态',
+        backendTaskId: null,
+        deviceId: null,
+        error: null,
+        createdAt: '2026-08-26T10:00:00Z',
+        updatedAt: '2026-08-26T10:00:00Z',
+        completedAt: null,
+      }
+
+      expect(automationRunFromBackend(run, uiRule())).toMatchObject({
+        status,
+        duration,
+      })
+    }
+  )
+
   test('maps status-change rules without changing their trigger semantics', () => {
     const mapped = automationRuleFromBackend(backendRule())
 
     expect(mapped.trigger.startMode).toBe('status')
     expect(mapped.trigger.event).toBe('status_changed')
-    expect(mapped.trigger.statuses).toEqual(['pending', 'in_progress'])
+  })
+
+  test('formats automation timestamps in Asia/Shanghai', () => {
+    const mapped = automationRuleFromBackend(backendRule({ updatedAt: '2026-08-26T09:18:00Z' }))
+
+    expect(mapped.updatedAt).toBe('2026/08/26 17:18')
   })
 
   test('persists the complete node execution configuration in the backend rule', () => {
@@ -128,7 +167,8 @@ describe('automationRuleBackend', () => {
     }
 
     expect(input.eventType).toBe('task.status_changed')
-    expect(input.eventConfig.statuses).toEqual(['pending', 'in_progress'])
+    expect(input.eventConfig.transition).toBe('entered_processing')
+    expect(input.eventConfig).not.toHaveProperty('statuses')
     expect(storedFlow.version).toBe(2)
     expect(storedFlow.graph.nodes[0]).toMatchObject({
       executionDeviceId: 'device-1',

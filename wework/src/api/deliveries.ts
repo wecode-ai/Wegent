@@ -324,6 +324,7 @@ export interface CloudProject {
   }
   board_config?: {
     group_by: 'status' | 'priority' | 'assignee' | 'tag'
+    processing_start_status_id: string | null
     statuses: Array<{
       id: string
       name: string
@@ -947,6 +948,7 @@ export function createDeliveryApi(client: HttpClient) {
         local_project_name?: string | null
         workflow?: IssueWorkflowInstance | null
         execution_config?: WorkflowExecutionConfig | null
+        automation_rule_id?: string | null
       }
     ): Promise<CloudLoopItem> {
       return client.post(`/v1/cloud-projects/${projectId}/loop-items`, data)

@@ -14,6 +14,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, aliased
 
 from app.core.project_automation_secrets import encrypt_webhook_secret
+from app.db.timezone import database_datetime_timezone
 from app.models.delivery import (
     CloudProject,
     LoopItem,
@@ -63,6 +64,19 @@ from app.services.share import team_share_service
 from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 logger = logging.getLogger(__name__)
+
+
+def _canonical_event_config(
+    event_type: str | None,
+    event_config: object,
+) -> dict:
+    config = dict(event_config) if isinstance(event_config, dict) else {}
+    config.pop("statuses", None)
+    if event_type == "task.status_changed":
+        config["transition"] = "entered_processing"
+    else:
+        config.pop("transition", None)
+    return config
 
 
 class ProjectAutomationService:
@@ -247,7 +261,10 @@ class ProjectAutomationService:
                     "event_type": (
                         values.event_type if values.trigger_type == "event" else None
                     ),
-                    "event_config": values.event_config,
+                    "event_config": _canonical_event_config(
+                        values.event_type if values.trigger_type == "event" else None,
+                        values.event_config,
+                    ),
                     "webhook_secret_encrypted": None,
                     "cron_expression": (
                         values.cron_expression
@@ -264,6 +281,9 @@ class ProjectAutomationService:
         row.metadata_json = self._bind_self_managed_workflow(
             _metadata(row),
             automation_id=str(row.id),
+        )
+        self._validate_workflow_definition(
+            _metadata(row).get("event_config"),
         )
         if webhook_secret:
             row_metadata = _metadata(row)
@@ -300,6 +320,28 @@ class ProjectAutomationService:
             "runtime_workflow_definition": next_definition,
         }
         return {**rule_metadata, "event_config": next_event_config}
+
+    @staticmethod
+    def _validate_workflow_definition(event_config: object) -> None:
+        if not isinstance(event_config, dict):
+            return
+        raw_definition = event_config.get("runtime_workflow_definition")
+        if raw_definition is None:
+            return
+        if not isinstance(raw_definition, dict):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Automation workflow definition must be an object",
+            )
+        try:
+            from app.schemas.issue_workflow import ProjectWorkflowDefinition
+
+            ProjectWorkflowDefinition.model_validate(raw_definition)
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"Invalid automation workflow definition: {exc}",
+            ) from exc
 
     def update(
         self,
@@ -411,15 +453,19 @@ class ProjectAutomationService:
         if values.enabled is not None:
             row.status = "enabled" if values.enabled else "disabled"
 
+        event_config = _canonical_event_config(
+            event_type,
+            (
+                values.event_config
+                if values.event_config is not None
+                else rule_metadata.get("event_config", {})
+            ),
+        )
         rule_metadata.update(
             {
                 "trigger_type": trigger_type,
                 "event_type": event_type,
-                "event_config": (
-                    values.event_config
-                    if values.event_config is not None
-                    else rule_metadata.get("event_config", {})
-                ),
+                "event_config": event_config,
                 "cron_expression": expression,
                 "timezone": timezone_name,
             }
@@ -440,6 +486,9 @@ class ProjectAutomationService:
                 base=rule_metadata,
             ),
             automation_id=str(row.id),
+        )
+        self._validate_workflow_definition(
+            _metadata(row).get("event_config"),
         )
         row.due_at = (
             _next_run(str(expression), timezone_name, utcnow())
@@ -622,6 +671,7 @@ class ProjectAutomationService:
         run.task_title = item.title or ""
         run.metadata_json = {
             **(run.metadata_json or {}),
+            "workflow_parent_run_id": self._workflow_parent_run_id(item),
             "workflow_node_id": workflow_node_id,
             "instruction_override": str(node.get("prompt") or ""),
             "dependency_context": node.get("dependency_context") or {},
@@ -783,6 +833,7 @@ class ProjectAutomationService:
             metadata_json={
                 "trigger": "workflow",
                 "scheduled_for": scheduled_for.isoformat(),
+                "workflow_parent_run_id": self._workflow_parent_run_id(item),
                 "workflow_node_id": workflow_node_id,
                 "workflow_node_name": str(node.get("name") or ""),
                 "instruction_override": str(node.get("prompt") or ""),
@@ -928,6 +979,47 @@ class ProjectAutomationService:
             .all()
         )
         visible_rows = [row for row in rows if self._is_visible_run(row)][:100]
+        repaired = (
+            loop_item_execution_service.reconcile_terminal_automation_projections(
+                db,
+                run_ids=[str(row.id) for row in visible_rows],
+                limit=len(visible_rows),
+            )
+        )
+        if repaired:
+            rows = (
+                db.query(ProjectAutomationRun)
+                .filter(
+                    ProjectAutomationRun.parent_id == automation_id,
+                    loop_datetime_is_unset(ProjectAutomationRun.deleted_at),
+                )
+                .order_by(ProjectAutomationRun.created_at.desc())
+                .limit(200)
+                .all()
+            )
+            visible_rows = [row for row in rows if self._is_visible_run(row)][:100]
+        from app.services.project_workflow_projection import (
+            reconcile_workflow_automation_run,
+        )
+
+        workflow_repaired = False
+        for row in visible_rows:
+            if reconcile_workflow_automation_run(db, row):
+                workflow_repaired = True
+        if workflow_repaired:
+            db.commit()
+            db.expire_all()
+            rows = (
+                db.query(ProjectAutomationRun)
+                .filter(
+                    ProjectAutomationRun.parent_id == automation_id,
+                    loop_datetime_is_unset(ProjectAutomationRun.deleted_at),
+                )
+                .order_by(ProjectAutomationRun.created_at.desc())
+                .limit(200)
+                .all()
+            )
+            visible_rows = [row for row in rows if self._is_visible_run(row)][:100]
         return [self._run_view(row, timezone_name) for row in visible_rows]
 
     async def cancel_run(
@@ -1286,6 +1378,7 @@ class ProjectAutomationService:
             device_id = None
             model = None
         last_run = rule_metadata.get("last_run_at")
+        database_timezone = database_datetime_timezone(db)
         return {
             "id": row.id,
             "project_id": str(row.cloud_project_id),
@@ -1323,8 +1416,8 @@ class ProjectAutomationService:
             ),
             "last_run_status": last_run_row.status if last_run_row else None,
             "version": row.version,
-            "created_at": _utc_aware(row.created_at),
-            "updated_at": _utc_aware(row.updated_at),
+            "created_at": _utc_aware(row.created_at, database_timezone),
+            "updated_at": _utc_aware(row.updated_at, database_timezone),
         }
 
     @staticmethod

@@ -64,7 +64,6 @@ export interface AutomationUiTrigger {
   startMode: 'immediate' | 'status'
   event: 'created' | 'status_changed'
   tags: string[]
-  statuses: string[]
   schedule: {
     frequency: 'daily' | 'weekdays' | 'weekly'
     weekday: string
@@ -84,7 +83,6 @@ export interface AutomationUiRule {
   updatedAt: string
   trigger: AutomationUiTrigger
   steps: AutomationUiStep[]
-  lastStatus: 'success' | 'running' | 'failed' | 'idle'
   legacyDefinition: ProjectWorkflowDefinition | null
 }
 
@@ -93,7 +91,8 @@ export interface AutomationUiRun {
   ruleId: string
   ruleName: string
   issue: string
-  status: 'success' | 'running' | 'failed'
+  status: ProjectAutomationRun['status']
+  triggeredAt: string
   startedAt: string
   duration: string
 }
@@ -147,6 +146,17 @@ function stringArray(value: unknown): string[] {
 
 function recordArray(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value) ? value.filter(isRecord) : []
+}
+
+function formatAutomationTimestamp(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Shanghai',
+  }).format(new Date(value))
 }
 
 function normalizeDeliverables(value: unknown): AutomationUiDeliverable[] {
@@ -381,28 +391,10 @@ function fallbackStep(rule: ProjectAutomationRule): AutomationUiStep {
   }
 }
 
-function displayStatus(
-  status: ProjectAutomationRule['lastRunStatus']
-): AutomationUiRule['lastStatus'] {
-  if (status === 'succeeded') return 'success'
-  if (status === 'failed' || status === 'cancelled' || status === 'skipped') return 'failed'
-  if (
-    status &&
-    ['pending', 'queued', 'waiting_runtime', 'waiting_device', 'running'].includes(status)
-  ) {
-    return 'running'
-  }
-  return 'idle'
-}
-
 export function automationRuleFromBackend(rule: ProjectAutomationRule): AutomationUiRule {
   const flow = storedFlow(rule)
   const schedule = parseCron(rule.cronExpression)
-  const startMode =
-    rule.eventType === 'task.status_changed' ||
-    (Array.isArray(rule.eventConfig.statuses) && rule.eventConfig.statuses.length > 0)
-      ? 'status'
-      : 'immediate'
+  const startMode = rule.eventType === 'task.status_changed' ? 'status' : 'immediate'
   return {
     id: rule.id,
     persisted: true,
@@ -411,13 +403,7 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
     name: rule.name,
     description: flow?.description ?? rule.prompt,
     enabled: rule.enabled,
-    updatedAt: new Intl.DateTimeFormat('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(new Date(rule.updatedAt)),
+    updatedAt: formatAutomationTimestamp(rule.updatedAt),
     trigger: {
       type: rule.triggerType === 'schedule' ? 'schedule' : 'event',
       source: 'issue',
@@ -426,16 +412,12 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
       tags: Array.isArray(rule.eventConfig.tags)
         ? rule.eventConfig.tags.filter((value): value is string => typeof value === 'string')
         : [],
-      statuses: Array.isArray(rule.eventConfig.statuses)
-        ? rule.eventConfig.statuses.filter((value): value is string => typeof value === 'string')
-        : ['pending', 'in_progress'],
       schedule: {
         ...schedule,
         timezone: rule.timezone,
       },
     },
     steps: flow?.graph.nodes.length ? flow.graph.nodes : [fallbackStep(rule)],
-    lastStatus: displayStatus(rule.lastRunStatus),
     legacyDefinition: null,
   }
 }
@@ -621,20 +603,13 @@ export function automationRuleFromLegacyWorkflow(
         ? 'AI 根据 Issue 动态拆解、分配并推进任务'
         : 'Issue 进入处理状态后按照预设 DAG 推进'),
     enabled: stageMode === 'dag' || advancementPolicy === 'ai',
-    updatedAt: new Intl.DateTimeFormat('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(new Date(project.updated_at)),
+    updatedAt: formatAutomationTimestamp(project.updated_at),
     trigger: {
       type: 'event',
       source: 'issue',
       startMode: 'status',
       event: 'status_changed',
       tags: [],
-      statuses: ['pending'],
       schedule: {
         frequency: 'daily',
         weekday: 'monday',
@@ -643,7 +618,6 @@ export function automationRuleFromLegacyWorkflow(
       },
     },
     steps,
-    lastStatus: displayStatus(managerRule?.lastRunStatus ?? null),
     legacyDefinition: definition,
   }
 }
@@ -802,7 +776,7 @@ export function automationInputFromUi(
       : null,
     eventConfig: {
       tags: rule.trigger.tags,
-      ...(rule.trigger.startMode === 'status' ? { statuses: rule.trigger.statuses } : {}),
+      ...(rule.trigger.startMode === 'status' ? { transition: 'entered_processing' } : {}),
       runtime_workflow_definition: legacyWorkflowFromAutomationRule(rule),
       [FLOW_KEY]: {
         version: 2,
@@ -829,14 +803,8 @@ export function automationInputFromUi(
   }
 }
 
-function runStatus(status: ProjectAutomationRun['status']): AutomationUiRun['status'] {
-  if (status === 'succeeded') return 'success'
-  if (status === 'failed' || status === 'cancelled' || status === 'skipped') return 'failed'
-  return 'running'
-}
-
 function runDuration(run: ProjectAutomationRun): string {
-  if (!run.completedAt) return '进行中'
+  if (!run.completedAt) return run.status === 'running' ? '进行中' : '—'
   const milliseconds = new Date(run.completedAt).getTime() - new Date(run.createdAt).getTime()
   const seconds = Math.max(0, Math.round(milliseconds / 1000))
   if (seconds < 60) return `${seconds} 秒`
@@ -852,7 +820,8 @@ export function automationRunFromBackend(
     ruleId: rule.id,
     ruleName: rule.name,
     issue: run.taskTitle || run.taskId || (run.trigger === 'scheduled' ? '计划运行' : '手动运行'),
-    status: runStatus(run.status),
+    status: run.status,
+    triggeredAt: run.createdAt,
     startedAt: new Intl.DateTimeFormat('zh-CN', {
       year: 'numeric',
       month: '2-digit',

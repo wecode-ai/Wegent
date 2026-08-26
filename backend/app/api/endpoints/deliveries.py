@@ -64,6 +64,10 @@ from app.services.issue_workflow_decision import issue_workflow_decision_service
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_item_events import publish_loop_item_changed
+from app.services.loop_item_status_history import (
+    is_processing_status,
+    project_status_transition,
+)
 from app.services.loop_items import loop_item_service
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
@@ -472,25 +476,97 @@ async def create_loop_item(
     """Create a board task using a user JWT or personal API key."""
 
     project = cloud_project_service.get(db, project_id, current_user.id)
-    created = loop_item_provider_router.create(db, project, current_user, values)
-    response = LoopItemResponse.model_validate(created.values)
     from app.services.project_automations import (
         ProjectAutomationEvent,
         project_automation_processor,
     )
 
-    try:
-        await project_automation_processor.process(
-            db,
-            ProjectAutomationEvent(
-                event_type="task.created",
-                project_id=str(project.id),
-                subject_id=str(created.values["id"]),
-                source=project.task_provider,
-                actor_user_id=current_user.id,
-                payload=response.model_dump(mode="json"),
-            ),
+    event_payload = values.model_dump(
+        mode="json",
+        exclude={"automation_rule_id"},
+    )
+    event_payload["status"] = values.status or "inbox"
+    event = ProjectAutomationEvent(
+        event_type="task.created",
+        project_id=str(project.id),
+        subject_id="",
+        source=project.task_provider,
+        actor_user_id=current_user.id,
+        payload=event_payload,
+    )
+    project_metadata = (
+        project.metadata_json if isinstance(project.metadata_json, dict) else {}
+    )
+    project_workflow = project_metadata.get("workflow_definition")
+    explicit_workflow = values.workflow
+    has_bound_workflow = (
+        explicit_workflow is not None
+        and (
+            explicit_workflow.stage_mode == "dag"
+            or explicit_workflow.advancement_policy == "ai"
         )
+    ) or (
+        isinstance(project_workflow, dict)
+        and (
+            project_workflow.get("stage_mode") == "dag"
+            or project_workflow.get("advancement_policy") == "ai"
+        )
+    )
+    matching_rules = (
+        []
+        if has_bound_workflow
+        else project_automation_processor.matching_rules(db, event)
+    )
+    selected_automation_id = values.automation_rule_id
+    if selected_automation_id:
+        selected_rule = next(
+            (rule for rule in matching_rules if str(rule.id) == selected_automation_id),
+            None,
+        )
+        if selected_rule is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "automation_selection_stale",
+                    "message": "The selected automation no longer matches this Issue",
+                },
+            )
+    elif len(matching_rules) > 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "automation_selection_required",
+                "message": "Multiple automations match this Issue",
+                "candidates": [
+                    {
+                        "id": str(rule.id),
+                        "name": rule.title,
+                        "description": rule.description or "",
+                    }
+                    for rule in matching_rules
+                ],
+            },
+        )
+    elif len(matching_rules) == 1:
+        selected_automation_id = str(matching_rules[0].id)
+
+    created = loop_item_provider_router.create(db, project, current_user, values)
+    response = LoopItemResponse.model_validate(created.values)
+
+    try:
+        if not has_bound_workflow and selected_automation_id:
+            await project_automation_processor.process(
+                db,
+                ProjectAutomationEvent(
+                    event_type="task.created",
+                    project_id=str(project.id),
+                    subject_id=str(created.values["id"]),
+                    source=project.task_provider,
+                    actor_user_id=current_user.id,
+                    payload=response.model_dump(mode="json"),
+                ),
+                automation_id=selected_automation_id,
+            )
     except Exception:
         db.rollback()
         logger.exception(
@@ -502,7 +578,8 @@ async def create_loop_item(
     if created.internal_item is not None:
         db.refresh(created.internal_item)
         if issue_workflow_start_service.should_start_after_creation(
-            created.internal_item
+            created.internal_item,
+            project,
         ):
             await issue_workflow_start_service.start(
                 db,
@@ -909,14 +986,24 @@ async def update_loop_item(
     existing = loop_item_service.get(db, item_id, current_user.id)
     previous_status = existing.status
     item = loop_item_service.update(db, item_id, current_user.id, values)
+    project = cloud_project_service.get(db, int(item.cloud_project_id), current_user.id)
     issue_workflow_planning_service.sync_from_child(
         db,
         child_id=item.id,
         commit=True,
     )
     workflow_updated = "workflow" in values.model_fields_set
-    should_start_workflow = item.status in {"pending", "in_progress"} and (
-        previous_status not in {"pending", "in_progress"} or workflow_updated
+    status_changed = (
+        "status" in values.model_fields_set and previous_status != item.status
+    )
+    status_transition = project_status_transition(
+        project,
+        previous_status=previous_status,
+        current_status=item.status,
+    )
+    entered_processing = status_changed and status_transition.entered_processing
+    should_start_workflow = entered_processing or (
+        workflow_updated and is_processing_status(project, item.status)
     )
     logger.info(
         "[issue-workflow-start] update item=%s project=%s previous_status=%s "
@@ -930,9 +1017,6 @@ async def update_loop_item(
         sorted(values.model_fields_set),
     )
     if should_start_workflow:
-        project = cloud_project_service.get(
-            db, int(item.cloud_project_id), current_user.id
-        )
         await issue_workflow_start_service.start(
             db,
             item=item,
@@ -949,11 +1033,7 @@ async def update_loop_item(
         background_tasks.add_task(consume_queues_background)
         db.refresh(item)
     elif item.assignee_agent_id and (
-        "execution_config" in values.model_fields_set
-        or (
-            previous_status not in {"pending", "in_progress"}
-            and item.status in {"pending", "in_progress"}
-        )
+        "execution_config" in values.model_fields_set or entered_processing
     ):
         item = loop_item_service.refresh_agent_execution_configuration(
             db,
@@ -967,14 +1047,18 @@ async def update_loop_item(
 
         background_tasks.add_task(consume_queues_background)
         db.refresh(item)
-    if "status" in values.model_fields_set and previous_status != item.status:
+    if status_changed:
         from app.services.project_automations import (
             ProjectAutomationEvent,
             project_automation_processor,
         )
 
+        item_metadata_before_automation = (
+            item.metadata_json if isinstance(item.metadata_json, dict) else {}
+        )
+        workflow_before_automation = item_metadata_before_automation.get("workflow")
         try:
-            await project_automation_processor.process(
+            dispatched_automations = await project_automation_processor.process(
                 db,
                 ProjectAutomationEvent(
                     event_type="task.status_changed",
@@ -989,6 +1073,34 @@ async def update_loop_item(
                         "previous_status": previous_status,
                     },
                 ),
+            )
+            db.refresh(item)
+            item_metadata_after_automation = (
+                item.metadata_json if isinstance(item.metadata_json, dict) else {}
+            )
+            workflow_after_automation = item_metadata_after_automation.get("workflow")
+            workflow_nodes = (
+                workflow_after_automation.get("nodes")
+                if isinstance(workflow_after_automation, dict)
+                else []
+            )
+            logger.info(
+                "[project-automation-routing] status update item=%s project=%s "
+                "previous_status=%s status=%s dispatched=%s workflow_before=%s "
+                "workflow_after=%s node_ids=%s node_statuses=%s",
+                item.id,
+                item.cloud_project_id,
+                previous_status,
+                item.status,
+                dispatched_automations,
+                isinstance(workflow_before_automation, dict),
+                isinstance(workflow_after_automation, dict),
+                [node.get("id") for node in workflow_nodes if isinstance(node, dict)],
+                [
+                    node.get("status")
+                    for node in workflow_nodes
+                    if isinstance(node, dict)
+                ],
             )
         except Exception:
             db.rollback()

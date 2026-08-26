@@ -100,8 +100,8 @@ from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_executions.device_pull import (
-    acknowledge_cloud_execution,
-    pull_cloud_execution,
+    acknowledge_execution,
+    pull_execution,
 )
 from app.services.loop_item_executions.service import (
     loop_item_execution_service,
@@ -1705,12 +1705,18 @@ class DeviceNamespace(socketio.AsyncNamespace):
         session["device_name"] = effective_device_name
         session["runtime_transfer_host"] = runtime_transfer_host
         session["runtime_instance_id"] = payload.runtime_instance_id
+        session["execution_target_id"] = payload.app_device_id or payload.device_id
+        session["execution_environment"] = "local" if payload.app_device_id else "cloud"
         session["registered"] = True
 
         device_room = f"device:{user_id}:{payload.device_id}"
+        execution_target_room = (
+            f"execution-target:{user_id}:{session['execution_target_id']}"
+        )
         try:
             await self.save_session(sid, session)
             await self.enter_room(sid, device_room)
+            await self.enter_room(sid, execution_target_room)
         except (KeyError, ValueError) as exc:
             logger.info(
                 "[Device WS] Connection disappeared before device registration "
@@ -2076,13 +2082,21 @@ class DeviceNamespace(socketio.AsyncNamespace):
         return {"success": True}
 
     async def on_runtime_tasks_pull(self, sid: str, data: dict) -> dict:
-        """Return one atomically claimed cloud execution to this Executor."""
+        """Return one atomically claimed execution to this Executor."""
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
-        device_id = session.get("device_id")
+        runtime_device_id = session.get("device_id")
+        execution_target_id = session.get("execution_target_id")
+        environment = session.get("execution_environment")
         runtime_instance_id = session.get("runtime_instance_id")
-        if not user_id or not device_id or not runtime_instance_id:
+        if (
+            not user_id
+            or not runtime_device_id
+            or not execution_target_id
+            or environment not in {"local", "cloud"}
+            or not runtime_instance_id
+        ):
             return {"success": False, "error": "Device is not registered"}
         runtime_capacity = (
             data.get("runtime_capacity")
@@ -2091,10 +2105,12 @@ class DeviceNamespace(socketio.AsyncNamespace):
         )
         return await run_sync_in_executor(
             partial(
-                pull_cloud_execution,
+                pull_execution,
                 owner_user_id=int(user_id),
-                device_id=str(device_id),
+                execution_target_id=str(execution_target_id),
+                runtime_device_id=str(runtime_device_id),
                 runtime_instance_id=str(runtime_instance_id),
+                environment=str(environment),
                 runtime_capacity=runtime_capacity,
             )
         )
@@ -2104,9 +2120,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
-        device_id = session.get("device_id")
+        runtime_device_id = session.get("device_id")
         runtime_instance_id = session.get("runtime_instance_id")
-        if not user_id or not device_id or not runtime_instance_id:
+        if not user_id or not runtime_device_id or not runtime_instance_id:
             return {"success": False, "error": "Device is not registered"}
         if not isinstance(data, dict):
             return {"success": False, "error": "Invalid acceptance payload"}
@@ -2119,9 +2135,9 @@ class DeviceNamespace(socketio.AsyncNamespace):
             return {"success": False, "error": "runtime_task_id is required"}
         return await run_sync_in_executor(
             partial(
-                acknowledge_cloud_execution,
+                acknowledge_execution,
                 owner_user_id=int(user_id),
-                device_id=str(device_id),
+                runtime_device_id=str(runtime_device_id),
                 runtime_instance_id=str(runtime_instance_id),
                 execution_id=execution_id,
                 runtime_task_id=runtime_task_id,

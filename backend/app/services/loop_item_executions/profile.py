@@ -406,14 +406,7 @@ class WeworkExecutionProfile:
                             continue
                         device_id = str(source.get("device_id") or "")
                         source_task_id = str(source.get("task_id") or "")
-                        if (
-                            device_id
-                            and source_task_id
-                            and (
-                                not execution_device_id
-                                or device_id == execution_device_id
-                            )
-                        ):
+                        if device_id and source_task_id:
                             workspace_source_task = {
                                 "deviceId": device_id,
                                 "taskId": source_task_id,
@@ -423,8 +416,7 @@ class WeworkExecutionProfile:
                         break
                 if workspace_source_task is None:
                     raise WeworkExecutionProfileError(
-                        "Inherited workflow workspace is unavailable on the "
-                        "selected execution device"
+                        "Inherited workflow workspace has no predecessor Runtime task"
                     )
         has_stage_workspace = workspace_policy == "inherit" or (
             workspace_policy == "composer" and has_bound_workspace

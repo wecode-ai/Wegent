@@ -199,20 +199,25 @@ function json(response, status, body) {
 }
 
 function createHistoricalRuns() {
+  const states = ['waiting_runtime', 'queued', 'succeeded', 'failed']
   return Array.from({ length: 8 }, (_, index) => ({
     id: `automation-run-history-${index + 1}`,
     automationId: 'automation-rule-created',
     projectId: PROJECT_ID,
     trigger: 'schedule',
-    status: 'succeeded',
+    status: states[index] ?? 'succeeded',
     scheduledFor: `2026-08-${String(10 - index).padStart(2, '0')}T09:00:00`,
     expiresAt: null,
     taskId: `AUTO-${100 - index}`,
     taskTitle: `历史自动化任务 ${index + 1}`,
     deviceId: AGENT.executionDeviceId,
-    error: null,
+    error: states[index] === 'failed' ? 'Historical execution failed.' : null,
     createdAt: `2026-08-${String(10 - index).padStart(2, '0')}T09:00:00`,
     updatedAt: `2026-08-${String(10 - index).padStart(2, '0')}T09:01:00`,
+    completedAt:
+      states[index] === 'succeeded' || states[index] === 'failed'
+        ? `2026-08-${String(10 - index).padStart(2, '0')}T09:01:00`
+        : null,
     retryable: false,
   }))
 }
@@ -563,6 +568,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
     })
     const activeBoard = '[data-workspace-tab-content][aria-hidden="false"]'
+    const boardWorkspaceTabId = await control.command('getAttribute', activeBoard, {
+      value: 'data-workspace-tab-content',
+    })
+    assert.ok(boardWorkspaceTabId, 'The project-space workspace tab ID was not observable')
+    const boardWorkspaceTabSelector = `[data-testid="workspace-tab-select-${boardWorkspaceTabId}"]`
     const projectSelector = `${activeBoard} [data-testid="cloud-sidebar-project-${projectId}"]`
     await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
     await control.command('click', projectSelector)
@@ -577,6 +587,238 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
+
+    const statusWorkflowRule = await cloudRequest(
+      `/api/v1/cloud-projects/${projectId}/automations`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: '进入进行中绑定工作流',
+          prompt: 'Issue 进入进行中后必须绑定工作流，不能启动单任务。',
+          triggerType: 'event',
+          eventType: 'task.status_changed',
+          eventConfig: {
+            transition: 'entered_processing',
+            tags: ['status-wf-bind'],
+            runtime_workflow_definition: {
+              version: 1,
+              stage_mode: 'dag',
+              advancement_policy: 'manual',
+              approval_policy: 'required',
+              coordinator_prompt: '',
+              ai_automation_rule_id: null,
+              execution_config: null,
+              nodes: [
+                {
+                  id: 'review',
+                  name: '工作流评审',
+                  prompt: '验证状态自动化已经绑定工作流。',
+                  execution_mode: 'human',
+                  depends_on: [],
+                  dependency_context: {},
+                  required: true,
+                  required_deliverables: [],
+                  workspace_policy: 'none',
+                  automation_rule_id: null,
+                  execution_config: null,
+                  execution_config_override: false,
+                },
+              ],
+            },
+          },
+          assignmentMode: 'manual',
+          agentId: localDefaultAgent.id,
+          enabled: true,
+        }),
+      }
+    )
+    const statusWorkflowIssue = await publicApiRequest(
+      `/api/v1/cloud-projects/${projectId}/loop-items`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: '收集箱进入进行中绑定自动化工作流',
+          description: '移动后必须进入自动化工作流，不能创建单任务。',
+          status: 'inbox',
+          priority: 'high',
+          tags: ['status-wf-bind'],
+        }),
+      }
+    )
+    const readyCountBeforeStatusWorkflowReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeStatusWorkflowReload),
+      uiTimeoutMs * 3,
+      'The project board did not reconnect for the status workflow binding regression'
+    )
+    await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
+    await control.command('click', projectSelector)
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      visible: true,
+    })
+    const statusWorkflowCard = `${activeBoard} [data-testid="cloud-todo-card-${statusWorkflowIssue.id}"]`
+    await control.command('waitFor', statusWorkflowCard, {
+      text: statusWorkflowIssue.title,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('drag', statusWorkflowCard, {
+      target: `${activeBoard} [data-testid="cloud-todo-column-dropzone-in_progress"]`,
+    })
+    const boundStatusWorkflowIssue = await waitForValue(
+      () => cloudRequest(`/api/v1/loop-items/${statusWorkflowIssue.id}`),
+      item =>
+        item.status === 'in_progress' &&
+        item.workflow?.nodes?.[0]?.id === 'review' &&
+        item.workflow?.nodes?.[0]?.status === 'ready',
+      'The status automation workflow was not bound before execution routing',
+      uiTimeoutMs
+    )
+    assert.equal(boundStatusWorkflowIssue.workflow.nodes[0].execution_mode, 'human')
+    assert.equal(
+      Number(await control.command('getElementCount', '[data-testid="ai-chat-modal"]')),
+      0,
+      'Moving the Issue started a single-task composer instead of the bound workflow'
+    )
+    await captureScreenshot(control, 'project-automation-status-workflow-bound.png')
+    await disableRule(projectId, statusWorkflowRule)
+
+    const inheritedWorkflowIssue = await publicApiRequest(
+      `/api/v1/cloud-projects/${projectId}/loop-items`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          title: '工作流共享运行配置规范化',
+          description: '旧快照只在首个节点保存运行配置，弹窗必须将其提升为共享配置并允许立即确认。',
+          status: 'in_progress',
+          priority: 'high',
+          tags: ['workflow-shared-runtime-regression'],
+          workflow: {
+            version: 1,
+            definition_version: 1,
+            stage_mode: 'dag',
+            advancement_policy: 'manual',
+            execution_config: null,
+            nodes: [
+              {
+                id: 'pwd',
+                name: 'pwd',
+                execution_mode: 'robot',
+                depends_on: [],
+                required: true,
+                workspace_policy: 'composer',
+                automation_rule_id: null,
+                execution_config_override: false,
+                execution_config: {
+                  agent_id: null,
+                  runtime_profile_id: null,
+                  execution_device_id: localDefaultDevice.device_id,
+                  model: DEFAULT_MODEL_ID,
+                  model_type: 'runtime',
+                  model_options: {},
+                  workspace_binding: null,
+                },
+              },
+              {
+                id: 'ls',
+                name: 'ls',
+                execution_mode: 'robot',
+                depends_on: ['pwd'],
+                required: true,
+                workspace_policy: 'composer',
+                automation_rule_id: null,
+                execution_config_override: false,
+                execution_config: null,
+              },
+            ],
+          },
+        }),
+      }
+    )
+    const readyCountBeforeInheritedWorkflowReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeInheritedWorkflowReload),
+      uiTimeoutMs * 3,
+      'The project board did not reconnect for the shared workflow Runtime regression'
+    )
+    await control.command('waitFor', projectSelector, { timeoutMs: uiTimeoutMs })
+    await control.command('click', projectSelector)
+    await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
+      visible: true,
+    })
+    const inheritedWorkflowCard = `${activeBoard} [data-testid="cloud-todo-card-${inheritedWorkflowIssue.id}"]`
+    await control.command('waitFor', inheritedWorkflowCard, {
+      text: inheritedWorkflowIssue.title,
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const configureExecution = `${activeBoard} [data-testid="cloud-todo-card-configure-execution-${inheritedWorkflowIssue.id}"]`
+    await control.command('waitFor', configureExecution, {
+      text: '去配置',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', configureExecution, {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="issue-execution-config-dialog"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    assert.equal(
+      await control.command('getValue', '[data-testid="issue-execution-config-default-device"]'),
+      localDefaultDevice.device_id,
+      'The workflow dialog did not promote the legacy node device to the shared configuration'
+    )
+    assert.equal(
+      await control.command('getValue', '[data-testid="issue-execution-config-default-model"]'),
+      `runtime:${DEFAULT_MODEL_ID}`,
+      'The workflow dialog did not promote the legacy node model to the shared configuration'
+    )
+    await control.command('click', '[data-testid="cloud-todo-modal-close"]', {
+      visible: true,
+    })
+    await waitForValue(
+      () => control.command('getElementCount', '[data-testid="issue-execution-config-dialog"]'),
+      count => Number(count) === 0,
+      'The execution configuration dialog did not close',
+      uiTimeoutMs
+    )
+    await control.command('waitFor', configureExecution, {
+      text: '去配置',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', configureExecution, {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="issue-execution-config-dialog"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await captureScreenshot(control, 'project-automation-reopen-execution-configuration.png')
+    await control.command('clickWhenEnabled', '[data-testid="issue-execution-config-confirm"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await waitForValue(
+      () => cloudRequest(`/api/v1/loop-items/${inheritedWorkflowIssue.id}`),
+      item =>
+        item.workflow?.execution_config?.execution_device_id === localDefaultDevice.device_id &&
+        item.workflow?.execution_config?.model === DEFAULT_MODEL_ID &&
+        item.workflow?.nodes?.every(node => node.execution_config === null),
+      'The normalized shared workflow Runtime snapshot was not persisted',
+      uiTimeoutMs
+    )
 
     const moonshotOverrideIssue = await publicApiRequest(
       `/api/v1/cloud-projects/${projectId}/loop-items`,
@@ -923,6 +1165,40 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     await captureScreenshot(control, 'project-automation-unified-home.png')
+    await control.command('click', '[data-testid="automation-card-automation-rule-created"]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', '[data-testid="automation-editor-section-menu"]', {
+      visible: true,
+    })
+    await control.command('click', '[data-testid="open-current-automation-runs"]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="current-run-automation-run-history-1"]', {
+      text: '待配置',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="current-run-automation-run-history-2"]', {
+      text: '排队中',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="current-run-automation-run-history-3"]', {
+      text: '成功',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const waitingRunText = await control.command(
+      'getText',
+      '[data-testid="current-run-automation-run-history-1"]'
+    )
+    assert.ok(!waitingRunText.includes('执行中'))
+    assert.ok(!waitingRunText.includes('0 秒'))
 
     const workflowProject = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)
     await cloudRequest(`/api/v1/cloud-projects/${projectId}`, {
@@ -1197,15 +1473,68 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('waitFor', '[data-testid="automation-trigger-node"].selected', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="automation-editor-rightbar"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+    await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="automation-trigger-node"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: false,
+      stableMs: 250,
+    })
+    await captureScreenshot(control, 'project-automation-01-inactive-canvas-isolated.png')
+    await control.command('click', boardWorkspaceTabSelector)
+    await control.command('waitFor', '[data-testid="automation-trigger-node"].selected', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="automation-editor-rightbar"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', '[data-testid="automation-workflow-canvas"]', {
+      visible: true,
+    })
+    await waitForValue(
+      async () =>
+        JSON.parse(await control.command('snapshot', '[data-testid="automation-rule-editor"]')),
+      snapshot => !snapshot.testIds.includes('automation-editor-rightbar'),
+      'Automation detail panel remained visible after clearing the canvas selection',
+      uiTimeoutMs
+    )
+    await control.command('click', '[data-testid="automation-trigger-node"]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="automation-editor-rightbar"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', '[data-testid="automation-editor-section-menu"]')
     await control.command('fill', '[aria-label="自动化名称"]', {
       value: '统一自动化回归',
     })
     await control.command('fill', '[data-testid="automation-rule-description"]', {
       value: '创建 Issue 后按完整流程执行，并持久化节点与 DAG 配置。',
     })
-    await control.command('click', '[data-testid="automation-insert-node--1"]')
-    await control.command('click', '[data-testid="automation-insert-task--1"]')
+    await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
+    await control.command('click', '[data-testid="automation-node-insert-after-task-trigger"]')
     await control.command('waitFor', '[data-testid^="execution-node-name-"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('waitFor', 'body', {
+      text: '请填写所有执行节点名称',
       timeoutMs: uiTimeoutMs,
     })
     await control.command('fill', '[data-testid^="execution-node-name-"]', {
@@ -1214,17 +1543,50 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('fill', '[data-testid^="execution-node-prompt-"]', {
       value: '根据 Issue 修改代码并运行相关测试。',
     })
-    await control.command('waitFor', '[data-testid="automation-insert-node-0"]', {
+    await control.command('waitFor', '[data-testid^="automation-node-insert-after-step-"]', {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    await control.command('click', '[data-testid="automation-insert-node-0"]')
-    await control.command('click', '[data-testid="automation-insert-dynamic-0"]')
+    await control.command('click', '[data-testid^="automation-node-insert-after-step-"]')
+    await control.command('click', '[data-testid^="automation-node-insert-after-dynamic-step-"]')
     await control.command('waitFor', '[data-testid="ai-coordinator-prompt"]', {
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('click', '[data-testid^="execution-node-step-"]', {
+      visible: true,
+    })
+    await control.command('click', '[data-testid="automation-canvas-fit-view"]', {
+      visible: true,
+    })
+    await control.command('hover', '[data-testid^="execution-node-step-"]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid^="automation-node-insert-before-step-"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const insertHoverSnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="automation-rule-editor"]')
+    )
+    assert.ok(
+      insertHoverSnapshot.testIds.some(testId =>
+        testId.startsWith('automation-node-insert-before-step-')
+      ),
+      'Workflow stages did not expose their predecessor insertion controls'
+    )
+    assert.ok(
+      insertHoverSnapshot.testIds.some(testId =>
+        testId.startsWith('automation-node-insert-after-step-')
+      ),
+      'Workflow stages did not expose their successor insertion controls'
+    )
+    assert.ok(
+      !insertHoverSnapshot.testIds.some(testId => testId.startsWith('automation-insert-node-')),
+      'The obsolete trailing insertion node remained mounted'
+    )
+    await captureScreenshot(control, 'project-automation-node-insert-hover.png')
     await captureScreenshot(control, 'project-automation-00-unified-editor.png')
-    await control.command('clickWhenEnabled', '[data-testid="automation-publish"]', {
+    await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
       timeoutMs: uiTimeoutMs,
     })
     const unifiedRule = await waitForValue(
@@ -1242,42 +1604,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(unifiedGraphNodes[1].kind, 'dynamic')
     assert.ok(unifiedGraphNodes[1].subgraph.nodes.length > 1)
 
-    await control.command('click', '[data-testid="automation-test-run"]')
-    const runs = await waitForValue(
-      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${unifiedRule.id}/runs`),
-      items => items.length > 0 && Boolean(items[0].taskId),
-      'Unified automation did not create a durable task through the real backend',
-      uiTimeoutMs
-    )
-    assert.ok(
-      ['queued', 'waiting_device', 'running', 'succeeded'].includes(runs[0].status),
-      `Unified automation entered an unexpected state: ${runs[0].status}`
-    )
-    const execution = await waitForValue(
-      async () => {
-        const responses = await Promise.all(
-          [null, 'completed', 'failed', 'cancelled'].map(status =>
-            cloudRequest(
-              `/api/v1/cloud-projects/${projectId}/executions${status ? `?status=${status}` : ''}`
-            )
-          )
-        )
-        return responses
-          .flatMap(response => response.items ?? [])
-          .filter(item => item.loopItemId === runs[0].taskId)
-          .sort((left, right) => right.id - left.id)[0]
-      },
-      value => Boolean(value),
-      'Unified automation did not expose authoritative execution truth',
-      uiTimeoutMs
-    )
-    assertExecutionTruthContract(execution)
-    await control.command('click', '[data-testid="open-current-automation-runs"]')
-    await control.command('waitFor', `[data-testid="current-run-${runs[0].id}"]`, {
-      timeoutMs: uiTimeoutMs,
-    })
-    await captureScreenshot(control, 'project-automation-01-unified-real-run.png')
     await disableRule(projectId, unifiedRule)
+    const projectWithWorkflow = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)
+    await cloudRequest(`/api/v1/cloud-projects/${projectId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        version: projectWithWorkflow.version,
+        workflow_definition: null,
+      }),
+    })
+
     await verifyPublicApiAutomationMatrix(control)
   }
 
@@ -3367,28 +3703,29 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('click', '[data-testid="automation-editor-section-menu"]')
       await control.command('fill', '[aria-label="自动化名称"]', {
         value: '统一自动化回归',
       })
       await control.command('fill', '[data-testid="automation-rule-description"]', {
         value: '验证统一触发规则、执行节点和 DAG 持久化。',
       })
-      await control.command('click', '[data-testid="automation-insert-node--1"]')
-      await control.command('click', '[data-testid="automation-insert-task--1"]')
+      await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
+      await control.command('click', '[data-testid="automation-node-insert-after-task-trigger"]')
       await control.command('fill', '[data-testid^="execution-node-name-"]', {
         value: '实现与验证',
       })
       await control.command('fill', '[data-testid^="execution-node-prompt-"]', {
         value: '完成代码实现和测试。',
       })
-      await control.command('waitFor', '[data-testid="automation-insert-node-0"]', {
+      await control.command('waitFor', '[data-testid^="automation-node-insert-after-step-"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await control.command('click', '[data-testid="automation-insert-node-0"]')
-      await control.command('click', '[data-testid="automation-insert-dynamic-0"]')
+      await control.command('click', '[data-testid^="automation-node-insert-after-step-"]')
+      await control.command('click', '[data-testid^="automation-node-insert-after-dynamic-step-"]')
       await captureScreenshot(control, 'project-automation-00-unified-editor.png')
-      await control.command('clickWhenEnabled', '[data-testid="automation-publish"]', {
+      await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
         timeoutMs: uiTimeoutMs,
       })
       const createdAutomation = createdPayloads.find(payload => payload.name === '统一自动化回归')
@@ -3400,12 +3737,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       assert.equal(createdGraphNodes?.[1].kind, 'dynamic')
       assert.ok(createdGraphNodes?.[1].subgraph.nodes.length > 1)
 
-      await control.command('click', '[data-testid="automation-test-run"]')
-      await control.command('click', '[data-testid="open-current-automation-runs"]')
-      await control.command('waitFor', '[data-testid="current-run-automation-run-queued"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await captureScreenshot(control, 'project-automation-01-unified-run.png')
       await control.command(
         'click',
         `${activeBoard} [data-testid="cloud-project-automation-view"]`,

@@ -21,11 +21,11 @@ from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.cloud_project import (
+    CloudProjectBoardConfig,
     CloudProjectCreate,
     CloudProjectMemberCreate,
     CloudProjectMemberUpdate,
     CloudProjectUpdate,
-    default_board_statuses,
     normalize_provider_config,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
@@ -119,12 +119,7 @@ class CloudProjectService:
                 "provider_config": provider_config,
                 "visibility": values.visibility,
                 "tags": [],
-                "board_config": {
-                    "group_by": "status",
-                    "statuses": [
-                        item.model_dump() for item in default_board_statuses()
-                    ],
-                },
+                "board_config": CloudProjectBoardConfig().model_dump(),
             },
         )
         db.add(project)

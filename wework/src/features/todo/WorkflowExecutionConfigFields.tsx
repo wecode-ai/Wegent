@@ -1,6 +1,8 @@
+import { Cloud, Laptop } from 'lucide-react'
 import type { WorkflowExecutionConfig } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { RuntimeProfile } from '@/api/runtimeProfiles'
+import { MenuSelect, type MenuOption } from '@/components/common/MenuSelect'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
@@ -32,13 +34,59 @@ export function WorkflowExecutionConfigFields({
   testId: string
 }) {
   const { t } = useTranslation('common')
-  const selectedWorkspace =
-    value.workspace_binding?.type === 'backend_project'
+  const selectedWorkspace = value.workspace_binding
+    ? value.workspace_binding.type === 'backend_project'
       ? String(value.workspace_binding.projectId)
       : 'standalone'
+    : ''
   const complete = workflowExecutionConfigComplete(value)
   const selectedModelKey = value.model ? `${value.model_type ?? ''}:${value.model}` : ''
   const selectedDeviceId = value.execution_device_id?.trim() ?? ''
+  const deviceOptions: MenuOption[] = [
+    {
+      value: '',
+      label: t('todo.workflow_execution_fill_later', '运行时填写'),
+    },
+  ]
+
+  if (selectedDeviceId && !devices.some(device => device.device_id === selectedDeviceId)) {
+    deviceOptions.push({
+      value: selectedDeviceId,
+      label: selectedDeviceId,
+      icon: <Cloud aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />,
+      ariaLabel: t('todo.workflow_execution_cloud_device_named', '云设备 {{name}}', {
+        name: selectedDeviceId,
+      }),
+    })
+  }
+
+  deviceOptions.push(
+    ...devices.map(device => {
+      const local =
+        device.device_id === 'local-device' ||
+        device.device_type === 'local' ||
+        device.device_type === 'app' ||
+        device.name === 'Local Executor'
+      const label = local
+        ? t('todo.workflow_execution_local_device', '本机')
+        : device.name || device.device_id
+
+      return {
+        value: device.device_id,
+        label,
+        icon: local ? (
+          <Laptop aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+        ) : (
+          <Cloud aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+        ),
+        ariaLabel: local
+          ? label
+          : t('todo.workflow_execution_cloud_device_named', '云设备 {{name}}', {
+              name: label,
+            }),
+      }
+    })
+  )
 
   return (
     <div
@@ -72,34 +120,28 @@ export function WorkflowExecutionConfigFields({
         </select>
       </label>
       <label className="text-xs font-medium text-text-secondary">
-        {t('todo.workflow_execution_device', '执行机器')}
-        <select
-          data-testid={`${testId}-device`}
-          value={value.execution_device_id ?? ''}
-          onChange={event => {
-            onChange({
-              ...value,
-              execution_device_id: event.target.value || null,
-              runtime_profile_id:
-                runtimeProfiles.find(
-                  profile =>
-                    profile.id === value.runtime_profile_id &&
-                    profile.executionDeviceId === event.target.value
-                )?.id ?? null,
-            })
-          }}
-          className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
-        >
-          <option value="">{t('todo.workflow_execution_fill_later', '运行时填写')}</option>
-          {selectedDeviceId && !devices.some(device => device.device_id === selectedDeviceId) ? (
-            <option value={selectedDeviceId}>{selectedDeviceId}</option>
-          ) : null}
-          {devices.map(device => (
-            <option key={device.device_id} value={device.device_id}>
-              {device.name || device.device_id}
-            </option>
-          ))}
-        </select>
+        {t('todo.workflow_execution_device', '执行设备')}
+        <div className="mt-1.5">
+          <MenuSelect
+            testId={`${testId}-device`}
+            value={value.execution_device_id ?? ''}
+            options={deviceOptions}
+            onChange={executionDeviceId => {
+              onChange({
+                ...value,
+                execution_device_id: executionDeviceId || null,
+                runtime_profile_id:
+                  runtimeProfiles.find(
+                    profile =>
+                      profile.id === value.runtime_profile_id &&
+                      profile.executionDeviceId === executionDeviceId
+                  )?.id ?? null,
+              })
+            }}
+            field
+            fullWidth
+          />
+        </div>
       </label>
       <label className="text-xs font-medium text-text-secondary">
         {t('todo.workflow_execution_model', '模型')}
@@ -162,6 +204,9 @@ export function WorkflowExecutionConfigFields({
           }
           className="mt-1.5 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm"
         >
+          <option value="" disabled>
+            {t('todo.workflow_execution_project_empty', '请选择代码项目')}
+          </option>
           <option value="standalone">
             {t('todo.workflow_execution_standalone', '独立对话目录（不绑定项目）')}
           </option>

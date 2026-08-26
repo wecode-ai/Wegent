@@ -263,7 +263,7 @@ export function WorkspaceTabSurface({
   const renderProvider = surfaceHistory.hasMountedProvider || !iframe
   const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
   // Fixed native tabs behave like desktop tabs: mount once, preserve their
-  // effects and in-memory UI state, and only change visibility when inactive.
+  // effects and in-memory UI state, and remove them from layout and paint while inactive.
   const keepNativeWorkbenchActive =
     Boolean(nativeWorkbenchKind || tab.kind === 'task' || tab.kind === 'board') && renderWorkbench
   // App WebViews own in-memory page state that is lost when React Activity
@@ -326,7 +326,7 @@ export function WorkspaceTabSurface({
           className={cn(
             'min-h-0 min-w-0 overflow-hidden',
             active ? 'relative h-full' : 'absolute inset-0',
-            !active && keepSurfaceActive && 'pointer-events-none invisible'
+            !active && keepSurfaceActive && 'hidden'
           )}
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}

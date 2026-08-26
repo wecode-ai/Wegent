@@ -14,11 +14,12 @@ export interface AutomationRulesViewProps {
   projectTags?: string[]
   executionCatalog?: AutomationExecutionCatalog
   onReload?: () => Promise<void>
-  onSaveRule?: (rule: AutomationUiRule, published: boolean) => Promise<AutomationUiRule>
+  onLoadExecutionCatalog?: () => Promise<AutomationExecutionCatalog>
+  onLoadRuns?: () => Promise<AutomationUiRun[]>
+  onSaveRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule>
   onToggleRule?: (rule: AutomationUiRule, enabled: boolean) => Promise<AutomationUiRule>
   onDuplicateRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule>
   onDeleteRule?: (rule: AutomationUiRule) => Promise<void>
-  onRunRule?: (rule: AutomationUiRule) => Promise<AutomationUiRun>
 }
 
 export const AutomationRulesView: ComponentType<AutomationRulesViewProps>

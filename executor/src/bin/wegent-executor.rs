@@ -4,6 +4,9 @@
 
 use std::env;
 
+#[cfg(unix)]
+use std::{thread, time::Duration};
+
 use wegent_executor::app::cli::CliArgs;
 
 #[cfg(any(target_os = "macos", test))]
@@ -116,6 +119,7 @@ fn main() {
             std::process::exit(2);
         }
     };
+    install_app_sidecar_parent_watchdog();
     let shell_environment = if should_hydrate_shell_environment(&args) {
         Some(wegent_executor::process_environment::hydrate_process_environment())
     } else {
@@ -139,6 +143,47 @@ fn runtime() -> tokio::runtime::Runtime {
         .enable_all()
         .build()
         .expect("Tokio runtime should initialize")
+}
+
+#[cfg(unix)]
+fn install_app_sidecar_parent_watchdog() {
+    if !app_sidecar_ipc_configured() {
+        return;
+    }
+    let expected_parent_process_id = unsafe { libc::getppid() as u32 };
+    if expected_parent_process_id <= 1 {
+        return;
+    }
+    wegent_executor::logging::write_executor_log_line(&format!(
+        "app sidecar parent watchdog armed parent_pid={expected_parent_process_id}"
+    ));
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_millis(500));
+        let current_parent_process_id = unsafe { libc::getppid() as u32 };
+        if !parent_process_changed(expected_parent_process_id, current_parent_process_id) {
+            continue;
+        }
+        wegent_executor::logging::write_executor_error_line(
+            "wegent-executor parent exited; terminating process group",
+        );
+        unsafe {
+            libc::killpg(libc::getpgrp(), libc::SIGTERM);
+        }
+        std::process::exit(0);
+    });
+}
+
+#[cfg(not(unix))]
+fn install_app_sidecar_parent_watchdog() {}
+
+fn app_sidecar_ipc_configured() -> bool {
+    env::var("WEGENT_APP_IPC_ENDPOINT")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn parent_process_changed(expected_parent_process_id: u32, current_parent_process_id: u32) -> bool {
+    expected_parent_process_id > 1 && current_parent_process_id != expected_parent_process_id
 }
 
 #[cfg(target_os = "macos")]
@@ -240,5 +285,29 @@ mod tests {
             open_files_soft_limit_target(libc::RLIM_INFINITY, Some(24_576)),
             24_576
         );
+    }
+
+    #[test]
+    fn app_sidecar_parent_watchdog_configuration_requires_ipc_endpoint() {
+        let previous = env::var_os("WEGENT_APP_IPC_ENDPOINT");
+        env::remove_var("WEGENT_APP_IPC_ENDPOINT");
+        assert!(!app_sidecar_ipc_configured());
+        env::set_var("WEGENT_APP_IPC_ENDPOINT", " ");
+        assert!(!app_sidecar_ipc_configured());
+        env::set_var("WEGENT_APP_IPC_ENDPOINT", "/tmp/wegent-executor.sock");
+        assert!(app_sidecar_ipc_configured());
+        if let Some(previous) = previous {
+            env::set_var("WEGENT_APP_IPC_ENDPOINT", previous);
+        } else {
+            env::remove_var("WEGENT_APP_IPC_ENDPOINT");
+        }
+    }
+
+    #[test]
+    fn parent_process_change_detects_orphaned_executor() {
+        assert!(parent_process_changed(42, 1));
+        assert!(parent_process_changed(42, 43));
+        assert!(!parent_process_changed(42, 42));
+        assert!(!parent_process_changed(1, 1));
     }
 }

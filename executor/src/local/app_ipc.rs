@@ -748,6 +748,10 @@ impl AppIpcServer {
                 .and_then(Value::as_object_mut)
                 .ok_or_else(|| AppIpcError::new("invalid_request", "Claim must be an object"))?;
             claim.insert(
+                "execution_device_id".to_owned(),
+                Value::String(self.device_id.clone()),
+            );
+            claim.insert(
                 "runtime_instance_id".to_owned(),
                 Value::String(runtime_instance_id.clone()),
             );

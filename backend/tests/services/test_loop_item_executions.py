@@ -2771,7 +2771,7 @@ def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
                         "stage_id": "develop",
                         "runtime_tasks": [
                             {
-                                "device_id": "cloud-device-1",
+                                "device_id": "electron-app-device",
                                 "task_id": "previous-runtime-task",
                             }
                         ],
@@ -2779,17 +2779,83 @@ def test_inherited_stage_keeps_issue_identity_and_reuses_predecessor_workspace(
                 ],
             }
         },
-        execution_device_id="cloud-device-1",
+        execution_device_id="electron-app-device",
     )
     payload = request.model_dump(by_alias=True, exclude_none=True)
 
     assert f"task_id: {item.id}" in payload["message"]
     assert "task_id: previous-runtime-task" not in payload["message"]
     assert payload["workspaceSourceTask"] == {
-        "deviceId": "cloud-device-1",
+        "deviceId": "electron-app-device",
         "taskId": "previous-runtime-task",
     }
     assert payload["standaloneChatWorkspace"] is False
+
+
+def test_inherited_stage_requires_the_executor_that_owns_the_workspace(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user, title="Deploy")
+    execution = _make_execution(test_db, item, bot, test_user)
+    request = WeworkExecutionProfile.for_project_robot(bot).build_runtime_request(
+        test_db,
+        execution_id=execution.id,
+        runtime_task_id=execution.runtime_task_id,
+        task=TaskContext(
+            id=item.id,
+            cloud_project_id=str(project.id),
+            title=item.title,
+            description="",
+            status="in_progress",
+            priority="medium",
+        ),
+        cloud_project_id=str(project.id),
+        origin_context={
+            "workflow_stage_input": {
+                "target_stage": {
+                    "id": "deploy",
+                    "prompt": "Deploy",
+                    "workspace_policy": "inherit",
+                    "required_deliverables": [],
+                },
+                "dependencies": [
+                    {
+                        "stage_id": "develop",
+                        "runtime_tasks": [
+                            {
+                                "device_id": "other-app-device",
+                                "task_id": "previous-runtime-task",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+        execution_device_id="electron-app-device",
+    )
+    execution.execution_environment = "local"
+    execution.execution_device_id = "electron-app-device"
+    execution.execution_payload = (
+        loop_item_execution_service._serialize_execution_intent(
+            runtime_selection=dict(execution.runtime_selection),
+            origin_context={},
+            runtime_request=request.model_dump(by_alias=True, exclude_none=True),
+        )
+    )
+    test_db.commit()
+
+    with pytest.raises(
+        WeworkRuntimeConfigurationError,
+        match="belongs to a different execution target",
+    ):
+        loop_item_execution_service.build_executor_runtime_payload(
+            test_db,
+            execution=execution,
+            execution_target_id="electron-app-device",
+            executor_device_id="executor-runtime-device",
+        )
 
 
 def test_claim_batch_moves_queued_to_claimed_within_capacity(
@@ -3244,6 +3310,7 @@ def test_mark_start_requested_binds_issue_runtime_task_without_workflow_stage(
     assert binding.device_id == "cloud-device-1"
     assert binding.task_title == item.title
     assert binding.workflow_node_id is None
+    assert binding.metadata_json["workspace_device_id"] == "cloud-device-1"
 
 
 @pytest.mark.parametrize("executor_type", ["project_robot", "generic_robot"])
@@ -3364,6 +3431,7 @@ def test_mark_start_requested_binds_workflow_stage_runtime_task(
     assert binding.device_id == "cloud-device-1"
     assert binding.workflow_node_id == "deploy"
     assert binding.metadata_json["workflow_stage_input_sha256"] == "stage-snapshot"
+    assert binding.metadata_json["workspace_device_id"] == "cloud-device-1"
 
 
 def test_runtime_start_fence_requires_exact_claim_identity(
@@ -3930,14 +3998,37 @@ def test_claim_materializes_current_model_config_without_persisting_credentials(
 
 
 @pytest.mark.parametrize("executor_type", ["project_robot", "automation_manager"])
-def test_local_runtime_payload_leaves_model_materialization_to_app(
+def test_local_runtime_payload_materializes_only_for_executor_pull(
     test_db: Session, test_user: User, executor_type: str
 ) -> None:
-    """Every local Wework executor crosses claim with a model reference only."""
+    """App intent stays transient while Executor pull receives a runnable payload."""
 
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
     _ensure_device(test_db, test_user, "local-device", "local")
+    _ensure_device(test_db, test_user, "executor-runtime-device", "local")
+    test_db.add(
+        Kind(
+            kind="Model",
+            name="backend-visible-model",
+            namespace="default",
+            user_id=0,
+            is_active=True,
+            json={
+                "spec": {
+                    "modelConfig": {
+                        "env": {
+                            "model": "codex",
+                            "model_id": "gpt-5.5",
+                            "api_key": "test-runtime-key",
+                            "base_url": "https://runtime.example.com",
+                        }
+                    }
+                }
+            },
+        )
+    )
+    test_db.flush()
     if executor_type == "project_robot":
         bot = _make_bot(test_db, project, test_user)
         profile = RuntimeProfile(
@@ -4075,6 +4166,17 @@ def test_local_runtime_payload_leaves_model_materialization_to_app(
     assert "executionRequest" not in payload
     assert "model_config" not in str(payload)
     assert "api_key" not in str(payload)
+
+    executor_payload = loop_item_execution_service.build_executor_runtime_payload(
+        test_db,
+        execution=claimed,
+        execution_target_id="local-device",
+        executor_device_id="executor-runtime-device",
+    )
+    executor_model_config = executor_payload["executionRequest"]["model_config"]
+    assert executor_model_config["model_id"] == "backend-visible-model"
+    assert executor_model_config["api_key"]
+    assert executor_model_config["base_url"]
     if executor_type == "automation_manager":
         assert f"project_id: {project.id}" in payload["message"]
         assert "你是看板的 AI 管家，只负责编排，不执行具体任务。" in payload["message"]

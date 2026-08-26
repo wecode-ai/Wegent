@@ -37,6 +37,7 @@ from app.schemas.issue_workflow import (
 from app.schemas.project_chat import LoopItemAssign
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_item_executions.service import loop_item_execution_service
+from app.services.loop_item_status_history import project_status_transition
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.loop_items.service import loop_item_service
@@ -111,12 +112,12 @@ class ProjectAutomationExecution:
                     "existing_issue" if run.task_id else "automation_created"
                 )
                 run.metadata_json = run_metadata
-            self._ensure_run_task(db, project=project, owner=owner, rule=rule, run=run)
             workflow_definition = (
                 None
                 if run_metadata.get("bypass_workflow_definition")
                 else self._workflow_definition(rule)
             )
+            self._ensure_run_task(db, project=project, owner=owner, rule=rule, run=run)
             if workflow_definition is not None:
                 await self._dispatch_workflow(
                     db,
@@ -1484,6 +1485,69 @@ class ProjectAutomationProcessor:
 
         return project_automation_service._create_run(db, rule, trigger, scheduled_for)
 
+    def matching_rules(
+        self,
+        db: Session,
+        event: ProjectAutomationEvent,
+        *,
+        automation_id: str | None = None,
+    ) -> list[ProjectAutomationRule]:
+        """Return enabled rules that match one supported project event."""
+
+        if event.event_type not in {"task.created", "task.status_changed"}:
+            return []
+        query = db.query(ProjectAutomationRule).filter(
+            ProjectAutomationRule.cloud_project_id == event.project_id,
+            ProjectAutomationRule.status == "enabled",
+            loop_datetime_is_unset(ProjectAutomationRule.deleted_at),
+        )
+        if automation_id:
+            query = query.filter(ProjectAutomationRule.id == automation_id)
+        project = db.get(CloudProject, event.project_id)
+        if project is None:
+            return []
+        workflow = event.payload.get("workflow")
+        deferred_automation_id = (
+            str(workflow.get("ai_automation_rule_id") or "")
+            if isinstance(workflow, dict) and workflow.get("advancement_policy") == "ai"
+            else ""
+        )
+        candidate_rules = query.all()
+        logger.info(
+            "[ProjectAutomation] Evaluating event rules project=%s subject=%s "
+            "event=%s previous_status=%s status=%s tags=%s candidates=%s",
+            event.project_id,
+            event.subject_id,
+            event.event_type,
+            event.payload.get("previous_status"),
+            event.payload.get("status"),
+            event.payload.get("tags"),
+            [
+                {
+                    "id": str(rule.id),
+                    "trigger_type": metadata(rule).get("trigger_type"),
+                    "event_type": metadata(rule).get("event_type"),
+                    "transition": (metadata(rule).get("event_config") or {}).get(
+                        "transition"
+                    ),
+                    "tags": (metadata(rule).get("event_config") or {}).get("tags"),
+                }
+                for rule in candidate_rules
+            ],
+        )
+        matches: list[ProjectAutomationRule] = []
+        for rule in candidate_rules:
+            if deferred_automation_id and str(rule.id) == deferred_automation_id:
+                continue
+            rule_metadata = metadata(rule)
+            if rule_metadata.get("trigger_type") != "event":
+                continue
+            if rule_metadata.get("event_type") != event.event_type:
+                continue
+            if self._matches(rule_metadata.get("event_config"), event, project):
+                matches.append(rule)
+        return matches
+
     @staticmethod
     def _event_payload_for_rule(
         db: Session,
@@ -1628,30 +1692,53 @@ class ProjectAutomationProcessor:
                 "[ProjectAutomation] Ignoring unsupported event=%s", event.event_type
             )
             return 0
-        query = db.query(ProjectAutomationRule).filter(
-            ProjectAutomationRule.cloud_project_id == event.project_id,
-            ProjectAutomationRule.status == "enabled",
-            loop_datetime_is_unset(ProjectAutomationRule.deleted_at),
+        matching_rules = self.matching_rules(db, event, automation_id=automation_id)
+        logger.info(
+            "[ProjectAutomation] Event matched project=%s subject=%s event=%s "
+            "requested_rule=%s matching_rule_ids=%s",
+            event.project_id,
+            event.subject_id,
+            event.event_type,
+            automation_id,
+            [str(rule.id) for rule in matching_rules],
         )
-        if automation_id:
-            query = query.filter(ProjectAutomationRule.id == automation_id)
-        workflow = event.payload.get("workflow")
-        deferred_automation_id = (
-            str(workflow.get("ai_automation_rule_id") or "")
-            if isinstance(workflow, dict) and workflow.get("advancement_policy") == "ai"
-            else ""
-        )
+        if automation_id is None and matching_rules:
+            issue = (
+                db.query(LoopItem)
+                .filter(
+                    LoopItem.id == event.subject_id,
+                    LoopItem.cloud_project_id == event.project_id,
+                    loop_datetime_is_unset(LoopItem.deleted_at),
+                )
+                .one_or_none()
+            )
+            issue_metadata = (
+                issue.metadata_json
+                if issue is not None and isinstance(issue.metadata_json, dict)
+                else {}
+            )
+            workflow_binding = issue_metadata.get("workflow_automation")
+            bound_rule_id = (
+                str(workflow_binding.get("rule_id") or "")
+                if isinstance(workflow_binding, dict)
+                else ""
+            )
+            if bound_rule_id:
+                matching_rules = [
+                    rule for rule in matching_rules if str(rule.id) == bound_rule_id
+                ]
+            elif len(matching_rules) > 1:
+                logger.info(
+                    "[ProjectAutomation] Selection required project=%s subject=%s "
+                    "candidates=%s",
+                    event.project_id,
+                    event.subject_id,
+                    [str(rule.id) for rule in matching_rules],
+                )
+                return 0
+
         dispatched = 0
-        for rule in query.all():
-            if deferred_automation_id and str(rule.id) == deferred_automation_id:
-                continue
-            rule_metadata = metadata(rule)
-            if rule_metadata.get("trigger_type") != "event":
-                continue
-            if rule_metadata.get("event_type") != event.event_type:
-                continue
-            if not self._matches(rule_metadata.get("event_config"), event):
-                continue
+        for rule in matching_rules:
             run_event_payload = self._event_payload_for_rule(db, event, rule)
             run = self._create_run(db, rule, "event", utcnow())
             run.task_id = event.subject_id
@@ -1685,21 +1772,38 @@ class ProjectAutomationProcessor:
         return dispatched
 
     @staticmethod
-    def _matches(config: object, event: ProjectAutomationEvent) -> bool:
+    def _matches(
+        config: object,
+        event: ProjectAutomationEvent,
+        project: CloudProject,
+    ) -> bool:
         if not isinstance(config, dict):
             return True
         sources = config.get("sources")
         if isinstance(sources, list) and sources and event.source not in sources:
             return False
-        for field in ("statuses", "priorities"):
-            expected = config.get(field)
-            payload_key = "status" if field == "statuses" else "priority"
-            if (
-                isinstance(expected, list)
-                and expected
-                and event.payload.get(payload_key) not in expected
+        if event.event_type == "task.status_changed":
+            if config.get("transition") != "entered_processing":
+                return False
+            previous_status = event.payload.get("previous_status")
+            current_status = event.payload.get("status")
+            if not isinstance(previous_status, str) or not isinstance(
+                current_status, str
             ):
                 return False
+            if not project_status_transition(
+                project,
+                previous_status=previous_status,
+                current_status=current_status,
+            ).entered_processing:
+                return False
+        expected_priorities = config.get("priorities")
+        if (
+            isinstance(expected_priorities, list)
+            and expected_priorities
+            and event.payload.get("priority") not in expected_priorities
+        ):
+            return False
         expected_tags = config.get("tags")
         actual_tags = event.payload.get("tags")
         if isinstance(expected_tags, list) and expected_tags:
