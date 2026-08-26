@@ -373,26 +373,20 @@ function codexCacheRoot() {
   )
 }
 
-async function prepareHarnessRuntimeRoots() {
-  const catalogPath = join(
-    weworkDir,
-    'node_modules',
-    '.cache',
-    'harness-runtime-dev',
-    'runtimes.json'
+async function prepareHarnessRuntimeRoots(appBinary) {
+  const packagedResources = join(
+    dirname(appBinary),
+    ...(process.platform === 'darwin'
+      ? ['..', 'Resources', 'harness-runtime']
+      : ['resources', 'harness-runtime'])
   )
+  const catalogPath = join(packagedResources, 'runtimes.json')
   const catalog = JSON.parse(await readFile(catalogPath, 'utf8'))
   const runtimeRoot = join(resultDir, 'harness-runtime')
   await rm(runtimeRoot, { recursive: true, force: true })
   await mkdir(runtimeRoot, { recursive: true })
   for (const runtime of catalog.runtimes) {
-    const archivePath = join(
-      weworkDir,
-      'node_modules',
-      '.cache',
-      'harness-runtime-assets',
-      runtime.assetName
-    )
+    const archivePath = join(packagedResources, runtime.assetName)
     const extracted = join(runtimeRoot, runtime.sourceFingerprint)
     await mkdir(extracted, { recursive: true })
     await runChecked('tar', ['-xzf', archivePath, '-C', extracted], { cwd: weworkDir })
@@ -439,18 +433,6 @@ async function cloneMacElectronApp(binaryPath, appIdentifier, codexBinary) {
 }
 
 async function buildDesktopApp(appIdentifier, codexBinary) {
-  if (SELECTED_DESKTOP_SEGMENT === 'harness-apps') {
-    await runChecked('pnpm', ['run', 'prepare:harness-runtime', '--materialize'], {
-      cwd: weworkDir,
-      env: {
-        ...process.env,
-        VITE_WEWORK_E2E: 'true',
-        VITE_WEWORK_RELEASE_CHANNEL: 'stable',
-        VITE_WEWORK_RUNTIME_MODE: 'local-first',
-      },
-    })
-  }
-
   const configured = process.env.WEWORK_E2E_APP_BIN
   assert.ok(
     configured,

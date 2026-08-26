@@ -154,13 +154,9 @@ async function verifyPriorityFilter({ composerSelector, control }) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     await control.command('press', 'body', { key: 'Meta+Alt+U' })
-    await control.command(
-      'waitFor',
-      `[data-testid^="runtime-priority-recent-list-"] [data-testid="${requestInputTaskRowTestId}"]`,
-      {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      }
-    )
+    await control.command('waitFor', '[data-testid="runtime-priority-empty"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     const reopenedPrioritySnapshot = JSON.parse(
       await control.command('snapshot', '[data-testid="runtime-priority-section"]')
     )

@@ -999,7 +999,9 @@ async function main() {
     }
 
     const harnessRuntimes =
-      SELECTED_DESKTOP_SEGMENT === 'harness-apps' ? await prepareHarnessRuntimeRoots() : null
+      SELECTED_DESKTOP_SEGMENT === 'harness-apps'
+        ? await prepareHarnessRuntimeRoots(appBinary)
+        : null
     const electronCoreRuntimeRoot = process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || null
     if (electronCoreRuntimeRoot) {
       assert.equal(

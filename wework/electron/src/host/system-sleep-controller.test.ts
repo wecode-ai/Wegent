@@ -65,8 +65,14 @@ describe('SystemSleepController', () => {
 
   test('tracks executor response events independently from renderer surfaces', () => {
     const controller = new SystemSleepController()
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
 
     controller.handleExecutorEvent('response.created', { taskId: 'task-1' })
+    const logCallsAfterCreated = log.mock.calls.length
+    for (let index = 0; index < 2_200; index += 1) {
+      controller.handleExecutorEvent('response.block.updated', { taskId: 'task-1' })
+    }
+    expect(log).toHaveBeenCalledTimes(logCallsAfterCreated)
     controller.setTaskActive('main', false)
 
     expect(mocks.start).toHaveBeenCalledOnce()

@@ -30,7 +30,6 @@ function setup(language = 'en-US', resolvedImage = imageContext()) {
   })
   const actions = {
     copyPath: vi.fn(),
-    copyText: vi.fn(),
     openImage: vi.fn(async () => undefined),
     reportError: vi.fn(),
     resolveImageContext: vi.fn(async () => resolvedImage),
@@ -112,8 +111,10 @@ describe('installNativeContextMenu', () => {
   })
 
   test('shows Copy for selected conversation text', async () => {
-    const { actions, buildMenu, trigger } = setup()
+    const { buildMenu, popup, trigger } = setup()
+    const frame = {}
     const params = {
+      frame,
       mediaType: 'none',
       selectionText: 'selected response',
       x: 10,
@@ -123,9 +124,45 @@ describe('installNativeContextMenu', () => {
     await trigger(params)
 
     const [items] = buildMenu.mock.calls[0] ?? []
-    expect(items?.map(item => item.label)).toEqual(['Copy'])
-    items?.[0]?.click?.()
-    expect(actions.copyText).toHaveBeenCalledWith('selected response')
+    expect(items).toEqual([{ role: 'copy' }])
+    expect(popup).toHaveBeenCalledWith({ frame })
+  })
+
+  test('shows native editing actions with availability from Chromium', async () => {
+    const { buildMenu, popup, trigger } = setup()
+    const frame = {}
+
+    await trigger({
+      editFlags: {
+        canCopy: true,
+        canCut: true,
+        canDelete: true,
+        canPaste: false,
+        canRedo: false,
+        canSelectAll: true,
+        canUndo: true,
+      },
+      frame,
+      isEditable: true,
+      mediaType: 'none',
+      selectionText: '',
+      x: 10,
+      y: 20,
+    })
+
+    const [items] = buildMenu.mock.calls[0] ?? []
+    expect(items).toEqual([
+      { role: 'undo', enabled: true },
+      { role: 'redo', enabled: false },
+      { type: 'separator' },
+      { role: 'cut', enabled: true },
+      { role: 'copy', enabled: true },
+      { role: 'paste', enabled: false },
+      { role: 'delete', enabled: true },
+      { type: 'separator' },
+      { role: 'selectAll', enabled: true },
+    ])
+    expect(popup).toHaveBeenCalledWith({ frame })
   })
 
   test('leaves non-image context menus without a selection untouched', async () => {

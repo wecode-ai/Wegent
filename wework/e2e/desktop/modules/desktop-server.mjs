@@ -64,6 +64,7 @@ import {
   BACKGROUND_FOLLOW_UP_RESTORE_PROMPT,
   BACKGROUND_FOLLOW_UP_RESTORE_TEXT,
   BLOCKED_CLOUD_MODEL_PATH,
+  BACKGROUND_GUIDANCE_CONTINUATION,
   CANCELLATION_COMPLETION_TEXT,
   CANCELLATION_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
@@ -2170,7 +2171,42 @@ class DesktopE2EServer {
       // immediate mock response can otherwise race the live image-view rendering.
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
       if (this.initialCompletionHeld) {
+        const text = `${BACKGROUND_GUIDANCE_CONTINUATION}\n\n${COMPLETION_TEXT}`
+        const stream = streamingTextEvents(responseId, text)
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(
+          createSse([
+            ...stream.start,
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: BACKGROUND_GUIDANCE_CONTINUATION,
+              offset: 0,
+            },
+          ])
+        )
         await this.initialCompletionRelease
+        response.end(
+          createSse([
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: `\n\n${COMPLETION_TEXT}`,
+              offset: BACKGROUND_GUIDANCE_CONTINUATION.length,
+            },
+            ...stream.finish,
+          ])
+        )
+        return
       }
       const responseEvents = [
         responseCreated(responseId),

@@ -344,6 +344,7 @@ export function createElectronCapabilityRouter(
   })
   router.register('e2e.getProcessSnapshot', () => getElectronProcessSnapshot())
   router.register('e2e.getRuntimeDiagnostics', () => e2eHost.runtimeDiagnostics())
+  router.register('e2e.getClipboardText', () => clipboard.readText())
   router.register('e2e.getWindowFocusSnapshot', () => {
     const target = requiredWindow(window)
     const popout = e2eHost.popoutWindowSnapshot()

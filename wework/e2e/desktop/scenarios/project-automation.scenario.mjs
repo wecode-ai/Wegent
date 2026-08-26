@@ -417,7 +417,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     return execution
   }
 
-  async function waitForSucceededRun(projectId, ruleId, taskId = null) {
+  async function waitForSucceededRun(
+    projectId,
+    ruleId,
+    taskId = null,
+    timeoutMs = uiTimeoutMs * 3
+  ) {
     return waitForValue(
       () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${ruleId}/runs`),
       items =>
@@ -425,7 +430,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           item => item.status === 'succeeded' && (taskId === null || item.taskId === taskId)
         ),
       `Automation ${ruleId} did not reach succeeded${taskId ? ` for ${taskId}` : ''}`,
-      uiTimeoutMs * 3
+      timeoutMs
     ).then(items =>
       items.find(item => item.status === 'succeeded' && (taskId === null || item.taskId === taskId))
     )
@@ -1815,7 +1820,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     const scheduleRun = await waitForSucceededRun(
       projectId,
       scheduleRule.id,
-      queuedScheduleRun.taskId
+      queuedScheduleRun.taskId,
+      uiTimeoutMs * 6
     )
     const scheduleExecution = await waitForCompletedExecution(
       projectId,
