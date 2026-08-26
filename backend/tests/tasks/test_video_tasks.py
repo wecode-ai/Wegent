@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from celery.exceptions import Ignore
 
+from app.models.subtask import SubtaskStatus
 from app.services.execution.agents.video.async_card import AsyncCardSnapshot
 from app.services.execution.agents.video.extensions import PreparedVideoArtifact
 from app.services.execution.agents.video.providers.base import VideoJobResult
@@ -14,6 +15,7 @@ from app.tasks.video_tasks import (
     POLL_INTERVAL_SECONDS,
     _estimate_polling_progress,
     _handle_completion,
+    _is_stale_video_poll_attempt,
     _merge_video_job_result,
     _poll_async_card,
     _schedule_video_job_poll,
@@ -337,6 +339,49 @@ def test_poll_video_job_ignores_stale_duplicate_without_polling_provider() -> No
             )
 
     get_provider.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("status", "persisted_job_id", "persisted_poll_count", "expected"),
+    [
+        (SubtaskStatus.COMPLETED, "job-1", 4, True),
+        (SubtaskStatus.RUNNING, "job-2", 4, True),
+        (SubtaskStatus.RUNNING, "job-1", 5, True),
+        (SubtaskStatus.RUNNING, "job-1", 4, False),
+    ],
+)
+def test_video_poll_attempt_must_own_active_job(
+    status: SubtaskStatus,
+    persisted_job_id: str,
+    persisted_poll_count: int,
+    expected: bool,
+) -> None:
+    db = MagicMock()
+    subtask = MagicMock(
+        status=status,
+        result={
+            "video_job": {
+                "job_id": persisted_job_id,
+                "poll_count": persisted_poll_count,
+            }
+        },
+    )
+
+    with (
+        patch("app.db.session.SessionLocal", return_value=db),
+        patch(
+            "app.tasks.video_tasks.subtask_store.get_basic_by_id",
+            return_value=subtask,
+        ),
+    ):
+        is_stale = _is_stale_video_poll_attempt(
+            subtask_id=20,
+            job_id="job-1",
+            incoming_poll_count=4,
+        )
+
+    assert is_stale is expected
+    db.close.assert_called_once()
 
 
 def test_poll_video_job_hands_off_during_shutdown_without_polling_provider() -> None:

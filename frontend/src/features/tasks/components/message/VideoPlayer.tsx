@@ -255,9 +255,9 @@ export function VideoPlayer({
       : {
           width: MESSAGE_VIDEO_SHORT_EDGE,
           height: MESSAGE_VIDEO_SHORT_EDGE,
-          visibility: 'hidden' as const,
         }
     : undefined
+  const isMessageMetadataLoading = useMessageDisplaySize && !messageDisplaySize
 
   // Placeholder mode: show loading state with progress
   if (isPlaceholder) {
@@ -314,6 +314,7 @@ export function VideoPlayer({
         className={cn(
           'w-full h-auto',
           useMessageDisplaySize && 'h-full object-contain',
+          isMessageMetadataLoading && 'opacity-0',
           videoClassName
         )}
         onLoadedMetadata={handleLoadedMetadata}
@@ -325,6 +326,18 @@ export function VideoPlayer({
         playsInline
         preload="metadata"
       />
+
+      {isMessageMetadataLoading && (
+        <div
+          data-testid="video-metadata-placeholder"
+          role="status"
+          aria-label={t('video.loading')}
+          className="absolute inset-0 z-[1] flex items-center justify-center overflow-hidden bg-muted"
+        >
+          <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-muted via-surface to-muted" />
+          <Play className="relative h-8 w-8 fill-current text-text-muted/50" aria-hidden="true" />
+        </div>
+      )}
 
       {/* The whole video toggles playback; the center icon is transient feedback only. */}
       <button

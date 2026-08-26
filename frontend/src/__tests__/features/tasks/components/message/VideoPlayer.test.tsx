@@ -106,7 +106,7 @@ describe('VideoPlayer', () => {
     expect(video).toHaveClass('h-full', 'object-contain')
   })
 
-  it('hides the compact message player until its aspect ratio is known', () => {
+  it('shows a compact placeholder until the message video aspect ratio is known', () => {
     const { container } = render(
       <VideoPlayer videoUrl="https://example.com/result.mp4" useMessageDisplaySize />
     )
@@ -116,8 +116,9 @@ describe('VideoPlayer', () => {
     expect(player).toHaveStyle({
       width: '202px',
       height: '202px',
-      visibility: 'hidden',
     })
+    expect(screen.getByTestId('video-metadata-placeholder')).toHaveAccessibleName('video.loading')
+    expect(video).toHaveClass('opacity-0')
 
     Object.defineProperties(video, {
       videoWidth: {
@@ -135,7 +136,8 @@ describe('VideoPlayer', () => {
       width: '202px',
       height: '359px',
     })
-    expect(player).not.toHaveStyle({ visibility: 'hidden' })
+    expect(screen.queryByTestId('video-metadata-placeholder')).not.toBeInTheDocument()
+    expect(video).not.toHaveClass('opacity-0')
   })
 
   it('seeks backward and forward with the arrow keys', () => {
