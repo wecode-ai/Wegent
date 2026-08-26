@@ -1,11 +1,10 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 import {
   abortRuntimeConversationHydration,
   appendOptimisticRuntimeConversationGuidance,
   applyRuntimeConversationGoalContinuation,
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
-  applyRuntimeConversationStreamAction,
   beginRuntimeConversationHydration,
   cacheConversationScrollSnapshot,
   cacheConversationVirtualMeasurements,
@@ -47,10 +46,7 @@ const address = {
 }
 
 describe('runtimeConversationCache', () => {
-  afterEach(() => {
-    clearRuntimeConversationCacheForTests()
-    vi.restoreAllMocks()
-  })
+  afterEach(clearRuntimeConversationCacheForTests)
 
   test('keeps transcript data independently from a mounted pane', () => {
     applyRuntimeConversationAction(address, {
@@ -158,103 +154,6 @@ describe('runtimeConversationCache', () => {
     cacheRuntimeConversationQueuePaused(address, false)
 
     expect(notifications).toBe(2)
-    unsubscribe()
-  })
-
-  test('batches streaming notifications and flushes the final state on completion', () => {
-    let scheduledFrame: FrameRequestCallback | null = null
-    const requestAnimationFrame = vi
-      .spyOn(globalThis, 'requestAnimationFrame')
-      .mockImplementation(callback => {
-        scheduledFrame = callback
-        return 1
-      })
-    const cancelAnimationFrame = vi
-      .spyOn(globalThis, 'cancelAnimationFrame')
-      .mockImplementation(() => undefined)
-    const listener = vi.fn()
-    const unsubscribe = subscribeRuntimeConversation(address, listener)
-
-    applyRuntimeConversationStreamAction(address, {
-      type: 'assistant_started',
-      taskId: address.taskId,
-      subtaskId: 'turn-1',
-    })
-    for (let index = 0; index < 2_200; index += 1) {
-      applyRuntimeConversationStreamAction(address, {
-        type: 'assistant_chunk',
-        subtaskId: 'turn-1',
-        itemId: 'assistant-1',
-        content: 'x',
-      })
-    }
-
-    expect(listener).toHaveBeenCalledTimes(1)
-    expect(requestAnimationFrame).toHaveBeenCalledTimes(1)
-    expect(scheduledFrame).not.toBeNull()
-
-    applyRuntimeConversationStreamAction(address, {
-      type: 'assistant_chunk',
-      subtaskId: 'turn-1',
-      itemId: 'assistant-1',
-      content: 'complete',
-      contentMode: 'snapshot',
-    })
-    applyRuntimeConversationStreamAction(address, {
-      type: 'assistant_done',
-      subtaskId: 'turn-1',
-    })
-
-    expect(cancelAnimationFrame).toHaveBeenCalledWith(1)
-    expect(listener).toHaveBeenCalledTimes(2)
-    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'assistant_done' }))
-    expect(getRuntimeConversationMessages(address)).toEqual([
-      expect.objectContaining({
-        content: 'complete',
-        status: 'done',
-      }),
-    ])
-    unsubscribe()
-  })
-
-  test('coalesces streaming text deltas before updating cached turns', () => {
-    const scheduledFrames: FrameRequestCallback[] = []
-    const requestAnimationFrame = vi
-      .spyOn(globalThis, 'requestAnimationFrame')
-      .mockImplementation(callback => {
-        scheduledFrames.push(callback)
-        return scheduledFrames.length
-      })
-    vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(() => undefined)
-    const listener = vi.fn()
-    const unsubscribe = subscribeRuntimeConversation(address, listener)
-
-    applyRuntimeConversationStreamAction(address, {
-      type: 'assistant_started',
-      taskId: address.taskId,
-      subtaskId: 'turn-1',
-    })
-    for (let index = 0; index < 2_200; index += 1) {
-      applyRuntimeConversationStreamAction(address, {
-        type: 'assistant_chunk',
-        subtaskId: 'turn-1',
-        itemId: 'assistant-1',
-        content: 'x',
-      })
-    }
-
-    expect(requestAnimationFrame).toHaveBeenCalledTimes(1)
-    expect(listener).toHaveBeenCalledTimes(1)
-
-    scheduledFrames[0](0)
-
-    expect(listener).toHaveBeenCalledTimes(2)
-    expect(getRuntimeConversationMessages(address)).toEqual([
-      expect.objectContaining({
-        content: 'x'.repeat(2_200),
-        status: 'streaming',
-      }),
-    ])
     unsubscribe()
   })
 

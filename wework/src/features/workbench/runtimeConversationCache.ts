@@ -34,28 +34,6 @@ const MAX_CONVERSATION_CACHE_ENTRIES = 50
 const turnsByConversation = new Map<string, RuntimeConversationTurn[]>()
 const metadataByConversation = new Map<string, RuntimeConversationMetadata>()
 const listenersByConversation = new Map<string, Set<(action?: RuntimePaneMessageAction) => void>>()
-type PendingRuntimeConversationNotification =
-  | { id: number; scheduler: 'animation-frame' }
-  | {
-      id: ReturnType<typeof globalThis.setTimeout>
-      scheduler: 'timeout'
-    }
-
-type CoalescibleRuntimeConversationAction = Extract<
-  RuntimePaneMessageAction,
-  { type: 'assistant_chunk' }
-> & {
-  content: string
-  itemId: string
-}
-
-type PendingRuntimeConversationAction = PendingRuntimeConversationNotification & {
-  action: CoalescibleRuntimeConversationAction
-  contentParts: string[]
-}
-
-const pendingNotificationsByConversation = new Map<string, PendingRuntimeConversationNotification>()
-const pendingActionsByConversation = new Map<string, PendingRuntimeConversationAction>()
 const runtimeTransportReplacedListeners = new Set<
   (payload: RuntimeTransportReplacedPayload) => void
 >()
@@ -339,19 +317,6 @@ export function applyRuntimeConversationAction(
   cacheBoundedEntry(turnsByConversation, key, nextTurns)
   notifyRuntimeConversation(key, action)
   return projectRuntimeConversationTurns(nextTurns)
-}
-
-export function applyRuntimeConversationStreamAction(
-  address: RuntimeTaskAddress,
-  action: RuntimePaneMessageAction
-): WorkbenchMessage[] {
-  const key = runtimeConversationKey(address)
-  if (isCoalescibleRuntimeConversationAction(action)) {
-    queueRuntimeConversationAction(key, action)
-    return projectRuntimeConversationTurns(turnsByConversation.get(key) ?? [])
-  }
-  flushPendingRuntimeConversationAction(key, false)
-  return applyRuntimeConversationAction(address, action)
 }
 
 export function appendAcceptedRuntimeConversationMessage(
@@ -875,8 +840,6 @@ function shortRuntimeAgentId(agentId: string): string {
 
 export function evictRuntimeConversation(address: RuntimeTaskAddress) {
   const key = runtimeConversationKey(address)
-  cancelPendingRuntimeConversationAction(key)
-  cancelPendingRuntimeConversationNotification(key)
   turnsByConversation.delete(key)
   metadataByConversation.delete(key)
   hydrationByConversation.delete(key)
@@ -896,10 +859,6 @@ export function getRuntimeConversationCacheStats() {
 }
 
 export function clearRuntimeConversationCacheForTests() {
-  pendingActionsByConversation.forEach((_, key) => cancelPendingRuntimeConversationAction(key))
-  pendingNotificationsByConversation.forEach((_, key) =>
-    cancelPendingRuntimeConversationNotification(key)
-  )
   turnsByConversation.clear()
   metadataByConversation.clear()
   listenersByConversation.clear()
@@ -913,124 +872,6 @@ export function clearRuntimeConversationCacheForTests() {
 }
 
 function notifyRuntimeConversation(key: string, action?: RuntimePaneMessageAction) {
-  if (action && isBatchableRuntimeConversationAction(action)) {
-    scheduleRuntimeConversationNotification(key)
-    return
-  }
-  cancelPendingRuntimeConversationNotification(key)
-  emitRuntimeConversationNotification(key, action)
-}
-
-function isCoalescibleRuntimeConversationAction(
-  action: RuntimePaneMessageAction
-): action is CoalescibleRuntimeConversationAction {
-  return (
-    action.type === 'assistant_chunk' &&
-    Boolean(action.itemId) &&
-    Boolean(action.content) &&
-    action.contentMode !== 'snapshot' &&
-    action.offset === undefined &&
-    !action.reasoningChunk &&
-    (!action.blocks || action.blocks.length === 0)
-  )
-}
-
-function queueRuntimeConversationAction(
-  key: string,
-  action: CoalescibleRuntimeConversationAction
-): void {
-  const pending = pendingActionsByConversation.get(key)
-  if (
-    pending &&
-    pending.action.subtaskId === action.subtaskId &&
-    pending.action.itemId === action.itemId
-  ) {
-    pending.contentParts.push(action.content)
-    return
-  }
-  flushPendingRuntimeConversationAction(key, true)
-
-  const schedule = (scheduler: PendingRuntimeConversationNotification['scheduler']) => {
-    const callback = () => flushPendingRuntimeConversationAction(key, true)
-    if (scheduler === 'animation-frame') {
-      return globalThis.requestAnimationFrame(callback)
-    }
-    return globalThis.setTimeout(callback, 0)
-  }
-  const scheduler =
-    typeof globalThis.requestAnimationFrame === 'function' ? 'animation-frame' : 'timeout'
-  pendingActionsByConversation.set(key, {
-    action,
-    contentParts: [action.content],
-    id: schedule(scheduler),
-    scheduler,
-  } as PendingRuntimeConversationAction)
-}
-
-function flushPendingRuntimeConversationAction(key: string, notify: boolean): void {
-  const pending = pendingActionsByConversation.get(key)
-  if (!pending) return
-  cancelPendingRuntimeConversationAction(key)
-  const action = {
-    ...pending.action,
-    content: pending.contentParts.join(''),
-  }
-  const hydration = hydrationByConversation.get(key)
-  if (hydration) {
-    hydration.bufferedActions.push(action)
-    return
-  }
-  const turns = reduceRuntimeConversationTurns(turnsByConversation.get(key) ?? [], action)
-  cacheBoundedEntry(turnsByConversation, key, turns)
-  if (notify) emitRuntimeConversationNotification(key)
-}
-
-function cancelPendingRuntimeConversationAction(key: string): void {
-  const pending = pendingActionsByConversation.get(key)
-  if (!pending) return
-  pendingActionsByConversation.delete(key)
-  if (pending.scheduler === 'animation-frame') {
-    globalThis.cancelAnimationFrame(pending.id)
-    return
-  }
-  globalThis.clearTimeout(pending.id)
-}
-
-function isBatchableRuntimeConversationAction(action: RuntimePaneMessageAction): boolean {
-  return action.type === 'assistant_chunk' || action.type === 'block_updated'
-}
-
-function scheduleRuntimeConversationNotification(key: string): void {
-  if (pendingNotificationsByConversation.has(key)) return
-
-  if (typeof globalThis.requestAnimationFrame === 'function') {
-    const id = globalThis.requestAnimationFrame(() => {
-      pendingNotificationsByConversation.delete(key)
-      emitRuntimeConversationNotification(key)
-    })
-    pendingNotificationsByConversation.set(key, { id, scheduler: 'animation-frame' })
-    return
-  }
-
-  const id = globalThis.setTimeout(() => {
-    pendingNotificationsByConversation.delete(key)
-    emitRuntimeConversationNotification(key)
-  }, 0)
-  pendingNotificationsByConversation.set(key, { id, scheduler: 'timeout' })
-}
-
-function cancelPendingRuntimeConversationNotification(key: string): void {
-  const pending = pendingNotificationsByConversation.get(key)
-  if (!pending) return
-  pendingNotificationsByConversation.delete(key)
-  if (pending.scheduler === 'animation-frame') {
-    globalThis.cancelAnimationFrame(pending.id)
-    return
-  }
-  globalThis.clearTimeout(pending.id)
-}
-
-function emitRuntimeConversationNotification(key: string, action?: RuntimePaneMessageAction): void {
   listenersByConversation.get(key)?.forEach(listener => listener(action))
 }
 
