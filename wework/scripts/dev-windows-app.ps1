@@ -13,7 +13,7 @@ $MANAGED_SOURCE_EXECUTOR = $false
 
 function Show-Usage {
   @'
-Usage: powershell -File wework/scripts/dev-windows-app.ps1 [options] [-- electron-options]
+Usage: pwsh -File wework/scripts/dev-windows-app.ps1 [options] [-- electron-options]
 
 Options:
   --executor-isolation      Use a temporary Executor Home for this launch.
@@ -195,7 +195,7 @@ function Get-ExecutorBinaryPath {
 function Start-PrepareStep([string]$Name, [string]$Command) {
   $stdout = Join-Path $env:TEMP "wework-dev-$Name-$PID.out.log"
   $stderr = Join-Path $env:TEMP "wework-dev-$Name-$PID.err.log"
-  $process = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $Command) -WorkingDirectory $WEWORK_DIR -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
+  $process = Start-Process -FilePath 'pwsh.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $Command) -WorkingDirectory $WEWORK_DIR -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
   return [pscustomobject]@{ Name = $Name; Process = $process; Stdout = $stdout; Stderr = $stderr }
 }
 
